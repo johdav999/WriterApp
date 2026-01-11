@@ -84,6 +84,176 @@ function focusFontFamilySelect() {
     }
 }
 
+function selectionHasNodeType(editor, nodeType) {
+    const { from, to, empty } = editor.state.selection;
+    if (empty) {
+        return editor.isActive(nodeType);
+    }
+
+    let found = false;
+    editor.state.doc.nodesBetween(from, to, node => {
+        if (node.type?.name === nodeType) {
+            found = true;
+            return false;
+        }
+    });
+
+    return found;
+}
+
+function getTextStyleAttrFromMarks(marks, attrName) {
+    if (!marks) {
+        return null;
+    }
+
+    const mark = marks.find(entry => entry.type?.name === "textStyle");
+    if (!mark) {
+        return null;
+    }
+
+    return mark.attrs ? mark.attrs[attrName] ?? null : null;
+}
+
+function getUniformTextStyleAttr(editor, attrName) {
+    const { from, to, empty } = editor.state.selection;
+    if (empty) {
+        const attrs = editor.getAttributes("textStyle") ?? {};
+        return { mixed: false, value: attrs[attrName] ?? null };
+    }
+
+    let hasValue = false;
+    let currentValue = null;
+    let mixed = false;
+
+    editor.state.doc.nodesBetween(from, to, node => {
+        if (!node.isText) {
+            return;
+        }
+
+        const value = getTextStyleAttrFromMarks(node.marks, attrName);
+        if (!hasValue) {
+            currentValue = value;
+            hasValue = true;
+            return;
+        }
+
+        if (currentValue !== value) {
+            mixed = true;
+            return false;
+        }
+    });
+
+    if (!hasValue) {
+        currentValue = null;
+    }
+
+    return { mixed, value: currentValue };
+}
+
+function normalizeFontSize(value) {
+    if (value === null || value === undefined) {
+        return "";
+    }
+
+    const match = String(value).match(/(\d+(\.\d+)?)/);
+    if (!match) {
+        return "";
+    }
+
+    const parsed = Number(match[1]);
+    return Number.isFinite(parsed) ? String(parsed) : "";
+}
+
+function getBlockType(editor) {
+    const { from, to, empty } = editor.state.selection;
+    if (empty) {
+        for (let level = 1; level <= 6; level += 1) {
+            if (editor.isActive("heading", { level })) {
+                return `heading:${level}`;
+            }
+        }
+
+        if (editor.isActive("paragraph")) {
+            return "paragraph";
+        }
+
+        return null;
+    }
+
+    let currentType = null;
+    let mixed = false;
+
+    editor.state.doc.nodesBetween(from, to, node => {
+        if (!node.isTextblock) {
+            return;
+        }
+
+        let nodeType = null;
+        if (node.type?.name === "heading") {
+            nodeType = `heading:${node.attrs?.level ?? 1}`;
+        } else if (node.type?.name === "paragraph") {
+            nodeType = "paragraph";
+        }
+
+        if (!nodeType) {
+            return;
+        }
+
+        if (!currentType) {
+            currentType = nodeType;
+            return;
+        }
+
+        if (currentType !== nodeType) {
+            mixed = true;
+            return false;
+        }
+    });
+
+    if (mixed) {
+        return null;
+    }
+
+    return currentType;
+}
+
+function buildFormattingState(editor) {
+    const fontFamilyResult = getUniformTextStyleAttr(editor, "fontFamily");
+    const fontSizeResult = getUniformTextStyleAttr(editor, "fontSize");
+    const isInCodeBlock = selectionHasNodeType(editor, "codeBlock");
+    const canBold = editor.can().chain().toggleBold().run();
+    const canItalic = editor.can().chain().toggleItalic().run();
+    const canStrike = editor.can().chain().toggleStrike().run();
+    const canCode = editor.can().chain().toggleCode().run();
+    const canApplyHeading = !isInCodeBlock
+        && (editor.can().chain().setParagraph().run()
+            || editor.can().chain().toggleHeading({ level: 1 }).run());
+    const canToggleList = !isInCodeBlock
+        && (editor.can().chain().toggleBulletList().run()
+            || editor.can().chain().toggleOrderedList().run());
+    const canBlockquote = editor.can().chain().toggleBlockquote().run();
+    const canHorizontalRule = editor.can().chain().setHorizontalRule().run();
+
+    return {
+        isBold: editor.isActive("bold"),
+        isItalic: editor.isActive("italic"),
+        isStrike: editor.isActive("strike"),
+        isCode: editor.isActive("code"),
+        canBold,
+        canItalic,
+        canStrike,
+        canCode,
+        isInCodeBlock,
+        canApplyHeading,
+        canToggleList,
+        canBlockquote,
+        canHorizontalRule,
+        blockType: getBlockType(editor),
+        fontFamily: fontFamilyResult.mixed ? null : (fontFamilyResult.value ?? ""),
+        fontSize: fontSizeResult.mixed ? null : normalizeFontSize(fontSizeResult.value)
+    };
+}
+
 window.tiptapEditor = {
     create: function (elementId, initialContent, dotNetRef) {
         const ShortcutExtension = Extension.create({
@@ -194,6 +364,58 @@ window.tiptapEditor = {
                 );
             }
         });
+
+        let lastFormattingState = "";
+        const pushFormattingState = () => {
+            if (!dotNetRef) {
+                return;
+            }
+
+            const state = buildFormattingState(editor);
+            const serialized = JSON.stringify(state);
+            if (serialized === lastFormattingState) {
+                return;
+            }
+
+            lastFormattingState = serialized;
+            dotNetRef.invokeMethodAsync("OnEditorFormattingChanged", state);
+        };
+
+        editor.on("selectionUpdate", pushFormattingState);
+        editor.on("update", pushFormattingState);
+        pushFormattingState();
+
+        const setupScrollSync = () => {
+            const editorScroll = editor.view?.dom?.closest(".editor-pane")?.querySelector(".pane-body");
+            const previewScroll = document.querySelector(".preview-pane .pane-body");
+            if (!editorScroll || !previewScroll) {
+                return;
+            }
+
+            let isSyncing = false;
+            const syncScroll = (source, target) => {
+                if (isSyncing) {
+                    return;
+                }
+
+                if (source.scrollHeight <= source.clientHeight || target.scrollHeight <= target.clientHeight) {
+                    return;
+                }
+
+                isSyncing = true;
+                const ratio = source.scrollTop / (source.scrollHeight - source.clientHeight);
+                const targetMax = target.scrollHeight - target.clientHeight;
+                target.scrollTop = Math.round(ratio * targetMax);
+                requestAnimationFrame(() => {
+                    isSyncing = false;
+                });
+            };
+
+            editorScroll.addEventListener("scroll", () => syncScroll(editorScroll, previewScroll));
+            previewScroll.addEventListener("scroll", () => syncScroll(previewScroll, editorScroll));
+        };
+
+        setupScrollSync();
 
         return editor;
     },

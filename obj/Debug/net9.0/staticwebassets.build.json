@@ -1,6 +1,6 @@
 {
   "Version": 1,
-  "Hash": "UExHZOiG7hGmR9l2kZnU4i7A5hanUW4l+izZa8Qg7QM=",
+  "Hash": "ki/R7UVb+LUv3WxMMF7XHETRQZIwa6MTH4kDNS6VClw=",
   "Source": "BlazorApp",
   "BasePath": "_content/BlazorApp",
   "Mode": "Default",
@@ -290,12 +290,12 @@
       "OriginalItemSpec": "C:\\Users\\Johan\\source\\repos\\WriterApp\\wwwroot\\lib\\bootstrap\\dist\\js\\bootstrap.esm.js"
     },
     {
-      "Identity": "C:\\Users\\Johan\\source\\repos\\WriterApp\\obj\\Debug\\net9.0\\compressed\\6suaetkggf-p55mxwcaxz.gz",
+      "Identity": "C:\\Users\\Johan\\source\\repos\\WriterApp\\obj\\Debug\\net9.0\\compressed\\6suaetkggf-vdqzju9lz6.gz",
       "SourceId": "BlazorApp",
       "SourceType": "Discovered",
       "ContentRoot": "C:\\Users\\Johan\\source\\repos\\WriterApp\\obj\\Debug\\net9.0\\compressed\\",
       "BasePath": "_content/BlazorApp",
-      "RelativePath": "js/tiptap-commands#[.{fingerprint=p55mxwcaxz}]?.js.gz",
+      "RelativePath": "js/tiptap-commands#[.{fingerprint=vdqzju9lz6}]?.js.gz",
       "AssetKind": "All",
       "AssetMode": "All",
       "AssetRole": "Alternative",
@@ -304,8 +304,8 @@
       "RelatedAsset": "C:\\Users\\Johan\\source\\repos\\WriterApp\\wwwroot\\js\\tiptap-commands.js",
       "AssetTraitName": "Content-Encoding",
       "AssetTraitValue": "gzip",
-      "Fingerprint": "g0zzcgl986",
-      "Integrity": "APjDhZtcOpFA5ITJDiKJVZmmjWLsorgZzGrHRwpbQLE=",
+      "Fingerprint": "nrb1mwypia",
+      "Integrity": "LViYozjPq7nGuHH9GPst7VENrxzWjd76PoGytsRjdXo=",
       "CopyToOutputDirectory": "Never",
       "CopyToPublishDirectory": "PreserveNewest",
       "OriginalItemSpec": "C:\\Users\\Johan\\source\\repos\\WriterApp\\wwwroot\\js\\tiptap-commands.js"
@@ -437,12 +437,12 @@
       "OriginalItemSpec": "C:\\Users\\Johan\\source\\repos\\WriterApp\\wwwroot\\lib\\bootstrap\\dist\\css\\bootstrap.rtl.min.css"
     },
     {
-      "Identity": "C:\\Users\\Johan\\source\\repos\\WriterApp\\obj\\Debug\\net9.0\\compressed\\e5wh4zdham-7bdy8sg3f0.gz",
+      "Identity": "C:\\Users\\Johan\\source\\repos\\WriterApp\\obj\\Debug\\net9.0\\compressed\\e5wh4zdham-5g4pkdx3eu.gz",
       "SourceId": "BlazorApp",
       "SourceType": "Discovered",
       "ContentRoot": "C:\\Users\\Johan\\source\\repos\\WriterApp\\obj\\Debug\\net9.0\\compressed\\",
       "BasePath": "_content/BlazorApp",
-      "RelativePath": "js/tiptap-editor#[.{fingerprint=7bdy8sg3f0}]?.js.gz",
+      "RelativePath": "js/tiptap-editor#[.{fingerprint=5g4pkdx3eu}]?.js.gz",
       "AssetKind": "All",
       "AssetMode": "All",
       "AssetRole": "Alternative",
@@ -451,8 +451,8 @@
       "RelatedAsset": "C:\\Users\\Johan\\source\\repos\\WriterApp\\wwwroot\\js\\tiptap-editor.js",
       "AssetTraitName": "Content-Encoding",
       "AssetTraitValue": "gzip",
-      "Fingerprint": "8gxas0zyyy",
-      "Integrity": "2BOzUJAj1RN+Ew+D2RlxaCjRTd/m/5+Xsa0iZ+5FVBE=",
+      "Fingerprint": "fmum6z57n5",
+      "Integrity": "eXnH8i87LPz4EcC6ZrR8AeUsoq9xPRDDq2mr+U4Z0KU=",
       "CopyToOutputDirectory": "Never",
       "CopyToPublishDirectory": "PreserveNewest",
       "OriginalItemSpec": "C:\\Users\\Johan\\source\\repos\\WriterApp\\wwwroot\\js\\tiptap-editor.js"
@@ -1144,8 +1144,8 @@
       "RelatedAsset": "",
       "AssetTraitName": "",
       "AssetTraitValue": "",
-      "Fingerprint": "p55mxwcaxz",
-      "Integrity": "Y7uNm+B1g8P1m15R+A469nPiCN4NJsSbte3g5AGJLxs=",
+      "Fingerprint": "vdqzju9lz6",
+      "Integrity": "rZRCMRioyKG+gEMZ4TLbsCENMdrZCoIvu0mA3zqnnuo=",
       "CopyToOutputDirectory": "Never",
       "CopyToPublishDirectory": "PreserveNewest",
       "OriginalItemSpec": "wwwroot\\js\\tiptap-commands.js"
@@ -1165,8 +1165,8 @@
       "RelatedAsset": "",
       "AssetTraitName": "",
       "AssetTraitValue": "",
-      "Fingerprint": "7bdy8sg3f0",
-      "Integrity": "4y9quWEv3qYLTrMVblA6HotPgt8QX+2gOxvkPclNkXw=",
+      "Fingerprint": "5g4pkdx3eu",
+      "Integrity": "xZreXqlPHeh0rVGnjy1E/tSCTAaZ0x8500koVpEKXNc=",
       "CopyToOutputDirectory": "Never",
       "CopyToPublishDirectory": "PreserveNewest",
       "OriginalItemSpec": "wwwroot\\js\\tiptap-editor.js"
@@ -3075,12 +3075,12 @@
     },
     {
       "Route": "js/tiptap-commands.js",
-      "AssetFile": "C:\\Users\\Johan\\source\\repos\\WriterApp\\obj\\Debug\\net9.0\\compressed\\6suaetkggf-p55mxwcaxz.gz",
+      "AssetFile": "C:\\Users\\Johan\\source\\repos\\WriterApp\\obj\\Debug\\net9.0\\compressed\\6suaetkggf-vdqzju9lz6.gz",
       "Selectors": [
         {
           "Name": "Content-Encoding",
           "Value": "gzip",
-          "Quality": "0.002398081535"
+          "Quality": "0.002309468822"
         }
       ],
       "ResponseHeaders": [
@@ -3090,15 +3090,15 @@
         },
         {
           "Name": "Content-Length",
-          "Value": "416"
+          "Value": "432"
         },
         {
           "Name": "ETag",
-          "Value": "\"APjDhZtcOpFA5ITJDiKJVZmmjWLsorgZzGrHRwpbQLE=\""
+          "Value": "\"LViYozjPq7nGuHH9GPst7VENrxzWjd76PoGytsRjdXo=\""
         },
         {
           "Name": "Last-Modified",
-          "Value": "Sun, 11 Jan 2026 14:20:38 GMT"
+          "Value": "Sun, 11 Jan 2026 15:13:52 GMT"
         },
         {
           "Name": "Cache-Control",
@@ -3118,13 +3118,13 @@
         },
         {
           "Name": "ETag",
-          "Value": "W/\"Y7uNm+B1g8P1m15R+A469nPiCN4NJsSbte3g5AGJLxs=\""
+          "Value": "W/\"rZRCMRioyKG+gEMZ4TLbsCENMdrZCoIvu0mA3zqnnuo=\""
         }
       ],
       "EndpointProperties": [
         {
           "Name": "integrity",
-          "Value": "sha256-Y7uNm+B1g8P1m15R+A469nPiCN4NJsSbte3g5AGJLxs="
+          "Value": "sha256-rZRCMRioyKG+gEMZ4TLbsCENMdrZCoIvu0mA3zqnnuo="
         }
       ]
     },
@@ -3139,7 +3139,7 @@
         },
         {
           "Name": "Content-Length",
-          "Value": "2110"
+          "Value": "2222"
         },
         {
           "Name": "Content-Type",
@@ -3147,11 +3147,11 @@
         },
         {
           "Name": "ETag",
-          "Value": "\"Y7uNm+B1g8P1m15R+A469nPiCN4NJsSbte3g5AGJLxs=\""
+          "Value": "\"rZRCMRioyKG+gEMZ4TLbsCENMdrZCoIvu0mA3zqnnuo=\""
         },
         {
           "Name": "Last-Modified",
-          "Value": "Sun, 11 Jan 2026 14:20:38 GMT"
+          "Value": "Sun, 11 Jan 2026 15:13:52 GMT"
         },
         {
           "Name": "Cache-Control",
@@ -3161,13 +3161,13 @@
       "EndpointProperties": [
         {
           "Name": "integrity",
-          "Value": "sha256-Y7uNm+B1g8P1m15R+A469nPiCN4NJsSbte3g5AGJLxs="
+          "Value": "sha256-rZRCMRioyKG+gEMZ4TLbsCENMdrZCoIvu0mA3zqnnuo="
         }
       ]
     },
     {
       "Route": "js/tiptap-commands.js.gz",
-      "AssetFile": "C:\\Users\\Johan\\source\\repos\\WriterApp\\obj\\Debug\\net9.0\\compressed\\6suaetkggf-p55mxwcaxz.gz",
+      "AssetFile": "C:\\Users\\Johan\\source\\repos\\WriterApp\\obj\\Debug\\net9.0\\compressed\\6suaetkggf-vdqzju9lz6.gz",
       "Selectors": [],
       "ResponseHeaders": [
         {
@@ -3176,7 +3176,7 @@
         },
         {
           "Name": "Content-Length",
-          "Value": "416"
+          "Value": "432"
         },
         {
           "Name": "Content-Type",
@@ -3184,11 +3184,11 @@
         },
         {
           "Name": "ETag",
-          "Value": "\"APjDhZtcOpFA5ITJDiKJVZmmjWLsorgZzGrHRwpbQLE=\""
+          "Value": "\"LViYozjPq7nGuHH9GPst7VENrxzWjd76PoGytsRjdXo=\""
         },
         {
           "Name": "Last-Modified",
-          "Value": "Sun, 11 Jan 2026 14:20:38 GMT"
+          "Value": "Sun, 11 Jan 2026 15:13:52 GMT"
         },
         {
           "Name": "Cache-Control",
@@ -3206,18 +3206,18 @@
       "EndpointProperties": [
         {
           "Name": "integrity",
-          "Value": "sha256-APjDhZtcOpFA5ITJDiKJVZmmjWLsorgZzGrHRwpbQLE="
+          "Value": "sha256-LViYozjPq7nGuHH9GPst7VENrxzWjd76PoGytsRjdXo="
         }
       ]
     },
     {
-      "Route": "js/tiptap-commands.p55mxwcaxz.js",
-      "AssetFile": "C:\\Users\\Johan\\source\\repos\\WriterApp\\obj\\Debug\\net9.0\\compressed\\6suaetkggf-p55mxwcaxz.gz",
+      "Route": "js/tiptap-commands.vdqzju9lz6.js",
+      "AssetFile": "C:\\Users\\Johan\\source\\repos\\WriterApp\\obj\\Debug\\net9.0\\compressed\\6suaetkggf-vdqzju9lz6.gz",
       "Selectors": [
         {
           "Name": "Content-Encoding",
           "Value": "gzip",
-          "Quality": "0.002398081535"
+          "Quality": "0.002309468822"
         }
       ],
       "ResponseHeaders": [
@@ -3227,15 +3227,15 @@
         },
         {
           "Name": "Content-Length",
-          "Value": "416"
+          "Value": "432"
         },
         {
           "Name": "ETag",
-          "Value": "\"APjDhZtcOpFA5ITJDiKJVZmmjWLsorgZzGrHRwpbQLE=\""
+          "Value": "\"LViYozjPq7nGuHH9GPst7VENrxzWjd76PoGytsRjdXo=\""
         },
         {
           "Name": "Last-Modified",
-          "Value": "Sun, 11 Jan 2026 14:20:38 GMT"
+          "Value": "Sun, 11 Jan 2026 15:13:52 GMT"
         },
         {
           "Name": "Cache-Control",
@@ -3255,13 +3255,13 @@
         },
         {
           "Name": "ETag",
-          "Value": "W/\"Y7uNm+B1g8P1m15R+A469nPiCN4NJsSbte3g5AGJLxs=\""
+          "Value": "W/\"rZRCMRioyKG+gEMZ4TLbsCENMdrZCoIvu0mA3zqnnuo=\""
         }
       ],
       "EndpointProperties": [
         {
           "Name": "fingerprint",
-          "Value": "p55mxwcaxz"
+          "Value": "vdqzju9lz6"
         },
         {
           "Name": "label",
@@ -3269,12 +3269,12 @@
         },
         {
           "Name": "integrity",
-          "Value": "sha256-Y7uNm+B1g8P1m15R+A469nPiCN4NJsSbte3g5AGJLxs="
+          "Value": "sha256-rZRCMRioyKG+gEMZ4TLbsCENMdrZCoIvu0mA3zqnnuo="
         }
       ]
     },
     {
-      "Route": "js/tiptap-commands.p55mxwcaxz.js",
+      "Route": "js/tiptap-commands.vdqzju9lz6.js",
       "AssetFile": "C:\\Users\\Johan\\source\\repos\\WriterApp\\wwwroot\\js\\tiptap-commands.js",
       "Selectors": [],
       "ResponseHeaders": [
@@ -3284,7 +3284,7 @@
         },
         {
           "Name": "Content-Length",
-          "Value": "2110"
+          "Value": "2222"
         },
         {
           "Name": "Content-Type",
@@ -3292,11 +3292,11 @@
         },
         {
           "Name": "ETag",
-          "Value": "\"Y7uNm+B1g8P1m15R+A469nPiCN4NJsSbte3g5AGJLxs=\""
+          "Value": "\"rZRCMRioyKG+gEMZ4TLbsCENMdrZCoIvu0mA3zqnnuo=\""
         },
         {
           "Name": "Last-Modified",
-          "Value": "Sun, 11 Jan 2026 14:20:38 GMT"
+          "Value": "Sun, 11 Jan 2026 15:13:52 GMT"
         },
         {
           "Name": "Cache-Control",
@@ -3306,7 +3306,7 @@
       "EndpointProperties": [
         {
           "Name": "fingerprint",
-          "Value": "p55mxwcaxz"
+          "Value": "vdqzju9lz6"
         },
         {
           "Name": "label",
@@ -3314,13 +3314,13 @@
         },
         {
           "Name": "integrity",
-          "Value": "sha256-Y7uNm+B1g8P1m15R+A469nPiCN4NJsSbte3g5AGJLxs="
+          "Value": "sha256-rZRCMRioyKG+gEMZ4TLbsCENMdrZCoIvu0mA3zqnnuo="
         }
       ]
     },
     {
-      "Route": "js/tiptap-commands.p55mxwcaxz.js.gz",
-      "AssetFile": "C:\\Users\\Johan\\source\\repos\\WriterApp\\obj\\Debug\\net9.0\\compressed\\6suaetkggf-p55mxwcaxz.gz",
+      "Route": "js/tiptap-commands.vdqzju9lz6.js.gz",
+      "AssetFile": "C:\\Users\\Johan\\source\\repos\\WriterApp\\obj\\Debug\\net9.0\\compressed\\6suaetkggf-vdqzju9lz6.gz",
       "Selectors": [],
       "ResponseHeaders": [
         {
@@ -3329,7 +3329,7 @@
         },
         {
           "Name": "Content-Length",
-          "Value": "416"
+          "Value": "432"
         },
         {
           "Name": "Content-Type",
@@ -3337,11 +3337,11 @@
         },
         {
           "Name": "ETag",
-          "Value": "\"APjDhZtcOpFA5ITJDiKJVZmmjWLsorgZzGrHRwpbQLE=\""
+          "Value": "\"LViYozjPq7nGuHH9GPst7VENrxzWjd76PoGytsRjdXo=\""
         },
         {
           "Name": "Last-Modified",
-          "Value": "Sun, 11 Jan 2026 14:20:38 GMT"
+          "Value": "Sun, 11 Jan 2026 15:13:52 GMT"
         },
         {
           "Name": "Cache-Control",
@@ -3359,7 +3359,7 @@
       "EndpointProperties": [
         {
           "Name": "fingerprint",
-          "Value": "p55mxwcaxz"
+          "Value": "vdqzju9lz6"
         },
         {
           "Name": "label",
@@ -3367,18 +3367,18 @@
         },
         {
           "Name": "integrity",
-          "Value": "sha256-APjDhZtcOpFA5ITJDiKJVZmmjWLsorgZzGrHRwpbQLE="
+          "Value": "sha256-LViYozjPq7nGuHH9GPst7VENrxzWjd76PoGytsRjdXo="
         }
       ]
     },
     {
-      "Route": "js/tiptap-editor.7bdy8sg3f0.js",
-      "AssetFile": "C:\\Users\\Johan\\source\\repos\\WriterApp\\obj\\Debug\\net9.0\\compressed\\e5wh4zdham-7bdy8sg3f0.gz",
+      "Route": "js/tiptap-editor.5g4pkdx3eu.js",
+      "AssetFile": "C:\\Users\\Johan\\source\\repos\\WriterApp\\obj\\Debug\\net9.0\\compressed\\e5wh4zdham-5g4pkdx3eu.gz",
       "Selectors": [
         {
           "Name": "Content-Encoding",
           "Value": "gzip",
-          "Quality": "0.001522070015"
+          "Quality": "0.000364963504"
         }
       ],
       "ResponseHeaders": [
@@ -3388,15 +3388,15 @@
         },
         {
           "Name": "Content-Length",
-          "Value": "656"
+          "Value": "2739"
         },
         {
           "Name": "ETag",
-          "Value": "\"2BOzUJAj1RN+Ew+D2RlxaCjRTd/m/5+Xsa0iZ+5FVBE=\""
+          "Value": "\"eXnH8i87LPz4EcC6ZrR8AeUsoq9xPRDDq2mr+U4Z0KU=\""
         },
         {
           "Name": "Last-Modified",
-          "Value": "Sun, 11 Jan 2026 14:20:43 GMT"
+          "Value": "Sun, 11 Jan 2026 15:14:47 GMT"
         },
         {
           "Name": "Cache-Control",
@@ -3416,13 +3416,13 @@
         },
         {
           "Name": "ETag",
-          "Value": "W/\"4y9quWEv3qYLTrMVblA6HotPgt8QX+2gOxvkPclNkXw=\""
+          "Value": "W/\"xZreXqlPHeh0rVGnjy1E/tSCTAaZ0x8500koVpEKXNc=\""
         }
       ],
       "EndpointProperties": [
         {
           "Name": "fingerprint",
-          "Value": "7bdy8sg3f0"
+          "Value": "5g4pkdx3eu"
         },
         {
           "Name": "label",
@@ -3430,12 +3430,12 @@
         },
         {
           "Name": "integrity",
-          "Value": "sha256-4y9quWEv3qYLTrMVblA6HotPgt8QX+2gOxvkPclNkXw="
+          "Value": "sha256-xZreXqlPHeh0rVGnjy1E/tSCTAaZ0x8500koVpEKXNc="
         }
       ]
     },
     {
-      "Route": "js/tiptap-editor.7bdy8sg3f0.js",
+      "Route": "js/tiptap-editor.5g4pkdx3eu.js",
       "AssetFile": "C:\\Users\\Johan\\source\\repos\\WriterApp\\wwwroot\\js\\tiptap-editor.js",
       "Selectors": [],
       "ResponseHeaders": [
@@ -3445,7 +3445,7 @@
         },
         {
           "Name": "Content-Length",
-          "Value": "2087"
+          "Value": "13117"
         },
         {
           "Name": "Content-Type",
@@ -3453,11 +3453,11 @@
         },
         {
           "Name": "ETag",
-          "Value": "\"4y9quWEv3qYLTrMVblA6HotPgt8QX+2gOxvkPclNkXw=\""
+          "Value": "\"xZreXqlPHeh0rVGnjy1E/tSCTAaZ0x8500koVpEKXNc=\""
         },
         {
           "Name": "Last-Modified",
-          "Value": "Sun, 11 Jan 2026 14:20:43 GMT"
+          "Value": "Sun, 11 Jan 2026 15:14:47 GMT"
         },
         {
           "Name": "Cache-Control",
@@ -3467,7 +3467,7 @@
       "EndpointProperties": [
         {
           "Name": "fingerprint",
-          "Value": "7bdy8sg3f0"
+          "Value": "5g4pkdx3eu"
         },
         {
           "Name": "label",
@@ -3475,13 +3475,13 @@
         },
         {
           "Name": "integrity",
-          "Value": "sha256-4y9quWEv3qYLTrMVblA6HotPgt8QX+2gOxvkPclNkXw="
+          "Value": "sha256-xZreXqlPHeh0rVGnjy1E/tSCTAaZ0x8500koVpEKXNc="
         }
       ]
     },
     {
-      "Route": "js/tiptap-editor.7bdy8sg3f0.js.gz",
-      "AssetFile": "C:\\Users\\Johan\\source\\repos\\WriterApp\\obj\\Debug\\net9.0\\compressed\\e5wh4zdham-7bdy8sg3f0.gz",
+      "Route": "js/tiptap-editor.5g4pkdx3eu.js.gz",
+      "AssetFile": "C:\\Users\\Johan\\source\\repos\\WriterApp\\obj\\Debug\\net9.0\\compressed\\e5wh4zdham-5g4pkdx3eu.gz",
       "Selectors": [],
       "ResponseHeaders": [
         {
@@ -3490,7 +3490,7 @@
         },
         {
           "Name": "Content-Length",
-          "Value": "656"
+          "Value": "2739"
         },
         {
           "Name": "Content-Type",
@@ -3498,11 +3498,11 @@
         },
         {
           "Name": "ETag",
-          "Value": "\"2BOzUJAj1RN+Ew+D2RlxaCjRTd/m/5+Xsa0iZ+5FVBE=\""
+          "Value": "\"eXnH8i87LPz4EcC6ZrR8AeUsoq9xPRDDq2mr+U4Z0KU=\""
         },
         {
           "Name": "Last-Modified",
-          "Value": "Sun, 11 Jan 2026 14:20:43 GMT"
+          "Value": "Sun, 11 Jan 2026 15:14:47 GMT"
         },
         {
           "Name": "Cache-Control",
@@ -3520,7 +3520,7 @@
       "EndpointProperties": [
         {
           "Name": "fingerprint",
-          "Value": "7bdy8sg3f0"
+          "Value": "5g4pkdx3eu"
         },
         {
           "Name": "label",
@@ -3528,18 +3528,18 @@
         },
         {
           "Name": "integrity",
-          "Value": "sha256-2BOzUJAj1RN+Ew+D2RlxaCjRTd/m/5+Xsa0iZ+5FVBE="
+          "Value": "sha256-eXnH8i87LPz4EcC6ZrR8AeUsoq9xPRDDq2mr+U4Z0KU="
         }
       ]
     },
     {
       "Route": "js/tiptap-editor.js",
-      "AssetFile": "C:\\Users\\Johan\\source\\repos\\WriterApp\\obj\\Debug\\net9.0\\compressed\\e5wh4zdham-7bdy8sg3f0.gz",
+      "AssetFile": "C:\\Users\\Johan\\source\\repos\\WriterApp\\obj\\Debug\\net9.0\\compressed\\e5wh4zdham-5g4pkdx3eu.gz",
       "Selectors": [
         {
           "Name": "Content-Encoding",
           "Value": "gzip",
-          "Quality": "0.001522070015"
+          "Quality": "0.000364963504"
         }
       ],
       "ResponseHeaders": [
@@ -3549,15 +3549,15 @@
         },
         {
           "Name": "Content-Length",
-          "Value": "656"
+          "Value": "2739"
         },
         {
           "Name": "ETag",
-          "Value": "\"2BOzUJAj1RN+Ew+D2RlxaCjRTd/m/5+Xsa0iZ+5FVBE=\""
+          "Value": "\"eXnH8i87LPz4EcC6ZrR8AeUsoq9xPRDDq2mr+U4Z0KU=\""
         },
         {
           "Name": "Last-Modified",
-          "Value": "Sun, 11 Jan 2026 14:20:43 GMT"
+          "Value": "Sun, 11 Jan 2026 15:14:47 GMT"
         },
         {
           "Name": "Cache-Control",
@@ -3577,13 +3577,13 @@
         },
         {
           "Name": "ETag",
-          "Value": "W/\"4y9quWEv3qYLTrMVblA6HotPgt8QX+2gOxvkPclNkXw=\""
+          "Value": "W/\"xZreXqlPHeh0rVGnjy1E/tSCTAaZ0x8500koVpEKXNc=\""
         }
       ],
       "EndpointProperties": [
         {
           "Name": "integrity",
-          "Value": "sha256-4y9quWEv3qYLTrMVblA6HotPgt8QX+2gOxvkPclNkXw="
+          "Value": "sha256-xZreXqlPHeh0rVGnjy1E/tSCTAaZ0x8500koVpEKXNc="
         }
       ]
     },
@@ -3598,7 +3598,7 @@
         },
         {
           "Name": "Content-Length",
-          "Value": "2087"
+          "Value": "13117"
         },
         {
           "Name": "Content-Type",
@@ -3606,11 +3606,11 @@
         },
         {
           "Name": "ETag",
-          "Value": "\"4y9quWEv3qYLTrMVblA6HotPgt8QX+2gOxvkPclNkXw=\""
+          "Value": "\"xZreXqlPHeh0rVGnjy1E/tSCTAaZ0x8500koVpEKXNc=\""
         },
         {
           "Name": "Last-Modified",
-          "Value": "Sun, 11 Jan 2026 14:20:43 GMT"
+          "Value": "Sun, 11 Jan 2026 15:14:47 GMT"
         },
         {
           "Name": "Cache-Control",
@@ -3620,13 +3620,13 @@
       "EndpointProperties": [
         {
           "Name": "integrity",
-          "Value": "sha256-4y9quWEv3qYLTrMVblA6HotPgt8QX+2gOxvkPclNkXw="
+          "Value": "sha256-xZreXqlPHeh0rVGnjy1E/tSCTAaZ0x8500koVpEKXNc="
         }
       ]
     },
     {
       "Route": "js/tiptap-editor.js.gz",
-      "AssetFile": "C:\\Users\\Johan\\source\\repos\\WriterApp\\obj\\Debug\\net9.0\\compressed\\e5wh4zdham-7bdy8sg3f0.gz",
+      "AssetFile": "C:\\Users\\Johan\\source\\repos\\WriterApp\\obj\\Debug\\net9.0\\compressed\\e5wh4zdham-5g4pkdx3eu.gz",
       "Selectors": [],
       "ResponseHeaders": [
         {
@@ -3635,7 +3635,7 @@
         },
         {
           "Name": "Content-Length",
-          "Value": "656"
+          "Value": "2739"
         },
         {
           "Name": "Content-Type",
@@ -3643,11 +3643,11 @@
         },
         {
           "Name": "ETag",
-          "Value": "\"2BOzUJAj1RN+Ew+D2RlxaCjRTd/m/5+Xsa0iZ+5FVBE=\""
+          "Value": "\"eXnH8i87LPz4EcC6ZrR8AeUsoq9xPRDDq2mr+U4Z0KU=\""
         },
         {
           "Name": "Last-Modified",
-          "Value": "Sun, 11 Jan 2026 14:20:43 GMT"
+          "Value": "Sun, 11 Jan 2026 15:14:47 GMT"
         },
         {
           "Name": "Cache-Control",
@@ -3665,7 +3665,7 @@
       "EndpointProperties": [
         {
           "Name": "integrity",
-          "Value": "sha256-2BOzUJAj1RN+Ew+D2RlxaCjRTd/m/5+Xsa0iZ+5FVBE="
+          "Value": "sha256-eXnH8i87LPz4EcC6ZrR8AeUsoq9xPRDDq2mr+U4Z0KU="
         }
       ]
     },
