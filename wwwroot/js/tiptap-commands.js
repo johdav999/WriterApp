@@ -111,3 +111,11 @@ export function clearFontFamily(editor) {
 
     editor.chain().focus().setMark("textStyle", { fontFamily: null }).run();
 }
+
+export function focusEditor(editor) {
+    if (!editor) {
+        return;
+    }
+
+    editor.commands.focus();
+}

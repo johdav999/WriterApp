@@ -2,6 +2,7 @@
 @rendermode Microsoft.AspNetCore.Components.Web.RenderMode.InteractiveServer
 @using System
 @using System.Collections.Generic
+@using System.Globalization
 @using BlazorApp.Components.Editor
 @using Microsoft.AspNetCore.Components
 @using Microsoft.JSInterop
@@ -20,29 +21,30 @@
             <h2>Section Editor</h2>
             <div class="editor-toolbar" role="toolbar" aria-label="Editor formatting">
                 <div class="editor-toolbar-group" aria-label="Text emphasis">
-                    <button type="button" @onclick="OnBoldRequested">Bold</button>
-                    <button type="button" @onclick="OnItalicRequested">Italic</button>
-                    <button type="button" @onclick="OnStrikeRequested">Strike</button>
-                    <button type="button" @onclick="OnCodeRequested">Code</button>
+                    <button type="button" class="@GetActiveClass(_formattingState.IsBold)" disabled="@(!_formattingState.CanBold)" @onclick="OnBoldRequested">Bold</button>
+                    <button type="button" class="@GetActiveClass(_formattingState.IsItalic)" disabled="@(!_formattingState.CanItalic)" @onclick="OnItalicRequested">Italic</button>
+                    <button type="button" class="@GetActiveClass(_formattingState.IsStrike)" disabled="@(!_formattingState.CanStrike)" @onclick="OnStrikeRequested">Strike</button>
+                    <button type="button" class="@GetActiveClass(_formattingState.IsCode)" disabled="@(!_formattingState.CanCode)" @onclick="OnCodeRequested">Code</button>
                 </div>
                 <div class="editor-toolbar-group" aria-label="Structure">
-                    <button type="button" @onclick="OnParagraphRequested">Paragraph</button>
-                    <button type="button" @onclick="() => OnHeadingRequested(1)">H1</button>
-                    <button type="button" @onclick="() => OnHeadingRequested(2)">H2</button>
-                    <button type="button" @onclick="() => OnHeadingRequested(3)">H3</button>
-                    <button type="button" @onclick="() => OnHeadingRequested(4)">H4</button>
-                    <button type="button" @onclick="() => OnHeadingRequested(5)">H5</button>
-                    <button type="button" @onclick="() => OnHeadingRequested(6)">H6</button>
-                    <button type="button" @onclick="OnBlockquoteRequested">Blockquote</button>
-                    <button type="button" @onclick="OnHorizontalRuleRequested">Horizontal rule</button>
+                    <button type="button" class="@GetActiveClass(_formattingState.BlockType == "paragraph")" disabled="@(!_formattingState.CanApplyHeading)" @onclick="OnParagraphRequested">Paragraph</button>
+                    <button type="button" class="@GetActiveClass(_formattingState.BlockType == "heading:1")" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnHeadingRequested(1)">H1</button>
+                    <button type="button" class="@GetActiveClass(_formattingState.BlockType == "heading:2")" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnHeadingRequested(2)">H2</button>
+                    <button type="button" class="@GetActiveClass(_formattingState.BlockType == "heading:3")" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnHeadingRequested(3)">H3</button>
+                    <button type="button" class="@GetActiveClass(_formattingState.BlockType == "heading:4")" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnHeadingRequested(4)">H4</button>
+                    <button type="button" class="@GetActiveClass(_formattingState.BlockType == "heading:5")" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnHeadingRequested(5)">H5</button>
+                    <button type="button" class="@GetActiveClass(_formattingState.BlockType == "heading:6")" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnHeadingRequested(6)">H6</button>
+                    <button type="button" disabled="@(!_formattingState.CanBlockquote)" @onclick="OnBlockquoteRequested">Blockquote</button>
+                    <button type="button" disabled="@(!_formattingState.CanHorizontalRule)" @onclick="OnHorizontalRuleRequested">Horizontal rule</button>
                 </div>
                 <div class="editor-toolbar-group" aria-label="Lists">
-                    <button type="button" @onclick="OnBulletListRequested">Bullet list</button>
-                    <button type="button" @onclick="OnOrderedListRequested">Ordered list</button>
+                    <button type="button" disabled="@(!_formattingState.CanToggleList)" @onclick="OnBulletListRequested">Bullet list</button>
+                    <button type="button" disabled="@(!_formattingState.CanToggleList)" @onclick="OnOrderedListRequested">Ordered list</button>
                 </div>
                 <div class="editor-toolbar-group" aria-label="Typography">
                     <label class="editor-toolbar-label" for="fontFamilySelect">Font</label>
                     <select id="fontFamilySelect" class="editor-toolbar-select" value="@_fontFamily" @onchange="OnFontFamilyChanged">
+                        <option value="mixed" disabled>Mixed</option>
                         <option value="">Default</option>
                         <option value="Georgia">Georgia</option>
                         <option value="Times New Roman">Times New Roman</option>
@@ -52,6 +54,7 @@
                     </select>
                     <label class="editor-toolbar-label" for="fontSizeSelect">Text size</label>
                     <select id="fontSizeSelect" class="editor-toolbar-select" value="@_fontSize" @onchange="OnFontSizeChanged">
+                        <option value="mixed" disabled>Mixed</option>
                         <option value="12">12px</option>
                         <option value="14">14px</option>
                         <option value="16">16px</option>
@@ -66,11 +69,12 @@
                 <button type="button" @onclick="OnRedo" disabled="@(!_commandProcessor.CanRedo)">Redo</button>
             </div>
         </div>
-        <div class="pane-body">
+        <div class="pane-body editor-scroll">
             <SectionEditor @ref="_editorRef"
                            Content="@_activeSectionContent"
                            ContentChanged="OnSectionContentChanged"
                            EditorReady="OnEditorReady"
+                           FormattingChanged="OnFormattingChanged"
                            UndoRequested="OnUndo"
                            RedoRequested="OnRedo" />
         </div>
@@ -79,7 +83,7 @@
         <div class="pane-header">
             <h2>Document Preview</h2>
         </div>
-        <div class="pane-body">
+        <div class="pane-body preview-scroll">
             <div class="document-preview">
                 @if (_previewSections is not null)
                 {
@@ -123,6 +127,10 @@
         gap: 12px;
         padding-bottom: 12px;
         border-bottom: 1px solid #ececec;
+        position: sticky;
+        top: 0;
+        background: #fff;
+        z-index: 2;
     }
 
     .pane-header h2 {
@@ -131,6 +139,8 @@
 
     .pane-body {
         padding-top: 12px;
+        max-height: 70vh;
+        overflow: auto;
     }
 
     .editor-toolbar {
@@ -185,6 +195,16 @@
         transform: translateY(1px);
     }
 
+    .editor-toolbar button.is-active {
+        background: #e6eefc;
+        border-color: #9bb6f0;
+    }
+
+    .editor-toolbar button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
     .editor-pane .ProseMirror {
         min-height: 320px;
         padding: 12px;
@@ -221,6 +241,10 @@
         .editor-preview-layout {
             flex-direction: column;
         }
+
+        .pane-body {
+            max-height: none;
+        }
     }
 </style>
 
@@ -236,8 +260,19 @@
     private bool _skipNextEditorSync;
     private IJSObjectReference? _editorInstance;
     private IJSObjectReference? _commandsModule;
-    private int _fontSize = 16;
+    private string _fontSize = "16";
     private string _fontFamily = string.Empty;
+    private EditorFormattingState _formattingState = new()
+    {
+        CanBold = true,
+        CanItalic = true,
+        CanStrike = true,
+        CanCode = true,
+        CanApplyHeading = true,
+        CanToggleList = true,
+        CanBlockquote = true,
+        CanHorizontalRule = true
+    };
 
     public Home()
     {
@@ -282,6 +317,7 @@
         if (_commandProcessor.CanUndo)
         {
             _commandProcessor.Undo();
+            return InvokeCommandAsync("focusEditor");
         }
 
         return Task.CompletedTask;
@@ -292,6 +328,7 @@
         if (_commandProcessor.CanRedo)
         {
             _commandProcessor.Redo();
+            return InvokeCommandAsync("focusEditor");
         }
 
         return Task.CompletedTask;
@@ -304,9 +341,15 @@
             return;
         }
 
-        if (int.TryParse(args.Value.ToString(), out int size))
+        string? value = args.Value.ToString();
+        if (string.Equals(value, "mixed", StringComparison.Ordinal))
         {
-            _fontSize = size;
+            return;
+        }
+
+        if (int.TryParse(value, out int size))
+        {
+            _fontSize = size.ToString(CultureInfo.InvariantCulture);
             await InvokeCommandAsync("setFontSize", size);
         }
     }
@@ -316,6 +359,11 @@
         string? family = args.Value?.ToString();
         _fontFamily = family ?? string.Empty;
 
+        if (string.Equals(_fontFamily, "mixed", StringComparison.Ordinal))
+        {
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(_fontFamily))
         {
             await InvokeCommandAsync("clearFontFamily");
@@ -324,6 +372,21 @@
 
         await InvokeCommandAsync("setFontFamily", _fontFamily);
     }
+
+    private Task OnFormattingChanged(EditorFormattingState state)
+    {
+        _formattingState = state ?? new EditorFormattingState();
+        _fontFamily = _formattingState.FontFamily is null
+            ? "mixed"
+            : string.IsNullOrWhiteSpace(_formattingState.FontFamily) ? string.Empty : _formattingState.FontFamily;
+        _fontSize = _formattingState.FontSize is null
+            ? "mixed"
+            : string.IsNullOrWhiteSpace(_formattingState.FontSize) ? "16" : _formattingState.FontSize;
+
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private static string GetActiveClass(bool isActive) => isActive ? "is-active" : string.Empty;
 
     private async Task HandleDocumentChangedAsync()
     {
@@ -521,6 +584,11 @@
         }
 
         await _commandsModule.InvokeVoidAsync(command, args);
+
+        if (!string.Equals(command, "focusEditor", StringComparison.Ordinal))
+        {
+            await _commandsModule.InvokeVoidAsync("focusEditor", _editorInstance);
+        }
     }
 
     public void Dispose()

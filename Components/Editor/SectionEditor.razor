@@ -24,6 +24,9 @@
     public EventCallback RedoRequested { get; set; }
 
     [Parameter]
+    public EventCallback<EditorFormattingState> FormattingChanged { get; set; }
+
+    [Parameter]
     public EventCallback<IJSObjectReference> EditorReady { get; set; }
 
     [Inject]
@@ -91,6 +94,15 @@
         if (RedoRequested.HasDelegate)
         {
             await RedoRequested.InvokeAsync();
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnEditorFormattingChanged(EditorFormattingState state)
+    {
+        if (FormattingChanged.HasDelegate)
+        {
+            await FormattingChanged.InvokeAsync(state);
         }
     }
 
