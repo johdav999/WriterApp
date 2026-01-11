@@ -71,6 +71,14 @@
                 <button type="button" @onclick="OnUndo" disabled="@(!_commandProcessor.CanUndo)">Undo</button>
                 <button type="button" @onclick="OnRedo" disabled="@(!_commandProcessor.CanRedo)">Redo</button>
                 <button type="button" @onclick="OnSave">Save</button>
+                <select class="editor-toolbar-select" value="@_selectedDocumentId" @onchange="OnSelectedDocumentChanged">
+                    <option value="">Load document...</option>
+                    @foreach (DocumentIndexEntry entry in _savedDocuments)
+                    {
+                        <option value="@entry.DocumentId.ToString()">@entry.Title</option>
+                    }
+                </select>
+                <button type="button" @onclick="OnLoadSelected" disabled="@string.IsNullOrWhiteSpace(_selectedDocumentId)">Load</button>
             </div>
             <div class="editor-status">
                 <span>@_wordCount words</span>
@@ -226,6 +234,13 @@
         cursor: pointer;
     }
 
+    .editor-actions select {
+        padding: 6px 8px;
+        border: 1px solid #d0d0d0;
+        border-radius: 4px;
+        background: #fff;
+    }
+
     .editor-actions button:active,
     .editor-toolbar button:active {
         transform: translateY(1px);
@@ -360,8 +375,12 @@
     private bool _loadedFromStorage;
     private int _wordCount;
     private string _readingTime = "0 min read";
+    private string _selectedDocumentId = string.Empty;
+    private readonly List<DocumentIndexEntry> _savedDocuments = new();
 
     private const string StorageKey = "writerapp.document";
+    private const string StorageIndexKey = "writerapp.document.index";
+    private const string StoragePrefix = "writerapp.document.";
 
     public Home()
     {
@@ -390,6 +409,7 @@
         }
 
         _loadedFromStorage = true;
+        await LoadDocumentIndexAsync();
         await LoadDocumentAsync();
     }
 
@@ -471,6 +491,21 @@
         }
 
         await InvokeCommandAsync("setFontFamily", _fontFamily);
+    }
+
+    private void OnSelectedDocumentChanged(ChangeEventArgs args)
+    {
+        _selectedDocumentId = args.Value?.ToString() ?? string.Empty;
+    }
+
+    private async Task OnLoadSelected()
+    {
+        if (string.IsNullOrWhiteSpace(_selectedDocumentId))
+        {
+            return;
+        }
+
+        await LoadDocumentByIdAsync(_selectedDocumentId);
     }
 
     private Task OnOutlineChanged(List<OutlineItem> outline)
@@ -559,10 +594,27 @@
             return 0;
         }
 
-        string noTags = Regex.Replace(html, "<[^>]+>", " ");
-        string decoded = WebUtility.HtmlDecode(noTags);
+        string decoded = ExtractPlainText(html);
         MatchCollection matches = Regex.Matches(decoded, @"\b[\p{L}\p{N}']+\b");
         return matches.Count;
+    }
+
+    private static int CountCharacters(string? html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+        {
+            return 0;
+        }
+
+        string decoded = ExtractPlainText(html);
+        return decoded.Length;
+    }
+
+    private static string ExtractPlainText(string html)
+    {
+        string noTags = Regex.Replace(html, "<[^>]+>", " ");
+        string decoded = WebUtility.HtmlDecode(noTags);
+        return decoded.Trim();
     }
 
     private void UpdateReadingMetrics(int wordCount)
@@ -745,9 +797,14 @@
     {
         try
         {
-            DocumentStorage payload = new(_state.Document, DateTime.UtcNow);
+            Document normalized = NormalizeDocumentForSave(_state.Document);
+            DocumentStorage payload = new(normalized);
             string json = JsonSerializer.Serialize(payload);
             await JSRuntime.InvokeVoidAsync("localStorage.setItem", StorageKey, json);
+
+            string documentKey = StoragePrefix + normalized.DocumentId;
+            await JSRuntime.InvokeVoidAsync("localStorage.setItem", documentKey, json);
+            await UpdateDocumentIndexAsync(normalized);
         }
         catch (JSException)
         {
@@ -768,6 +825,13 @@
 
         if (string.IsNullOrWhiteSpace(json))
         {
+            if (_savedDocuments.Count == 0)
+            {
+                return;
+            }
+
+            DocumentIndexEntry latest = _savedDocuments[0];
+            await LoadDocumentByIdAsync(latest.DocumentId.ToString());
             return;
         }
 
@@ -777,8 +841,177 @@
             return;
         }
 
-        InitializeState(payload.Document);
+        InitializeState(NormalizeDocumentForLoad(payload.Document));
         await SyncEditorAsync();
+    }
+
+    private async Task LoadDocumentByIdAsync(string documentId)
+    {
+        string key = StoragePrefix + documentId;
+        string? json = null;
+        try
+        {
+            json = await JSRuntime.InvokeAsync<string>("localStorage.getItem", key);
+        }
+        catch (JSException)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return;
+        }
+
+        DocumentStorage? payload = JsonSerializer.Deserialize<DocumentStorage>(json);
+        if (payload?.Document is null)
+        {
+            return;
+        }
+
+        InitializeState(NormalizeDocumentForLoad(payload.Document));
+        await SyncEditorAsync();
+    }
+
+    private async Task LoadDocumentIndexAsync()
+    {
+        _savedDocuments.Clear();
+
+        string? json = null;
+        try
+        {
+            json = await JSRuntime.InvokeAsync<string>("localStorage.getItem", StorageIndexKey);
+        }
+        catch (JSException)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return;
+        }
+
+        List<DocumentIndexEntry>? entries = JsonSerializer.Deserialize<List<DocumentIndexEntry>>(json);
+        if (entries is null)
+        {
+            return;
+        }
+
+        entries.Sort((a, b) => b.LastModifiedUtc.CompareTo(a.LastModifiedUtc));
+        _savedDocuments.AddRange(entries);
+    }
+
+    private async Task UpdateDocumentIndexAsync(Document document)
+    {
+        string title = string.IsNullOrWhiteSpace(document.Metadata.Title)
+            ? "Untitled"
+            : document.Metadata.Title;
+
+        DocumentIndexEntry entry = new(document.DocumentId, title, document.Metadata.ModifiedUtc);
+
+        int index = _savedDocuments.FindIndex(item => item.DocumentId == entry.DocumentId);
+        if (index >= 0)
+        {
+            _savedDocuments[index] = entry;
+        }
+        else
+        {
+            _savedDocuments.Add(entry);
+        }
+
+        _savedDocuments.Sort((a, b) => b.LastModifiedUtc.CompareTo(a.LastModifiedUtc));
+        string json = JsonSerializer.Serialize(_savedDocuments);
+
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("localStorage.setItem", StorageIndexKey, json);
+        }
+        catch (JSException)
+        {
+        }
+    }
+
+    private Document NormalizeDocumentForSave(Document document)
+    {
+        Document normalized = NormalizeDocumentForLoad(document);
+        DocumentMetadata updatedMetadata = normalized.Metadata with { ModifiedUtc = DateTime.UtcNow };
+        return normalized with { Metadata = updatedMetadata };
+    }
+
+    private Document NormalizeDocumentForLoad(Document document)
+    {
+        string? title = document.Metadata.Title;
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            title = DeriveTitleFromDocument(document);
+        }
+
+        DocumentMetadata updatedMetadata = document.Metadata with
+        {
+            Title = title ?? document.Metadata.Title
+        };
+
+        List<Chapter> chapters = new();
+        for (int chapterIndex = 0; chapterIndex < document.Chapters.Count; chapterIndex++)
+        {
+            Chapter chapter = document.Chapters[chapterIndex];
+            List<Section> sections = new();
+            for (int sectionIndex = 0; sectionIndex < chapter.Sections.Count; sectionIndex++)
+            {
+                Section section = chapter.Sections[sectionIndex];
+                SectionStats stats = new()
+                {
+                    WordCount = CountWords(section.Content.Value),
+                    CharacterCount = CountCharacters(section.Content.Value)
+                };
+
+                sections.Add(section with { Stats = stats });
+            }
+
+            chapters.Add(chapter with { Sections = sections });
+        }
+
+        return document with
+        {
+            Metadata = updatedMetadata,
+            Chapters = chapters
+        };
+    }
+
+    private static string? DeriveTitleFromDocument(Document document)
+    {
+        Regex headingRegex = new("<h[1-6][^>]*>(.*?)</h[1-6]>", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        for (int chapterIndex = 0; chapterIndex < document.Chapters.Count; chapterIndex++)
+        {
+            Chapter chapter = document.Chapters[chapterIndex];
+            for (int sectionIndex = 0; sectionIndex < chapter.Sections.Count; sectionIndex++)
+            {
+                Section section = chapter.Sections[sectionIndex];
+                string html = section.Content.Value ?? string.Empty;
+                Match match = headingRegex.Match(html);
+                if (!match.Success)
+                {
+                    continue;
+                }
+
+                string plain = ExtractPlainText(match.Groups[1].Value);
+                if (string.IsNullOrWhiteSpace(plain))
+                {
+                    continue;
+                }
+
+                plain = Regex.Replace(plain, @"\s+", " ").Trim();
+                if (plain.Length > 60)
+                {
+                    plain = plain.Substring(0, 60).Trim();
+                }
+
+                return plain;
+            }
+        }
+
+        return null;
     }
 
     private void InitializeState(Document document)
@@ -834,4 +1067,8 @@
             }
         }
     }
+
+    private sealed record DocumentStorage(Document Document);
+
+    private sealed record DocumentIndexEntry(Guid DocumentId, string Title, DateTime LastModifiedUtc);
 }
