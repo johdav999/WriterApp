@@ -27,6 +27,9 @@
     public EventCallback<EditorFormattingState> FormattingChanged { get; set; }
 
     [Parameter]
+    public EventCallback<List<OutlineItem>> OutlineChanged { get; set; }
+
+    [Parameter]
     public EventCallback<IJSObjectReference> EditorReady { get; set; }
 
     [Inject]
@@ -103,6 +106,15 @@
         if (FormattingChanged.HasDelegate)
         {
             await FormattingChanged.InvokeAsync(state);
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnEditorOutlineChanged(List<OutlineItem> outline)
+    {
+        if (OutlineChanged.HasDelegate)
+        {
+            await OutlineChanged.InvokeAsync(outline);
         }
     }
 
