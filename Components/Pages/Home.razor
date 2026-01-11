@@ -3,6 +3,7 @@
 @using System
 @using System.Collections.Generic
 @using System.Globalization
+@using System.Linq
 @using System.Net
 @using System.Text.Json
 @using System.Text.RegularExpressions
@@ -22,6 +23,30 @@
     <div class="editor-pane">
         <div class="pane-header">
             <h2>Section Editor</h2>
+            <div class="section-nav">
+                <div class="section-nav-header">
+                    <h3>Sections</h3>
+                    <button type="button" @onclick="OnCreateSection">Add section</button>
+                </div>
+                <ul class="section-nav-list">
+                    @foreach (Section section in _orderedSections)
+                    {
+                        <li class="section-nav-row">
+                            <button type="button"
+                                    class="section-nav-item @GetActiveSectionClass(section.SectionId)"
+                                    @onclick="() => OnSectionSelected(section.SectionId)">
+                                <span class="section-order">@GetSectionOrderLabel(section)</span>
+                                <span class="section-title">@GetSectionTitle(section)</span>
+                            </button>
+                            <div class="section-nav-actions">
+                                <button type="button" @onclick="() => OnMoveSectionUp(section.SectionId)" disabled="@IsFirstSection(section)">Up</button>
+                                <button type="button" @onclick="() => OnMoveSectionDown(section.SectionId)" disabled="@IsLastSection(section)">Down</button>
+                                <button type="button" @onclick="() => OnDeleteSection(section.SectionId)" disabled="@(_orderedSections.Count <= 1)">Delete</button>
+                            </div>
+                        </li>
+                    }
+                </ul>
+            </div>
             <div class="editor-toolbar" role="toolbar" aria-label="Editor formatting">
                 <div class="editor-toolbar-group" aria-label="Text emphasis">
                     <button type="button" class="@GetActiveClass(_formattingState.IsBold)" disabled="@(!_formattingState.CanBold)" @onclick="OnBoldRequested">Bold</button>
@@ -186,6 +211,72 @@
         gap: 8px;
     }
 
+    .section-nav {
+        border: 1px solid #ececec;
+        border-radius: 6px;
+        padding: 10px;
+        background: #fafafa;
+    }
+
+    .section-nav-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+    }
+
+    .section-nav-header h3 {
+        margin: 0;
+        font-size: 1rem;
+    }
+
+    .section-nav-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 6px;
+    }
+
+    .section-nav-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .section-nav-item {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        text-align: left;
+        padding: 6px 8px;
+        border: 1px solid transparent;
+        border-radius: 4px;
+        background: #fff;
+        cursor: pointer;
+    }
+
+    .section-nav-item.is-active {
+        border-color: #9bb6f0;
+        background: #e6eefc;
+    }
+
+    .section-order {
+        font-size: 0.85rem;
+        color: #6b6b6b;
+        min-width: 24px;
+    }
+
+    .section-title {
+        font-size: 0.95rem;
+    }
+
+    .section-nav-actions {
+        display: flex;
+        gap: 4px;
+    }
+
     .editor-toolbar-group {
         display: flex;
         flex-wrap: wrap;
@@ -232,6 +323,21 @@
         border-radius: 4px;
         background: #f8f8f8;
         cursor: pointer;
+    }
+
+    .section-nav-actions button,
+    .section-nav-header button {
+        padding: 4px 8px;
+        border: 1px solid #d0d0d0;
+        border-radius: 4px;
+        background: #f8f8f8;
+        cursor: pointer;
+    }
+
+    .section-nav-actions button:disabled,
+    .section-nav-header button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
     }
 
     .editor-actions select {
@@ -352,6 +458,7 @@
     private readonly Action _onChangedHandler;
     private readonly List<string> _previewSections = new();
     private readonly List<OutlineItem> _outlineItems = new();
+    private readonly List<Section> _orderedSections = new();
     private SectionEditor? _editorRef;
     private Guid _activeSectionId;
     private string _activeSectionContent = string.Empty;
@@ -509,6 +616,209 @@
         await LoadDocumentByIdAsync(_selectedDocumentId);
     }
 
+    private async Task OnSectionSelected(Guid sectionId)
+    {
+        if (sectionId == _activeSectionId)
+        {
+            return;
+        }
+
+        _commandProcessor.ClearHistory();
+        _activeSectionId = sectionId;
+        _skipNextEditorSync = false;
+        _state.NotifyChanged();
+        await InvokeCommandAsync("focusEditor");
+    }
+
+    private void OnMoveSectionUp(Guid sectionId)
+    {
+        MoveSection(sectionId, -1);
+    }
+
+    private void OnMoveSectionDown(Guid sectionId)
+    {
+        MoveSection(sectionId, 1);
+    }
+
+    private async Task OnCreateSection()
+    {
+        Chapter chapter = GetPrimaryChapter();
+        List<Section> ordered = _orderedSections.Count > 0
+            ? new List<Section>(_orderedSections)
+            : chapter.Sections.OrderBy(section => section.Order).ToList();
+
+        int insertIndex = ordered.FindIndex(section => section.SectionId == _activeSectionId);
+        if (insertIndex < 0)
+        {
+            insertIndex = ordered.Count - 1;
+        }
+
+        Section newSection = new()
+        {
+            SectionId = Guid.NewGuid(),
+            Order = insertIndex + 1,
+            Title = string.Empty,
+            Content = new SectionContent { Format = "html", Value = "<p></p>" },
+            Stats = new SectionStats(),
+            Flags = new SectionFlags(),
+            AI = new SectionAIInfo(),
+            CreatedUtc = DateTime.UtcNow,
+            ModifiedUtc = DateTime.UtcNow
+        };
+
+        ordered.Insert(insertIndex + 1, newSection);
+        chapter.Sections.Add(newSection);
+        ApplySectionOrdering(ordered, chapter);
+
+        _activeSectionId = newSection.SectionId;
+        _commandProcessor.ClearHistory();
+        _state.NotifyChanged();
+        await InvokeCommandAsync("focusEditor");
+    }
+
+    private async Task OnDeleteSection(Guid sectionId)
+    {
+        if (_orderedSections.Count <= 1)
+        {
+            return;
+        }
+
+        bool confirmed = await JSRuntime.InvokeAsync<bool>("confirm", "Delete this section?");
+        if (!confirmed)
+        {
+            return;
+        }
+
+        Chapter chapter = GetPrimaryChapter();
+        List<Section> ordered = _orderedSections.Count > 0
+            ? new List<Section>(_orderedSections)
+            : chapter.Sections.OrderBy(section => section.Order).ToList();
+
+        int removeIndex = ordered.FindIndex(section => section.SectionId == sectionId);
+        if (removeIndex < 0)
+        {
+            return;
+        }
+
+        ordered.RemoveAt(removeIndex);
+        chapter.Sections.RemoveAll(section => section.SectionId == sectionId);
+        ApplySectionOrdering(ordered, chapter);
+
+        if (sectionId == _activeSectionId)
+        {
+            int nextIndex = Math.Min(removeIndex, ordered.Count - 1);
+            _activeSectionId = ordered[nextIndex].SectionId;
+        }
+
+        _commandProcessor.ClearHistory();
+        _state.NotifyChanged();
+        await InvokeCommandAsync("focusEditor");
+    }
+
+    private void MoveSection(Guid sectionId, int direction)
+    {
+        if (_orderedSections.Count <= 1 || direction == 0)
+        {
+            return;
+        }
+
+        Chapter chapter = GetPrimaryChapter();
+        List<Section> ordered = _orderedSections.Count > 0
+            ? new List<Section>(_orderedSections)
+            : chapter.Sections.OrderBy(section => section.Order).ToList();
+
+        int index = ordered.FindIndex(section => section.SectionId == sectionId);
+        int targetIndex = index + direction;
+        if (index < 0 || targetIndex < 0 || targetIndex >= ordered.Count)
+        {
+            return;
+        }
+
+        Section section = ordered[index];
+        ordered.RemoveAt(index);
+        ordered.Insert(targetIndex, section);
+        ApplySectionOrdering(ordered, chapter);
+        _state.NotifyChanged();
+    }
+
+    private Chapter GetPrimaryChapter()
+    {
+        if (_state.Document.Chapters.Count == 0)
+        {
+            Chapter chapter = new() { Order = 0, Title = "Draft" };
+            _state.Document.Chapters.Add(chapter);
+            return chapter;
+        }
+
+        return _state.Document.Chapters[0];
+    }
+
+    private void ApplySectionOrdering(List<Section> ordered, Chapter chapter)
+    {
+        Dictionary<Guid, Section> updates = new();
+        for (int i = 0; i < ordered.Count; i++)
+        {
+            Section updated = ordered[i] with { Order = i };
+            updates[updated.SectionId] = updated;
+        }
+
+        for (int i = 0; i < chapter.Sections.Count; i++)
+        {
+            Section section = chapter.Sections[i];
+            if (updates.TryGetValue(section.SectionId, out Section updated))
+            {
+                chapter.Sections[i] = updated;
+            }
+        }
+    }
+
+    private bool IsFirstSection(Section section) => _orderedSections.Count == 0 || _orderedSections[0].SectionId == section.SectionId;
+
+    private bool IsLastSection(Section section) => _orderedSections.Count == 0 || _orderedSections[^1].SectionId == section.SectionId;
+
+    private string GetActiveSectionClass(Guid sectionId) => sectionId == _activeSectionId ? "is-active" : string.Empty;
+
+    private string GetSectionOrderLabel(Section section) => (section.Order + 1).ToString(CultureInfo.InvariantCulture);
+
+    private string GetSectionTitle(Section section)
+    {
+        if (!string.IsNullOrWhiteSpace(section.Title))
+        {
+            return section.Title;
+        }
+
+        string? derived = DeriveTitleFromSection(section.Content.Value);
+        return string.IsNullOrWhiteSpace(derived) ? "Untitled section" : derived;
+    }
+
+    private static string? DeriveTitleFromSection(string? html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+        {
+            return null;
+        }
+
+        Match match = Regex.Match(html, "<h[1-6][^>]*>(.*?)</h[1-6]>", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        if (!match.Success)
+        {
+            return null;
+        }
+
+        string plain = ExtractPlainText(match.Groups[1].Value);
+        if (string.IsNullOrWhiteSpace(plain))
+        {
+            return null;
+        }
+
+        plain = Regex.Replace(plain, @"\s+", " ").Trim();
+        if (plain.Length > 60)
+        {
+            plain = plain.Substring(0, 60).Trim();
+        }
+
+        return plain;
+    }
+
     private Task OnOutlineChanged(List<OutlineItem> outline)
     {
         _outlineItems.Clear();
@@ -571,6 +881,7 @@
     private void RefreshFromDocument(Document document)
     {
         _previewSections.Clear();
+        _orderedSections.Clear();
         int wordCount = 0;
         for (int chapterIndex = 0; chapterIndex < document.Chapters.Count; chapterIndex++)
         {
@@ -581,6 +892,12 @@
                 _previewSections.Add(section.Content.Value ?? string.Empty);
                 wordCount += CountWords(section.Content.Value);
             }
+        }
+
+        Chapter? primaryChapter = document.Chapters.Count > 0 ? document.Chapters[0] : null;
+        if (primaryChapter is not null)
+        {
+            _orderedSections.AddRange(primaryChapter.Sections.OrderBy(section => section.Order));
         }
 
         Section activeSection = FindSection(document, _activeSectionId);
