@@ -108,6 +108,8 @@
             <div class="editor-status">
                 <span>@_wordCount words</span>
                 <span>@_readingTime</span>
+                <span class="@GetDirtyClass()">@GetDirtyLabel()</span>
+                <span>@GetLastSavedLabel()</span>
             </div>
         </div>
         <div class="pane-body editor-scroll">
@@ -362,6 +364,15 @@
         cursor: not-allowed;
     }
 
+    .dirty-indicator {
+        font-weight: 600;
+        color: #b45309;
+    }
+
+    .clean-indicator {
+        color: #4b5563;
+    }
+
     .editor-pane .ProseMirror {
         min-height: 320px;
         padding: 12px;
@@ -485,6 +496,9 @@
     private string _readingTime = "0 min read";
     private string _selectedDocumentId = string.Empty;
     private readonly List<DocumentIndexEntry> _savedDocuments = new();
+    private bool _isDirty;
+    private DateTime _lastSavedUtc;
+    private bool _suppressDirtyUpdate;
 
     private const string StorageKey = "writerapp.document";
     private const string StorageIndexKey = "writerapp.document.index";
@@ -502,11 +516,15 @@
         {
             _activeSectionId = document.Chapters[0].Sections[0].SectionId;
         }
+
+        _lastSavedUtc = document.Metadata.ModifiedUtc;
     }
 
     protected override void OnInitialized()
     {
         RefreshFromDocument(_state.Document);
+        _lastSavedUtc = _state.Document.Metadata.ModifiedUtc;
+        _isDirty = false;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -626,6 +644,7 @@
         _commandProcessor.ClearHistory();
         _activeSectionId = sectionId;
         _skipNextEditorSync = false;
+        _suppressDirtyUpdate = true;
         _state.NotifyChanged();
         await InvokeCommandAsync("focusEditor");
     }
@@ -858,6 +877,15 @@
     private async Task HandleDocumentChangedAsync()
     {
         RefreshFromDocument(_state.Document);
+
+        if (_suppressDirtyUpdate)
+        {
+            _suppressDirtyUpdate = false;
+        }
+        else
+        {
+            _isDirty = true;
+        }
 
         bool shouldSyncEditor = !_skipNextEditorSync;
         _skipNextEditorSync = false;
@@ -1123,6 +1151,11 @@
             string documentKey = StoragePrefix + normalized.DocumentId;
             await JSRuntime.InvokeVoidAsync("localStorage.setItem", documentKey, json);
             await UpdateDocumentIndexAsync(normalized);
+            _state.ReplaceDocument(normalized, notify: false);
+            RefreshFromDocument(normalized);
+            _lastSavedUtc = normalized.Metadata.ModifiedUtc;
+            _isDirty = false;
+            await InvokeAsync(StateHasChanged);
         }
         catch (JSException)
         {
@@ -1345,6 +1378,8 @@
         }
 
         RefreshFromDocument(_state.Document);
+        _lastSavedUtc = _state.Document.Metadata.ModifiedUtc;
+        _isDirty = false;
     }
 
     private async Task SyncEditorAsync()
@@ -1363,6 +1398,39 @@
         {
             _suppressEditorEvent = false;
         }
+    }
+
+    private string GetDirtyLabel() => _isDirty ? "Unsaved changes" : "All changes saved";
+
+    private string GetDirtyClass() => _isDirty ? "dirty-indicator" : "clean-indicator";
+
+    private string GetLastSavedLabel()
+    {
+        if (_lastSavedUtc == default)
+        {
+            return "Not saved yet";
+        }
+
+        TimeSpan delta = DateTime.UtcNow - _lastSavedUtc;
+        if (delta < TimeSpan.FromMinutes(1))
+        {
+            return "Last saved just now";
+        }
+
+        if (delta < TimeSpan.FromHours(1))
+        {
+            int minutes = Math.Max(1, (int)Math.Round(delta.TotalMinutes));
+            return $"Last saved {minutes} min ago";
+        }
+
+        if (delta < TimeSpan.FromDays(1))
+        {
+            int hours = Math.Max(1, (int)Math.Round(delta.TotalHours));
+            return $"Last saved {hours} hr ago";
+        }
+
+        int days = Math.Max(1, (int)Math.Round(delta.TotalDays));
+        return $"Last saved {days} day{(days == 1 ? string.Empty : "s")} ago";
     }
 
     public void Dispose()

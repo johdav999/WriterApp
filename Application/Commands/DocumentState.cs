@@ -8,7 +8,7 @@ namespace WriterApp.Application.State
     /// </summary>
     public sealed class DocumentState
     {
-        public Document Document { get; }
+        public Document Document { get; private set; }
 
         public event Action? OnChanged;
 
@@ -20,6 +20,15 @@ namespace WriterApp.Application.State
         public void NotifyChanged()
         {
             OnChanged?.Invoke();
+        }
+
+        public void ReplaceDocument(Document document, bool notify = true)
+        {
+            Document = document ?? throw new ArgumentNullException(nameof(document));
+            if (notify)
+            {
+                OnChanged?.Invoke();
+            }
         }
     }
 }
