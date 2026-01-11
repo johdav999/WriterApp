@@ -19,6 +19,10 @@ namespace WriterApp.Application.Commands
             _state = state ?? throw new ArgumentNullException(nameof(state));
         }
 
+        public bool CanUndo => _undoStack.Count > 0;
+
+        public bool CanRedo => _redoStack.Count > 0;
+
         public void Execute(IDocumentCommand command)
         {
             if (command is null)
