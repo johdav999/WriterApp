@@ -1,0 +1,91 @@
+﻿@using Microsoft.JSInterop
+@implements IAsyncDisposable
+
+<div id="@_elementId" tabindex="0"></div>
+
+@code {
+    private readonly string _elementId = $"section-editor-{Guid.NewGuid():N}";
+    private IJSObjectReference? _editor;
+    private DotNetObjectReference<SectionEditor>? _dotNetRef;
+    private bool _initialized;
+    private bool _isEditing;
+
+    [Parameter]
+    [EditorRequired]
+    public string Content { get; set; } = string.Empty;
+
+    [Parameter]
+    public EventCallback<string> ContentChanged { get; set; }
+
+    [Inject]
+    private IJSRuntime JSRuntime { get; set; } = default!;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || _initialized)
+        {
+            return;
+        }
+
+        _dotNetRef = DotNetObjectReference.Create(this);
+        _editor = await JSRuntime.InvokeAsync<IJSObjectReference>(
+            "tiptapEditor.create",
+            _elementId,
+            Content,
+            _dotNetRef);
+
+        _initialized = true;
+    }
+
+    protected override bool ShouldRender()
+    {
+        return !_isEditing;
+    }
+
+    public async Task SetContentAsync(string html)
+    {
+        if (_editor is null)
+        {
+            return;
+        }
+
+        _isEditing = false;
+        string content = html ?? string.Empty;
+        await JSRuntime.InvokeVoidAsync("tiptapEditor.setContent", _editor, content);
+    }
+
+    [JSInvokable]
+    public async Task OnEditorContentChanged(string html)
+    {
+        _isEditing = true;
+        string content = html ?? string.Empty;
+        await ContentChanged.InvokeAsync(content);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_editor is not null)
+        {
+            try
+            {
+                await JSRuntime.InvokeVoidAsync("tiptapEditor.destroy", _editor);
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+
+            try
+            {
+                await _editor.DisposeAsync();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
+
+        _dotNetRef?.Dispose();
+    }
+}
