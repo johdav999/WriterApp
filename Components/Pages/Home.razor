@@ -1,0 +1,287 @@
+﻿@page "/"
+@rendermode Microsoft.AspNetCore.Components.Web.RenderMode.InteractiveServer
+@using System
+@using System.Collections.Generic
+@using BlazorApp.Components.Editor
+@using BlazorApp.Components.Preview
+@using WriterApp.Application.Commands
+@using WriterApp.Application.State
+@using WriterApp.Domain.Documents
+@implements IDisposable
+
+<PageTitle>Writer</PageTitle>
+
+<div class="editor-preview-layout">
+    <div class="editor-pane">
+        <h2>Section Editor</h2>
+        <div class="editor-actions">
+            <button type="button" @onclick="OnUndo">Undo</button>
+            <button type="button" @onclick="OnRedo">Redo</button>
+        </div>
+        <SectionEditor @ref="_editorRef" Content="@_activeSectionContent" ContentChanged="OnSectionContentChanged" />
+    </div>
+    <div class="preview-pane">
+        <h2>Document Preview</h2>
+        <DocumentPreview Sections="@_previewSections" />
+    </div>
+</div>
+
+<style>
+    .editor-preview-layout {
+        display: flex;
+        gap: 32px;
+        align-items: flex-start;
+        padding: 24px;
+    }
+
+    .editor-pane,
+    .preview-pane {
+        flex: 1 1 0;
+        min-width: 320px;
+    }
+
+    .editor-pane h2,
+    .preview-pane h2 {
+        margin-top: 0;
+        font-size: 1.1rem;
+        letter-spacing: 0.02em;
+    }
+
+    .editor-actions {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 12px;
+    }
+
+    .editor-actions button {
+        padding: 6px 12px;
+        border: 1px solid #d0d0d0;
+        border-radius: 4px;
+        background: #f8f8f8;
+        cursor: pointer;
+    }
+
+    .editor-actions button:active {
+        transform: translateY(1px);
+    }
+
+    .editor-pane .ProseMirror {
+        min-height: 320px;
+        padding: 12px;
+        border: 1px solid #d9d9d9;
+        border-radius: 6px;
+        background: #fff;
+    }
+
+    @@media (max-width: 900px) {
+        .editor-preview-layout {
+            flex-direction: column;
+        }
+    }
+</style>
+
+@code {
+    private readonly DocumentState _state;
+    private readonly CommandProcessor _commandProcessor;
+    private readonly Action _onChangedHandler;
+    private readonly List<string> _previewSections = new();
+    private SectionEditor? _editorRef;
+    private Guid _activeSectionId;
+    private string _activeSectionContent = string.Empty;
+    private bool _suppressEditorEvent;
+    private bool _skipNextEditorSync;
+
+    public Home()
+    {
+        Document document = CreateSampleDocument();
+        _state = new DocumentState(document);
+        _commandProcessor = new CommandProcessor(_state);
+        _onChangedHandler = () => _ = HandleDocumentChangedAsync();
+        _state.OnChanged += _onChangedHandler;
+
+        if (document.Chapters.Count > 0 && document.Chapters[0].Sections.Count > 0)
+        {
+            _activeSectionId = document.Chapters[0].Sections[0].SectionId;
+        }
+    }
+
+    protected override void OnInitialized()
+    {
+        RefreshFromDocument(_state.Document);
+    }
+
+    private Task OnSectionContentChanged(string html)
+    {
+        if (_suppressEditorEvent)
+        {
+            return Task.CompletedTask;
+        }
+
+        string content = html ?? string.Empty;
+        Section section = FindSection(_state.Document, _activeSectionId);
+        if (string.Equals(section.Content.Value, content, StringComparison.Ordinal))
+        {
+            return Task.CompletedTask;
+        }
+
+        _skipNextEditorSync = true;
+        _commandProcessor.Execute(new UpdateSectionContentCommand(_activeSectionId, content));
+        return Task.CompletedTask;
+    }
+
+    private Task OnUndo()
+    {
+        _commandProcessor.Undo();
+        return Task.CompletedTask;
+    }
+
+    private Task OnRedo()
+    {
+        _commandProcessor.Redo();
+        return Task.CompletedTask;
+    }
+
+    private async Task HandleDocumentChangedAsync()
+    {
+        RefreshFromDocument(_state.Document);
+
+        bool shouldSyncEditor = !_skipNextEditorSync;
+        _skipNextEditorSync = false;
+
+        if (_editorRef is not null && shouldSyncEditor)
+        {
+            _suppressEditorEvent = true;
+            try
+            {
+                await _editorRef.SetContentAsync(_activeSectionContent);
+            }
+            finally
+            {
+                _suppressEditorEvent = false;
+            }
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void RefreshFromDocument(Document document)
+    {
+        _previewSections.Clear();
+        for (int chapterIndex = 0; chapterIndex < document.Chapters.Count; chapterIndex++)
+        {
+            Chapter chapter = document.Chapters[chapterIndex];
+            for (int sectionIndex = 0; sectionIndex < chapter.Sections.Count; sectionIndex++)
+            {
+                Section section = chapter.Sections[sectionIndex];
+                _previewSections.Add(section.Content.Value ?? string.Empty);
+            }
+        }
+
+        Section activeSection = FindSection(document, _activeSectionId);
+        _activeSectionContent = activeSection.Content.Value ?? string.Empty;
+    }
+
+    private static Section FindSection(Document document, Guid sectionId)
+    {
+        for (int chapterIndex = 0; chapterIndex < document.Chapters.Count; chapterIndex++)
+        {
+            Chapter chapter = document.Chapters[chapterIndex];
+            for (int sectionIndex = 0; sectionIndex < chapter.Sections.Count; sectionIndex++)
+            {
+                Section section = chapter.Sections[sectionIndex];
+                if (section.SectionId == sectionId)
+                {
+                    return section;
+                }
+            }
+        }
+
+        throw new InvalidOperationException($"Section {sectionId} was not found.");
+    }
+
+    private static Document CreateSampleDocument()
+    {
+        DateTime now = DateTime.UtcNow;
+
+        return new Document
+        {
+            Metadata = new DocumentMetadata
+            {
+                Title = "Sample Draft",
+                Author = "Demo",
+                Language = "en",
+                Tags = new List<string> { "demo" },
+                CreatedUtc = now,
+                ModifiedUtc = now
+            },
+            Settings = new DocumentSettings
+            {
+                DefaultFont = "Georgia",
+                DefaultFontSize = 12,
+                PageSize = "Letter",
+                LineSpacing = 1.5
+            },
+            Chapters = new List<Chapter>
+            {
+                new Chapter
+                {
+                    Order = 0,
+                    Title = "Draft",
+                    Sections = new List<Section>
+                    {
+                        new Section
+                        {
+                            Order = 0,
+                            Title = "Opening Scene",
+                            Content = new SectionContent
+                            {
+                                Format = "html",
+                                Value = "<h1>Opening Scene</h1><p>The storm rolled in just after dusk, wrapping the town in a soft gray hush.</p>"
+                            },
+                            Stats = new SectionStats(),
+                            Flags = new SectionFlags(),
+                            AI = new SectionAIInfo(),
+                            CreatedUtc = now,
+                            ModifiedUtc = now
+                        },
+                        new Section
+                        {
+                            Order = 1,
+                            Title = "Chapter One",
+                            Content = new SectionContent
+                            {
+                                Format = "html",
+                                Value = "<h2>Chapter One</h2><p>Eva traced the map with her finger, pausing at the edge of the inked coastline.</p>"
+                            },
+                            Stats = new SectionStats(),
+                            Flags = new SectionFlags(),
+                            AI = new SectionAIInfo(),
+                            CreatedUtc = now,
+                            ModifiedUtc = now
+                        },
+                        new Section
+                        {
+                            Order = 2,
+                            Title = "Chapter Two",
+                            Content = new SectionContent
+                            {
+                                Format = "html",
+                                Value = "<h2>Chapter Two</h2><p>By morning, the docks were empty, save for a single lantern swaying against the tide.</p>"
+                            },
+                            Stats = new SectionStats(),
+                            Flags = new SectionFlags(),
+                            AI = new SectionAIInfo(),
+                            CreatedUtc = now,
+                            ModifiedUtc = now
+                        }
+                    }
+                }
+            }
+        };
+    }
+
+    public void Dispose()
+    {
+        _state.OnChanged -= _onChangedHandler;
+    }
+}

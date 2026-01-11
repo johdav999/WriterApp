@@ -1,0 +1,46 @@
+﻿@using System
+@using Microsoft.AspNetCore.Components
+
+<div class="document-preview">
+    @if (Sections is not null)
+    {
+        for (int i = 0; i < Sections.Count; i++)
+        {
+            string html = Sections[i] ?? string.Empty;
+            <section class="document-section">
+                @((MarkupString)html)
+            </section>
+        }
+    }
+</div>
+
+<style>
+    .document-preview {
+        max-width: 760px;
+        margin: 0 auto;
+        padding: 24px 28px;
+        line-height: 1.6;
+        font-family: "Georgia", "Times New Roman", serif;
+        background: #fff;
+        color: #1e1e1e;
+        border: 1px solid #e2e2e2;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+    }
+
+    .document-section {
+        margin-bottom: 28px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid #f0f0f0;
+    }
+
+    .document-section:last-child {
+        border-bottom: none;
+        margin-bottom: 0;
+        padding-bottom: 0;
+    }
+</style>
+
+@code {
+    [Parameter]
+    public IReadOnlyList<string> Sections { get; set; } = Array.Empty<string>();
+}
