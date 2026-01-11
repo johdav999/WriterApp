@@ -23,6 +23,12 @@ namespace WriterApp.Application.Commands
 
         public bool CanRedo => _redoStack.Count > 0;
 
+        public void ClearHistory()
+        {
+            _undoStack.Clear();
+            _redoStack.Clear();
+        }
+
         public void Execute(IDocumentCommand command)
         {
             if (command is null)
