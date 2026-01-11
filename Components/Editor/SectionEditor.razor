@@ -17,6 +17,15 @@
     [Parameter]
     public EventCallback<string> ContentChanged { get; set; }
 
+    [Parameter]
+    public EventCallback UndoRequested { get; set; }
+
+    [Parameter]
+    public EventCallback RedoRequested { get; set; }
+
+    [Parameter]
+    public EventCallback<IJSObjectReference> EditorReady { get; set; }
+
     [Inject]
     private IJSRuntime JSRuntime { get; set; } = default!;
 
@@ -35,6 +44,11 @@
             _dotNetRef);
 
         _initialized = true;
+
+        if (_editor is not null && EditorReady.HasDelegate)
+        {
+            await EditorReady.InvokeAsync(_editor);
+        }
     }
 
     protected override bool ShouldRender()
@@ -60,6 +74,24 @@
         _isEditing = true;
         string content = html ?? string.Empty;
         await ContentChanged.InvokeAsync(content);
+    }
+
+    [JSInvokable]
+    public async Task OnUndoShortcut()
+    {
+        if (UndoRequested.HasDelegate)
+        {
+            await UndoRequested.InvokeAsync();
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnRedoShortcut()
+    {
+        if (RedoRequested.HasDelegate)
+        {
+            await RedoRequested.InvokeAsync();
+        }
     }
 
     public async ValueTask DisposeAsync()

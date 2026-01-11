@@ -1,28 +1,98 @@
-﻿@page "/"
+@page "/"
 @rendermode Microsoft.AspNetCore.Components.Web.RenderMode.InteractiveServer
 @using System
 @using System.Collections.Generic
 @using BlazorApp.Components.Editor
-@using BlazorApp.Components.Preview
+@using Microsoft.AspNetCore.Components
+@using Microsoft.JSInterop
 @using WriterApp.Application.Commands
 @using WriterApp.Application.State
 @using WriterApp.Domain.Documents
 @implements IDisposable
+@implements IAsyncDisposable
+@inject IJSRuntime JSRuntime
 
 <PageTitle>Writer</PageTitle>
 
 <div class="editor-preview-layout">
     <div class="editor-pane">
-        <h2>Section Editor</h2>
-        <div class="editor-actions">
-            <button type="button" @onclick="OnUndo">Undo</button>
-            <button type="button" @onclick="OnRedo">Redo</button>
+        <div class="pane-header">
+            <h2>Section Editor</h2>
+            <div class="editor-toolbar" role="toolbar" aria-label="Editor formatting">
+                <div class="editor-toolbar-group" aria-label="Text emphasis">
+                    <button type="button" @onclick="OnBoldRequested">Bold</button>
+                    <button type="button" @onclick="OnItalicRequested">Italic</button>
+                    <button type="button" @onclick="OnStrikeRequested">Strike</button>
+                    <button type="button" @onclick="OnCodeRequested">Code</button>
+                </div>
+                <div class="editor-toolbar-group" aria-label="Structure">
+                    <button type="button" @onclick="OnParagraphRequested">Paragraph</button>
+                    <button type="button" @onclick="() => OnHeadingRequested(1)">H1</button>
+                    <button type="button" @onclick="() => OnHeadingRequested(2)">H2</button>
+                    <button type="button" @onclick="() => OnHeadingRequested(3)">H3</button>
+                    <button type="button" @onclick="() => OnHeadingRequested(4)">H4</button>
+                    <button type="button" @onclick="() => OnHeadingRequested(5)">H5</button>
+                    <button type="button" @onclick="() => OnHeadingRequested(6)">H6</button>
+                    <button type="button" @onclick="OnBlockquoteRequested">Blockquote</button>
+                    <button type="button" @onclick="OnHorizontalRuleRequested">Horizontal rule</button>
+                </div>
+                <div class="editor-toolbar-group" aria-label="Lists">
+                    <button type="button" @onclick="OnBulletListRequested">Bullet list</button>
+                    <button type="button" @onclick="OnOrderedListRequested">Ordered list</button>
+                </div>
+                <div class="editor-toolbar-group" aria-label="Typography">
+                    <label class="editor-toolbar-label" for="fontFamilySelect">Font</label>
+                    <select id="fontFamilySelect" class="editor-toolbar-select" value="@_fontFamily" @onchange="OnFontFamilyChanged">
+                        <option value="">Default</option>
+                        <option value="Georgia">Georgia</option>
+                        <option value="Times New Roman">Times New Roman</option>
+                        <option value="Arial">Arial</option>
+                        <option value="Helvetica">Helvetica</option>
+                        <option value="Courier New">Courier New</option>
+                    </select>
+                    <label class="editor-toolbar-label" for="fontSizeSelect">Text size</label>
+                    <select id="fontSizeSelect" class="editor-toolbar-select" value="@_fontSize" @onchange="OnFontSizeChanged">
+                        <option value="12">12px</option>
+                        <option value="14">14px</option>
+                        <option value="16">16px</option>
+                        <option value="18">18px</option>
+                        <option value="24">24px</option>
+                        <option value="32">32px</option>
+                    </select>
+                </div>
+            </div>
+            <div class="editor-actions">
+                <button type="button" @onclick="OnUndo" disabled="@(!_commandProcessor.CanUndo)">Undo</button>
+                <button type="button" @onclick="OnRedo" disabled="@(!_commandProcessor.CanRedo)">Redo</button>
+            </div>
         </div>
-        <SectionEditor @ref="_editorRef" Content="@_activeSectionContent" ContentChanged="OnSectionContentChanged" />
+        <div class="pane-body">
+            <SectionEditor @ref="_editorRef"
+                           Content="@_activeSectionContent"
+                           ContentChanged="OnSectionContentChanged"
+                           EditorReady="OnEditorReady"
+                           UndoRequested="OnUndo"
+                           RedoRequested="OnRedo" />
+        </div>
     </div>
     <div class="preview-pane">
-        <h2>Document Preview</h2>
-        <DocumentPreview Sections="@_previewSections" />
+        <div class="pane-header">
+            <h2>Document Preview</h2>
+        </div>
+        <div class="pane-body">
+            <div class="document-preview">
+                @if (_previewSections is not null)
+                {
+                    for (int i = 0; i < _previewSections.Count; i++)
+                    {
+                        string html = _previewSections[i] ?? string.Empty;
+                        <section class="document-section">
+                            @((MarkupString)html)
+                        </section>
+                    }
+                }
+            </div>
+        </div>
     </div>
 </div>
 
@@ -47,13 +117,62 @@
         letter-spacing: 0.02em;
     }
 
+    .pane-header {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid #ececec;
+    }
+
+    .pane-header h2 {
+        margin: 0;
+    }
+
+    .pane-body {
+        padding-top: 12px;
+    }
+
+    .editor-toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .editor-toolbar-group {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        padding-right: 10px;
+        border-right: 1px solid #e3e3e3;
+    }
+
+    .editor-toolbar-group:last-child {
+        padding-right: 0;
+        border-right: none;
+    }
+
+    .editor-toolbar-label {
+        align-self: center;
+        font-size: 0.9rem;
+    }
+
+    .editor-toolbar-select {
+        padding: 6px 8px;
+        border: 1px solid #d0d0d0;
+        border-radius: 4px;
+        background: #fff;
+        cursor: pointer;
+    }
+
     .editor-actions {
         display: flex;
         gap: 8px;
-        margin-bottom: 12px;
+        margin: 0;
     }
 
-    .editor-actions button {
+    .editor-actions button,
+    .editor-toolbar button {
         padding: 6px 12px;
         border: 1px solid #d0d0d0;
         border-radius: 4px;
@@ -61,7 +180,8 @@
         cursor: pointer;
     }
 
-    .editor-actions button:active {
+    .editor-actions button:active,
+    .editor-toolbar button:active {
         transform: translateY(1px);
     }
 
@@ -71,6 +191,30 @@
         border: 1px solid #d9d9d9;
         border-radius: 6px;
         background: #fff;
+    }
+
+    .document-preview {
+        max-width: 760px;
+        margin: 0 auto;
+        padding: 24px 28px;
+        line-height: 1.6;
+        font-family: "Georgia", "Times New Roman", serif;
+        background: #fff;
+        color: #1e1e1e;
+        border: 1px solid #e2e2e2;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+    }
+
+    .document-section {
+        margin-bottom: 28px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid #f0f0f0;
+    }
+
+    .document-section:last-child {
+        border-bottom: none;
+        margin-bottom: 0;
+        padding-bottom: 0;
     }
 
     @@media (max-width: 900px) {
@@ -90,6 +234,10 @@
     private string _activeSectionContent = string.Empty;
     private bool _suppressEditorEvent;
     private bool _skipNextEditorSync;
+    private IJSObjectReference? _editorInstance;
+    private IJSObjectReference? _commandsModule;
+    private int _fontSize = 16;
+    private string _fontFamily = string.Empty;
 
     public Home()
     {
@@ -131,14 +279,50 @@
 
     private Task OnUndo()
     {
-        _commandProcessor.Undo();
+        if (_commandProcessor.CanUndo)
+        {
+            _commandProcessor.Undo();
+        }
+
         return Task.CompletedTask;
     }
 
     private Task OnRedo()
     {
-        _commandProcessor.Redo();
+        if (_commandProcessor.CanRedo)
+        {
+            _commandProcessor.Redo();
+        }
+
         return Task.CompletedTask;
+    }
+
+    private async Task OnFontSizeChanged(ChangeEventArgs args)
+    {
+        if (args.Value is null)
+        {
+            return;
+        }
+
+        if (int.TryParse(args.Value.ToString(), out int size))
+        {
+            _fontSize = size;
+            await InvokeCommandAsync("setFontSize", size);
+        }
+    }
+
+    private async Task OnFontFamilyChanged(ChangeEventArgs args)
+    {
+        string? family = args.Value?.ToString();
+        _fontFamily = family ?? string.Empty;
+
+        if (string.IsNullOrWhiteSpace(_fontFamily))
+        {
+            await InvokeCommandAsync("clearFontFamily");
+            return;
+        }
+
+        await InvokeCommandAsync("setFontFamily", _fontFamily);
     }
 
     private async Task HandleDocumentChangedAsync()
@@ -280,8 +464,81 @@
         };
     }
 
+    private async Task OnEditorReady(IJSObjectReference editor)
+    {
+        _editorInstance = editor;
+        await EnsureCommandsModuleAsync();
+    }
+
+    private Task OnBoldRequested() => InvokeCommandAsync("toggleBold");
+
+    private Task OnItalicRequested() => InvokeCommandAsync("toggleItalic");
+
+    private Task OnStrikeRequested() => InvokeCommandAsync("toggleStrike");
+
+    private Task OnCodeRequested() => InvokeCommandAsync("toggleCode");
+
+    private Task OnParagraphRequested() => InvokeCommandAsync("setParagraph");
+
+    private Task OnHeadingRequested(int level) => InvokeCommandAsync("toggleHeading", level);
+
+    private Task OnBlockquoteRequested() => InvokeCommandAsync("toggleBlockquote");
+
+    private Task OnHorizontalRuleRequested() => InvokeCommandAsync("insertHorizontalRule");
+
+    private Task OnBulletListRequested() => InvokeCommandAsync("toggleBulletList");
+
+    private Task OnOrderedListRequested() => InvokeCommandAsync("toggleOrderedList");
+
+    private async Task EnsureCommandsModuleAsync()
+    {
+        if (_commandsModule is null)
+        {
+            _commandsModule = await JSRuntime.InvokeAsync<IJSObjectReference>(
+                "import",
+                "/js/tiptap-commands.js");
+        }
+    }
+
+    private async Task InvokeCommandAsync(string command, params object?[] extraArgs)
+    {
+        if (_editorInstance is null)
+        {
+            return;
+        }
+
+        await EnsureCommandsModuleAsync();
+        if (_commandsModule is null)
+        {
+            return;
+        }
+
+        object?[] args = new object?[1 + extraArgs.Length];
+        args[0] = _editorInstance;
+        for (int i = 0; i < extraArgs.Length; i++)
+        {
+            args[i + 1] = extraArgs[i];
+        }
+
+        await _commandsModule.InvokeVoidAsync(command, args);
+    }
+
     public void Dispose()
     {
         _state.OnChanged -= _onChangedHandler;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_commandsModule is not null)
+        {
+            try
+            {
+                await _commandsModule.DisposeAsync();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
     }
 }
