@@ -9,6 +9,7 @@
     private DotNetObjectReference<SectionEditor>? _dotNetRef;
     private bool _initialized;
     private bool _isEditing;
+    private bool _disposed;
 
     [Parameter]
     [EditorRequired]
@@ -120,6 +121,13 @@
 
     public async ValueTask DisposeAsync()
     {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+
         if (_editor is not null)
         {
             try
@@ -140,8 +148,16 @@
             catch (ObjectDisposedException)
             {
             }
+            catch (JSDisconnectedException)
+            {
+            }
+            finally
+            {
+                _editor = null;
+            }
         }
 
         _dotNetRef?.Dispose();
+        _dotNetRef = null;
     }
 }
