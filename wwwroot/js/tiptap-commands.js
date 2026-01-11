@@ -119,3 +119,19 @@ export function focusEditor(editor) {
 
     editor.commands.focus();
 }
+
+export function scrollToPosition(editor, position) {
+    if (!editor) {
+        return;
+    }
+
+    const pos = Number(position);
+    if (!Number.isFinite(pos)) {
+        return;
+    }
+
+    editor.chain().focus().setTextSelection(pos).run();
+    if (editor.view) {
+        editor.view.scrollIntoView();
+    }
+}

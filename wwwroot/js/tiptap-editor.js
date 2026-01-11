@@ -164,6 +164,23 @@ function normalizeFontSize(value) {
     return Number.isFinite(parsed) ? String(parsed) : "";
 }
 
+function buildOutline(editor) {
+    const outline = [];
+    editor.state.doc.descendants((node, pos) => {
+        if (node.type?.name !== "heading") {
+            return;
+        }
+
+        outline.push({
+            text: node.textContent || "",
+            level: node.attrs?.level ?? 1,
+            position: pos + 1
+        });
+    });
+
+    return outline;
+}
+
 function getBlockType(editor) {
     const { from, to, empty } = editor.state.selection;
     if (empty) {
@@ -384,6 +401,25 @@ window.tiptapEditor = {
         editor.on("selectionUpdate", pushFormattingState);
         editor.on("update", pushFormattingState);
         pushFormattingState();
+
+        let lastOutlineState = "";
+        const pushOutlineState = () => {
+            if (!dotNetRef) {
+                return;
+            }
+
+            const outline = buildOutline(editor);
+            const serialized = JSON.stringify(outline);
+            if (serialized === lastOutlineState) {
+                return;
+            }
+
+            lastOutlineState = serialized;
+            dotNetRef.invokeMethodAsync("OnEditorOutlineChanged", outline);
+        };
+
+        editor.on("update", pushOutlineState);
+        pushOutlineState();
 
         const setupScrollSync = () => {
             const editorScroll = editor.view?.dom?.closest(".editor-pane")?.querySelector(".pane-body");

@@ -3,6 +3,9 @@
 @using System
 @using System.Collections.Generic
 @using System.Globalization
+@using System.Net
+@using System.Text.Json
+@using System.Text.RegularExpressions
 @using BlazorApp.Components.Editor
 @using Microsoft.AspNetCore.Components
 @using Microsoft.JSInterop
@@ -67,6 +70,11 @@
             <div class="editor-actions">
                 <button type="button" @onclick="OnUndo" disabled="@(!_commandProcessor.CanUndo)">Undo</button>
                 <button type="button" @onclick="OnRedo" disabled="@(!_commandProcessor.CanRedo)">Redo</button>
+                <button type="button" @onclick="OnSave">Save</button>
+            </div>
+            <div class="editor-status">
+                <span>@_wordCount words</span>
+                <span>@_readingTime</span>
             </div>
         </div>
         <div class="pane-body editor-scroll">
@@ -75,6 +83,7 @@
                            ContentChanged="OnSectionContentChanged"
                            EditorReady="OnEditorReady"
                            FormattingChanged="OnFormattingChanged"
+                           OutlineChanged="OnOutlineChanged"
                            UndoRequested="OnUndo"
                            RedoRequested="OnRedo" />
         </div>
@@ -84,6 +93,26 @@
             <h2>Document Preview</h2>
         </div>
         <div class="pane-body preview-scroll">
+            <div class="outline-panel">
+                <h3>Outline</h3>
+                @if (_outlineItems.Count == 0)
+                {
+                    <div class="outline-empty">No headings</div>
+                }
+                else
+                {
+                    <ul class="outline-list">
+                        @foreach (OutlineItem item in _outlineItems)
+                        {
+                            <li>
+                                <button type="button" class="outline-item level-@item.Level" @onclick="() => OnOutlineSelected(item)">
+                                    @item.Text
+                                </button>
+                            </li>
+                        }
+                    </ul>
+                }
+            </div>
             <div class="document-preview">
                 @if (_previewSections is not null)
                 {
@@ -181,6 +210,13 @@
         margin: 0;
     }
 
+    .editor-status {
+        display: flex;
+        gap: 12px;
+        font-size: 0.9rem;
+        color: #5b5b5b;
+    }
+
     .editor-actions button,
     .editor-toolbar button {
         padding: 6px 12px;
@@ -237,6 +273,53 @@
         padding-bottom: 0;
     }
 
+    .outline-panel {
+        margin-bottom: 16px;
+        padding: 12px;
+        border: 1px solid #ececec;
+        border-radius: 6px;
+        background: #fafafa;
+    }
+
+    .outline-panel h3 {
+        margin: 0 0 8px 0;
+        font-size: 1rem;
+    }
+
+    .outline-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+    }
+
+    .outline-item {
+        display: block;
+        width: 100%;
+        text-align: left;
+        padding: 4px 6px;
+        border: 1px solid transparent;
+        border-radius: 4px;
+        background: transparent;
+        cursor: pointer;
+    }
+
+    .outline-item:hover {
+        background: #f0f3f8;
+        border-color: #d7dbe2;
+    }
+
+    .outline-item.level-1 { padding-left: 4px; }
+    .outline-item.level-2 { padding-left: 16px; }
+    .outline-item.level-3 { padding-left: 28px; }
+    .outline-item.level-4 { padding-left: 40px; }
+    .outline-item.level-5 { padding-left: 52px; }
+    .outline-item.level-6 { padding-left: 64px; }
+
+    .outline-empty {
+        font-size: 0.9rem;
+        color: #7a7a7a;
+    }
+
     @@media (max-width: 900px) {
         .editor-preview-layout {
             flex-direction: column;
@@ -249,10 +332,11 @@
 </style>
 
 @code {
-    private readonly DocumentState _state;
-    private readonly CommandProcessor _commandProcessor;
+    private DocumentState _state;
+    private CommandProcessor _commandProcessor;
     private readonly Action _onChangedHandler;
     private readonly List<string> _previewSections = new();
+    private readonly List<OutlineItem> _outlineItems = new();
     private SectionEditor? _editorRef;
     private Guid _activeSectionId;
     private string _activeSectionContent = string.Empty;
@@ -273,6 +357,11 @@
         CanBlockquote = true,
         CanHorizontalRule = true
     };
+    private bool _loadedFromStorage;
+    private int _wordCount;
+    private string _readingTime = "0 min read";
+
+    private const string StorageKey = "writerapp.document";
 
     public Home()
     {
@@ -291,6 +380,17 @@
     protected override void OnInitialized()
     {
         RefreshFromDocument(_state.Document);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || _loadedFromStorage)
+        {
+            return;
+        }
+
+        _loadedFromStorage = true;
+        await LoadDocumentAsync();
     }
 
     private Task OnSectionContentChanged(string html)
@@ -373,6 +473,27 @@
         await InvokeCommandAsync("setFontFamily", _fontFamily);
     }
 
+    private Task OnOutlineChanged(List<OutlineItem> outline)
+    {
+        _outlineItems.Clear();
+        if (outline is not null)
+        {
+            _outlineItems.AddRange(outline);
+        }
+
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private Task OnOutlineSelected(OutlineItem item)
+    {
+        if (item is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        return InvokeCommandAsync("scrollToPosition", item.Position);
+    }
+
     private Task OnFormattingChanged(EditorFormattingState state)
     {
         _formattingState = state ?? new EditorFormattingState();
@@ -414,6 +535,7 @@
     private void RefreshFromDocument(Document document)
     {
         _previewSections.Clear();
+        int wordCount = 0;
         for (int chapterIndex = 0; chapterIndex < document.Chapters.Count; chapterIndex++)
         {
             Chapter chapter = document.Chapters[chapterIndex];
@@ -421,11 +543,39 @@
             {
                 Section section = chapter.Sections[sectionIndex];
                 _previewSections.Add(section.Content.Value ?? string.Empty);
+                wordCount += CountWords(section.Content.Value);
             }
         }
 
         Section activeSection = FindSection(document, _activeSectionId);
         _activeSectionContent = activeSection.Content.Value ?? string.Empty;
+        UpdateReadingMetrics(wordCount);
+    }
+
+    private static int CountWords(string? html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+        {
+            return 0;
+        }
+
+        string noTags = Regex.Replace(html, "<[^>]+>", " ");
+        string decoded = WebUtility.HtmlDecode(noTags);
+        MatchCollection matches = Regex.Matches(decoded, @"\b[\p{L}\p{N}']+\b");
+        return matches.Count;
+    }
+
+    private void UpdateReadingMetrics(int wordCount)
+    {
+        _wordCount = wordCount;
+        if (wordCount == 0)
+        {
+            _readingTime = "0 min read";
+            return;
+        }
+
+        int minutes = Math.Max(1, (int)Math.Ceiling(wordCount / 220.0));
+        _readingTime = $"{minutes} min read";
     }
 
     private static Section FindSection(Document document, Guid sectionId)
@@ -591,10 +741,85 @@
         }
     }
 
+    private async Task OnSave()
+    {
+        try
+        {
+            DocumentStorage payload = new(_state.Document, DateTime.UtcNow);
+            string json = JsonSerializer.Serialize(payload);
+            await JSRuntime.InvokeVoidAsync("localStorage.setItem", StorageKey, json);
+        }
+        catch (JSException)
+        {
+        }
+    }
+
+    private async Task LoadDocumentAsync()
+    {
+        string? json = null;
+        try
+        {
+            json = await JSRuntime.InvokeAsync<string>("localStorage.getItem", StorageKey);
+        }
+        catch (JSException)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return;
+        }
+
+        DocumentStorage? payload = JsonSerializer.Deserialize<DocumentStorage>(json);
+        if (payload?.Document is null)
+        {
+            return;
+        }
+
+        InitializeState(payload.Document);
+        await SyncEditorAsync();
+    }
+
+    private void InitializeState(Document document)
+    {
+        _state.OnChanged -= _onChangedHandler;
+        _state = new DocumentState(document);
+        _commandProcessor = new CommandProcessor(_state);
+        _state.OnChanged += _onChangedHandler;
+
+        if (document.Chapters.Count > 0 && document.Chapters[0].Sections.Count > 0)
+        {
+            _activeSectionId = document.Chapters[0].Sections[0].SectionId;
+        }
+
+        RefreshFromDocument(_state.Document);
+    }
+
+    private async Task SyncEditorAsync()
+    {
+        if (_editorRef is null)
+        {
+            return;
+        }
+
+        _suppressEditorEvent = true;
+        try
+        {
+            await _editorRef.SetContentAsync(_activeSectionContent);
+        }
+        finally
+        {
+            _suppressEditorEvent = false;
+        }
+    }
+
     public void Dispose()
     {
         _state.OnChanged -= _onChangedHandler;
     }
+
+    private sealed record DocumentStorage(Document Document, DateTime SavedUtc);
 
     public async ValueTask DisposeAsync()
     {

@@ -66,8 +66,8 @@
       <RelatedAsset></RelatedAsset>
       <AssetTraitName></AssetTraitName>
       <AssetTraitValue></AssetTraitValue>
-      <Fingerprint>vdqzju9lz6</Fingerprint>
-      <Integrity>rZRCMRioyKG+gEMZ4TLbsCENMdrZCoIvu0mA3zqnnuo=</Integrity>
+      <Fingerprint>kpye8zw1az</Fingerprint>
+      <Integrity>OFsyj5lwKqs/beMpZ2IAsUVFdp2F2cL6OIbH04P+01Y=</Integrity>
       <CopyToOutputDirectory>Never</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
       <OriginalItemSpec>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\staticwebassets\js\tiptap-commands.js'))</OriginalItemSpec>
@@ -84,8 +84,8 @@
       <RelatedAsset></RelatedAsset>
       <AssetTraitName></AssetTraitName>
       <AssetTraitValue></AssetTraitValue>
-      <Fingerprint>5g4pkdx3eu</Fingerprint>
-      <Integrity>xZreXqlPHeh0rVGnjy1E/tSCTAaZ0x8500koVpEKXNc=</Integrity>
+      <Fingerprint>t6cuoewwfq</Fingerprint>
+      <Integrity>NakSvbVn0+xdmBqc1w1ayqytsp/rLBdqN0sqrmua6Mw=</Integrity>
       <CopyToOutputDirectory>Never</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
       <OriginalItemSpec>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\staticwebassets\js\tiptap-editor.js'))</OriginalItemSpec>
