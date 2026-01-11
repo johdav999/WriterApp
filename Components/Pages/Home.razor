@@ -359,6 +359,7 @@
     private bool _skipNextEditorSync;
     private IJSObjectReference? _editorInstance;
     private IJSObjectReference? _commandsModule;
+    private bool _disposed;
     private string _fontSize = "16";
     private string _fontFamily = string.Empty;
     private EditorFormattingState _formattingState = new()
@@ -1052,10 +1053,15 @@
         _state.OnChanged -= _onChangedHandler;
     }
 
-    private sealed record DocumentStorage(Document Document, DateTime SavedUtc);
-
     public async ValueTask DisposeAsync()
     {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+
         if (_commandsModule is not null)
         {
             try
@@ -1064,6 +1070,13 @@
             }
             catch (ObjectDisposedException)
             {
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+            finally
+            {
+                _commandsModule = null;
             }
         }
     }
