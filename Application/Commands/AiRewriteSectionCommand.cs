@@ -6,9 +6,8 @@ namespace WriterApp.Application.Commands
     /// <summary>
     /// Applies an AI rewrite result to a section with undoable audit metadata.
     /// </summary>
-    public sealed class AiRewriteSectionCommand : IDocumentCommand
+    public sealed class AiRewriteSectionCommand : DocumentEditCommand
     {
-        private readonly Guid _sectionId;
         private readonly string _aiResult;
         private SectionContent? _previousContent;
         private DateTime _previousModifiedUtc;
@@ -16,14 +15,12 @@ namespace WriterApp.Application.Commands
         private bool _hasExecuted;
 
         public AiRewriteSectionCommand(Guid sectionId, string aiResult)
+            : base(sectionId, EditOrigin.AI)
         {
-            _sectionId = sectionId;
             _aiResult = aiResult ?? string.Empty;
         }
 
         public string Name => "AiRewriteSection";
-
-        public DateTime ExecutedUtc { get; private set; }
 
         public void Execute(Document document)
         {
@@ -32,7 +29,7 @@ namespace WriterApp.Application.Commands
                 throw new ArgumentNullException(nameof(document));
             }
 
-            (Chapter chapter, int sectionIndex, Section section) = FindSection(document, _sectionId);
+            (Chapter chapter, int sectionIndex, Section section) = FindSection(document, SectionId);
             _previousContent = section.Content;
             _previousModifiedUtc = section.ModifiedUtc;
             _previousAi = section.AI;
@@ -45,10 +42,7 @@ namespace WriterApp.Application.Commands
             };
             chapter.Sections[sectionIndex] = updatedSection;
 
-            if (ExecutedUtc == default)
-            {
-                ExecutedUtc = DateTime.UtcNow;
-            }
+            MarkAppliedUtc();
 
             _hasExecuted = true;
         }
@@ -65,7 +59,7 @@ namespace WriterApp.Application.Commands
                 throw new InvalidOperationException("Command has not been executed.");
             }
 
-            (Chapter chapter, int sectionIndex, Section section) = FindSection(document, _sectionId);
+            (Chapter chapter, int sectionIndex, Section section) = FindSection(document, SectionId);
             Section updatedSection = section with
             {
                 Content = _previousContent ?? new SectionContent(),
@@ -73,24 +67,6 @@ namespace WriterApp.Application.Commands
                 AI = _previousAi ?? new SectionAIInfo()
             };
             chapter.Sections[sectionIndex] = updatedSection;
-        }
-
-        private static (Chapter Chapter, int SectionIndex, Section Section) FindSection(Document document, Guid sectionId)
-        {
-            for (int chapterIndex = 0; chapterIndex < document.Chapters.Count; chapterIndex++)
-            {
-                Chapter chapter = document.Chapters[chapterIndex];
-                for (int sectionIndex = 0; sectionIndex < chapter.Sections.Count; sectionIndex++)
-                {
-                    Section section = chapter.Sections[sectionIndex];
-                    if (section.SectionId == sectionId)
-                    {
-                        return (chapter, sectionIndex, section);
-                    }
-                }
-            }
-
-            throw new InvalidOperationException($"Section {sectionId} was not found.");
         }
     }
 }
