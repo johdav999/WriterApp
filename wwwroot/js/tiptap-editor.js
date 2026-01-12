@@ -471,6 +471,45 @@ window.tiptapEditor = {
         return editor;
     },
 
+    attachContextMenu: function (elementId, dotNetRef) {
+        const element = document.getElementById(elementId);
+        if (!element) {
+            return;
+        }
+
+        if (element.__contextMenuHandler) {
+            element.removeEventListener("contextmenu", element.__contextMenuHandler);
+        }
+
+        const interopState = createInteropState(dotNetRef);
+        const handler = event => {
+            event.preventDefault();
+            safeInvoke(dotNetRef, interopState, "OnEditorContextMenu", event.clientX, event.clientY);
+        };
+
+        element.addEventListener("contextmenu", handler);
+        element.__contextMenuHandler = handler;
+        element.__contextMenuInteropState = interopState;
+    },
+
+    detachContextMenu: function (elementId) {
+        const element = document.getElementById(elementId);
+        if (!element) {
+            return;
+        }
+
+        if (element.__contextMenuHandler) {
+            element.removeEventListener("contextmenu", element.__contextMenuHandler);
+        }
+
+        if (element.__contextMenuInteropState) {
+            element.__contextMenuInteropState.enabled = false;
+        }
+
+        element.__contextMenuHandler = null;
+        element.__contextMenuInteropState = null;
+    },
+
     prepareSectionDrag: function (event) {
         if (!event || !event.dataTransfer) {
             return;

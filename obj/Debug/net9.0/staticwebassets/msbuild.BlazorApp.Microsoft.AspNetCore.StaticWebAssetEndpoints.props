@@ -48,17 +48,17 @@
       <EndpointProperties><![CDATA[[{"Name":"fingerprint","Value":"kpye8zw1az"},{"Name":"integrity","Value":"sha256-OFsyj5lwKqs/beMpZ2IAsUVFdp2F2cL6OIbH04P\u002B01Y="},{"Name":"label","Value":"_content/BlazorApp/js/tiptap-commands.js"}]]]></EndpointProperties>
       <ResponseHeaders><![CDATA[[{"Name":"Accept-Ranges","Value":"bytes"},{"Name":"Cache-Control","Value":"max-age=31536000, immutable"},{"Name":"Content-Length","Value":"2533"},{"Name":"Content-Type","Value":"text/javascript"},{"Name":"ETag","Value":"\u0022OFsyj5lwKqs/beMpZ2IAsUVFdp2F2cL6OIbH04P\u002B01Y=\u0022"},{"Name":"Last-Modified","Value":"Sun, 11 Jan 2026 16:18:43 GMT"}]]]></ResponseHeaders>
     </StaticWebAssetEndpoint>
-    <StaticWebAssetEndpoint Include="_content/BlazorApp/js/tiptap-editor.fpxux7ryyv.js">
+    <StaticWebAssetEndpoint Include="_content/BlazorApp/js/tiptap-editor.ewswdmtxop.js">
       <AssetFile>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\staticwebassets\js\tiptap-editor.js'))</AssetFile>
       <Selectors><![CDATA[[]]]></Selectors>
-      <EndpointProperties><![CDATA[[{"Name":"fingerprint","Value":"fpxux7ryyv"},{"Name":"integrity","Value":"sha256-I3P3q0PsBkYrjmuWdvqA1i6FrJ1SYfIfgIvIhuTzbB4="},{"Name":"label","Value":"_content/BlazorApp/js/tiptap-editor.js"}]]]></EndpointProperties>
-      <ResponseHeaders><![CDATA[[{"Name":"Accept-Ranges","Value":"bytes"},{"Name":"Cache-Control","Value":"max-age=31536000, immutable"},{"Name":"Content-Length","Value":"16046"},{"Name":"Content-Type","Value":"text/javascript"},{"Name":"ETag","Value":"\u0022I3P3q0PsBkYrjmuWdvqA1i6FrJ1SYfIfgIvIhuTzbB4=\u0022"},{"Name":"Last-Modified","Value":"Sun, 11 Jan 2026 21:21:32 GMT"}]]]></ResponseHeaders>
+      <EndpointProperties><![CDATA[[{"Name":"fingerprint","Value":"ewswdmtxop"},{"Name":"integrity","Value":"sha256-slC6mknbcbLGYDXsB/VUl/7D96fMWLDfHHvMSDNnBPg="},{"Name":"label","Value":"_content/BlazorApp/js/tiptap-editor.js"}]]]></EndpointProperties>
+      <ResponseHeaders><![CDATA[[{"Name":"Accept-Ranges","Value":"bytes"},{"Name":"Cache-Control","Value":"max-age=31536000, immutable"},{"Name":"Content-Length","Value":"17304"},{"Name":"Content-Type","Value":"text/javascript"},{"Name":"ETag","Value":"\u0022slC6mknbcbLGYDXsB/VUl/7D96fMWLDfHHvMSDNnBPg=\u0022"},{"Name":"Last-Modified","Value":"Mon, 12 Jan 2026 06:02:51 GMT"}]]]></ResponseHeaders>
     </StaticWebAssetEndpoint>
     <StaticWebAssetEndpoint Include="_content/BlazorApp/js/tiptap-editor.js">
       <AssetFile>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\staticwebassets\js\tiptap-editor.js'))</AssetFile>
       <Selectors><![CDATA[[]]]></Selectors>
-      <EndpointProperties><![CDATA[[{"Name":"integrity","Value":"sha256-I3P3q0PsBkYrjmuWdvqA1i6FrJ1SYfIfgIvIhuTzbB4="}]]]></EndpointProperties>
-      <ResponseHeaders><![CDATA[[{"Name":"Accept-Ranges","Value":"bytes"},{"Name":"Cache-Control","Value":"no-cache"},{"Name":"Content-Length","Value":"16046"},{"Name":"Content-Type","Value":"text/javascript"},{"Name":"ETag","Value":"\u0022I3P3q0PsBkYrjmuWdvqA1i6FrJ1SYfIfgIvIhuTzbB4=\u0022"},{"Name":"Last-Modified","Value":"Sun, 11 Jan 2026 21:21:32 GMT"}]]]></ResponseHeaders>
+      <EndpointProperties><![CDATA[[{"Name":"integrity","Value":"sha256-slC6mknbcbLGYDXsB/VUl/7D96fMWLDfHHvMSDNnBPg="}]]]></EndpointProperties>
+      <ResponseHeaders><![CDATA[[{"Name":"Accept-Ranges","Value":"bytes"},{"Name":"Cache-Control","Value":"no-cache"},{"Name":"Content-Length","Value":"17304"},{"Name":"Content-Type","Value":"text/javascript"},{"Name":"ETag","Value":"\u0022slC6mknbcbLGYDXsB/VUl/7D96fMWLDfHHvMSDNnBPg=\u0022"},{"Name":"Last-Modified","Value":"Mon, 12 Jan 2026 06:02:51 GMT"}]]]></ResponseHeaders>
     </StaticWebAssetEndpoint>
     <StaticWebAssetEndpoint Include="_content/BlazorApp/lib/bootstrap/dist/css/bootstrap-grid.css">
       <AssetFile>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\staticwebassets\lib\bootstrap\dist\css\bootstrap-grid.css'))</AssetFile>
