@@ -417,6 +417,30 @@ window.tiptapEditor = {
         editor.on("update", pushFormattingState);
         pushFormattingState();
 
+        let lastSelectionState = "";
+        const pushSelectionState = () => {
+            if (!dotNetRef || !interopState.enabled) {
+                return;
+            }
+
+            const { from, to } = editor.state.selection;
+            const prefix = editor.state.doc.textBetween(0, from, " ", " ");
+            const selection = editor.state.doc.textBetween(from, to, " ", " ");
+            const start = prefix.length;
+            const end = start + selection.length;
+            const serialized = `${start}:${end}`;
+            if (serialized === lastSelectionState) {
+                return;
+            }
+
+            lastSelectionState = serialized;
+            safeInvoke(dotNetRef, interopState, "OnEditorSelectionChanged", start, end);
+        };
+
+        editor.on("selectionUpdate", pushSelectionState);
+        editor.on("update", pushSelectionState);
+        pushSelectionState();
+
         let lastOutlineState = "";
         const pushOutlineState = () => {
             if (!dotNetRef || !interopState.enabled) {

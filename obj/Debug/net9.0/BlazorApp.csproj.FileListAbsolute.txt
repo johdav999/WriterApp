@@ -158,4 +158,4 @@ C:\Users\Johan\source\repos\WriterApp\obj\Debug\net9.0\BlazorApp.pdb
 C:\Users\Johan\source\repos\WriterApp\obj\Debug\net9.0\BlazorApp.genruntimeconfig.cache
 C:\Users\Johan\source\repos\WriterApp\obj\Debug\net9.0\ref\BlazorApp.dll
 C:\Users\Johan\source\repos\WriterApp\obj\Debug\net9.0\compressed\6suaetkggf-kpye8zw1az.gz
-C:\Users\Johan\source\repos\WriterApp\obj\Debug\net9.0\compressed\e5wh4zdham-ewswdmtxop.gz
+C:\Users\Johan\source\repos\WriterApp\obj\Debug\net9.0\compressed\e5wh4zdham-dz121yif3u.gz

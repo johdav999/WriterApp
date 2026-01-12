@@ -4,7 +4,6 @@
 @using System.Collections.Generic
 @using System.Globalization
 @using System.Linq
-@using System.Net
 @using System.Text.Json
 @using System.Text.RegularExpressions
 @using BlazorApp.Components.Editor
@@ -125,6 +124,7 @@
                            EditorReady="OnEditorReady"
                            FormattingChanged="OnFormattingChanged"
                            OutlineChanged="OnOutlineChanged"
+                           SelectionChanged="OnSelectionChanged"
                            UndoRequested="OnUndo"
                            RedoRequested="OnRedo"
                            ContextMenuRequested="OnEditorContextMenuRequested" />
@@ -647,6 +647,7 @@
     private double _contextMenuY;
     private ElementReference _contextMenuRef;
     private bool _shouldFocusContextMenu;
+    private TextRange? _currentSelectionRange;
 
     private const string StorageKey = "writerapp.document";
     private const string StorageIndexKey = "writerapp.document.index";
@@ -820,6 +821,7 @@
             _activeSectionId = sectionId;
             _skipNextEditorSync = false;
             _suppressDirtyUpdate = true;
+            _currentSelectionRange = null;
             _state.NotifyChanged();
             await InvokeCommandAsync("focusEditor");
         });
@@ -1234,6 +1236,20 @@
         });
     }
 
+    private Task OnSelectionChanged(SectionEditor.EditorSelectionRange range)
+    {
+        return ExecuteSafeAsync("OnSelectionChanged", () =>
+        {
+            if (_disposed || _isReordering)
+            {
+                return Task.CompletedTask;
+            }
+
+            UpdateSelectionRange(range.Start, range.End);
+            return Task.CompletedTask;
+        });
+    }
+
     private static string GetActiveClass(bool isActive) => isActive ? "is-active" : string.Empty;
 
     private string GetContextMenuStyle()
@@ -1371,9 +1387,22 @@
 
     private static string ExtractPlainText(string html)
     {
-        string noTags = Regex.Replace(html, "<[^>]+>", " ");
-        string decoded = WebUtility.HtmlDecode(noTags);
-        return decoded.Trim();
+        return PlainTextMapper.ToPlainText(html);
+    }
+
+    private void UpdateSelectionRange(int start, int end)
+    {
+        if (start < 0 || end < 0)
+        {
+            _currentSelectionRange = null;
+            return;
+        }
+
+        string plainText = PlainTextMapper.ToPlainText(_activeSectionContent);
+        int maxLength = plainText.Length;
+        int normalizedStart = Math.Clamp(Math.Min(start, end), 0, maxLength);
+        int normalizedEnd = Math.Clamp(Math.Max(start, end), 0, maxLength);
+        _currentSelectionRange = new TextRange(normalizedStart, normalizedEnd - normalizedStart);
     }
 
     private void UpdateReadingMetrics(int wordCount)
