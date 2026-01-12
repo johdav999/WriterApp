@@ -979,13 +979,174 @@
       ]
     },
     {
+      "Route": "js/tiptap-editor.fpxux7ryyv.js",
+      "AssetFile": "js/tiptap-editor.js.gz",
+      "Selectors": [
+        {
+          "Name": "Content-Encoding",
+          "Value": "gzip",
+          "Quality": "0.000298062593"
+        }
+      ],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "max-age=31536000, immutable"
+        },
+        {
+          "Name": "Content-Encoding",
+          "Value": "gzip"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "3354"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/javascript"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"MbSp69+BV3sz0//dJAAuWC4D4FPVx3bHFmXAu9rU1yM=\""
+        },
+        {
+          "Name": "ETag",
+          "Value": "W/\"I3P3q0PsBkYrjmuWdvqA1i6FrJ1SYfIfgIvIhuTzbB4=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Sun, 11 Jan 2026 21:21:32 GMT"
+        },
+        {
+          "Name": "Vary",
+          "Value": "Content-Encoding"
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "fingerprint",
+          "Value": "fpxux7ryyv"
+        },
+        {
+          "Name": "integrity",
+          "Value": "sha256-I3P3q0PsBkYrjmuWdvqA1i6FrJ1SYfIfgIvIhuTzbB4="
+        },
+        {
+          "Name": "label",
+          "Value": "js/tiptap-editor.js"
+        }
+      ]
+    },
+    {
+      "Route": "js/tiptap-editor.fpxux7ryyv.js",
+      "AssetFile": "js/tiptap-editor.js",
+      "Selectors": [],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "max-age=31536000, immutable"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "16046"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/javascript"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"I3P3q0PsBkYrjmuWdvqA1i6FrJ1SYfIfgIvIhuTzbB4=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Sun, 11 Jan 2026 21:21:32 GMT"
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "fingerprint",
+          "Value": "fpxux7ryyv"
+        },
+        {
+          "Name": "integrity",
+          "Value": "sha256-I3P3q0PsBkYrjmuWdvqA1i6FrJ1SYfIfgIvIhuTzbB4="
+        },
+        {
+          "Name": "label",
+          "Value": "js/tiptap-editor.js"
+        }
+      ]
+    },
+    {
+      "Route": "js/tiptap-editor.fpxux7ryyv.js.gz",
+      "AssetFile": "js/tiptap-editor.js.gz",
+      "Selectors": [],
+      "ResponseHeaders": [
+        {
+          "Name": "Accept-Ranges",
+          "Value": "bytes"
+        },
+        {
+          "Name": "Cache-Control",
+          "Value": "max-age=31536000, immutable"
+        },
+        {
+          "Name": "Content-Encoding",
+          "Value": "gzip"
+        },
+        {
+          "Name": "Content-Length",
+          "Value": "3354"
+        },
+        {
+          "Name": "Content-Type",
+          "Value": "text/javascript"
+        },
+        {
+          "Name": "ETag",
+          "Value": "\"MbSp69+BV3sz0//dJAAuWC4D4FPVx3bHFmXAu9rU1yM=\""
+        },
+        {
+          "Name": "Last-Modified",
+          "Value": "Sun, 11 Jan 2026 21:21:32 GMT"
+        },
+        {
+          "Name": "Vary",
+          "Value": "Content-Encoding"
+        }
+      ],
+      "EndpointProperties": [
+        {
+          "Name": "fingerprint",
+          "Value": "fpxux7ryyv"
+        },
+        {
+          "Name": "integrity",
+          "Value": "sha256-MbSp69+BV3sz0//dJAAuWC4D4FPVx3bHFmXAu9rU1yM="
+        },
+        {
+          "Name": "label",
+          "Value": "js/tiptap-editor.js.gz"
+        }
+      ]
+    },
+    {
       "Route": "js/tiptap-editor.js",
       "AssetFile": "js/tiptap-editor.js.gz",
       "Selectors": [
         {
           "Name": "Content-Encoding",
           "Value": "gzip",
-          "Quality": "0.000346380326"
+          "Quality": "0.000298062593"
         }
       ],
       "ResponseHeaders": [
@@ -1003,7 +1164,7 @@
         },
         {
           "Name": "Content-Length",
-          "Value": "2886"
+          "Value": "3354"
         },
         {
           "Name": "Content-Type",
@@ -1011,15 +1172,15 @@
         },
         {
           "Name": "ETag",
-          "Value": "\"1BK0VRwidsOMPRTObj5my7j3BaJ8vOesCtvoUlqxAic=\""
+          "Value": "\"MbSp69+BV3sz0//dJAAuWC4D4FPVx3bHFmXAu9rU1yM=\""
         },
         {
           "Name": "ETag",
-          "Value": "W/\"NakSvbVn0+xdmBqc1w1ayqytsp/rLBdqN0sqrmua6Mw=\""
+          "Value": "W/\"I3P3q0PsBkYrjmuWdvqA1i6FrJ1SYfIfgIvIhuTzbB4=\""
         },
         {
           "Name": "Last-Modified",
-          "Value": "Sun, 11 Jan 2026 16:18:35 GMT"
+          "Value": "Sun, 11 Jan 2026 21:21:32 GMT"
         },
         {
           "Name": "Vary",
@@ -1029,7 +1190,7 @@
       "EndpointProperties": [
         {
           "Name": "integrity",
-          "Value": "sha256-NakSvbVn0+xdmBqc1w1ayqytsp/rLBdqN0sqrmua6Mw="
+          "Value": "sha256-I3P3q0PsBkYrjmuWdvqA1i6FrJ1SYfIfgIvIhuTzbB4="
         }
       ]
     },
@@ -1048,7 +1209,7 @@
         },
         {
           "Name": "Content-Length",
-          "Value": "14029"
+          "Value": "16046"
         },
         {
           "Name": "Content-Type",
@@ -1056,17 +1217,17 @@
         },
         {
           "Name": "ETag",
-          "Value": "\"NakSvbVn0+xdmBqc1w1ayqytsp/rLBdqN0sqrmua6Mw=\""
+          "Value": "\"I3P3q0PsBkYrjmuWdvqA1i6FrJ1SYfIfgIvIhuTzbB4=\""
         },
         {
           "Name": "Last-Modified",
-          "Value": "Sun, 11 Jan 2026 16:18:35 GMT"
+          "Value": "Sun, 11 Jan 2026 21:21:32 GMT"
         }
       ],
       "EndpointProperties": [
         {
           "Name": "integrity",
-          "Value": "sha256-NakSvbVn0+xdmBqc1w1ayqytsp/rLBdqN0sqrmua6Mw="
+          "Value": "sha256-I3P3q0PsBkYrjmuWdvqA1i6FrJ1SYfIfgIvIhuTzbB4="
         }
       ]
     },
@@ -1089,7 +1250,7 @@
         },
         {
           "Name": "Content-Length",
-          "Value": "2886"
+          "Value": "3354"
         },
         {
           "Name": "Content-Type",
@@ -1097,11 +1258,11 @@
         },
         {
           "Name": "ETag",
-          "Value": "\"1BK0VRwidsOMPRTObj5my7j3BaJ8vOesCtvoUlqxAic=\""
+          "Value": "\"MbSp69+BV3sz0//dJAAuWC4D4FPVx3bHFmXAu9rU1yM=\""
         },
         {
           "Name": "Last-Modified",
-          "Value": "Sun, 11 Jan 2026 16:18:35 GMT"
+          "Value": "Sun, 11 Jan 2026 21:21:32 GMT"
         },
         {
           "Name": "Vary",
@@ -1111,168 +1272,7 @@
       "EndpointProperties": [
         {
           "Name": "integrity",
-          "Value": "sha256-1BK0VRwidsOMPRTObj5my7j3BaJ8vOesCtvoUlqxAic="
-        }
-      ]
-    },
-    {
-      "Route": "js/tiptap-editor.t6cuoewwfq.js",
-      "AssetFile": "js/tiptap-editor.js.gz",
-      "Selectors": [
-        {
-          "Name": "Content-Encoding",
-          "Value": "gzip",
-          "Quality": "0.000346380326"
-        }
-      ],
-      "ResponseHeaders": [
-        {
-          "Name": "Accept-Ranges",
-          "Value": "bytes"
-        },
-        {
-          "Name": "Cache-Control",
-          "Value": "max-age=31536000, immutable"
-        },
-        {
-          "Name": "Content-Encoding",
-          "Value": "gzip"
-        },
-        {
-          "Name": "Content-Length",
-          "Value": "2886"
-        },
-        {
-          "Name": "Content-Type",
-          "Value": "text/javascript"
-        },
-        {
-          "Name": "ETag",
-          "Value": "\"1BK0VRwidsOMPRTObj5my7j3BaJ8vOesCtvoUlqxAic=\""
-        },
-        {
-          "Name": "ETag",
-          "Value": "W/\"NakSvbVn0+xdmBqc1w1ayqytsp/rLBdqN0sqrmua6Mw=\""
-        },
-        {
-          "Name": "Last-Modified",
-          "Value": "Sun, 11 Jan 2026 16:18:35 GMT"
-        },
-        {
-          "Name": "Vary",
-          "Value": "Content-Encoding"
-        }
-      ],
-      "EndpointProperties": [
-        {
-          "Name": "fingerprint",
-          "Value": "t6cuoewwfq"
-        },
-        {
-          "Name": "integrity",
-          "Value": "sha256-NakSvbVn0+xdmBqc1w1ayqytsp/rLBdqN0sqrmua6Mw="
-        },
-        {
-          "Name": "label",
-          "Value": "js/tiptap-editor.js"
-        }
-      ]
-    },
-    {
-      "Route": "js/tiptap-editor.t6cuoewwfq.js",
-      "AssetFile": "js/tiptap-editor.js",
-      "Selectors": [],
-      "ResponseHeaders": [
-        {
-          "Name": "Accept-Ranges",
-          "Value": "bytes"
-        },
-        {
-          "Name": "Cache-Control",
-          "Value": "max-age=31536000, immutable"
-        },
-        {
-          "Name": "Content-Length",
-          "Value": "14029"
-        },
-        {
-          "Name": "Content-Type",
-          "Value": "text/javascript"
-        },
-        {
-          "Name": "ETag",
-          "Value": "\"NakSvbVn0+xdmBqc1w1ayqytsp/rLBdqN0sqrmua6Mw=\""
-        },
-        {
-          "Name": "Last-Modified",
-          "Value": "Sun, 11 Jan 2026 16:18:35 GMT"
-        }
-      ],
-      "EndpointProperties": [
-        {
-          "Name": "fingerprint",
-          "Value": "t6cuoewwfq"
-        },
-        {
-          "Name": "integrity",
-          "Value": "sha256-NakSvbVn0+xdmBqc1w1ayqytsp/rLBdqN0sqrmua6Mw="
-        },
-        {
-          "Name": "label",
-          "Value": "js/tiptap-editor.js"
-        }
-      ]
-    },
-    {
-      "Route": "js/tiptap-editor.t6cuoewwfq.js.gz",
-      "AssetFile": "js/tiptap-editor.js.gz",
-      "Selectors": [],
-      "ResponseHeaders": [
-        {
-          "Name": "Accept-Ranges",
-          "Value": "bytes"
-        },
-        {
-          "Name": "Cache-Control",
-          "Value": "max-age=31536000, immutable"
-        },
-        {
-          "Name": "Content-Encoding",
-          "Value": "gzip"
-        },
-        {
-          "Name": "Content-Length",
-          "Value": "2886"
-        },
-        {
-          "Name": "Content-Type",
-          "Value": "text/javascript"
-        },
-        {
-          "Name": "ETag",
-          "Value": "\"1BK0VRwidsOMPRTObj5my7j3BaJ8vOesCtvoUlqxAic=\""
-        },
-        {
-          "Name": "Last-Modified",
-          "Value": "Sun, 11 Jan 2026 16:18:35 GMT"
-        },
-        {
-          "Name": "Vary",
-          "Value": "Content-Encoding"
-        }
-      ],
-      "EndpointProperties": [
-        {
-          "Name": "fingerprint",
-          "Value": "t6cuoewwfq"
-        },
-        {
-          "Name": "integrity",
-          "Value": "sha256-1BK0VRwidsOMPRTObj5my7j3BaJ8vOesCtvoUlqxAic="
-        },
-        {
-          "Name": "label",
-          "Value": "js/tiptap-editor.js.gz"
+          "Value": "sha256-MbSp69+BV3sz0//dJAAuWC4D4FPVx3bHFmXAu9rU1yM="
         }
       ]
     },

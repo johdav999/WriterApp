@@ -84,8 +84,8 @@
       <RelatedAsset></RelatedAsset>
       <AssetTraitName></AssetTraitName>
       <AssetTraitValue></AssetTraitValue>
-      <Fingerprint>t6cuoewwfq</Fingerprint>
-      <Integrity>NakSvbVn0+xdmBqc1w1ayqytsp/rLBdqN0sqrmua6Mw=</Integrity>
+      <Fingerprint>fpxux7ryyv</Fingerprint>
+      <Integrity>I3P3q0PsBkYrjmuWdvqA1i6FrJ1SYfIfgIvIhuTzbB4=</Integrity>
       <CopyToOutputDirectory>Never</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
       <OriginalItemSpec>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\staticwebassets\js\tiptap-editor.js'))</OriginalItemSpec>

@@ -9,6 +9,7 @@
 @using System.Text.RegularExpressions
 @using BlazorApp.Components.Editor
 @using Microsoft.AspNetCore.Components
+@using Microsoft.Extensions.Logging
 @using Microsoft.JSInterop
 @using WriterApp.Application.Commands
 @using WriterApp.Application.State
@@ -16,6 +17,7 @@
 @implements IDisposable
 @implements IAsyncDisposable
 @inject IJSRuntime JSRuntime
+@inject ILogger<Home> Logger
 
 <PageTitle>Writer</PageTitle>
 
@@ -31,7 +33,8 @@
                 <ul class="section-nav-list">
                     @foreach (Section section in _orderedSections)
                     {
-                        <li class="section-nav-row">
+                        <li class="drop-zone @(GetDropZoneClass(section.SectionId, DropPosition.Before))" @ondragover="OnDragOver" @ondragover:preventDefault @ondragenter="() => OnDragEnter(section.SectionId, DropPosition.Before)" @ondrop="() => OnDrop(section.SectionId, DropPosition.Before)"></li>
+                        <li class="section-nav-row @GetDraggingClass(section.SectionId)" draggable="@(_orderedSections.Count > 1 ? "true" : "false")" @ondragstart="(args) => OnDragStart(section.SectionId, args)" @ondragend="OnDragEnd">
                             <button type="button"
                                     class="section-nav-item @GetActiveSectionClass(section.SectionId)"
                                     @onclick="() => OnSectionSelected(section.SectionId)">
@@ -39,11 +42,13 @@
                                 <span class="section-title">@GetSectionTitle(section)</span>
                             </button>
                             <div class="section-nav-actions">
+                                <span class="drag-handle" aria-hidden="true">:::</span>
                                 <button type="button" @onclick="() => OnMoveSectionUp(section.SectionId)" disabled="@IsFirstSection(section)">Up</button>
                                 <button type="button" @onclick="() => OnMoveSectionDown(section.SectionId)" disabled="@IsLastSection(section)">Down</button>
                                 <button type="button" @onclick="() => OnDeleteSection(section.SectionId)" disabled="@(_orderedSections.Count <= 1)">Delete</button>
                             </div>
                         </li>
+                        <li class="drop-zone @(GetDropZoneClass(section.SectionId, DropPosition.After))" @ondragover="OnDragOver" @ondragover:preventDefault @ondragenter="() => OnDragEnter(section.SectionId, DropPosition.After)" @ondrop="() => OnDrop(section.SectionId, DropPosition.After)"></li>
                     }
                 </ul>
             </div>
@@ -244,6 +249,36 @@
         display: flex;
         align-items: center;
         gap: 6px;
+    }
+
+    .drag-handle {
+        width: 28px;
+        height: 28px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        cursor: grab;
+        background: #fff;
+        user-select: none;
+    }
+
+    .drag-handle:disabled,
+    .drag-handle[aria-disabled="true"] {
+        cursor: not-allowed;
+        opacity: 0.5;
+    }
+
+    .drop-zone {
+        height: 6px;
+        border-radius: 4px;
+    }
+
+    .drop-zone.is-active {
+        background: #9bb6f0;
+    }
+
+    .section-nav-row.is-dragging .section-nav-item {
+        opacity: 0.6;
     }
 
     .section-nav-item {
@@ -499,6 +534,10 @@
     private bool _isDirty;
     private DateTime _lastSavedUtc;
     private bool _suppressDirtyUpdate;
+    private Guid? _draggingSectionId;
+    private Guid? _dropTargetSectionId;
+    private DropPosition? _dropPosition;
+    private bool _isReordering;
 
     private const string StorageKey = "writerapp.document";
     private const string StorageIndexKey = "writerapp.document.index";
@@ -541,223 +580,414 @@
 
     private Task OnSectionContentChanged(string html)
     {
-        if (_suppressEditorEvent)
+        return ExecuteSafeAsync("OnSectionContentChanged", () =>
         {
-            return Task.CompletedTask;
-        }
+            if (_suppressEditorEvent || _disposed || _isReordering)
+            {
+                return Task.CompletedTask;
+            }
 
-        string content = html ?? string.Empty;
-        Section section = FindSection(_state.Document, _activeSectionId);
-        if (string.Equals(section.Content.Value, content, StringComparison.Ordinal))
-        {
-            return Task.CompletedTask;
-        }
+            string content = html ?? string.Empty;
+            Section section = FindSection(_state.Document, _activeSectionId);
+            if (string.Equals(section.Content.Value, content, StringComparison.Ordinal))
+            {
+                return Task.CompletedTask;
+            }
 
-        _skipNextEditorSync = true;
-        _commandProcessor.Execute(new UpdateSectionContentCommand(_activeSectionId, content));
-        return Task.CompletedTask;
+            _skipNextEditorSync = true;
+            _commandProcessor.Execute(new UpdateSectionContentCommand(_activeSectionId, content));
+            return Task.CompletedTask;
+        });
     }
 
     private Task OnUndo()
     {
-        if (_commandProcessor.CanUndo)
+        return ExecuteSafeAsync("OnUndo", () =>
         {
-            _commandProcessor.Undo();
-            return InvokeCommandAsync("focusEditor");
-        }
+            if (_commandProcessor.CanUndo)
+            {
+                _commandProcessor.Undo();
+                return InvokeCommandAsync("focusEditor");
+            }
 
-        return Task.CompletedTask;
+            return Task.CompletedTask;
+        });
     }
 
     private Task OnRedo()
     {
-        if (_commandProcessor.CanRedo)
+        return ExecuteSafeAsync("OnRedo", () =>
         {
-            _commandProcessor.Redo();
-            return InvokeCommandAsync("focusEditor");
-        }
+            if (_commandProcessor.CanRedo)
+            {
+                _commandProcessor.Redo();
+                return InvokeCommandAsync("focusEditor");
+            }
 
-        return Task.CompletedTask;
+            return Task.CompletedTask;
+        });
     }
 
-    private async Task OnFontSizeChanged(ChangeEventArgs args)
+    private Task OnFontSizeChanged(ChangeEventArgs args)
     {
-        if (args.Value is null)
+        return ExecuteSafeAsync("OnFontSizeChanged", async () =>
         {
-            return;
-        }
+            if (args.Value is null)
+            {
+                return;
+            }
 
-        string? value = args.Value.ToString();
-        if (string.Equals(value, "mixed", StringComparison.Ordinal))
-        {
-            return;
-        }
+            string? value = args.Value.ToString();
+            if (string.Equals(value, "mixed", StringComparison.Ordinal))
+            {
+                return;
+            }
 
-        if (int.TryParse(value, out int size))
-        {
-            _fontSize = size.ToString(CultureInfo.InvariantCulture);
-            await InvokeCommandAsync("setFontSize", size);
-        }
+            if (int.TryParse(value, out int size))
+            {
+                _fontSize = size.ToString(CultureInfo.InvariantCulture);
+                await InvokeCommandAsync("setFontSize", size);
+            }
+        });
     }
 
-    private async Task OnFontFamilyChanged(ChangeEventArgs args)
+    private Task OnFontFamilyChanged(ChangeEventArgs args)
     {
-        string? family = args.Value?.ToString();
-        _fontFamily = family ?? string.Empty;
-
-        if (string.Equals(_fontFamily, "mixed", StringComparison.Ordinal))
+        return ExecuteSafeAsync("OnFontFamilyChanged", async () =>
         {
-            return;
-        }
+            string? family = args.Value?.ToString();
+            _fontFamily = family ?? string.Empty;
 
-        if (string.IsNullOrWhiteSpace(_fontFamily))
-        {
-            await InvokeCommandAsync("clearFontFamily");
-            return;
-        }
+            if (string.Equals(_fontFamily, "mixed", StringComparison.Ordinal))
+            {
+                return;
+            }
 
-        await InvokeCommandAsync("setFontFamily", _fontFamily);
+            if (string.IsNullOrWhiteSpace(_fontFamily))
+            {
+                await InvokeCommandAsync("clearFontFamily");
+                return;
+            }
+
+            await InvokeCommandAsync("setFontFamily", _fontFamily);
+        });
     }
 
     private void OnSelectedDocumentChanged(ChangeEventArgs args)
     {
-        _selectedDocumentId = args.Value?.ToString() ?? string.Empty;
+        ExecuteSafe("OnSelectedDocumentChanged", () =>
+        {
+            _selectedDocumentId = args.Value?.ToString() ?? string.Empty;
+        });
     }
 
-    private async Task OnLoadSelected()
+    private Task OnLoadSelected()
     {
-        if (string.IsNullOrWhiteSpace(_selectedDocumentId))
+        return ExecuteSafeAsync("OnLoadSelected", async () =>
         {
-            return;
-        }
+            if (string.IsNullOrWhiteSpace(_selectedDocumentId))
+            {
+                return;
+            }
 
-        await LoadDocumentByIdAsync(_selectedDocumentId);
+            await LoadDocumentByIdAsync(_selectedDocumentId);
+        });
     }
 
-    private async Task OnSectionSelected(Guid sectionId)
+    private Task OnSectionSelected(Guid sectionId)
     {
-        if (sectionId == _activeSectionId)
+        return ExecuteSafeAsync("OnSectionSelected", async () =>
         {
-            return;
-        }
+            if (sectionId == _activeSectionId)
+            {
+                return;
+            }
 
-        _commandProcessor.ClearHistory();
-        _activeSectionId = sectionId;
-        _skipNextEditorSync = false;
-        _suppressDirtyUpdate = true;
-        _state.NotifyChanged();
-        await InvokeCommandAsync("focusEditor");
+            _commandProcessor.ClearHistory();
+            _activeSectionId = sectionId;
+            _skipNextEditorSync = false;
+            _suppressDirtyUpdate = true;
+            _state.NotifyChanged();
+            await InvokeCommandAsync("focusEditor");
+        });
     }
 
-    private void OnMoveSectionUp(Guid sectionId)
+    private Task OnMoveSectionUp(Guid sectionId)
     {
-        MoveSection(sectionId, -1);
+        return ExecuteSafeAsync("OnMoveSectionUp", () => MoveSectionAsync(sectionId, -1));
     }
 
-    private void OnMoveSectionDown(Guid sectionId)
+    private Task OnMoveSectionDown(Guid sectionId)
     {
-        MoveSection(sectionId, 1);
+        return ExecuteSafeAsync("OnMoveSectionDown", () => MoveSectionAsync(sectionId, 1));
     }
 
-    private async Task OnCreateSection()
+    private Task OnCreateSection()
     {
-        Chapter chapter = GetPrimaryChapter();
-        List<Section> ordered = _orderedSections.Count > 0
-            ? new List<Section>(_orderedSections)
-            : chapter.Sections.OrderBy(section => section.Order).ToList();
-
-        int insertIndex = ordered.FindIndex(section => section.SectionId == _activeSectionId);
-        if (insertIndex < 0)
+        return ExecuteSafeAsync("OnCreateSection", async () =>
         {
-            insertIndex = ordered.Count - 1;
-        }
+            Chapter chapter = GetPrimaryChapter();
+            List<Section> ordered = _orderedSections.Count > 0
+                ? new List<Section>(_orderedSections)
+                : chapter.Sections.OrderBy(section => section.Order).ToList();
 
-        Section newSection = new()
-        {
-            SectionId = Guid.NewGuid(),
-            Order = insertIndex + 1,
-            Title = string.Empty,
-            Content = new SectionContent { Format = "html", Value = "<p></p>" },
-            Stats = new SectionStats(),
-            Flags = new SectionFlags(),
-            AI = new SectionAIInfo(),
-            CreatedUtc = DateTime.UtcNow,
-            ModifiedUtc = DateTime.UtcNow
-        };
+            int insertIndex = ordered.FindIndex(section => section.SectionId == _activeSectionId);
+            if (insertIndex < 0)
+            {
+                insertIndex = ordered.Count - 1;
+            }
 
-        ordered.Insert(insertIndex + 1, newSection);
-        chapter.Sections.Add(newSection);
-        ApplySectionOrdering(ordered, chapter);
+            Section newSection = new()
+            {
+                SectionId = Guid.NewGuid(),
+                Order = insertIndex + 1,
+                Title = string.Empty,
+                Content = new SectionContent { Format = "html", Value = "<p></p>" },
+                Stats = new SectionStats(),
+                Flags = new SectionFlags(),
+                AI = new SectionAIInfo(),
+                CreatedUtc = DateTime.UtcNow,
+                ModifiedUtc = DateTime.UtcNow
+            };
 
-        _activeSectionId = newSection.SectionId;
-        _commandProcessor.ClearHistory();
-        _state.NotifyChanged();
-        await InvokeCommandAsync("focusEditor");
+            ordered.Insert(insertIndex + 1, newSection);
+            chapter.Sections.Add(newSection);
+            ApplySectionOrdering(ordered, chapter);
+
+            _activeSectionId = newSection.SectionId;
+            _commandProcessor.ClearHistory();
+            _state.NotifyChanged();
+            await InvokeCommandAsync("focusEditor");
+        });
     }
 
-    private async Task OnDeleteSection(Guid sectionId)
+    private Task OnDeleteSection(Guid sectionId)
     {
-        if (_orderedSections.Count <= 1)
+        return ExecuteSafeAsync("OnDeleteSection", async () =>
         {
-            return;
-        }
+            if (_orderedSections.Count <= 1)
+            {
+                return;
+            }
 
-        bool confirmed = await JSRuntime.InvokeAsync<bool>("confirm", "Delete this section?");
-        if (!confirmed)
-        {
-            return;
-        }
+            bool confirmed;
+            try
+            {
+                confirmed = await JSRuntime.InvokeAsync<bool>("confirm", "Delete this section?");
+            }
+            catch (JSException ex)
+            {
+                Logger.LogWarning(ex, "Delete confirmation failed.");
+                return;
+            }
 
-        Chapter chapter = GetPrimaryChapter();
-        List<Section> ordered = _orderedSections.Count > 0
-            ? new List<Section>(_orderedSections)
-            : chapter.Sections.OrderBy(section => section.Order).ToList();
+            if (!confirmed)
+            {
+                return;
+            }
 
-        int removeIndex = ordered.FindIndex(section => section.SectionId == sectionId);
-        if (removeIndex < 0)
-        {
-            return;
-        }
+            Chapter chapter = GetPrimaryChapter();
+            List<Section> ordered = _orderedSections.Count > 0
+                ? new List<Section>(_orderedSections)
+                : chapter.Sections.OrderBy(section => section.Order).ToList();
 
-        ordered.RemoveAt(removeIndex);
-        chapter.Sections.RemoveAll(section => section.SectionId == sectionId);
-        ApplySectionOrdering(ordered, chapter);
+            int removeIndex = ordered.FindIndex(section => section.SectionId == sectionId);
+            if (removeIndex < 0)
+            {
+                return;
+            }
 
-        if (sectionId == _activeSectionId)
-        {
-            int nextIndex = Math.Min(removeIndex, ordered.Count - 1);
-            _activeSectionId = ordered[nextIndex].SectionId;
-        }
+            ordered.RemoveAt(removeIndex);
+            chapter.Sections.RemoveAll(section => section.SectionId == sectionId);
+            ApplySectionOrdering(ordered, chapter);
 
-        _commandProcessor.ClearHistory();
-        _state.NotifyChanged();
-        await InvokeCommandAsync("focusEditor");
+            if (sectionId == _activeSectionId)
+            {
+                int nextIndex = Math.Min(removeIndex, ordered.Count - 1);
+                _activeSectionId = ordered[nextIndex].SectionId;
+            }
+
+            _commandProcessor.ClearHistory();
+            _state.NotifyChanged();
+            await InvokeCommandAsync("focusEditor");
+        });
     }
 
-    private void MoveSection(Guid sectionId, int direction)
+    private Task MoveSectionAsync(Guid sectionId, int direction)
     {
-        if (_orderedSections.Count <= 1 || direction == 0)
+        return ExecuteSafeAsync("MoveSectionAsync", async () =>
         {
-            return;
+            if (_orderedSections.Count <= 1 || direction == 0)
+            {
+                return;
+            }
+
+            _isReordering = true;
+            try
+            {
+                Chapter chapter = GetPrimaryChapter();
+                List<Section> ordered = _orderedSections.Count > 0
+                    ? new List<Section>(_orderedSections)
+                    : chapter.Sections.OrderBy(section => section.Order).ToList();
+
+                int index = ordered.FindIndex(section => section.SectionId == sectionId);
+                int targetIndex = index + direction;
+                if (index < 0 || targetIndex < 0 || targetIndex >= ordered.Count)
+                {
+                    return;
+                }
+
+                Section section = ordered[index];
+                ordered.RemoveAt(index);
+                ordered.Insert(targetIndex, section);
+                ApplySectionOrdering(ordered, chapter);
+                _suppressDirtyUpdate = true;
+                _state.NotifyChanged();
+                await OnSave();
+            }
+            finally
+            {
+                _isReordering = false;
+            }
+        });
+    }
+
+    private void OnDragStart(Guid sectionId, DragEventArgs args)
+    {
+        ExecuteSafe("OnDragStart", () =>
+        {
+            Logger.LogInformation("DragStart: section {SectionId}", sectionId);
+            if (_orderedSections.Count <= 1)
+            {
+                Logger.LogInformation("DragStart ignored: only one section.");
+                return;
+            }
+
+            _draggingSectionId = sectionId;
+            _dropTargetSectionId = null;
+            _dropPosition = null;
+
+            if (args.DataTransfer is not null)
+            {
+                args.DataTransfer.DropEffect = "move";
+                args.DataTransfer.EffectAllowed = "move";
+            }
+
+            _ = InvokeAsync(StateHasChanged);
+        });
+    }
+
+    private void OnDragEnd(DragEventArgs args)
+    {
+        ExecuteSafe("OnDragEnd", () =>
+        {
+            Logger.LogInformation("DragEnd: dragging {SectionId}", _draggingSectionId);
+            _draggingSectionId = null;
+            _dropTargetSectionId = null;
+            _dropPosition = null;
+            _ = InvokeAsync(StateHasChanged);
+        });
+    }
+
+    private void OnDragEnter(Guid targetSectionId, DropPosition position)
+    {
+        ExecuteSafe("OnDragEnter", () =>
+        {
+            Logger.LogInformation("DragEnter: target {TargetSectionId} position {Position}", targetSectionId, position);
+            if (_draggingSectionId is null || _draggingSectionId == targetSectionId)
+            {
+                Logger.LogInformation("DragEnter ignored: dragging {DraggingSectionId}", _draggingSectionId);
+                return;
+            }
+
+            _dropTargetSectionId = targetSectionId;
+            _dropPosition = position;
+            _ = InvokeAsync(StateHasChanged);
+        });
+    }
+
+    private void OnDragOver(DragEventArgs args)
+    {
+        ExecuteSafe("OnDragOver", () =>
+        {
+            if (args.DataTransfer is not null)
+            {
+                args.DataTransfer.DropEffect = "move";
+            }
+        });
+    }
+
+    private Task OnDrop(Guid targetSectionId, DropPosition position)
+    {
+        return ExecuteSafeAsync("OnDrop", async () =>
+        {
+            Logger.LogInformation("Drop: target {TargetSectionId} position {Position} dragging {DraggingSectionId}", targetSectionId, position, _draggingSectionId);
+            if (_draggingSectionId is null || _draggingSectionId == targetSectionId)
+            {
+                Logger.LogInformation("Drop ignored: invalid dragging state.");
+                return;
+            }
+
+            Guid sourceSectionId = _draggingSectionId.Value;
+            _draggingSectionId = null;
+            _dropTargetSectionId = null;
+            _dropPosition = null;
+
+            _isReordering = true;
+            try
+            {
+                Chapter chapter = GetPrimaryChapter();
+                List<Section> ordered = new(_orderedSections);
+                int sourceIndex = ordered.FindIndex(section => section.SectionId == sourceSectionId);
+                int targetIndex = ordered.FindIndex(section => section.SectionId == targetSectionId);
+                if (sourceIndex < 0 || targetIndex < 0)
+                {
+                    Logger.LogWarning("Drop aborted: sourceIndex {SourceIndex} targetIndex {TargetIndex}", sourceIndex, targetIndex);
+                    return;
+                }
+
+                Section moving = ordered[sourceIndex];
+                ordered.RemoveAt(sourceIndex);
+                if (sourceIndex < targetIndex)
+                {
+                    targetIndex -= 1;
+                }
+
+                int insertIndex = position == DropPosition.Before ? targetIndex : targetIndex + 1;
+                insertIndex = Math.Clamp(insertIndex, 0, ordered.Count);
+                Logger.LogInformation("Drop reorder: source {SourceIndex} target {TargetIndex} insert {InsertIndex}", sourceIndex, targetIndex, insertIndex);
+                ordered.Insert(insertIndex, moving);
+                ApplySectionOrdering(ordered, chapter);
+                _suppressDirtyUpdate = true;
+                _state.NotifyChanged();
+                await OnSave();
+            }
+            finally
+            {
+                _isReordering = false;
+            }
+        });
+    }
+
+    private string GetDropZoneClass(Guid sectionId, DropPosition position)
+    {
+        if (_dropTargetSectionId == sectionId && _dropPosition == position)
+        {
+            return "is-active";
         }
 
-        Chapter chapter = GetPrimaryChapter();
-        List<Section> ordered = _orderedSections.Count > 0
-            ? new List<Section>(_orderedSections)
-            : chapter.Sections.OrderBy(section => section.Order).ToList();
+        return string.Empty;
+    }
 
-        int index = ordered.FindIndex(section => section.SectionId == sectionId);
-        int targetIndex = index + direction;
-        if (index < 0 || targetIndex < 0 || targetIndex >= ordered.Count)
-        {
-            return;
-        }
+    private string GetDraggingClass(Guid sectionId)
+    {
+        return _draggingSectionId == sectionId ? "is-dragging" : string.Empty;
+    }
 
-        Section section = ordered[index];
-        ordered.RemoveAt(index);
-        ordered.Insert(targetIndex, section);
-        ApplySectionOrdering(ordered, chapter);
-        _state.NotifyChanged();
+    private enum DropPosition
+    {
+        Before,
+        After
     }
 
     private Chapter GetPrimaryChapter()
@@ -840,70 +1070,97 @@
 
     private Task OnOutlineChanged(List<OutlineItem> outline)
     {
-        _outlineItems.Clear();
-        if (outline is not null)
+        return ExecuteSafeAsync("OnOutlineChanged", () =>
         {
-            _outlineItems.AddRange(outline);
-        }
+            if (_disposed || _isReordering)
+            {
+                return Task.CompletedTask;
+            }
 
-        return InvokeAsync(StateHasChanged);
+            _outlineItems.Clear();
+            if (outline is not null)
+            {
+                _outlineItems.AddRange(outline);
+            }
+
+            return InvokeAsync(StateHasChanged);
+        });
     }
 
     private Task OnOutlineSelected(OutlineItem item)
     {
-        if (item is null)
+        return ExecuteSafeAsync("OnOutlineSelected", () =>
         {
-            return Task.CompletedTask;
-        }
+            if (item is null || _disposed)
+            {
+                return Task.CompletedTask;
+            }
 
-        return InvokeCommandAsync("scrollToPosition", item.Position);
+            return InvokeCommandAsync("scrollToPosition", item.Position);
+        });
     }
 
     private Task OnFormattingChanged(EditorFormattingState state)
     {
-        _formattingState = state ?? new EditorFormattingState();
-        _fontFamily = _formattingState.FontFamily is null
-            ? "mixed"
-            : string.IsNullOrWhiteSpace(_formattingState.FontFamily) ? string.Empty : _formattingState.FontFamily;
-        _fontSize = _formattingState.FontSize is null
-            ? "mixed"
-            : string.IsNullOrWhiteSpace(_formattingState.FontSize) ? "16" : _formattingState.FontSize;
+        return ExecuteSafeAsync("OnFormattingChanged", () =>
+        {
+            if (_disposed || _isReordering)
+            {
+                return Task.CompletedTask;
+            }
 
-        return InvokeAsync(StateHasChanged);
+            _formattingState = state ?? new EditorFormattingState();
+            _fontFamily = _formattingState.FontFamily is null
+                ? "mixed"
+                : string.IsNullOrWhiteSpace(_formattingState.FontFamily) ? string.Empty : _formattingState.FontFamily;
+            _fontSize = _formattingState.FontSize is null
+                ? "mixed"
+                : string.IsNullOrWhiteSpace(_formattingState.FontSize) ? "16" : _formattingState.FontSize;
+
+            return InvokeAsync(StateHasChanged);
+        });
     }
 
     private static string GetActiveClass(bool isActive) => isActive ? "is-active" : string.Empty;
 
-    private async Task HandleDocumentChangedAsync()
+    private Task HandleDocumentChangedAsync()
     {
-        RefreshFromDocument(_state.Document);
-
-        if (_suppressDirtyUpdate)
+        return ExecuteSafeAsync("HandleDocumentChangedAsync", async () =>
         {
-            _suppressDirtyUpdate = false;
-        }
-        else
-        {
-            _isDirty = true;
-        }
-
-        bool shouldSyncEditor = !_skipNextEditorSync;
-        _skipNextEditorSync = false;
-
-        if (_editorRef is not null && shouldSyncEditor)
-        {
-            _suppressEditorEvent = true;
-            try
+            if (_disposed)
             {
-                await _editorRef.SetContentAsync(_activeSectionContent);
+                return;
             }
-            finally
-            {
-                _suppressEditorEvent = false;
-            }
-        }
 
-        await InvokeAsync(StateHasChanged);
+            RefreshFromDocument(_state.Document);
+
+            if (_suppressDirtyUpdate)
+            {
+                _suppressDirtyUpdate = false;
+            }
+            else
+            {
+                _isDirty = true;
+            }
+
+            bool shouldSyncEditor = !_skipNextEditorSync;
+            _skipNextEditorSync = false;
+
+            if (_editorRef is not null && shouldSyncEditor)
+            {
+                _suppressEditorEvent = true;
+                try
+                {
+                    await _editorRef.SetContentAsync(_activeSectionContent);
+                }
+                finally
+                {
+                    _suppressEditorEvent = false;
+                }
+            }
+
+            await InvokeAsync(StateHasChanged);
+        });
     }
 
     private void RefreshFromDocument(Document document)
@@ -1075,31 +1332,34 @@
         };
     }
 
-    private async Task OnEditorReady(IJSObjectReference editor)
+    private Task OnEditorReady(IJSObjectReference editor)
     {
-        _editorInstance = editor;
-        await EnsureCommandsModuleAsync();
+        return ExecuteSafeAsync("OnEditorReady", async () =>
+        {
+            _editorInstance = editor;
+            await EnsureCommandsModuleAsync();
+        });
     }
 
-    private Task OnBoldRequested() => InvokeCommandAsync("toggleBold");
+    private Task OnBoldRequested() => ExecuteSafeAsync("OnBoldRequested", () => InvokeCommandAsync("toggleBold"));
 
-    private Task OnItalicRequested() => InvokeCommandAsync("toggleItalic");
+    private Task OnItalicRequested() => ExecuteSafeAsync("OnItalicRequested", () => InvokeCommandAsync("toggleItalic"));
 
-    private Task OnStrikeRequested() => InvokeCommandAsync("toggleStrike");
+    private Task OnStrikeRequested() => ExecuteSafeAsync("OnStrikeRequested", () => InvokeCommandAsync("toggleStrike"));
 
-    private Task OnCodeRequested() => InvokeCommandAsync("toggleCode");
+    private Task OnCodeRequested() => ExecuteSafeAsync("OnCodeRequested", () => InvokeCommandAsync("toggleCode"));
 
-    private Task OnParagraphRequested() => InvokeCommandAsync("setParagraph");
+    private Task OnParagraphRequested() => ExecuteSafeAsync("OnParagraphRequested", () => InvokeCommandAsync("setParagraph"));
 
-    private Task OnHeadingRequested(int level) => InvokeCommandAsync("toggleHeading", level);
+    private Task OnHeadingRequested(int level) => ExecuteSafeAsync("OnHeadingRequested", () => InvokeCommandAsync("toggleHeading", level));
 
-    private Task OnBlockquoteRequested() => InvokeCommandAsync("toggleBlockquote");
+    private Task OnBlockquoteRequested() => ExecuteSafeAsync("OnBlockquoteRequested", () => InvokeCommandAsync("toggleBlockquote"));
 
-    private Task OnHorizontalRuleRequested() => InvokeCommandAsync("insertHorizontalRule");
+    private Task OnHorizontalRuleRequested() => ExecuteSafeAsync("OnHorizontalRuleRequested", () => InvokeCommandAsync("insertHorizontalRule"));
 
-    private Task OnBulletListRequested() => InvokeCommandAsync("toggleBulletList");
+    private Task OnBulletListRequested() => ExecuteSafeAsync("OnBulletListRequested", () => InvokeCommandAsync("toggleBulletList"));
 
-    private Task OnOrderedListRequested() => InvokeCommandAsync("toggleOrderedList");
+    private Task OnOrderedListRequested() => ExecuteSafeAsync("OnOrderedListRequested", () => InvokeCommandAsync("toggleOrderedList"));
 
     private async Task EnsureCommandsModuleAsync()
     {
@@ -1139,148 +1399,168 @@
         }
     }
 
-    private async Task OnSave()
+    private Task OnSave()
     {
-        try
+        return ExecuteSafeAsync("OnSave", async () =>
         {
-            Document normalized = NormalizeDocumentForSave(_state.Document);
-            DocumentStorage payload = new(normalized);
-            string json = JsonSerializer.Serialize(payload);
-            await JSRuntime.InvokeVoidAsync("localStorage.setItem", StorageKey, json);
+            try
+            {
+                Document normalized = NormalizeDocumentForSave(_state.Document);
+                DocumentStorage payload = new(normalized);
+                string json = JsonSerializer.Serialize(payload);
+                await JSRuntime.InvokeVoidAsync("localStorage.setItem", StorageKey, json);
 
-            string documentKey = StoragePrefix + normalized.DocumentId;
-            await JSRuntime.InvokeVoidAsync("localStorage.setItem", documentKey, json);
-            await UpdateDocumentIndexAsync(normalized);
-            _state.ReplaceDocument(normalized, notify: false);
-            RefreshFromDocument(normalized);
-            _lastSavedUtc = normalized.Metadata.ModifiedUtc;
-            _isDirty = false;
-            await InvokeAsync(StateHasChanged);
-        }
-        catch (JSException)
-        {
-        }
+                string documentKey = StoragePrefix + normalized.DocumentId;
+                await JSRuntime.InvokeVoidAsync("localStorage.setItem", documentKey, json);
+                await UpdateDocumentIndexAsync(normalized);
+                _state.ReplaceDocument(normalized, notify: false);
+                RefreshFromDocument(normalized);
+                _lastSavedUtc = normalized.Metadata.ModifiedUtc;
+                _isDirty = false;
+                await InvokeAsync(StateHasChanged);
+            }
+            catch (JSException ex)
+            {
+                Logger.LogWarning(ex, "Local storage save failed.");
+            }
+        });
     }
 
-    private async Task LoadDocumentAsync()
+    private Task LoadDocumentAsync()
     {
-        string? json = null;
-        try
+        return ExecuteSafeAsync("LoadDocumentAsync", async () =>
         {
-            json = await JSRuntime.InvokeAsync<string>("localStorage.getItem", StorageKey);
-        }
-        catch (JSException)
-        {
-            return;
-        }
+            string? json = null;
+            try
+            {
+                json = await JSRuntime.InvokeAsync<string>("localStorage.getItem", StorageKey);
+            }
+            catch (JSException ex)
+            {
+                Logger.LogWarning(ex, "Local storage read failed.");
+                return;
+            }
 
-        if (string.IsNullOrWhiteSpace(json))
-        {
-            if (_savedDocuments.Count == 0)
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                if (_savedDocuments.Count == 0)
+                {
+                    return;
+                }
+
+                DocumentIndexEntry latest = _savedDocuments[0];
+                await LoadDocumentByIdAsync(latest.DocumentId.ToString());
+                return;
+            }
+
+            DocumentStorage? payload = JsonSerializer.Deserialize<DocumentStorage>(json);
+            if (payload?.Document is null)
             {
                 return;
             }
 
-            DocumentIndexEntry latest = _savedDocuments[0];
-            await LoadDocumentByIdAsync(latest.DocumentId.ToString());
-            return;
-        }
-
-        DocumentStorage? payload = JsonSerializer.Deserialize<DocumentStorage>(json);
-        if (payload?.Document is null)
-        {
-            return;
-        }
-
-        InitializeState(NormalizeDocumentForLoad(payload.Document));
-        await SyncEditorAsync();
+            InitializeState(NormalizeDocumentForLoad(payload.Document));
+            await SyncEditorAsync();
+        });
     }
 
-    private async Task LoadDocumentByIdAsync(string documentId)
+    private Task LoadDocumentByIdAsync(string documentId)
     {
-        string key = StoragePrefix + documentId;
-        string? json = null;
-        try
+        return ExecuteSafeAsync("LoadDocumentByIdAsync", async () =>
         {
-            json = await JSRuntime.InvokeAsync<string>("localStorage.getItem", key);
-        }
-        catch (JSException)
-        {
-            return;
-        }
+            string key = StoragePrefix + documentId;
+            string? json = null;
+            try
+            {
+                json = await JSRuntime.InvokeAsync<string>("localStorage.getItem", key);
+            }
+            catch (JSException ex)
+            {
+                Logger.LogWarning(ex, "Local storage read failed.");
+                return;
+            }
 
-        if (string.IsNullOrWhiteSpace(json))
-        {
-            return;
-        }
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return;
+            }
 
-        DocumentStorage? payload = JsonSerializer.Deserialize<DocumentStorage>(json);
-        if (payload?.Document is null)
-        {
-            return;
-        }
+            DocumentStorage? payload = JsonSerializer.Deserialize<DocumentStorage>(json);
+            if (payload?.Document is null)
+            {
+                return;
+            }
 
-        InitializeState(NormalizeDocumentForLoad(payload.Document));
-        await SyncEditorAsync();
+            InitializeState(NormalizeDocumentForLoad(payload.Document));
+            await SyncEditorAsync();
+        });
     }
 
-    private async Task LoadDocumentIndexAsync()
+    private Task LoadDocumentIndexAsync()
     {
-        _savedDocuments.Clear();
-
-        string? json = null;
-        try
+        return ExecuteSafeAsync("LoadDocumentIndexAsync", async () =>
         {
-            json = await JSRuntime.InvokeAsync<string>("localStorage.getItem", StorageIndexKey);
-        }
-        catch (JSException)
-        {
-            return;
-        }
+            _savedDocuments.Clear();
 
-        if (string.IsNullOrWhiteSpace(json))
-        {
-            return;
-        }
+            string? json = null;
+            try
+            {
+                json = await JSRuntime.InvokeAsync<string>("localStorage.getItem", StorageIndexKey);
+            }
+            catch (JSException ex)
+            {
+                Logger.LogWarning(ex, "Local storage index read failed.");
+                return;
+            }
 
-        List<DocumentIndexEntry>? entries = JsonSerializer.Deserialize<List<DocumentIndexEntry>>(json);
-        if (entries is null)
-        {
-            return;
-        }
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return;
+            }
 
-        entries.Sort((a, b) => b.LastModifiedUtc.CompareTo(a.LastModifiedUtc));
-        _savedDocuments.AddRange(entries);
+            List<DocumentIndexEntry>? entries = JsonSerializer.Deserialize<List<DocumentIndexEntry>>(json);
+            if (entries is null)
+            {
+                return;
+            }
+
+            entries.Sort((a, b) => b.LastModifiedUtc.CompareTo(a.LastModifiedUtc));
+            _savedDocuments.AddRange(entries);
+        });
     }
 
-    private async Task UpdateDocumentIndexAsync(Document document)
+    private Task UpdateDocumentIndexAsync(Document document)
     {
-        string title = string.IsNullOrWhiteSpace(document.Metadata.Title)
-            ? "Untitled"
-            : document.Metadata.Title;
-
-        DocumentIndexEntry entry = new(document.DocumentId, title, document.Metadata.ModifiedUtc);
-
-        int index = _savedDocuments.FindIndex(item => item.DocumentId == entry.DocumentId);
-        if (index >= 0)
+        return ExecuteSafeAsync("UpdateDocumentIndexAsync", async () =>
         {
-            _savedDocuments[index] = entry;
-        }
-        else
-        {
-            _savedDocuments.Add(entry);
-        }
+            string title = string.IsNullOrWhiteSpace(document.Metadata.Title)
+                ? "Untitled"
+                : document.Metadata.Title;
 
-        _savedDocuments.Sort((a, b) => b.LastModifiedUtc.CompareTo(a.LastModifiedUtc));
-        string json = JsonSerializer.Serialize(_savedDocuments);
+            DocumentIndexEntry entry = new(document.DocumentId, title, document.Metadata.ModifiedUtc);
 
-        try
-        {
-            await JSRuntime.InvokeVoidAsync("localStorage.setItem", StorageIndexKey, json);
-        }
-        catch (JSException)
-        {
-        }
+            int index = _savedDocuments.FindIndex(item => item.DocumentId == entry.DocumentId);
+            if (index >= 0)
+            {
+                _savedDocuments[index] = entry;
+            }
+            else
+            {
+                _savedDocuments.Add(entry);
+            }
+
+            _savedDocuments.Sort((a, b) => b.LastModifiedUtc.CompareTo(a.LastModifiedUtc));
+            string json = JsonSerializer.Serialize(_savedDocuments);
+
+            try
+            {
+                await JSRuntime.InvokeVoidAsync("localStorage.setItem", StorageIndexKey, json);
+            }
+            catch (JSException ex)
+            {
+                Logger.LogWarning(ex, "Local storage index update failed.");
+            }
+        });
     }
 
     private Document NormalizeDocumentForSave(Document document)
@@ -1431,6 +1711,30 @@
 
         int days = Math.Max(1, (int)Math.Round(delta.TotalDays));
         return $"Last saved {days} day{(days == 1 ? string.Empty : "s")} ago";
+    }
+
+    private async Task ExecuteSafeAsync(string operation, Func<Task> action)
+    {
+        try
+        {
+            await action();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Home {Operation} failed.", operation);
+        }
+    }
+
+    private void ExecuteSafe(string operation, Action action)
+    {
+        try
+        {
+            action();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Home {Operation} failed.", operation);
+        }
     }
 
     public void Dispose()
