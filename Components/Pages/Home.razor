@@ -9,6 +9,7 @@
 @using System.Text.RegularExpressions
 @using BlazorApp.Components.Editor
 @using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Components.Web
 @using Microsoft.Extensions.Logging
 @using Microsoft.JSInterop
 @using WriterApp.Application.Commands
@@ -125,7 +126,8 @@
                            FormattingChanged="OnFormattingChanged"
                            OutlineChanged="OnOutlineChanged"
                            UndoRequested="OnUndo"
-                           RedoRequested="OnRedo" />
+                           RedoRequested="OnRedo"
+                           ContextMenuRequested="OnEditorContextMenuRequested" />
         </div>
     </div>
     <div class="preview-pane">
@@ -168,6 +170,42 @@
         </div>
     </div>
 </div>
+
+@if (_isContextMenuOpen)
+{
+    <div class="editor-context-menu-backdrop" @onclick="CloseContextMenu"></div>
+    <div class="editor-context-menu"
+         style="@GetContextMenuStyle()"
+         tabindex="-1"
+         role="menu"
+         @ref="_contextMenuRef"
+         @onclick:stopPropagation="true"
+         @onkeydown="OnContextMenuKeyDown">
+        <div class="editor-context-menu-group">
+            <div class="editor-context-menu-label">Text emphasis</div>
+            <button type="button" class="@GetActiveClass(_formattingState.IsBold)" disabled="@(!_formattingState.CanBold)" @onclick="() => OnContextMenuCommand(OnBoldRequested)">Bold</button>
+            <button type="button" class="@GetActiveClass(_formattingState.IsItalic)" disabled="@(!_formattingState.CanItalic)" @onclick="() => OnContextMenuCommand(OnItalicRequested)">Italic</button>
+            <button type="button" class="@GetActiveClass(_formattingState.IsStrike)" disabled="@(!_formattingState.CanStrike)" @onclick="() => OnContextMenuCommand(OnStrikeRequested)">Strike</button>
+            <button type="button" class="@GetActiveClass(_formattingState.IsCode)" disabled="@(!_formattingState.CanCode)" @onclick="() => OnContextMenuCommand(OnCodeRequested)">Code</button>
+        </div>
+        <div class="editor-context-menu-group">
+            <div class="editor-context-menu-label">Structure</div>
+            <button type="button" class="@GetActiveClass(_formattingState.BlockType == "paragraph")" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnContextMenuCommand(OnParagraphRequested)">Paragraph</button>
+            <button type="button" class="@GetActiveClass(_formattingState.BlockType == "heading:1")" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnContextMenuCommand(() => OnHeadingRequested(1))">Heading 1</button>
+            <button type="button" class="@GetActiveClass(_formattingState.BlockType == "heading:2")" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnContextMenuCommand(() => OnHeadingRequested(2))">Heading 2</button>
+            <button type="button" class="@GetActiveClass(_formattingState.BlockType == "heading:3")" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnContextMenuCommand(() => OnHeadingRequested(3))">Heading 3</button>
+        </div>
+        <div class="editor-context-menu-group">
+            <div class="editor-context-menu-label">Lists</div>
+            <button type="button" disabled="@(!_formattingState.CanToggleList)" @onclick="() => OnContextMenuCommand(OnBulletListRequested)">Bullet list</button>
+            <button type="button" disabled="@(!_formattingState.CanToggleList)" @onclick="() => OnContextMenuCommand(OnOrderedListRequested)">Ordered list</button>
+        </div>
+        <div class="editor-context-menu-group">
+            <div class="editor-context-menu-label">Other</div>
+            <button type="button" disabled="@(!_formattingState.CanBlockquote)" @onclick="() => OnContextMenuCommand(OnBlockquoteRequested)">Blockquote</button>
+        </div>
+    </div>
+}
 
 <style>
     .editor-preview-layout {
@@ -399,6 +437,72 @@
         cursor: not-allowed;
     }
 
+    .editor-context-menu-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 40;
+    }
+
+    .editor-context-menu {
+        position: fixed;
+        z-index: 41;
+        min-width: 200px;
+        padding: 6px;
+        border: 1px solid #d6d6d6;
+        border-radius: 6px;
+        background: #fff;
+        box-shadow: 0 10px 24px rgba(0, 0, 0, 0.12);
+    }
+
+    .editor-context-menu:focus {
+        outline: none;
+    }
+
+    .editor-context-menu-group {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        padding: 4px 2px;
+    }
+
+    .editor-context-menu-group + .editor-context-menu-group {
+        border-top: 1px solid #ececec;
+        margin-top: 4px;
+        padding-top: 6px;
+    }
+
+    .editor-context-menu-label {
+        font-size: 0.75rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #6b6b6b;
+        padding: 4px 8px;
+    }
+
+    .editor-context-menu button {
+        width: 100%;
+        border: none;
+        background: transparent;
+        text-align: left;
+        padding: 6px 8px;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+
+    .editor-context-menu button:hover:not(:disabled) {
+        background: #f0f3f8;
+    }
+
+    .editor-context-menu button.is-active {
+        background: #e6eefc;
+        color: #1f2a44;
+    }
+
+    .editor-context-menu button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
     .dirty-indicator {
         font-weight: 600;
         color: #b45309;
@@ -538,6 +642,11 @@
     private Guid? _dropTargetSectionId;
     private DropPosition? _dropPosition;
     private bool _isReordering;
+    private bool _isContextMenuOpen;
+    private double _contextMenuX;
+    private double _contextMenuY;
+    private ElementReference _contextMenuRef;
+    private bool _shouldFocusContextMenu;
 
     private const string StorageKey = "writerapp.document";
     private const string StorageIndexKey = "writerapp.document.index";
@@ -568,14 +677,18 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!firstRender || _loadedFromStorage)
+        if (firstRender && !_loadedFromStorage)
         {
-            return;
+            _loadedFromStorage = true;
+            await LoadDocumentIndexAsync();
+            await LoadDocumentAsync();
         }
 
-        _loadedFromStorage = true;
-        await LoadDocumentIndexAsync();
-        await LoadDocumentAsync();
+        if (_shouldFocusContextMenu)
+        {
+            _shouldFocusContextMenu = false;
+            await _contextMenuRef.FocusAsync();
+        }
     }
 
     private Task OnSectionContentChanged(string html)
@@ -1122,6 +1235,49 @@
     }
 
     private static string GetActiveClass(bool isActive) => isActive ? "is-active" : string.Empty;
+
+    private string GetContextMenuStyle()
+    {
+        string left = _contextMenuX.ToString(CultureInfo.InvariantCulture);
+        string top = _contextMenuY.ToString(CultureInfo.InvariantCulture);
+        return $"left: {left}px; top: {top}px;";
+    }
+
+    private Task OnEditorContextMenuRequested(SectionEditor.EditorContextMenuRequest request)
+    {
+        return ExecuteSafeAsync("OnEditorContextMenuRequested", () =>
+        {
+            _isContextMenuOpen = true;
+            _contextMenuX = request.X;
+            _contextMenuY = request.Y;
+            _shouldFocusContextMenu = true;
+            return InvokeAsync(StateHasChanged);
+        });
+    }
+
+    private void CloseContextMenu()
+    {
+        _isContextMenuOpen = false;
+    }
+
+    private async Task OnContextMenuCommand(Func<Task> command)
+    {
+        CloseContextMenu();
+        if (command is null)
+        {
+            return;
+        }
+
+        await command();
+    }
+
+    private void OnContextMenuKeyDown(KeyboardEventArgs args)
+    {
+        if (string.Equals(args.Key, "Escape", StringComparison.Ordinal))
+        {
+            CloseContextMenu();
+        }
+    }
 
     private Task HandleDocumentChangedAsync()
     {

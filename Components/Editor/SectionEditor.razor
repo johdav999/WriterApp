@@ -10,6 +10,7 @@
     private bool _initialized;
     private bool _isEditing;
     private bool _disposed;
+    private bool _contextMenuAttached;
 
     [Parameter]
     [EditorRequired]
@@ -33,6 +34,9 @@
     [Parameter]
     public EventCallback<IJSObjectReference> EditorReady { get; set; }
 
+    [Parameter]
+    public EventCallback<EditorContextMenuRequest> ContextMenuRequested { get; set; }
+
     [Inject]
     private IJSRuntime JSRuntime { get; set; } = default!;
 
@@ -49,6 +53,9 @@
             _elementId,
             Content,
             _dotNetRef);
+
+        await JSRuntime.InvokeVoidAsync("tiptapEditor.attachContextMenu", _elementId, _dotNetRef);
+        _contextMenuAttached = true;
 
         _initialized = true;
 
@@ -119,6 +126,15 @@
         }
     }
 
+    [JSInvokable]
+    public async Task OnEditorContextMenu(double clientX, double clientY)
+    {
+        if (ContextMenuRequested.HasDelegate)
+        {
+            await ContextMenuRequested.InvokeAsync(new EditorContextMenuRequest(clientX, clientY));
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (_disposed)
@@ -127,6 +143,24 @@
         }
 
         _disposed = true;
+
+        if (_contextMenuAttached)
+        {
+            try
+            {
+                await JSRuntime.InvokeVoidAsync("tiptapEditor.detachContextMenu", _elementId);
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            finally
+            {
+                _contextMenuAttached = false;
+            }
+        }
 
         if (_editor is not null)
         {
@@ -160,4 +194,6 @@
         _dotNetRef?.Dispose();
         _dotNetRef = null;
     }
+
+    public sealed record EditorContextMenuRequest(double X, double Y);
 }
