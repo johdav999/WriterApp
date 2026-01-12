@@ -11,6 +11,8 @@ namespace WriterApp.Domain.Documents
 
         public List<AIHistoryEntry> AIHistory { get; init; } = new();
 
+        public List<AiEditGroupEntry> AiEditGroups { get; init; } = new();
+
         public SectionAIInfo()
         {
         }

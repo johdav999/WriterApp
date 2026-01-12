@@ -6,8 +6,9 @@ namespace WriterApp.Application.Commands
     /// <summary>
     /// Applies an AI rewrite result to a section with undoable audit metadata.
     /// </summary>
-    public sealed class AiRewriteSectionCommand : DocumentEditCommand
+    public sealed class AiRewriteSectionCommand : DocumentEditCommand, IAiEditCommand
     {
+        private readonly AiEditGroup _group;
         private readonly string _aiResult;
         private SectionContent? _previousContent;
         private DateTime _previousModifiedUtc;
@@ -15,12 +16,27 @@ namespace WriterApp.Application.Commands
         private bool _hasExecuted;
 
         public AiRewriteSectionCommand(Guid sectionId, string aiResult)
+            : this(sectionId, aiResult, new AiEditGroup(sectionId))
+        {
+        }
+
+        public AiRewriteSectionCommand(Guid sectionId, string aiResult, AiEditGroup group)
             : base(sectionId, EditOrigin.AI)
         {
+            _group = group ?? throw new ArgumentNullException(nameof(group));
+            if (_group.SectionId != sectionId)
+            {
+                throw new ArgumentException("AI edit group section does not match command section.", nameof(group));
+            }
+
             _aiResult = aiResult ?? string.Empty;
         }
 
         public override string Name => "AiRewriteSection";
+
+        public Guid AiEditGroupId => _group.GroupId;
+
+        public string? AiEditGroupReason => _group.Reason;
 
         public override void Execute(Document document)
         {
