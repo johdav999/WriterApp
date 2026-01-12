@@ -6,8 +6,9 @@ namespace WriterApp.Application.Commands
     /// <summary>
     /// Replaces a range in a section with AI-provided text and supports undo/redo.
     /// </summary>
-    public sealed class AiReplaceSectionRangeCommand : DocumentEditCommand
+    public sealed class AiReplaceSectionRangeCommand : DocumentEditCommand, IAiEditCommand
     {
+        private readonly AiEditGroup _group;
         private readonly int _start;
         private readonly int _length;
         private readonly string _newText;
@@ -15,6 +16,11 @@ namespace WriterApp.Application.Commands
         private bool _hasExecuted;
 
         public AiReplaceSectionRangeCommand(Guid sectionId, int start, int length, string newText, string? reason = null)
+            : this(sectionId, start, length, newText, new AiEditGroup(sectionId, reason), reason)
+        {
+        }
+
+        public AiReplaceSectionRangeCommand(Guid sectionId, int start, int length, string newText, AiEditGroup group, string? reason = null)
             : base(sectionId, EditOrigin.AI)
         {
             if (start < 0)
@@ -27,6 +33,12 @@ namespace WriterApp.Application.Commands
                 throw new ArgumentOutOfRangeException(nameof(length));
             }
 
+            _group = group ?? throw new ArgumentNullException(nameof(group));
+            if (_group.SectionId != sectionId)
+            {
+                throw new ArgumentException("AI edit group section does not match command section.", nameof(group));
+            }
+
             _start = start;
             _length = length;
             _newText = newText ?? string.Empty;
@@ -34,6 +46,10 @@ namespace WriterApp.Application.Commands
         }
 
         public override string Name => "AiReplaceSectionRange";
+
+        public Guid AiEditGroupId => _group.GroupId;
+
+        public string? AiEditGroupReason => _group.Reason ?? Reason;
 
         public int Start => _start;
 
