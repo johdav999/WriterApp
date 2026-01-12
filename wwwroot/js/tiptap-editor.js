@@ -46,6 +46,27 @@ const TextStyleWithFontSize = TextStyle.extend({
 
 const fontSizePresets = [12, 14, 16, 18, 24, 32];
 
+function createInteropState(dotNetRef) {
+    return { enabled: !!dotNetRef };
+}
+
+function safeInvoke(dotNetRef, interopState, method, ...args) {
+    if (!dotNetRef || !interopState || !interopState.enabled) {
+        return;
+    }
+
+    try {
+        const result = dotNetRef.invokeMethodAsync(method, ...args);
+        if (result && typeof result.catch === "function") {
+            result.catch(() => {
+                interopState.enabled = false;
+            });
+        }
+    } catch (error) {
+        interopState.enabled = false;
+    }
+}
+
 function parseFontSize(value) {
     if (value === null || value === undefined) {
         return null;
@@ -273,6 +294,7 @@ function buildFormattingState(editor) {
 
 window.tiptapEditor = {
     create: function (elementId, initialContent, dotNetRef) {
+        const interopState = createInteropState(dotNetRef);
         const ShortcutExtension = Extension.create({
             name: "appShortcuts",
             addKeyboardShortcuts() {
@@ -338,21 +360,15 @@ window.tiptapEditor = {
                         return true;
                     },
                     "Mod-z": () => {
-                        if (dotNetRef) {
-                            dotNetRef.invokeMethodAsync("OnUndoShortcut");
-                        }
+                        safeInvoke(dotNetRef, interopState, "OnUndoShortcut");
                         return true;
                     },
                     "Mod-Shift-z": () => {
-                        if (dotNetRef) {
-                            dotNetRef.invokeMethodAsync("OnRedoShortcut");
-                        }
+                        safeInvoke(dotNetRef, interopState, "OnRedoShortcut");
                         return true;
                     },
                     "Mod-y": () => {
-                        if (dotNetRef) {
-                            dotNetRef.invokeMethodAsync("OnRedoShortcut");
-                        }
+                        safeInvoke(dotNetRef, interopState, "OnRedoShortcut");
                         return true;
                     }
                 };
@@ -375,16 +391,15 @@ window.tiptapEditor = {
                 }
             },
             onUpdate({ editor }) {
-                dotNetRef.invokeMethodAsync(
-                    "OnEditorContentChanged",
-                    editor.getHTML()
-                );
+                safeInvoke(dotNetRef, interopState, "OnEditorContentChanged", editor.getHTML());
             }
         });
 
+        editor.__interopState = interopState;
+
         let lastFormattingState = "";
         const pushFormattingState = () => {
-            if (!dotNetRef) {
+            if (!dotNetRef || !interopState.enabled) {
                 return;
             }
 
@@ -395,7 +410,7 @@ window.tiptapEditor = {
             }
 
             lastFormattingState = serialized;
-            dotNetRef.invokeMethodAsync("OnEditorFormattingChanged", state);
+            safeInvoke(dotNetRef, interopState, "OnEditorFormattingChanged", state);
         };
 
         editor.on("selectionUpdate", pushFormattingState);
@@ -404,7 +419,7 @@ window.tiptapEditor = {
 
         let lastOutlineState = "";
         const pushOutlineState = () => {
-            if (!dotNetRef) {
+            if (!dotNetRef || !interopState.enabled) {
                 return;
             }
 
@@ -415,7 +430,7 @@ window.tiptapEditor = {
             }
 
             lastOutlineState = serialized;
-            dotNetRef.invokeMethodAsync("OnEditorOutlineChanged", outline);
+            safeInvoke(dotNetRef, interopState, "OnEditorOutlineChanged", outline);
         };
 
         editor.on("update", pushOutlineState);
@@ -456,11 +471,58 @@ window.tiptapEditor = {
         return editor;
     },
 
+    prepareSectionDrag: function (event) {
+        if (!event || !event.dataTransfer) {
+            return;
+        }
+
+        event.dataTransfer.setData("text/plain", "section");
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.dropEffect = "move";
+    },
+
     setContent: function (editor, content) {
         editor.commands.setContent(content, false);
     },
 
     destroy: function (editor) {
+        if (editor && editor.__interopState) {
+            editor.__interopState.enabled = false;
+        }
         editor.destroy();
     }
 };
+
+if (!window.__writerAppDragInit) {
+    window.__writerAppDragInit = true;
+    document.addEventListener("dragstart", event => {
+        let targetElement = null;
+        if (event.target instanceof Element) {
+            targetElement = event.target;
+        } else if (event.target && event.target.parentElement) {
+            targetElement = event.target.parentElement;
+        }
+
+        let draggableRoot = targetElement?.closest?.(".drag-handle");
+        if (!draggableRoot && typeof event.composedPath === "function") {
+            const path = event.composedPath();
+            draggableRoot = path.find(entry => entry instanceof Element && entry.classList.contains("drag-handle"));
+        }
+
+        if (!draggableRoot) {
+            draggableRoot = targetElement?.closest?.(".section-nav-row");
+        }
+
+        if (!draggableRoot || !draggableRoot.draggable) {
+            return;
+        }
+
+        if (!event.dataTransfer) {
+            return;
+        }
+
+        event.dataTransfer.setData("text/plain", "section");
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.dropEffect = "move";
+    });
+}
