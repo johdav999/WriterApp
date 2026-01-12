@@ -19,9 +19,9 @@ namespace WriterApp.Application.Commands
             _newContent = newContent ?? string.Empty;
         }
 
-        public string Name => "UpdateSectionContent";
+        public override string Name => "UpdateSectionContent";
 
-        public void Execute(Document document)
+        public override void Execute(Document document)
         {
             if (document is null)
             {
@@ -44,7 +44,7 @@ namespace WriterApp.Application.Commands
             _hasExecuted = true;
         }
 
-        public void Undo(Document document)
+        public override void Undo(Document document)
         {
             if (document is null)
             {

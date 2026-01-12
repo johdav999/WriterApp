@@ -37,6 +37,9 @@
     [Parameter]
     public EventCallback<EditorContextMenuRequest> ContextMenuRequested { get; set; }
 
+    [Parameter]
+    public EventCallback<EditorSelectionRange> SelectionChanged { get; set; }
+
     [Inject]
     private IJSRuntime JSRuntime { get; set; } = default!;
 
@@ -135,6 +138,15 @@
         }
     }
 
+    [JSInvokable]
+    public async Task OnEditorSelectionChanged(int start, int end)
+    {
+        if (SelectionChanged.HasDelegate)
+        {
+            await SelectionChanged.InvokeAsync(new EditorSelectionRange(start, end));
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (_disposed)
@@ -196,4 +208,6 @@
     }
 
     public sealed record EditorContextMenuRequest(double X, double Y);
+
+    public sealed record EditorSelectionRange(int Start, int End);
 }

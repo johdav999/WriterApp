@@ -20,9 +20,9 @@ namespace WriterApp.Application.Commands
             _aiResult = aiResult ?? string.Empty;
         }
 
-        public string Name => "AiRewriteSection";
+        public override string Name => "AiRewriteSection";
 
-        public void Execute(Document document)
+        public override void Execute(Document document)
         {
             if (document is null)
             {
@@ -47,7 +47,7 @@ namespace WriterApp.Application.Commands
             _hasExecuted = true;
         }
 
-        public void Undo(Document document)
+        public override void Undo(Document document)
         {
             if (document is null)
             {
