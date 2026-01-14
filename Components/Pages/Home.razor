@@ -4,14 +4,19 @@
 @using System.Collections.Generic
 @using System.Globalization
 @using System.Linq
+@using System.Runtime.CompilerServices
 @using System.Text.Json
 @using System.Text.RegularExpressions
+@using System.Threading
 @using BlazorApp.Components.Editor
 @using Microsoft.AspNetCore.Components
 @using Microsoft.AspNetCore.Components.Web
 @using Microsoft.Extensions.Hosting
 @using Microsoft.Extensions.Logging
+@using Microsoft.Extensions.Options
 @using Microsoft.JSInterop
+@using WriterApp.AI.Abstractions
+@using WriterApp.AI.Actions
 @using WriterApp.Application.Commands
 @using WriterApp.Application.State
 @using WriterApp.Domain.Documents
@@ -20,7 +25,11 @@
 @inject IJSRuntime JSRuntime
 @inject ILogger<Home> Logger
 @inject IWebHostEnvironment HostEnvironment
-@inject IAiTextService AiTextService
+@inject IAiOrchestrator AiOrchestrator
+@inject IAiProposalApplier AiProposalApplier
+@inject IArtifactStore ArtifactStore
+@inject IAiAttachmentStore AiAttachmentStore
+@inject IOptions<WriterAiOptions> AiOptions
 
 <PageTitle>Writer</PageTitle>
 
@@ -104,6 +113,10 @@
                 <button type="button" @onclick="OnUndo" disabled="@(!_commandProcessor.CanUndo)">Undo</button>
                 <button type="button" @onclick="OnRedo" disabled="@(!_commandProcessor.CanRedo)">Redo</button>
                 <button type="button" @onclick="OnSave">Save</button>
+                @if (IsAiEnabled && _aiOptions.UI.ShowAiMenu && AiOrchestrator.CanRunAction(GenerateCoverImageAction.ActionIdValue))
+                {
+                    <button type="button" @onclick="OnGenerateCoverImage">Generate cover image (mock)</button>
+                }
                 <select class="editor-toolbar-select" value="@_selectedDocumentId" @onchange="OnSelectedDocumentChanged">
                     <option value="">Load document...</option>
                     @foreach (DocumentIndexEntry entry in _savedDocuments)
@@ -119,26 +132,44 @@
                 <span class="@GetDirtyClass()">@GetDirtyLabel()</span>
                 <span>@GetLastSavedLabel()</span>
             </div>
-            @if (_pendingAiEdit is not null)
+            @if (_pendingAiProposal is not null)
             {
                 <div class="ai-preview">
                     <div class="ai-preview-header">
                         <strong>AI suggestion</strong>
-                        <span>@_pendingAiEdit.Instruction</span>
+                        <span>@_pendingAiProposal.Instruction</span>
+                        @if (_isAiStreaming)
+                        {
+                            <span class="ai-preview-status">Generating...</span>
+                        }
+                        else if (!string.IsNullOrWhiteSpace(_aiStreamError))
+                        {
+                            <span class="ai-preview-status error">@_aiStreamError</span>
+                        }
                     </div>
-                    <div class="ai-preview-columns">
-                        <div class="ai-preview-pane">
-                            <div class="ai-preview-label">Original</div>
-                            <div class="ai-preview-text">@_pendingAiEdit.OriginalText</div>
+                    @if (!string.IsNullOrWhiteSpace(_pendingAiProposal.ProposedText))
+                    {
+                        <div class="ai-preview-columns">
+                            <div class="ai-preview-pane">
+                                <div class="ai-preview-label">Original</div>
+                                <div class="ai-preview-text">@_pendingAiProposal.OriginalText</div>
+                            </div>
+                            <div class="ai-preview-pane">
+                                <div class="ai-preview-label">Proposed</div>
+                                <div class="ai-preview-text">@_pendingAiProposal.ProposedText</div>
+                            </div>
                         </div>
-                        <div class="ai-preview-pane">
-                            <div class="ai-preview-label">Proposed</div>
-                            <div class="ai-preview-text">@_pendingAiEdit.ProposedText</div>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(_pendingAiProposal.ImageDataUrl))
+                    {
+                        <div class="ai-preview-image">
+                            <div class="ai-preview-label">Proposed image</div>
+                            <img src="@_pendingAiProposal.ImageDataUrl" alt="Proposed cover" />
                         </div>
-                    </div>
+                    }
                     <div class="ai-preview-actions">
-                        <button type="button" @onclick="OnApplyPendingAiEdit">Apply</button>
-                        <button type="button" @onclick="OnDiscardPendingAiEdit">Discard</button>
+                        <button type="button" @onclick="OnApplyPendingAiProposal" disabled="@(!_canApplyPendingAiProposal)">Apply</button>
+                        <button type="button" @onclick="OnDiscardPendingAiProposal">Discard</button>
                     </div>
                 </div>
             }
@@ -181,6 +212,12 @@
                     </ul>
                 }
             </div>
+            @if (GetCoverImageDataUrl(_activeSectionId) is string coverUrl)
+            {
+                <div class="cover-image-preview">
+                    <img src="@coverUrl" alt="Cover image" />
+                </div>
+            }
             <div class="document-preview">
                 @if (_previewSections is not null)
                 {
@@ -233,7 +270,7 @@
         @if (_hasAiEditsAtSelection)
         {
             <div class="editor-context-menu-group">
-                <div class="editor-context-menu-label">AI</div>
+                <div class="editor-context-menu-label">AI History</div>
                 <button type="button" @onclick="() => OnContextMenuCommand(OnRollbackAiEdit)">Revert AI change</button>
                 @if (_hasMultipleAiEditsInSection)
                 {
@@ -248,11 +285,11 @@
                 <button type="button" @onclick="() => OnContextMenuCommand(OnSimulateAiEdit)">Simulate AI edit (test)</button>
             </div>
         }
-        @if (_currentSelectionRange is not null)
+        @if (_currentSelectionRange is not null && CanShowAiMenu && AiOrchestrator.CanRunAction(RewriteSelectionAction.ActionIdValue))
         {
             <div class="editor-context-menu-group">
-                <div class="editor-context-menu-label">AI Actions</div>
-                @foreach (AiActionDefinition action in _aiActions)
+                <div class="editor-context-menu-label">AI</div>
+                @foreach (AiActionOption action in _aiActions)
                 {
                     <button type="button" @onclick="() => OnContextMenuCommand(() => OnAiActionSelected(action))">@action.Label</button>
                 }
@@ -591,6 +628,16 @@
         font-size: 0.95rem;
     }
 
+    .ai-preview-status {
+        margin-left: auto;
+        font-size: 0.85rem;
+        color: #8a6d3b;
+    }
+
+    .ai-preview-status.error {
+        color: #b00020;
+    }
+
     .ai-preview-columns {
         display: grid;
         gap: 12px;
@@ -613,6 +660,22 @@
     .ai-preview-text {
         font-size: 0.95rem;
         white-space: pre-wrap;
+    }
+
+    .ai-preview-image {
+        border: 1px solid #e8e8e8;
+        border-radius: 4px;
+        padding: 8px;
+        background: #fff;
+        display: grid;
+        gap: 6px;
+    }
+
+    .ai-preview-image img {
+        max-width: 100%;
+        height: auto;
+        border-radius: 4px;
+        border: 1px solid #eee;
     }
 
     .ai-preview-actions {
@@ -638,6 +701,23 @@
         color: #1e1e1e;
         border: 1px solid #e2e2e2;
         box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+    }
+
+    .cover-image-preview {
+        max-width: 760px;
+        margin: 0 auto 16px;
+        padding: 12px;
+        background: #fff;
+        border: 1px solid #e2e2e2;
+        border-radius: 8px;
+        box-shadow: 0 6px 16px rgba(0, 0, 0, 0.05);
+    }
+
+    .cover-image-preview img {
+        width: 100%;
+        height: auto;
+        display: block;
+        border-radius: 6px;
     }
 
     .document-section {
@@ -759,18 +839,67 @@
     private bool _hasMultipleAiEditsInSection;
     private Guid? _aiRollbackGroupId;
     private bool _isReordering;
-    private PendingAiEdit? _pendingAiEdit;
-    private readonly List<AiActionDefinition> _aiActions = new()
+    private PendingAiProposal? _pendingAiProposal;
+    private CancellationTokenSource? _aiStreamCts;
+    private bool _isAiStreaming;
+    private string? _aiStreamError;
+    private string _streamedText = string.Empty;
+    private string? _streamedImageReference;
+    private readonly List<AiActionOption> _aiActions = new()
     {
-        new AiActionDefinition(AiActionKind.RewriteSelection, "Rewrite selection", "Rewrite selection", AiActionScope.Selection),
-        new AiActionDefinition(AiActionKind.ShortenSelection, "Shorten selection", "Shorten selection", AiActionScope.Selection),
-        new AiActionDefinition(AiActionKind.FixGrammar, "Fix grammar", "Fix grammar", AiActionScope.Selection),
-        new AiActionDefinition(AiActionKind.ChangeTone, "Change tone", "Change tone", AiActionScope.Selection),
-        new AiActionDefinition(AiActionKind.SummarizeParagraph, "Summarize paragraph", "Summarize paragraph", AiActionScope.Paragraph)
+        new AiActionOption("Rewrite (Neutral)", "Rewrite (Neutral)", AiActionScope.Selection, new Dictionary<string, object?>
+        {
+            ["tone"] = "Neutral",
+            ["length"] = "Same",
+            ["preserve_terms"] = true
+        }),
+        new AiActionOption("Rewrite (Formal)", "Rewrite (Formal)", AiActionScope.Selection, new Dictionary<string, object?>
+        {
+            ["tone"] = "Formal",
+            ["length"] = "Same",
+            ["preserve_terms"] = true
+        }),
+        new AiActionOption("Rewrite (Casual)", "Rewrite (Casual)", AiActionScope.Selection, new Dictionary<string, object?>
+        {
+            ["tone"] = "Casual",
+            ["length"] = "Same",
+            ["preserve_terms"] = true
+        }),
+        new AiActionOption("Rewrite (Executive)", "Rewrite (Executive)", AiActionScope.Selection, new Dictionary<string, object?>
+        {
+            ["tone"] = "Executive",
+            ["length"] = "Same",
+            ["preserve_terms"] = true
+        }),
+        new AiActionOption("Shorten (Neutral)", "Shorten (Neutral)", AiActionScope.Selection, new Dictionary<string, object?>
+        {
+            ["tone"] = "Neutral",
+            ["length"] = "Shorter",
+            ["preserve_terms"] = true
+        }),
+        new AiActionOption("Fix grammar (Neutral)", "Fix grammar (Neutral)", AiActionScope.Selection, new Dictionary<string, object?>
+        {
+            ["tone"] = "Neutral",
+            ["length"] = "Same",
+            ["preserve_terms"] = true
+        }),
+        new AiActionOption("Change tone (Friendly)", "Change tone (Friendly)", AiActionScope.Selection, new Dictionary<string, object?>
+        {
+            ["tone"] = "Friendly",
+            ["length"] = "Same",
+            ["preserve_terms"] = true
+        }),
+        new AiActionOption("Change tone (Technical)", "Change tone (Technical)", AiActionScope.Selection, new Dictionary<string, object?>
+        {
+            ["tone"] = "Technical",
+            ["length"] = "Same",
+            ["preserve_terms"] = true
+        })
     };
     private const string StorageKey = "writerapp.document";
     private const string StorageIndexKey = "writerapp.document.index";
     private const string StoragePrefix = "writerapp.document.";
+    private WriterAiOptions _aiOptions = new();
 
     public Home()
     {
@@ -790,6 +919,7 @@
 
     protected override void OnInitialized()
     {
+        _aiOptions = AiOptions.Value;
         RefreshFromDocument(_state.Document);
         _lastSavedUtc = _state.Document.Metadata.ModifiedUtc;
         _isDirty = false;
@@ -938,7 +1068,7 @@
 
             _commandProcessor.ClearHistory();
             _activeSectionId = sectionId;
-            _pendingAiEdit = null;
+            _pendingAiProposal = null;
             _skipNextEditorSync = false;
             _suppressDirtyUpdate = true;
             _currentSelectionRange = null;
@@ -1416,101 +1546,517 @@
         });
     }
 
-    private Task OnAiActionSelected(AiActionDefinition action)
+    private Task OnAiActionSelected(AiActionOption action)
     {
-        return ExecuteSafeAsync("OnAiActionSelected", () =>
+        return ExecuteSafeAsync("OnAiActionSelected", async () =>
         {
+            if (!IsAiEnabled)
+            {
+                ShowAiMessage("AI is disabled by configuration.");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
             if (_currentSelectionRange is null)
             {
-                return Task.CompletedTask;
+                return;
+            }
+
+            if (!AiOrchestrator.CanRunAction(RewriteSelectionAction.ActionIdValue))
+            {
+                return;
             }
 
             string plainText = PlainTextMapper.ToPlainText(_activeSectionContent);
             if (plainText.Length == 0)
             {
-                return Task.CompletedTask;
+                return;
             }
 
-            TextRange range = _currentSelectionRange.Length > 0
-                ? _currentSelectionRange
-                : new TextRange(0, plainText.Length);
+            CancelAiStream();
 
-            int start = Math.Clamp(range.Start, 0, plainText.Length);
-            int end = Math.Clamp(range.Start + range.Length, 0, plainText.Length);
-            if (end < start)
+            TextRange normalized = NormalizeRange(_currentSelectionRange, plainText.Length);
+            TextRange selectionRange = ResolveSelectionRange(action, normalized, plainText.Length);
+            string originalText = ExtractRangeText(plainText, selectionRange);
+
+            AiActionInput input = new(
+                _state.Document,
+                _activeSectionId,
+                selectionRange,
+                originalText,
+                action.Instruction,
+                action.Inputs);
+
+            AiStreamingCapabilities streamingCapabilities = AiOrchestrator.GetStreamingCapabilities(RewriteSelectionAction.ActionIdValue);
+            if (streamingCapabilities.SupportsTextStreaming)
             {
-                (start, end) = (end, start);
+                bool started = await StartAiStreamingAsync(
+                    RewriteSelectionAction.ActionIdValue,
+                    input,
+                    BuildActionLabel(action),
+                    originalText);
+                if (!started)
+                {
+                    await InvokeAsync(StateHasChanged);
+                }
+
+                return;
             }
 
-            string originalText = plainText.Substring(start, Math.Max(0, end - start));
-            TextRange selectionRange = new(start, Math.Max(0, end - start));
-            AiActionScope scope = ResolveAiScope(action, selectionRange, plainText.Length);
-            AiTextProposal proposal = AiTextService.ProposeText(
-                _activeSectionId,
-                selectionRange,
-                originalText,
-                action.Instruction,
-                scope);
+            AiProposal proposal;
+            try
+            {
+                proposal = await AiOrchestrator.ExecuteActionAsync(
+                    RewriteSelectionAction.ActionIdValue,
+                    input,
+                    CancellationToken.None);
+            }
+            catch (InvalidOperationException ex)
+            {
+                ShowAiMessage(ex.Message);
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
 
-            _pendingAiEdit = new PendingAiEdit(
-                _activeSectionId,
-                selectionRange,
+            _pendingAiProposal = new PendingAiProposal(
+                proposal,
+                BuildActionLabel(action),
                 originalText,
-                proposal.ProposedText,
-                proposal.Explanation,
-                action.Instruction,
+                GetProposedText(proposal),
+                GetImageDataUrl(proposal),
                 DateTime.UtcNow);
+            _aiStreamError = null;
 
-            return InvokeAsync(StateHasChanged);
+            await InvokeAsync(StateHasChanged);
         });
     }
 
-    private static AiActionScope ResolveAiScope(AiActionDefinition action, TextRange range, int sectionLength)
+    private Task OnGenerateCoverImage()
     {
-        if (action.Scope == AiActionScope.Paragraph)
+        return ExecuteSafeAsync("OnGenerateCoverImage", async () =>
         {
-            return AiActionScope.Paragraph;
-        }
+            if (!IsAiEnabled)
+            {
+                ShowAiMessage("AI is disabled by configuration.");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
 
-        if (range.Start == 0 && range.Length >= sectionLength)
-        {
-            return AiActionScope.Section;
-        }
+            if (!AiOrchestrator.CanRunAction(GenerateCoverImageAction.ActionIdValue))
+            {
+                return;
+            }
 
-        return AiActionScope.Selection;
+            CancelAiStream();
+
+            string plainText = PlainTextMapper.ToPlainText(_activeSectionContent);
+            TextRange selectionRange = new(0, Math.Max(0, plainText.Length));
+
+            AiActionInput input = new(
+                _state.Document,
+                _activeSectionId,
+                selectionRange,
+                string.Empty,
+                "Generate cover image",
+                null);
+
+            AiStreamingCapabilities streamingCapabilities = AiOrchestrator.GetStreamingCapabilities(GenerateCoverImageAction.ActionIdValue);
+            if (streamingCapabilities.SupportsImageStreaming)
+            {
+                bool started = await StartAiStreamingAsync(
+                    GenerateCoverImageAction.ActionIdValue,
+                    input,
+                    "Generate cover image",
+                    string.Empty);
+                if (!started)
+                {
+                    await InvokeAsync(StateHasChanged);
+                }
+
+                return;
+            }
+
+            AiProposal proposal;
+            try
+            {
+                proposal = await AiOrchestrator.ExecuteActionAsync(
+                    GenerateCoverImageAction.ActionIdValue,
+                    input,
+                    CancellationToken.None);
+            }
+            catch (InvalidOperationException ex)
+            {
+                ShowAiMessage(ex.Message);
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            _pendingAiProposal = new PendingAiProposal(
+                proposal,
+                "Generate cover image",
+                string.Empty,
+                GetProposedText(proposal),
+                GetImageDataUrl(proposal),
+                DateTime.UtcNow);
+            _aiStreamError = null;
+
+            if (proposal.ArtifactIds.Count > 0)
+            {
+                AiAttachmentStore.SetCoverImageId(_activeSectionId, proposal.ArtifactIds[0]);
+            }
+
+            await InvokeAsync(StateHasChanged);
+        });
     }
 
-    private Task OnApplyPendingAiEdit()
+    private bool _canApplyPendingAiProposal => !_isAiStreaming && _pendingAiProposal?.Proposal is not null;
+
+    private Task OnApplyPendingAiProposal()
     {
-        return ExecuteSafeAsync("OnApplyPendingAiEdit", () =>
+        return ExecuteSafeAsync("OnApplyPendingAiProposal", () =>
         {
-            if (_pendingAiEdit is null)
+            if (_pendingAiProposal is null)
             {
                 return Task.CompletedTask;
             }
 
-            PendingAiEdit pending = _pendingAiEdit;
-            _pendingAiEdit = null;
+            PendingAiProposal pending = _pendingAiProposal;
+            if (_isAiStreaming || pending.Proposal is null)
+            {
+                return Task.CompletedTask;
+            }
 
-            AiEditGroup group = new(pending.SectionId, pending.Instruction);
-            _commandProcessor.Execute(new AiReplacePlainTextRangeCommand(
-                pending.SectionId,
-                pending.Range,
-                pending.ProposedText,
-                group,
-                pending.Instruction));
+            _pendingAiProposal = null;
+            AiProposalApplier.Apply(_commandProcessor, pending.Proposal);
+            AiAttachmentStore.SetCoverImageId(pending.Proposal.SectionId, null);
 
             return InvokeCommandAsync("focusEditor");
         });
     }
 
-    private Task OnDiscardPendingAiEdit()
+    private Task OnDiscardPendingAiProposal()
     {
-        return ExecuteSafeAsync("OnDiscardPendingAiEdit", () =>
+        return ExecuteSafeAsync("OnDiscardPendingAiProposal", () =>
         {
-            _pendingAiEdit = null;
+            CancelAiStream();
+            _pendingAiProposal = null;
+            _aiStreamError = null;
+            AiAttachmentStore.SetCoverImageId(_activeSectionId, null);
             return InvokeAsync(StateHasChanged);
         });
+    }
+
+    private async Task<bool> StartAiStreamingAsync(
+        string actionId,
+        AiActionInput input,
+        string instructionLabel,
+        string originalText)
+    {
+        CancelAiStream();
+
+        CancellationTokenSource cts = new();
+        _aiStreamCts = cts;
+        _isAiStreaming = true;
+        _aiStreamError = null;
+        _streamedText = string.Empty;
+        _streamedImageReference = null;
+
+        // Preview updates stream into the panel; apply is only enabled after completion.
+        _pendingAiProposal = new PendingAiProposal(
+            null,
+            instructionLabel,
+            originalText,
+            null,
+            null,
+            DateTime.UtcNow);
+
+        await InvokeAsync(StateHasChanged);
+
+        AiStreamingSession session;
+        try
+        {
+            session = AiOrchestrator.StreamActionAsync(actionId, input, cts.Token);
+        }
+        catch (InvalidOperationException ex)
+        {
+            ShowAiMessage(ex.Message);
+            return false;
+        }
+
+        try
+        {
+            await foreach (AiStreamEvent streamEvent in session.Events.WithCancellation(cts.Token))
+            {
+                switch (streamEvent)
+                {
+                    case AiStreamEvent.TextDelta textDelta:
+                        if (!string.IsNullOrEmpty(textDelta.Delta))
+                        {
+                            _streamedText += textDelta.Delta;
+                            if (_pendingAiProposal is not null)
+                            {
+                                _pendingAiProposal = _pendingAiProposal with { ProposedText = _streamedText };
+                            }
+                        }
+
+                        break;
+                    case AiStreamEvent.ImageDelta imageDelta:
+                        if (!string.IsNullOrWhiteSpace(imageDelta.Reference))
+                        {
+                            _streamedImageReference = imageDelta.Reference;
+                            if (_pendingAiProposal is not null)
+                            {
+                                _pendingAiProposal = _pendingAiProposal with { ImageDataUrl = imageDelta.Reference };
+                            }
+                        }
+
+                        break;
+                    case AiStreamEvent.Failed failed:
+                        _aiStreamError = failed.Error;
+                        break;
+                }
+
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+        finally
+        {
+            if (_aiStreamCts == cts)
+            {
+                _aiStreamCts = null;
+                _isAiStreaming = false;
+            }
+        }
+
+        if (cts.IsCancellationRequested)
+        {
+            return false;
+        }
+
+        AiProposal? proposal = await session.Completion;
+        if (proposal is null)
+        {
+            await InvokeAsync(StateHasChanged);
+            return false;
+        }
+
+        string? proposedText = GetProposedText(proposal);
+        string? imageDataUrl = GetImageDataUrl(proposal);
+
+        _pendingAiProposal = new PendingAiProposal(
+            proposal,
+            instructionLabel,
+            originalText,
+            proposedText,
+            imageDataUrl,
+            DateTime.UtcNow);
+
+        if (proposal.ArtifactIds.Count > 0)
+        {
+            AiAttachmentStore.SetCoverImageId(_activeSectionId, proposal.ArtifactIds[0]);
+        }
+
+        await InvokeAsync(StateHasChanged);
+        return true;
+    }
+
+    private bool IsAiEnabled => _aiOptions.Enabled;
+
+    private bool CanShowAiMenu => _aiOptions.Enabled && _aiOptions.UI.ShowAiMenu;
+
+    private void ShowAiMessage(string message)
+    {
+        CancelAiStream();
+        _aiStreamError = message;
+        _pendingAiProposal = new PendingAiProposal(
+            null,
+            "AI",
+            string.Empty,
+            null,
+            null,
+            DateTime.UtcNow);
+    }
+
+    private void CancelAiStream()
+    {
+        if (_aiStreamCts is null)
+        {
+            return;
+        }
+
+        _aiStreamCts.Cancel();
+        _aiStreamCts.Dispose();
+        _aiStreamCts = null;
+        _isAiStreaming = false;
+    }
+
+    private static TextRange NormalizeRange(TextRange range, int sectionLength)
+    {
+        int start = Math.Clamp(range.Start, 0, sectionLength);
+        int end = Math.Clamp(range.Start + range.Length, 0, sectionLength);
+        if (end < start)
+        {
+            (start, end) = (end, start);
+        }
+
+        return new TextRange(start, Math.Max(0, end - start));
+    }
+
+    private static TextRange ResolveSelectionRange(AiActionOption action, TextRange selection, int sectionLength)
+    {
+        if (action.Scope == AiActionScope.Section)
+        {
+            return new TextRange(0, Math.Max(0, sectionLength));
+        }
+
+        if (selection.Length == 0)
+        {
+            return new TextRange(0, Math.Max(0, sectionLength));
+        }
+
+        return selection;
+    }
+
+    private static string ExtractRangeText(string plainText, TextRange range)
+    {
+        if (string.IsNullOrEmpty(plainText))
+        {
+            return string.Empty;
+        }
+
+        int start = Math.Clamp(range.Start, 0, plainText.Length);
+        int end = Math.Clamp(range.Start + range.Length, 0, plainText.Length);
+        if (end < start)
+        {
+            (start, end) = (end, start);
+        }
+
+        return plainText.Substring(start, Math.Max(0, end - start));
+    }
+
+    private static string? GetProposedText(AiProposal proposal)
+    {
+        for (int index = 0; index < proposal.Operations.Count; index++)
+        {
+            if (proposal.Operations[index] is ReplaceTextRangeOperation replaceOperation)
+            {
+                return replaceOperation.NewText;
+            }
+        }
+
+        return null;
+    }
+
+    private static string BuildActionLabel(AiActionOption action)
+    {
+        string tone = GetInputValue(action.Inputs, "tone", "Neutral");
+        string length = GetInputValue(action.Inputs, "length", "Same");
+        bool preserveTerms = GetInputValue(action.Inputs, "preserve_terms", true);
+        string preserveLabel = preserveTerms ? "Yes" : "No";
+        return $"{action.Label} · Tone: {tone} · Length: {length} · Preserve terms: {preserveLabel}";
+    }
+
+    private static string GetInputValue(Dictionary<string, object?> inputs, string key, string defaultValue)
+    {
+        if (!inputs.TryGetValue(key, out object? value) || value is null)
+        {
+            return defaultValue;
+        }
+
+        return value.ToString() ?? defaultValue;
+    }
+
+    private static bool GetInputValue(Dictionary<string, object?> inputs, string key, bool defaultValue)
+    {
+        if (!inputs.TryGetValue(key, out object? value) || value is null)
+        {
+            return defaultValue;
+        }
+
+        if (value is bool boolValue)
+        {
+            return boolValue;
+        }
+
+        return bool.TryParse(value.ToString(), out bool parsed) ? parsed : defaultValue;
+    }
+
+    private string? GetImageDataUrl(AiProposal proposal)
+    {
+        for (int index = 0; index < proposal.ArtifactIds.Count; index++)
+        {
+            AiArtifact? artifact = ArtifactStore.Get(proposal.ArtifactIds[index]);
+            if (artifact is null || artifact.Modality != AiModality.Image)
+            {
+                continue;
+            }
+
+            if (artifact.Metadata is not null && artifact.Metadata.TryGetValue("dataUrl", out object? value))
+            {
+                return value?.ToString();
+            }
+
+            if (artifact.BinaryContent is not null)
+            {
+                string base64 = Convert.ToBase64String(artifact.BinaryContent);
+                return $"data:{artifact.MimeType};base64,{base64}";
+            }
+        }
+
+        return null;
+    }
+
+    private string? GetCoverImageDataUrl(Guid sectionId)
+    {
+        Guid? previewId = _pendingAiProposal is not null ? AiAttachmentStore.GetCoverImageId(sectionId) : null;
+        if (previewId is not null)
+        {
+            AiArtifact? previewArtifact = ArtifactStore.Get(previewId.Value);
+            if (previewArtifact is not null)
+            {
+                if (previewArtifact.Metadata is not null && previewArtifact.Metadata.TryGetValue("dataUrl", out object? value))
+                {
+                    return value?.ToString();
+                }
+
+                if (previewArtifact.BinaryContent is not null)
+                {
+                    string base64 = Convert.ToBase64String(previewArtifact.BinaryContent);
+                    return $"data:{previewArtifact.MimeType};base64,{base64}";
+                }
+            }
+        }
+
+        Guid? coverId = _state.Document.CoverImageId;
+        if (coverId is null)
+        {
+            return null;
+        }
+
+        for (int index = 0; index < _state.Document.Artifacts.Count; index++)
+        {
+            DocumentArtifact artifact = _state.Document.Artifacts[index];
+            if (artifact.ArtifactId != coverId.Value)
+            {
+                continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(artifact.DataUrl))
+            {
+                return artifact.DataUrl;
+            }
+
+            if (!string.IsNullOrWhiteSpace(artifact.Base64Data))
+            {
+                return $"data:{artifact.MimeType};base64,{artifact.Base64Data}";
+            }
+        }
+
+        return null;
     }
 
     private Task OnSimulateAiEdit()
@@ -1557,9 +2103,9 @@
             }
 
             RefreshFromDocument(_state.Document);
-            if (_pendingAiEdit is not null)
+            if (_pendingAiProposal is not null)
             {
-                _pendingAiEdit = null;
+                _pendingAiProposal = null;
             }
             await UpdateAiDecorationsAsync();
 
@@ -2247,6 +2793,7 @@
     public void Dispose()
     {
         _state.OnChanged -= _onChangedHandler;
+        CancelAiStream();
     }
 
     public async ValueTask DisposeAsync()
@@ -2282,4 +2829,10 @@
     private sealed record DocumentIndexEntry(Guid DocumentId, string Title, DateTime LastModifiedUtc);
 
     private sealed record AiEditDecoration(int Start, int End, bool IsActive);
+
+    private sealed record AiActionOption(
+        string Label,
+        string Instruction,
+        AiActionScope Scope,
+        Dictionary<string, object?> Inputs);
 }

@@ -1,5 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
+using System.Threading;
+using System.Threading.Tasks;
+using WriterApp.AI.Abstractions;
 
 namespace WriterApp.Application.Commands
 {
@@ -8,6 +12,8 @@ namespace WriterApp.Application.Commands
         private const int SelectionWordLimit = 12;
         private const int ParagraphWordLimit = 24;
         private const int SectionWordLimit = 36;
+        private static readonly TimeSpan DeltaDelay = TimeSpan.FromMilliseconds(120);
+        private const int MaxChunkSize = 28;
 
         public AiTextProposal ProposeText(
             Guid sectionId,
@@ -39,6 +45,28 @@ namespace WriterApp.Application.Commands
 
             string explanation = $"Mock AI proposal ({scope}).";
             return new AiTextProposal(proposedText, explanation);
+        }
+
+        public async IAsyncEnumerable<AiStreamEvent> StreamTextAsync(
+            Guid sectionId,
+            TextRange selectionRange,
+            string originalText,
+            string instruction,
+            AiActionScope scope,
+            [EnumeratorCancellation] CancellationToken ct)
+        {
+            AiTextProposal proposal = ProposeText(sectionId, selectionRange, originalText, instruction, scope);
+
+            yield return new AiStreamEvent.Started();
+
+            foreach (string chunk in ChunkText(proposal.ProposedText, MaxChunkSize))
+            {
+                ct.ThrowIfCancellationRequested();
+                yield return new AiStreamEvent.TextDelta(chunk);
+                await Task.Delay(DeltaDelay, ct);
+            }
+
+            yield return new AiStreamEvent.Completed();
         }
 
         private static string BuildShortenedText(string originalText, AiActionScope scope)
@@ -97,6 +125,34 @@ namespace WriterApp.Application.Commands
             }
 
             return string.Join(" ", words);
+        }
+
+        private static IEnumerable<string> ChunkText(string text, int maxChunkSize)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                yield break;
+            }
+
+            int index = 0;
+            while (index < text.Length)
+            {
+                int length = Math.Min(maxChunkSize, text.Length - index);
+                int nextIndex = index + length;
+
+                if (nextIndex < text.Length && !char.IsWhiteSpace(text[nextIndex - 1]))
+                {
+                    int lastSpace = text.LastIndexOf(' ', nextIndex - 1, length);
+                    if (lastSpace > index)
+                    {
+                        nextIndex = lastSpace + 1;
+                        length = nextIndex - index;
+                    }
+                }
+
+                yield return text.Substring(index, length);
+                index += length;
+            }
         }
     }
 }

@@ -18,6 +18,10 @@ namespace WriterApp.Domain.Documents
 
         public List<Chapter> Chapters { get; init; } = new();
 
+        public Guid? CoverImageId { get; set; }
+
+        public List<DocumentArtifact> Artifacts { get; init; } = new();
+
         /// <summary>
         /// Historical snapshots for future undo and audit features.
         /// </summary>
