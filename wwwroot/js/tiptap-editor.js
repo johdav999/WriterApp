@@ -1,4 +1,6 @@
 import { Editor, Extension } from "https://esm.sh/@tiptap/core@2.1.13?bundle";
+import { Plugin, PluginKey } from "https://esm.sh/prosemirror-state@1.4.3?bundle";
+import { Decoration, DecorationSet } from "https://esm.sh/prosemirror-view@1.33.6?bundle";
 import StarterKit from "https://esm.sh/@tiptap/starter-kit@2.1.13?bundle";
 import TextStyle from "https://esm.sh/@tiptap/extension-text-style@2.1.13?bundle";
 import {
@@ -41,6 +43,35 @@ const TextStyleWithFontSize = TextStyle.extend({
                 }
             }
         };
+    }
+});
+
+const aiDecorationsKey = new PluginKey("aiDecorations");
+
+const AiDecorationsExtension = Extension.create({
+    name: "aiDecorations",
+    addProseMirrorPlugins() {
+        return [
+            new Plugin({
+                key: aiDecorationsKey,
+                state: {
+                    init: () => DecorationSet.empty,
+                    apply: (tr, value) => {
+                        const next = tr.getMeta(aiDecorationsKey);
+                        if (next) {
+                            return next;
+                        }
+
+                        return value.map(tr.mapping, tr.doc);
+                    }
+                },
+                props: {
+                    decorations(state) {
+                        return aiDecorationsKey.getState(state);
+                    }
+                }
+            })
+        ];
     }
 });
 
@@ -292,6 +323,76 @@ function buildFormattingState(editor) {
     };
 }
 
+function buildPlainTextSegments(doc) {
+    const segments = [];
+    let plainIndex = 0;
+    let lastTextblock = false;
+
+    doc.descendants((node, pos) => {
+        if (node.isTextblock) {
+            if (lastTextblock && plainIndex > 0) {
+                plainIndex += 1;
+            }
+
+            lastTextblock = true;
+        }
+
+        if (node.isText && node.text) {
+            const start = plainIndex;
+            const end = plainIndex + node.text.length;
+            segments.push({
+                start,
+                end,
+                from: pos,
+                to: pos + node.text.length
+            });
+            plainIndex = end;
+        }
+    });
+
+    return segments;
+}
+
+function mapPlainOffsetToDoc(segments, offset) {
+    for (let index = 0; index < segments.length; index += 1) {
+        const segment = segments[index];
+        if (offset <= segment.end) {
+            const delta = Math.max(0, offset - segment.start);
+            return segment.from + delta;
+        }
+    }
+
+    if (segments.length > 0) {
+        return segments[segments.length - 1].to;
+    }
+
+    return null;
+}
+
+function buildAiDecorations(editor, ranges) {
+    if (!ranges || ranges.length === 0) {
+        return DecorationSet.empty;
+    }
+
+    const segments = buildPlainTextSegments(editor.state.doc);
+    const decorations = [];
+
+    ranges.forEach(range => {
+        const start = Math.max(0, range.start);
+        const end = Math.max(start, range.end);
+        const from = mapPlainOffsetToDoc(segments, start);
+        const to = mapPlainOffsetToDoc(segments, end);
+        if (from === null || to === null || to <= from) {
+            return;
+        }
+
+        const className = range.isActive ? "ai-edit-range is-active" : "ai-edit-range";
+        decorations.push(Decoration.inline(from, to, { class: className }));
+    });
+
+    return DecorationSet.create(editor.state.doc, decorations);
+}
+
 window.tiptapEditor = {
     create: function (elementId, initialContent, dotNetRef) {
         const interopState = createInteropState(dotNetRef);
@@ -380,6 +481,7 @@ window.tiptapEditor = {
             extensions: [
                 StarterKit,
                 TextStyleWithFontSize,
+                AiDecorationsExtension,
                 ShortcutExtension
             ],
             content: initialContent,
@@ -493,6 +595,16 @@ window.tiptapEditor = {
         setupScrollSync();
 
         return editor;
+    },
+
+    setAiDecorations: function (editor, ranges) {
+        if (!editor || !editor.view) {
+            return;
+        }
+
+        const decorations = buildAiDecorations(editor, ranges);
+        const tr = editor.state.tr.setMeta(aiDecorationsKey, decorations);
+        editor.view.dispatch(tr);
     },
 
     attachContextMenu: function (elementId, dotNetRef) {

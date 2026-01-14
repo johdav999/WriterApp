@@ -9,6 +9,7 @@
 @using BlazorApp.Components.Editor
 @using Microsoft.AspNetCore.Components
 @using Microsoft.AspNetCore.Components.Web
+@using Microsoft.Extensions.Hosting
 @using Microsoft.Extensions.Logging
 @using Microsoft.JSInterop
 @using WriterApp.Application.Commands
@@ -18,6 +19,7 @@
 @implements IAsyncDisposable
 @inject IJSRuntime JSRuntime
 @inject ILogger<Home> Logger
+@inject IWebHostEnvironment HostEnvironment
 
 <PageTitle>Writer</PageTitle>
 
@@ -116,6 +118,29 @@
                 <span class="@GetDirtyClass()">@GetDirtyLabel()</span>
                 <span>@GetLastSavedLabel()</span>
             </div>
+            @if (_pendingAiEdit is not null)
+            {
+                <div class="ai-preview">
+                    <div class="ai-preview-header">
+                        <strong>AI suggestion</strong>
+                        <span>@_pendingAiEdit.Instruction</span>
+                    </div>
+                    <div class="ai-preview-columns">
+                        <div class="ai-preview-pane">
+                            <div class="ai-preview-label">Original</div>
+                            <div class="ai-preview-text">@_pendingAiEdit.OriginalText</div>
+                        </div>
+                        <div class="ai-preview-pane">
+                            <div class="ai-preview-label">Proposed</div>
+                            <div class="ai-preview-text">@_pendingAiEdit.ProposedText</div>
+                        </div>
+                    </div>
+                    <div class="ai-preview-actions">
+                        <button type="button" @onclick="OnApplyPendingAiEdit">Apply</button>
+                        <button type="button" @onclick="OnDiscardPendingAiEdit">Discard</button>
+                    </div>
+                </div>
+            }
         </div>
         <div class="pane-body editor-scroll">
             <SectionEditor @ref="_editorRef"
@@ -204,6 +229,34 @@
             <div class="editor-context-menu-label">Other</div>
             <button type="button" disabled="@(!_formattingState.CanBlockquote)" @onclick="() => OnContextMenuCommand(OnBlockquoteRequested)">Blockquote</button>
         </div>
+        @if (_hasAiEditsAtSelection)
+        {
+            <div class="editor-context-menu-group">
+                <div class="editor-context-menu-label">AI</div>
+                <button type="button" @onclick="() => OnContextMenuCommand(OnRollbackAiEdit)">Revert AI change</button>
+                @if (_hasMultipleAiEditsInSection)
+                {
+                    <button type="button" @onclick="() => OnContextMenuCommand(OnRollbackAllAiEdits)">Revert all AI changes in this section</button>
+                }
+            </div>
+        }
+        @if (HostEnvironment.IsDevelopment())
+        {
+            <div class="editor-context-menu-group">
+                <div class="editor-context-menu-label">AI (Test)</div>
+                <button type="button" @onclick="() => OnContextMenuCommand(OnSimulateAiEdit)">Simulate AI edit (test)</button>
+            </div>
+        }
+        @if (_currentSelectionRange is not null)
+        {
+            <div class="editor-context-menu-group">
+                <div class="editor-context-menu-label">AI Actions</div>
+                @foreach (AiActionDefinition action in _aiActions)
+                {
+                    <button type="button" @onclick="() => OnContextMenuCommand(() => OnAiActionSelected(action))">@action.Label</button>
+                }
+            </div>
+        }
     </div>
 }
 
@@ -512,6 +565,60 @@
         color: #4b5563;
     }
 
+    .ai-edit-range {
+        background: rgba(255, 204, 102, 0.25);
+        border-radius: 2px;
+    }
+
+    .ai-edit-range.is-active {
+        background: rgba(255, 204, 102, 0.55);
+    }
+
+    .ai-preview {
+        border: 1px solid #e3e3e3;
+        border-radius: 6px;
+        padding: 12px;
+        background: #fffaf0;
+        display: grid;
+        gap: 10px;
+    }
+
+    .ai-preview-header {
+        display: flex;
+        gap: 8px;
+        align-items: baseline;
+        font-size: 0.95rem;
+    }
+
+    .ai-preview-columns {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    }
+
+    .ai-preview-pane {
+        border: 1px solid #e8e8e8;
+        border-radius: 4px;
+        padding: 8px;
+        background: #fff;
+    }
+
+    .ai-preview-label {
+        font-size: 0.85rem;
+        color: #6b6b6b;
+        margin-bottom: 4px;
+    }
+
+    .ai-preview-text {
+        font-size: 0.95rem;
+        white-space: pre-wrap;
+    }
+
+    .ai-preview-actions {
+        display: flex;
+        gap: 8px;
+    }
+
     .editor-pane .ProseMirror {
         min-height: 320px;
         padding: 12px;
@@ -641,14 +748,26 @@
     private Guid? _draggingSectionId;
     private Guid? _dropTargetSectionId;
     private DropPosition? _dropPosition;
-    private bool _isReordering;
     private bool _isContextMenuOpen;
     private double _contextMenuX;
     private double _contextMenuY;
     private ElementReference _contextMenuRef;
     private bool _shouldFocusContextMenu;
     private TextRange? _currentSelectionRange;
-
+    private bool _hasAiEditsAtSelection;
+    private bool _hasMultipleAiEditsInSection;
+    private Guid? _aiRollbackGroupId;
+    private bool _isReordering;
+    private PendingAiEdit? _pendingAiEdit;
+    private readonly IAiProposalGenerator _proposalGenerator = new MockAiProposalGenerator();
+    private readonly List<AiActionDefinition> _aiActions = new()
+    {
+        new AiActionDefinition(AiActionKind.RewriteSelection, "Rewrite selection", "Rewrite selection", AiActionScope.Selection),
+        new AiActionDefinition(AiActionKind.ShortenSelection, "Shorten selection", "Shorten selection", AiActionScope.Selection),
+        new AiActionDefinition(AiActionKind.FixGrammar, "Fix grammar", "Fix grammar", AiActionScope.Selection),
+        new AiActionDefinition(AiActionKind.ChangeTone, "Change tone", "Change tone", AiActionScope.Selection),
+        new AiActionDefinition(AiActionKind.SummarizeParagraph, "Summarize paragraph", "Summarize paragraph", AiActionScope.Paragraph)
+    };
     private const string StorageKey = "writerapp.document";
     private const string StorageIndexKey = "writerapp.document.index";
     private const string StoragePrefix = "writerapp.document.";
@@ -696,7 +815,7 @@
     {
         return ExecuteSafeAsync("OnSectionContentChanged", () =>
         {
-            if (_suppressEditorEvent || _disposed || _isReordering)
+            if (_suppressEditorEvent || _disposed)
             {
                 return Task.CompletedTask;
             }
@@ -819,6 +938,7 @@
 
             _commandProcessor.ClearHistory();
             _activeSectionId = sectionId;
+            _pendingAiEdit = null;
             _skipNextEditorSync = false;
             _suppressDirtyUpdate = true;
             _currentSelectionRange = null;
@@ -937,33 +1057,25 @@
                 return;
             }
 
-            _isReordering = true;
-            try
-            {
-                Chapter chapter = GetPrimaryChapter();
-                List<Section> ordered = _orderedSections.Count > 0
-                    ? new List<Section>(_orderedSections)
-                    : chapter.Sections.OrderBy(section => section.Order).ToList();
+            Chapter chapter = GetPrimaryChapter();
+            List<Section> ordered = _orderedSections.Count > 0
+                ? new List<Section>(_orderedSections)
+                : chapter.Sections.OrderBy(section => section.Order).ToList();
 
-                int index = ordered.FindIndex(section => section.SectionId == sectionId);
-                int targetIndex = index + direction;
-                if (index < 0 || targetIndex < 0 || targetIndex >= ordered.Count)
-                {
-                    return;
-                }
-
-                Section section = ordered[index];
-                ordered.RemoveAt(index);
-                ordered.Insert(targetIndex, section);
-                ApplySectionOrdering(ordered, chapter);
-                _suppressDirtyUpdate = true;
-                _state.NotifyChanged();
-                await OnSave();
-            }
-            finally
+            int index = ordered.FindIndex(section => section.SectionId == sectionId);
+            int targetIndex = index + direction;
+            if (index < 0 || targetIndex < 0 || targetIndex >= ordered.Count)
             {
-                _isReordering = false;
+                return;
             }
+
+            Section section = ordered[index];
+            ordered.RemoveAt(index);
+            ordered.Insert(targetIndex, section);
+
+            _commandProcessor.Execute(new ReorderSectionsCommand(
+                chapter.ChapterId,
+                ordered.Select(entry => entry.SectionId).ToList()));
         });
     }
 
@@ -1048,39 +1160,31 @@
             _dropTargetSectionId = null;
             _dropPosition = null;
 
-            _isReordering = true;
-            try
+            Chapter chapter = GetPrimaryChapter();
+            List<Section> ordered = new(_orderedSections);
+            int sourceIndex = ordered.FindIndex(section => section.SectionId == sourceSectionId);
+            int targetIndex = ordered.FindIndex(section => section.SectionId == targetSectionId);
+            if (sourceIndex < 0 || targetIndex < 0)
             {
-                Chapter chapter = GetPrimaryChapter();
-                List<Section> ordered = new(_orderedSections);
-                int sourceIndex = ordered.FindIndex(section => section.SectionId == sourceSectionId);
-                int targetIndex = ordered.FindIndex(section => section.SectionId == targetSectionId);
-                if (sourceIndex < 0 || targetIndex < 0)
-                {
-                    Logger.LogWarning("Drop aborted: sourceIndex {SourceIndex} targetIndex {TargetIndex}", sourceIndex, targetIndex);
-                    return;
-                }
-
-                Section moving = ordered[sourceIndex];
-                ordered.RemoveAt(sourceIndex);
-                if (sourceIndex < targetIndex)
-                {
-                    targetIndex -= 1;
-                }
-
-                int insertIndex = position == DropPosition.Before ? targetIndex : targetIndex + 1;
-                insertIndex = Math.Clamp(insertIndex, 0, ordered.Count);
-                Logger.LogInformation("Drop reorder: source {SourceIndex} target {TargetIndex} insert {InsertIndex}", sourceIndex, targetIndex, insertIndex);
-                ordered.Insert(insertIndex, moving);
-                ApplySectionOrdering(ordered, chapter);
-                _suppressDirtyUpdate = true;
-                _state.NotifyChanged();
-                await OnSave();
+                Logger.LogWarning("Drop aborted: sourceIndex {SourceIndex} targetIndex {TargetIndex}", sourceIndex, targetIndex);
+                return;
             }
-            finally
+
+            Section moving = ordered[sourceIndex];
+            ordered.RemoveAt(sourceIndex);
+            if (sourceIndex < targetIndex)
             {
-                _isReordering = false;
+                targetIndex -= 1;
             }
+
+            int insertIndex = position == DropPosition.Before ? targetIndex : targetIndex + 1;
+            insertIndex = Math.Clamp(insertIndex, 0, ordered.Count);
+            Logger.LogInformation("Drop reorder: source {SourceIndex} target {TargetIndex} insert {InsertIndex}", sourceIndex, targetIndex, insertIndex);
+            ordered.Insert(insertIndex, moving);
+
+            _commandProcessor.Execute(new ReorderSectionsCommand(
+                chapter.ChapterId,
+                ordered.Select(entry => entry.SectionId).ToList()));
         });
     }
 
@@ -1187,7 +1291,7 @@
     {
         return ExecuteSafeAsync("OnOutlineChanged", () =>
         {
-            if (_disposed || _isReordering)
+            if (_disposed)
             {
                 return Task.CompletedTask;
             }
@@ -1219,7 +1323,7 @@
     {
         return ExecuteSafeAsync("OnFormattingChanged", () =>
         {
-            if (_disposed || _isReordering)
+            if (_disposed)
             {
                 return Task.CompletedTask;
             }
@@ -1240,13 +1344,14 @@
     {
         return ExecuteSafeAsync("OnSelectionChanged", () =>
         {
-            if (_disposed || _isReordering)
+            if (_disposed)
             {
                 return Task.CompletedTask;
             }
 
             UpdateSelectionRange(range.Start, range.End);
-            return Task.CompletedTask;
+            UpdateAiContextMenuState();
+            return UpdateAiDecorationsAsync();
         });
     }
 
@@ -1263,6 +1368,7 @@
     {
         return ExecuteSafeAsync("OnEditorContextMenuRequested", () =>
         {
+            UpdateAiContextMenuState();
             _isContextMenuOpen = true;
             _contextMenuX = request.X;
             _contextMenuY = request.Y;
@@ -1287,6 +1393,129 @@
         await command();
     }
 
+    private Task OnRollbackAiEdit()
+    {
+        return ExecuteSafeAsync("OnRollbackAiEdit", () =>
+        {
+            if (_aiRollbackGroupId is null)
+            {
+                return Task.CompletedTask;
+            }
+
+            _commandProcessor.RollbackAiEditGroup(_activeSectionId, _aiRollbackGroupId.Value);
+            return InvokeCommandAsync("focusEditor");
+        });
+    }
+
+    private Task OnRollbackAllAiEdits()
+    {
+        return ExecuteSafeAsync("OnRollbackAllAiEdits", () =>
+        {
+            _commandProcessor.RollbackAllAiEdits(_activeSectionId);
+            return InvokeCommandAsync("focusEditor");
+        });
+    }
+
+    private Task OnAiActionSelected(AiActionDefinition action)
+    {
+        return ExecuteSafeAsync("OnAiActionSelected", () =>
+        {
+            if (_currentSelectionRange is null)
+            {
+                return Task.CompletedTask;
+            }
+
+            string plainText = PlainTextMapper.ToPlainText(_activeSectionContent);
+            if (plainText.Length == 0)
+            {
+                return Task.CompletedTask;
+            }
+
+            TextRange range = _currentSelectionRange.Length > 0
+                ? _currentSelectionRange
+                : new TextRange(0, plainText.Length);
+
+            int start = Math.Clamp(range.Start, 0, plainText.Length);
+            int end = Math.Clamp(range.Start + range.Length, 0, plainText.Length);
+            if (end < start)
+            {
+                (start, end) = (end, start);
+            }
+
+            string originalText = plainText.Substring(start, Math.Max(0, end - start));
+            string proposedText = _proposalGenerator.Generate(action.Kind, action.Instruction, originalText);
+
+            _pendingAiEdit = new PendingAiEdit(
+                _activeSectionId,
+                new TextRange(start, end - start),
+                originalText,
+                proposedText,
+                action.Instruction,
+                DateTime.UtcNow);
+
+            return InvokeAsync(StateHasChanged);
+        });
+    }
+
+    private Task OnApplyPendingAiEdit()
+    {
+        return ExecuteSafeAsync("OnApplyPendingAiEdit", () =>
+        {
+            if (_pendingAiEdit is null)
+            {
+                return Task.CompletedTask;
+            }
+
+            PendingAiEdit pending = _pendingAiEdit;
+            _pendingAiEdit = null;
+
+            AiEditGroup group = new(pending.SectionId, pending.Instruction);
+            _commandProcessor.Execute(new AiReplacePlainTextRangeCommand(
+                pending.SectionId,
+                pending.Range,
+                pending.ProposedText,
+                group,
+                pending.Instruction));
+
+            return InvokeCommandAsync("focusEditor");
+        });
+    }
+
+    private Task OnDiscardPendingAiEdit()
+    {
+        return ExecuteSafeAsync("OnDiscardPendingAiEdit", () =>
+        {
+            _pendingAiEdit = null;
+            return InvokeAsync(StateHasChanged);
+        });
+    }
+
+    private Task OnSimulateAiEdit()
+    {
+        return ExecuteSafeAsync("OnSimulateAiEdit", () =>
+        {
+            if (!HostEnvironment.IsDevelopment())
+            {
+                return Task.CompletedTask;
+            }
+
+            string plainText = PlainTextMapper.ToPlainText(_activeSectionContent);
+            int length = plainText.Length;
+            if (length == 0)
+            {
+                return Task.CompletedTask;
+            }
+
+            TextRange range = _currentSelectionRange is { Length: > 0 }
+                ? _currentSelectionRange
+                : new TextRange(0, length);
+
+            string reason = "TEST: Simulated AI edit";
+            _commandProcessor.Execute(new SimulatedAiEditCommand(_activeSectionId, range, reason));
+            return InvokeCommandAsync("focusEditor");
+        });
+    }
+
     private void OnContextMenuKeyDown(KeyboardEventArgs args)
     {
         if (string.Equals(args.Key, "Escape", StringComparison.Ordinal))
@@ -1305,6 +1534,11 @@
             }
 
             RefreshFromDocument(_state.Document);
+            if (_pendingAiEdit is not null)
+            {
+                _pendingAiEdit = null;
+            }
+            await UpdateAiDecorationsAsync();
 
             if (_suppressDirtyUpdate)
             {
@@ -1403,6 +1637,71 @@
         int normalizedStart = Math.Clamp(Math.Min(start, end), 0, maxLength);
         int normalizedEnd = Math.Clamp(Math.Max(start, end), 0, maxLength);
         _currentSelectionRange = new TextRange(normalizedStart, normalizedEnd - normalizedStart);
+    }
+
+    private void UpdateAiContextMenuState()
+    {
+        _hasAiEditsAtSelection = false;
+        _hasMultipleAiEditsInSection = false;
+        _aiRollbackGroupId = null;
+
+        if (_currentSelectionRange is null)
+        {
+            return;
+        }
+
+        string plainText = PlainTextMapper.ToPlainText(_activeSectionContent);
+        AiEditSelectionInfo info = _commandProcessor.GetAiEditSelectionInfo(
+            _activeSectionId,
+            _currentSelectionRange,
+            plainText.Length);
+
+        _hasAiEditsAtSelection = info.HasIntersection;
+        _hasMultipleAiEditsInSection = info.HasMultipleGroups;
+        _aiRollbackGroupId = info.GroupId;
+    }
+
+    private async Task UpdateAiDecorationsAsync()
+    {
+        if (_editorInstance is null)
+        {
+            return;
+        }
+
+        string plainText = PlainTextMapper.ToPlainText(_activeSectionContent);
+        IReadOnlyList<AiEditRangeInfo> ranges = _commandProcessor.GetAiEditRanges(_activeSectionId, plainText.Length);
+        List<AiEditDecoration> decorations = new(ranges.Count);
+
+        for (int index = 0; index < ranges.Count; index++)
+        {
+            TextRange range = ranges[index].Range;
+            int start = Math.Clamp(range.Start, 0, plainText.Length);
+            int end = Math.Clamp(range.Start + range.Length, 0, plainText.Length);
+            if (end <= start)
+            {
+                continue;
+            }
+
+            bool isActive = _currentSelectionRange is not null
+                && RangesIntersect(_currentSelectionRange, new TextRange(start, end - start));
+
+            decorations.Add(new AiEditDecoration(start, end, isActive));
+        }
+
+        await JSRuntime.InvokeVoidAsync("tiptapEditor.setAiDecorations", _editorInstance, decorations);
+    }
+
+    private static bool RangesIntersect(TextRange selection, TextRange target)
+    {
+        if (selection.Length == 0)
+        {
+            int point = selection.Start;
+            return point >= target.Start && point <= target.Start + target.Length;
+        }
+
+        int selectionEnd = selection.Start + selection.Length;
+        int targetEnd = target.Start + target.Length;
+        return selection.Start < targetEnd && target.Start < selectionEnd;
     }
 
     private void UpdateReadingMetrics(int wordCount)
@@ -1958,4 +2257,6 @@
     private sealed record DocumentStorage(Document Document);
 
     private sealed record DocumentIndexEntry(Guid DocumentId, string Title, DateTime LastModifiedUtc);
+
+    private sealed record AiEditDecoration(int Start, int End, bool IsActive);
 }
