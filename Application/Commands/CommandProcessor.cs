@@ -39,7 +39,7 @@ namespace WriterApp.Application.Commands
             command.Execute(_state.Document);
             if (command is IAiEditCommand aiCommand)
             {
-                AppendAiCommand(_state.Document, aiCommand);
+                AiEditProvenance.Append(_state.Document, aiCommand);
             }
 
             _undoStack.Push(command);
@@ -58,7 +58,7 @@ namespace WriterApp.Application.Commands
             command.Undo(_state.Document);
             if (command is IAiEditCommand aiCommand)
             {
-                RemoveAiCommand(_state.Document, aiCommand);
+                AiEditProvenance.Remove(_state.Document, aiCommand);
             }
 
             _redoStack.Push(command);
@@ -76,11 +76,156 @@ namespace WriterApp.Application.Commands
             command.Execute(_state.Document);
             if (command is IAiEditCommand aiCommand)
             {
-                AppendAiCommand(_state.Document, aiCommand);
+                AiEditProvenance.Append(_state.Document, aiCommand);
             }
 
             _undoStack.Push(command);
             _state.NotifyChanged();
+        }
+
+        public AiEditSelectionInfo GetAiEditSelectionInfo(Guid sectionId, TextRange range, int sectionPlainTextLength)
+        {
+            if (sectionId == Guid.Empty)
+            {
+                return new AiEditSelectionInfo(false, null, false);
+            }
+
+            if (!AiEditProvenance.TryGetSection(_state.Document, sectionId, out Chapter chapter, out int sectionIndex, out Section section))
+            {
+                return new AiEditSelectionInfo(false, null, false);
+            }
+
+            List<AiEditGroupEntry> groups = section.AI?.AiEditGroups ?? new List<AiEditGroupEntry>();
+            bool hasMultipleGroups = groups.Count > 1;
+            if (groups.Count == 0)
+            {
+                return new AiEditSelectionInfo(false, null, false);
+            }
+
+            HashSet<Guid> groupIds = new();
+            for (int index = 0; index < groups.Count; index++)
+            {
+                groupIds.Add(groups[index].GroupId);
+            }
+
+            foreach (IDocumentCommand command in _undoStack)
+            {
+                if (command is not IAiEditCommand aiCommand)
+                {
+                    continue;
+                }
+
+                if (aiCommand.SectionId != sectionId || !groupIds.Contains(aiCommand.AiEditGroupId))
+                {
+                    continue;
+                }
+
+                TextRange targetRange = GetAiCommandRange(aiCommand, sectionPlainTextLength);
+                if (RangesIntersect(range, targetRange))
+                {
+                    return new AiEditSelectionInfo(true, aiCommand.AiEditGroupId, hasMultipleGroups);
+                }
+            }
+
+            return new AiEditSelectionInfo(false, null, hasMultipleGroups);
+        }
+
+        public IReadOnlyList<AiEditRangeInfo> GetAiEditRanges(Guid sectionId, int sectionPlainTextLength)
+        {
+            if (sectionId == Guid.Empty)
+            {
+                return Array.Empty<AiEditRangeInfo>();
+            }
+
+            if (!AiEditProvenance.TryGetSection(_state.Document, sectionId, out Chapter chapter, out int sectionIndex, out Section section))
+            {
+                return Array.Empty<AiEditRangeInfo>();
+            }
+
+            List<AiEditGroupEntry> groups = section.AI?.AiEditGroups ?? new List<AiEditGroupEntry>();
+            if (groups.Count == 0)
+            {
+                return Array.Empty<AiEditRangeInfo>();
+            }
+
+            HashSet<Guid> groupIds = new();
+            for (int index = 0; index < groups.Count; index++)
+            {
+                groupIds.Add(groups[index].GroupId);
+            }
+
+            Dictionary<Guid, TextRange> mergedRanges = new();
+            foreach (IDocumentCommand command in _undoStack)
+            {
+                if (command is not IAiEditCommand aiCommand)
+                {
+                    continue;
+                }
+
+                if (aiCommand.SectionId != sectionId || !groupIds.Contains(aiCommand.AiEditGroupId))
+                {
+                    continue;
+                }
+
+                TextRange range = GetAiCommandRange(aiCommand, sectionPlainTextLength);
+                if (mergedRanges.TryGetValue(aiCommand.AiEditGroupId, out TextRange existing))
+                {
+                    int start = Math.Min(existing.Start, range.Start);
+                    int end = Math.Max(existing.Start + existing.Length, range.Start + range.Length);
+                    mergedRanges[aiCommand.AiEditGroupId] = new TextRange(start, Math.Max(0, end - start));
+                }
+                else
+                {
+                    mergedRanges[aiCommand.AiEditGroupId] = range;
+                }
+            }
+
+            if (mergedRanges.Count == 0)
+            {
+                return Array.Empty<AiEditRangeInfo>();
+            }
+
+            List<AiEditRangeInfo> results = new(mergedRanges.Count);
+            foreach (KeyValuePair<Guid, TextRange> entry in mergedRanges)
+            {
+                results.Add(new AiEditRangeInfo(entry.Value, entry.Key));
+            }
+
+            results.Sort((left, right) => left.Range.Start.CompareTo(right.Range.Start));
+            return results;
+        }
+
+        public bool RollbackAiEditGroup(Guid sectionId, Guid groupId)
+        {
+            if (sectionId == Guid.Empty)
+            {
+                throw new ArgumentException("Section ID is required.", nameof(sectionId));
+            }
+
+            if (groupId == Guid.Empty)
+            {
+                throw new ArgumentException("Group ID is required.", nameof(groupId));
+            }
+
+            if (!AiEditProvenance.TryGetSection(_state.Document, sectionId, out Chapter chapter, out int sectionIndex, out Section section))
+            {
+                return false;
+            }
+
+            List<AiEditGroupEntry> groups = section.AI?.AiEditGroups ?? new List<AiEditGroupEntry>();
+            if (groups.Count == 0 || !groups.Exists(entry => entry.GroupId == groupId))
+            {
+                return false;
+            }
+
+            List<IAiEditCommand> commandsInOrder = CollectAiGroupCommands(sectionId, groupId);
+            if (commandsInOrder.Count == 0)
+            {
+                return false;
+            }
+
+            Execute(new RollbackAiEditGroupCommand(sectionId, groupId, commandsInOrder));
+            return true;
         }
 
         public void RollbackLastAiEdit(Guid sectionId)
@@ -90,7 +235,7 @@ namespace WriterApp.Application.Commands
                 throw new ArgumentException("Section ID is required.", nameof(sectionId));
             }
 
-            if (!TryGetSection(_state.Document, sectionId, out Chapter chapter, out int sectionIndex, out Section section))
+            if (!AiEditProvenance.TryGetSection(_state.Document, sectionId, out Chapter chapter, out int sectionIndex, out Section section))
             {
                 return;
             }
@@ -101,8 +246,8 @@ namespace WriterApp.Application.Commands
                 return;
             }
 
-            AiEditGroupEntry group = groups[groups.Count - 1];
-            RollbackAiGroup(sectionId, group.GroupId);
+            AiEditGroupEntry group = groups[^1];
+            RollbackAiEditGroup(sectionId, group.GroupId);
         }
 
         public void RollbackAllAiEdits(Guid sectionId)
@@ -112,7 +257,7 @@ namespace WriterApp.Application.Commands
                 throw new ArgumentException("Section ID is required.", nameof(sectionId));
             }
 
-            if (!TryGetSection(_state.Document, sectionId, out Chapter chapter, out int sectionIndex, out Section section))
+            if (!AiEditProvenance.TryGetSection(_state.Document, sectionId, out Chapter chapter, out int sectionIndex, out Section section))
             {
                 return;
             }
@@ -123,164 +268,59 @@ namespace WriterApp.Application.Commands
                 return;
             }
 
-            for (int index = groups.Count - 1; index >= 0; index--)
+            List<Guid> groupIds = new();
+            for (int index = 0; index < groups.Count; index++)
             {
-                RollbackAiGroup(sectionId, groups[index].GroupId);
+                groupIds.Add(groups[index].GroupId);
+            }
+
+            for (int index = groupIds.Count - 1; index >= 0; index--)
+            {
+                RollbackAiEditGroup(sectionId, groupIds[index]);
             }
         }
 
-        private void RollbackAiGroup(Guid sectionId, Guid groupId)
+        private List<IAiEditCommand> CollectAiGroupCommands(Guid sectionId, Guid groupId)
         {
-            if (_undoStack.Count == 0)
+            List<IAiEditCommand> commands = new();
+            foreach (IDocumentCommand command in _undoStack)
             {
-                return;
-            }
-
-            Stack<IDocumentCommand> preserved = new();
-            while (_undoStack.Count > 0)
-            {
-                IDocumentCommand command = _undoStack.Pop();
-                if (command is IAiEditCommand aiCommand
-                    && aiCommand.SectionId == sectionId
-                    && aiCommand.AiEditGroupId == groupId)
+                if (command is not IAiEditCommand aiCommand)
                 {
-                    command.Undo(_state.Document);
-                    RemoveAiCommand(_state.Document, aiCommand);
                     continue;
                 }
 
-                preserved.Push(command);
+                if (aiCommand.SectionId == sectionId && aiCommand.AiEditGroupId == groupId)
+                {
+                    commands.Add(aiCommand);
+                }
             }
 
-            while (preserved.Count > 0)
-            {
-                _undoStack.Push(preserved.Pop());
-            }
-
-            _redoStack.Clear();
-            _state.NotifyChanged();
+            commands.Reverse();
+            return commands;
         }
 
-        private static void AppendAiCommand(Document document, IAiEditCommand command)
+        private static TextRange GetAiCommandRange(IAiEditCommand command, int sectionPlainTextLength)
         {
-            if (!TryGetSection(document, command.SectionId, out Chapter chapter, out int sectionIndex, out Section section))
+            if (command is IAiRangeEditCommand rangedCommand)
             {
-                return;
+                return rangedCommand.Range;
             }
 
-            SectionAIInfo aiInfo = section.AI ?? new SectionAIInfo();
-            List<AiEditGroupEntry> groups = aiInfo.AiEditGroups is null
-                ? new List<AiEditGroupEntry>()
-                : new List<AiEditGroupEntry>(aiInfo.AiEditGroups);
-
-            int groupIndex = groups.FindLastIndex(entry => entry.GroupId == command.AiEditGroupId);
-            if (groupIndex < 0)
-            {
-                groups.Add(new AiEditGroupEntry
-                {
-                    GroupId = command.AiEditGroupId,
-                    AppliedUtc = command.AppliedUtc == default ? DateTime.UtcNow : command.AppliedUtc,
-                    Reason = command.AiEditGroupReason,
-                    CommandIds = new List<Guid> { command.CommandId }
-                });
-            }
-            else
-            {
-                AiEditGroupEntry existing = groups[groupIndex];
-                List<Guid> commandIds = existing.CommandIds is null
-                    ? new List<Guid>()
-                    : new List<Guid>(existing.CommandIds);
-                if (!commandIds.Contains(command.CommandId))
-                {
-                    commandIds.Add(command.CommandId);
-                }
-
-                groups[groupIndex] = existing with
-                {
-                    Reason = existing.Reason ?? command.AiEditGroupReason,
-                    CommandIds = commandIds
-                };
-            }
-
-            Section updatedSection = section with
-            {
-                AI = aiInfo with
-                {
-                    LastModifiedByAi = true,
-                    AiEditGroups = groups
-                }
-            };
-            chapter.Sections[sectionIndex] = updatedSection;
+            return new TextRange(0, Math.Max(0, sectionPlainTextLength));
         }
 
-        private static void RemoveAiCommand(Document document, IAiEditCommand command)
+        private static bool RangesIntersect(TextRange selection, TextRange target)
         {
-            if (!TryGetSection(document, command.SectionId, out Chapter chapter, out int sectionIndex, out Section section))
+            if (selection.Length == 0)
             {
-                return;
+                int point = selection.Start;
+                return point >= target.Start && point <= target.Start + target.Length;
             }
 
-            SectionAIInfo aiInfo = section.AI ?? new SectionAIInfo();
-            List<AiEditGroupEntry> groups = aiInfo.AiEditGroups is null
-                ? new List<AiEditGroupEntry>()
-                : new List<AiEditGroupEntry>(aiInfo.AiEditGroups);
-
-            int groupIndex = groups.FindLastIndex(entry => entry.GroupId == command.AiEditGroupId);
-            if (groupIndex < 0)
-            {
-                return;
-            }
-
-            AiEditGroupEntry existing = groups[groupIndex];
-            List<Guid> commandIds = existing.CommandIds is null
-                ? new List<Guid>()
-                : new List<Guid>(existing.CommandIds);
-
-            if (commandIds.Remove(command.CommandId))
-            {
-                if (commandIds.Count == 0)
-                {
-                    groups.RemoveAt(groupIndex);
-                }
-                else
-                {
-                    groups[groupIndex] = existing with { CommandIds = commandIds };
-                }
-            }
-
-            Section updatedSection = section with
-            {
-                AI = aiInfo with
-                {
-                    LastModifiedByAi = groups.Count > 0,
-                    AiEditGroups = groups
-                }
-            };
-            chapter.Sections[sectionIndex] = updatedSection;
-        }
-
-        private static bool TryGetSection(Document document, Guid sectionId, out Chapter chapter, out int sectionIndex, out Section section)
-        {
-            for (int chapterIndex = 0; chapterIndex < document.Chapters.Count; chapterIndex++)
-            {
-                Chapter candidate = document.Chapters[chapterIndex];
-                for (int index = 0; index < candidate.Sections.Count; index++)
-                {
-                    Section entry = candidate.Sections[index];
-                    if (entry.SectionId == sectionId)
-                    {
-                        chapter = candidate;
-                        sectionIndex = index;
-                        section = entry;
-                        return true;
-                    }
-                }
-            }
-
-            chapter = null!;
-            sectionIndex = -1;
-            section = null!;
-            return false;
+            int selectionEnd = selection.Start + selection.Length;
+            int targetEnd = target.Start + target.Length;
+            return selection.Start < targetEnd && target.Start < selectionEnd;
         }
     }
 }

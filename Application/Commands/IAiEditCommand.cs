@@ -2,7 +2,7 @@ using System;
 
 namespace WriterApp.Application.Commands
 {
-    public interface IAiEditCommand
+    public interface IAiEditCommand : IDocumentCommand
     {
         Guid CommandId { get; }
         Guid SectionId { get; }

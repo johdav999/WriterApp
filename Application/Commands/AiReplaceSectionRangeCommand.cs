@@ -6,7 +6,7 @@ namespace WriterApp.Application.Commands
     /// <summary>
     /// Replaces a range in a section with AI-provided text and supports undo/redo.
     /// </summary>
-    public sealed class AiReplaceSectionRangeCommand : DocumentEditCommand, IAiEditCommand
+    public sealed class AiReplaceSectionRangeCommand : DocumentEditCommand, IAiRangeEditCommand
     {
         private readonly AiEditGroup _group;
         private readonly int _start;
@@ -50,6 +50,8 @@ namespace WriterApp.Application.Commands
         public Guid AiEditGroupId => _group.GroupId;
 
         public string? AiEditGroupReason => _group.Reason ?? Reason;
+
+        public TextRange Range => new(_start, _length);
 
         public int Start => _start;
 
