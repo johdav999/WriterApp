@@ -1,10 +1,12 @@
 using BlazorApp.Components;
+using WriterApp.Application.Commands;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
+builder.Services.AddSingleton<IAiTextService, MockAiTextService>();
 
 var app = builder.Build();
 

@@ -8,6 +8,7 @@ namespace BlazorApp.Components.Editor
         TextRange Range,
         string OriginalText,
         string ProposedText,
+        string? Explanation,
         string Instruction,
         DateTime CreatedUtc);
 }

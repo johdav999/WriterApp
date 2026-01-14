@@ -12,7 +12,8 @@ namespace WriterApp.Application.Commands
     public enum AiActionScope
     {
         Selection,
-        Paragraph
+        Paragraph,
+        Section
     }
 
     public sealed record AiActionDefinition(
