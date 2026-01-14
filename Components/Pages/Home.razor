@@ -20,6 +20,7 @@
 @inject IJSRuntime JSRuntime
 @inject ILogger<Home> Logger
 @inject IWebHostEnvironment HostEnvironment
+@inject IAiTextService AiTextService
 
 <PageTitle>Writer</PageTitle>
 
@@ -759,7 +760,6 @@
     private Guid? _aiRollbackGroupId;
     private bool _isReordering;
     private PendingAiEdit? _pendingAiEdit;
-    private readonly IAiProposalGenerator _proposalGenerator = new MockAiProposalGenerator();
     private readonly List<AiActionDefinition> _aiActions = new()
     {
         new AiActionDefinition(AiActionKind.RewriteSelection, "Rewrite selection", "Rewrite selection", AiActionScope.Selection),
@@ -1443,18 +1443,41 @@
             }
 
             string originalText = plainText.Substring(start, Math.Max(0, end - start));
-            string proposedText = _proposalGenerator.Generate(action.Kind, action.Instruction, originalText);
+            TextRange selectionRange = new(start, Math.Max(0, end - start));
+            AiActionScope scope = ResolveAiScope(action, selectionRange, plainText.Length);
+            AiTextProposal proposal = AiTextService.ProposeText(
+                _activeSectionId,
+                selectionRange,
+                originalText,
+                action.Instruction,
+                scope);
 
             _pendingAiEdit = new PendingAiEdit(
                 _activeSectionId,
-                new TextRange(start, end - start),
+                selectionRange,
                 originalText,
-                proposedText,
+                proposal.ProposedText,
+                proposal.Explanation,
                 action.Instruction,
                 DateTime.UtcNow);
 
             return InvokeAsync(StateHasChanged);
         });
+    }
+
+    private static AiActionScope ResolveAiScope(AiActionDefinition action, TextRange range, int sectionLength)
+    {
+        if (action.Scope == AiActionScope.Paragraph)
+        {
+            return AiActionScope.Paragraph;
+        }
+
+        if (range.Start == 0 && range.Length >= sectionLength)
+        {
+            return AiActionScope.Section;
+        }
+
+        return AiActionScope.Selection;
     }
 
     private Task OnApplyPendingAiEdit()
