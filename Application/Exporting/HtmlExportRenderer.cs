@@ -77,10 +77,14 @@ namespace WriterApp.Application.Exporting
                 builder.Append("    <h2>").Append(WebUtility.HtmlEncode(sectionTitle)).Append("</h2>\n");
 
 <<<<<<< HEAD
+<<<<<<< HEAD
                 string sectionHtml = ConvertSectionContentToHtml(section.Content, sectionTitle);
 =======
                 string sectionHtml = ConvertSectionContentToHtml(section.Content);
 >>>>>>> ebb7526 (Implemented export of md and html)
+=======
+                string sectionHtml = ConvertSectionContentToHtml(section.Content, sectionTitle);
+>>>>>>> 604a04c (Fixed headings in export)
                 if (!string.IsNullOrWhiteSpace(sectionHtml))
                 {
                     string indented = IndentLines(sectionHtml.Trim(), "    ");
@@ -106,8 +110,12 @@ namespace WriterApp.Application.Exporting
             return Task.FromResult(result);
         }
 
+<<<<<<< HEAD
         private static string ConvertSectionContentToHtml(SectionContent content)
 >>>>>>> ebb7526 (Implemented export of md and html)
+=======
+        private static string ConvertSectionContentToHtml(SectionContent content, string sectionTitle)
+>>>>>>> 604a04c (Fixed headings in export)
         {
             if (content is null || string.IsNullOrWhiteSpace(content.Value))
             {
@@ -122,10 +130,14 @@ namespace WriterApp.Application.Exporting
             }
 
 <<<<<<< HEAD
+<<<<<<< HEAD
             string value = ExportHelpers.NormalizeSectionHtmlForExport(content.Value, sectionTitle).Trim();
 =======
             string value = content.Value.Trim();
 >>>>>>> ebb7526 (Implemented export of md and html)
+=======
+            string value = ExportHelpers.NormalizeSectionHtmlForExport(content.Value, sectionTitle).Trim();
+>>>>>>> 604a04c (Fixed headings in export)
             if (!value.Contains('<', StringComparison.Ordinal))
             {
                 return $"<p>{WebUtility.HtmlEncode(value)}</p>";
