@@ -28,6 +28,7 @@ namespace WriterApp.AI.Core
 
             string reason = BuildReason(proposal);
             AiEditGroup group = new(proposal.SectionId, reason);
+            int appliedOperations = 0;
 
             for (int index = 0; index < proposal.Operations.Count; index++)
             {
@@ -40,6 +41,7 @@ namespace WriterApp.AI.Core
                         replaceOperation.NewText,
                         group,
                         reason));
+                    appliedOperations++;
                 }
                 else if (operation is AttachImageOperation attachOperation)
                 {
@@ -75,8 +77,31 @@ namespace WriterApp.AI.Core
                         documentArtifact,
                         group,
                         reason));
+                    appliedOperations++;
                 }
             }
+
+            if (appliedOperations == 0)
+            {
+                return;
+            }
+
+            AIHistoryEntry entry = new()
+            {
+                EntryId = Guid.NewGuid(),
+                TimestampUtc = DateTime.UtcNow,
+                ActionId = proposal.ActionId,
+                ProviderId = proposal.ProviderId,
+                EditGroupId = group.GroupId,
+                OperationSummary = string.IsNullOrWhiteSpace(proposal.UserSummary) ? proposal.SummaryLabel : proposal.UserSummary,
+                TargetScope = proposal.TargetScope,
+                AffectedSectionId = proposal.SectionId,
+                Instruction = proposal.Instruction,
+                BeforeText = proposal.OriginalText,
+                AfterText = proposal.ProposedText
+            };
+
+            commandProcessor.AppendAiHistoryEntry(proposal.SectionId, entry);
         }
 
         private static string? ExtractBase64FromDataUrl(string dataUrl)
@@ -99,5 +124,6 @@ namespace WriterApp.AI.Core
 
             return $"{proposal.Reason} ({proposal.ActionId}:{proposal.RequestId})";
         }
+
     }
 }

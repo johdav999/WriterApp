@@ -3,7 +3,10 @@ using WriterApp.AI.Abstractions;
 using WriterApp.AI.Actions;
 using WriterApp.AI.Core;
 using WriterApp.AI.Providers.Mock;
+using WriterApp.AI.Providers.OpenAI;
 using WriterApp.Application.Commands;
+using WriterApp.Application.Exporting;
+using WriterApp.Application.State;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -16,6 +19,21 @@ builder.Services.AddSingleton<IArtifactStore, InMemoryArtifactStore>();
 builder.Services.AddSingleton<IAiAttachmentStore, InMemoryAiAttachmentStore>();
 builder.Services.AddSingleton<IAiProvider, MockTextProvider>();
 builder.Services.AddSingleton<IAiProvider, MockImageProvider>();
+
+WriterAiOpenAiOptions openAiOptions = builder.Configuration
+    .GetSection("WriterApp:AI:Providers:OpenAI")
+    .Get<WriterAiOpenAiOptions>() ?? new WriterAiOpenAiOptions();
+
+if (openAiOptions.Enabled)
+{
+    builder.Services.AddHttpClient(nameof(OpenAiProvider), client =>
+    {
+        int timeoutSeconds = Math.Max(1, openAiOptions.TimeoutSeconds);
+        client.Timeout = TimeSpan.FromSeconds(timeoutSeconds);
+    });
+    builder.Services.AddSingleton<IAiProvider, OpenAiProvider>();
+}
+
 builder.Services.AddSingleton<IAiProviderRegistry, DefaultAiProviderRegistry>();
 builder.Services.AddSingleton<IAiRouter, DefaultAiRouter>();
 builder.Services.AddSingleton<IAiAction, RewriteSelectionAction>();
@@ -23,6 +41,11 @@ builder.Services.AddSingleton<IAiAction, GenerateCoverImageAction>();
 builder.Services.AddSingleton<IAiActionExecutor, AiActionExecutor>();
 builder.Services.AddSingleton<IAiProposalApplier, DefaultProposalApplier>();
 builder.Services.AddSingleton<IAiOrchestrator, AiOrchestrator>();
+builder.Services.AddScoped<DocumentStorageService>();
+builder.Services.AddScoped<AppHeaderState>();
+builder.Services.AddSingleton<IExportRenderer, MarkdownExportRenderer>();
+builder.Services.AddSingleton<IExportRenderer, HtmlExportRenderer>();
+builder.Services.AddSingleton<ExportService>();
 
 var app = builder.Build();
 

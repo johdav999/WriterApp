@@ -1,11 +1,10 @@
-@page "/"
+@page "/doc"
+@page "/doc/{documentId}"
 @rendermode Microsoft.AspNetCore.Components.Web.RenderMode.InteractiveServer
 @using System
 @using System.Collections.Generic
 @using System.Globalization
 @using System.Linq
-@using System.Runtime.CompilerServices
-@using System.Text.Json
 @using System.Text.RegularExpressions
 @using System.Threading
 @using BlazorApp.Components.Editor
@@ -18,6 +17,7 @@
 @using WriterApp.AI.Abstractions
 @using WriterApp.AI.Actions
 @using WriterApp.Application.Commands
+@using WriterApp.Application.Exporting
 @using WriterApp.Application.State
 @using WriterApp.Domain.Documents
 @implements IDisposable
@@ -30,19 +30,32 @@
 @inject IArtifactStore ArtifactStore
 @inject IAiAttachmentStore AiAttachmentStore
 @inject IOptions<WriterAiOptions> AiOptions
+@inject DocumentStorageService DocumentStorage
+@inject ExportService ExportService
+@inject NavigationManager Navigation
+@inject AppHeaderState HeaderState
 
 <PageTitle>Writer</PageTitle>
 
-<div class="editor-preview-layout">
-    <div class="editor-pane">
-        <div class="pane-header">
-            <h2>Section Editor</h2>
-            <div class="section-nav">
-                <div class="section-nav-header">
-                    <h3>Sections</h3>
-                    <button type="button" @onclick="OnCreateSection">Add section</button>
-                </div>
-                <ul class="section-nav-list">
+@if (_hasRecoveryCandidate)
+{
+    <div class="recovery-banner">
+        <span>We recovered unsaved changes from your last session.</span>
+        <div class="recovery-actions">
+            <button type="button" @onclick="OnAcceptRecovery">Use recovery</button>
+            <button type="button" class="secondary" @onclick="OnDiscardRecovery">Discard</button>
+        </div>
+    </div>
+}
+
+<div class="editor-shell">
+    <div class="editor-workspace @GetWorkspaceClass()">
+        <aside class="section-panel">
+            <div class="section-panel-header">
+                <h2>Sections</h2>
+                <button type="button" @onclick="OnCreateSection">Add section</button>
+            </div>
+            <ul class="section-nav-list">
                     @foreach (Section section in _orderedSections)
                     {
                         <li class="drop-zone @(GetDropZoneClass(section.SectionId, DropPosition.Before))" @ondragover="OnDragOver" @ondragover:preventDefault @ondragenter="() => OnDragEnter(section.SectionId, DropPosition.Before)" @ondrop="() => OnDrop(section.SectionId, DropPosition.Before)"></li>
@@ -62,9 +75,33 @@
                         </li>
                         <li class="drop-zone @(GetDropZoneClass(section.SectionId, DropPosition.After))" @ondragover="OnDragOver" @ondragover:preventDefault @ondragenter="() => OnDragEnter(section.SectionId, DropPosition.After)" @ondrop="() => OnDrop(section.SectionId, DropPosition.After)"></li>
                     }
-                </ul>
+            </ul>
+        </aside>
+
+        <div class="editor-split @GetPreviewSplitClass()">
+            <section class="editor-main">
+            <div class="editor-main-header">
+                <div class="editor-section-info">
+                    <div class="editor-section-label">Active section</div>
+                    <div class="editor-section-title">@GetActiveSectionTitle()</div>
+                </div>
+                <div class="document-title-field">
+                    <label for="documentTitleInput">Document title</label>
+                    <input id="documentTitleInput"
+                           type="text"
+                           value="@_documentTitleDraft"
+                           @oninput="OnDocumentTitleInput" />
+                </div>
+                <button type="button" class="panel-toggle" @onclick="ToggleContextPanel">
+                    @(_isContextPanelCollapsed ? "Show panel" : "Hide panel")
+                </button>
             </div>
-            <div class="editor-toolbar" role="toolbar" aria-label="Editor formatting">
+
+                <button type="button" class="preview-toggle" @onclick="TogglePreview" aria-label="Toggle preview" aria-expanded="@_isPreviewOpen">
+                    @(_isPreviewOpen ? "<" : ">")
+                </button>
+
+                <div class="editor-toolbar" role="toolbar" aria-label="Editor formatting">
                 <div class="editor-toolbar-group" aria-label="Text emphasis">
                     <button type="button" class="@GetActiveClass(_formattingState.IsBold)" disabled="@(!_formattingState.CanBold)" @onclick="OnBoldRequested">Bold</button>
                     <button type="button" class="@GetActiveClass(_formattingState.IsItalic)" disabled="@(!_formattingState.CanItalic)" @onclick="OnItalicRequested">Italic</button>
@@ -113,24 +150,20 @@
                 <button type="button" @onclick="OnUndo" disabled="@(!_commandProcessor.CanUndo)">Undo</button>
                 <button type="button" @onclick="OnRedo" disabled="@(!_commandProcessor.CanRedo)">Redo</button>
                 <button type="button" @onclick="OnSave">Save</button>
+                <div class="export-menu">
+                    <button type="button" @onclick="ToggleExportMenu">Export</button>
+                    @if (_isExportMenuOpen)
+                    {
+                        <div class="export-menu-panel">
+                            <button type="button" @onclick="() => OnExportRequested(ExportFormat.Markdown)">Export as Markdown</button>
+                            <button type="button" @onclick="() => OnExportRequested(ExportFormat.Html)">Export as HTML</button>
+                        </div>
+                    }
+                </div>
                 @if (IsAiEnabled && _aiOptions.UI.ShowAiMenu && AiOrchestrator.CanRunAction(GenerateCoverImageAction.ActionIdValue))
                 {
                     <button type="button" @onclick="OnGenerateCoverImage">Generate cover image (mock)</button>
                 }
-                <select class="editor-toolbar-select" value="@_selectedDocumentId" @onchange="OnSelectedDocumentChanged">
-                    <option value="">Load document...</option>
-                    @foreach (DocumentIndexEntry entry in _savedDocuments)
-                    {
-                        <option value="@entry.DocumentId.ToString()">@entry.Title</option>
-                    }
-                </select>
-                <button type="button" @onclick="OnLoadSelected" disabled="@string.IsNullOrWhiteSpace(_selectedDocumentId)">Load</button>
-            </div>
-            <div class="editor-status">
-                <span>@_wordCount words</span>
-                <span>@_readingTime</span>
-                <span class="@GetDirtyClass()">@GetDirtyLabel()</span>
-                <span>@GetLastSavedLabel()</span>
             </div>
             @if (_pendingAiProposal is not null)
             {
@@ -173,25 +206,52 @@
                     </div>
                 </div>
             }
+            <div class="editor-surface">
+                <SectionEditor @ref="_editorRef"
+                               Content="@_activeSectionContent"
+                               ContentChanged="OnSectionContentChanged"
+                               EditorReady="OnEditorReady"
+                               FormattingChanged="OnFormattingChanged"
+                               OutlineChanged="OnOutlineChanged"
+                               SelectionChanged="OnSelectionChanged"
+                               UndoRequested="OnUndo"
+                               RedoRequested="OnRedo"
+                               ContextMenuRequested="OnEditorContextMenuRequested" />
+            </div>
+            <div class="editor-status">
+                <span>@_wordCount words</span>
+                <span>@_readingTime</span>
+                <span class="@GetSaveStatusClass()">@GetSaveStatusLabel()</span>
+                <span>@GetLastSavedLabel()</span>
+            </div>
+            </section>
+
+            <aside class="preview-panel">
+                <div class="preview-panel-header">
+                    <h2>Preview</h2>
+                </div>
+                <div class="preview-panel-body">
+                    <div class="document-preview">
+                        @if (_previewSections is not null)
+                        {
+                            for (int i = 0; i < _previewSections.Count; i++)
+                            {
+                                string html = _previewSections[i] ?? string.Empty;
+                                <section class="document-section">
+                                    @((MarkupString)html)
+                                </section>
+                            }
+                        }
+                    </div>
+                </div>
+            </aside>
         </div>
-        <div class="pane-body editor-scroll">
-            <SectionEditor @ref="_editorRef"
-                           Content="@_activeSectionContent"
-                           ContentChanged="OnSectionContentChanged"
-                           EditorReady="OnEditorReady"
-                           FormattingChanged="OnFormattingChanged"
-                           OutlineChanged="OnOutlineChanged"
-                           SelectionChanged="OnSelectionChanged"
-                           UndoRequested="OnUndo"
-                           RedoRequested="OnRedo"
-                           ContextMenuRequested="OnEditorContextMenuRequested" />
-        </div>
-    </div>
-    <div class="preview-pane">
-        <div class="pane-header">
-            <h2>Document Preview</h2>
-        </div>
-        <div class="pane-body preview-scroll">
+
+        <aside class="context-panel @GetContextPanelClass()">
+            <div class="context-panel-header">
+                <h2>Context</h2>
+            </div>
+            <div class="context-panel-body">
             <div class="outline-panel">
                 <h3>Outline</h3>
                 @if (_outlineItems.Count == 0)
@@ -212,25 +272,95 @@
                     </ul>
                 }
             </div>
+            @{
+                IReadOnlyList<AIHistoryEntry> aiHistoryEntries = GetActiveSectionAiHistory();
+            }
+            @if (aiHistoryEntries.Count > 0)
+            {
+                <details class="ai-history-panel">
+                    <summary>
+                        <span>AI Changes</span>
+                        <span class="ai-history-count">@aiHistoryEntries.Count</span>
+                    </summary>
+                    <div class="ai-history-helper">AI changes are separate from undo/redo.</div>
+                    <ul class="ai-history-list">
+                        @foreach (AIHistoryEntry entry in aiHistoryEntries)
+                        {
+                            bool isActive = IsAiHistoryEntryActive(entry);
+                            bool showDetails = _aiHistoryDetailsId == entry.EditGroupId;
+                            <li class="ai-history-item">
+                                <div class="ai-history-meta">
+                                    <span class="ai-history-badge">AI</span>
+                                    <span class="ai-history-summary">@entry.OperationSummary</span>
+                                </div>
+                                <div class="ai-history-sub">
+                                    <span>@FormatRelativeTime(entry.TimestampUtc)</span>
+                                    <span class="ai-history-provider">@entry.ProviderId</span>
+                                    @if (!isActive)
+                                    {
+                                        <span class="ai-history-rolled">Rolled back</span>
+                                    }
+                                </div>
+                                <div class="ai-history-actions">
+                                    <button type="button"
+                                            disabled="@(!isActive || _isAiHistoryRollback)"
+                                            @onclick="() => OnRollbackAiHistoryEntry(entry)">
+                                        Undo this AI change
+                                    </button>
+                                    <button type="button" @onclick="() => OnToggleAiHistoryDetails(entry)">
+                                        @(showDetails ? "Hide details" : "View details")
+                                    </button>
+                                </div>
+                                @if (showDetails)
+                                {
+                                    <div class="ai-history-details">
+                                        <div class="ai-history-details-header">
+                                            <div class="ai-history-details-summary">@entry.OperationSummary</div>
+                                            <div class="ai-history-details-sub">
+                                                <span>@FormatRelativeTime(entry.TimestampUtc)</span>
+                                                <span class="ai-history-provider">@entry.ProviderId</span>
+                                            </div>
+                                        </div>
+                                        <div class="ai-history-details-meta">
+                                            <span>Scope: @entry.TargetScope</span>
+                                            <span>Section: @GetAiHistorySectionTitle(entry)</span>
+                                            @if (TryGetCharacterDelta(entry, out int delta))
+                                            {
+                                                <span>Char delta: @FormatDelta(delta)</span>
+                                            }
+                                        </div>
+                                        @if (!string.IsNullOrWhiteSpace(entry.Instruction))
+                                        {
+                                            <div class="ai-history-details-intent">
+                                                <div class="ai-history-details-label">Intent</div>
+                                                <div class="ai-history-details-text">@entry.Instruction</div>
+                                            </div>
+                                        }
+                                        <div class="ai-history-details-compare">
+                                            <div class="ai-history-details-block">
+                                                <div class="ai-history-details-label">Before</div>
+                                                <pre>@FormatHistoryText(entry.BeforeText)</pre>
+                                            </div>
+                                            <div class="ai-history-details-block">
+                                                <div class="ai-history-details-label">After</div>
+                                                <pre>@FormatHistoryText(entry.AfterText)</pre>
+                                            </div>
+                                        </div>
+                                    </div>
+                                }
+                            </li>
+                        }
+                    </ul>
+                </details>
+            }
             @if (GetCoverImageDataUrl(_activeSectionId) is string coverUrl)
             {
                 <div class="cover-image-preview">
                     <img src="@coverUrl" alt="Cover image" />
                 </div>
             }
-            <div class="document-preview">
-                @if (_previewSections is not null)
-                {
-                    for (int i = 0; i < _previewSections.Count; i++)
-                    {
-                        string html = _previewSections[i] ?? string.Empty;
-                        <section class="document-section">
-                            @((MarkupString)html)
-                        </section>
-                    }
-                }
-            </div>
         </div>
+    </aside>
     </div>
 </div>
 
@@ -299,72 +429,276 @@
 }
 
 <style>
-    .editor-preview-layout {
-        display: flex;
-        gap: 32px;
-        align-items: flex-start;
+    .editor-shell {
+        --section-panel-width: 500px;
+        --context-panel-width: 340px;
         padding: 24px;
     }
 
-    .editor-pane,
-    .preview-pane {
-        flex: 1 1 0;
-        min-width: 320px;
+    .recovery-banner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 10px 14px;
+        margin: 12px 24px 0;
+        border-radius: 10px;
+        border: 1px solid #f0d7a2;
+        background: #fff7e6;
+        color: #6b4b1f;
+        font-size: 0.9rem;
     }
 
-    .editor-pane h2,
-    .preview-pane h2 {
-        margin-top: 0;
-        font-size: 1.1rem;
-        letter-spacing: 0.02em;
+    .recovery-actions {
+        display: flex;
+        gap: 8px;
     }
 
-    .pane-header {
+    .recovery-banner button {
+        padding: 6px 12px;
+        border-radius: 6px;
+        border: 1px solid #d6c79c;
+        background: #f9e8c5;
+        cursor: pointer;
+    }
+
+    .recovery-banner .secondary {
+        background: #f5f1eb;
+        border-color: #d8d4ce;
+    }
+
+    .editor-workspace {
+        display: grid;
+        grid-template-columns: var(--section-panel-width) minmax(0, 1fr) var(--context-panel-width);
+        gap: 24px;
+        align-items: start;
+    }
+
+    .section-panel {
+        border: 1px solid #e3e1dd;
+        border-radius: 10px;
+        padding: 12px;
+        background: #faf7f2;
+        max-height: calc(100vh - 140px);
+        overflow: auto;
+    }
+
+    .section-panel-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 10px;
+    }
+
+    .section-panel-header h2 {
+        margin: 0;
+        font-size: 1rem;
+    }
+
+    .editor-split {
+        position: relative;
+        display: grid;
+        grid-template-columns: 1fr 0;
+        min-width: 0;
+        transition: grid-template-columns 0.3s ease;
+    }
+
+    .editor-split.is-preview-open {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .editor-main {
         display: flex;
         flex-direction: column;
         gap: 12px;
-        padding-bottom: 12px;
-        border-bottom: 1px solid #ececec;
-        position: sticky;
+        min-width: 0;
+        position: relative;
+        padding-right: 24px;
+    }
+
+    .editor-main-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .document-title-field {
+        display: grid;
+        gap: 4px;
+        min-width: 240px;
+    }
+
+    .document-title-field label {
+        font-size: 0.7rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: #7a7a7a;
+    }
+
+    .document-title-field input {
+        border: 1px solid #d8d4ce;
+        border-radius: 8px;
+        padding: 6px 10px;
+        font-size: 0.95rem;
+        background: #ffffff;
+        color: #1f2937;
+        min-width: 0;
+    }
+
+    .editor-section-info {
+        display: grid;
+        gap: 4px;
+    }
+
+    .editor-section-label {
+        font-size: 0.7rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: #7a7a7a;
+    }
+
+    .editor-section-title {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: #1f2937;
+    }
+
+    .panel-toggle {
+        padding: 6px 12px;
+        border-radius: 20px;
+        border: 1px solid #d8d4ce;
+        background: #f5f1eb;
+        font-size: 0.85rem;
+        color: #1f2937;
+        cursor: pointer;
+    }
+
+    .preview-toggle {
+        position: absolute;
         top: 0;
-        background: #fff;
-        z-index: 2;
-    }
-
-    .pane-header h2 {
-        margin: 0;
-    }
-
-    .pane-body {
-        padding-top: 12px;
-        max-height: 70vh;
-        overflow: auto;
+        right: 0;
+        height: 100%;
+        width: 24px;
+        border: 1px solid #d8d4ce;
+        border-radius: 999px;
+        background: #f5f1eb;
+        font-size: 1rem;
+        color: #1f2937;
+        cursor: pointer;
+        z-index: 3;
+        display: flex;
+        align-items: center;
+        justify-content: center;
     }
 
     .editor-toolbar {
         display: flex;
         flex-wrap: wrap;
         gap: 8px;
+        padding: 8px;
+        border-radius: 10px;
+        border: 1px solid #e2dfda;
+        background: #f5f3ef;
     }
 
-    .section-nav {
-        border: 1px solid #ececec;
-        border-radius: 6px;
-        padding: 10px;
-        background: #fafafa;
-    }
-
-    .section-nav-header {
+    .editor-actions {
         display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 8px;
+        flex-wrap: wrap;
+        gap: 8px;
     }
 
-    .section-nav-header h3 {
+    .editor-surface {
+        padding: 12px;
+        border-radius: 12px;
+        border: 1px solid #e2dfda;
+        background: #ffffff;
+    }
+
+    .editor-status {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        font-size: 0.85rem;
+        color: #5b5b5b;
+        padding: 8px 12px;
+        border-radius: 10px;
+        border: 1px solid #e2dfda;
+        background: #faf7f2;
+    }
+
+    .preview-panel {
+        border-left: 1px solid #e2dfda;
+        background: #ffffff;
+        display: flex;
+        flex-direction: column;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.2s ease;
+        min-width: 0;
+    }
+
+    .editor-split.is-preview-open .preview-panel {
+        opacity: 1;
+        pointer-events: auto;
+    }
+
+    .editor-split:not(.is-preview-open) .preview-panel {
+        border-left: none;
+    }
+
+    .preview-panel-header {
+        padding: 10px 12px;
+        border-bottom: 1px solid #ececec;
+        font-size: 1rem;
+    }
+
+    .preview-panel-header h2 {
         margin: 0;
         font-size: 1rem;
     }
+
+    .preview-panel-body {
+        padding: 12px;
+        overflow: auto;
+    }
+
+    .context-panel {
+        border: 1px solid #e3e1dd;
+        border-radius: 12px;
+        background: #fbfaf8;
+        display: flex;
+        flex-direction: column;
+        max-height: calc(100vh - 140px);
+        overflow: hidden;
+    }
+
+    .context-panel-header {
+        padding: 10px 12px;
+        border-bottom: 1px solid #e5e2dd;
+    }
+
+    .context-panel-header h2 {
+        margin: 0;
+        font-size: 1rem;
+    }
+
+    .context-panel-body {
+        padding: 12px;
+        display: grid;
+        gap: 16px;
+        overflow: auto;
+    }
+
+    .context-panel.is-collapsed {
+        display: none;
+    }
+
+    .editor-workspace.is-panel-collapsed {
+        grid-template-columns: var(--section-panel-width) minmax(0, 1fr);
+    }
+
 
     .section-nav-list {
         list-style: none;
@@ -469,18 +803,6 @@
         cursor: pointer;
     }
 
-    .editor-actions {
-        display: flex;
-        gap: 8px;
-        margin: 0;
-    }
-
-    .editor-status {
-        display: flex;
-        gap: 12px;
-        font-size: 0.9rem;
-        color: #5b5b5b;
-    }
 
     .editor-actions button,
     .editor-toolbar button {
@@ -492,7 +814,7 @@
     }
 
     .section-nav-actions button,
-    .section-nav-header button {
+    .section-panel-header button {
         padding: 4px 8px;
         border: 1px solid #d0d0d0;
         border-radius: 4px;
@@ -501,7 +823,7 @@
     }
 
     .section-nav-actions button:disabled,
-    .section-nav-header button:disabled {
+    .section-panel-header button:disabled {
         opacity: 0.5;
         cursor: not-allowed;
     }
@@ -603,6 +925,11 @@
         color: #4b5563;
     }
 
+    .saving-indicator {
+        color: #6b4b1f;
+        font-weight: 600;
+    }
+
     .ai-edit-range {
         background: rgba(255, 204, 102, 0.25);
         border-radius: 2px;
@@ -683,29 +1010,27 @@
         gap: 8px;
     }
 
-    .editor-pane .ProseMirror {
+    .editor-surface .ProseMirror {
         min-height: 320px;
-        padding: 12px;
-        border: 1px solid #d9d9d9;
-        border-radius: 6px;
-        background: #fff;
+        padding: 8px;
+        border: none;
+        background: transparent;
     }
 
     .document-preview {
-        max-width: 760px;
-        margin: 0 auto;
-        padding: 24px 28px;
+        width: 100%;
+        padding: 20px 22px;
         line-height: 1.6;
         font-family: "Georgia", "Times New Roman", serif;
         background: #fff;
         color: #1e1e1e;
         border: 1px solid #e2e2e2;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.05);
     }
 
     .cover-image-preview {
-        max-width: 760px;
-        margin: 0 auto 16px;
+        width: 100%;
+        margin: 0 0 16px;
         padding: 12px;
         background: #fff;
         border: 1px solid #e2e2e2;
@@ -779,18 +1104,208 @@
         color: #7a7a7a;
     }
 
-    @@media (max-width: 900px) {
-        .editor-preview-layout {
-            flex-direction: column;
+    .ai-history-panel {
+        margin: 1.5rem 0;
+        padding: 0.75rem 0.9rem;
+        border-radius: 12px;
+        border: 1px solid #e2e6ee;
+        background: #f8f9fb;
+    }
+
+    .ai-history-panel summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-weight: 600;
+        cursor: pointer;
+    }
+
+    .ai-history-count {
+        font-size: 0.8rem;
+        color: #5f6b7a;
+    }
+
+    .ai-history-helper {
+        margin: 0.5rem 0 0.75rem;
+        font-size: 0.85rem;
+        color: #6b7280;
+    }
+
+    .ai-history-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+
+    .ai-history-item {
+        padding: 0.7rem 0.8rem;
+        border-radius: 10px;
+        background: #ffffff;
+        border: 1px solid #edf0f5;
+    }
+
+    .ai-history-meta {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        font-weight: 600;
+    }
+
+    .ai-history-badge {
+        font-size: 0.7rem;
+        padding: 0.15rem 0.45rem;
+        border-radius: 999px;
+        background: #1f2937;
+        color: #ffffff;
+        letter-spacing: 0.04em;
+    }
+
+    .ai-history-summary {
+        font-size: 0.95rem;
+        color: #111827;
+    }
+
+    .ai-history-sub {
+        margin-top: 0.35rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        font-size: 0.8rem;
+        color: #6b7280;
+    }
+
+    .ai-history-provider {
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        font-weight: 600;
+    }
+
+    .ai-history-rolled {
+        color: #a33a3a;
+        font-weight: 600;
+    }
+
+    .ai-history-actions {
+        margin-top: 0.6rem;
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+    }
+
+    .ai-history-details {
+        margin-top: 0.75rem;
+        padding-top: 0.75rem;
+        border-top: 1px solid #edf0f5;
+        display: flex;
+        flex-direction: column;
+        gap: 0.6rem;
+    }
+
+    .ai-history-details-header {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+
+    .ai-history-details-summary {
+        font-weight: 600;
+        color: #111827;
+    }
+
+    .ai-history-details-sub {
+        display: flex;
+        gap: 0.5rem;
+        font-size: 0.8rem;
+        color: #6b7280;
+    }
+
+    .ai-history-details-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.6rem;
+        font-size: 0.8rem;
+        color: #4b5563;
+    }
+
+    .ai-history-details-compare {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 0.6rem;
+    }
+
+    .ai-history-details-block {
+        padding: 0.5rem;
+        border-radius: 8px;
+        background: #f9fafb;
+        border: 1px solid #eef2f7;
+    }
+
+    .ai-history-details-label {
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #6b7280;
+        margin-bottom: 0.35rem;
+    }
+
+    .ai-history-details-block pre {
+        margin: 0;
+        white-space: pre-wrap;
+        font-family: "Georgia", serif;
+        font-size: 0.85rem;
+        color: #111827;
+    }
+
+    .ai-history-details-intent {
+        padding: 0.5rem;
+        border-radius: 8px;
+        background: #fff7ed;
+        border: 1px solid #fde3c5;
+    }
+
+    .export-menu {
+        position: relative;
+        display: inline-block;
+    }
+
+    .export-menu-panel {
+        position: absolute;
+        top: calc(100% + 0.35rem);
+        right: 0;
+        min-width: 180px;
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+        padding: 0.5rem;
+        border-radius: 8px;
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12);
+        z-index: 20;
+    }
+
+    @@media (max-width: 1200px) {
+        .editor-shell {
+            --section-panel-width: 360px;
         }
 
-        .pane-body {
-            max-height: none;
+        .editor-workspace {
+            grid-template-columns: var(--section-panel-width) minmax(0, 1fr);
+        }
+
+        .context-panel {
+            display: none;
         }
     }
 </style>
 
 @code {
+    [Parameter]
+    public string? DocumentId { get; set; }
+
     private DocumentState _state;
     private CommandProcessor _commandProcessor;
     private readonly Action _onChangedHandler;
@@ -804,6 +1319,7 @@
     private bool _skipNextEditorSync;
     private IJSObjectReference? _editorInstance;
     private IJSObjectReference? _commandsModule;
+    private IJSObjectReference? _exportModule;
     private bool _disposed;
     private string _fontSize = "16";
     private string _fontFamily = string.Empty;
@@ -818,18 +1334,24 @@
         CanBlockquote = true,
         CanHorizontalRule = true
     };
-    private bool _loadedFromStorage;
     private int _wordCount;
     private string _readingTime = "0 min read";
-    private string _selectedDocumentId = string.Empty;
-    private readonly List<DocumentIndexEntry> _savedDocuments = new();
     private bool _isDirty;
     private DateTime _lastSavedUtc;
+    private DateTime _lastAutosaveUtc;
+    private AutosaveStatus _autosaveStatus = AutosaveStatus.Idle;
+    private CancellationTokenSource? _autosaveCts;
+    private bool _isManualSaveInProgress;
+    private string _documentTitleDraft = string.Empty;
+    private bool _hasRecoveryCandidate;
+    private DocumentStorageService.DocumentAutosave? _recoveryCandidate;
     private bool _suppressDirtyUpdate;
     private Guid? _draggingSectionId;
     private Guid? _dropTargetSectionId;
     private DropPosition? _dropPosition;
     private bool _isContextMenuOpen;
+    private bool _isContextPanelCollapsed;
+    private bool _isPreviewOpen;
     private double _contextMenuX;
     private double _contextMenuY;
     private ElementReference _contextMenuRef;
@@ -838,13 +1360,18 @@
     private bool _hasAiEditsAtSelection;
     private bool _hasMultipleAiEditsInSection;
     private Guid? _aiRollbackGroupId;
+    private bool _isAiHistoryRollback;
+    private Guid? _aiHistoryDetailsId;
     private bool _isReordering;
     private PendingAiProposal? _pendingAiProposal;
     private CancellationTokenSource? _aiStreamCts;
     private bool _isAiStreaming;
+    private bool _isExportMenuOpen;
     private string? _aiStreamError;
     private string _streamedText = string.Empty;
     private string? _streamedImageReference;
+    private string? _loadedDocumentId;
+    private bool _pendingDocumentLoad;
     private readonly List<AiActionOption> _aiActions = new()
     {
         new AiActionOption("Rewrite (Neutral)", "Rewrite (Neutral)", AiActionScope.Selection, new Dictionary<string, object?>
@@ -896,14 +1423,12 @@
             ["preserve_terms"] = true
         })
     };
-    private const string StorageKey = "writerapp.document";
-    private const string StorageIndexKey = "writerapp.document.index";
-    private const string StoragePrefix = "writerapp.document.";
+    private static readonly TimeSpan AutosaveDebounce = TimeSpan.FromSeconds(2.5);
     private WriterAiOptions _aiOptions = new();
 
     public Home()
     {
-        Document document = CreateSampleDocument();
+        Document document = DocumentFactory.CreateNewDocument();
         _state = new DocumentState(document);
         _commandProcessor = new CommandProcessor(_state);
         _onChangedHandler = () => _ = HandleDocumentChangedAsync();
@@ -923,15 +1448,32 @@
         RefreshFromDocument(_state.Document);
         _lastSavedUtc = _state.Document.Metadata.ModifiedUtc;
         _isDirty = false;
+        _autosaveStatus = AutosaveStatus.Idle;
+        _lastAutosaveUtc = default;
+        _hasRecoveryCandidate = false;
+        _recoveryCandidate = null;
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (DocumentId is null)
+        {
+            _pendingDocumentLoad = true;
+            return;
+        }
+
+        if (!string.Equals(_loadedDocumentId, DocumentId, StringComparison.Ordinal))
+        {
+            _pendingDocumentLoad = true;
+        }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (firstRender && !_loadedFromStorage)
+        if (_pendingDocumentLoad)
         {
-            _loadedFromStorage = true;
-            await LoadDocumentIndexAsync();
-            await LoadDocumentAsync();
+            _pendingDocumentLoad = false;
+            await LoadDocumentFromRouteAsync(DocumentId);
         }
 
         if (_shouldFocusContextMenu)
@@ -1036,26 +1578,19 @@
         });
     }
 
-    private void OnSelectedDocumentChanged(ChangeEventArgs args)
+    private void OnDocumentTitleInput(ChangeEventArgs args)
     {
-        ExecuteSafe("OnSelectedDocumentChanged", () =>
+        ExecuteSafe("OnDocumentTitleInput", () =>
         {
-            _selectedDocumentId = args.Value?.ToString() ?? string.Empty;
+            _documentTitleDraft = args.Value?.ToString() ?? string.Empty;
+            HeaderState.DocumentTitle = string.IsNullOrWhiteSpace(_documentTitleDraft)
+                ? "Untitled"
+                : _documentTitleDraft;
+            _isDirty = true;
+            ScheduleAutosave();
         });
     }
 
-    private Task OnLoadSelected()
-    {
-        return ExecuteSafeAsync("OnLoadSelected", async () =>
-        {
-            if (string.IsNullOrWhiteSpace(_selectedDocumentId))
-            {
-                return;
-            }
-
-            await LoadDocumentByIdAsync(_selectedDocumentId);
-        });
-    }
 
     private Task OnSectionSelected(Guid sectionId)
     {
@@ -1339,6 +1874,13 @@
         After
     }
 
+    private enum AutosaveStatus
+    {
+        Idle,
+        Saving,
+        Failed
+    }
+
     private Chapter GetPrimaryChapter()
     {
         if (_state.Document.Chapters.Count == 0)
@@ -1388,6 +1930,28 @@
         string? derived = DeriveTitleFromSection(section.Content.Value);
         return string.IsNullOrWhiteSpace(derived) ? "Untitled section" : derived;
     }
+
+    private string GetActiveSectionTitle()
+    {
+        Section activeSection = FindSection(_state.Document, _activeSectionId);
+        return GetSectionTitle(activeSection);
+    }
+
+    private void ToggleContextPanel()
+    {
+        _isContextPanelCollapsed = !_isContextPanelCollapsed;
+    }
+
+    private string GetContextPanelClass() => _isContextPanelCollapsed ? "is-collapsed" : string.Empty;
+
+    private string GetWorkspaceClass() => _isContextPanelCollapsed ? "is-panel-collapsed" : string.Empty;
+
+    private void TogglePreview()
+    {
+        _isPreviewOpen = !_isPreviewOpen;
+    }
+
+    private string GetPreviewSplitClass() => _isPreviewOpen ? "is-preview-open" : string.Empty;
 
     private static string? DeriveTitleFromSection(string? html)
     {
@@ -1544,6 +2108,49 @@
             _commandProcessor.RollbackAllAiEdits(_activeSectionId);
             return InvokeCommandAsync("focusEditor");
         });
+    }
+
+    private Task OnRollbackAiHistoryEntry(AIHistoryEntry entry)
+    {
+        return ExecuteSafeAsync("OnRollbackAiHistoryEntry", async () =>
+        {
+            if (entry is null || _isAiHistoryRollback)
+            {
+                return;
+            }
+
+            if (!IsAiHistoryEntryActive(entry))
+            {
+                return;
+            }
+
+            bool confirmed = await JSRuntime.InvokeAsync<bool>("confirm", "Undo this AI change?");
+            if (!confirmed)
+            {
+                return;
+            }
+
+            _isAiHistoryRollback = true;
+            try
+            {
+                _commandProcessor.RollbackAiEditGroup(entry.AffectedSectionId, entry.EditGroupId);
+            }
+            finally
+            {
+                _isAiHistoryRollback = false;
+            }
+        });
+    }
+
+    private Task OnToggleAiHistoryDetails(AIHistoryEntry entry)
+    {
+        if (entry is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        _aiHistoryDetailsId = _aiHistoryDetailsId == entry.EditGroupId ? null : entry.EditGroupId;
+        return InvokeAsync(StateHasChanged);
     }
 
     private Task OnAiActionSelected(AiActionOption action)
@@ -2134,12 +2741,16 @@
                 }
             }
 
+            ScheduleAutosave();
             await InvokeAsync(StateHasChanged);
         });
     }
 
     private void RefreshFromDocument(Document document)
     {
+        string title = GetDocumentTitle(document);
+        HeaderState.DocumentTitle = title;
+        _documentTitleDraft = title;
         _previewSections.Clear();
         _orderedSections.Clear();
         int wordCount = 0;
@@ -2163,6 +2774,11 @@
         Section activeSection = FindSection(document, _activeSectionId);
         _activeSectionContent = activeSection.Content.Value ?? string.Empty;
         UpdateReadingMetrics(wordCount);
+    }
+
+    private static string GetDocumentTitle(Document document)
+    {
+        return string.IsNullOrWhiteSpace(document.Metadata.Title) ? "Untitled" : document.Metadata.Title;
     }
 
     private static int CountWords(string? html)
@@ -2286,6 +2902,122 @@
         _readingTime = $"{minutes} min read";
     }
 
+    private IReadOnlyList<AIHistoryEntry> GetActiveSectionAiHistory()
+    {
+        if (_state?.Document is null || _activeSectionId == Guid.Empty)
+        {
+            return Array.Empty<AIHistoryEntry>();
+        }
+
+        Section section = FindSection(_state.Document, _activeSectionId);
+        SectionAIInfo aiInfo = section.AI;
+        if (aiInfo is null || aiInfo.AIHistory is null || aiInfo.AIHistory.Count == 0)
+        {
+            return Array.Empty<AIHistoryEntry>();
+        }
+
+        return aiInfo.AIHistory
+            .OrderByDescending(entry => entry.TimestampUtc)
+            .ToList();
+    }
+
+    private bool IsAiHistoryEntryActive(AIHistoryEntry entry)
+    {
+        if (_state?.Document is null || entry is null)
+        {
+            return false;
+        }
+
+        Section section = FindSection(_state.Document, _activeSectionId);
+        SectionAIInfo aiInfo = section.AI;
+        if (aiInfo is null || aiInfo.AiEditGroups is null || aiInfo.AiEditGroups.Count == 0)
+        {
+            return false;
+        }
+
+        return aiInfo.AiEditGroups.Exists(group => group.GroupId == entry.EditGroupId);
+    }
+
+    private string GetAiHistorySectionTitle(AIHistoryEntry entry)
+    {
+        if (_state?.Document is null)
+        {
+            return "Unknown section";
+        }
+
+        try
+        {
+            Section section = FindSection(_state.Document, entry.AffectedSectionId);
+            return string.IsNullOrWhiteSpace(section.Title) ? "Untitled section" : section.Title;
+        }
+        catch (InvalidOperationException)
+        {
+            return "Unknown section";
+        }
+    }
+
+    private static bool TryGetCharacterDelta(AIHistoryEntry entry, out int delta)
+    {
+        delta = 0;
+        if (entry is null || entry.BeforeText is null || entry.AfterText is null)
+        {
+            return false;
+        }
+
+        delta = entry.AfterText.Length - entry.BeforeText.Length;
+        return true;
+    }
+
+    private static string FormatDelta(int delta)
+    {
+        if (delta == 0)
+        {
+            return "0";
+        }
+
+        return delta > 0 ? $"+{delta}" : delta.ToString(CultureInfo.InvariantCulture);
+    }
+
+    private static string FormatHistoryText(string? text)
+    {
+        return text is null ? "No text captured." : text;
+    }
+
+    private static string FormatRelativeTime(DateTime timestampUtc)
+    {
+        DateTime utc = timestampUtc.Kind == DateTimeKind.Utc ? timestampUtc : timestampUtc.ToUniversalTime();
+        TimeSpan delta = DateTime.UtcNow - utc;
+        if (delta < TimeSpan.Zero)
+        {
+            delta = TimeSpan.Zero;
+        }
+
+        if (delta < TimeSpan.FromMinutes(1))
+        {
+            return "just now";
+        }
+
+        if (delta < TimeSpan.FromHours(1))
+        {
+            int minutes = Math.Max(1, (int)delta.TotalMinutes);
+            return minutes == 1 ? "1 min ago" : $"{minutes} min ago";
+        }
+
+        if (delta < TimeSpan.FromDays(1))
+        {
+            int hours = Math.Max(1, (int)delta.TotalHours);
+            return hours == 1 ? "1 hr ago" : $"{hours} hr ago";
+        }
+
+        int days = Math.Max(1, (int)delta.TotalDays);
+        if (days < 7)
+        {
+            return days == 1 ? "1 day ago" : $"{days} days ago";
+        }
+
+        return utc.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+    }
+
     private static Section FindSection(Document document, Guid sectionId)
     {
         for (int chapterIndex = 0; chapterIndex < document.Chapters.Count; chapterIndex++)
@@ -2302,87 +3034,6 @@
         }
 
         throw new InvalidOperationException($"Section {sectionId} was not found.");
-    }
-
-    private static Document CreateSampleDocument()
-    {
-        DateTime now = DateTime.UtcNow;
-
-        return new Document
-        {
-            Metadata = new DocumentMetadata
-            {
-                Title = "Sample Draft",
-                Author = "Demo",
-                Language = "en",
-                Tags = new List<string> { "demo" },
-                CreatedUtc = now,
-                ModifiedUtc = now
-            },
-            Settings = new DocumentSettings
-            {
-                DefaultFont = "Georgia",
-                DefaultFontSize = 12,
-                PageSize = "Letter",
-                LineSpacing = 1.5
-            },
-            Chapters = new List<Chapter>
-            {
-                new Chapter
-                {
-                    Order = 0,
-                    Title = "Draft",
-                    Sections = new List<Section>
-                    {
-                        new Section
-                        {
-                            Order = 0,
-                            Title = "Opening Scene",
-                            Content = new SectionContent
-                            {
-                                Format = "html",
-                                Value = "<h1>Opening Scene</h1><p>The storm rolled in just after dusk, wrapping the town in a soft gray hush.</p>"
-                            },
-                            Stats = new SectionStats(),
-                            Flags = new SectionFlags(),
-                            AI = new SectionAIInfo(),
-                            CreatedUtc = now,
-                            ModifiedUtc = now
-                        },
-                        new Section
-                        {
-                            Order = 1,
-                            Title = "Chapter One",
-                            Content = new SectionContent
-                            {
-                                Format = "html",
-                                Value = "<h2>Chapter One</h2><p>Eva traced the map with her finger, pausing at the edge of the inked coastline.</p>"
-                            },
-                            Stats = new SectionStats(),
-                            Flags = new SectionFlags(),
-                            AI = new SectionAIInfo(),
-                            CreatedUtc = now,
-                            ModifiedUtc = now
-                        },
-                        new Section
-                        {
-                            Order = 2,
-                            Title = "Chapter Two",
-                            Content = new SectionContent
-                            {
-                                Format = "html",
-                                Value = "<h2>Chapter Two</h2><p>By morning, the docks were empty, save for a single lantern swaying against the tide.</p>"
-                            },
-                            Stats = new SectionStats(),
-                            Flags = new SectionFlags(),
-                            AI = new SectionAIInfo(),
-                            CreatedUtc = now,
-                            ModifiedUtc = now
-                        }
-                    }
-                }
-            }
-        };
     }
 
     private Task OnEditorReady(IJSObjectReference editor)
@@ -2456,165 +3107,282 @@
     {
         return ExecuteSafeAsync("OnSave", async () =>
         {
-            try
-            {
-                Document normalized = NormalizeDocumentForSave(_state.Document);
-                DocumentStorage payload = new(normalized);
-                string json = JsonSerializer.Serialize(payload);
-                await JSRuntime.InvokeVoidAsync("localStorage.setItem", StorageKey, json);
-
-                string documentKey = StoragePrefix + normalized.DocumentId;
-                await JSRuntime.InvokeVoidAsync("localStorage.setItem", documentKey, json);
-                await UpdateDocumentIndexAsync(normalized);
-                _state.ReplaceDocument(normalized, notify: false);
-                RefreshFromDocument(normalized);
-                _lastSavedUtc = normalized.Metadata.ModifiedUtc;
-                _isDirty = false;
-                await InvokeAsync(StateHasChanged);
-            }
-            catch (JSException ex)
-            {
-                Logger.LogWarning(ex, "Local storage save failed.");
-            }
+            await SaveDocumentAsync();
         });
     }
 
-    private Task LoadDocumentAsync()
+    private async Task<Document?> SaveDocumentAsync()
     {
-        return ExecuteSafeAsync("LoadDocumentAsync", async () =>
+        if (_isManualSaveInProgress)
         {
-            string? json = null;
-            try
+            return null;
+        }
+
+        _isManualSaveInProgress = true;
+        _autosaveCts?.Cancel();
+        try
+        {
+            string? title = await EnsureDocumentTitleAsync();
+            if (string.IsNullOrWhiteSpace(title))
             {
-                json = await JSRuntime.InvokeAsync<string>("localStorage.getItem", StorageKey);
+                return null;
             }
-            catch (JSException ex)
+
+            Document withTitle = ApplyTitle(_state.Document, title);
+            Document normalized = NormalizeDocumentForSave(withTitle);
+            await DocumentStorage.SaveDocumentAsync(normalized);
+            await DocumentStorage.ClearAutosaveAsync(normalized.DocumentId);
+            _state.ReplaceDocument(normalized, notify: false);
+            RefreshFromDocument(normalized);
+            _lastSavedUtc = normalized.Metadata.ModifiedUtc;
+            _isDirty = false;
+            _autosaveStatus = AutosaveStatus.Idle;
+            await InvokeAsync(StateHasChanged);
+            return normalized;
+        }
+        finally
+        {
+            _isManualSaveInProgress = false;
+        }
+    }
+
+    private void ToggleExportMenu()
+    {
+        _isExportMenuOpen = !_isExportMenuOpen;
+    }
+
+    private Task OnExportRequested(ExportFormat format)
+    {
+        return ExecuteSafeAsync("OnExportRequested", async () =>
+        {
+            _isExportMenuOpen = false;
+            Document? saved = await SaveDocumentAsync();
+            if (saved is null)
             {
-                Logger.LogWarning(ex, "Local storage read failed.");
                 return;
             }
 
-            if (string.IsNullOrWhiteSpace(json))
-            {
-                if (_savedDocuments.Count == 0)
-                {
-                    return;
-                }
+            ExportResult result = await ExportService.ExportAsync(saved, format, new ExportOptions());
+            await DownloadExportAsync(result);
+        });
+    }
 
-                DocumentIndexEntry latest = _savedDocuments[0];
-                await LoadDocumentByIdAsync(latest.DocumentId.ToString());
+    private async Task DownloadExportAsync(ExportResult result)
+    {
+        await EnsureExportModuleAsync();
+        if (_exportModule is null)
+        {
+            return;
+        }
+
+        string payload = Convert.ToBase64String(result.Content);
+        await _exportModule.InvokeVoidAsync("downloadFile", payload, result.MimeType, result.FileName);
+    }
+
+    private async Task EnsureExportModuleAsync()
+    {
+        if (_exportModule is null)
+        {
+            _exportModule = await JSRuntime.InvokeAsync<IJSObjectReference>(
+                "import",
+                "/js/export.js");
+        }
+    }
+
+    private async Task<string?> EnsureDocumentTitleAsync()
+    {
+        string title = _documentTitleDraft.Trim();
+        if (!string.IsNullOrWhiteSpace(title))
+        {
+            return title;
+        }
+
+        string? response = null;
+        try
+        {
+            response = await JSRuntime.InvokeAsync<string?>("prompt", "Name your document", string.Empty);
+        }
+        catch (JSException ex)
+        {
+            Logger.LogWarning(ex, "Document title prompt failed.");
+        }
+
+        if (string.IsNullOrWhiteSpace(response))
+        {
+            return null;
+        }
+
+        title = response.Trim();
+        _documentTitleDraft = title;
+        HeaderState.DocumentTitle = title;
+        return title;
+    }
+
+    private static Document ApplyTitle(Document document, string title)
+    {
+        DocumentMetadata metadata = document.Metadata with { Title = title };
+        return document with { Metadata = metadata };
+    }
+
+    private Task LoadDocumentFromRouteAsync(string? documentId)
+    {
+        return ExecuteSafeAsync("LoadDocumentFromRouteAsync", async () =>
+        {
+            if (string.IsNullOrWhiteSpace(documentId) || !Guid.TryParse(documentId, out _))
+            {
+                RedirectToLanding();
                 return;
             }
 
-            DocumentStorage? payload = JsonSerializer.Deserialize<DocumentStorage>(json);
-            if (payload?.Document is null)
+            Document? document = await DocumentStorage.LoadDocumentByIdAsync(documentId);
+            if (document is null)
             {
+                RedirectToLanding();
                 return;
             }
 
-            InitializeState(NormalizeDocumentForLoad(payload.Document));
+            InitializeState(NormalizeDocumentForLoad(document));
+            _loadedDocumentId = documentId;
             await SyncEditorAsync();
+            await CheckForRecoveryAsync(documentId, document);
         });
     }
 
-    private Task LoadDocumentByIdAsync(string documentId)
+    private void RedirectToLanding()
     {
-        return ExecuteSafeAsync("LoadDocumentByIdAsync", async () =>
+        Navigation.NavigateTo("/", replace: true);
+    }
+
+    private async Task CheckForRecoveryAsync(string documentId, Document document)
+    {
+        DocumentStorageService.DocumentAutosave? autosave = await DocumentStorage.LoadAutosaveAsync(documentId);
+        if (autosave is null || autosave.AutosavedUtc <= document.Metadata.ModifiedUtc)
         {
-            string key = StoragePrefix + documentId;
-            string? json = null;
-            try
-            {
-                json = await JSRuntime.InvokeAsync<string>("localStorage.getItem", key);
-            }
-            catch (JSException ex)
-            {
-                Logger.LogWarning(ex, "Local storage read failed.");
-                return;
-            }
+            _hasRecoveryCandidate = false;
+            _recoveryCandidate = null;
+            return;
+        }
 
-            if (string.IsNullOrWhiteSpace(json))
-            {
-                return;
-            }
+        _recoveryCandidate = autosave;
+        _hasRecoveryCandidate = true;
+        await InvokeAsync(StateHasChanged);
+    }
 
-            DocumentStorage? payload = JsonSerializer.Deserialize<DocumentStorage>(json);
-            if (payload?.Document is null)
+    private Task OnAcceptRecovery()
+    {
+        return ExecuteSafeAsync("OnAcceptRecovery", async () =>
+        {
+            if (_recoveryCandidate is null)
             {
                 return;
             }
 
-            InitializeState(NormalizeDocumentForLoad(payload.Document));
+            InitializeState(NormalizeDocumentForLoad(_recoveryCandidate.Document));
+            _hasRecoveryCandidate = false;
+            _lastAutosaveUtc = _recoveryCandidate.AutosavedUtc;
+            _recoveryCandidate = null;
+            _autosaveStatus = AutosaveStatus.Idle;
+            _isDirty = true;
             await SyncEditorAsync();
+            await InvokeAsync(StateHasChanged);
         });
     }
 
-    private Task LoadDocumentIndexAsync()
+    private Task OnDiscardRecovery()
     {
-        return ExecuteSafeAsync("LoadDocumentIndexAsync", async () =>
+        return ExecuteSafeAsync("OnDiscardRecovery", async () =>
         {
-            _savedDocuments.Clear();
-
-            string? json = null;
-            try
+            if (_recoveryCandidate?.Document is null)
             {
-                json = await JSRuntime.InvokeAsync<string>("localStorage.getItem", StorageIndexKey);
-            }
-            catch (JSException ex)
-            {
-                Logger.LogWarning(ex, "Local storage index read failed.");
+                _hasRecoveryCandidate = false;
                 return;
             }
 
-            if (string.IsNullOrWhiteSpace(json))
-            {
-                return;
-            }
-
-            List<DocumentIndexEntry>? entries = JsonSerializer.Deserialize<List<DocumentIndexEntry>>(json);
-            if (entries is null)
-            {
-                return;
-            }
-
-            entries.Sort((a, b) => b.LastModifiedUtc.CompareTo(a.LastModifiedUtc));
-            _savedDocuments.AddRange(entries);
+            await DocumentStorage.ClearAutosaveAsync(_recoveryCandidate.Document.DocumentId);
+            _hasRecoveryCandidate = false;
+            _recoveryCandidate = null;
+            _autosaveStatus = AutosaveStatus.Idle;
+            await InvokeAsync(StateHasChanged);
         });
     }
 
-    private Task UpdateDocumentIndexAsync(Document document)
+    private Document BuildAutosaveDocument(Document document)
     {
-        return ExecuteSafeAsync("UpdateDocumentIndexAsync", async () =>
+        string title = string.IsNullOrWhiteSpace(_documentTitleDraft)
+            ? document.Metadata.Title
+            : _documentTitleDraft.Trim();
+
+        Document normalized = NormalizeDocumentForLoad(document);
+        DocumentMetadata updatedMetadata = normalized.Metadata with
         {
-            string title = string.IsNullOrWhiteSpace(document.Metadata.Title)
-                ? "Untitled"
-                : document.Metadata.Title;
+            Title = string.IsNullOrWhiteSpace(title) ? normalized.Metadata.Title : title,
+            ModifiedUtc = DateTime.UtcNow
+        };
 
-            DocumentIndexEntry entry = new(document.DocumentId, title, document.Metadata.ModifiedUtc);
-
-            int index = _savedDocuments.FindIndex(item => item.DocumentId == entry.DocumentId);
-            if (index >= 0)
-            {
-                _savedDocuments[index] = entry;
-            }
-            else
-            {
-                _savedDocuments.Add(entry);
-            }
-
-            _savedDocuments.Sort((a, b) => b.LastModifiedUtc.CompareTo(a.LastModifiedUtc));
-            string json = JsonSerializer.Serialize(_savedDocuments);
-
-            try
-            {
-                await JSRuntime.InvokeVoidAsync("localStorage.setItem", StorageIndexKey, json);
-            }
-            catch (JSException ex)
-            {
-                Logger.LogWarning(ex, "Local storage index update failed.");
-            }
-        });
+        return normalized with { Metadata = updatedMetadata };
     }
+
+    private void ScheduleAutosave()
+    {
+        if (_isManualSaveInProgress || _hasRecoveryCandidate || _loadedDocumentId is null)
+        {
+            return;
+        }
+
+        _autosaveCts?.Cancel();
+        _autosaveCts?.Dispose();
+        _autosaveCts = null;
+
+        CancellationTokenSource cts = new();
+        _autosaveCts = cts;
+        _ = DebouncedAutosaveAsync(cts);
+    }
+
+    private async Task DebouncedAutosaveAsync(CancellationTokenSource cts)
+    {
+        try
+        {
+            await Task.Delay(AutosaveDebounce, cts.Token);
+        }
+        catch (TaskCanceledException)
+        {
+            return;
+        }
+
+        if (cts.IsCancellationRequested)
+        {
+            return;
+        }
+
+        await AutosaveAsync();
+    }
+
+    private async Task AutosaveAsync()
+    {
+        if (_isManualSaveInProgress || _hasRecoveryCandidate || _loadedDocumentId is null)
+        {
+            return;
+        }
+
+        _autosaveStatus = AutosaveStatus.Saving;
+        await InvokeAsync(StateHasChanged);
+
+        Document autosaveDocument = BuildAutosaveDocument(_state.Document);
+        bool saved = await DocumentStorage.SaveAutosaveAsync(autosaveDocument.DocumentId, autosaveDocument, DateTime.UtcNow);
+        if (saved)
+        {
+            _autosaveStatus = AutosaveStatus.Idle;
+            _lastAutosaveUtc = DateTime.UtcNow;
+            _isDirty = false;
+        }
+        else
+        {
+            _autosaveStatus = AutosaveStatus.Failed;
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
 
     private Document NormalizeDocumentForSave(Document document)
     {
@@ -2733,9 +3501,27 @@
         }
     }
 
-    private string GetDirtyLabel() => _isDirty ? "Unsaved changes" : "All changes saved";
+    private string GetSaveStatusLabel()
+    {
+        return _autosaveStatus switch
+        {
+            AutosaveStatus.Saving => "Saving...",
+            AutosaveStatus.Failed => "Autosave failed",
+            _ when _isDirty => "Unsaved changes",
+            _ => "All changes saved"
+        };
+    }
 
-    private string GetDirtyClass() => _isDirty ? "dirty-indicator" : "clean-indicator";
+    private string GetSaveStatusClass()
+    {
+        return _autosaveStatus switch
+        {
+            AutosaveStatus.Saving => "saving-indicator",
+            AutosaveStatus.Failed => "dirty-indicator",
+            _ when _isDirty => "dirty-indicator",
+            _ => "clean-indicator"
+        };
+    }
 
     private string GetLastSavedLabel()
     {
@@ -2794,6 +3580,10 @@
     {
         _state.OnChanged -= _onChangedHandler;
         CancelAiStream();
+        HeaderState.DocumentTitle = null;
+        _autosaveCts?.Cancel();
+        _autosaveCts?.Dispose();
+        _autosaveCts = null;
     }
 
     public async ValueTask DisposeAsync()
@@ -2822,11 +3612,25 @@
                 _commandsModule = null;
             }
         }
+
+        if (_exportModule is not null)
+        {
+            try
+            {
+                await _exportModule.DisposeAsync();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+            finally
+            {
+                _exportModule = null;
+            }
+        }
     }
-
-    private sealed record DocumentStorage(Document Document);
-
-    private sealed record DocumentIndexEntry(Guid DocumentId, string Title, DateTime LastModifiedUtc);
 
     private sealed record AiEditDecoration(int Start, int End, bool IsActive);
 

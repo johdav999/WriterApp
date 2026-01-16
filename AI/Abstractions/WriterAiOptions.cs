@@ -13,6 +13,7 @@ namespace WriterApp.AI.Abstractions
         public string DefaultTextProviderId { get; set; } = "mock-text";
         public string DefaultImageProviderId { get; set; } = "mock-image";
         public bool AllowProviderFallback { get; set; } = true;
+        public WriterAiOpenAiOptions OpenAI { get; set; } = new();
     }
 
     public sealed class WriterAiStreamingOptions
@@ -23,5 +24,17 @@ namespace WriterApp.AI.Abstractions
     public sealed class WriterAiUiOptions
     {
         public bool ShowAiMenu { get; set; } = true;
+    }
+
+    public sealed class WriterAiOpenAiOptions
+    {
+        public bool Enabled { get; set; } = false;
+        public string? ApiKey { get; set; }
+        public string? BaseUrl { get; set; }
+        public string TextModel { get; set; } = "gpt-4.1-mini";
+        public string ImageModel { get; set; } = "gpt-image-1";
+        public int TimeoutSeconds { get; set; } = 60;
+        public int MaxOutputTokens { get; set; } = 800;
+        public string? Organization { get; set; }
     }
 }

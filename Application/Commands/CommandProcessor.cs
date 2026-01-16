@@ -47,6 +47,75 @@ namespace WriterApp.Application.Commands
             _state.NotifyChanged();
         }
 
+        public void AppendAiHistoryEntry(Guid sectionId, AIHistoryEntry entry)
+        {
+            if (entry is null)
+            {
+                throw new ArgumentNullException(nameof(entry));
+            }
+
+            if (!AiEditProvenance.TryGetSection(_state.Document, sectionId, out Chapter chapter, out int sectionIndex, out Section section))
+            {
+                return;
+            }
+
+            SectionAIInfo aiInfo = section.AI;
+            if (aiInfo is null)
+            {
+                return;
+            }
+
+            List<AIHistoryEntry> history = aiInfo.AIHistory is null
+                ? new List<AIHistoryEntry>()
+                : new List<AIHistoryEntry>(aiInfo.AIHistory);
+
+            if (history.Exists(existing => existing.EditGroupId == entry.EditGroupId))
+            {
+                return;
+            }
+
+            history.Add(entry);
+            Section updatedSection = section with
+            {
+                AI = aiInfo with { AIHistory = history }
+            };
+            chapter.Sections[sectionIndex] = updatedSection;
+            _state.NotifyChanged();
+        }
+
+        public void RemoveAiHistoryEntry(Guid sectionId, Guid editGroupId)
+        {
+            if (editGroupId == Guid.Empty)
+            {
+                return;
+            }
+
+            if (!AiEditProvenance.TryGetSection(_state.Document, sectionId, out Chapter chapter, out int sectionIndex, out Section section))
+            {
+                return;
+            }
+
+            SectionAIInfo aiInfo = section.AI;
+            if (aiInfo is null || aiInfo.AIHistory is null || aiInfo.AIHistory.Count == 0)
+            {
+                return;
+            }
+
+            List<AIHistoryEntry> history = new List<AIHistoryEntry>(aiInfo.AIHistory);
+            int removedCount = history.RemoveAll(entry => entry.EditGroupId == editGroupId);
+            if (removedCount == 0)
+            {
+                return;
+            }
+
+            Section updatedSection = section with
+            {
+                AI = aiInfo with { AIHistory = history }
+            };
+            chapter.Sections[sectionIndex] = updatedSection;
+            _state.NotifyChanged();
+        }
+
         public void Undo()
         {
             if (_undoStack.Count == 0)
