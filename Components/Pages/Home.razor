@@ -157,7 +157,10 @@
                         <div class="export-menu-panel">
                             <button type="button" @onclick="() => OnExportRequested(ExportFormat.Markdown)">Export as Markdown</button>
                             <button type="button" @onclick="() => OnExportRequested(ExportFormat.Html)">Export as HTML</button>
+<<<<<<< HEAD
                             <button type="button" @onclick="OnExportPdfRequested">Export as PDF</button>
+=======
+>>>>>>> ebb7526 (Implemented export of md and html)
                         </div>
                     }
                 </div>
@@ -3168,6 +3171,7 @@
         });
     }
 
+<<<<<<< HEAD
     private Task OnExportPdfRequested()
     {
         return ExecuteSafeAsync("OnExportPdfRequested", async () =>
@@ -3193,6 +3197,8 @@
         return $"<!DOCTYPE html>\n<html>\n<head>\n  <title>{safeTitle}</title>\n  <link rel=\"stylesheet\" href=\"/css/print.css\">\n</head>\n<body class=\"print\">\n{normalizedBody}\n</body>\n</html>\n";
     }
 
+=======
+>>>>>>> ebb7526 (Implemented export of md and html)
     private async Task DownloadExportAsync(ExportResult result)
     {
         await EnsureExportModuleAsync();
@@ -3205,6 +3211,7 @@
         await _exportModule.InvokeVoidAsync("downloadFile", payload, result.MimeType, result.FileName);
     }
 
+<<<<<<< HEAD
     private async Task PrintExportAsync(string html)
     {
         await EnsureExportModuleAsync();
@@ -3216,6 +3223,8 @@
         await _exportModule.InvokeVoidAsync("printHtmlAsPdf", html);
     }
 
+=======
+>>>>>>> ebb7526 (Implemented export of md and html)
     private async Task EnsureExportModuleAsync()
     {
         if (_exportModule is null)

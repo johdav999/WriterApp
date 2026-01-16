@@ -22,9 +22,14 @@ namespace WriterApp.Application.Exporting
         {
             ExportOptions resolved = options ?? new ExportOptions();
             string title = ExportHelpers.GetDocumentTitle(document);
+<<<<<<< HEAD
             string bodyHtml = RenderBodyHtml(document, resolved);
 
             StringBuilder builder = new();
+=======
+            StringBuilder builder = new();
+
+>>>>>>> ebb7526 (Implemented export of md and html)
             builder.Append("<!DOCTYPE html>\n")
                 .Append("<html>\n")
                 .Append("<head>\n")
@@ -36,6 +41,7 @@ namespace WriterApp.Application.Exporting
                 .Append("    p { line-height: 1.6; }\n")
                 .Append("  </style>\n")
                 .Append("</head>\n")
+<<<<<<< HEAD
                 .Append("<body>\n")
                 .Append(bodyHtml)
                 .Append("</body>\n</html>\n");
@@ -53,6 +59,9 @@ namespace WriterApp.Application.Exporting
             ExportOptions resolved = options ?? new ExportOptions();
             string title = ExportHelpers.GetDocumentTitle(document);
             StringBuilder builder = new();
+=======
+                .Append("<body>\n");
+>>>>>>> ebb7526 (Implemented export of md and html)
 
             if (resolved.IncludeTitlePage)
             {
@@ -67,7 +76,11 @@ namespace WriterApp.Application.Exporting
                 // Section titles map to second-level headings.
                 builder.Append("    <h2>").Append(WebUtility.HtmlEncode(sectionTitle)).Append("</h2>\n");
 
+<<<<<<< HEAD
                 string sectionHtml = ConvertSectionContentToHtml(section.Content, sectionTitle);
+=======
+                string sectionHtml = ConvertSectionContentToHtml(section.Content);
+>>>>>>> ebb7526 (Implemented export of md and html)
                 if (!string.IsNullOrWhiteSpace(sectionHtml))
                 {
                     string indented = IndentLines(sectionHtml.Trim(), "    ");
@@ -77,10 +90,24 @@ namespace WriterApp.Application.Exporting
                 builder.Append("  </section>\n");
             }
 
+<<<<<<< HEAD
             return builder.ToString();
         }
 
         private static string ConvertSectionContentToHtml(SectionContent content, string sectionTitle)
+=======
+            builder.Append("</body>\n</html>\n");
+
+            string html = ExportHelpers.NormalizeLineEndings(builder.ToString());
+            byte[] content = Encoding.UTF8.GetBytes(html);
+            string fileName = ExportHelpers.SanitizeFileName(document.Metadata.Title, "document", ".html");
+
+            ExportResult result = new(content, "text/html", fileName);
+            return Task.FromResult(result);
+        }
+
+        private static string ConvertSectionContentToHtml(SectionContent content)
+>>>>>>> ebb7526 (Implemented export of md and html)
         {
             if (content is null || string.IsNullOrWhiteSpace(content.Value))
             {
@@ -94,7 +121,11 @@ namespace WriterApp.Application.Exporting
                 return MarkdownToHtml(content.Value);
             }
 
+<<<<<<< HEAD
             string value = ExportHelpers.NormalizeSectionHtmlForExport(content.Value, sectionTitle).Trim();
+=======
+            string value = content.Value.Trim();
+>>>>>>> ebb7526 (Implemented export of md and html)
             if (!value.Contains('<', StringComparison.Ordinal))
             {
                 return $"<p>{WebUtility.HtmlEncode(value)}</p>";
