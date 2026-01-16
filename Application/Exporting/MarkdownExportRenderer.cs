@@ -33,11 +33,8 @@ namespace WriterApp.Application.Exporting
                 // Section titles map to second-level headings.
                 builder.Append("## ").Append(sectionTitle).Append("\n\n");
 
-<<<<<<< HEAD
                 string sectionMarkdown = ConvertSectionContentToMarkdown(section.Content, sectionTitle);
-=======
-                string sectionMarkdown = ConvertSectionContentToMarkdown(section.Content);
->>>>>>> ebb7526 (Implemented export of md and html)
+
                 if (!string.IsNullOrWhiteSpace(sectionMarkdown))
                 {
                     builder.Append(sectionMarkdown.Trim()).Append("\n\n");
@@ -52,11 +49,12 @@ namespace WriterApp.Application.Exporting
             return Task.FromResult(result);
         }
 
-<<<<<<< HEAD
+
+
+
+
         private static string ConvertSectionContentToMarkdown(SectionContent content, string sectionTitle)
-=======
-        private static string ConvertSectionContentToMarkdown(SectionContent content)
->>>>>>> ebb7526 (Implemented export of md and html)
+
         {
             if (content is null || string.IsNullOrWhiteSpace(content.Value))
             {
@@ -69,13 +67,10 @@ namespace WriterApp.Application.Exporting
                 return ExportHelpers.NormalizeLineEndings(content.Value);
             }
 
-            // HTML content is mapped to Markdown for export.
-<<<<<<< HEAD
+
             string normalizedHtml = ExportHelpers.NormalizeSectionHtmlForExport(content.Value, sectionTitle);
-            return HtmlToMarkdown(normalizedHtml);
-=======
-            return HtmlToMarkdown(content.Value);
->>>>>>> ebb7526 (Implemented export of md and html)
+            return HtmlToMarkdown(normalizedHtml)
+
         }
 
         private static string HtmlToMarkdown(string html)
