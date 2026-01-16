@@ -3,12 +3,14 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Text.RegularExpressions;
+using AngleSharp.Html.Parser;
 using WriterApp.Domain.Documents;
 
 namespace WriterApp.Application.Exporting
 {
     internal static class ExportHelpers
     {
+        private static readonly Regex WhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
         private static readonly Regex HeadingRegex = new("<h[1-6][^>]*>(.*?)</h[1-6]>", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
         private static readonly Regex TagRegex = new("<[^>]+>", RegexOptions.Compiled);
 
@@ -64,6 +66,38 @@ namespace WriterApp.Application.Exporting
         public static string HtmlDecode(string value)
         {
             return WebUtility.HtmlDecode(value) ?? string.Empty;
+        }
+
+        public static string NormalizeSectionHtmlForExport(string html, string sectionTitle)
+        {
+            if (string.IsNullOrWhiteSpace(html) || string.IsNullOrWhiteSpace(sectionTitle))
+            {
+                return html;
+            }
+
+            HtmlParser parser = new();
+            var document = parser.ParseDocument(html);
+            var firstHeading = document.QuerySelector("h1, h2");
+            if (firstHeading is null)
+            {
+                return html;
+            }
+
+            string headingText = NormalizeHeadingText(firstHeading.TextContent);
+            string titleText = NormalizeHeadingText(sectionTitle);
+            if (!string.Equals(headingText, titleText, StringComparison.OrdinalIgnoreCase))
+            {
+                return html;
+            }
+
+            firstHeading.Remove();
+            return document.Body?.InnerHtml ?? html;
+        }
+
+        private static string NormalizeHeadingText(string value)
+        {
+            string trimmed = string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim();
+            return WhitespaceRegex.Replace(trimmed, " ");
         }
 
         private static string? DeriveTitleFromHtml(string? html)

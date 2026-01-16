@@ -50,7 +50,7 @@ namespace WriterApp.Application.Exporting
                 // Section titles map to second-level headings.
                 builder.Append("    <h2>").Append(WebUtility.HtmlEncode(sectionTitle)).Append("</h2>\n");
 
-                string sectionHtml = ConvertSectionContentToHtml(section.Content);
+                string sectionHtml = ConvertSectionContentToHtml(section.Content, sectionTitle);
                 if (!string.IsNullOrWhiteSpace(sectionHtml))
                 {
                     string indented = IndentLines(sectionHtml.Trim(), "    ");
@@ -70,7 +70,7 @@ namespace WriterApp.Application.Exporting
             return Task.FromResult(result);
         }
 
-        private static string ConvertSectionContentToHtml(SectionContent content)
+        private static string ConvertSectionContentToHtml(SectionContent content, string sectionTitle)
         {
             if (content is null || string.IsNullOrWhiteSpace(content.Value))
             {
@@ -84,7 +84,7 @@ namespace WriterApp.Application.Exporting
                 return MarkdownToHtml(content.Value);
             }
 
-            string value = content.Value.Trim();
+            string value = ExportHelpers.NormalizeSectionHtmlForExport(content.Value, sectionTitle).Trim();
             if (!value.Contains('<', StringComparison.Ordinal))
             {
                 return $"<p>{WebUtility.HtmlEncode(value)}</p>";
