@@ -18,5 +18,9 @@ Rewrite variants pass these inputs via AiRequest.Inputs:
 
 ## OpenAI provider
 - Configure `WriterApp:AI:Providers:OpenAI` in `appsettings.Development.json`.
+<<<<<<< HEAD
 - Set `OPENAI_API_KEY` in your environment; the API key must never be stored in config files.
+=======
+- Prefer `OPENAI_API_KEY` for the API key; config `ApiKey` is a fallback.
+>>>>>>> ebb7526 (Implemented export of md and html)
 - Set `DefaultTextProviderId` / `DefaultImageProviderId` to `openai` to route to the OpenAI provider.

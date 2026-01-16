@@ -20,6 +20,7 @@ export function downloadFile(base64Data, mimeType, fileName) {
     link.remove();
     URL.revokeObjectURL(url);
 }
+<<<<<<< HEAD
 
 export function printHtmlAsPdf(html) {
     if (!html) {
@@ -52,3 +53,5 @@ if (!window.writerExport) {
 }
 
 window.writerExport.printHtmlAsPdf = printHtmlAsPdf;
+=======
+>>>>>>> ebb7526 (Implemented export of md and html)

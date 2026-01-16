@@ -3,14 +3,20 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Text.RegularExpressions;
+<<<<<<< HEAD
 using AngleSharp.Html.Parser;
+=======
+>>>>>>> ebb7526 (Implemented export of md and html)
 using WriterApp.Domain.Documents;
 
 namespace WriterApp.Application.Exporting
 {
     internal static class ExportHelpers
     {
+<<<<<<< HEAD
         private static readonly Regex WhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
+=======
+>>>>>>> ebb7526 (Implemented export of md and html)
         private static readonly Regex HeadingRegex = new("<h[1-6][^>]*>(.*?)</h[1-6]>", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
         private static readonly Regex TagRegex = new("<[^>]+>", RegexOptions.Compiled);
 
@@ -68,6 +74,7 @@ namespace WriterApp.Application.Exporting
             return WebUtility.HtmlDecode(value) ?? string.Empty;
         }
 
+<<<<<<< HEAD
         public static string NormalizeSectionHtmlForExport(string html, string sectionTitle)
         {
             if (string.IsNullOrWhiteSpace(html) || string.IsNullOrWhiteSpace(sectionTitle))
@@ -100,6 +107,8 @@ namespace WriterApp.Application.Exporting
             return WhitespaceRegex.Replace(trimmed, " ");
         }
 
+=======
+>>>>>>> ebb7526 (Implemented export of md and html)
         private static string? DeriveTitleFromHtml(string? html)
         {
             if (string.IsNullOrWhiteSpace(html))

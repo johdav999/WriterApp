@@ -27,6 +27,7 @@ namespace WriterApp.Application.Exporting
 
             return renderer.RenderAsync(document, options ?? new ExportOptions());
         }
+<<<<<<< HEAD
 
         public Task<string> ExportHtmlBodyAsync(Document document, ExportOptions options)
         {
@@ -43,5 +44,7 @@ namespace WriterApp.Application.Exporting
 
             return Task.FromResult(renderer.RenderBodyHtml(document, options ?? new ExportOptions()));
         }
+=======
+>>>>>>> ebb7526 (Implemented export of md and html)
     }
 }
