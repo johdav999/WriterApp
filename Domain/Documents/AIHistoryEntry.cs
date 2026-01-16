@@ -7,24 +7,27 @@ namespace WriterApp.Domain.Documents
     /// </summary>
     public record AIHistoryEntry
     {
-        public Guid OperationId { get; init; } = Guid.NewGuid();
-
-        /// <summary>
-        /// Allowed values: "rewrite", "translate", "continue", or "summarize".
-        /// </summary>
-        public string Type { get; init; } = string.Empty;
-
-        public string Model { get; init; } = string.Empty;
-
-        public string PromptPreset { get; init; } = string.Empty;
-
-        public string InputExcerpt { get; init; } = string.Empty;
-
-        public string OutputExcerpt { get; init; } = string.Empty;
+        public Guid EntryId { get; init; } = Guid.NewGuid();
 
         public DateTime TimestampUtc { get; init; } = DateTime.UtcNow;
 
-        public bool Accepted { get; init; }
+        public string ActionId { get; init; } = string.Empty;
+
+        public string ProviderId { get; init; } = string.Empty;
+
+        public Guid EditGroupId { get; init; }
+
+        public string OperationSummary { get; init; } = string.Empty;
+
+        public string TargetScope { get; init; } = string.Empty;
+
+        public Guid AffectedSectionId { get; init; }
+
+        public string? Instruction { get; init; }
+
+        public string? BeforeText { get; init; }
+
+        public string? AfterText { get; init; }
 
         public AIHistoryEntry()
         {

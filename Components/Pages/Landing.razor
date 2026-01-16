@@ -1,0 +1,146 @@
+@page "/"
+@rendermode Microsoft.AspNetCore.Components.Web.RenderMode.InteractiveServer
+@using System
+@using System.Collections.Generic
+@using System.Globalization
+@using System.Threading.Tasks
+@using Microsoft.AspNetCore.Components
+@using Microsoft.Extensions.Logging
+@using WriterApp.Application.State
+@using WriterApp.Domain.Documents
+@inject DocumentStorageService DocumentStorage
+@inject NavigationManager Navigation
+@inject ILogger<Landing> Logger
+@inject AppHeaderState HeaderState
+
+<PageTitle>Writer</PageTitle>
+
+<div class="landing">
+    <header class="landing-header">
+        <div>
+            <h1>Documents</h1>
+            <p class="landing-subtitle">Pick up where you left off or start something new.</p>
+        </div>
+        <button type="button" class="primary" @onclick="CreateNewDocument">Create new document</button>
+    </header>
+
+    @if (_isLoading)
+    {
+        <div class="landing-loading">Loading documents...</div>
+    }
+    else if (_documents.Count == 0)
+    {
+        <div class="landing-empty">
+            <p>No documents yet.</p>
+            <button type="button" class="primary" @onclick="CreateNewDocument">Create new document</button>
+        </div>
+    }
+    else
+    {
+        <div class="landing-list">
+            @foreach (DocumentIndexEntry entry in _documents)
+            {
+                <div class="landing-card">
+                    <div class="landing-meta">
+                        <div class="landing-title">@entry.Title</div>
+                        <div class="landing-time">Last modified @FormatRelativeTime(entry.LastModifiedUtc)</div>
+                        @if (entry.WordCount > 0)
+                        {
+                            <div class="landing-words">@entry.WordCount words</div>
+                        }
+                    </div>
+                    <div class="landing-actions">
+                        <button type="button" class="secondary" @onclick="() => OpenDocument(entry)">Open</button>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private readonly List<DocumentIndexEntry> _documents = new();
+    private bool _isLoading = true;
+    private bool _hasLoaded;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_hasLoaded)
+        {
+            return;
+        }
+
+        _hasLoaded = true;
+        await LoadDocumentsAsync();
+    }
+
+    private async Task LoadDocumentsAsync()
+    {
+        try
+        {
+            _documents.Clear();
+            _documents.AddRange(await DocumentStorage.LoadIndexAsync());
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Landing document load failed.");
+        }
+        finally
+        {
+            _isLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task CreateNewDocument()
+    {
+        Document document = DocumentFactory.CreateNewDocument();
+        await DocumentStorage.SaveDocumentAsync(document);
+        Navigation.NavigateTo($"/doc/{document.DocumentId}");
+    }
+
+    private void OpenDocument(DocumentIndexEntry entry)
+    {
+        Navigation.NavigateTo($"/doc/{entry.DocumentId}");
+    }
+
+    private static string FormatRelativeTime(DateTime timestampUtc)
+    {
+        DateTime utc = timestampUtc.Kind == DateTimeKind.Utc ? timestampUtc : timestampUtc.ToUniversalTime();
+        TimeSpan delta = DateTime.UtcNow - utc;
+        if (delta < TimeSpan.Zero)
+        {
+            delta = TimeSpan.Zero;
+        }
+
+        if (delta < TimeSpan.FromMinutes(1))
+        {
+            return "just now";
+        }
+
+        if (delta < TimeSpan.FromHours(1))
+        {
+            int minutes = Math.Max(1, (int)delta.TotalMinutes);
+            return minutes == 1 ? "1 min ago" : $"{minutes} min ago";
+        }
+
+        if (delta < TimeSpan.FromDays(1))
+        {
+            int hours = Math.Max(1, (int)delta.TotalHours);
+            return hours == 1 ? "1 hr ago" : $"{hours} hr ago";
+        }
+
+        int days = Math.Max(1, (int)delta.TotalDays);
+        if (days < 7)
+        {
+            return days == 1 ? "1 day ago" : $"{days} days ago";
+        }
+
+        return utc.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+    }
+
+    protected override void OnInitialized()
+    {
+        HeaderState.DocumentTitle = null;
+    }
+}

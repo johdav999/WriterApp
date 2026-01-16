@@ -15,3 +15,8 @@ Rewrite variants pass these inputs via AiRequest.Inputs:
 - Cover images are persisted in the document model.
 - Document.CoverImageId references a stored DocumentArtifact in Document.Artifacts.
 - SetCoverImageCommand stores the artifact and sets CoverImageId with undo/redo support.
+
+## OpenAI provider
+- Configure `WriterApp:AI:Providers:OpenAI` in `appsettings.Development.json`.
+- Prefer `OPENAI_API_KEY` for the API key; config `ApiKey` is a fallback.
+- Set `DefaultTextProviderId` / `DefaultImageProviderId` to `openai` to route to the OpenAI provider.

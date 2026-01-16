@@ -8,9 +8,15 @@ namespace WriterApp.AI.Abstractions
         Guid SectionId,
         string SummaryLabel,
         string ActionId,
+        string ProviderId,
         Guid RequestId,
         DateTime CreatedUtc,
         string? Reason,
         List<ProposedOperation> Operations,
-        List<Guid> ArtifactIds);
+        List<Guid> ArtifactIds,
+        string UserSummary,
+        string TargetScope,
+        string? Instruction,
+        string? OriginalText,
+        string? ProposedText);
 }
