@@ -19,7 +19,7 @@ namespace WriterApp.AI.Core
             _artifactStore = artifactStore ?? throw new ArgumentNullException(nameof(artifactStore));
         }
 
-        public async Task<AiProposal> ExecuteAsync(IAiAction action, AiActionInput input, CancellationToken ct)
+        public async Task<AiExecutionOutcome> ExecuteAsync(IAiAction action, AiActionInput input, CancellationToken ct)
         {
             if (action is null)
             {
@@ -29,7 +29,8 @@ namespace WriterApp.AI.Core
             AiRequest request = action.BuildRequest(input);
             AiProviderSelection selection = _router.Route(request);
             AiResult result = await selection.Provider.ExecuteAsync(request, ct);
-            return BuildProposal(action, input, request, result, selection.SelectedProviderId);
+            AiProposal proposal = BuildProposal(action, input, request, result, selection.SelectedProviderId);
+            return new AiExecutionOutcome(proposal, result, selection.SelectedProviderId);
         }
 
         private AiProposal BuildProposal(

@@ -5,10 +5,11 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using WriterApp.AI.Abstractions;
 using WriterApp.AI.Actions;
+using WriterApp.Application.Usage;
+using WriterApp.Data.Usage;
 
 namespace WriterApp.AI.Core
 {
@@ -17,8 +18,9 @@ namespace WriterApp.AI.Core
         private readonly IAiActionExecutor _executor;
         private readonly IAiProviderRegistry _providerRegistry;
         private readonly IAiRouter _router;
+        private readonly IAiUsagePolicy _usagePolicy;
+        private readonly IUsageMeter _usageMeter;
         private readonly WriterAiOptions _options;
-        private readonly ILogger<AiOrchestrator> _logger;
         private readonly IReadOnlyList<IAiAction> _actions;
         private readonly Dictionary<string, IAiAction> _actionMap;
 
@@ -26,15 +28,17 @@ namespace WriterApp.AI.Core
             IAiActionExecutor executor,
             IAiProviderRegistry providerRegistry,
             IAiRouter router,
+            IAiUsagePolicy usagePolicy,
+            IUsageMeter usageMeter,
             IOptions<WriterAiOptions> options,
-            ILogger<AiOrchestrator> logger,
             IEnumerable<IAiAction> actions)
         {
             _executor = executor ?? throw new ArgumentNullException(nameof(executor));
             _providerRegistry = providerRegistry ?? throw new ArgumentNullException(nameof(providerRegistry));
             _router = router ?? throw new ArgumentNullException(nameof(router));
+            _usagePolicy = usagePolicy ?? throw new ArgumentNullException(nameof(usagePolicy));
+            _usageMeter = usageMeter ?? throw new ArgumentNullException(nameof(usageMeter));
             _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             if (actions is null)
             {
                 throw new ArgumentNullException(nameof(actions));
@@ -58,11 +62,6 @@ namespace WriterApp.AI.Core
 
         public bool CanRunAction(string actionId)
         {
-            if (!_options.Enabled)
-            {
-                return false;
-            }
-
             IAiAction? action = GetAction(actionId);
             if (action is null)
             {
@@ -74,6 +73,11 @@ namespace WriterApp.AI.Core
 
             foreach (IAiProvider provider in _providerRegistry.GetAll())
             {
+                if (!_options.Enabled && ProviderRequiresEntitlement(provider))
+                {
+                    continue;
+                }
+
                 AiProviderCapabilities capabilities = provider.Capabilities;
                 if (needsText && !capabilities.SupportsText)
                 {
@@ -109,6 +113,11 @@ namespace WriterApp.AI.Core
 
             foreach (IAiProvider provider in _providerRegistry.GetAll())
             {
+                if (!_options.Enabled && ProviderRequiresEntitlement(provider))
+                {
+                    continue;
+                }
+
                 AiProviderCapabilities capabilities = provider.Capabilities;
                 if (needsText && !capabilities.SupportsText)
                 {
@@ -131,35 +140,75 @@ namespace WriterApp.AI.Core
             return new AiStreamingCapabilities(false, false);
         }
 
-        public Task<AiProposal> ExecuteActionAsync(string actionId, AiActionInput input, CancellationToken ct)
+        public async Task<AiExecutionResult> ExecuteActionAsync(string actionId, AiActionInput input, CancellationToken ct)
         {
-            EnsureAiEnabled();
             IAiAction? action = GetAction(actionId);
             if (action is null)
             {
-                throw new InvalidOperationException($"AI action '{actionId}' was not registered.");
+                return AiExecutionResult.Blocked("ai.action_missing", $"AI action '{actionId}' was not registered.");
             }
 
-            return _executor.ExecuteAsync(action, input, ct);
+            AiRequest request = action.BuildRequest(input);
+            IAiProvider provider;
+            try
+            {
+                provider = _router.Route(request).Provider;
+            }
+            catch (InvalidOperationException ex)
+            {
+                return AiExecutionResult.Blocked("ai.provider_unavailable", ex.Message);
+            }
+
+            AiUsageDecision decision = await _usagePolicy.EvaluateAsync(provider, action.ActionId);
+            if (!decision.Allowed)
+            {
+                return AiExecutionResult.Blocked(decision.ErrorCode ?? "ai.blocked", decision.ErrorMessage ?? "AI usage is not permitted.");
+            }
+
+            AiExecutionOutcome outcome = await _executor.ExecuteAsync(action, input, ct);
+
+            await RecordUsageAsync(
+                decision.UserId,
+                action.ActionId,
+                outcome.ProviderId,
+                outcome.Result,
+                input);
+
+            return AiExecutionResult.Success(outcome.Proposal);
         }
 
         public AiStreamingSession StreamActionAsync(string actionId, AiActionInput input, CancellationToken ct)
         {
-            EnsureAiEnabled();
             IAiAction? action = GetAction(actionId);
             if (action is null)
             {
-                throw new InvalidOperationException($"AI action '{actionId}' was not registered.");
+                return CreateBlockedSession("ai.action_missing", $"AI action '{actionId}' was not registered.");
             }
 
             AiRequest request = action.BuildRequest(input);
-            IAiProvider provider = _router.Route(request).Provider;
+            IAiProvider provider;
+            try
+            {
+                provider = _router.Route(request).Provider;
+            }
+            catch (InvalidOperationException ex)
+            {
+                return CreateBlockedSession("ai.provider_unavailable", ex.Message);
+            }
+
+            AiUsageDecision decision = _usagePolicy.EvaluateAsync(provider, action.ActionId).GetAwaiter().GetResult();
+            if (!decision.Allowed)
+            {
+                return CreateBlockedSession(decision.ErrorCode ?? "ai.blocked", decision.ErrorMessage ?? "AI usage is not permitted.");
+            }
+
             TaskCompletionSource<AiProposal?> completionSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
             IAsyncEnumerable<AiStreamEvent> events = StreamProposalAsync(
                 provider,
                 action,
                 input,
                 request,
+                decision.UserId,
                 completionSource,
                 _options.Streaming.Enabled,
                 ct);
@@ -172,6 +221,7 @@ namespace WriterApp.AI.Core
             IAiAction action,
             AiActionInput input,
             AiRequest request,
+            string userId,
             TaskCompletionSource<AiProposal?> completionSource,
             bool allowStreaming,
             [EnumeratorCancellation] CancellationToken ct)
@@ -232,6 +282,7 @@ namespace WriterApp.AI.Core
                             case AiStreamEvent.Completed:
                                 AiProposal? proposal = BuildStreamingProposal(action, input, request, textBuilder.ToString(), imageReference, provider.ProviderId);
                                 completionSource.TrySetResult(proposal);
+                                await RecordStreamingUsageAsync(userId, action.ActionId, provider.ProviderId, input);
                                 break;
                             case AiStreamEvent.Failed:
                                 completionSource.TrySetResult(null);
@@ -271,7 +322,9 @@ namespace WriterApp.AI.Core
             Exception? nonStreamingError = null;
             try
             {
-                nonStreamingProposal = await _executor.ExecuteAsync(action, input, ct);
+                AiExecutionOutcome outcome = await _executor.ExecuteAsync(action, input, ct);
+                nonStreamingProposal = outcome.Proposal;
+                await RecordUsageAsync(userId, action.ActionId, outcome.ProviderId, outcome.Result, input);
             }
             catch (OperationCanceledException)
             {
@@ -447,15 +500,108 @@ namespace WriterApp.AI.Core
             return value.ToString() ?? string.Empty;
         }
 
-        private void EnsureAiEnabled()
+        private static bool ProviderRequiresEntitlement(IAiProvider provider)
         {
-            if (_options.Enabled)
+            return provider is IAiBillingProvider billingProvider && billingProvider.RequiresEntitlement;
+        }
+
+        private async Task RecordUsageAsync(
+            string userId,
+            string actionId,
+            string providerId,
+            AiResult result,
+            AiActionInput input)
+        {
+            if (string.IsNullOrWhiteSpace(userId))
             {
                 return;
             }
 
-            _logger.LogWarning("AI execution blocked because AI is disabled by configuration.");
-            throw new InvalidOperationException("AI is disabled by configuration.");
+            if (!_options.Enabled || result is null)
+            {
+                return;
+            }
+
+            if (!_providerRegistry.GetAll().Any(provider => provider.ProviderId == providerId && provider is IAiBillingProvider billing && billing.IsBillable))
+            {
+                return;
+            }
+
+            string model = GetProviderMeta(result, "model") ?? string.Empty;
+
+            UsageEvent usageEvent = new()
+            {
+                UserId = userId,
+                Kind = actionId,
+                Provider = providerId,
+                Model = model,
+                InputTokens = result.Usage.InputTokens,
+                OutputTokens = result.Usage.OutputTokens,
+                CostMicros = null,
+                DocumentId = input.Document.DocumentId,
+                SectionId = input.ActiveSectionId,
+                TimestampUtc = DateTime.UtcNow,
+                CorrelationId = result.RequestId
+            };
+
+            await _usageMeter.RecordAsync(usageEvent);
+        }
+
+        private async Task RecordStreamingUsageAsync(
+            string userId,
+            string actionId,
+            string providerId,
+            AiActionInput input)
+        {
+            if (string.IsNullOrWhiteSpace(userId))
+            {
+                return;
+            }
+
+            if (!_providerRegistry.GetAll().Any(provider => provider.ProviderId == providerId && provider is IAiBillingProvider billing && billing.IsBillable))
+            {
+                return;
+            }
+
+            UsageEvent usageEvent = new()
+            {
+                UserId = userId,
+                Kind = actionId,
+                Provider = providerId,
+                Model = providerId,
+                InputTokens = 0,
+                OutputTokens = 0,
+                CostMicros = null,
+                DocumentId = input.Document.DocumentId,
+                SectionId = input.ActiveSectionId,
+                TimestampUtc = DateTime.UtcNow,
+                CorrelationId = Guid.NewGuid()
+            };
+
+            await _usageMeter.RecordAsync(usageEvent);
+        }
+
+        private static string? GetProviderMeta(AiResult result, string key)
+        {
+            if (result.ProviderMeta is null || !result.ProviderMeta.TryGetValue(key, out object? value))
+            {
+                return null;
+            }
+
+            return value?.ToString();
+        }
+
+        private static AiStreamingSession CreateBlockedSession(string errorCode, string errorMessage)
+        {
+            async IAsyncEnumerable<AiStreamEvent> BlockedEvents()
+            {
+                yield return new AiStreamEvent.Started();
+                yield return new AiStreamEvent.Failed($"{errorCode}: {errorMessage}");
+            }
+
+            TaskCompletionSource<AiProposal?> completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            completion.TrySetResult(null);
+            return new AiStreamingSession(BlockedEvents(), completion.Task);
         }
 
     }

@@ -14,7 +14,7 @@ using WriterApp.AI.Abstractions;
 
 namespace WriterApp.AI.Providers.OpenAI
 {
-    public sealed class OpenAiProvider : IAiStreamingProvider
+    public sealed class OpenAiProvider : IAiStreamingProvider, IAiBillingProvider
     {
         private const string ProviderIdValue = "openai";
         private const string DefaultBaseUrl = "https://api.openai.com/v1/";
@@ -51,6 +51,10 @@ namespace WriterApp.AI.Providers.OpenAI
 
         public AiStreamingCapabilities StreamingCapabilities => new(true, false);
 
+        public bool RequiresEntitlement => true;
+
+        public bool IsBillable => true;
+
         public async Task<AiResult> ExecuteAsync(AiRequest request, CancellationToken ct)
         {
             if (request is null)
@@ -69,7 +73,7 @@ namespace WriterApp.AI.Providers.OpenAI
             {
                 if (string.Equals(request.ActionId, ActionRewrite, StringComparison.Ordinal))
                 {
-                    string outputText = await ExecuteTextAsync(request, apiKey, ct);
+                    (string outputText, int inputTokens, int outputTokens) = await ExecuteTextAsync(request, apiKey, ct);
                     AiArtifact artifact = new(
                         Guid.NewGuid(),
                         AiModality.Text,
@@ -78,13 +82,18 @@ namespace WriterApp.AI.Providers.OpenAI
                         null,
                         null);
 
-                    LogUsage(request, _options.TextModel, outputText.Length, stopwatch.Elapsed);
+                    AiUsage usage = new(inputTokens, outputTokens, stopwatch.Elapsed);
+                    LogUsage(request, _options.TextModel, outputTokens, stopwatch.Elapsed);
 
                     return new AiResult(
                         request.RequestId,
                         new List<AiArtifact> { artifact },
-                        new AiUsage(0, 0, stopwatch.Elapsed),
-                        new Dictionary<string, object> { ["provider"] = ProviderIdValue });
+                        usage,
+                        new Dictionary<string, object>
+                        {
+                            ["provider"] = ProviderIdValue,
+                            ["model"] = _options.TextModel
+                        });
                 }
 
                 if (string.Equals(request.ActionId, ActionCoverImage, StringComparison.Ordinal))
@@ -96,7 +105,11 @@ namespace WriterApp.AI.Providers.OpenAI
                         request.RequestId,
                         new List<AiArtifact> { artifact },
                         new AiUsage(0, 0, stopwatch.Elapsed),
-                        new Dictionary<string, object> { ["provider"] = ProviderIdValue });
+                        new Dictionary<string, object>
+                        {
+                            ["provider"] = ProviderIdValue,
+                            ["model"] = _options.ImageModel
+                        });
                 }
 
                 throw new AiProviderException(ProviderIdValue, $"OpenAI provider does not support action '{request.ActionId}'.");
@@ -204,7 +217,10 @@ namespace WriterApp.AI.Providers.OpenAI
             }
         }
 
-        private async Task<string> ExecuteTextAsync(AiRequest request, string apiKey, CancellationToken ct)
+        private async Task<(string OutputText, int InputTokens, int OutputTokens)> ExecuteTextAsync(
+            AiRequest request,
+            string apiKey,
+            CancellationToken ct)
         {
             HttpRequestMessage requestMessage = BuildResponsesRequest(request, apiKey, stream: false);
             HttpClient client = _httpClientFactory.CreateClient(nameof(OpenAiProvider));
@@ -213,7 +229,7 @@ namespace WriterApp.AI.Providers.OpenAI
             await EnsureSuccessAsync(response, ct);
 
             string json = await response.Content.ReadAsStringAsync(ct);
-            return ExtractResponseText(json);
+            return ExtractResponseTextAndUsage(json);
         }
 
         private async Task<AiArtifact> ExecuteImageAsync(AiRequest request, string apiKey, CancellationToken ct)
@@ -437,20 +453,35 @@ namespace WriterApp.AI.Providers.OpenAI
             return false;
         }
 
-        private static string ExtractResponseText(string json)
+        private static (string OutputText, int InputTokens, int OutputTokens) ExtractResponseTextAndUsage(string json)
         {
             if (string.IsNullOrWhiteSpace(json))
             {
-                return string.Empty;
+                return (string.Empty, 0, 0);
             }
 
             using JsonDocument doc = JsonDocument.Parse(json);
             JsonElement root = doc.RootElement;
 
+            int inputTokens = 0;
+            int outputTokens = 0;
+            if (root.TryGetProperty("usage", out JsonElement usageElement))
+            {
+                if (usageElement.TryGetProperty("input_tokens", out JsonElement inputTokensElement))
+                {
+                    inputTokens = inputTokensElement.GetInt32();
+                }
+
+                if (usageElement.TryGetProperty("output_tokens", out JsonElement outputTokensElement))
+                {
+                    outputTokens = outputTokensElement.GetInt32();
+                }
+            }
+
             if (root.TryGetProperty("output_text", out JsonElement outputTextElement)
                 && outputTextElement.ValueKind == JsonValueKind.String)
             {
-                return outputTextElement.GetString() ?? string.Empty;
+                return (outputTextElement.GetString() ?? string.Empty, inputTokens, outputTokens);
             }
 
             if (root.TryGetProperty("output", out JsonElement outputElement)
@@ -476,10 +507,10 @@ namespace WriterApp.AI.Providers.OpenAI
                     }
                 }
 
-                return builder.ToString();
+                return (builder.ToString(), inputTokens, outputTokens);
             }
 
-            return string.Empty;
+            return (string.Empty, inputTokens, outputTokens);
         }
 
         private static byte[] ExtractImageBytes(string json)
@@ -545,16 +576,16 @@ namespace WriterApp.AI.Providers.OpenAI
             throw new AiProviderException(ProviderIdValue, message);
         }
 
-        private void LogUsage(AiRequest request, string model, int outputLength, TimeSpan latency)
+        private void LogUsage(AiRequest request, string model, int outputTokens, TimeSpan latency)
         {
             _logger.LogInformation(
-                "OpenAI request {ActionId} model={Model} document={DocumentId} section={SectionId} selectionLength={SelectionLength} outputLength={OutputLength} latencyMs={LatencyMs}",
+                "OpenAI request {ActionId} model={Model} document={DocumentId} section={SectionId} selectionLength={SelectionLength} outputTokens={OutputTokens} latencyMs={LatencyMs}",
                 request.ActionId,
                 model,
                 request.Context.DocumentId,
                 request.Context.SectionId,
                 request.Context.SelectionLength,
-                outputLength,
+                outputTokens,
                 (int)latency.TotalMilliseconds);
         }
     }
