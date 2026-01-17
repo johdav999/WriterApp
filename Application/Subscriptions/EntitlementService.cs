@@ -81,5 +81,16 @@ namespace WriterApp.Application.Subscriptions
 
             return int.TryParse(value, out int parsed) ? parsed : null;
         }
+
+        public void InvalidateForUser(string userId)
+        {
+            if (string.IsNullOrWhiteSpace(userId))
+            {
+                return;
+            }
+
+            string cacheKey = $"entitlements:{userId}";
+            _cache.Remove(cacheKey);
+        }
     }
 }
