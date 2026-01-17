@@ -22,8 +22,9 @@ namespace WriterApp.Application.Exporting
         {
             ExportOptions resolved = options ?? new ExportOptions();
             string title = ExportHelpers.GetDocumentTitle(document);
-            StringBuilder builder = new();
+            string bodyHtml = RenderBodyHtml(document, resolved);
 
+            StringBuilder builder = new();
             builder.Append("<!DOCTYPE html>\n")
                 .Append("<html>\n")
                 .Append("<head>\n")
@@ -35,7 +36,23 @@ namespace WriterApp.Application.Exporting
                 .Append("    p { line-height: 1.6; }\n")
                 .Append("  </style>\n")
                 .Append("</head>\n")
-                .Append("<body>\n");
+                .Append("<body>\n")
+                .Append(bodyHtml)
+                .Append("</body>\n</html>\n");
+
+            string html = ExportHelpers.NormalizeLineEndings(builder.ToString());
+            byte[] content = Encoding.UTF8.GetBytes(html);
+            string fileName = ExportHelpers.SanitizeFileName(document.Metadata.Title, "document", ".html");
+
+            ExportResult result = new(content, "text/html", fileName);
+            return Task.FromResult(result);
+        }
+
+        public string RenderBodyHtml(Document document, ExportOptions options)
+        {
+            ExportOptions resolved = options ?? new ExportOptions();
+            string title = ExportHelpers.GetDocumentTitle(document);
+            StringBuilder builder = new();
 
             if (resolved.IncludeTitlePage)
             {
@@ -60,14 +77,7 @@ namespace WriterApp.Application.Exporting
                 builder.Append("  </section>\n");
             }
 
-            builder.Append("</body>\n</html>\n");
-
-            string html = ExportHelpers.NormalizeLineEndings(builder.ToString());
-            byte[] content = Encoding.UTF8.GetBytes(html);
-            string fileName = ExportHelpers.SanitizeFileName(document.Metadata.Title, "document", ".html");
-
-            ExportResult result = new(content, "text/html", fileName);
-            return Task.FromResult(result);
+            return builder.ToString();
         }
 
         private static string ConvertSectionContentToHtml(SectionContent content, string sectionTitle)
