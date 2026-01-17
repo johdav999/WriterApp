@@ -8,7 +8,7 @@ using WriterApp.AI.Abstractions;
 
 namespace WriterApp.AI.Providers.Mock
 {
-    public sealed class MockTextProvider : IAiStreamingProvider
+    public sealed class MockTextProvider : IAiStreamingProvider, IAiBillingProvider
     {
         private static readonly TimeSpan DeltaDelay = TimeSpan.FromMilliseconds(120);
         private const int MaxChunkSize = 28;
@@ -18,6 +18,10 @@ namespace WriterApp.AI.Providers.Mock
         public AiProviderCapabilities Capabilities => new(true, false);
 
         public AiStreamingCapabilities StreamingCapabilities => new(true, false);
+
+        public bool RequiresEntitlement => false;
+
+        public bool IsBillable => false;
 
         public Task<AiResult> ExecuteAsync(AiRequest request, CancellationToken ct)
         {
@@ -46,7 +50,11 @@ namespace WriterApp.AI.Providers.Mock
                 request.RequestId,
                 new List<AiArtifact> { artifact },
                 usage,
-                new Dictionary<string, object> { ["provider"] = ProviderId });
+                new Dictionary<string, object>
+                {
+                    ["provider"] = ProviderId,
+                    ["model"] = "mock-text"
+                });
 
             return Task.FromResult(result);
         }

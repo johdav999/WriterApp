@@ -7,14 +7,25 @@
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
   </PropertyGroup>
 
+  <!-- Exclude test artifacts from the web app -->
   <ItemGroup>
-    <Compile Remove="Tests\\**\\*.cs" />
-    <Content Remove="Tests\\**" />
-    <None Remove="Tests\\**" />
+    <Compile Remove="Tests\**\*.cs" />
+    <Content Remove="Tests\**" />
+    <None Remove="Tests\**" />
   </ItemGroup>
 
   <ItemGroup>
+    <!-- HTML parsing / export -->
     <PackageReference Include="AngleSharp" Version="1.1.1" />
+
+    <!-- EF Core 8 (LTS) – aligned across runtime + tools -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.4" />
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="8.0.4" />
+
+    <!-- EF Core design-time tools -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.4">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
   </ItemGroup>
 
 </Project>

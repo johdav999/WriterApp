@@ -9,6 +9,7 @@
 @using System.Threading
 @using BlazorApp.Components.Editor
 @using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.Components.Web
 @using Microsoft.Extensions.Hosting
 @using Microsoft.Extensions.Logging
@@ -18,7 +19,9 @@
 @using WriterApp.AI.Actions
 @using WriterApp.Application.Commands
 @using WriterApp.Application.Exporting
+@using WriterApp.Application.Security
 @using WriterApp.Application.State
+@using WriterApp.Application.Usage
 @using WriterApp.Domain.Documents
 @implements IDisposable
 @implements IAsyncDisposable
@@ -34,6 +37,9 @@
 @inject ExportService ExportService
 @inject NavigationManager Navigation
 @inject AppHeaderState HeaderState
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject IAiUsageStatusService AiUsageStatusService
+@inject IUserIdResolver UserIdResolver
 
 <PageTitle>Writer</PageTitle>
 
@@ -161,7 +167,7 @@
                         </div>
                     }
                 </div>
-                @if (IsAiEnabled && _aiOptions.UI.ShowAiMenu && AiOrchestrator.CanRunAction(GenerateCoverImageAction.ActionIdValue))
+                @if (CanShowAiMenu && AiOrchestrator.CanRunAction(GenerateCoverImageAction.ActionIdValue))
                 {
                     <button type="button" @onclick="OnGenerateCoverImage">Generate cover image (mock)</button>
                 }
@@ -224,6 +230,15 @@
                 <span>@_readingTime</span>
                 <span class="@GetSaveStatusClass()">@GetSaveStatusLabel()</span>
                 <span>@GetLastSavedLabel()</span>
+                @if (_aiUsageStatus is not null)
+                {
+                    <span>Plan: @_aiUsageStatus.PlanName</span>
+                    <span>AI usage: @_aiUsageStatus.QuotaUsed / @_aiUsageStatus.QuotaTotal tokens this month</span>
+                    @if (!IsAiAvailable)
+                    {
+                        <span>AI is currently unavailable for this account.</span>
+                    }
+                }
             </div>
             </section>
 
@@ -627,6 +642,21 @@
         border-radius: 10px;
         border: 1px solid #e2dfda;
         background: #faf7f2;
+    }
+
+    .ai-usage-summary {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        margin-top: 8px;
+        font-size: 0.9rem;
+        color: #546170;
+    }
+
+    .ai-usage-note {
+        margin-top: 4px;
+        font-size: 0.85rem;
+        color: #7a4d4d;
     }
 
     .preview-panel {
@@ -1373,6 +1403,12 @@
     private string? _streamedImageReference;
     private string? _loadedDocumentId;
     private bool _pendingDocumentLoad;
+    private AiUsageStatus? _aiUsageStatus;
+    private CancellationTokenSource? _aiUsageRefreshCts;
+    private bool _aiUsageRefreshInProgress;
+    private Task? _aiUsageRefreshTask;
+    private bool _canShowAiMenu;
+    private bool? _lastAiMenuVisibility;
     private readonly List<AiActionOption> _aiActions = new()
     {
         new AiActionOption("Rewrite (Neutral)", "Rewrite (Neutral)", AiActionScope.Selection, new Dictionary<string, object?>
@@ -1453,6 +1489,14 @@
         _lastAutosaveUtc = default;
         _hasRecoveryCandidate = false;
         _recoveryCandidate = null;
+        AuthenticationStateProvider.AuthenticationStateChanged += OnAuthenticationStateChanged;
+        UpdateAiMenuVisibility();
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAiUsageStatusAsync();
+        StartAiUsageRefreshLoop();
     }
 
     protected override void OnParametersSet()
@@ -2158,9 +2202,9 @@
     {
         return ExecuteSafeAsync("OnAiActionSelected", async () =>
         {
-            if (!IsAiEnabled)
+            if (!IsAiAvailable)
             {
-                ShowAiMessage("AI is disabled by configuration.");
+                ShowAiMessage(GetAiBlockedMessage());
                 await InvokeAsync(StateHasChanged);
                 return;
             }
@@ -2211,20 +2255,29 @@
                 return;
             }
 
-            AiProposal proposal;
+            AiExecutionResult result;
             try
             {
-                proposal = await AiOrchestrator.ExecuteActionAsync(
+                result = await AiOrchestrator.ExecuteActionAsync(
                     RewriteSelectionAction.ActionIdValue,
                     input,
                     CancellationToken.None);
             }
-            catch (InvalidOperationException ex)
+            catch (Exception ex)
             {
                 ShowAiMessage(ex.Message);
                 await InvokeAsync(StateHasChanged);
                 return;
             }
+
+            if (!result.Succeeded || result.Proposal is null)
+            {
+                ShowAiMessage(result.ErrorMessage ?? "AI is not available.");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            AiProposal proposal = result.Proposal;
 
             _pendingAiProposal = new PendingAiProposal(
                 proposal,
@@ -2243,9 +2296,9 @@
     {
         return ExecuteSafeAsync("OnGenerateCoverImage", async () =>
         {
-            if (!IsAiEnabled)
+            if (!IsAiAvailable)
             {
-                ShowAiMessage("AI is disabled by configuration.");
+                ShowAiMessage(GetAiBlockedMessage());
                 await InvokeAsync(StateHasChanged);
                 return;
             }
@@ -2284,20 +2337,29 @@
                 return;
             }
 
-            AiProposal proposal;
+            AiExecutionResult result;
             try
             {
-                proposal = await AiOrchestrator.ExecuteActionAsync(
+                result = await AiOrchestrator.ExecuteActionAsync(
                     GenerateCoverImageAction.ActionIdValue,
                     input,
                     CancellationToken.None);
             }
-            catch (InvalidOperationException ex)
+            catch (Exception ex)
             {
                 ShowAiMessage(ex.Message);
                 await InvokeAsync(StateHasChanged);
                 return;
             }
+
+            if (!result.Succeeded || result.Proposal is null)
+            {
+                ShowAiMessage(result.ErrorMessage ?? "AI is not available.");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            AiProposal proposal = result.Proposal;
 
             _pendingAiProposal = new PendingAiProposal(
                 proposal,
@@ -2380,16 +2442,7 @@
 
         await InvokeAsync(StateHasChanged);
 
-        AiStreamingSession session;
-        try
-        {
-            session = AiOrchestrator.StreamActionAsync(actionId, input, cts.Token);
-        }
-        catch (InvalidOperationException ex)
-        {
-            ShowAiMessage(ex.Message);
-            return false;
-        }
+        AiStreamingSession session = AiOrchestrator.StreamActionAsync(actionId, input, cts.Token);
 
         try
         {
@@ -2472,9 +2525,127 @@
         return true;
     }
 
-    private bool IsAiEnabled => _aiOptions.Enabled;
+    private bool CanShowAiMenu => _canShowAiMenu;
 
-    private bool CanShowAiMenu => _aiOptions.Enabled && _aiOptions.UI.ShowAiMenu;
+    private bool IsAiAvailable => _aiOptions.Enabled && _aiUsageStatus?.AiEnabled == true && _aiUsageStatus.QuotaRemaining > 0;
+
+    private string GetAiBlockedMessage()
+    {
+        if (_aiUsageStatus is null)
+        {
+            return "AI is not available right now.";
+        }
+
+        if (!_aiUsageStatus.AiEnabled)
+        {
+            return "AI is not enabled for your plan.";
+        }
+
+        return "AI usage quota is exhausted.";
+    }
+
+    private async Task LoadAiUsageStatusAsync()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        if (_aiUsageRefreshInProgress)
+        {
+            return;
+        }
+
+        _aiUsageRefreshInProgress = true;
+        try
+        {
+            var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+            string userId = UserIdResolver.ResolveForEntitlements(authState.User);
+            _aiUsageStatus = await AiUsageStatusService.GetStatusAsync(userId);
+            UpdateAiMenuVisibility();
+            await InvokeAsync(StateHasChanged);
+        }
+        finally
+        {
+            _aiUsageRefreshInProgress = false;
+        }
+    }
+
+    private void StartAiUsageRefreshLoop()
+    {
+        _aiUsageRefreshCts?.Cancel();
+        _aiUsageRefreshCts?.Dispose();
+        _aiUsageRefreshCts = new CancellationTokenSource();
+
+        CancellationToken token = _aiUsageRefreshCts.Token;
+        _aiUsageRefreshTask = Task.Run(async () =>
+        {
+            using PeriodicTimer timer = new(TimeSpan.FromSeconds(30));
+            try
+            {
+                while (await timer.WaitForNextTickAsync(token))
+                {
+                    if (_disposed || token.IsCancellationRequested)
+                    {
+                        break;
+                    }
+
+                    await InvokeAsync(LoadAiUsageStatusAsync);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }, token);
+    }
+
+    private void UpdateAiMenuVisibility()
+    {
+        bool aiEnabled = _aiOptions.Enabled;
+        bool uiEnabled = _aiOptions.UI.ShowAiMenu;
+        bool entitlementEnabled = _aiUsageStatus?.AiEnabled == true;
+        bool visible = aiEnabled && uiEnabled && entitlementEnabled;
+
+        if (!aiEnabled)
+        {
+            Logger.LogDebug("AI menu hidden: feature flag disabled");
+        }
+
+        if (!uiEnabled)
+        {
+            Logger.LogDebug("AI menu hidden: UI flag disabled");
+        }
+
+        if (!entitlementEnabled)
+        {
+            Logger.LogDebug("AI menu hidden: ai.enabled=false");
+        }
+
+        if (_lastAiMenuVisibility is null || _lastAiMenuVisibility.Value != visible)
+        {
+            Logger.LogInformation(
+                "AI menu visibility: {Visible} (AIEnabled={AiEnabled}, UiEnabled={UiEnabled}, Entitled={Entitled})",
+                visible,
+                aiEnabled,
+                uiEnabled,
+                entitlementEnabled);
+            _lastAiMenuVisibility = visible;
+        }
+
+        _canShowAiMenu = visible;
+    }
+
+    private async void OnAuthenticationStateChanged(Task<AuthenticationState> task)
+    {
+        try
+        {
+            await LoadAiUsageStatusAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "AI usage status refresh failed after auth state change.");
+        }
+    }
 
     private void ShowAiMessage(string message)
     {
@@ -3624,6 +3795,10 @@
     public void Dispose()
     {
         _state.OnChanged -= _onChangedHandler;
+        AuthenticationStateProvider.AuthenticationStateChanged -= OnAuthenticationStateChanged;
+        _aiUsageRefreshCts?.Cancel();
+        _aiUsageRefreshCts?.Dispose();
+        _aiUsageRefreshCts = null;
         CancelAiStream();
         HeaderState.DocumentTitle = null;
         _autosaveCts?.Cancel();
@@ -3639,6 +3814,19 @@
         }
 
         _disposed = true;
+        _aiUsageRefreshCts?.Cancel();
+        _aiUsageRefreshCts?.Dispose();
+        _aiUsageRefreshCts = null;
+        if (_aiUsageRefreshTask is not null)
+        {
+            try
+            {
+                await _aiUsageRefreshTask;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
 
         if (_commandsModule is not null)
         {

@@ -5,6 +5,6 @@ namespace WriterApp.AI.Abstractions
 {
     public interface IAiActionExecutor
     {
-        Task<AiProposal> ExecuteAsync(IAiAction action, AiActionInput input, CancellationToken ct);
+        Task<AiExecutionOutcome> ExecuteAsync(IAiAction action, AiActionInput input, CancellationToken ct);
     }
 }

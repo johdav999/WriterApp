@@ -1,0 +1,75 @@
+@page "/account/login"
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Identity
+@using WriterApp.Data
+@inject SignInManager<ApplicationUser> SignInManager
+@inject NavigationManager Navigation
+
+<PageTitle>Login</PageTitle>
+
+<div class="auth-shell">
+    <h1>Sign in</h1>
+    @if (!string.IsNullOrWhiteSpace(_error))
+    {
+        <div class="auth-error">@_error</div>
+    }
+    <EditForm Model="_input" OnValidSubmit="HandleLoginAsync">
+        <DataAnnotationsValidator />
+        <ValidationSummary />
+        <div class="auth-field">
+            <label for="email">Email</label>
+            <InputText id="email" class="form-control" @bind-Value="_input.Email" />
+        </div>
+        <div class="auth-field">
+            <label for="password">Password</label>
+            <InputText id="password" type="password" class="form-control" @bind-Value="_input.Password" />
+        </div>
+        <div class="auth-field">
+            <label class="auth-checkbox">
+                <InputCheckbox @bind-Value="_input.RememberMe" />
+                Remember me
+            </label>
+        </div>
+        <button type="submit" class="btn btn-primary">Sign in</button>
+    </EditForm>
+    <div class="auth-footer">
+        <a href="/account/register">Create an account</a>
+    </div>
+</div>
+
+@code {
+    [SupplyParameterFromQuery]
+    public string? ReturnUrl { get; set; }
+
+    private readonly LoginInput _input = new();
+    private string? _error;
+
+    private async Task HandleLoginAsync()
+    {
+        _error = null;
+        var result = await SignInManager.PasswordSignInAsync(
+            _input.Email,
+            _input.Password,
+            _input.RememberMe,
+            lockoutOnFailure: false);
+
+        if (result.Succeeded)
+        {
+            Navigation.NavigateTo(string.IsNullOrWhiteSpace(ReturnUrl) ? "/doc" : ReturnUrl, forceLoad: true);
+            return;
+        }
+
+        _error = "Invalid email or password.";
+    }
+
+    private sealed class LoginInput
+    {
+        [Required, EmailAddress]
+        public string Email { get; set; } = string.Empty;
+
+        [Required]
+        public string Password { get; set; } = string.Empty;
+
+        public bool RememberMe { get; set; }
+    }
+}
