@@ -1,0 +1,40 @@
+@page {
+    size: A4;
+    margin: 20mm;
+}
+
+body.print {
+    font-family: "Georgia", "Times New Roman", serif;
+    color: #111111;
+    background: #ffffff;
+    margin: 0;
+}
+
+body.print h1,
+body.print h2,
+body.print h3,
+body.print h4 {
+    page-break-after: avoid;
+    page-break-inside: avoid;
+    margin-top: 1.5rem;
+}
+
+body.print section {
+    page-break-inside: avoid;
+    margin-bottom: 1.5rem;
+}
+
+body.print p {
+    line-height: 1.6;
+    margin: 0.6rem 0;
+}
+
+@media print {
+    .no-print {
+        display: none !important;
+    }
+
+    .print-only {
+        display: block !important;
+    }
+}

@@ -27,5 +27,21 @@ namespace WriterApp.Application.Exporting
 
             return renderer.RenderAsync(document, options ?? new ExportOptions());
         }
+
+        public Task<string> ExportHtmlBodyAsync(Document document, ExportOptions options)
+        {
+            if (document is null)
+            {
+                throw new ArgumentNullException(nameof(document));
+            }
+
+            HtmlExportRenderer? renderer = _renderers.OfType<HtmlExportRenderer>().FirstOrDefault();
+            if (renderer is null)
+            {
+                throw new InvalidOperationException("No HTML export renderer registered.");
+            }
+
+            return Task.FromResult(renderer.RenderBodyHtml(document, options ?? new ExportOptions()));
+        }
     }
 }
