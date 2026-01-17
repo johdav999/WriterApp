@@ -23,6 +23,7 @@ namespace WriterApp.Application.Exporting
             ExportOptions resolved = options ?? new ExportOptions();
             string title = ExportHelpers.GetDocumentTitle(document);
 <<<<<<< HEAD
+<<<<<<< HEAD
             string bodyHtml = RenderBodyHtml(document, resolved);
 
             StringBuilder builder = new();
@@ -30,6 +31,11 @@ namespace WriterApp.Application.Exporting
             StringBuilder builder = new();
 
 >>>>>>> ebb7526 (Implemented export of md and html)
+=======
+            string bodyHtml = RenderBodyHtml(document, resolved);
+
+            StringBuilder builder = new();
+>>>>>>> 42eec1a (Added pdf export)
             builder.Append("<!DOCTYPE html>\n")
                 .Append("<html>\n")
                 .Append("<head>\n")
@@ -42,6 +48,9 @@ namespace WriterApp.Application.Exporting
                 .Append("  </style>\n")
                 .Append("</head>\n")
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 42eec1a (Added pdf export)
                 .Append("<body>\n")
                 .Append(bodyHtml)
                 .Append("</body>\n</html>\n");
@@ -59,9 +68,12 @@ namespace WriterApp.Application.Exporting
             ExportOptions resolved = options ?? new ExportOptions();
             string title = ExportHelpers.GetDocumentTitle(document);
             StringBuilder builder = new();
+<<<<<<< HEAD
 =======
                 .Append("<body>\n");
 >>>>>>> ebb7526 (Implemented export of md and html)
+=======
+>>>>>>> 42eec1a (Added pdf export)
 
             if (resolved.IncludeTitlePage)
             {
@@ -95,6 +107,7 @@ namespace WriterApp.Application.Exporting
             }
 
 <<<<<<< HEAD
+<<<<<<< HEAD
             return builder.ToString();
         }
 
@@ -108,6 +121,9 @@ namespace WriterApp.Application.Exporting
 
             ExportResult result = new(content, "text/html", fileName);
             return Task.FromResult(result);
+=======
+            return builder.ToString();
+>>>>>>> 42eec1a (Added pdf export)
         }
 
 <<<<<<< HEAD
