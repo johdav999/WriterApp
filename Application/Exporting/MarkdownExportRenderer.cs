@@ -69,7 +69,7 @@ namespace WriterApp.Application.Exporting
 
 
             string normalizedHtml = ExportHelpers.NormalizeSectionHtmlForExport(content.Value, sectionTitle);
-            return HtmlToMarkdown(normalizedHtml)
+            return HtmlToMarkdown(normalizedHtml);
 
         }
 

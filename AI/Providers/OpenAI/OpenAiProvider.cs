@@ -26,18 +26,12 @@ namespace WriterApp.AI.Providers.OpenAI
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly WriterAiOpenAiOptions _options;
         private readonly ILogger<OpenAiProvider> _logger;
-<<<<<<< HEAD
         private readonly string _apiKey;
-=======
->>>>>>> ebb7526 (Implemented export of md and html)
 
         public OpenAiProvider(
             IHttpClientFactory httpClientFactory,
             IOptions<WriterAiOptions> options,
-<<<<<<< HEAD
             OpenAiKeyProvider keyProvider,
-=======
->>>>>>> ebb7526 (Implemented export of md and html)
             ILogger<OpenAiProvider> logger)
         {
             _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
@@ -48,10 +42,7 @@ namespace WriterApp.AI.Providers.OpenAI
             }
 
             _options = options.Value.Providers.OpenAI ?? new WriterAiOpenAiOptions();
-<<<<<<< HEAD
             _apiKey = keyProvider?.ApiKey ?? string.Empty;
-=======
->>>>>>> ebb7526 (Implemented export of md and html)
         }
 
         public string ProviderId => ProviderIdValue;
@@ -67,11 +58,7 @@ namespace WriterApp.AI.Providers.OpenAI
                 throw new ArgumentNullException(nameof(request));
             }
 
-<<<<<<< HEAD
             string apiKey = _apiKey;
-=======
-            string apiKey = ResolveApiKey();
->>>>>>> ebb7526 (Implemented export of md and html)
             if (string.IsNullOrWhiteSpace(apiKey))
             {
                 throw new AiProviderException(ProviderIdValue, "OpenAI API key is not configured.");
@@ -148,11 +135,7 @@ namespace WriterApp.AI.Providers.OpenAI
                 yield break;
             }
 
-<<<<<<< HEAD
             string apiKey = _apiKey;
-=======
-            string apiKey = ResolveApiKey();
->>>>>>> ebb7526 (Implemented export of md and html)
             if (string.IsNullOrWhiteSpace(apiKey))
             {
                 yield return new AiStreamEvent.Started();
@@ -337,20 +320,6 @@ namespace WriterApp.AI.Providers.OpenAI
             return requestMessage;
         }
 
-<<<<<<< HEAD
-=======
-        private string ResolveApiKey()
-        {
-            string? key = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
-            if (!string.IsNullOrWhiteSpace(key))
-            {
-                return key;
-            }
-
-            return _options.ApiKey ?? string.Empty;
-        }
-
->>>>>>> ebb7526 (Implemented export of md and html)
         private void ApplyAuthHeaders(HttpRequestMessage request, string apiKey)
         {
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
