@@ -23,8 +23,10 @@ builder.Services.AddSingleton<IAiProvider, MockImageProvider>();
 WriterAiOpenAiOptions openAiOptions = builder.Configuration
     .GetSection("WriterApp:AI:Providers:OpenAI")
     .Get<WriterAiOpenAiOptions>() ?? new WriterAiOpenAiOptions();
+OpenAiKeyProvider openAiKeyProvider = OpenAiKeyProvider.FromEnvironment();
+builder.Services.AddSingleton(openAiKeyProvider);
 
-if (openAiOptions.Enabled)
+if (openAiOptions.Enabled && openAiKeyProvider.HasKey)
 {
     builder.Services.AddHttpClient(nameof(OpenAiProvider), client =>
     {
@@ -48,6 +50,12 @@ builder.Services.AddSingleton<IExportRenderer, HtmlExportRenderer>();
 builder.Services.AddSingleton<ExportService>();
 
 var app = builder.Build();
+
+if (openAiOptions.Enabled && !openAiKeyProvider.HasKey)
+{
+    var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
+    logger.LogWarning("OPENAI_API_KEY is not set. OpenAI provider is disabled.");
+}
 
 // Configure the HTTP request pipeline.
 if (!app.Environment.IsDevelopment())
