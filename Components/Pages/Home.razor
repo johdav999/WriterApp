@@ -157,10 +157,7 @@
                         <div class="export-menu-panel">
                             <button type="button" @onclick="() => OnExportRequested(ExportFormat.Markdown)">Export as Markdown</button>
                             <button type="button" @onclick="() => OnExportRequested(ExportFormat.Html)">Export as HTML</button>
-<<<<<<< HEAD
                             <button type="button" @onclick="OnExportPdfRequested">Export as PDF</button>
-=======
->>>>>>> ebb7526 (Implemented export of md and html)
                         </div>
                     }
                 </div>
@@ -3171,7 +3168,9 @@
         });
     }
 
-<<<<<<< HEAD
+
+
+
     private Task OnExportPdfRequested()
     {
         return ExecuteSafeAsync("OnExportPdfRequested", async () =>
@@ -3197,8 +3196,34 @@
         return $"<!DOCTYPE html>\n<html>\n<head>\n  <title>{safeTitle}</title>\n  <link rel=\"stylesheet\" href=\"/css/print.css\">\n</head>\n<body class=\"print\">\n{normalizedBody}\n</body>\n</html>\n";
     }
 
-=======
->>>>>>> ebb7526 (Implemented export of md and html)
+
+    private Task OnExportPdfRequested()
+    {
+        return ExecuteSafeAsync("OnExportPdfRequested", async () =>
+        {
+            _isExportMenuOpen = false;
+            Document? saved = await SaveDocumentAsync();
+            if (saved is null)
+            {
+                return;
+            }
+
+            string bodyHtml = await ExportService.ExportHtmlBodyAsync(saved, new ExportOptions());
+            string printShell = BuildPrintShell(bodyHtml, saved.Metadata.Title);
+            await PrintExportAsync(printShell);
+        });
+    }
+
+    private static string BuildPrintShell(string bodyHtml, string title)
+    {
+        string safeTitle = System.Net.WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(title) ? "Document" : title.Trim());
+        string normalizedBody = ExportHelpers.NormalizeLineEndings(bodyHtml ?? string.Empty);
+
+        return $"<!DOCTYPE html>\n<html>\n<head>\n  <title>{safeTitle}</title>\n  <link rel=\"stylesheet\" href=\"/css/print.css\">\n</head>\n<body class=\"print\">\n{normalizedBody}\n</body>\n</html>\n";
+    }
+
+
+
     private async Task DownloadExportAsync(ExportResult result)
     {
         await EnsureExportModuleAsync();
@@ -3211,7 +3236,9 @@
         await _exportModule.InvokeVoidAsync("downloadFile", payload, result.MimeType, result.FileName);
     }
 
-<<<<<<< HEAD
+
+
+
     private async Task PrintExportAsync(string html)
     {
         await EnsureExportModuleAsync();
@@ -3223,8 +3250,7 @@
         await _exportModule.InvokeVoidAsync("printHtmlAsPdf", html);
     }
 
-=======
->>>>>>> ebb7526 (Implemented export of md and html)
+
     private async Task EnsureExportModuleAsync()
     {
         if (_exportModule is null)
