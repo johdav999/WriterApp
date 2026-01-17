@@ -1,0 +1,228 @@
+@page "/admin/plan-assignments"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Identity
+@using Microsoft.EntityFrameworkCore
+@using WriterApp.Application.Subscriptions
+@using WriterApp.Data
+@using WriterApp.Data.Subscriptions
+@attribute [Authorize(Roles = "Admin")]
+@inject AppDbContext DbContext
+@inject UserManager<ApplicationUser> UserManager
+@inject IEntitlementService EntitlementService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject ILogger<PlanAssignments> Logger
+
+<PageTitle>Admin - Plan Assignments</PageTitle>
+
+<div class="admin-page">
+    <h1>Assign plan to user</h1>
+    @if (_isLoading)
+    {
+        <p>Loading users...</p>
+    }
+    else
+    {
+        @if (!string.IsNullOrWhiteSpace(_statusMessage))
+        {
+            <p class="status-message">@_statusMessage</p>
+        }
+        <table class="admin-table">
+            <thead>
+                <tr>
+                    <th>Email</th>
+                    <th>User Id</th>
+                    <th>Current plan</th>
+                    <th>Assign plan</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (UserPlanRow row in _rows)
+                {
+                    <tr>
+                        <td>@row.Email</td>
+                        <td>@row.UserId</td>
+                        <td>@row.CurrentPlanName</td>
+                        <td>
+                            <select value="@row.SelectedPlanId" @onchange="(args) => OnPlanSelected(row, args)">
+                                @foreach (Plan plan in _plans)
+                                {
+                                    <option value="@plan.PlanId">@plan.Name</option>
+                                }
+                            </select>
+                        </td>
+                        <td>
+                            <button type="button" disabled="@(!row.CanSave)" @onclick="() => OnSaveAsync(row)">
+                                Save
+                            </button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+@code {
+    private readonly List<UserPlanRow> _rows = new();
+    private readonly List<Plan> _plans = new();
+    private bool _isLoading = true;
+    private string? _statusMessage;
+    private Guid? _freePlanId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+        _rows.Clear();
+        _plans.Clear();
+        _statusMessage = null;
+
+        List<Plan> plans = await DbContext.Plans
+            .Where(plan => plan.IsActive)
+            .OrderBy(plan => plan.Name)
+            .ToListAsync();
+        _plans.AddRange(plans);
+        _freePlanId = _plans.FirstOrDefault(plan => plan.Key == "free")?.PlanId;
+
+        List<ApplicationUser> users = await DbContext.Users
+            .OrderBy(user => user.Email)
+            .ToListAsync();
+
+        List<UserPlanAssignment?> assignments = await DbContext.UserPlanAssignments
+            .GroupBy(assignment => assignment.UserId)
+            .Select(group => group.OrderByDescending(entry => entry.AssignedUtc).FirstOrDefault())
+            .ToListAsync();
+        Dictionary<string, UserPlanAssignment?> latestAssignments = assignments
+            .Where(assignment => assignment is not null)
+            .ToDictionary(assignment => assignment!.UserId, assignment => assignment);
+
+        foreach (ApplicationUser user in users)
+        {
+            if (string.IsNullOrWhiteSpace(user.Id))
+            {
+                continue;
+            }
+
+            if (!latestAssignments.TryGetValue(user.Id, out UserPlanAssignment? assignment))
+            {
+                assignment = null;
+            }
+
+            Plan? currentPlan = assignment is null
+                ? _plans.FirstOrDefault(plan => plan.Key == "free")
+                : _plans.FirstOrDefault(plan => plan.PlanId == assignment.PlanId);
+
+            Guid selectedPlanId = currentPlan?.PlanId ?? _freePlanId ?? Guid.Empty;
+
+            _rows.Add(new UserPlanRow(
+                user.Id,
+                user.Email ?? string.Empty,
+                currentPlan?.PlanId,
+                currentPlan?.Name ?? "Free",
+                selectedPlanId));
+        }
+
+        _isLoading = false;
+    }
+
+    private async Task OnSaveAsync(UserPlanRow row)
+    {
+        if (row is null || !row.CanSave)
+        {
+            return;
+        }
+
+        if (row.SelectedPlanId == Guid.Empty)
+        {
+            _statusMessage = "Select a plan before saving.";
+            return;
+        }
+
+        Plan? selectedPlan = _plans.FirstOrDefault(plan => plan.PlanId == row.SelectedPlanId);
+        if (selectedPlan is null)
+        {
+            _statusMessage = "Selected plan was not found.";
+            return;
+        }
+
+        string assignedBy = await ResolveAssignedByAsync();
+
+        UserPlanAssignment assignment = new()
+        {
+            UserId = row.UserId,
+            PlanId = selectedPlan.PlanId,
+            AssignedUtc = DateTime.UtcNow,
+            AssignedBy = assignedBy
+        };
+
+        DbContext.UserPlanAssignments.Add(assignment);
+        await DbContext.SaveChangesAsync();
+        EntitlementService.InvalidateForUser(row.UserId);
+
+        row.ApplyPlan(selectedPlan.PlanId, selectedPlan.Name);
+        _statusMessage = $"Updated {row.Email} to {selectedPlan.Name}.";
+        Logger.LogInformation("Admin updated plan for {UserId} to {PlanKey}", row.UserId, selectedPlan.Key);
+    }
+
+    private void OnPlanSelected(UserPlanRow row, ChangeEventArgs args)
+    {
+        if (row is null)
+        {
+            return;
+        }
+
+        if (Guid.TryParse(args.Value?.ToString(), out Guid selectedPlanId))
+        {
+            row.SelectedPlanId = selectedPlanId;
+        }
+        else
+        {
+            row.SelectedPlanId = Guid.Empty;
+        }
+
+        _statusMessage = null;
+    }
+
+    private async Task<string> ResolveAssignedByAsync()
+    {
+        AuthenticationState authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        string? userId = UserManager.GetUserId(authState.User);
+        if (!string.IsNullOrWhiteSpace(userId))
+        {
+            return userId;
+        }
+
+        return authState.User.Identity?.Name ?? "admin";
+    }
+
+    private sealed class UserPlanRow
+    {
+        public UserPlanRow(string userId, string email, Guid? currentPlanId, string currentPlanName, Guid selectedPlanId)
+        {
+            UserId = userId;
+            Email = email;
+            CurrentPlanId = currentPlanId;
+            CurrentPlanName = currentPlanName;
+            SelectedPlanId = selectedPlanId;
+        }
+
+        public string UserId { get; }
+        public string Email { get; }
+        public Guid? CurrentPlanId { get; private set; }
+        public string CurrentPlanName { get; private set; }
+        public Guid SelectedPlanId { get; set; }
+        public bool CanSave => CurrentPlanId != SelectedPlanId;
+
+        public void ApplyPlan(Guid planId, string planName)
+        {
+            CurrentPlanId = planId;
+            CurrentPlanName = planName;
+        }
+    }
+}

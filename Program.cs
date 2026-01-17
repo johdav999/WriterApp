@@ -29,6 +29,7 @@ builder.Services.AddIdentityCore<ApplicationUser>(options =>
     {
         options.User.RequireUniqueEmail = true;
     })
+    .AddRoles<IdentityRole>()
     .AddEntityFrameworkStores<AppDbContext>()
     .AddSignInManager()
     .AddDefaultTokenProviders();
@@ -91,6 +92,44 @@ using (IServiceScope scope = app.Services.CreateScope())
 {
     AppDbContext dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     dbContext.Database.EnsureCreated();
+
+    WriterAuthOptions authOptions = scope.ServiceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<WriterAuthOptions>>().Value;
+    RoleManager<IdentityRole> roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
+    UserManager<ApplicationUser> userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+
+    if (!await roleManager.RoleExistsAsync("Admin"))
+    {
+        await roleManager.CreateAsync(new IdentityRole("Admin"));
+    }
+
+    string? adminEmail = string.IsNullOrWhiteSpace(authOptions.AdminEmail)
+        ? authOptions.DevAutoLoginEmail
+        : authOptions.AdminEmail;
+
+    if (!string.IsNullOrWhiteSpace(adminEmail))
+    {
+        ApplicationUser? adminUser = await userManager.FindByEmailAsync(adminEmail);
+        if (adminUser is null && app.Environment.IsDevelopment())
+        {
+            adminUser = new ApplicationUser
+            {
+                UserName = adminEmail,
+                Email = adminEmail,
+                EmailConfirmed = true
+            };
+
+            IdentityResult createResult = await userManager.CreateAsync(adminUser, authOptions.DevAutoLoginPassword);
+            if (!createResult.Succeeded)
+            {
+                adminUser = null;
+            }
+        }
+
+        if (adminUser is not null && !await userManager.IsInRoleAsync(adminUser, "Admin"))
+        {
+            await userManager.AddToRoleAsync(adminUser, "Admin");
+        }
+    }
 }
 
 if (openAiOptions.Enabled && !openAiKeyProvider.HasKey)

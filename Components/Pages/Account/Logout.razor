@@ -12,6 +12,12 @@
     protected override async Task OnInitializedAsync()
     {
         await SignInManager.SignOutAsync();
-        Navigation.NavigateTo("/", forceLoad: true);
+        try
+        {
+            Navigation.NavigateTo("/", forceLoad: true);
+        }
+        catch (NavigationException)
+        {
+        }
     }
 }
