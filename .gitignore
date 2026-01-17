@@ -13,7 +13,7 @@ dist/
 
 # Environment
 .env
-appsettings.Development.json
+
 
 # OS
 .DS_Store
@@ -25,3 +25,5 @@ obj/
 
 # Test output
 TestResults/
+appsettings.Development.json
+appsettings.json
