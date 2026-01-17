@@ -22,20 +22,12 @@ namespace WriterApp.Application.Exporting
         {
             ExportOptions resolved = options ?? new ExportOptions();
             string title = ExportHelpers.GetDocumentTitle(document);
-<<<<<<< HEAD
-<<<<<<< HEAD
+
             string bodyHtml = RenderBodyHtml(document, resolved);
 
             StringBuilder builder = new();
-=======
-            StringBuilder builder = new();
 
->>>>>>> ebb7526 (Implemented export of md and html)
-=======
-            string bodyHtml = RenderBodyHtml(document, resolved);
 
-            StringBuilder builder = new();
->>>>>>> 42eec1a (Added pdf export)
             builder.Append("<!DOCTYPE html>\n")
                 .Append("<html>\n")
                 .Append("<head>\n")
@@ -47,10 +39,6 @@ namespace WriterApp.Application.Exporting
                 .Append("    p { line-height: 1.6; }\n")
                 .Append("  </style>\n")
                 .Append("</head>\n")
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> 42eec1a (Added pdf export)
                 .Append("<body>\n")
                 .Append(bodyHtml)
                 .Append("</body>\n</html>\n");
@@ -68,12 +56,7 @@ namespace WriterApp.Application.Exporting
             ExportOptions resolved = options ?? new ExportOptions();
             string title = ExportHelpers.GetDocumentTitle(document);
             StringBuilder builder = new();
-<<<<<<< HEAD
-=======
-                .Append("<body>\n");
->>>>>>> ebb7526 (Implemented export of md and html)
-=======
->>>>>>> 42eec1a (Added pdf export)
+
 
             if (resolved.IncludeTitlePage)
             {
@@ -88,15 +71,10 @@ namespace WriterApp.Application.Exporting
                 // Section titles map to second-level headings.
                 builder.Append("    <h2>").Append(WebUtility.HtmlEncode(sectionTitle)).Append("</h2>\n");
 
-<<<<<<< HEAD
-<<<<<<< HEAD
+
                 string sectionHtml = ConvertSectionContentToHtml(section.Content, sectionTitle);
-=======
-                string sectionHtml = ConvertSectionContentToHtml(section.Content);
->>>>>>> ebb7526 (Implemented export of md and html)
-=======
-                string sectionHtml = ConvertSectionContentToHtml(section.Content, sectionTitle);
->>>>>>> 604a04c (Fixed headings in export)
+
+
                 if (!string.IsNullOrWhiteSpace(sectionHtml))
                 {
                     string indented = IndentLines(sectionHtml.Trim(), "    ");
@@ -106,32 +84,15 @@ namespace WriterApp.Application.Exporting
                 builder.Append("  </section>\n");
             }
 
-<<<<<<< HEAD
-<<<<<<< HEAD
+
             return builder.ToString();
         }
 
+
+
+
         private static string ConvertSectionContentToHtml(SectionContent content, string sectionTitle)
-=======
-            builder.Append("</body>\n</html>\n");
 
-            string html = ExportHelpers.NormalizeLineEndings(builder.ToString());
-            byte[] content = Encoding.UTF8.GetBytes(html);
-            string fileName = ExportHelpers.SanitizeFileName(document.Metadata.Title, "document", ".html");
-
-            ExportResult result = new(content, "text/html", fileName);
-            return Task.FromResult(result);
-=======
-            return builder.ToString();
->>>>>>> 42eec1a (Added pdf export)
-        }
-
-<<<<<<< HEAD
-        private static string ConvertSectionContentToHtml(SectionContent content)
->>>>>>> ebb7526 (Implemented export of md and html)
-=======
-        private static string ConvertSectionContentToHtml(SectionContent content, string sectionTitle)
->>>>>>> 604a04c (Fixed headings in export)
         {
             if (content is null || string.IsNullOrWhiteSpace(content.Value))
             {
@@ -145,15 +106,11 @@ namespace WriterApp.Application.Exporting
                 return MarkdownToHtml(content.Value);
             }
 
-<<<<<<< HEAD
-<<<<<<< HEAD
+
+   
+
+
             string value = ExportHelpers.NormalizeSectionHtmlForExport(content.Value, sectionTitle).Trim();
-=======
-            string value = content.Value.Trim();
->>>>>>> ebb7526 (Implemented export of md and html)
-=======
-            string value = ExportHelpers.NormalizeSectionHtmlForExport(content.Value, sectionTitle).Trim();
->>>>>>> 604a04c (Fixed headings in export)
             if (!value.Contains('<', StringComparison.Ordinal))
             {
                 return $"<p>{WebUtility.HtmlEncode(value)}</p>";

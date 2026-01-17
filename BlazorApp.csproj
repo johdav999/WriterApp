@@ -11,13 +11,6 @@
     <Compile Remove="Tests\\**\\*.cs" />
     <Content Remove="Tests\\**" />
     <None Remove="Tests\\**" />
-<<<<<<< HEAD
-  </ItemGroup>
-
-  <ItemGroup>
-    <PackageReference Include="AngleSharp" Version="1.1.1" />
-=======
->>>>>>> ebb7526 (Implemented export of md and html)
   </ItemGroup>
 
   <ItemGroup>

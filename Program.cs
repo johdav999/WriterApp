@@ -23,15 +23,10 @@ builder.Services.AddSingleton<IAiProvider, MockImageProvider>();
 WriterAiOpenAiOptions openAiOptions = builder.Configuration
     .GetSection("WriterApp:AI:Providers:OpenAI")
     .Get<WriterAiOpenAiOptions>() ?? new WriterAiOpenAiOptions();
-<<<<<<< HEAD
 OpenAiKeyProvider openAiKeyProvider = OpenAiKeyProvider.FromEnvironment();
 builder.Services.AddSingleton(openAiKeyProvider);
 
 if (openAiOptions.Enabled && openAiKeyProvider.HasKey)
-=======
-
-if (openAiOptions.Enabled)
->>>>>>> ebb7526 (Implemented export of md and html)
 {
     builder.Services.AddHttpClient(nameof(OpenAiProvider), client =>
     {

@@ -29,10 +29,8 @@ namespace WriterApp.AI.Abstractions
     public sealed class WriterAiOpenAiOptions
     {
         public bool Enabled { get; set; } = false;
-<<<<<<< HEAD
-=======
+
         public string? ApiKey { get; set; }
->>>>>>> ebb7526 (Implemented export of md and html)
         public string? BaseUrl { get; set; }
         public string TextModel { get; set; } = "gpt-4.1-mini";
         public string ImageModel { get; set; } = "gpt-image-1";
