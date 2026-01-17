@@ -26,10 +26,12 @@ namespace WriterApp.AI.Providers.OpenAI
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly WriterAiOpenAiOptions _options;
         private readonly ILogger<OpenAiProvider> _logger;
+        private readonly string _apiKey;
 
         public OpenAiProvider(
             IHttpClientFactory httpClientFactory,
             IOptions<WriterAiOptions> options,
+            OpenAiKeyProvider keyProvider,
             ILogger<OpenAiProvider> logger)
         {
             _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
@@ -40,6 +42,7 @@ namespace WriterApp.AI.Providers.OpenAI
             }
 
             _options = options.Value.Providers.OpenAI ?? new WriterAiOpenAiOptions();
+            _apiKey = keyProvider?.ApiKey ?? string.Empty;
         }
 
         public string ProviderId => ProviderIdValue;
@@ -55,7 +58,7 @@ namespace WriterApp.AI.Providers.OpenAI
                 throw new ArgumentNullException(nameof(request));
             }
 
-            string apiKey = ResolveApiKey();
+            string apiKey = _apiKey;
             if (string.IsNullOrWhiteSpace(apiKey))
             {
                 throw new AiProviderException(ProviderIdValue, "OpenAI API key is not configured.");
@@ -132,7 +135,7 @@ namespace WriterApp.AI.Providers.OpenAI
                 yield break;
             }
 
-            string apiKey = ResolveApiKey();
+            string apiKey = _apiKey;
             if (string.IsNullOrWhiteSpace(apiKey))
             {
                 yield return new AiStreamEvent.Started();
@@ -315,17 +318,6 @@ namespace WriterApp.AI.Providers.OpenAI
             }
 
             return requestMessage;
-        }
-
-        private string ResolveApiKey()
-        {
-            string? key = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
-            if (!string.IsNullOrWhiteSpace(key))
-            {
-                return key;
-            }
-
-            return _options.ApiKey ?? string.Empty;
         }
 
         private void ApplyAuthHeaders(HttpRequestMessage request, string apiKey)
