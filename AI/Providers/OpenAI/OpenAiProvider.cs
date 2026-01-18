@@ -14,14 +14,14 @@ using WriterApp.AI.Abstractions;
 
 namespace WriterApp.AI.Providers.OpenAI
 {
-    public sealed class OpenAiProvider : IAiStreamingProvider, IAiBillingProvider
+    public sealed class OpenAiProvider : IAiStreamingProvider, IAiBillingProvider, IAiImageProvider
     {
         private const string ProviderIdValue = "openai";
         private const string DefaultBaseUrl = "https://api.openai.com/v1/";
         private const string ResponsesEndpoint = "responses";
-        private const string ImagesEndpoint = "images";
         private const string ActionRewrite = "rewrite.selection";
         private const string ActionCoverImage = "generate.image.cover";
+        private const int ImageTokenCost = 1000;
 
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly WriterAiOpenAiOptions _options;
@@ -98,18 +98,15 @@ namespace WriterApp.AI.Providers.OpenAI
 
                 if (string.Equals(request.ActionId, ActionCoverImage, StringComparison.Ordinal))
                 {
-                    AiArtifact artifact = await ExecuteImageAsync(request, apiKey, ct);
+                    AiImageResult imageResult = await GenerateImageAsync(request, ct);
+                    AiArtifact artifact = BuildImageArtifact(imageResult);
                     LogUsage(request, _options.ImageModel, artifact.BinaryContent?.Length ?? 0, stopwatch.Elapsed);
 
                     return new AiResult(
                         request.RequestId,
                         new List<AiArtifact> { artifact },
-                        new AiUsage(0, 0, stopwatch.Elapsed),
-                        new Dictionary<string, object>
-                        {
-                            ["provider"] = ProviderIdValue,
-                            ["model"] = _options.ImageModel
-                        });
+                        new AiUsage(0, ImageTokenCost, stopwatch.Elapsed),
+                        imageResult.ProviderMetadata);
                 }
 
                 throw new AiProviderException(ProviderIdValue, $"OpenAI provider does not support action '{request.ActionId}'.");
@@ -232,45 +229,37 @@ namespace WriterApp.AI.Providers.OpenAI
             return ExtractResponseTextAndUsage(json);
         }
 
-        private async Task<AiArtifact> ExecuteImageAsync(AiRequest request, string apiKey, CancellationToken ct)
+        public async Task<AiImageResult> GenerateImageAsync(AiRequest request, CancellationToken ct)
         {
-            string prompt = GetInputValue(request, "prompt", string.Empty);
-            string instruction = GetInputValue(request, "instruction", string.Empty);
-            string combinedPrompt = string.IsNullOrWhiteSpace(instruction)
-                ? prompt
-                : $"{prompt}\n\nInstruction: {instruction}";
-
-            Dictionary<string, object> payload = new()
+            if (request is null)
             {
-                ["model"] = _options.ImageModel,
-                ["prompt"] = combinedPrompt,
-                ["size"] = "1024x1024",
-                ["response_format"] = "b64_json"
-            };
+                throw new ArgumentNullException(nameof(request));
+            }
 
-            HttpRequestMessage requestMessage = new(HttpMethod.Post, BuildUri(ImagesEndpoint))
+            string apiKey = _apiKey;
+            if (string.IsNullOrWhiteSpace(apiKey))
             {
-                Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
-            };
+                throw new AiProviderException(ProviderIdValue, "OpenAI API key is not configured.");
+            }
 
-            ApplyAuthHeaders(requestMessage, apiKey);
+            HttpRequestMessage requestMessage = BuildResponsesImageRequest(request, apiKey);
 
             HttpClient client = _httpClientFactory.CreateClient(nameof(OpenAiProvider));
             using HttpResponseMessage response = await client.SendAsync(requestMessage, ct);
             await EnsureSuccessAsync(response, ct);
 
             string json = await response.Content.ReadAsStringAsync(ct);
-            byte[] bytes = ExtractImageBytes(json);
+            AiImagePayload payload = ExtractResponseImage(json);
 
-            string dataUrl = $"data:image/png;base64,{Convert.ToBase64String(bytes)}";
-
-            return new AiArtifact(
-                Guid.NewGuid(),
-                AiModality.Image,
-                "image/png",
-                null,
-                bytes,
-                new Dictionary<string, object> { ["dataUrl"] = dataUrl });
+            return new AiImageResult(
+                payload.Bytes,
+                payload.ContentType,
+                new Dictionary<string, object>
+                {
+                    ["provider"] = ProviderIdValue,
+                    ["model"] = _options.ImageModel,
+                    ["requestId"] = payload.RequestId ?? request.RequestId.ToString()
+                });
         }
 
         private HttpRequestMessage BuildResponsesRequest(AiRequest request, string apiKey, bool stream)
@@ -333,6 +322,46 @@ namespace WriterApp.AI.Providers.OpenAI
                 requestMessage.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
             }
 
+            return requestMessage;
+        }
+
+        private HttpRequestMessage BuildResponsesImageRequest(AiRequest request, string apiKey)
+        {
+            string prompt = GetInputValue(request, "prompt", string.Empty);
+            string instruction = GetInputValue(request, "instruction", string.Empty);
+            string size = GetInputValue(request, "size", "1024x1024");
+            string style = GetInputValue(request, "style", string.Empty);
+
+            string combinedPrompt = string.IsNullOrWhiteSpace(instruction)
+                ? prompt
+                : $"{prompt}\n\nInstruction: {instruction}";
+
+            Dictionary<string, object> payload = new()
+            {
+                ["model"] = _options.ImageModel,
+                ["input"] = combinedPrompt,
+                ["tools"] = new object[]
+                {
+                    new Dictionary<string, object>
+                    {
+                        ["type"] = "image_generation",
+                        ["size"] = size,
+                        ["response_format"] = "b64_json"
+                    }
+                }
+            };
+
+            if (!string.IsNullOrWhiteSpace(style))
+            {
+                payload["style"] = style;
+            }
+
+            HttpRequestMessage requestMessage = new(HttpMethod.Post, BuildUri(ResponsesEndpoint))
+            {
+                Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
+            };
+
+            ApplyAuthHeaders(requestMessage, apiKey);
             return requestMessage;
         }
 
@@ -513,7 +542,7 @@ namespace WriterApp.AI.Providers.OpenAI
             return (string.Empty, inputTokens, outputTokens);
         }
 
-        private static byte[] ExtractImageBytes(string json)
+        private static AiImagePayload ExtractResponseImage(string json)
         {
             if (string.IsNullOrWhiteSpace(json))
             {
@@ -522,27 +551,100 @@ namespace WriterApp.AI.Providers.OpenAI
 
             using JsonDocument doc = JsonDocument.Parse(json);
             JsonElement root = doc.RootElement;
-            if (!root.TryGetProperty("data", out JsonElement dataElement)
-                || dataElement.ValueKind != JsonValueKind.Array
-                || dataElement.GetArrayLength() == 0)
+            string? requestId = root.TryGetProperty("id", out JsonElement idElement) ? idElement.GetString() : null;
+
+            if (root.TryGetProperty("output", out JsonElement outputElement)
+                && outputElement.ValueKind == JsonValueKind.Array)
             {
-                throw new AiProviderException(ProviderIdValue, "OpenAI image response did not include data.");
+                foreach (JsonElement output in outputElement.EnumerateArray())
+                {
+                    if (!output.TryGetProperty("content", out JsonElement contentElement)
+                        || contentElement.ValueKind != JsonValueKind.Array)
+                    {
+                        continue;
+                    }
+
+                    foreach (JsonElement content in contentElement.EnumerateArray())
+                    {
+                        if (content.TryGetProperty("type", out JsonElement typeElement))
+                        {
+                            string? type = typeElement.GetString();
+                            if (string.Equals(type, "image", StringComparison.OrdinalIgnoreCase)
+                                || string.Equals(type, "image_generation", StringComparison.OrdinalIgnoreCase))
+                            {
+                                if (TryExtractBase64(content, out string base64, out string contentType))
+                                {
+                                    return new AiImagePayload(Convert.FromBase64String(base64), contentType, requestId);
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
-            JsonElement first = dataElement[0];
-            if (!first.TryGetProperty("b64_json", out JsonElement b64Element))
+            if (root.TryGetProperty("data", out JsonElement dataElement)
+                && dataElement.ValueKind == JsonValueKind.Array
+                && dataElement.GetArrayLength() > 0)
             {
-                throw new AiProviderException(ProviderIdValue, "OpenAI image response did not include image bytes.");
+                JsonElement first = dataElement[0];
+                if (TryExtractBase64(first, out string base64, out string contentType))
+                {
+                    return new AiImagePayload(Convert.FromBase64String(base64), contentType, requestId);
+                }
             }
 
-            string? base64 = b64Element.GetString();
-            if (string.IsNullOrWhiteSpace(base64))
-            {
-                throw new AiProviderException(ProviderIdValue, "OpenAI image response contained empty image data.");
-            }
-
-            return Convert.FromBase64String(base64);
+            throw new AiProviderException(ProviderIdValue, "OpenAI image response did not include image bytes.");
         }
+
+        private static bool TryExtractBase64(JsonElement element, out string base64, out string contentType)
+        {
+            base64 = string.Empty;
+            contentType = "image/png";
+
+            if (element.TryGetProperty("content_type", out JsonElement typeElement))
+            {
+                string? type = typeElement.GetString();
+                if (!string.IsNullOrWhiteSpace(type))
+                {
+                    contentType = type;
+                }
+            }
+
+            if (element.TryGetProperty("b64_json", out JsonElement b64Element))
+            {
+                base64 = b64Element.GetString() ?? string.Empty;
+                return !string.IsNullOrWhiteSpace(base64);
+            }
+
+            if (element.TryGetProperty("image_base64", out JsonElement imageElement))
+            {
+                base64 = imageElement.GetString() ?? string.Empty;
+                return !string.IsNullOrWhiteSpace(base64);
+            }
+
+            if (element.TryGetProperty("data", out JsonElement dataElement))
+            {
+                base64 = dataElement.GetString() ?? string.Empty;
+                return !string.IsNullOrWhiteSpace(base64);
+            }
+
+            return false;
+        }
+
+        private static AiArtifact BuildImageArtifact(AiImageResult imageResult)
+        {
+            string dataUrl = $"data:{imageResult.ContentType};base64,{Convert.ToBase64String(imageResult.ImageBytes)}";
+
+            return new AiArtifact(
+                Guid.NewGuid(),
+                AiModality.Image,
+                imageResult.ContentType,
+                null,
+                imageResult.ImageBytes,
+                new Dictionary<string, object> { ["dataUrl"] = dataUrl });
+        }
+
+        private sealed record AiImagePayload(byte[] Bytes, string ContentType, string? RequestId);
 
         private static async Task EnsureSuccessAsync(HttpResponseMessage response, CancellationToken ct)
         {
