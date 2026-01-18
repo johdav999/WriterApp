@@ -12,6 +12,7 @@
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.Components.Web
 @using Microsoft.Extensions.Hosting
+@using Microsoft.EntityFrameworkCore
 @using Microsoft.Extensions.Logging
 @using Microsoft.Extensions.Options
 @using Microsoft.JSInterop
@@ -23,6 +24,7 @@
 @using WriterApp.Application.State
 @using WriterApp.Application.Subscriptions
 @using WriterApp.Application.Usage
+@using WriterApp.Data.Subscriptions
 @using WriterApp.Domain.Documents
 @implements IDisposable
 @implements IAsyncDisposable
@@ -43,6 +45,7 @@
 @inject IEntitlementService EntitlementService
 @inject IUsageMeter UsageMeter
 @inject IUserIdResolver UserIdResolver
+@inject AppDbContext DbContext
 
 <PageTitle>Writer</PageTitle>
 
@@ -351,6 +354,49 @@
                     </div>
                 }
             </details>
+            @if (ShouldShowUpgradePrompt)
+            {
+                <div class="ai-upgrade-banner">
+                    <div class="ai-upgrade-text">Upgrade to Standard or Professional to continue using AI features.</div>
+                    <button type="button" @onclick="OnViewPlansAsync">View plans</button>
+                </div>
+            }
+            @if (_showPlansPanel)
+            {
+                <div class="ai-plans-panel">
+                    <div class="ai-plans-header">
+                        <strong>Plans</strong>
+                        <button type="button" class="ai-plans-close" @onclick="ClosePlansPanel">Close</button>
+                    </div>
+                    @if (_isPlansLoading)
+                    {
+                        <div class="ai-usage-empty">Loading plans...</div>
+                    }
+                    else if (!string.IsNullOrWhiteSpace(_plansError))
+                    {
+                        <div class="ai-usage-empty">@_plansError</div>
+                    }
+                    else
+                    {
+                        <div class="ai-plans-list">
+                            @foreach (Plan plan in _planCatalog)
+                            {
+                                <div class="ai-plan-card">
+                                    <div class="ai-plan-title">@plan.Name</div>
+                                    <div class="ai-plan-meta">Key: @plan.Key</div>
+                                    <div class="ai-plan-entitlements">
+                                        <div><strong>AI Enabled:</strong> @GetEntitlementValue(plan, "ai.enabled")</div>
+                                        <div><strong>Monthly Tokens:</strong> @GetEntitlementValue(plan, "ai.monthly_tokens")</div>
+                                        <div><strong>Daily Cap:</strong> @GetEntitlementValue(plan, "ai.daily_tokens_cap")</div>
+                                        <div><strong>Cover Images:</strong> @GetEntitlementValue(plan, "ai.images.cover")</div>
+                                        <div><strong>PDF Export:</strong> @GetEntitlementValue(plan, "export.pdf")</div>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            }
             @{
                 IReadOnlyList<AIHistoryEntry> aiHistoryEntries = GetActiveSectionAiHistory();
             }
@@ -1254,6 +1300,80 @@
         color: #b45309;
     }
 
+    .ai-upgrade-banner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 10px 12px;
+        margin-bottom: 16px;
+        border: 1px solid #f1d1a5;
+        border-radius: 8px;
+        background: #fff7e6;
+        font-size: 0.9rem;
+        color: #7a5a24;
+    }
+
+    .ai-upgrade-banner button {
+        padding: 6px 10px;
+        border-radius: 6px;
+        border: 1px solid #d6c79c;
+        background: #f9e8c5;
+        cursor: pointer;
+    }
+
+    .ai-plans-panel {
+        margin-bottom: 16px;
+        padding: 12px;
+        border: 1px solid #ececec;
+        border-radius: 8px;
+        background: #ffffff;
+    }
+
+    .ai-plans-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+    }
+
+    .ai-plans-close {
+        border: none;
+        background: transparent;
+        color: #6b7280;
+        cursor: pointer;
+    }
+
+    .ai-plans-list {
+        display: grid;
+        gap: 10px;
+    }
+
+    .ai-plan-card {
+        border: 1px solid #edf0f5;
+        border-radius: 8px;
+        padding: 10px;
+        background: #f9fafb;
+    }
+
+    .ai-plan-title {
+        font-weight: 600;
+        margin-bottom: 4px;
+    }
+
+    .ai-plan-meta {
+        font-size: 0.8rem;
+        color: #6b7280;
+        margin-bottom: 6px;
+    }
+
+    .ai-plan-entitlements {
+        display: grid;
+        gap: 4px;
+        font-size: 0.85rem;
+        color: #374151;
+    }
+
     .ai-history-panel {
         margin: 1.5rem 0;
         padding: 0.75rem 0.9rem;
@@ -1526,6 +1646,10 @@
     private UsageSnapshot? _aiUsageSnapshot;
     private int? _aiMonthlyTokenLimit;
     private bool _aiMonthlyQuotaUnlimited;
+    private readonly List<Plan> _planCatalog = new();
+    private bool _showPlansPanel;
+    private bool _isPlansLoading;
+    private string? _plansError;
     private CancellationTokenSource? _aiUsageRefreshCts;
     private bool _aiUsageRefreshInProgress;
     private Task? _aiUsageRefreshTask;
@@ -2658,6 +2782,8 @@
 
     private bool IsAiQuotaExceeded => _aiUsageStatus is not null && _aiUsageStatus.QuotaRemaining <= 0;
 
+    private bool ShouldShowUpgradePrompt => _aiOptions.Enabled && (_aiUsageStatus is null || !IsAiEntitled || IsAiQuotaExceeded);
+
     private string GetAiBlockedMessage()
     {
         if (_aiUsageStatus is null)
@@ -2846,6 +2972,60 @@
 
         int used = _aiUsageSnapshot.TotalInputTokens + _aiUsageSnapshot.TotalOutputTokens;
         return Math.Clamp(used / (double)_aiMonthlyTokenLimit.Value * 100d, 0d, 100d);
+    }
+
+    private async Task OnViewPlansAsync()
+    {
+        _showPlansPanel = true;
+        _plansError = null;
+
+        if (_planCatalog.Count > 0)
+        {
+            return;
+        }
+
+        _isPlansLoading = true;
+        try
+        {
+            List<Plan> plans = await DbContext.Plans
+                .Include(plan => plan.Entitlements)
+                .Where(plan => plan.IsActive)
+                .OrderBy(plan => plan.Name)
+                .ToListAsync();
+
+            _planCatalog.Clear();
+            _planCatalog.AddRange(plans);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Plan catalog load failed.");
+            _plansError = "Plans could not be loaded.";
+        }
+        finally
+        {
+            _isPlansLoading = false;
+        }
+    }
+
+    private void ClosePlansPanel()
+    {
+        _showPlansPanel = false;
+    }
+
+    private static string GetEntitlementValue(Plan plan, string key)
+    {
+        if (plan.Entitlements is null)
+        {
+            return "Not available";
+        }
+
+        PlanEntitlement? entitlement = plan.Entitlements.FirstOrDefault(item => string.Equals(item.Key, key, StringComparison.OrdinalIgnoreCase));
+        if (entitlement is null)
+        {
+            return "Not available";
+        }
+
+        return entitlement.Value;
     }
 
     private void CancelAiStream()
