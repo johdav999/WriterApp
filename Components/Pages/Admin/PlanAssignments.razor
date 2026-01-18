@@ -40,12 +40,12 @@
             <tbody>
                 @foreach (UserPlanRow row in _rows)
                 {
-                    <tr>
+                    <tr @key="row.UserId">
                         <td>@row.Email</td>
                         <td>@row.UserId</td>
                         <td>@row.CurrentPlanName</td>
                         <td>
-                            <select value="@row.SelectedPlanId" @onchange="(args) => OnPlanSelected(row, args)">
+                            <select @bind="row.SelectedPlanId">
                                 @foreach (Plan plan in _plans)
                                 {
                                     <option value="@plan.PlanId">@plan.Name</option>
@@ -170,25 +170,6 @@
         Logger.LogInformation("Admin updated plan for {UserId} to {PlanKey}", row.UserId, selectedPlan.Key);
     }
 
-    private void OnPlanSelected(UserPlanRow row, ChangeEventArgs args)
-    {
-        if (row is null)
-        {
-            return;
-        }
-
-        if (Guid.TryParse(args.Value?.ToString(), out Guid selectedPlanId))
-        {
-            row.SelectedPlanId = selectedPlanId;
-        }
-        else
-        {
-            row.SelectedPlanId = Guid.Empty;
-        }
-
-        _statusMessage = null;
-    }
-
     private async Task<string> ResolveAssignedByAsync()
     {
         AuthenticationState authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
@@ -203,6 +184,9 @@
 
     private sealed class UserPlanRow
     {
+        private Guid _selectedPlanId;
+        private bool _hasPendingChange;
+
         public UserPlanRow(string userId, string email, Guid? currentPlanId, string currentPlanName, Guid selectedPlanId)
         {
             UserId = userId;
@@ -210,19 +194,31 @@
             CurrentPlanId = currentPlanId;
             CurrentPlanName = currentPlanName;
             SelectedPlanId = selectedPlanId;
+            _hasPendingChange = false;
         }
 
         public string UserId { get; }
         public string Email { get; }
         public Guid? CurrentPlanId { get; private set; }
         public string CurrentPlanName { get; private set; }
-        public Guid SelectedPlanId { get; set; }
-        public bool CanSave => CurrentPlanId != SelectedPlanId;
+        public Guid SelectedPlanId
+        {
+            get => _selectedPlanId;
+            set
+            {
+                _selectedPlanId = value;
+                _hasPendingChange = CurrentPlanId != value;
+            }
+        }
+
+        public bool CanSave => _hasPendingChange;
 
         public void ApplyPlan(Guid planId, string planName)
         {
             CurrentPlanId = planId;
             CurrentPlanName = planName;
+            SelectedPlanId = planId;
+            _hasPendingChange = false;
         }
     }
 }
