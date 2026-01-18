@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using WriterApp.AI.Abstractions;
+using WriterApp.AI.Actions;
 using WriterApp.Application.Security;
 using WriterApp.Application.Subscriptions;
 using WriterApp.Application.Usage;
@@ -67,6 +68,15 @@ namespace WriterApp.AI.Core
             if (!aiEnabled)
             {
                 return new AiUsageDecision(false, userId, "ai.disabled", "AI is not enabled for your plan.");
+            }
+
+            if (string.Equals(actionId, GenerateCoverImageAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                bool imagesEnabled = await _entitlementService.HasAsync(userId, "ai.images.cover");
+                if (!imagesEnabled)
+                {
+                    return new AiUsageDecision(false, userId, "ai.images.cover_disabled", "Cover image generation is not enabled for your plan.");
+                }
             }
 
             int requestsPerMinute = Math.Max(1, _options.RateLimiting.RequestsPerMinute);

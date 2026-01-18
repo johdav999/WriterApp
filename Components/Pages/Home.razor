@@ -24,6 +24,7 @@
 @using WriterApp.Application.State
 @using WriterApp.Application.Subscriptions
 @using WriterApp.Application.Usage
+@using WriterApp.Data
 @using WriterApp.Data.Subscriptions
 @using WriterApp.Domain.Documents
 @implements IDisposable
@@ -173,7 +174,7 @@
                         </div>
                     }
                 </div>
-                @if (CanShowAiMenu && AiOrchestrator.CanRunAction(GenerateCoverImageAction.ActionIdValue))
+                @if (CanShowAiMenu && _aiImageEntitled && AiOrchestrator.CanRunAction(GenerateCoverImageAction.ActionIdValue))
                 {
                     <button type="button" disabled="@IsAiQuotaExceeded" @onclick="OnGenerateCoverImage">Generate cover image (mock)</button>
                 }
@@ -1646,6 +1647,7 @@
     private UsageSnapshot? _aiUsageSnapshot;
     private int? _aiMonthlyTokenLimit;
     private bool _aiMonthlyQuotaUnlimited;
+    private bool _aiImageEntitled;
     private readonly List<Plan> _planCatalog = new();
     private bool _showPlansPanel;
     private bool _isPlansLoading;
@@ -2825,6 +2827,7 @@
             _aiMonthlyTokenLimit = await EntitlementService.GetIntAsync(userId, "ai.monthly_tokens");
             _aiMonthlyQuotaUnlimited = _aiMonthlyTokenLimit is null;
             _aiUsageSnapshot = await UsageMeter.GetCurrentPeriodAsync(userId, "ai.total");
+            _aiImageEntitled = await EntitlementService.HasAsync(userId, "ai.images.cover");
             UpdateAiMenuVisibility();
             await InvokeAsync(StateHasChanged);
         }
