@@ -15,31 +15,33 @@ namespace WriterApp.Application.Exporting
             _renderers = renderers?.ToList() ?? throw new ArgumentNullException(nameof(renderers));
         }
 
-        public Task<ExportResult> ExportAsync(Document document, ExportFormat format, ExportOptions options)
+        public Task<ExportResult> ExportAsync(Document document, ExportKind kind, ExportFormat format, ExportOptions options)
         {
             if (document is null)
             {
                 throw new ArgumentNullException(nameof(document));
             }
 
-            IExportRenderer renderer = _renderers.FirstOrDefault(candidate => candidate.Format == format)
-                ?? throw new InvalidOperationException($"No export renderer registered for {format}.");
+            IExportRenderer renderer = _renderers.FirstOrDefault(candidate => candidate.Format == format && candidate.Kind == kind)
+                ?? throw new InvalidOperationException($"No export renderer registered for {kind} {format}.");
 
             return renderer.RenderAsync(document, options ?? new ExportOptions());
         }
 
 
-        public Task<string> ExportHtmlBodyAsync(Document document, ExportOptions options)
+        public Task<string> ExportHtmlBodyAsync(Document document, ExportKind kind, ExportOptions options)
         {
             if (document is null)
             {
                 throw new ArgumentNullException(nameof(document));
             }
 
-            HtmlExportRenderer? renderer = _renderers.OfType<HtmlExportRenderer>().FirstOrDefault();
+            HtmlExportRenderer? renderer = _renderers
+                .OfType<HtmlExportRenderer>()
+                .FirstOrDefault(candidate => candidate.Kind == kind);
             if (renderer is null)
             {
-                throw new InvalidOperationException("No HTML export renderer registered.");
+                throw new InvalidOperationException($"No HTML export renderer registered for {kind}.");
             }
 
             return Task.FromResult(renderer.RenderBodyHtml(document, options ?? new ExportOptions()));

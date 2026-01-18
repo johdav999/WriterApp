@@ -2,6 +2,7 @@
 @using WriterApp.Application.State
 @implements IDisposable
 @inject AppHeaderState HeaderState
+@inject NavigationManager Navigation
 
 <div class="app-shell">
     <header class="app-header">
@@ -16,7 +17,7 @@
             }
         </div>
         <div class="app-header-right">
-            <a class="app-link" href="https://learn.microsoft.com/aspnet/core/" target="_blank" rel="noopener">About</a>
+            <button type="button" class="app-link app-link-button" @onclick="OnAboutClicked">About</button>
         </div>
     </header>
 
@@ -68,5 +69,10 @@
         return string.IsNullOrWhiteSpace(HeaderState.DocumentId)
             ? "/synopsis"
             : $"/synopsis/{HeaderState.DocumentId}";
+    }
+
+    private void OnAboutClicked()
+    {
+        Navigation.NavigateTo("https://learn.microsoft.com/aspnet/core/", forceLoad: true);
     }
 }

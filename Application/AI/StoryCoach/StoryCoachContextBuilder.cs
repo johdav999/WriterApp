@@ -73,10 +73,12 @@ namespace WriterApp.Application.AI.StoryCoach
                 "protagonist" => "Who carries the emotional weight of this story, and what do they want?",
                 "antagonist" => "Who or what opposes the protagonist?",
                 "central_conflict" => "What stands between the protagonist and their goal?",
+                "theme" => "What theme or message runs through the story?",
                 "stakes" => "What will be lost if the protagonist fails?",
                 "arc" => "How does the protagonist change from start to finish?",
                 "setting" => "Where and when does the story take place?",
                 "ending" => "What outcome brings the story to a satisfying close?",
+                "resolution" => "What final resolution brings the story to closure?",
                 _ => "Share what you want to develop in this field."
             };
         }

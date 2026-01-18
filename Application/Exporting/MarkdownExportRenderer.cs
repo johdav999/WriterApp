@@ -14,6 +14,7 @@ namespace WriterApp.Application.Exporting
         private static readonly Regex WhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
 
         public ExportFormat Format => ExportFormat.Markdown;
+        public ExportKind Kind => ExportKind.Document;
 
         public Task<ExportResult> RenderAsync(Document document, ExportOptions options)
         {
@@ -42,6 +43,7 @@ namespace WriterApp.Application.Exporting
             }
 
             string markdown = ExportHelpers.NormalizeLineEndings(builder.ToString()).TrimEnd() + "\n";
+            ExportHelpers.AssertSynopsisNotIncluded(markdown, document);
             byte[] content = Encoding.UTF8.GetBytes(markdown);
             string fileName = ExportHelpers.SanitizeFileName(document.Metadata.Title, "document", ".md");
 
