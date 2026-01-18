@@ -10,10 +10,12 @@ namespace WriterApp.Application.Usage
     {
         private const string TotalKind = "ai.total";
         private readonly AppDbContext _dbContext;
+        private readonly IClock _clock;
 
-        public UsageMeter(AppDbContext dbContext)
+        public UsageMeter(AppDbContext dbContext, IClock clock)
         {
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
+            _clock = clock ?? throw new ArgumentNullException(nameof(clock));
         }
 
         public async Task RecordAsync(UsageEvent usageEvent)
@@ -30,7 +32,7 @@ namespace WriterApp.Application.Usage
 
             if (usageEvent.TimestampUtc == default)
             {
-                usageEvent.TimestampUtc = DateTime.UtcNow;
+                usageEvent.TimestampUtc = _clock.UtcNow;
             }
 
             (DateTime periodStartUtc, DateTime periodEndUtc) = GetPeriodBounds(usageEvent.TimestampUtc);
@@ -59,7 +61,7 @@ namespace WriterApp.Application.Usage
 
         public async Task<UsageSnapshot> GetCurrentPeriodAsync(string userId, string kind)
         {
-            (DateTime periodStartUtc, DateTime periodEndUtc) = GetPeriodBounds(DateTime.UtcNow);
+            (DateTime periodStartUtc, DateTime periodEndUtc) = GetPeriodBounds(_clock.UtcNow);
 
             UsageAggregate? aggregate = await _dbContext.UsageAggregates
                 .FirstOrDefaultAsync(existing =>
@@ -78,7 +80,7 @@ namespace WriterApp.Application.Usage
                     0,
                     0,
                     0,
-                    DateTime.UtcNow);
+                    _clock.UtcNow);
             }
 
             return new UsageSnapshot(
@@ -133,7 +135,7 @@ namespace WriterApp.Application.Usage
             return aggregate;
         }
 
-        private static void ApplyUsage(UsageAggregate aggregate, UsageEvent usageEvent)
+        private void ApplyUsage(UsageAggregate aggregate, UsageEvent usageEvent)
         {
             aggregate.TotalInputTokens += usageEvent.InputTokens;
             aggregate.TotalOutputTokens += usageEvent.OutputTokens;
@@ -142,7 +144,7 @@ namespace WriterApp.Application.Usage
                 aggregate.TotalCostMicros += usageEvent.CostMicros.Value;
             }
 
-            aggregate.UpdatedUtc = DateTime.UtcNow;
+            aggregate.UpdatedUtc = _clock.UtcNow;
         }
     }
 }
