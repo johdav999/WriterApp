@@ -6,6 +6,7 @@ namespace WriterApp.AI.Abstractions
         public WriterAiProviderOptions Providers { get; set; } = new();
         public WriterAiStreamingOptions Streaming { get; set; } = new();
         public WriterAiUiOptions UI { get; set; } = new();
+        public WriterAiRateLimitOptions RateLimiting { get; set; } = new();
     }
 
     public sealed class WriterAiProviderOptions
@@ -24,6 +25,11 @@ namespace WriterApp.AI.Abstractions
     public sealed class WriterAiUiOptions
     {
         public bool ShowAiMenu { get; set; } = true;
+    }
+
+    public sealed class WriterAiRateLimitOptions
+    {
+        public int RequestsPerMinute { get; set; } = 10;
     }
 
     public sealed class WriterAiOpenAiOptions

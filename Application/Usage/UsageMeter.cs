@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using WriterApp.Data;
@@ -92,6 +93,39 @@ namespace WriterApp.Application.Usage
                 aggregate.TotalOutputTokens,
                 aggregate.TotalCostMicros,
                 aggregate.UpdatedUtc);
+        }
+
+        public async Task<UsageSnapshot> GetRangeAsync(string userId, string kind, DateTime startUtc, DateTime endUtc)
+        {
+            if (string.IsNullOrWhiteSpace(userId))
+            {
+                return new UsageSnapshot(userId, startUtc, endUtc, kind, 0, 0, 0, _clock.UtcNow);
+            }
+
+            IQueryable<UsageEvent> query = _dbContext.UsageEvents
+                .Where(usage =>
+                    usage.UserId == userId
+                    && usage.TimestampUtc >= startUtc
+                    && usage.TimestampUtc < endUtc);
+
+            if (!string.Equals(kind, TotalKind, StringComparison.OrdinalIgnoreCase))
+            {
+                query = query.Where(usage => usage.Kind == kind);
+            }
+
+            int inputTokens = await query.SumAsync(usage => (int?)usage.InputTokens) ?? 0;
+            int outputTokens = await query.SumAsync(usage => (int?)usage.OutputTokens) ?? 0;
+            long costMicros = await query.SumAsync(usage => (long?)(usage.CostMicros ?? 0)) ?? 0;
+
+            return new UsageSnapshot(
+                userId,
+                startUtc,
+                endUtc,
+                kind,
+                inputTokens,
+                outputTokens,
+                costMicros,
+                _clock.UtcNow);
         }
 
         private static (DateTime StartUtc, DateTime EndUtc) GetPeriodBounds(DateTime timestampUtc)

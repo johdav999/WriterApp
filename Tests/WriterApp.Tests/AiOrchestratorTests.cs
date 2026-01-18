@@ -87,6 +87,11 @@ namespace WriterApp.Tests
                 DateTime now = DateTime.UtcNow;
                 return Task.FromResult(new UsageSnapshot(userId, now, now, kind, 0, 0, 0, now));
             }
+
+            public Task<UsageSnapshot> GetRangeAsync(string userId, string kind, DateTime startUtc, DateTime endUtc)
+            {
+                return Task.FromResult(new UsageSnapshot(userId, startUtc, endUtc, kind, 0, 0, 0, endUtc));
+            }
         }
     }
 }

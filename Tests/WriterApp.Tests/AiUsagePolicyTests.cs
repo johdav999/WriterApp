@@ -30,7 +30,7 @@ namespace WriterApp.Tests
             IEntitlementService entitlementService = BuildEntitlementService(dbContext);
             TestClock clock = new(new DateTime(2025, 1, 15, 0, 0, 0, DateTimeKind.Utc));
             IUsageMeter usageMeter = new UsageMeter(dbContext, clock);
-            IAiUsagePolicy policy = BuildPolicy(entitlementService, usageMeter, "user-free");
+            IAiUsagePolicy policy = BuildPolicy(entitlementService, usageMeter, clock, "user-free");
 
             AiUsageDecision decision = await policy.EvaluateAsync(new TestBillingProvider(), "rewrite");
 
@@ -60,7 +60,7 @@ namespace WriterApp.Tests
             IEntitlementService entitlementService = BuildEntitlementService(dbContext);
             TestClock clock = new(new DateTime(2025, 1, 15, 0, 0, 0, DateTimeKind.Utc));
             UsageMeter usageMeter = new(dbContext, clock);
-            IAiUsagePolicy policy = BuildPolicy(entitlementService, usageMeter, "user-standard");
+            IAiUsagePolicy policy = BuildPolicy(entitlementService, usageMeter, clock, "user-standard");
 
             AiUsageDecision allowed = await policy.EvaluateAsync(new TestBillingProvider(), "rewrite");
             Assert.True(allowed.Allowed);
@@ -77,6 +77,84 @@ namespace WriterApp.Tests
             };
 
             await usageMeter.RecordAsync(usageEvent);
+
+            AiUsageDecision blocked = await policy.EvaluateAsync(new TestBillingProvider(), "rewrite");
+            Assert.False(blocked.Allowed);
+            Assert.Equal("ai.quota_exceeded", blocked.ErrorCode);
+        }
+
+        [Fact]
+        public async Task RateLimit_BlocksAfterLimitExceeded()
+        {
+            await using SqliteConnection connection = new("DataSource=:memory:");
+            await connection.OpenAsync();
+            AppDbContext dbContext = BuildDbContext(connection);
+
+            Plan? standardPlan = await dbContext.Plans.FirstOrDefaultAsync(plan => plan.Key == "standard");
+            Assert.NotNull(standardPlan);
+
+            dbContext.UserPlanAssignments.Add(new UserPlanAssignment
+            {
+                UserId = "user-rate",
+                PlanId = standardPlan!.PlanId,
+                AssignedUtc = new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc),
+                AssignedBy = "seed"
+            });
+            await dbContext.SaveChangesAsync();
+
+            IEntitlementService entitlementService = BuildEntitlementService(dbContext);
+            TestClock clock = new(new DateTime(2025, 1, 15, 0, 0, 0, DateTimeKind.Utc));
+            IUsageMeter usageMeter = new UsageMeter(dbContext, clock);
+            IAiUsagePolicy policy = BuildPolicy(entitlementService, usageMeter, clock, "user-rate", requestsPerMinute: 1);
+
+            AiUsageDecision first = await policy.EvaluateAsync(new TestBillingProvider(), "rewrite");
+            AiUsageDecision second = await policy.EvaluateAsync(new TestBillingProvider(), "rewrite");
+
+            Assert.True(first.Allowed);
+            Assert.False(second.Allowed);
+            Assert.Equal("ai.rate_limited", second.ErrorCode);
+        }
+
+        [Fact]
+        public async Task DailyCap_BlocksWhenExceeded()
+        {
+            await using SqliteConnection connection = new("DataSource=:memory:");
+            await connection.OpenAsync();
+            AppDbContext dbContext = BuildDbContext(connection);
+
+            Plan? standardPlan = await dbContext.Plans.FirstOrDefaultAsync(plan => plan.Key == "standard");
+            Assert.NotNull(standardPlan);
+
+            dbContext.UserPlanAssignments.Add(new UserPlanAssignment
+            {
+                UserId = "user-daily",
+                PlanId = standardPlan!.PlanId,
+                AssignedUtc = new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc),
+                AssignedBy = "seed"
+            });
+            dbContext.PlanEntitlements.Add(new PlanEntitlement
+            {
+                PlanId = standardPlan.PlanId,
+                Key = "ai.daily_tokens_cap",
+                Value = "5"
+            });
+            await dbContext.SaveChangesAsync();
+
+            IEntitlementService entitlementService = BuildEntitlementService(dbContext);
+            TestClock clock = new(new DateTime(2025, 1, 15, 0, 0, 0, DateTimeKind.Utc));
+            UsageMeter usageMeter = new(dbContext, clock);
+            IAiUsagePolicy policy = BuildPolicy(entitlementService, usageMeter, clock, "user-daily");
+
+            await usageMeter.RecordAsync(new UsageEvent
+            {
+                UserId = "user-daily",
+                Kind = "ai.text",
+                Provider = "mock",
+                Model = "mock",
+                InputTokens = 5,
+                OutputTokens = 0,
+                TimestampUtc = clock.UtcNow
+            });
 
             AiUsageDecision blocked = await policy.EvaluateAsync(new TestBillingProvider(), "rewrite");
             Assert.False(blocked.Allowed);
@@ -104,7 +182,9 @@ namespace WriterApp.Tests
         private static IAiUsagePolicy BuildPolicy(
             IEntitlementService entitlementService,
             IUsageMeter usageMeter,
-            string userId)
+            IClock clock,
+            string userId,
+            int? requestsPerMinute = null)
         {
             DefaultHttpContext httpContext = new();
             ClaimsIdentity identity = new(new[]
@@ -118,8 +198,16 @@ namespace WriterApp.Tests
                 HttpContext = httpContext
             };
 
-            WriterAiOptions options = new() { Enabled = true };
-            return new AiUsagePolicy(accessor, entitlementService, usageMeter, Options.Create(options));
+            WriterAiOptions options = new()
+            {
+                Enabled = true,
+                RateLimiting = new WriterAiRateLimitOptions
+                {
+                    RequestsPerMinute = requestsPerMinute ?? 100
+                }
+            };
+            IMemoryCache cache = new MemoryCache(new MemoryCacheOptions());
+            return new AiUsagePolicy(accessor, entitlementService, usageMeter, cache, clock, Options.Create(options));
         }
 
         private sealed class TestClock : IClock
