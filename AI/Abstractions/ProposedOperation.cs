@@ -7,5 +7,7 @@ namespace WriterApp.AI.Abstractions
 
     public sealed record ReplaceTextRangeOperation(Guid SectionId, TextRange Range, string NewText) : ProposedOperation;
 
+    public sealed record ReplaceSynopsisFieldOperation(string FieldKey, string NewText) : ProposedOperation;
+
     public sealed record AttachImageOperation(Guid SectionId, Guid ArtifactId, string Placement) : ProposedOperation;
 }

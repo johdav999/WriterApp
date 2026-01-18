@@ -72,7 +72,12 @@ namespace WriterApp.Application.State
             }
 
             DocumentStorage? payload = JsonSerializer.Deserialize<DocumentStorage>(json);
-            return payload?.Document;
+            if (payload?.Document is null)
+            {
+                return null;
+            }
+
+            return DocumentFactory.EnsureSynopsis(payload.Document);
         }
 
         public async Task SaveDocumentAsync(Document document)
@@ -128,7 +133,14 @@ namespace WriterApp.Application.State
                 return null;
             }
 
-            return JsonSerializer.Deserialize<DocumentAutosave>(json);
+            DocumentAutosave? autosave = JsonSerializer.Deserialize<DocumentAutosave>(json);
+            if (autosave?.Document is null)
+            {
+                return autosave;
+            }
+
+            Document normalized = DocumentFactory.EnsureSynopsis(autosave.Document);
+            return new DocumentAutosave(normalized, autosave.AutosavedUtc);
         }
 
         public async Task<bool> ClearAutosaveAsync(Guid documentId)

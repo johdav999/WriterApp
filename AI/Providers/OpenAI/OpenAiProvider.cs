@@ -21,6 +21,7 @@ namespace WriterApp.AI.Providers.OpenAI
         private const string ResponsesEndpoint = "responses";
         private const string ActionRewrite = "rewrite.selection";
         private const string ActionCoverImage = "generate.image.cover";
+        private const string ActionStoryCoach = "synopsis.story_coach";
         private const int ImageTokenCost = 1000;
 
         private readonly IHttpClientFactory _httpClientFactory;
@@ -107,6 +108,31 @@ namespace WriterApp.AI.Providers.OpenAI
                         new List<AiArtifact> { artifact },
                         new AiUsage(0, ImageTokenCost, stopwatch.Elapsed),
                         imageResult.ProviderMetadata);
+                }
+
+                if (string.Equals(request.ActionId, ActionStoryCoach, StringComparison.Ordinal))
+                {
+                    (string outputText, int inputTokens, int outputTokens) = await ExecuteStoryCoachAsync(request, apiKey, ct);
+                    AiArtifact artifact = new(
+                        Guid.NewGuid(),
+                        AiModality.Text,
+                        "text/plain",
+                        outputText,
+                        null,
+                        null);
+
+                    AiUsage usage = new(inputTokens, outputTokens, stopwatch.Elapsed);
+                    LogUsage(request, _options.TextModel, outputTokens, stopwatch.Elapsed);
+
+                    return new AiResult(
+                        request.RequestId,
+                        new List<AiArtifact> { artifact },
+                        usage,
+                        new Dictionary<string, object>
+                        {
+                            ["provider"] = ProviderIdValue,
+                            ["model"] = _options.TextModel
+                        });
                 }
 
                 throw new AiProviderException(ProviderIdValue, $"OpenAI provider does not support action '{request.ActionId}'.");
@@ -229,6 +255,21 @@ namespace WriterApp.AI.Providers.OpenAI
             return ExtractResponseTextAndUsage(json);
         }
 
+        private async Task<(string OutputText, int InputTokens, int OutputTokens)> ExecuteStoryCoachAsync(
+            AiRequest request,
+            string apiKey,
+            CancellationToken ct)
+        {
+            HttpRequestMessage requestMessage = BuildStoryCoachRequest(request, apiKey);
+            HttpClient client = _httpClientFactory.CreateClient(nameof(OpenAiProvider));
+
+            using HttpResponseMessage response = await client.SendAsync(requestMessage, ct);
+            await EnsureSuccessAsync(response, ct);
+
+            string json = await response.Content.ReadAsStringAsync(ct);
+            return ExtractResponseTextAndUsage(json);
+        }
+
         public async Task<AiImageResult> GenerateImageAsync(AiRequest request, CancellationToken ct)
         {
             if (request is null)
@@ -322,6 +363,59 @@ namespace WriterApp.AI.Providers.OpenAI
                 requestMessage.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
             }
 
+            return requestMessage;
+        }
+
+        private HttpRequestMessage BuildStoryCoachRequest(AiRequest request, string apiKey)
+        {
+            string fieldKey = GetInputValue(request, "focus_field_key", "field");
+            string focusPrompt = GetInputValue(request, "focus_field_prompt", string.Empty);
+            string otherContext = GetInputValue(request, "other_fields_context", string.Empty);
+            string existing = GetInputValue(request, "existing_value", string.Empty);
+            string notes = GetInputValue(request, "user_notes", string.Empty);
+
+            string systemPrompt = StoryCoachPromptBuilder.BuildSystemPrompt();
+            string prompt = StoryCoachPromptBuilder.BuildUserPrompt(otherContext, fieldKey, focusPrompt, existing, notes);
+
+            Dictionary<string, object> payload = new()
+            {
+                ["model"] = _options.TextModel,
+                ["input"] = new object[]
+                {
+                    new Dictionary<string, object>
+                    {
+                        ["role"] = "system",
+                        ["content"] = new object[]
+                        {
+                            new Dictionary<string, object>
+                            {
+                                ["type"] = "input_text",
+                                ["text"] = systemPrompt
+                            }
+                        }
+                    },
+                    new Dictionary<string, object>
+                    {
+                        ["role"] = "user",
+                        ["content"] = new object[]
+                        {
+                            new Dictionary<string, object>
+                            {
+                                ["type"] = "input_text",
+                                ["text"] = prompt
+                            }
+                        }
+                    }
+                },
+                ["max_output_tokens"] = _options.MaxOutputTokens
+            };
+
+            HttpRequestMessage requestMessage = new(HttpMethod.Post, BuildUri(ResponsesEndpoint))
+            {
+                Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
+            };
+
+            ApplyAuthHeaders(requestMessage, apiKey);
             return requestMessage;
         }
 

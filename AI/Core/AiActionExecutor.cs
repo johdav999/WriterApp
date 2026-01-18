@@ -3,8 +3,11 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using WriterApp.AI.Abstractions;
 using WriterApp.AI.Actions;
+using WriterApp.Application.AI.StoryCoach;
+using WriterApp.Application.Commands;
 
 namespace WriterApp.AI.Core
 {
@@ -12,11 +15,13 @@ namespace WriterApp.AI.Core
     {
         private readonly IAiRouter _router;
         private readonly IArtifactStore _artifactStore;
+        private readonly ILogger<AiActionExecutor> _logger;
 
-        public AiActionExecutor(IAiRouter router, IArtifactStore artifactStore)
+        public AiActionExecutor(IAiRouter router, IArtifactStore artifactStore, ILogger<AiActionExecutor> logger)
         {
             _router = router ?? throw new ArgumentNullException(nameof(router));
             _artifactStore = artifactStore ?? throw new ArgumentNullException(nameof(artifactStore));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         public async Task<AiExecutionOutcome> ExecuteAsync(IAiAction action, AiActionInput input, CancellationToken ct)
@@ -29,11 +34,10 @@ namespace WriterApp.AI.Core
             AiRequest request = action.BuildRequest(input);
             AiProviderSelection selection = _router.Route(request);
             AiResult result = await selection.Provider.ExecuteAsync(request, ct);
-            AiProposal proposal = BuildProposal(action, input, request, result, selection.SelectedProviderId);
-            return new AiExecutionOutcome(proposal, result, selection.SelectedProviderId);
+            return BuildOutcome(action, input, request, result, selection.SelectedProviderId);
         }
 
-        private AiProposal BuildProposal(
+        private AiExecutionOutcome BuildOutcome(
             IAiAction action,
             AiActionInput input,
             AiRequest request,
@@ -53,6 +57,40 @@ namespace WriterApp.AI.Core
                 originalText = input.SelectedText;
                 operations.Add(new ReplaceTextRangeOperation(input.ActiveSectionId, input.SelectionRange, proposedText));
             }
+            else if (string.Equals(action.ActionId, StoryCoachAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                AiArtifact? textArtifact = result.Artifacts.FirstOrDefault(artifact => artifact.Modality == AiModality.Text);
+                proposedText = textArtifact?.TextContent ?? string.Empty;
+                originalText = GetInputValue(request, "existing_value");
+                string fieldKey = GetInputValue(request, "focus_field_key");
+
+                if (string.IsNullOrWhiteSpace(fieldKey))
+                {
+                    _logger.LogWarning("Story Coach output rejected: missing target field key.");
+                    return AiExecutionOutcome.Rejected(
+                        result,
+                        providerId,
+                        "ai.story_coach_rejected",
+                        "Story Coach output rejected: missing target field key.");
+                }
+
+                if (!StoryCoachOutputValidator.TryValidate(proposedText, fieldKey, originalText ?? string.Empty, out string reason))
+                {
+                    _logger.LogWarning(
+                        "Story Coach output rejected: fieldKey={FieldKey} reason={Reason}",
+                        fieldKey,
+                        reason);
+
+                    return AiExecutionOutcome.Rejected(
+                        result,
+                        providerId,
+                        "ai.story_coach_rejected",
+                        $"Story Coach output rejected: {reason}");
+                }
+
+                proposedText = proposedText.Trim();
+                operations.Add(new ReplaceSynopsisFieldOperation(fieldKey, proposedText));
+            }
             else if (string.Equals(action.ActionId, GenerateCoverImageAction.ActionIdValue, StringComparison.Ordinal))
             {
                 AiArtifact? imageArtifact = result.Artifacts.FirstOrDefault(artifact => artifact.Modality == AiModality.Image);
@@ -64,7 +102,7 @@ namespace WriterApp.AI.Core
                 }
             }
 
-            return new AiProposal(
+            AiProposal proposal = new(
                 Guid.NewGuid(),
                 input.ActiveSectionId,
                 summaryLabel,
@@ -80,6 +118,8 @@ namespace WriterApp.AI.Core
                 input.Instruction,
                 originalText,
                 proposedText);
+
+            return AiExecutionOutcome.Success(proposal, result, providerId);
         }
 
         private static string BuildTargetScope(string actionId)
@@ -87,6 +127,11 @@ namespace WriterApp.AI.Core
             if (string.Equals(actionId, GenerateCoverImageAction.ActionIdValue, StringComparison.Ordinal))
             {
                 return "Section";
+            }
+
+            if (string.Equals(actionId, StoryCoachAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Synopsis";
             }
 
             return "Selection";
@@ -97,6 +142,11 @@ namespace WriterApp.AI.Core
             if (string.Equals(actionId, GenerateCoverImageAction.ActionIdValue, StringComparison.Ordinal))
             {
                 return "Generate cover image";
+            }
+
+            if (string.Equals(actionId, StoryCoachAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Story Coach suggestion";
             }
 
             if (!string.Equals(actionId, RewriteSelectionAction.ActionIdValue, StringComparison.Ordinal))
@@ -149,6 +199,16 @@ namespace WriterApp.AI.Core
         private static string GetOption(Dictionary<string, object?>? options, string key)
         {
             if (options is null || !options.TryGetValue(key, out object? value) || value is null)
+            {
+                return string.Empty;
+            }
+
+            return value.ToString() ?? string.Empty;
+        }
+
+        private static string GetInputValue(AiRequest request, string key)
+        {
+            if (request.Inputs is null || !request.Inputs.TryGetValue(key, out object? value) || value is null)
             {
                 return string.Empty;
             }

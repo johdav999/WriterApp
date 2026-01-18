@@ -12,6 +12,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using WriterApp.AI.Abstractions;
 using WriterApp.AI.Actions;
+using Microsoft.Extensions.Logging;
 using WriterApp.AI.Core;
 using WriterApp.Application.Commands;
 using WriterApp.Application.State;
@@ -124,7 +125,10 @@ namespace WriterApp.Tests
             IAiProviderRegistry registry = new DefaultAiProviderRegistry(new[] { provider });
             WriterAiOptions options = new() { Enabled = true };
             IAiRouter router = new DefaultAiRouter(registry, Options.Create(options), NullLogger<DefaultAiRouter>.Instance);
-            IAiActionExecutor executor = new AiActionExecutor(router, store);
+            IAiActionExecutor executor = new AiActionExecutor(
+                router,
+                store,
+                new LoggerFactory().CreateLogger<AiActionExecutor>());
 
             return new AiOrchestrator(
                 executor,

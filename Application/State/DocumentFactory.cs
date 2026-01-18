@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using WriterApp.Domain.Documents;
+using SynopsisModel = WriterApp.Domain.Documents.Synopsis;
 
 namespace WriterApp.Application.State
 {
@@ -27,6 +28,10 @@ namespace WriterApp.Application.State
                     DefaultFontSize = 12,
                     PageSize = "Letter",
                     LineSpacing = 1.5
+                },
+                Synopsis = new SynopsisModel
+                {
+                    ModifiedUtc = now
                 },
                 Chapters = new List<Chapter>
                 {
@@ -84,6 +89,24 @@ namespace WriterApp.Application.State
                         }
                     }
                 }
+            };
+        }
+
+        public static Document EnsureSynopsis(Document document)
+        {
+            if (document is null)
+            {
+                throw new ArgumentNullException(nameof(document));
+            }
+
+            if (document.Synopsis is not null)
+            {
+                return document;
+            }
+
+            return document with
+            {
+                Synopsis = new SynopsisModel { ModifiedUtc = DateTime.UtcNow }
             };
         }
     }
