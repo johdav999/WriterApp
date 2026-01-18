@@ -21,6 +21,7 @@
 @using WriterApp.Application.Exporting
 @using WriterApp.Application.Security
 @using WriterApp.Application.State
+@using WriterApp.Application.Subscriptions
 @using WriterApp.Application.Usage
 @using WriterApp.Domain.Documents
 @implements IDisposable
@@ -39,6 +40,8 @@
 @inject AppHeaderState HeaderState
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject IAiUsageStatusService AiUsageStatusService
+@inject IEntitlementService EntitlementService
+@inject IUsageMeter UsageMeter
 @inject IUserIdResolver UserIdResolver
 
 <PageTitle>Writer</PageTitle>
@@ -288,6 +291,62 @@
                     </ul>
                 }
             </div>
+            <details class="ai-usage-panel" open>
+                <summary>AI Usage</summary>
+                @if (!_aiOptions.Enabled)
+                {
+                    <div class="ai-usage-empty">AI is disabled.</div>
+                }
+                else if (_aiUsageStatus is null)
+                {
+                    <div class="ai-usage-empty">Usage details unavailable.</div>
+                }
+                else
+                {
+                    int inputTokens = _aiUsageSnapshot?.TotalInputTokens ?? 0;
+                    int outputTokens = _aiUsageSnapshot?.TotalOutputTokens ?? 0;
+                    int usedTokens = inputTokens + outputTokens;
+                    string quotaLabel = _aiMonthlyQuotaUnlimited
+                        ? "Unlimited"
+                        : (_aiMonthlyTokenLimit?.ToString(CultureInfo.InvariantCulture) ?? "0");
+                    <div class="ai-usage-grid">
+                        <div class="ai-usage-row">
+                            <span>Plan</span>
+                            <strong>@_aiUsageStatus.PlanName</strong>
+                        </div>
+                        <div class="ai-usage-row">
+                            <span>Period</span>
+                            <strong>@GetAiUsagePeriodLabel()</strong>
+                        </div>
+                        <div class="ai-usage-row">
+                            <span>Input tokens</span>
+                            <strong>@inputTokens.ToString(CultureInfo.InvariantCulture)</strong>
+                        </div>
+                        <div class="ai-usage-row">
+                            <span>Output tokens</span>
+                            <strong>@outputTokens.ToString(CultureInfo.InvariantCulture)</strong>
+                        </div>
+                        <div class="ai-usage-row">
+                            <span>Total cost</span>
+                            <strong>@GetAiUsageCostLabel()</strong>
+                        </div>
+                        <div class="ai-usage-row">
+                            <span>Remaining</span>
+                            <strong>@GetAiUsageRemainingLabel()</strong>
+                        </div>
+                        <div class="ai-usage-row">
+                            <span>Quota</span>
+                            <strong>@quotaLabel</strong>
+                        </div>
+                    </div>
+                    <div class="ai-usage-progress">
+                        <div class="ai-usage-progress-bar" style="width: @GetAiUsagePercent().ToString("0.##", CultureInfo.InvariantCulture)%;"></div>
+                    </div>
+                    <div class="ai-usage-footnote">
+                        Used @usedTokens.ToString(CultureInfo.InvariantCulture) tokens this period.
+                    </div>
+                }
+            </details>
             @{
                 IReadOnlyList<AIHistoryEntry> aiHistoryEntries = GetActiveSectionAiHistory();
             }
@@ -1135,6 +1194,56 @@
         color: #7a7a7a;
     }
 
+    .ai-usage-panel {
+        margin-bottom: 16px;
+        padding: 12px;
+        border: 1px solid #ececec;
+        border-radius: 6px;
+        background: #fbfbfb;
+    }
+
+    .ai-usage-panel summary {
+        cursor: pointer;
+        font-weight: 600;
+        margin-bottom: 10px;
+    }
+
+    .ai-usage-grid {
+        display: grid;
+        gap: 6px;
+    }
+
+    .ai-usage-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        font-size: 0.9rem;
+    }
+
+    .ai-usage-empty {
+        font-size: 0.9rem;
+        color: #6b7280;
+    }
+
+    .ai-usage-progress {
+        margin-top: 10px;
+        height: 8px;
+        border-radius: 999px;
+        background: #e5e7eb;
+        overflow: hidden;
+    }
+
+    .ai-usage-progress-bar {
+        height: 100%;
+        background: #2563eb;
+    }
+
+    .ai-usage-footnote {
+        margin-top: 6px;
+        font-size: 0.8rem;
+        color: #6b7280;
+    }
+
     .ai-history-panel {
         margin: 1.5rem 0;
         padding: 0.75rem 0.9rem;
@@ -1404,6 +1513,9 @@
     private string? _loadedDocumentId;
     private bool _pendingDocumentLoad;
     private AiUsageStatus? _aiUsageStatus;
+    private UsageSnapshot? _aiUsageSnapshot;
+    private int? _aiMonthlyTokenLimit;
+    private bool _aiMonthlyQuotaUnlimited;
     private CancellationTokenSource? _aiUsageRefreshCts;
     private bool _aiUsageRefreshInProgress;
     private Task? _aiUsageRefreshTask;
@@ -2288,6 +2400,7 @@
                 DateTime.UtcNow);
             _aiStreamError = null;
 
+            await LoadAiUsageStatusAsync();
             await InvokeAsync(StateHasChanged);
         });
     }
@@ -2375,6 +2488,7 @@
                 AiAttachmentStore.SetCoverImageId(_activeSectionId, proposal.ArtifactIds[0]);
             }
 
+            await LoadAiUsageStatusAsync();
             await InvokeAsync(StateHasChanged);
         });
     }
@@ -2521,6 +2635,7 @@
             AiAttachmentStore.SetCoverImageId(_activeSectionId, proposal.ArtifactIds[0]);
         }
 
+        await LoadAiUsageStatusAsync();
         await InvokeAsync(StateHasChanged);
         return true;
     }
@@ -2562,6 +2677,9 @@
             var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
             string userId = UserIdResolver.ResolveForEntitlements(authState.User);
             _aiUsageStatus = await AiUsageStatusService.GetStatusAsync(userId);
+            _aiMonthlyTokenLimit = await EntitlementService.GetIntAsync(userId, "ai.monthly_tokens");
+            _aiMonthlyQuotaUnlimited = _aiMonthlyTokenLimit is null;
+            _aiUsageSnapshot = await UsageMeter.GetCurrentPeriodAsync(userId, "ai.total");
             UpdateAiMenuVisibility();
             await InvokeAsync(StateHasChanged);
         }
@@ -2658,6 +2776,57 @@
             null,
             null,
             DateTime.UtcNow);
+    }
+
+    private string GetAiUsagePeriodLabel()
+    {
+        if (_aiUsageSnapshot is null)
+        {
+            return "Unknown period";
+        }
+
+        string start = _aiUsageSnapshot.PeriodStartUtc.ToString("MMM d, yyyy", CultureInfo.InvariantCulture);
+        string end = _aiUsageSnapshot.PeriodEndUtc.AddDays(-1).ToString("MMM d, yyyy", CultureInfo.InvariantCulture);
+        return $"{start} - {end}";
+    }
+
+    private string GetAiUsageCostLabel()
+    {
+        if (_aiUsageSnapshot is null)
+        {
+            return "$0.00";
+        }
+
+        decimal cost = _aiUsageSnapshot.TotalCostMicros / 1_000_000m;
+        return string.Create(CultureInfo.InvariantCulture, $"${cost:0.00}");
+    }
+
+    private string GetAiUsageRemainingLabel()
+    {
+        if (_aiMonthlyQuotaUnlimited)
+        {
+            return "Unlimited";
+        }
+
+        if (_aiMonthlyTokenLimit is null || _aiUsageSnapshot is null)
+        {
+            return "0";
+        }
+
+        int used = _aiUsageSnapshot.TotalInputTokens + _aiUsageSnapshot.TotalOutputTokens;
+        int remaining = Math.Max(0, _aiMonthlyTokenLimit.Value - used);
+        return remaining.ToString(CultureInfo.InvariantCulture);
+    }
+
+    private double GetAiUsagePercent()
+    {
+        if (_aiMonthlyTokenLimit is null || _aiMonthlyTokenLimit <= 0 || _aiUsageSnapshot is null)
+        {
+            return 0;
+        }
+
+        int used = _aiUsageSnapshot.TotalInputTokens + _aiUsageSnapshot.TotalOutputTokens;
+        return Math.Clamp(used / (double)_aiMonthlyTokenLimit.Value * 100d, 0d, 100d);
     }
 
     private void CancelAiStream()
