@@ -43,6 +43,7 @@ builder.Services.AddScoped<IPlanRepository, PlanRepository>();
 builder.Services.AddScoped<IEntitlementService, EntitlementService>();
 builder.Services.AddScoped<IUserIdResolver, UserIdResolver>();
 builder.Services.AddScoped<IUsageMeter, UsageMeter>();
+builder.Services.AddSingleton<IClock, SystemClock>();
 builder.Services.AddScoped<IAiUsageStatusService, AiUsageStatusService>();
 builder.Services.AddScoped<IAiUsagePolicy, AiUsagePolicy>();
 builder.Services.Configure<WriterAuthOptions>(builder.Configuration.GetSection("WriterApp:Auth"));
