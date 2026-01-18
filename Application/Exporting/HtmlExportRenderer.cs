@@ -17,6 +17,7 @@ namespace WriterApp.Application.Exporting
         private static readonly Regex ItalicRegex = new(@"_(.+?)_", RegexOptions.Compiled);
 
         public ExportFormat Format => ExportFormat.Html;
+        public ExportKind Kind => ExportKind.Document;
 
         public Task<ExportResult> RenderAsync(Document document, ExportOptions options)
         {
@@ -44,6 +45,7 @@ namespace WriterApp.Application.Exporting
                 .Append("</body>\n</html>\n");
 
             string html = ExportHelpers.NormalizeLineEndings(builder.ToString());
+            ExportHelpers.AssertSynopsisNotIncluded(html, document);
             byte[] content = Encoding.UTF8.GetBytes(html);
             string fileName = ExportHelpers.SanitizeFileName(document.Metadata.Title, "document", ".html");
 
@@ -85,7 +87,9 @@ namespace WriterApp.Application.Exporting
             }
 
 
-            return builder.ToString();
+            string html = builder.ToString();
+            ExportHelpers.AssertSynopsisNotIncluded(html, document);
+            return html;
         }
 
 

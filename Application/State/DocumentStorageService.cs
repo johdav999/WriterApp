@@ -82,25 +82,27 @@ namespace WriterApp.Application.State
 
         public async Task SaveDocumentAsync(Document document)
         {
-            DocumentStorage payload = new(document);
+            Document normalized = DocumentFactory.EnsureSynopsis(document);
+            DocumentStorage payload = new(normalized);
             string json = JsonSerializer.Serialize(payload);
 
             try
             {
                 await _jsRuntime.InvokeVoidAsync("localStorage.setItem", StorageKey, json);
-                await _jsRuntime.InvokeVoidAsync("localStorage.setItem", StoragePrefix + document.DocumentId, json);
+                await _jsRuntime.InvokeVoidAsync("localStorage.setItem", StoragePrefix + normalized.DocumentId, json);
             }
             catch (JSException ex)
             {
                 _logger.LogWarning(ex, "Local storage save failed.");
             }
 
-            await UpdateDocumentIndexAsync(document);
+            await UpdateDocumentIndexAsync(normalized);
         }
 
         public async Task<bool> SaveAutosaveAsync(Guid documentId, Document document, DateTime autosavedUtc)
         {
-            DocumentAutosave payload = new(document, autosavedUtc);
+            Document normalized = DocumentFactory.EnsureSynopsis(document);
+            DocumentAutosave payload = new(normalized, autosavedUtc);
             string json = JsonSerializer.Serialize(payload);
 
             try

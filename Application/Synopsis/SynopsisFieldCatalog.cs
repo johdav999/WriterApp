@@ -15,10 +15,12 @@ namespace WriterApp.Application.Synopsis
             new("protagonist", "Protagonist", "Who is the main character?"),
             new("antagonist", "Antagonist (optional)", "Who or what opposes the protagonist?"),
             new("central_conflict", "Central Conflict", "What stands in the way?"),
+            new("theme", "Theme", "What idea or truth does the story explore?"),
             new("stakes", "Stakes", "What happens if they fail?"),
             new("arc", "Arc", "How does the protagonist change?"),
             new("setting", "Setting", "Where and when does the story unfold?"),
-            new("ending", "Ending (optional)", "How does it resolve?")
+            new("ending", "Ending (optional)", "How does it resolve?"),
+            new("resolution", "Resolution (optional)", "What brings the story to closure?")
         };
 
         public static IReadOnlyList<SynopsisFieldDefinition> Fields => FieldsValue;
@@ -44,6 +46,9 @@ namespace WriterApp.Application.Synopsis
                 case "central_conflict":
                     value = synopsis.CentralConflict;
                     return true;
+                case "theme":
+                    value = synopsis.Theme;
+                    return true;
                 case "stakes":
                     value = synopsis.Stakes;
                     return true;
@@ -55,6 +60,9 @@ namespace WriterApp.Application.Synopsis
                     return true;
                 case "ending":
                     value = synopsis.Ending;
+                    return true;
+                case "resolution":
+                    value = synopsis.Resolution;
                     return true;
                 default:
                     value = string.Empty;
@@ -83,6 +91,9 @@ namespace WriterApp.Application.Synopsis
                 case "central_conflict":
                     synopsis.CentralConflict = value;
                     return true;
+                case "theme":
+                    synopsis.Theme = value;
+                    return true;
                 case "stakes":
                     synopsis.Stakes = value;
                     return true;
@@ -94,6 +105,9 @@ namespace WriterApp.Application.Synopsis
                     return true;
                 case "ending":
                     synopsis.Ending = value;
+                    return true;
+                case "resolution":
+                    synopsis.Resolution = value;
                     return true;
                 default:
                     return false;

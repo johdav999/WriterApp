@@ -164,13 +164,15 @@
                 <button type="button" @onclick="OnRedo" disabled="@(!_commandProcessor.CanRedo)">Redo</button>
                 <button type="button" @onclick="OnSave">Save</button>
                 <div class="export-menu">
-                    <button type="button" @onclick="ToggleExportMenu">Export</button>
+                    <button type="button" @onclick="ToggleExportMenu">Export Document</button>
                     @if (_isExportMenuOpen)
                     {
                         <div class="export-menu-panel">
-                            <button type="button" @onclick="() => OnExportRequested(ExportFormat.Markdown)">Export as Markdown</button>
-                            <button type="button" @onclick="() => OnExportRequested(ExportFormat.Html)">Export as HTML</button>
-                            <button type="button" @onclick="OnExportPdfRequested">Export as PDF</button>
+                            <button type="button" @onclick="() => OnExportRequested(ExportKind.Document, ExportFormat.Markdown)">Export Document (Markdown)</button>
+                            <button type="button" @onclick="() => OnExportRequested(ExportKind.Document, ExportFormat.Html)">Export Document (HTML)</button>
+                            <button type="button" @onclick="OnExportPdfRequested">Export Document (PDF)</button>
+                            <button type="button" @onclick="() => OnExportRequested(ExportKind.Synopsis, ExportFormat.Markdown)">Export Synopsis (Markdown)</button>
+                            <button type="button" @onclick="() => OnExportRequested(ExportKind.Synopsis, ExportFormat.Html)">Export Synopsis (HTML)</button>
                         </div>
                     }
                 </div>
@@ -3694,7 +3696,7 @@
         _isExportMenuOpen = !_isExportMenuOpen;
     }
 
-    private Task OnExportRequested(ExportFormat format)
+    private Task OnExportRequested(ExportKind kind, ExportFormat format)
     {
         return ExecuteSafeAsync("OnExportRequested", async () =>
         {
@@ -3705,7 +3707,7 @@
                 return;
             }
 
-            ExportResult result = await ExportService.ExportAsync(saved, format, new ExportOptions());
+            ExportResult result = await ExportService.ExportAsync(saved, kind, format, new ExportOptions());
             await DownloadExportAsync(result);
         });
     }
@@ -3724,7 +3726,7 @@
                 return;
             }
 
-            string bodyHtml = await ExportService.ExportHtmlBodyAsync(saved, new ExportOptions());
+            string bodyHtml = await ExportService.ExportHtmlBodyAsync(saved, ExportKind.Document, new ExportOptions());
             string printShell = BuildPrintShell(bodyHtml, saved.Metadata.Title);
             await PrintExportAsync(printShell);
         });

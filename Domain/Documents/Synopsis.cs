@@ -8,10 +8,12 @@ namespace WriterApp.Domain.Documents
         public string Protagonist { get; set; } = string.Empty;
         public string Antagonist { get; set; } = string.Empty;
         public string CentralConflict { get; set; } = string.Empty;
+        public string Theme { get; set; } = string.Empty;
         public string Stakes { get; set; } = string.Empty;
         public string Arc { get; set; } = string.Empty;
         public string Setting { get; set; } = string.Empty;
         public string Ending { get; set; } = string.Empty;
+        public string Resolution { get; set; } = string.Empty;
         public DateTime ModifiedUtc { get; set; }
     }
 }

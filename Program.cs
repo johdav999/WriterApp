@@ -85,6 +85,8 @@ builder.Services.AddScoped<DocumentStorageService>();
 builder.Services.AddScoped<AppHeaderState>();
 builder.Services.AddSingleton<IExportRenderer, MarkdownExportRenderer>();
 builder.Services.AddSingleton<IExportRenderer, HtmlExportRenderer>();
+builder.Services.AddSingleton<IExportRenderer, SynopsisMarkdownExportRenderer>();
+builder.Services.AddSingleton<IExportRenderer, SynopsisHtmlExportRenderer>();
 builder.Services.AddSingleton<ExportService>();
 builder.Services.AddServerSideBlazor()
     .AddCircuitOptions(options =>

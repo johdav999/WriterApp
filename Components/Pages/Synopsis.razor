@@ -70,7 +70,7 @@
                 <textarea value="@currentValue"
                           rows="4"
                           placeholder="@field.Placeholder"
-                          @onchange="(args) => OnSynopsisFieldChanged(field.Key, args)">
+                          @oninput="(args) => OnSynopsisFieldInput(field.Key, args)">
                 </textarea>
                 <div class="synopsis-actions">
                     <button type="button" @onclick="() => SelectField(field.Key)">Ask Story Coach</button>
@@ -198,6 +198,9 @@
     private bool _showPlansPanel;
     private bool _isPlansLoading;
     private string? _plansError;
+    private static readonly TimeSpan AutosaveDebounce = TimeSpan.FromSeconds(2.5);
+    private CancellationTokenSource? _autosaveCts;
+    private bool _isAutosaveInProgress;
 
     private static readonly IReadOnlyList<SynopsisFieldDefinition> _fields = SynopsisFieldCatalog.Fields;
 
@@ -267,6 +270,7 @@
 
         InitializeState(DocumentFactory.EnsureSynopsis(document));
         _loadedDocumentId = resolvedId;
+        await InvokeAsync(StateHasChanged);
     }
 
     private async Task<string?> ResolveDocumentIdAsync(string? documentId)
@@ -316,7 +320,7 @@
             : string.Empty;
     }
 
-    private async Task OnSynopsisFieldChanged(string fieldKey, ChangeEventArgs args)
+    private void OnSynopsisFieldInput(string fieldKey, ChangeEventArgs args)
     {
         string value = args.Value?.ToString() ?? string.Empty;
         string current = GetSynopsisValue(fieldKey);
@@ -332,14 +336,23 @@
             current));
 
         _pendingProposal = null;
-        await SaveDocumentAsync();
+        ScheduleAutosave();
     }
 
     private async Task SaveDocumentAsync()
     {
         Document normalized = NormalizeDocumentForSave(_state.Document);
-        await DocumentStorage.SaveDocumentAsync(normalized);
-        _state.ReplaceDocument(normalized, notify: false);
+        try
+        {
+            await DocumentStorage.SaveDocumentAsync(normalized);
+            _state.ReplaceDocument(normalized, notify: false);
+            Logger.LogInformation("Synopsis saved for document {DocumentId}.", normalized.DocumentId);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Synopsis save failed for document {DocumentId}.", normalized.DocumentId);
+            throw;
+        }
     }
 
     private static Document NormalizeDocumentForSave(Document document)
@@ -454,6 +467,8 @@
             "antagonist" => "Who or what opposes the protagonist?",
             "setting" => "Where and when does the story take place?",
             "ending" => "What outcome brings the story to a satisfying close?",
+            "theme" => "What theme or idea should this story explore?",
+            "resolution" => "What final resolution brings the story to closure?",
             _ => "Pick a field and share what you have so far."
         };
     }
@@ -553,6 +568,68 @@
         _showPlansPanel = false;
     }
 
+    private void ScheduleAutosave()
+    {
+        if (_loadedDocumentId is null)
+        {
+            return;
+        }
+
+        _autosaveCts?.Cancel();
+        _autosaveCts?.Dispose();
+        _autosaveCts = null;
+
+        CancellationTokenSource cts = new();
+        _autosaveCts = cts;
+        _ = DebouncedAutosaveAsync(cts);
+    }
+
+    private async Task DebouncedAutosaveAsync(CancellationTokenSource cts)
+    {
+        try
+        {
+            await Task.Delay(AutosaveDebounce, cts.Token);
+        }
+        catch (TaskCanceledException)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Synopsis autosave delay failed.");
+            return;
+        }
+
+        if (cts.IsCancellationRequested)
+        {
+            return;
+        }
+
+        await AutosaveAsync();
+    }
+
+    private async Task AutosaveAsync()
+    {
+        if (_isAutosaveInProgress)
+        {
+            return;
+        }
+
+        _isAutosaveInProgress = true;
+        try
+        {
+            await SaveDocumentAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Synopsis autosave failed.");
+        }
+        finally
+        {
+            _isAutosaveInProgress = false;
+        }
+    }
+
     private static string GetEntitlementValue(Plan plan, string key)
     {
         if (plan.Entitlements is null)
@@ -572,6 +649,9 @@
     public void Dispose()
     {
         _state.OnChanged -= _onChangedHandler;
+        _autosaveCts?.Cancel();
+        _autosaveCts?.Dispose();
+        _autosaveCts = null;
         if (HeaderState.DocumentId == _loadedDocumentId)
         {
             HeaderState.DocumentTitle = null;

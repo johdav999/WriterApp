@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Net;
 using System.Text.RegularExpressions;
@@ -66,6 +67,44 @@ namespace WriterApp.Application.Exporting
         public static string HtmlDecode(string value)
         {
             return WebUtility.HtmlDecode(value) ?? string.Empty;
+        }
+
+        public static void AssertSynopsisNotIncluded(string output, Document document)
+        {
+#if DEBUG
+            if (document?.Synopsis is null)
+            {
+                return;
+            }
+
+            string[] values =
+            {
+                document.Synopsis.Premise,
+                document.Synopsis.Protagonist,
+                document.Synopsis.Antagonist,
+                document.Synopsis.CentralConflict,
+                document.Synopsis.Theme,
+                document.Synopsis.Stakes,
+                document.Synopsis.Arc,
+                document.Synopsis.Setting,
+                document.Synopsis.Ending,
+                document.Synopsis.Resolution
+            };
+
+            foreach (string value in values)
+            {
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    continue;
+                }
+
+                if (output.Contains(value, StringComparison.Ordinal))
+                {
+                    Debug.Assert(false, "Synopsis content should not appear in document export output.");
+                    break;
+                }
+            }
+#endif
         }
 
     
