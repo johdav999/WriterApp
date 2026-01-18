@@ -172,7 +172,11 @@
                 </div>
                 @if (CanShowAiMenu && AiOrchestrator.CanRunAction(GenerateCoverImageAction.ActionIdValue))
                 {
-                    <button type="button" @onclick="OnGenerateCoverImage">Generate cover image (mock)</button>
+                    <button type="button" disabled="@IsAiQuotaExceeded" @onclick="OnGenerateCoverImage">Generate cover image (mock)</button>
+                }
+                @if (IsAiQuotaExceeded)
+                {
+                    <span class="ai-quota-message">You've reached your monthly AI limit.</span>
                 }
             </div>
             @if (_pendingAiProposal is not null)
@@ -496,7 +500,7 @@
                 <div class="editor-context-menu-label">AI</div>
                 @foreach (AiActionOption action in _aiActions)
                 {
-                    <button type="button" @onclick="() => OnContextMenuCommand(() => OnAiActionSelected(action))">@action.Label</button>
+                    <button type="button" disabled="@IsAiQuotaExceeded" @onclick="() => OnContextMenuCommand(() => OnAiActionSelected(action))">@action.Label</button>
                 }
             </div>
         }
@@ -1242,6 +1246,12 @@
         margin-top: 6px;
         font-size: 0.8rem;
         color: #6b7280;
+    }
+
+    .ai-quota-message {
+        margin-left: 12px;
+        font-size: 0.85rem;
+        color: #b45309;
     }
 
     .ai-history-panel {
@@ -2642,7 +2652,11 @@
 
     private bool CanShowAiMenu => _canShowAiMenu;
 
-    private bool IsAiAvailable => _aiOptions.Enabled && _aiUsageStatus?.AiEnabled == true && _aiUsageStatus.QuotaRemaining > 0;
+    private bool IsAiAvailable => _aiOptions.Enabled && IsAiEntitled && !IsAiQuotaExceeded;
+
+    private bool IsAiEntitled => _aiUsageStatus?.AiEnabled == true;
+
+    private bool IsAiQuotaExceeded => _aiUsageStatus is not null && _aiUsageStatus.QuotaRemaining <= 0;
 
     private string GetAiBlockedMessage()
     {
@@ -2651,12 +2665,17 @@
             return "AI is not available right now.";
         }
 
-        if (!_aiUsageStatus.AiEnabled)
+        if (!IsAiEntitled)
         {
             return "AI is not enabled for your plan.";
         }
 
-        return "AI usage quota is exhausted.";
+        if (IsAiQuotaExceeded)
+        {
+            return "You've reached your monthly AI limit.";
+        }
+
+        return "AI usage is not available.";
     }
 
     private async Task LoadAiUsageStatusAsync()
