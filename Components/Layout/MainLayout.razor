@@ -21,9 +21,16 @@
     </header>
 
     <main class="app-main">
-        <article class="content">
-            @Body
-        </article>
+        <div class="app-body">
+            <nav class="app-nav">
+                <NavLink class="app-nav-link" href="@GetEditorLink()" Match="NavLinkMatch.Prefix">Editor</NavLink>
+                <NavLink class="app-nav-link" href="@GetSynopsisLink()" Match="NavLinkMatch.Prefix">Synopsis</NavLink>
+                <NavLink class="app-nav-link" href="" Match="NavLinkMatch.All">Documents</NavLink>
+            </nav>
+            <article class="content">
+                @Body
+            </article>
+        </div>
     </main>
 </div>
 
@@ -47,5 +54,19 @@
     private void HandleHeaderChange()
     {
         InvokeAsync(StateHasChanged);
+    }
+
+    private string GetEditorLink()
+    {
+        return string.IsNullOrWhiteSpace(HeaderState.DocumentId)
+            ? "/doc"
+            : $"/doc/{HeaderState.DocumentId}";
+    }
+
+    private string GetSynopsisLink()
+    {
+        return string.IsNullOrWhiteSpace(HeaderState.DocumentId)
+            ? "/synopsis"
+            : $"/synopsis/{HeaderState.DocumentId}";
     }
 }

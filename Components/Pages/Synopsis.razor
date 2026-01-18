@@ -1,0 +1,819 @@
+@page "/synopsis"
+@page "/synopsis/{DocumentId}"
+@rendermode Microsoft.AspNetCore.Components.Web.RenderMode.InteractiveServer
+@using System
+@using System.Collections.Generic
+@using System.Globalization
+@using System.Linq
+@using System.Threading
+@using BlazorApp.Components.Editor
+@using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.Logging
+@using Microsoft.Extensions.Options
+@using Microsoft.JSInterop
+@using WriterApp.AI.Abstractions
+@using WriterApp.AI.Actions
+@using WriterApp.Application.Commands
+@using WriterApp.Application.AI.StoryCoach
+@using WriterApp.Application.Security
+@using WriterApp.Application.Synopsis
+@using WriterApp.Application.State
+@using WriterApp.Application.Subscriptions
+@using WriterApp.Application.Usage
+@using WriterApp.Data
+@using WriterApp.Data.Subscriptions
+@using WriterApp.Domain.Documents
+@using SynopsisModel = WriterApp.Domain.Documents.Synopsis
+@implements IDisposable
+@inject ILogger<Synopsis> Logger
+@inject DocumentStorageService DocumentStorage
+@inject NavigationManager Navigation
+@inject AppHeaderState HeaderState
+@inject AuthenticationStateProvider AuthenticationStateProvider
+@inject IUserIdResolver UserIdResolver
+@inject IAiOrchestrator AiOrchestrator
+@inject IAiProposalApplier AiProposalApplier
+@inject IAiUsageStatusService AiUsageStatusService
+@inject IEntitlementService EntitlementService
+@inject AppDbContext DbContext
+@inject IOptions<WriterAiOptions> AiOptions
+@inject StoryCoachContextBuilder StoryCoachContextBuilder
+
+<PageTitle>Synopsis</PageTitle>
+
+<div class="synopsis-shell">
+    <section class="synopsis-canvas">
+        <header class="synopsis-header">
+            <h1>Synopsis</h1>
+            <button type="button" class="guide-button" @onclick="OnGuideMe">Guide me</button>
+        </header>
+
+        @foreach (SynopsisFieldDefinition field in _fields)
+        {
+            string currentValue = GetSynopsisValue(field.Key);
+            bool hasPending = _pendingProposal?.FieldKey == field.Key;
+            <div class="synopsis-field @(hasPending ? "is-pending" : string.Empty)">
+                <div class="synopsis-field-header">
+                    <div>
+                        <label>@field.Label</label>
+                        @if (HasActiveAiProvenance(field.Key))
+                        {
+                            <span class="ai-badge">AI</span>
+                        }
+                    </div>
+                    <div class="synopsis-meta">
+                        @GetModifiedLabel()
+                    </div>
+                </div>
+                <textarea value="@currentValue"
+                          rows="4"
+                          placeholder="@field.Placeholder"
+                          @onchange="(args) => OnSynopsisFieldChanged(field.Key, args)">
+                </textarea>
+                <div class="synopsis-actions">
+                    <button type="button" @onclick="() => SelectField(field.Key)">Ask Story Coach</button>
+                </div>
+                @if (hasPending && _pendingProposal is not null)
+                {
+                    <div class="synopsis-proposal">
+                        <div class="synopsis-proposal-label">Suggestion</div>
+                        <textarea readonly rows="4">@_pendingProposal.ProposedText</textarea>
+                        <div class="synopsis-proposal-actions">
+                            <button type="button" @onclick="OnApplyPendingProposal">Apply</button>
+                            <button type="button" class="secondary" @onclick="OnDiscardPendingProposal">Discard</button>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    </section>
+
+    <aside class="synopsis-coach">
+        <div class="coach-header">
+            <h2>Story Coach</h2>
+            <div class="coach-subtitle">Guided prompts for your synopsis fields.</div>
+            <div class="coach-hint">Suggestions are aligned with your full synopsis.</div>
+        </div>
+        @if (!IsAiEntitled)
+        {
+            <div class="coach-message">
+                AI assistance is not available for your plan.
+            </div>
+            <button type="button" class="coach-button" @onclick="OnViewPlansAsync">View plans</button>
+        }
+        else if (IsAiQuotaExceeded)
+        {
+            <div class="coach-message">You've reached your monthly AI limit.</div>
+            <button type="button" class="coach-button" @onclick="OnViewPlansAsync">View plans</button>
+        }
+        else if (!_aiOptionsEnabled)
+        {
+            <div class="coach-message">AI is currently disabled.</div>
+        }
+        else
+        {
+            <div class="coach-field-picker">
+                <label>Focus field</label>
+                <select @bind="_selectedFieldKey">
+                    <option value="">Select a field...</option>
+                    @foreach (SynopsisFieldDefinition field in _fields)
+                    {
+                        <option value="@field.Key">@field.Label</option>
+                    }
+                </select>
+            </div>
+            <div class="coach-question">
+                @GetCoachQuestion(_selectedFieldKey)
+            </div>
+            <textarea class="coach-input"
+                      rows="5"
+                      placeholder="Share what's on your mind about this field..."
+                      @bind="_coachNotes">
+            </textarea>
+            <button type="button" class="coach-button" disabled="@_isCoachBusy" @onclick="OnCoachSubmit">
+                @(_isCoachBusy ? "Thinking..." : "Get suggestion")
+            </button>
+            @if (!string.IsNullOrWhiteSpace(_coachError))
+            {
+                <div class="coach-message">@_coachError</div>
+            }
+        }
+
+        @if (_showPlansPanel)
+        {
+            <div class="coach-plans">
+                <div class="coach-plans-header">
+                    <strong>Plans</strong>
+                    <button type="button" class="coach-plans-close" @onclick="ClosePlansPanel">Close</button>
+                </div>
+                @if (_isPlansLoading)
+                {
+                    <div class="coach-message">Loading plans...</div>
+                }
+                else if (!string.IsNullOrWhiteSpace(_plansError))
+                {
+                    <div class="coach-message">@_plansError</div>
+                }
+                else
+                {
+                    @foreach (Plan plan in _planCatalog)
+                    {
+                        <div class="coach-plan-card">
+                            <div class="coach-plan-title">@plan.Name</div>
+                            <div class="coach-plan-meta">Key: @plan.Key</div>
+                            <div class="coach-plan-entitlements">
+                                <div><strong>AI Enabled:</strong> @GetEntitlementValue(plan, "ai.enabled")</div>
+                                <div><strong>Monthly Tokens:</strong> @GetEntitlementValue(plan, "ai.monthly_tokens")</div>
+                                <div><strong>Daily Cap:</strong> @GetEntitlementValue(plan, "ai.daily_tokens_cap")</div>
+                                <div><strong>Cover Images:</strong> @GetEntitlementValue(plan, "ai.images.cover")</div>
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+        }
+    </aside>
+</div>
+
+@code {
+    [Parameter]
+    public string? DocumentId { get; set; }
+
+    private DocumentState _state = new(DocumentFactory.CreateNewDocument());
+    private CommandProcessor _commandProcessor;
+    private readonly Action _onChangedHandler;
+    private string? _loadedDocumentId;
+    private bool _pendingDocumentLoad;
+    private Guid _provenanceSectionId;
+    private AiUsageStatus? _aiUsageStatus;
+    private bool _aiOptionsEnabled = true;
+    private string _selectedFieldKey = string.Empty;
+    private string _coachNotes = string.Empty;
+    private string? _coachError;
+    private bool _isCoachBusy;
+    private PendingSynopsisProposal? _pendingProposal;
+    private readonly List<Plan> _planCatalog = new();
+    private bool _showPlansPanel;
+    private bool _isPlansLoading;
+    private string? _plansError;
+
+    private static readonly IReadOnlyList<SynopsisFieldDefinition> _fields = SynopsisFieldCatalog.Fields;
+
+    public Synopsis()
+    {
+        _commandProcessor = new CommandProcessor(_state);
+        _onChangedHandler = () => InvokeAsync(StateHasChanged);
+        _state.OnChanged += _onChangedHandler;
+    }
+
+    protected override void OnInitialized()
+    {
+        _aiOptionsEnabled = AiOptions.Value.Enabled;
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (DocumentId is null)
+        {
+            _pendingDocumentLoad = true;
+            return;
+        }
+
+        if (!string.Equals(_loadedDocumentId, DocumentId, StringComparison.Ordinal))
+        {
+            _pendingDocumentLoad = true;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_pendingDocumentLoad)
+        {
+            _pendingDocumentLoad = false;
+            await LoadDocumentFromRouteAsync(DocumentId);
+        }
+
+        if (firstRender)
+        {
+            await LoadAiUsageStatusAsync();
+        }
+    }
+
+    private async Task LoadDocumentFromRouteAsync(string? documentId)
+    {
+        string? resolvedId = await ResolveDocumentIdAsync(documentId);
+        if (string.IsNullOrWhiteSpace(resolvedId))
+        {
+            Navigation.NavigateTo("/", replace: true);
+            return;
+        }
+
+        if (!string.Equals(resolvedId, documentId, StringComparison.Ordinal))
+        {
+            Navigation.NavigateTo($"/synopsis/{resolvedId}", replace: true);
+            return;
+        }
+
+        Document? document = await DocumentStorage.LoadDocumentByIdAsync(resolvedId);
+        if (document is null)
+        {
+            Document replacement = DocumentFactory.CreateNewDocument();
+            await DocumentStorage.SaveDocumentAsync(replacement);
+            Navigation.NavigateTo($"/synopsis/{replacement.DocumentId}", replace: true);
+            return;
+        }
+
+        InitializeState(DocumentFactory.EnsureSynopsis(document));
+        _loadedDocumentId = resolvedId;
+    }
+
+    private async Task<string?> ResolveDocumentIdAsync(string? documentId)
+    {
+        if (!string.IsNullOrWhiteSpace(documentId) && Guid.TryParse(documentId, out _))
+        {
+            return documentId;
+        }
+
+        List<DocumentIndexEntry> entries = await DocumentStorage.LoadIndexAsync();
+        if (entries.Count > 0)
+        {
+            return entries[0].DocumentId.ToString();
+        }
+
+        Document document = DocumentFactory.CreateNewDocument();
+        await DocumentStorage.SaveDocumentAsync(document);
+        return document.DocumentId.ToString();
+    }
+
+    private void InitializeState(Document document)
+    {
+        _state.OnChanged -= _onChangedHandler;
+        _state = new DocumentState(document);
+        _commandProcessor = new CommandProcessor(_state);
+        _state.OnChanged += _onChangedHandler;
+        _provenanceSectionId = ResolveProvenanceSectionId(document);
+        HeaderState.DocumentTitle = document.Metadata.Title;
+        HeaderState.DocumentId = document.DocumentId.ToString();
+    }
+
+    private static Guid ResolveProvenanceSectionId(Document document)
+    {
+        if (document.Chapters.Count == 0 || document.Chapters[0].Sections.Count == 0)
+        {
+            return Guid.Empty;
+        }
+
+        return document.Chapters[0].Sections[0].SectionId;
+    }
+
+    private string GetSynopsisValue(string fieldKey)
+    {
+        SynopsisModel synopsis = _state.Document.Synopsis ?? new SynopsisModel();
+        return SynopsisFieldCatalog.TryGetValue(synopsis, fieldKey, out string value)
+            ? value
+            : string.Empty;
+    }
+
+    private async Task OnSynopsisFieldChanged(string fieldKey, ChangeEventArgs args)
+    {
+        string value = args.Value?.ToString() ?? string.Empty;
+        string current = GetSynopsisValue(fieldKey);
+        if (string.Equals(value, current, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _commandProcessor.Execute(new UpdateSynopsisFieldManualCommand(
+            _provenanceSectionId,
+            fieldKey,
+            value,
+            current));
+
+        _pendingProposal = null;
+        await SaveDocumentAsync();
+    }
+
+    private async Task SaveDocumentAsync()
+    {
+        Document normalized = NormalizeDocumentForSave(_state.Document);
+        await DocumentStorage.SaveDocumentAsync(normalized);
+        _state.ReplaceDocument(normalized, notify: false);
+    }
+
+    private static Document NormalizeDocumentForSave(Document document)
+    {
+        DocumentMetadata metadata = document.Metadata with { ModifiedUtc = DateTime.UtcNow };
+        return document with { Metadata = metadata };
+    }
+
+    private void SelectField(string fieldKey)
+    {
+        _selectedFieldKey = fieldKey;
+    }
+
+    private void OnGuideMe()
+    {
+        if (string.IsNullOrWhiteSpace(_selectedFieldKey))
+        {
+            _selectedFieldKey = _fields.FirstOrDefault(field => string.IsNullOrWhiteSpace(GetSynopsisValue(field.Key)))?.Key
+                ?? _fields[0].Key;
+        }
+    }
+
+    private async Task OnCoachSubmit()
+    {
+        if (!_aiOptionsEnabled || !IsAiEntitled || IsAiQuotaExceeded)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_selectedFieldKey))
+        {
+            _coachError = "Select a field to guide.";
+            return;
+        }
+
+        _isCoachBusy = true;
+        _coachError = null;
+
+        string existingValue = GetSynopsisValue(_selectedFieldKey);
+        SynopsisModel synopsis = _state.Document.Synopsis ?? new SynopsisModel();
+        StoryCoachContext context = StoryCoachContextBuilder.Build(synopsis, _selectedFieldKey);
+        AiActionInput input = new(
+            _state.Document,
+            _provenanceSectionId,
+            new TextRange(0, existingValue.Length),
+            existingValue,
+            $"Synopsis:{_selectedFieldKey}",
+            new Dictionary<string, object?>
+            {
+                ["focus_field_key"] = context.FocusFieldKey,
+                ["focus_field_prompt"] = context.FocusFieldPrompt,
+                ["other_fields_context"] = context.OtherFieldsContext,
+                ["existing_value"] = existingValue,
+                ["user_notes"] = _coachNotes
+            });
+
+        try
+        {
+            AiExecutionResult result = await AiOrchestrator.ExecuteActionAsync(
+                StoryCoachAction.ActionIdValue,
+                input,
+                CancellationToken.None);
+
+            if (!result.Succeeded || result.Proposal is null)
+            {
+                _coachError = result.ErrorMessage ?? "Story Coach is not available.";
+                return;
+            }
+
+            string proposed = result.Proposal.ProposedText ?? string.Empty;
+            _pendingProposal = new PendingSynopsisProposal(_selectedFieldKey, result.Proposal, proposed);
+            _coachNotes = string.Empty;
+            await LoadAiUsageStatusAsync();
+        }
+        catch (Exception ex)
+        {
+            _coachError = ex.Message;
+        }
+        finally
+        {
+            _isCoachBusy = false;
+        }
+    }
+
+    private async Task OnApplyPendingProposal()
+    {
+        if (_pendingProposal?.Proposal is null)
+        {
+            return;
+        }
+
+        AiProposalApplier.Apply(_commandProcessor, _pendingProposal.Proposal);
+        _pendingProposal = null;
+        await SaveDocumentAsync();
+        await LoadAiUsageStatusAsync();
+    }
+
+    private void OnDiscardPendingProposal()
+    {
+        _pendingProposal = null;
+    }
+
+    private string GetCoachQuestion(string? fieldKey)
+    {
+        return fieldKey switch
+        {
+            "premise" => "What core idea or hook should this story communicate?",
+            "protagonist" => "Who carries the emotional weight of this story, and what do they want?",
+            "central_conflict" => "What stands between the protagonist and their goal?",
+            "stakes" => "What will be lost if the protagonist fails?",
+            "arc" => "How does the protagonist change from start to finish?",
+            "antagonist" => "Who or what opposes the protagonist?",
+            "setting" => "Where and when does the story take place?",
+            "ending" => "What outcome brings the story to a satisfying close?",
+            _ => "Pick a field and share what you have so far."
+        };
+    }
+
+    private string GetModifiedLabel()
+    {
+        DateTime modified = _state.Document.Synopsis?.ModifiedUtc ?? default;
+        if (modified == default)
+        {
+            return "Not updated yet";
+        }
+
+        TimeSpan delta = DateTime.UtcNow - modified;
+        if (delta < TimeSpan.FromMinutes(1))
+        {
+            return "Updated just now";
+        }
+
+        if (delta < TimeSpan.FromHours(1))
+        {
+            int minutes = Math.Max(1, (int)Math.Round(delta.TotalMinutes));
+            return $"Updated {minutes} min ago";
+        }
+
+        int hours = Math.Max(1, (int)Math.Round(delta.TotalHours));
+        return $"Updated {hours} hr ago";
+    }
+
+    private bool IsAiEntitled => _aiUsageStatus?.AiEnabled == true;
+
+    private bool IsAiQuotaExceeded => _aiUsageStatus is not null && _aiUsageStatus.QuotaRemaining <= 0;
+
+    private bool HasActiveAiProvenance(string fieldKey)
+    {
+        if (_provenanceSectionId == Guid.Empty)
+        {
+            return false;
+        }
+
+        Section? section = _state.Document.Chapters
+            .SelectMany(chapter => chapter.Sections)
+            .FirstOrDefault(entry => entry.SectionId == _provenanceSectionId);
+
+        if (section?.AI?.AiEditGroups is null)
+        {
+            return false;
+        }
+
+        string marker = $"Synopsis:{fieldKey}";
+        return section.AI.AiEditGroups.Exists(entry =>
+            !string.IsNullOrWhiteSpace(entry.Reason)
+            && entry.Reason.Contains(marker, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private async Task LoadAiUsageStatusAsync()
+    {
+        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        string userId = UserIdResolver.ResolveForEntitlements(authState.User);
+        _aiUsageStatus = await AiUsageStatusService.GetStatusAsync(userId);
+    }
+
+    private async Task OnViewPlansAsync()
+    {
+        _showPlansPanel = true;
+        _plansError = null;
+
+        if (_planCatalog.Count > 0)
+        {
+            return;
+        }
+
+        _isPlansLoading = true;
+        try
+        {
+            List<Plan> plans = await DbContext.Plans
+                .Include(plan => plan.Entitlements)
+                .Where(plan => plan.IsActive)
+                .OrderBy(plan => plan.Name)
+                .ToListAsync();
+
+            _planCatalog.Clear();
+            _planCatalog.AddRange(plans);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Plan catalog load failed.");
+            _plansError = "Plans could not be loaded.";
+        }
+        finally
+        {
+            _isPlansLoading = false;
+        }
+    }
+
+    private void ClosePlansPanel()
+    {
+        _showPlansPanel = false;
+    }
+
+    private static string GetEntitlementValue(Plan plan, string key)
+    {
+        if (plan.Entitlements is null)
+        {
+            return "Not available";
+        }
+
+        PlanEntitlement? entitlement = plan.Entitlements.FirstOrDefault(item => string.Equals(item.Key, key, StringComparison.OrdinalIgnoreCase));
+        if (entitlement is null)
+        {
+            return "Not available";
+        }
+
+        return entitlement.Value;
+    }
+
+    public void Dispose()
+    {
+        _state.OnChanged -= _onChangedHandler;
+        if (HeaderState.DocumentId == _loadedDocumentId)
+        {
+            HeaderState.DocumentTitle = null;
+            HeaderState.DocumentId = null;
+        }
+    }
+
+    private sealed record PendingSynopsisProposal(string FieldKey, AiProposal Proposal, string ProposedText);
+}
+
+<style>
+    .synopsis-shell {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 320px;
+        gap: 24px;
+        padding: 24px;
+    }
+
+    .synopsis-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+    }
+
+    .synopsis-header h1 {
+        margin: 0;
+        font-size: 1.6rem;
+    }
+
+    .guide-button {
+        padding: 6px 12px;
+        border-radius: 6px;
+        border: 1px solid #cbd5f5;
+        background: #eef2ff;
+        cursor: pointer;
+    }
+
+    .synopsis-field {
+        padding: 12px;
+        border: 1px solid #e1e1e1;
+        border-radius: 8px;
+        background: #fff;
+        margin-bottom: 16px;
+    }
+
+    .synopsis-field.is-pending {
+        border-color: #d6c79c;
+        box-shadow: 0 0 0 2px rgba(214, 199, 156, 0.25);
+    }
+
+    .synopsis-field-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+        font-weight: 600;
+    }
+
+    .synopsis-meta {
+        font-size: 0.8rem;
+        color: #6b7280;
+        font-weight: normal;
+    }
+
+    .synopsis-field textarea {
+        width: 100%;
+        border-radius: 6px;
+        border: 1px solid #dcdcdc;
+        padding: 8px;
+        resize: vertical;
+        font-family: inherit;
+        font-size: 0.95rem;
+        min-height: 90px;
+    }
+
+    .synopsis-actions {
+        margin-top: 8px;
+    }
+
+    .synopsis-actions button {
+        padding: 6px 10px;
+        border-radius: 6px;
+        border: 1px solid #d1d5db;
+        background: #f8fafc;
+        cursor: pointer;
+    }
+
+    .ai-badge {
+        margin-left: 8px;
+        padding: 2px 6px;
+        border-radius: 999px;
+        background: #111827;
+        color: #fff;
+        font-size: 0.7rem;
+    }
+
+    .synopsis-proposal {
+        margin-top: 10px;
+        padding: 10px;
+        border-radius: 8px;
+        background: #fef3c7;
+        border: 1px solid #f6d998;
+    }
+
+    .synopsis-proposal textarea {
+        margin-top: 6px;
+        background: #fffdf2;
+    }
+
+    .synopsis-proposal-actions {
+        margin-top: 8px;
+        display: flex;
+        gap: 8px;
+    }
+
+    .synopsis-proposal-actions button {
+        padding: 6px 10px;
+        border-radius: 6px;
+        border: 1px solid #d6c79c;
+        background: #f9e8c5;
+        cursor: pointer;
+    }
+
+    .synopsis-proposal-actions .secondary {
+        background: #f5f1eb;
+        border-color: #d8d4ce;
+    }
+
+    .synopsis-coach {
+        padding: 16px;
+        border-radius: 12px;
+        border: 1px solid #e2e6ee;
+        background: #f8f9fb;
+        height: fit-content;
+        position: sticky;
+        top: 80px;
+    }
+
+    .coach-header h2 {
+        margin: 0;
+        font-size: 1.1rem;
+    }
+
+    .coach-subtitle {
+        font-size: 0.85rem;
+        color: #6b7280;
+        margin-top: 4px;
+    }
+
+    .coach-hint {
+        margin-top: 6px;
+        font-size: 0.8rem;
+        color: #6b7280;
+    }
+
+    .coach-field-picker {
+        margin-top: 12px;
+    }
+
+    .coach-field-picker select {
+        width: 100%;
+        margin-top: 6px;
+        padding: 6px;
+        border-radius: 6px;
+        border: 1px solid #d1d5db;
+        background: #fff;
+    }
+
+    .coach-question {
+        margin: 12px 0 8px;
+        font-size: 0.9rem;
+        color: #374151;
+    }
+
+    .coach-input {
+        width: 100%;
+        border-radius: 6px;
+        border: 1px solid #d1d5db;
+        padding: 8px;
+        resize: vertical;
+        font-family: inherit;
+    }
+
+    .coach-button {
+        margin-top: 10px;
+        padding: 6px 12px;
+        border-radius: 6px;
+        border: 1px solid #cbd5f5;
+        background: #eef2ff;
+        cursor: pointer;
+    }
+
+    .coach-message {
+        margin-top: 10px;
+        font-size: 0.85rem;
+        color: #6b7280;
+    }
+
+    .coach-plans {
+        margin-top: 16px;
+        border-top: 1px solid #e5e7eb;
+        padding-top: 12px;
+    }
+
+    .coach-plans-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+    }
+
+    .coach-plans-close {
+        border: none;
+        background: transparent;
+        color: #6b7280;
+        cursor: pointer;
+    }
+
+    .coach-plan-card {
+        border: 1px solid #edf0f5;
+        border-radius: 8px;
+        padding: 10px;
+        background: #ffffff;
+        margin-bottom: 10px;
+    }
+
+    .coach-plan-title {
+        font-weight: 600;
+        margin-bottom: 4px;
+    }
+
+    .coach-plan-meta {
+        font-size: 0.8rem;
+        color: #6b7280;
+        margin-bottom: 6px;
+    }
+
+    .coach-plan-entitlements {
+        display: grid;
+        gap: 4px;
+        font-size: 0.85rem;
+        color: #374151;
+    }
+</style>

@@ -22,6 +22,8 @@ namespace WriterApp.Domain.Documents
 
         public List<DocumentArtifact> Artifacts { get; init; } = new();
 
+        public Synopsis Synopsis { get; init; } = new();
+
         /// <summary>
         /// Historical snapshots for future undo and audit features.
         /// </summary>

@@ -59,6 +59,34 @@
     flex: 1;
 }
 
+.app-body {
+    display: grid;
+    grid-template-columns: 180px minmax(0, 1fr);
+    min-height: calc(100vh - 60px);
+}
+
+.app-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 16px 12px;
+    border-right: 1px solid #e2e2e2;
+    background: #f3f2ee;
+}
+
+.app-nav-link {
+    padding: 6px 10px;
+    border-radius: 6px;
+    text-decoration: none;
+    color: #4b5563;
+}
+
+.app-nav-link.active {
+    color: #1f2a44;
+    font-weight: 600;
+    background: #e9e6df;
+}
+
 .content {
     padding: 0;
 }

@@ -174,6 +174,13 @@ namespace WriterApp.AI.Core
                 outcome.Result,
                 input);
 
+            if (outcome.Proposal is null)
+            {
+                string code = outcome.ErrorCode ?? "ai.no_proposal";
+                string message = outcome.ErrorMessage ?? "AI output was rejected.";
+                return AiExecutionResult.Blocked(code, message);
+            }
+
             return AiExecutionResult.Success(outcome.Proposal);
         }
 
@@ -325,6 +332,10 @@ namespace WriterApp.AI.Core
                 AiExecutionOutcome outcome = await _executor.ExecuteAsync(action, input, ct);
                 nonStreamingProposal = outcome.Proposal;
                 await RecordUsageAsync(userId, action.ActionId, outcome.ProviderId, outcome.Result, input);
+                if (nonStreamingProposal is null)
+                {
+                    nonStreamingError = new InvalidOperationException(outcome.ErrorMessage ?? "AI output was rejected.");
+                }
             }
             catch (OperationCanceledException)
             {

@@ -43,6 +43,18 @@ namespace WriterApp.AI.Core
                         reason));
                     appliedOperations++;
                 }
+                else if (operation is ReplaceSynopsisFieldOperation synopsisOperation)
+                {
+                    string oldValue = proposal.OriginalText ?? string.Empty;
+                    commandProcessor.Execute(new UpdateSynopsisFieldCommand(
+                        proposal.SectionId,
+                        synopsisOperation.FieldKey,
+                        synopsisOperation.NewText,
+                        oldValue,
+                        group,
+                        reason));
+                    appliedOperations++;
+                }
                 else if (operation is AttachImageOperation attachOperation)
                 {
                     AiArtifact? artifact = _artifactStore.Get(attachOperation.ArtifactId);

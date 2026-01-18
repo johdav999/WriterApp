@@ -2,6 +2,7 @@ using System;
 using System.Threading.Tasks;
 using WriterApp.AI.Abstractions;
 using WriterApp.AI.Actions;
+using Microsoft.Extensions.Logging;
 using WriterApp.AI.Core;
 using WriterApp.AI.Providers.Mock;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -28,7 +29,10 @@ namespace WriterApp.Tests
                 Options.Create(options),
                 NullLogger<DefaultAiRouter>.Instance);
             IArtifactStore store = new InMemoryArtifactStore();
-            IAiActionExecutor executor = new AiActionExecutor(router, store);
+            IAiActionExecutor executor = new AiActionExecutor(
+                router,
+                store,
+                new LoggerFactory().CreateLogger<AiActionExecutor>());
             IAiOrchestrator orchestrator = new AiOrchestrator(
                 executor,
                 registry,
@@ -57,7 +61,10 @@ namespace WriterApp.Tests
                 Options.Create(options),
                 NullLogger<DefaultAiRouter>.Instance);
             IArtifactStore store = new InMemoryArtifactStore();
-            IAiActionExecutor executor = new AiActionExecutor(router, store);
+            IAiActionExecutor executor = new AiActionExecutor(
+                router,
+                store,
+                new LoggerFactory().CreateLogger<AiActionExecutor>());
             IAiOrchestrator orchestrator = new AiOrchestrator(
                 executor,
                 registry,

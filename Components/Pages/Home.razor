@@ -3980,6 +3980,7 @@
 
     private Document NormalizeDocumentForLoad(Document document)
     {
+        document = DocumentFactory.EnsureSynopsis(document);
         string? title = document.Metadata.Title;
         if (string.IsNullOrWhiteSpace(title))
         {
@@ -4059,6 +4060,7 @@
         _state = new DocumentState(document);
         _commandProcessor = new CommandProcessor(_state);
         _state.OnChanged += _onChangedHandler;
+        HeaderState.DocumentId = _state.Document.DocumentId.ToString();
 
         if (document.Chapters.Count > 0 && document.Chapters[0].Sections.Count > 0)
         {
@@ -4172,6 +4174,7 @@
         _aiUsageRefreshCts = null;
         CancelAiStream();
         HeaderState.DocumentTitle = null;
+        HeaderState.DocumentId = null;
         _autosaveCts?.Cancel();
         _autosaveCts?.Dispose();
         _autosaveCts = null;
