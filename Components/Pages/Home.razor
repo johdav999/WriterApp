@@ -5,24 +5,27 @@
 @using System.Collections.Generic
 @using System.Globalization
 @using System.Linq
+@using System.Net.Http
+@using System.Net.Http.Json
+@using System.Security
+@using System.Security.Claims
 @using System.Text.RegularExpressions
 @using System.Threading
 @using BlazorApp.Components.Editor
 @using Microsoft.AspNetCore.Components
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.Components.Web
-@using Microsoft.Extensions.Hosting
 @using Microsoft.EntityFrameworkCore
 @using Microsoft.Extensions.Logging
 @using Microsoft.Extensions.Options
 @using Microsoft.JSInterop
 @using WriterApp.AI.Abstractions
 @using WriterApp.AI.Actions
+@using WriterApp.AI.Core
 @using WriterApp.Application.Commands
 @using WriterApp.Application.Exporting
 @using WriterApp.Application.Security
 @using WriterApp.Application.State
-@using WriterApp.Application.Subscriptions
 @using WriterApp.Application.Usage
 @using WriterApp.Data
 @using WriterApp.Data.Subscriptions
@@ -31,22 +34,20 @@
 @implements IAsyncDisposable
 @inject IJSRuntime JSRuntime
 @inject ILogger<Home> Logger
-@inject IWebHostEnvironment HostEnvironment
 @inject IAiOrchestrator AiOrchestrator
 @inject IAiProposalApplier AiProposalApplier
 @inject IArtifactStore ArtifactStore
 @inject IAiAttachmentStore AiAttachmentStore
-@inject IOptions<WriterAiOptions> AiOptions
 @inject DocumentStorageService DocumentStorage
 @inject ExportService ExportService
 @inject NavigationManager Navigation
 @inject AppHeaderState HeaderState
+@inject HttpClient Http
+@inject AppDbContext DbContext
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject IAiUsageStatusService AiUsageStatusService
-@inject IEntitlementService EntitlementService
-@inject IUsageMeter UsageMeter
 @inject IUserIdResolver UserIdResolver
-@inject AppDbContext DbContext
+@inject IOptions<WriterAiOptions> AiOptionsAccessor
 
 <PageTitle>Writer</PageTitle>
 
@@ -176,7 +177,7 @@
                         </div>
                     }
                 </div>
-                @if (CanShowAiMenu && _aiImageEntitled && AiOrchestrator.CanRunAction(GenerateCoverImageAction.ActionIdValue))
+                @if (CanShowAiMenu && AiOrchestrator.CanRunAction(GenerateCoverImageAction.ActionIdValue))
                 {
                     <button type="button" disabled="@IsAiQuotaExceeded" @onclick="OnGenerateCoverImage">Generate cover image (mock)</button>
                 }
@@ -245,8 +246,9 @@
                 <span>@GetLastSavedLabel()</span>
                 @if (_aiUsageStatus is not null)
                 {
-                    <span>Plan: @_aiUsageStatus.PlanName</span>
-                    <span>AI usage: @_aiUsageStatus.QuotaUsed / @_aiUsageStatus.QuotaTotal tokens this month</span>
+                    long usedTokens = Math.Max(0, _aiUsageStatus.QuotaTotal - _aiUsageStatus.QuotaRemaining);
+                    <span>Plan: @_aiUsageStatus.Plan</span>
+                    <span>AI usage: @usedTokens / @_aiUsageStatus.QuotaTotal tokens this month</span>
                     @if (!IsAiAvailable)
                     {
                         <span>AI is currently unavailable for this account.</span>
@@ -303,46 +305,26 @@
             </div>
             <details class="ai-usage-panel" open>
                 <summary>AI Usage</summary>
-                @if (!_aiOptions.Enabled)
-                {
-                    <div class="ai-usage-empty">AI is disabled.</div>
-                }
-                else if (_aiUsageStatus is null)
+                @if (_aiUsageStatus is null)
                 {
                     <div class="ai-usage-empty">Usage details unavailable.</div>
                 }
+                else if (!_aiUsageStatus.UiEnabled)
+                {
+                    <div class="ai-usage-empty">AI is disabled.</div>
+                }
                 else
                 {
-                    int inputTokens = _aiUsageSnapshot?.TotalInputTokens ?? 0;
-                    int outputTokens = _aiUsageSnapshot?.TotalOutputTokens ?? 0;
-                    int usedTokens = inputTokens + outputTokens;
-                    string quotaLabel = _aiMonthlyQuotaUnlimited
-                        ? "Unlimited"
-                        : (_aiMonthlyTokenLimit?.ToString(CultureInfo.InvariantCulture) ?? "0");
+                    long usedTokens = Math.Max(0, _aiUsageStatus.QuotaTotal - _aiUsageStatus.QuotaRemaining);
+                    string quotaLabel = _aiUsageStatus.QuotaTotal.ToString(CultureInfo.InvariantCulture);
                     <div class="ai-usage-grid">
                         <div class="ai-usage-row">
                             <span>Plan</span>
-                            <strong>@_aiUsageStatus.PlanName</strong>
-                        </div>
-                        <div class="ai-usage-row">
-                            <span>Period</span>
-                            <strong>@GetAiUsagePeriodLabel()</strong>
-                        </div>
-                        <div class="ai-usage-row">
-                            <span>Input tokens</span>
-                            <strong>@inputTokens.ToString(CultureInfo.InvariantCulture)</strong>
-                        </div>
-                        <div class="ai-usage-row">
-                            <span>Output tokens</span>
-                            <strong>@outputTokens.ToString(CultureInfo.InvariantCulture)</strong>
-                        </div>
-                        <div class="ai-usage-row">
-                            <span>Total cost</span>
-                            <strong>@GetAiUsageCostLabel()</strong>
+                            <strong>@_aiUsageStatus.Plan</strong>
                         </div>
                         <div class="ai-usage-row">
                             <span>Remaining</span>
-                            <strong>@GetAiUsageRemainingLabel()</strong>
+                            <strong>@_aiUsageStatus.QuotaRemaining.ToString(CultureInfo.InvariantCulture)</strong>
                         </div>
                         <div class="ai-usage-row">
                             <span>Quota</span>
@@ -534,13 +516,6 @@
                 {
                     <button type="button" @onclick="() => OnContextMenuCommand(OnRollbackAllAiEdits)">Revert all AI changes in this section</button>
                 }
-            </div>
-        }
-        @if (HostEnvironment.IsDevelopment())
-        {
-            <div class="editor-context-menu-group">
-                <div class="editor-context-menu-label">AI (Test)</div>
-                <button type="button" @onclick="() => OnContextMenuCommand(OnSimulateAiEdit)">Simulate AI edit (test)</button>
             </div>
         }
         @if (_currentSelectionRange is not null && CanShowAiMenu && AiOrchestrator.CanRunAction(RewriteSelectionAction.ActionIdValue))
@@ -1645,11 +1620,7 @@
     private string? _streamedImageReference;
     private string? _loadedDocumentId;
     private bool _pendingDocumentLoad;
-    private AiUsageStatus? _aiUsageStatus;
-    private UsageSnapshot? _aiUsageSnapshot;
-    private int? _aiMonthlyTokenLimit;
-    private bool _aiMonthlyQuotaUnlimited;
-    private bool _aiImageEntitled;
+    private AiUsageStatusDto? _aiUsageStatus;
     private readonly List<Plan> _planCatalog = new();
     private bool _showPlansPanel;
     private bool _isPlansLoading;
@@ -1711,8 +1682,6 @@
         })
     };
     private static readonly TimeSpan AutosaveDebounce = TimeSpan.FromSeconds(2.5);
-    private WriterAiOptions _aiOptions = new();
-
     public Home()
     {
         Document document = DocumentFactory.CreateNewDocument();
@@ -1731,7 +1700,6 @@
 
     protected override void OnInitialized()
     {
-        _aiOptions = AiOptions.Value;
         RefreshFromDocument(_state.Document);
         _lastSavedUtc = _state.Document.Metadata.ModifiedUtc;
         _isDirty = false;
@@ -1739,7 +1707,6 @@
         _lastAutosaveUtc = default;
         _hasRecoveryCandidate = false;
         _recoveryCandidate = null;
-        AuthenticationStateProvider.AuthenticationStateChanged += OnAuthenticationStateChanged;
         UpdateAiMenuVisibility();
     }
 
@@ -2780,13 +2747,15 @@
 
     private bool CanShowAiMenu => _canShowAiMenu;
 
-    private bool IsAiAvailable => _aiOptions.Enabled && IsAiEntitled && !IsAiQuotaExceeded;
+    private bool IsAiAvailable => IsAiUiEnabled && IsAiEntitled && !IsAiQuotaExceeded;
+
+    private bool IsAiUiEnabled => _aiUsageStatus?.UiEnabled == true;
 
     private bool IsAiEntitled => _aiUsageStatus?.AiEnabled == true;
 
     private bool IsAiQuotaExceeded => _aiUsageStatus is not null && _aiUsageStatus.QuotaRemaining <= 0;
 
-    private bool ShouldShowUpgradePrompt => _aiOptions.Enabled && (_aiUsageStatus is null || !IsAiEntitled || IsAiQuotaExceeded);
+    private bool ShouldShowUpgradePrompt => IsAiUiEnabled && (_aiUsageStatus is null || !IsAiEntitled || IsAiQuotaExceeded);
 
     private string GetAiBlockedMessage()
     {
@@ -2823,13 +2792,42 @@
         _aiUsageRefreshInProgress = true;
         try
         {
-            var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
-            string userId = UserIdResolver.ResolveForEntitlements(authState.User);
-            _aiUsageStatus = await AiUsageStatusService.GetStatusAsync(userId);
-            _aiMonthlyTokenLimit = await EntitlementService.GetIntAsync(userId, "ai.monthly_tokens");
-            _aiMonthlyQuotaUnlimited = _aiMonthlyTokenLimit is null;
-            _aiUsageSnapshot = await UsageMeter.GetCurrentPeriodAsync(userId, "ai.total");
-            _aiImageEntitled = await EntitlementService.HasAsync(userId, "ai.images.cover");
+            try
+            {
+                AuthenticationState authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+                ClaimsPrincipal user = authState.User;
+                string userId = UserIdResolver.ResolveUserId(user);
+
+                AiUsageStatus status = await AiUsageStatusService.GetStatusAsync(userId);
+                WriterAiOptions aiOptions = AiOptionsAccessor.Value;
+
+                _aiUsageStatus = new AiUsageStatusDto
+                {
+                    Plan = status.PlanName,
+                    AiEnabled = aiOptions.Enabled && status.AiEnabled,
+                    UiEnabled = aiOptions.Enabled && aiOptions.UI.ShowAiMenu,
+                    QuotaTotal = status.QuotaTotal,
+                    QuotaRemaining = status.QuotaRemaining
+                };
+
+                Logger.LogInformation(
+                    "AI status received: Plan={Plan}, AiEnabled={AiEnabled}, UiEnabled={UiEnabled}, QuotaRemaining={QuotaRemaining}, QuotaTotal={QuotaTotal}",
+                    _aiUsageStatus.Plan,
+                    _aiUsageStatus.AiEnabled,
+                    _aiUsageStatus.UiEnabled,
+                    _aiUsageStatus.QuotaRemaining,
+                    _aiUsageStatus.QuotaTotal);
+            }
+            catch (SecurityException ex)
+            {
+                Logger.LogWarning(ex, "AI status resolution failed.");
+                _aiUsageStatus = null;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "AI status resolution failed.");
+                _aiUsageStatus = null;
+            }
             UpdateAiMenuVisibility();
             await InvokeAsync(StateHasChanged);
         }
@@ -2869,10 +2867,9 @@
 
     private void UpdateAiMenuVisibility()
     {
-        bool aiEnabled = _aiOptions.Enabled;
-        bool uiEnabled = _aiOptions.UI.ShowAiMenu;
-        bool entitlementEnabled = _aiUsageStatus?.AiEnabled == true;
-        bool visible = aiEnabled && uiEnabled && entitlementEnabled;
+        bool aiEnabled = _aiUsageStatus?.AiEnabled == true;
+        bool uiEnabled = _aiUsageStatus?.UiEnabled == true;
+        bool visible = uiEnabled && aiEnabled;
 
         if (!aiEnabled)
         {
@@ -2884,35 +2881,17 @@
             Logger.LogDebug("AI menu hidden: UI flag disabled");
         }
 
-        if (!entitlementEnabled)
-        {
-            Logger.LogDebug("AI menu hidden: ai.enabled=false");
-        }
-
         if (_lastAiMenuVisibility is null || _lastAiMenuVisibility.Value != visible)
         {
             Logger.LogInformation(
-                "AI menu visibility: {Visible} (AIEnabled={AiEnabled}, UiEnabled={UiEnabled}, Entitled={Entitled})",
+                "AI menu visibility: {Visible} (AIEnabled={AiEnabled}, UiEnabled={UiEnabled})",
                 visible,
                 aiEnabled,
-                uiEnabled,
-                entitlementEnabled);
+                uiEnabled);
             _lastAiMenuVisibility = visible;
         }
 
         _canShowAiMenu = visible;
-    }
-
-    private async void OnAuthenticationStateChanged(Task<AuthenticationState> task)
-    {
-        try
-        {
-            await LoadAiUsageStatusAsync();
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError(ex, "AI usage status refresh failed after auth state change.");
-        }
     }
 
     private void ShowAiMessage(string message)
@@ -2928,55 +2907,15 @@
             DateTime.UtcNow);
     }
 
-    private string GetAiUsagePeriodLabel()
-    {
-        if (_aiUsageSnapshot is null)
-        {
-            return "Unknown period";
-        }
-
-        string start = _aiUsageSnapshot.PeriodStartUtc.ToString("MMM d, yyyy", CultureInfo.InvariantCulture);
-        string end = _aiUsageSnapshot.PeriodEndUtc.AddDays(-1).ToString("MMM d, yyyy", CultureInfo.InvariantCulture);
-        return $"{start} - {end}";
-    }
-
-    private string GetAiUsageCostLabel()
-    {
-        if (_aiUsageSnapshot is null)
-        {
-            return "$0.00";
-        }
-
-        decimal cost = _aiUsageSnapshot.TotalCostMicros / 1_000_000m;
-        return string.Create(CultureInfo.InvariantCulture, $"${cost:0.00}");
-    }
-
-    private string GetAiUsageRemainingLabel()
-    {
-        if (_aiMonthlyQuotaUnlimited)
-        {
-            return "Unlimited";
-        }
-
-        if (_aiMonthlyTokenLimit is null || _aiUsageSnapshot is null)
-        {
-            return "0";
-        }
-
-        int used = _aiUsageSnapshot.TotalInputTokens + _aiUsageSnapshot.TotalOutputTokens;
-        int remaining = Math.Max(0, _aiMonthlyTokenLimit.Value - used);
-        return remaining.ToString(CultureInfo.InvariantCulture);
-    }
-
     private double GetAiUsagePercent()
     {
-        if (_aiMonthlyTokenLimit is null || _aiMonthlyTokenLimit <= 0 || _aiUsageSnapshot is null)
+        if (_aiUsageStatus is null || _aiUsageStatus.QuotaTotal <= 0)
         {
             return 0;
         }
 
-        int used = _aiUsageSnapshot.TotalInputTokens + _aiUsageSnapshot.TotalOutputTokens;
-        return Math.Clamp(used / (double)_aiMonthlyTokenLimit.Value * 100d, 0d, 100d);
+        long used = Math.Max(0, _aiUsageStatus.QuotaTotal - _aiUsageStatus.QuotaRemaining);
+        return Math.Clamp(used / (double)_aiUsageStatus.QuotaTotal * 100d, 0d, 100d);
     }
 
     private async Task OnViewPlansAsync()
@@ -3209,32 +3148,6 @@
         }
 
         return null;
-    }
-
-    private Task OnSimulateAiEdit()
-    {
-        return ExecuteSafeAsync("OnSimulateAiEdit", () =>
-        {
-            if (!HostEnvironment.IsDevelopment())
-            {
-                return Task.CompletedTask;
-            }
-
-            string plainText = PlainTextMapper.ToPlainText(_activeSectionContent);
-            int length = plainText.Length;
-            if (length == 0)
-            {
-                return Task.CompletedTask;
-            }
-
-            TextRange range = _currentSelectionRange is { Length: > 0 }
-                ? _currentSelectionRange
-                : new TextRange(0, length);
-
-            string reason = "TEST: Simulated AI edit";
-            _commandProcessor.Execute(new SimulatedAiEditCommand(_activeSectionId, range, reason));
-            return InvokeCommandAsync("focusEditor");
-        });
     }
 
     private void OnContextMenuKeyDown(KeyboardEventArgs args)
@@ -4170,7 +4083,6 @@
     public void Dispose()
     {
         _state.OnChanged -= _onChangedHandler;
-        AuthenticationStateProvider.AuthenticationStateChanged -= OnAuthenticationStateChanged;
         _aiUsageRefreshCts?.Cancel();
         _aiUsageRefreshCts?.Dispose();
         _aiUsageRefreshCts = null;

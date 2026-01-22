@@ -18,27 +18,31 @@
     },
     {
       "label": "clean",
-      "command": "dotnet",
       "type": "process",
+      "command": "dotnet",
       "args": [
         "clean",
-        "${workspaceFolder}",
-        "/property:GenerateFullPaths=true",
-        "/consoleloggerparameters:NoSummary"
+        "--configuration",
+        "Release"
       ],
       "problemMatcher": "$msCompile"
     },
     {
-      "label": "publish-release",
-      "command": "dotnet",
+      "label": "publish-azure-linux",
       "type": "process",
+      "command": "dotnet",
       "args": [
         "publish",
-        "${workspaceFolder}",
+        "${workspaceFolder}/BlazorApp.csproj",
         "--configuration",
         "Release",
-        "/property:GenerateFullPaths=true",
-        "/consoleloggerparameters:NoSummary"
+        "--runtime",
+        "linux-x64",
+        "--self-contained",
+        "false",
+        "-o",
+        "${workspaceFolder}/.azure-publish",
+        "/p:UseAppHost=false"
       ],
       "problemMatcher": "$msCompile",
       "dependsOn": "clean"

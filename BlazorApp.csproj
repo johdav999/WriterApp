@@ -4,10 +4,16 @@
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+
+    <!-- Let the host decide -->
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+
+    <SelfContained>false</SelfContained>
+
+      <PublishDir>$(MSBuildProjectDirectory)\.azure-publish\</PublishDir>
   </PropertyGroup>
 
-  <!-- Exclude test artifacts from the web app -->
+  <!-- Exclude test artifacts -->
   <ItemGroup>
     <Compile Remove="Tests\**\*.cs" />
     <Content Remove="Tests\**" />
@@ -15,14 +21,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- HTML parsing / export -->
     <PackageReference Include="AngleSharp" Version="1.1.1" />
 
-    <!-- EF Core 8 (LTS) – aligned across runtime + tools -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.4" />
-    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="8.0.4" />
 
-    <!-- EF Core design-time tools -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.4">
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>

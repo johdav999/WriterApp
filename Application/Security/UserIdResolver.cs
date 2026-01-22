@@ -1,39 +1,47 @@
 using System;
+using System.Security;
 using System.Security.Claims;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace WriterApp.Application.Security
 {
     public sealed class UserIdResolver : IUserIdResolver
     {
-        private readonly IWebHostEnvironment _hostEnvironment;
         private readonly ILogger<UserIdResolver> _logger;
         private bool _hasLoggedResolvedUserId;
 
-        public UserIdResolver(IWebHostEnvironment hostEnvironment, ILogger<UserIdResolver> logger)
+        public UserIdResolver(
+            ILogger<UserIdResolver> logger)
         {
-            _hostEnvironment = hostEnvironment ?? throw new ArgumentNullException(nameof(hostEnvironment));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
-        public string ResolveForEntitlements(ClaimsPrincipal? user)
+        public string ResolveUserId(ClaimsPrincipal user)
         {
-            string userId = user.GetUserId();
+            if (user is null)
+            {
+                throw new ArgumentNullException(nameof(user));
+            }
+
+            string userId =
+                user.FindFirstValue("oid") ??
+                user.FindFirstValue("http://schemas.microsoft.com/identity/claims/objectidentifier") ??
+                string.Empty;
+            _logger.LogInformation(
+                "Server Auth: IsAuthenticated={Auth}, Name={Name}",
+                user.Identity?.IsAuthenticated,
+                user.Identity?.Name);
+
             if (string.IsNullOrWhiteSpace(userId))
             {
-                _logger.LogWarning("UserId was empty; falling back to DEV user in development mode");
-                if (_hostEnvironment.IsDevelopment())
-                {
-                    userId = "DEV";
-                }
+                _logger.LogError("Authenticated user missing oid claim.");
+                throw new SecurityException("Authenticated user missing oid claim");
             }
 
             if (!_hasLoggedResolvedUserId)
             {
                 _hasLoggedResolvedUserId = true;
-                _logger.LogInformation("Resolved UserId for entitlements: {UserId}", userId);
+                _logger.LogInformation("Resolved UserId for request: {UserId}", userId);
             }
 
             return userId;

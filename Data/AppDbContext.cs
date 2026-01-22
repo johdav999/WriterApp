@@ -1,11 +1,10 @@
-using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using WriterApp.Data.Subscriptions;
 using WriterApp.Data.Usage;
 
 namespace WriterApp.Data
 {
-    public sealed class AppDbContext : IdentityDbContext<ApplicationUser>
+    public sealed class AppDbContext : DbContext
     {
         public AppDbContext(DbContextOptions<AppDbContext> options)
             : base(options)
@@ -21,8 +20,6 @@ namespace WriterApp.Data
 
         protected override void OnModelCreating(ModelBuilder builder)
         {
-            base.OnModelCreating(builder);
-
             builder.Entity<UserProfile>(entity =>
             {
                 entity.HasKey(profile => profile.UserId);
