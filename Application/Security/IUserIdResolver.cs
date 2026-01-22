@@ -4,6 +4,6 @@ namespace WriterApp.Application.Security
 {
     public interface IUserIdResolver
     {
-        string ResolveForEntitlements(ClaimsPrincipal? user);
+        string ResolveUserId(ClaimsPrincipal user);
     }
 }

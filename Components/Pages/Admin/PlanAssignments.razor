@@ -1,224 +1,184 @@
 @page "/admin/plan-assignments"
-@using Microsoft.AspNetCore.Authorization
+@rendermode Microsoft.AspNetCore.Components.Web.RenderMode.InteractiveServer
 @using Microsoft.AspNetCore.Components.Authorization
-@using Microsoft.AspNetCore.Identity
-@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Authorization
+@using System.Security
+@using System.Security.Claims
+@using WriterApp.Application.Security
 @using WriterApp.Application.Subscriptions
-@using WriterApp.Data
 @using WriterApp.Data.Subscriptions
-@attribute [Authorize(Roles = "Admin")]
-@inject AppDbContext DbContext
-@inject UserManager<ApplicationUser> UserManager
-@inject IEntitlementService EntitlementService
-@inject AuthenticationStateProvider AuthenticationStateProvider
+@attribute [Authorize(Policy = "AdminOnly")]
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IPlanAssignmentService PlanAssignmentService
+@inject IUserIdResolver UserIdResolver
 @inject ILogger<PlanAssignments> Logger
 
 <PageTitle>Admin - Plan Assignments</PageTitle>
 
 <div class="admin-page">
     <h1>Assign plan to user</h1>
+
     @if (_isLoading)
     {
-        <p>Loading users...</p>
+        <p>Loading plans...</p>
     }
     else
     {
+        <div class="admin-form">
+            <label for="adminUserId">User Id</label>
+            <input id="adminUserId" type="text" @bind="_userIdInput" @bind:event="oninput" />
+
+            <label for="adminPlanKey">Plan</label>
+            <select id="adminPlanKey" @bind="_selectedPlanKey">
+                @foreach (Plan plan in _plans)
+                {
+                    <option value="@plan.Key">@plan.Name (@plan.Key)</option>
+                }
+            </select>
+
+            <div class="admin-form-actions">
+                <button type="button" @onclick="OnAssignAsync" disabled="@(!_canAssign)">Assign</button>
+                <button type="button" @onclick="OnLoadLatestAsync" disabled="@string.IsNullOrWhiteSpace(_userIdInput)">Load latest</button>
+            </div>
+        </div>
+
         @if (!string.IsNullOrWhiteSpace(_statusMessage))
         {
             <p class="status-message">@_statusMessage</p>
         }
-        <table class="admin-table">
-            <thead>
-                <tr>
-                    <th>Email</th>
-                    <th>User Id</th>
-                    <th>Current plan</th>
-                    <th>Assign plan</th>
-                    <th></th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (UserPlanRow row in _rows)
-                {
-                    <tr @key="row.UserId">
-                        <td>@row.Email</td>
-                        <td>@row.UserId</td>
-                        <td>@row.CurrentPlanName</td>
-                        <td>
-                            <select @bind="row.SelectedPlanId">
-                                @foreach (Plan plan in _plans)
-                                {
-                                    <option value="@plan.PlanId">@plan.Name</option>
-                                }
-                            </select>
-                        </td>
-                        <td>
-                            <button type="button" disabled="@(!row.CanSave)" @onclick="() => OnSaveAsync(row)">
-                                Save
-                            </button>
-                        </td>
-                    </tr>
-                }
-            </tbody>
-        </table>
+
+        @if (_latestAssignment is not null)
+        {
+            <div class="admin-latest">
+                <h2>Latest assignment</h2>
+                <p>User: @_latestAssignment.UserId</p>
+                <p>Plan: @_latestAssignment.PlanName (@_latestAssignment.PlanKey)</p>
+                <p>Assigned UTC: @_latestAssignment.AssignedUtc.ToString("u")</p>
+            </div>
+        }
     }
 </div>
 
 @code {
-    private readonly List<UserPlanRow> _rows = new();
     private readonly List<Plan> _plans = new();
     private bool _isLoading = true;
     private string? _statusMessage;
-    private Guid? _freePlanId;
+    private string _userIdInput = string.Empty;
+    private string _selectedPlanKey = string.Empty;
+    private LatestAssignmentView? _latestAssignment;
 
     protected override async Task OnInitializedAsync()
     {
-        await LoadAsync();
+        await LoadPlansAsync();
     }
 
-    private async Task LoadAsync()
+    private bool _canAssign => !string.IsNullOrWhiteSpace(_userIdInput) && !string.IsNullOrWhiteSpace(_selectedPlanKey);
+
+    private async Task LoadPlansAsync()
     {
         _isLoading = true;
-        _rows.Clear();
         _plans.Clear();
         _statusMessage = null;
 
-        List<Plan> plans = await DbContext.Plans
-            .Where(plan => plan.IsActive)
-            .OrderBy(plan => plan.Name)
-            .ToListAsync();
+        IReadOnlyList<Plan> plans = await PlanAssignmentService.GetActivePlansAsync();
         _plans.AddRange(plans);
-        _freePlanId = _plans.FirstOrDefault(plan => plan.Key == "free")?.PlanId;
-
-        List<ApplicationUser> users = await DbContext.Users
-            .OrderBy(user => user.Email)
-            .ToListAsync();
-
-        List<UserPlanAssignment?> assignments = await DbContext.UserPlanAssignments
-            .GroupBy(assignment => assignment.UserId)
-            .Select(group => group.OrderByDescending(entry => entry.AssignedUtc).FirstOrDefault())
-            .ToListAsync();
-        Dictionary<string, UserPlanAssignment?> latestAssignments = assignments
-            .Where(assignment => assignment is not null)
-            .ToDictionary(assignment => assignment!.UserId, assignment => assignment);
-
-        foreach (ApplicationUser user in users)
-        {
-            if (string.IsNullOrWhiteSpace(user.Id))
-            {
-                continue;
-            }
-
-            if (!latestAssignments.TryGetValue(user.Id, out UserPlanAssignment? assignment))
-            {
-                assignment = null;
-            }
-
-            Plan? currentPlan = assignment is null
-                ? _plans.FirstOrDefault(plan => plan.Key == "free")
-                : _plans.FirstOrDefault(plan => plan.PlanId == assignment.PlanId);
-
-            Guid selectedPlanId = currentPlan?.PlanId ?? _freePlanId ?? Guid.Empty;
-
-            _rows.Add(new UserPlanRow(
-                user.Id,
-                user.Email ?? string.Empty,
-                currentPlan?.PlanId,
-                currentPlan?.Name ?? "Free",
-                selectedPlanId));
-        }
+        _selectedPlanKey = _plans.FirstOrDefault()?.Key ?? string.Empty;
 
         _isLoading = false;
     }
 
-    private async Task OnSaveAsync(UserPlanRow row)
+    private async Task OnAssignAsync()
     {
-        if (row is null || !row.CanSave)
+        _statusMessage = null;
+        _latestAssignment = null;
+
+        if (!_canAssign)
         {
+            _statusMessage = "Provide a user id and choose a plan.";
             return;
         }
 
-        if (row.SelectedPlanId == Guid.Empty)
+        try
         {
-            _statusMessage = "Select a plan before saving.";
-            return;
+            AuthenticationState authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            ClaimsPrincipal user = authState.User;
+            string? callerName = user.Identity?.Name;
+            string assignedBy = ResolveAssignedBy(user, callerName);
+
+            PlanAssignmentResult result = await PlanAssignmentService.AssignPlanAsync(
+                _userIdInput,
+                _selectedPlanKey,
+                assignedBy,
+                callerName,
+                CancellationToken.None);
+
+            _statusMessage = $"Assigned {result.UserId} to {result.PlanName}.";
+            await LoadLatestAssignmentAsync(result.UserId);
         }
-
-        Plan? selectedPlan = _plans.FirstOrDefault(plan => plan.PlanId == row.SelectedPlanId);
-        if (selectedPlan is null)
+        catch (PlanAssignmentException ex)
         {
-            _statusMessage = "Selected plan was not found.";
-            return;
-        }
-
-        string assignedBy = await ResolveAssignedByAsync();
-
-        UserPlanAssignment assignment = new()
-        {
-            UserId = row.UserId,
-            PlanId = selectedPlan.PlanId,
-            AssignedUtc = DateTime.UtcNow,
-            AssignedBy = assignedBy
-        };
-
-        DbContext.UserPlanAssignments.Add(assignment);
-        await DbContext.SaveChangesAsync();
-        EntitlementService.InvalidateForUser(row.UserId);
-
-        row.ApplyPlan(selectedPlan.PlanId, selectedPlan.Name);
-        _statusMessage = $"Updated {row.Email} to {selectedPlan.Name}.";
-        Logger.LogInformation("Admin updated plan for {UserId} to {PlanKey}", row.UserId, selectedPlan.Key);
-    }
-
-    private async Task<string> ResolveAssignedByAsync()
-    {
-        AuthenticationState authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
-        string? userId = UserManager.GetUserId(authState.User);
-        if (!string.IsNullOrWhiteSpace(userId))
-        {
-            return userId;
-        }
-
-        return authState.User.Identity?.Name ?? "admin";
-    }
-
-    private sealed class UserPlanRow
-    {
-        private Guid _selectedPlanId;
-        private bool _hasPendingChange;
-
-        public UserPlanRow(string userId, string email, Guid? currentPlanId, string currentPlanName, Guid selectedPlanId)
-        {
-            UserId = userId;
-            Email = email;
-            CurrentPlanId = currentPlanId;
-            CurrentPlanName = currentPlanName;
-            SelectedPlanId = selectedPlanId;
-            _hasPendingChange = false;
-        }
-
-        public string UserId { get; }
-        public string Email { get; }
-        public Guid? CurrentPlanId { get; private set; }
-        public string CurrentPlanName { get; private set; }
-        public Guid SelectedPlanId
-        {
-            get => _selectedPlanId;
-            set
+            _statusMessage = ex.Code switch
             {
-                _selectedPlanId = value;
-                _hasPendingChange = CurrentPlanId != value;
-            }
+                PlanAssignmentErrorCode.PlanNotFound => ex.Message,
+                PlanAssignmentErrorCode.PlanInactive => ex.Message,
+                PlanAssignmentErrorCode.InvalidUserId => ex.Message,
+                PlanAssignmentErrorCode.InvalidPlanKey => ex.Message,
+                PlanAssignmentErrorCode.AssignmentExists => ex.Message,
+                _ => ex.Message
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Admin assignment request failed.");
+            _statusMessage = "Assignment request failed.";
+        }
+    }
+
+    private async Task OnLoadLatestAsync()
+    {
+        _statusMessage = null;
+        await LoadLatestAssignmentAsync(_userIdInput);
+    }
+
+    private async Task LoadLatestAssignmentAsync(string? userId)
+    {
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            _latestAssignment = null;
+            return;
         }
 
-        public bool CanSave => _hasPendingChange;
-
-        public void ApplyPlan(Guid planId, string planName)
+        UserPlanAssignment? assignment = await PlanAssignmentService.GetLatestAssignmentAsync(userId);
+        if (assignment?.Plan is null)
         {
-            CurrentPlanId = planId;
-            CurrentPlanName = planName;
-            SelectedPlanId = planId;
-            _hasPendingChange = false;
+            _latestAssignment = null;
+            _statusMessage = "No assignments found for this user.";
+            return;
+        }
+
+        _latestAssignment = new LatestAssignmentView(
+            assignment.UserId,
+            assignment.Plan.Key,
+            assignment.Plan.Name,
+            assignment.AssignedUtc);
+    }
+
+    private sealed record LatestAssignmentView(
+        string UserId,
+        string PlanKey,
+        string PlanName,
+        DateTime AssignedUtc);
+
+    private string ResolveAssignedBy(ClaimsPrincipal user, string? callerName)
+    {
+        try
+        {
+            return UserIdResolver.ResolveUserId(user);
+        }
+        catch (SecurityException ex)
+        {
+            Logger.LogWarning(ex, "Admin assignment missing oid claim.");
+            return callerName ?? "admin";
         }
     }
 }

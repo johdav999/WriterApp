@@ -1,5 +1,6 @@
 using System;
 using System.Threading.Tasks;
+using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
@@ -17,6 +18,7 @@ namespace WriterApp.AI.Core
         private static readonly TimeSpan RateLimitWindow = TimeSpan.FromMinutes(1);
 
         private readonly IHttpContextAccessor _httpContextAccessor;
+        private readonly IUserIdResolver _userIdResolver;
         private readonly IEntitlementService _entitlementService;
         private readonly IUsageMeter _usageMeter;
         private readonly IMemoryCache _cache;
@@ -25,6 +27,7 @@ namespace WriterApp.AI.Core
 
         public AiUsagePolicy(
             IHttpContextAccessor httpContextAccessor,
+            IUserIdResolver userIdResolver,
             IEntitlementService entitlementService,
             IUsageMeter usageMeter,
             IMemoryCache cache,
@@ -32,6 +35,7 @@ namespace WriterApp.AI.Core
             IOptions<WriterAiOptions> options)
         {
             _httpContextAccessor = httpContextAccessor ?? throw new ArgumentNullException(nameof(httpContextAccessor));
+            _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
             _entitlementService = entitlementService ?? throw new ArgumentNullException(nameof(entitlementService));
             _usageMeter = usageMeter ?? throw new ArgumentNullException(nameof(usageMeter));
             _cache = cache ?? throw new ArgumentNullException(nameof(cache));
@@ -47,7 +51,13 @@ namespace WriterApp.AI.Core
             }
 
             bool requiresEntitlement = provider is IAiBillingProvider billingProvider && billingProvider.RequiresEntitlement;
-            string userId = _httpContextAccessor.HttpContext?.User.GetUserId() ?? string.Empty;
+            ClaimsPrincipal? user = _httpContextAccessor.HttpContext?.User;
+            bool isAuthenticated = user?.Identity?.IsAuthenticated == true;
+            string userId = string.Empty;
+            if (isAuthenticated && user is not null)
+            {
+                userId = _userIdResolver.ResolveUserId(user);
+            }
 
             if (!requiresEntitlement)
             {
@@ -59,7 +69,7 @@ namespace WriterApp.AI.Core
                 return new AiUsageDecision(false, userId, "ai.disabled", "AI is disabled by configuration.");
             }
 
-            if (string.IsNullOrWhiteSpace(userId))
+            if (!isAuthenticated)
             {
                 return new AiUsageDecision(false, string.Empty, "auth.required", "Sign in to use AI.");
             }

@@ -1,23 +1,6 @@
-@page "/account/logout"
-@using Microsoft.AspNetCore.Identity
-@using WriterApp.Data
-@inject SignInManager<ApplicationUser> SignInManager
-@inject NavigationManager Navigation
+<PageTitle>Sign out</PageTitle>
 
-<PageTitle>Logout</PageTitle>
-
-<p>Signing out...</p>
-
-@code {
-    protected override async Task OnInitializedAsync()
-    {
-        await SignInManager.SignOutAsync();
-        try
-        {
-            Navigation.NavigateTo("/", forceLoad: true);
-        }
-        catch (NavigationException)
-        {
-        }
-    }
-}
+<div class="auth-shell">
+    <h1>Sign out</h1>
+    <p>Sign-out is handled by Azure App Service Authentication (Easy Auth).</p>
+</div>

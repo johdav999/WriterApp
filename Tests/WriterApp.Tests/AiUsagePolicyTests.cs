@@ -6,9 +6,11 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using WriterApp.AI.Abstractions;
 using WriterApp.AI.Core;
+using WriterApp.Application.Security;
 using WriterApp.Application.Subscriptions;
 using WriterApp.Application.Usage;
 using WriterApp.Data;
@@ -189,7 +191,7 @@ namespace WriterApp.Tests
             DefaultHttpContext httpContext = new();
             ClaimsIdentity identity = new(new[]
             {
-                new Claim(ClaimTypes.NameIdentifier, userId)
+                new Claim("oid", userId)
             }, "test");
             httpContext.User = new ClaimsPrincipal(identity);
 
@@ -198,6 +200,7 @@ namespace WriterApp.Tests
                 HttpContext = httpContext
             };
 
+            UserIdResolver userIdResolver = new(NullLogger<UserIdResolver>.Instance);
             WriterAiOptions options = new()
             {
                 Enabled = true,
@@ -207,7 +210,7 @@ namespace WriterApp.Tests
                 }
             };
             IMemoryCache cache = new MemoryCache(new MemoryCacheOptions());
-            return new AiUsagePolicy(accessor, entitlementService, usageMeter, cache, clock, Options.Create(options));
+            return new AiUsagePolicy(accessor, userIdResolver, entitlementService, usageMeter, cache, clock, Options.Create(options));
         }
 
         private sealed class TestClock : IClock
