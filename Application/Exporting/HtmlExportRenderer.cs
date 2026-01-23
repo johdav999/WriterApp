@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using WriterApp.Application.State;
 using WriterApp.Domain.Documents;
 
 namespace WriterApp.Application.Exporting
@@ -18,6 +20,8 @@ namespace WriterApp.Application.Exporting
 
         public ExportFormat Format => ExportFormat.Html;
         public ExportKind Kind => ExportKind.Document;
+
+        private readonly SectionNumberingService _numberingService = new();
 
         public Task<ExportResult> RenderAsync(Document document, ExportOptions options)
         {
@@ -58,6 +62,7 @@ namespace WriterApp.Application.Exporting
             ExportOptions resolved = options ?? new ExportOptions();
             string title = ExportHelpers.GetDocumentTitle(document);
             StringBuilder builder = new();
+            IReadOnlyDictionary<Guid, SectionNumberingInfo> numbering = _numberingService.BuildIndex(document);
 
 
             if (resolved.IncludeTitlePage)
@@ -69,9 +74,13 @@ namespace WriterApp.Application.Exporting
             foreach (Section section in ExportHelpers.GetOrderedSections(document))
             {
                 string sectionTitle = ExportHelpers.GetSectionTitle(section);
+                SectionNumberingInfo? info = numbering.TryGetValue(section.SectionId, out SectionNumberingInfo entry)
+                    ? entry
+                    : null;
+                string heading = _numberingService.BuildHeading(section, sectionTitle, info);
                 builder.Append("  <section>\n");
                 // Section titles map to second-level headings.
-                builder.Append("    <h2>").Append(WebUtility.HtmlEncode(sectionTitle)).Append("</h2>\n");
+                builder.Append("    <h2>").Append(WebUtility.HtmlEncode(heading)).Append("</h2>\n");
 
 
                 string sectionHtml = ConvertSectionContentToHtml(section.Content, sectionTitle);

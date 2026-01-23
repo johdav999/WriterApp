@@ -13,6 +13,12 @@ namespace WriterApp.Domain.Documents
 
         public string Title { get; init; } = string.Empty;
 
+        public SectionKind Kind { get; init; } = SectionKind.Chapter;
+
+        public bool IncludeInNumbering { get; init; } = true;
+
+        public SectionNumberingStyle NumberingStyle { get; init; } = SectionNumberingStyle.Decimal;
+
         public SectionContent Content { get; init; } = new();
 
         public SectionStats Stats { get; init; } = new();

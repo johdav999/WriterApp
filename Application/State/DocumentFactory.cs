@@ -45,6 +45,9 @@ namespace WriterApp.Application.State
                             {
                                 Order = 0,
                                 Title = "Opening Scene",
+                                Kind = SectionKind.Chapter,
+                                IncludeInNumbering = true,
+                                NumberingStyle = SectionNumberingStyle.Decimal,
                                 Content = new SectionContent
                                 {
                                     Format = "html",
@@ -60,6 +63,9 @@ namespace WriterApp.Application.State
                             {
                                 Order = 1,
                                 Title = "Chapter One",
+                                Kind = SectionKind.Chapter,
+                                IncludeInNumbering = true,
+                                NumberingStyle = SectionNumberingStyle.Decimal,
                                 Content = new SectionContent
                                 {
                                     Format = "html",
@@ -75,6 +81,9 @@ namespace WriterApp.Application.State
                             {
                                 Order = 2,
                                 Title = "Chapter Two",
+                                Kind = SectionKind.Chapter,
+                                IncludeInNumbering = true,
+                                NumberingStyle = SectionNumberingStyle.Decimal,
                                 Content = new SectionContent
                                 {
                                     Format = "html",

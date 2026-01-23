@@ -5,6 +5,7 @@
 @using System.Collections.Generic
 @using System.Globalization
 @using System.Linq
+@using System.Net
 @using System.Net.Http
 @using System.Net.Http.Json
 @using System.Security
@@ -67,7 +68,10 @@
         <aside class="section-panel">
             <div class="section-panel-header">
                 <h2>Sections</h2>
-                <button type="button" @onclick="OnCreateSection">Add section</button>
+                <div class="section-panel-actions">
+                    <button type="button" @onclick="() => OnCreateSection(SectionKind.Chapter)">Add chapter</button>
+                    <button type="button" @onclick="() => OnCreateSection(SectionKind.Section)">Add section</button>
+                </div>
             </div>
             <ul class="section-nav-list">
                     @foreach (Section section in _orderedSections)
@@ -97,7 +101,13 @@
             <div class="editor-main-header">
                 <div class="editor-section-info">
                     <div class="editor-section-label">Active section</div>
-                    <div class="editor-section-title">@GetActiveSectionTitle()</div>
+                    <div class="editor-section-title">
+                        @if (!string.IsNullOrWhiteSpace(GetActiveSectionNumberLabel()))
+                        {
+                            <span class="editor-section-number">@GetActiveSectionNumberLabel()</span>
+                        }
+                        <span>@GetActiveSectionTitle()</span>
+                    </div>
                 </div>
                 <div class="document-title-field">
                     <label for="documentTitleInput">Document title</label>
@@ -132,6 +142,13 @@
                     <button type="button" class="@GetActiveClass(_formattingState.BlockType == "heading:6")" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnHeadingRequested(6)">H6</button>
                     <button type="button" disabled="@(!_formattingState.CanBlockquote)" @onclick="OnBlockquoteRequested">Blockquote</button>
                     <button type="button" disabled="@(!_formattingState.CanHorizontalRule)" @onclick="OnHorizontalRuleRequested">Horizontal rule</button>
+                </div>
+                <div class="editor-toolbar-group" aria-label="Alignment">
+                    <button type="button" class="@GetActiveClass(_formattingState.TextAlign == "left")" @onclick="() => OnAlignRequested("left")">Align left</button>
+                    <button type="button" class="@GetActiveClass(_formattingState.TextAlign == "center")" @onclick="() => OnAlignRequested("center")">Align center</button>
+                    <button type="button" class="@GetActiveClass(_formattingState.TextAlign == "right")" @onclick="() => OnAlignRequested("right")">Align right</button>
+                    <button type="button" @onclick="OnIndentDecreaseRequested">Indent -</button>
+                    <button type="button" @onclick="OnIndentIncreaseRequested">Indent +</button>
                 </div>
                 <div class="editor-toolbar-group" aria-label="Lists">
                     <button type="button" disabled="@(!_formattingState.CanToggleList)" @onclick="OnBulletListRequested">Bullet list</button>
@@ -283,6 +300,35 @@
                 <h2>Context</h2>
             </div>
             <div class="context-panel-body">
+            <details class="section-settings-panel" open>
+                <summary>Section settings</summary>
+                @{
+                    Section activeSection = FindSection(_state.Document, _activeSectionId);
+                }
+                <div class="section-settings-grid">
+                    <label for="sectionKindSelect">Kind</label>
+                    <select id="sectionKindSelect" value="@activeSection.Kind" @onchange="OnSectionKindChanged">
+                        <option value="@SectionKind.Chapter">Chapter</option>
+                        <option value="@SectionKind.Section">Section</option>
+                    </select>
+                    <label for="sectionNumberingSelect">Numbering</label>
+                    <select id="sectionNumberingSelect"
+                            value="@activeSection.NumberingStyle"
+                            disabled="@(activeSection.Kind != SectionKind.Chapter)"
+                            @onchange="OnSectionNumberingStyleChanged">
+                        <option value="@SectionNumberingStyle.Decimal">Decimal</option>
+                        <option value="@SectionNumberingStyle.Roman">Roman</option>
+                        <option value="@SectionNumberingStyle.None">None</option>
+                    </select>
+                    <label class="section-settings-checkbox">
+                        <input type="checkbox"
+                               checked="@activeSection.IncludeInNumbering"
+                               disabled="@(activeSection.Kind != SectionKind.Chapter)"
+                               @onchange="OnSectionIncludeChanged" />
+                        Include in numbering
+                    </label>
+                </div>
+            </details>
             <div class="outline-panel">
                 <h3>Outline</h3>
                 @if (_outlineItems.Count == 0)
@@ -594,6 +640,13 @@
         margin-bottom: 10px;
     }
 
+    .section-panel-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        justify-content: flex-end;
+    }
+
     .section-panel-header h2 {
         margin: 0;
         font-size: 1rem;
@@ -663,9 +716,20 @@
     }
 
     .editor-section-title {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
         font-size: 1.25rem;
         font-weight: 600;
         color: #1f2937;
+    }
+
+    .editor-section-number {
+        font-size: 0.9rem;
+        font-weight: 600;
+        color: #6b7280;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
     }
 
     .panel-toggle {
@@ -809,6 +873,32 @@
         overflow: auto;
     }
 
+    .section-settings-panel summary {
+        cursor: pointer;
+        font-weight: 600;
+    }
+
+    .section-settings-grid {
+        display: grid;
+        gap: 8px;
+        margin-top: 8px;
+        font-size: 0.9rem;
+    }
+
+    .section-settings-grid select {
+        padding: 6px 8px;
+        border: 1px solid #d0d0d0;
+        border-radius: 4px;
+        background: #ffffff;
+    }
+
+    .section-settings-checkbox {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.85rem;
+    }
+
     .context-panel.is-collapsed {
         display: none;
     }
@@ -881,9 +971,10 @@
     }
 
     .section-order {
-        font-size: 0.85rem;
+        font-size: 0.8rem;
         color: #6b6b6b;
-        min-width: 24px;
+        min-width: 80px;
+        white-space: nowrap;
     }
 
     .section-title {
@@ -1560,6 +1651,8 @@
     private readonly List<string> _previewSections = new();
     private readonly List<OutlineItem> _outlineItems = new();
     private readonly List<Section> _orderedSections = new();
+    private readonly SectionNumberingService _numberingService = new();
+    private IReadOnlyDictionary<Guid, SectionNumberingInfo> _sectionNumbering = new Dictionary<Guid, SectionNumberingInfo>();
     private SectionEditor? _editorRef;
     private Guid _activeSectionId;
     private string _activeSectionContent = string.Empty;
@@ -1580,7 +1673,8 @@
         CanApplyHeading = true,
         CanToggleList = true,
         CanBlockquote = true,
-        CanHorizontalRule = true
+        CanHorizontalRule = true,
+        TextAlign = "left"
     };
     private int _wordCount;
     private string _readingTime = "0 min read";
@@ -1853,6 +1947,99 @@
         });
     }
 
+    private Task OnSectionKindChanged(ChangeEventArgs args)
+    {
+        return ExecuteSafeAsync("OnSectionKindChanged", () =>
+        {
+            string? value = args.Value?.ToString();
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return Task.CompletedTask;
+            }
+
+            if (!Enum.TryParse(value, out SectionKind kind))
+            {
+                return Task.CompletedTask;
+            }
+
+            return UpdateSectionSettings(kind: kind);
+        });
+    }
+
+    private Task OnSectionIncludeChanged(ChangeEventArgs args)
+    {
+        return ExecuteSafeAsync("OnSectionIncludeChanged", () =>
+        {
+            bool include = false;
+            if (args.Value is bool boolValue)
+            {
+                include = boolValue;
+            }
+            else if (args.Value is string rawValue)
+            {
+                bool.TryParse(rawValue, out include);
+            }
+
+            return UpdateSectionSettings(include: include);
+        });
+    }
+
+    private Task OnSectionNumberingStyleChanged(ChangeEventArgs args)
+    {
+        return ExecuteSafeAsync("OnSectionNumberingStyleChanged", () =>
+        {
+            string? value = args.Value?.ToString();
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return Task.CompletedTask;
+            }
+
+            if (!Enum.TryParse(value, out SectionNumberingStyle style))
+            {
+                return Task.CompletedTask;
+            }
+
+            return UpdateSectionSettings(style: style);
+        });
+    }
+
+    private Task UpdateSectionSettings(SectionKind? kind = null, bool? include = null, SectionNumberingStyle? style = null)
+    {
+        Section section = FindSection(_state.Document, _activeSectionId);
+
+        SectionKind nextKind = kind ?? section.Kind;
+        bool nextInclude = include ?? section.IncludeInNumbering;
+        SectionNumberingStyle nextStyle = style ?? section.NumberingStyle;
+
+        if (nextKind != SectionKind.Chapter)
+        {
+            nextInclude = false;
+            nextStyle = SectionNumberingStyle.None;
+        }
+        else if (kind.HasValue && nextKind == SectionKind.Chapter)
+        {
+            if (!include.HasValue)
+            {
+                nextInclude = true;
+            }
+
+            if (!style.HasValue || style.Value == SectionNumberingStyle.None)
+            {
+                nextStyle = SectionNumberingStyle.Decimal;
+            }
+        }
+
+        if (nextKind == section.Kind
+            && nextInclude == section.IncludeInNumbering
+            && nextStyle == section.NumberingStyle)
+        {
+            return Task.CompletedTask;
+        }
+
+        _commandProcessor.Execute(new UpdateSectionMetadataCommand(_activeSectionId, nextKind, nextInclude, nextStyle));
+        return Task.CompletedTask;
+    }
+
 
     private Task OnSectionSelected(Guid sectionId)
     {
@@ -1884,7 +2071,7 @@
         return ExecuteSafeAsync("OnMoveSectionDown", () => MoveSectionAsync(sectionId, 1));
     }
 
-    private Task OnCreateSection()
+    private Task OnCreateSection(SectionKind kind)
     {
         return ExecuteSafeAsync("OnCreateSection", async () =>
         {
@@ -1904,6 +2091,9 @@
                 SectionId = Guid.NewGuid(),
                 Order = insertIndex + 1,
                 Title = string.Empty,
+                Kind = kind,
+                IncludeInNumbering = kind == SectionKind.Chapter,
+                NumberingStyle = kind == SectionKind.Chapter ? SectionNumberingStyle.Decimal : SectionNumberingStyle.None,
                 Content = new SectionContent { Format = "html", Value = "<p></p>" },
                 Stats = new SectionStats(),
                 Flags = new SectionFlags(),
@@ -2180,7 +2370,17 @@
 
     private string GetActiveSectionClass(Guid sectionId) => sectionId == _activeSectionId ? "is-active" : string.Empty;
 
-    private string GetSectionOrderLabel(Section section) => (section.Order + 1).ToString(CultureInfo.InvariantCulture);
+    private string GetSectionOrderLabel(Section section)
+    {
+        if (_sectionNumbering.TryGetValue(section.SectionId, out SectionNumberingInfo info) && info.IsNumbered)
+        {
+            return section.Kind == SectionKind.Chapter
+                ? $"Chapter {info.Number}"
+                : info.Number ?? string.Empty;
+        }
+
+        return section.Kind == SectionKind.Chapter ? "Chapter" : "Section";
+    }
 
     private string GetSectionTitle(Section section)
     {
@@ -2197,6 +2397,19 @@
     {
         Section activeSection = FindSection(_state.Document, _activeSectionId);
         return GetSectionTitle(activeSection);
+    }
+
+    private string GetActiveSectionNumberLabel()
+    {
+        Section activeSection = FindSection(_state.Document, _activeSectionId);
+        if (_sectionNumbering.TryGetValue(activeSection.SectionId, out SectionNumberingInfo info) && info.IsNumbered)
+        {
+            return activeSection.Kind == SectionKind.Chapter
+                ? $"Chapter {info.Number}"
+                : info.Number ?? string.Empty;
+        }
+
+        return string.Empty;
     }
 
     private void ToggleContextPanel()
@@ -3211,6 +3424,7 @@
         _documentTitleDraft = title;
         _previewSections.Clear();
         _orderedSections.Clear();
+        _sectionNumbering = _numberingService.BuildIndex(document);
         int wordCount = 0;
         for (int chapterIndex = 0; chapterIndex < document.Chapters.Count; chapterIndex++)
         {
@@ -3218,7 +3432,7 @@
             for (int sectionIndex = 0; sectionIndex < chapter.Sections.Count; sectionIndex++)
             {
                 Section section = chapter.Sections[sectionIndex];
-                _previewSections.Add(section.Content.Value ?? string.Empty);
+                _previewSections.Add(BuildPreviewSectionHtml(section));
                 wordCount += CountWords(section.Content.Value);
             }
         }
@@ -3232,6 +3446,31 @@
         Section activeSection = FindSection(document, _activeSectionId);
         _activeSectionContent = activeSection.Content.Value ?? string.Empty;
         UpdateReadingMetrics(wordCount);
+    }
+
+    private string BuildPreviewSectionHtml(Section section)
+    {
+        string title = GetSectionTitle(section);
+        SectionNumberingInfo? info = _sectionNumbering.TryGetValue(section.SectionId, out SectionNumberingInfo entry)
+            ? entry
+            : null;
+        string heading = _numberingService.BuildHeading(section, title, info);
+        string normalizedContent = ExportHelpers.NormalizeSectionHtmlForExport(
+            section.Content.Value ?? string.Empty,
+            title).Trim();
+
+        if (string.IsNullOrWhiteSpace(heading))
+        {
+            return normalizedContent;
+        }
+
+        string headingHtml = $"<h2>{WebUtility.HtmlEncode(heading)}</h2>";
+        if (string.IsNullOrWhiteSpace(normalizedContent))
+        {
+            return headingHtml;
+        }
+
+        return $"{headingHtml}\n{normalizedContent}";
     }
 
     private static string GetDocumentTitle(Document document)
@@ -3518,6 +3757,15 @@
     private Task OnBlockquoteRequested() => ExecuteSafeAsync("OnBlockquoteRequested", () => InvokeCommandAsync("toggleBlockquote"));
 
     private Task OnHorizontalRuleRequested() => ExecuteSafeAsync("OnHorizontalRuleRequested", () => InvokeCommandAsync("insertHorizontalRule"));
+
+    private Task OnAlignRequested(string alignment)
+        => ExecuteSafeAsync("OnAlignRequested", () => InvokeCommandAsync("setTextAlign", alignment));
+
+    private Task OnIndentIncreaseRequested()
+        => ExecuteSafeAsync("OnIndentIncreaseRequested", () => InvokeCommandAsync("increaseIndent"));
+
+    private Task OnIndentDecreaseRequested()
+        => ExecuteSafeAsync("OnIndentDecreaseRequested", () => InvokeCommandAsync("decreaseIndent"));
 
     private Task OnBulletListRequested() => ExecuteSafeAsync("OnBulletListRequested", () => InvokeCommandAsync("toggleBulletList"));
 
