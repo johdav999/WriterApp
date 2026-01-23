@@ -108,7 +108,7 @@ namespace WriterApp.Application.State
 
     public sealed record SectionNumberingInfo(string? Number)
     {
-        public static SectionNumberingInfo Unnumbered { get; } = new(null);
+        public static SectionNumberingInfo Unnumbered { get; } = new((string?)null);
 
         public bool IsNumbered => !string.IsNullOrWhiteSpace(Number);
     }

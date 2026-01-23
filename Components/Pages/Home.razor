@@ -144,9 +144,9 @@
                     <button type="button" disabled="@(!_formattingState.CanHorizontalRule)" @onclick="OnHorizontalRuleRequested">Horizontal rule</button>
                 </div>
                 <div class="editor-toolbar-group" aria-label="Alignment">
-                    <button type="button" class="@GetActiveClass(_formattingState.TextAlign == "left")" @onclick="() => OnAlignRequested("left")">Align left</button>
-                    <button type="button" class="@GetActiveClass(_formattingState.TextAlign == "center")" @onclick="() => OnAlignRequested("center")">Align center</button>
-                    <button type="button" class="@GetActiveClass(_formattingState.TextAlign == "right")" @onclick="() => OnAlignRequested("right")">Align right</button>
+                    <button type="button" class="@GetActiveClass(_formattingState.TextAlign == "left")" @onclick='@(() => OnAlignRequested("left"))'>Align left</button>
+                    <button type="button" class="@GetActiveClass(_formattingState.TextAlign == "center")" @onclick='@(() => OnAlignRequested("center"))'>Align center</button>
+                    <button type="button" class="@GetActiveClass(_formattingState.TextAlign == "right")" @onclick='@(() => OnAlignRequested("right"))'>Align right</button>
                     <button type="button" @onclick="OnIndentDecreaseRequested">Indent -</button>
                     <button type="button" @onclick="OnIndentIncreaseRequested">Indent +</button>
                 </div>
