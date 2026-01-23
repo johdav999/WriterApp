@@ -642,6 +642,14 @@ window.tiptapEditor = {
                         safeInvoke(dotNetRef, interopState, "OnFocusModeShortcut");
                         return true;
                     },
+                    "Alt-ArrowUp": () => {
+                        safeInvoke(dotNetRef, interopState, "OnPrevSectionShortcut");
+                        return true;
+                    },
+                    "Alt-ArrowDown": () => {
+                        safeInvoke(dotNetRef, interopState, "OnNextSectionShortcut");
+                        return true;
+                    },
                     "Mod-z": () => {
                         safeInvoke(dotNetRef, interopState, "OnUndoShortcut");
                         return true;

@@ -87,9 +87,9 @@
                             </button>
                             <div class="section-nav-actions">
                                 <span class="drag-handle" aria-hidden="true">:::</span>
-                                <button type="button" @onclick="() => OnMoveSectionUp(section.SectionId)" disabled="@IsFirstSection(section)">Up</button>
-                                <button type="button" @onclick="() => OnMoveSectionDown(section.SectionId)" disabled="@IsLastSection(section)">Down</button>
-                                <button type="button" @onclick="() => OnDeleteSection(section.SectionId)" disabled="@(_orderedSections.Count <= 1)">Delete</button>
+                                <button type="button" class="section-action" @onclick="() => OnRenameSection(section.SectionId)">Rename</button>
+                                <button type="button" class="section-action" @onclick="() => OnDuplicateSection(section.SectionId)">Duplicate</button>
+                                <button type="button" class="section-action" @onclick="() => OnDeleteSection(section.SectionId)" disabled="@(_orderedSections.Count <= 1)">Delete</button>
                             </div>
                         </li>
                         <li class="drop-zone @(GetDropZoneClass(section.SectionId, DropPosition.After))" @ondragover="OnDragOver" @ondragover:preventDefault @ondragenter="() => OnDragEnter(section.SectionId, DropPosition.After)" @ondrop="() => OnDrop(section.SectionId, DropPosition.After)"></li>
@@ -109,6 +109,10 @@
                         }
                         <span>@GetActiveSectionTitle()</span>
                     </div>
+                </div>
+                <div class="editor-section-nav">
+                    <button type="button" @onclick="OnPrevSectionRequested" disabled="@IsFirstSection(GetActiveSection())">Prev</button>
+                    <button type="button" @onclick="OnNextSectionRequested" disabled="@IsLastSection(GetActiveSection())">Next</button>
                 </div>
                 <div class="document-title-field">
                     <label for="documentTitleInput">Document title</label>
@@ -257,6 +261,8 @@
                                OutlineChanged="OnOutlineChanged"
                                SelectionChanged="OnSelectionChanged"
                                FocusModeRequested="OnFocusModeRequested"
+                               PrevSectionRequested="OnPrevSectionRequested"
+                               NextSectionRequested="OnNextSectionRequested"
                                UndoRequested="OnUndo"
                                RedoRequested="OnRedo"
                                ContextMenuRequested="OnEditorContextMenuRequested" />
@@ -584,7 +590,7 @@
 
 <style>
     .editor-shell {
-        --section-panel-width: 500px;
+        --section-panel-width: 260px;
         --context-panel-width: 340px;
         padding: 24px;
     }
@@ -1020,6 +1026,17 @@
         gap: 4px;
     }
 
+    .section-nav-actions .section-action {
+        opacity: 0;
+        pointer-events: none;
+    }
+
+    .section-nav-row:hover .section-action,
+    .section-nav-row.is-dragging .section-action {
+        opacity: 1;
+        pointer-events: auto;
+    }
+
     .editor-toolbar-group {
         display: flex;
         flex-wrap: wrap;
@@ -1063,6 +1080,12 @@
         border-radius: 4px;
         background: #f8f8f8;
         cursor: pointer;
+    }
+
+    .editor-section-nav {
+        display: flex;
+        gap: 8px;
+        align-items: center;
     }
 
     .section-nav-actions button:disabled,
@@ -2113,6 +2136,46 @@
         return ExecuteSafeAsync("OnMoveSectionDown", () => MoveSectionAsync(sectionId, 1));
     }
 
+    private Task OnPrevSectionRequested()
+    {
+        return ExecuteSafeAsync("OnPrevSectionRequested", () =>
+        {
+            if (_orderedSections.Count == 0)
+            {
+                return Task.CompletedTask;
+            }
+
+            int index = _orderedSections.FindIndex(section => section.SectionId == _activeSectionId);
+            if (index <= 0)
+            {
+                return Task.CompletedTask;
+            }
+
+            Guid targetId = _orderedSections[index - 1].SectionId;
+            return OnSectionSelected(targetId);
+        });
+    }
+
+    private Task OnNextSectionRequested()
+    {
+        return ExecuteSafeAsync("OnNextSectionRequested", () =>
+        {
+            if (_orderedSections.Count == 0)
+            {
+                return Task.CompletedTask;
+            }
+
+            int index = _orderedSections.FindIndex(section => section.SectionId == _activeSectionId);
+            if (index < 0 || index >= _orderedSections.Count - 1)
+            {
+                return Task.CompletedTask;
+            }
+
+            Guid targetId = _orderedSections[index + 1].SectionId;
+            return OnSectionSelected(targetId);
+        });
+    }
+
     private Task OnCreateSection(SectionKind kind)
     {
         return ExecuteSafeAsync("OnCreateSection", async () =>
@@ -2201,6 +2264,77 @@
                 _activeSectionId = ordered[nextIndex].SectionId;
             }
 
+            _commandProcessor.ClearHistory();
+            _state.NotifyChanged();
+            await InvokeCommandAsync("focusEditor");
+        });
+    }
+
+    private Task OnRenameSection(Guid sectionId)
+    {
+        return ExecuteSafeAsync("OnRenameSection", async () =>
+        {
+            Section section = FindSection(_state.Document, sectionId);
+            string currentTitle = string.IsNullOrWhiteSpace(section.Title) ? GetSectionTitle(section) : section.Title;
+            string? newTitle;
+
+            try
+            {
+                newTitle = await JSRuntime.InvokeAsync<string?>("prompt", "Rename section:", currentTitle);
+            }
+            catch (JSException ex)
+            {
+                Logger.LogWarning(ex, "Rename prompt failed.");
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(newTitle))
+            {
+                return;
+            }
+
+            _commandProcessor.Execute(new UpdateSectionTitleCommand(sectionId, newTitle.Trim()));
+        });
+    }
+
+    private Task OnDuplicateSection(Guid sectionId)
+    {
+        return ExecuteSafeAsync("OnDuplicateSection", async () =>
+        {
+            Chapter chapter = GetPrimaryChapter();
+            List<Section> ordered = _orderedSections.Count > 0
+                ? new List<Section>(_orderedSections)
+                : chapter.Sections.OrderBy(section => section.Order).ToList();
+
+            int index = ordered.FindIndex(section => section.SectionId == sectionId);
+            if (index < 0)
+            {
+                return;
+            }
+
+            Section source = ordered[index];
+            string sourceTitle = GetSectionTitle(source);
+            Section duplicated = new()
+            {
+                SectionId = Guid.NewGuid(),
+                Order = index + 1,
+                Title = string.IsNullOrWhiteSpace(source.Title) ? $"{sourceTitle} Copy" : $"{source.Title} Copy",
+                Kind = source.Kind,
+                IncludeInNumbering = source.IncludeInNumbering,
+                NumberingStyle = source.NumberingStyle,
+                Content = source.Content with { Value = source.Content.Value ?? string.Empty },
+                Stats = new SectionStats(),
+                Flags = new SectionFlags(),
+                AI = new SectionAIInfo(),
+                CreatedUtc = DateTime.UtcNow,
+                ModifiedUtc = DateTime.UtcNow
+            };
+
+            ordered.Insert(index + 1, duplicated);
+            chapter.Sections.Add(duplicated);
+            ApplySectionOrdering(ordered, chapter);
+
+            _activeSectionId = duplicated.SectionId;
             _commandProcessor.ClearHistory();
             _state.NotifyChanged();
             await InvokeCommandAsync("focusEditor");
@@ -2409,6 +2543,8 @@
     private bool IsFirstSection(Section section) => _orderedSections.Count == 0 || _orderedSections[0].SectionId == section.SectionId;
 
     private bool IsLastSection(Section section) => _orderedSections.Count == 0 || _orderedSections[^1].SectionId == section.SectionId;
+
+    private Section GetActiveSection() => FindSection(_state.Document, _activeSectionId);
 
     private string GetActiveSectionClass(Guid sectionId) => sectionId == _activeSectionId ? "is-active" : string.Empty;
 
