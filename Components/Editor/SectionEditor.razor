@@ -43,6 +43,12 @@
     [Parameter]
     public EventCallback FocusModeRequested { get; set; }
 
+    [Parameter]
+    public EventCallback PrevSectionRequested { get; set; }
+
+    [Parameter]
+    public EventCallback NextSectionRequested { get; set; }
+
     [Inject]
     private IJSRuntime JSRuntime { get; set; } = default!;
 
@@ -156,6 +162,24 @@
         if (FocusModeRequested.HasDelegate)
         {
             await FocusModeRequested.InvokeAsync();
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnPrevSectionShortcut()
+    {
+        if (PrevSectionRequested.HasDelegate)
+        {
+            await PrevSectionRequested.InvokeAsync();
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnNextSectionShortcut()
+    {
+        if (NextSectionRequested.HasDelegate)
+        {
+            await NextSectionRequested.InvokeAsync();
         }
     }
 
