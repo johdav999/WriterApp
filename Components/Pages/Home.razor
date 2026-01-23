@@ -49,6 +49,7 @@
 @inject IAiUsageStatusService AiUsageStatusService
 @inject IUserIdResolver UserIdResolver
 @inject IOptions<WriterAiOptions> AiOptionsAccessor
+@inject LayoutStateService LayoutStateService
 
 <PageTitle>Writer</PageTitle>
 
@@ -63,9 +64,9 @@
     </div>
 }
 
-<div class="editor-shell">
+<div class="editor-shell @GetLayoutStateClass()">
     <div class="editor-workspace @GetWorkspaceClass()">
-        <aside class="section-panel">
+        <aside class="section-panel @GetSectionsPanelClass()">
             <div class="section-panel-header">
                 <h2>Sections</h2>
                 <div class="section-panel-actions">
@@ -117,7 +118,7 @@
                            @oninput="OnDocumentTitleInput" />
                 </div>
                 <button type="button" class="panel-toggle" @onclick="ToggleContextPanel">
-                    @(_isContextPanelCollapsed ? "Show panel" : "Hide panel")
+                    @(IsContextPanelCollapsed() ? "Show panel" : "Hide panel")
                 </button>
             </div>
 
@@ -632,6 +633,10 @@
         overflow: auto;
     }
 
+    .section-panel.is-collapsed {
+        display: none;
+    }
+
     .section-panel-header {
         display: flex;
         justify-content: space-between;
@@ -903,8 +908,16 @@
         display: none;
     }
 
-    .editor-workspace.is-panel-collapsed {
+    .editor-workspace.is-context-collapsed {
         grid-template-columns: var(--section-panel-width) minmax(0, 1fr);
+    }
+
+    .editor-workspace.is-sections-collapsed {
+        grid-template-columns: minmax(0, 1fr) var(--context-panel-width);
+    }
+
+    .editor-workspace.is-panels-collapsed {
+        grid-template-columns: minmax(0, 1fr);
     }
 
 
@@ -1692,7 +1705,6 @@
     private Guid? _dropTargetSectionId;
     private DropPosition? _dropPosition;
     private bool _isContextMenuOpen;
-    private bool _isContextPanelCollapsed;
     private bool _isPreviewOpen;
     private double _contextMenuX;
     private double _contextMenuY;
@@ -1724,6 +1736,7 @@
     private Task? _aiUsageRefreshTask;
     private bool _canShowAiMenu;
     private bool? _lastAiMenuVisibility;
+    private bool _layoutStateInitialized;
     private readonly List<AiActionOption> _aiActions = new()
     {
         new AiActionOption("Rewrite (Neutral)", "Rewrite (Neutral)", AiActionScope.Selection, new Dictionary<string, object?>
@@ -1826,6 +1839,14 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        if (firstRender && !_layoutStateInitialized)
+        {
+            _layoutStateInitialized = true;
+            await LayoutStateService.InitializeAsync();
+            LayoutStateService.Changed += OnLayoutStateChanged;
+            await InvokeAsync(StateHasChanged);
+        }
+
         if (_pendingDocumentLoad)
         {
             _pendingDocumentLoad = false;
@@ -2412,14 +2433,72 @@
         return string.Empty;
     }
 
-    private void ToggleContextPanel()
+    private async Task ToggleContextPanel()
     {
-        _isContextPanelCollapsed = !_isContextPanelCollapsed;
+        LayoutState current = LayoutStateService.State;
+        await LayoutStateService.SetStateAsync(current with { ContextCollapsed = !current.ContextCollapsed });
     }
 
-    private string GetContextPanelClass() => _isContextPanelCollapsed ? "is-collapsed" : string.Empty;
+    private string GetContextPanelClass() => IsContextPanelCollapsed() ? "is-collapsed" : string.Empty;
 
-    private string GetWorkspaceClass() => _isContextPanelCollapsed ? "is-panel-collapsed" : string.Empty;
+    private string GetWorkspaceClass()
+    {
+        LayoutState state = LayoutStateService.State;
+        bool sectionsCollapsed = state.SectionsCollapsed || state.FocusMode;
+        bool contextCollapsed = state.ContextCollapsed || state.FocusMode;
+
+        List<string> classes = new();
+        if (sectionsCollapsed)
+        {
+            classes.Add("is-sections-collapsed");
+        }
+
+        if (contextCollapsed)
+        {
+            classes.Add("is-context-collapsed");
+        }
+
+        if (sectionsCollapsed && contextCollapsed)
+        {
+            classes.Add("is-panels-collapsed");
+        }
+
+        return string.Join(" ", classes);
+    }
+
+    private string GetSectionsPanelClass()
+    {
+        LayoutState state = LayoutStateService.State;
+        return state.SectionsCollapsed || state.FocusMode ? "is-collapsed" : string.Empty;
+    }
+
+    private bool IsContextPanelCollapsed()
+    {
+        LayoutState state = LayoutStateService.State;
+        return state.ContextCollapsed || state.FocusMode;
+    }
+
+    private string GetLayoutStateClass()
+    {
+        LayoutState state = LayoutStateService.State;
+        List<string> classes = new();
+        if (state.FocusMode)
+        {
+            classes.Add("is-focus-mode");
+        }
+
+        if (state.ManuscriptWidthMode == ManuscriptWidthMode.FullWidth)
+        {
+            classes.Add("is-full-width");
+        }
+
+        return string.Join(" ", classes);
+    }
+
+    private void OnLayoutStateChanged(LayoutState state)
+    {
+        _ = InvokeAsync(StateHasChanged);
+    }
 
     private void TogglePreview()
     {
@@ -4331,6 +4410,7 @@
     public void Dispose()
     {
         _state.OnChanged -= _onChangedHandler;
+        LayoutStateService.Changed -= OnLayoutStateChanged;
         _aiUsageRefreshCts?.Cancel();
         _aiUsageRefreshCts?.Dispose();
         _aiUsageRefreshCts = null;
@@ -4350,6 +4430,7 @@
         }
 
         _disposed = true;
+        LayoutStateService.Changed -= OnLayoutStateChanged;
         _aiUsageRefreshCts?.Cancel();
         _aiUsageRefreshCts?.Dispose();
         _aiUsageRefreshCts = null;

@@ -172,6 +172,7 @@ builder.Services.AddScoped<IAiOrchestrator, AiOrchestrator>();
 
 builder.Services.AddScoped<DocumentStorageService>();
 builder.Services.AddScoped<AppHeaderState>();
+builder.Services.AddScoped<LayoutStateService>();
 
 builder.Services.AddSingleton<IExportRenderer, MarkdownExportRenderer>();
 builder.Services.AddSingleton<IExportRenderer, HtmlExportRenderer>();
