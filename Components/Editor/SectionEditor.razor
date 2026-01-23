@@ -40,6 +40,9 @@
     [Parameter]
     public EventCallback<EditorSelectionRange> SelectionChanged { get; set; }
 
+    [Parameter]
+    public EventCallback FocusModeRequested { get; set; }
+
     [Inject]
     private IJSRuntime JSRuntime { get; set; } = default!;
 
@@ -144,6 +147,15 @@
         if (SelectionChanged.HasDelegate)
         {
             await SelectionChanged.InvokeAsync(new EditorSelectionRange(start, end));
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnFocusModeShortcut()
+    {
+        if (FocusModeRequested.HasDelegate)
+        {
+            await FocusModeRequested.InvokeAsync();
         }
     }
 

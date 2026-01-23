@@ -4,8 +4,9 @@
 @implements IDisposable
 @inject AppHeaderState HeaderState
 @inject NavigationManager Navigation
+@inject LayoutStateService LayoutStateService
 
-<div class="app-shell">
+<div class="app-shell @GetLayoutClass()">
     <header class="app-header">
         <div class="app-header-left">
             <a class="app-brand" href="">Writer</a>
@@ -46,16 +47,29 @@
     protected override void OnInitialized()
     {
         HeaderState.OnChange += HandleHeaderChange;
+        LayoutStateService.Changed += HandleLayoutStateChange;
     }
 
     public void Dispose()
     {
         HeaderState.OnChange -= HandleHeaderChange;
+        LayoutStateService.Changed -= HandleLayoutStateChange;
     }
 
     private void HandleHeaderChange()
     {
         InvokeAsync(StateHasChanged);
+    }
+
+    private void HandleLayoutStateChange(LayoutState state)
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private string GetLayoutClass()
+    {
+        LayoutState state = LayoutStateService.State;
+        return state.FocusMode || state.LeftNavCollapsed ? "is-focus-mode" : string.Empty;
     }
 
     private string GetEditorLink()
