@@ -3,6 +3,7 @@ import { Plugin, PluginKey } from "https://esm.sh/prosemirror-state@1.4.3?bundle
 import { Decoration, DecorationSet } from "https://esm.sh/prosemirror-view@1.33.6?bundle";
 import StarterKit from "https://esm.sh/@tiptap/starter-kit@2.1.13?bundle";
 import TextStyle from "https://esm.sh/@tiptap/extension-text-style@2.1.13?bundle";
+import TextAlign from "https://esm.sh/@tiptap/extension-text-align@2.1.13?bundle";
 import {
     toggleBold,
     toggleItalic,
@@ -42,6 +43,136 @@ const TextStyleWithFontSize = TextStyle.extend({
                     return { style: `font-family: ${attributes.fontFamily}` };
                 }
             }
+        };
+    }
+});
+
+const indentUnitEm = 2;
+// Left indent only; right indent omitted to keep stored HTML predictable.
+const indentMaxLevel = 8;
+
+function parseIndentLevel(element) {
+    if (!element) {
+        return 0;
+    }
+
+    const dataValue = element.getAttribute?.("data-indent-level");
+    if (dataValue) {
+        const parsed = Number.parseInt(dataValue, 10);
+        if (Number.isFinite(parsed)) {
+            return Math.max(0, Math.min(indentMaxLevel, parsed));
+        }
+    }
+
+    const styleValue = element.style?.marginLeft;
+    if (!styleValue) {
+        return 0;
+    }
+
+    const match = String(styleValue).match(/([\d.]+)/);
+    if (!match) {
+        return 0;
+    }
+
+    const parsed = Number.parseFloat(match[1]);
+    if (!Number.isFinite(parsed)) {
+        return 0;
+    }
+
+    const level = Math.round(parsed / indentUnitEm);
+    return Math.max(0, Math.min(indentMaxLevel, level));
+}
+
+function clampIndentLevel(level) {
+    if (!Number.isFinite(level)) {
+        return 0;
+    }
+
+    return Math.max(0, Math.min(indentMaxLevel, Math.round(level)));
+}
+
+const IndentExtension = Extension.create({
+    name: "indent",
+    addOptions() {
+        return {
+            types: ["paragraph", "heading"]
+        };
+    },
+    addGlobalAttributes() {
+        return [
+            {
+                types: this.options.types,
+                attributes: {
+                    indentLevel: {
+                        default: 0,
+                        parseHTML: element => parseIndentLevel(element),
+                        renderHTML: attributes => {
+                            const level = clampIndentLevel(attributes.indentLevel);
+                            if (!level) {
+                                return {};
+                            }
+
+                            return {
+                                "data-indent-level": String(level),
+                                style: `margin-left: ${level * indentUnitEm}em;`
+                            };
+                        }
+                    }
+                }
+            }
+        ];
+    },
+    addCommands() {
+        const updateIndent = (delta) => ({ state, tr, dispatch }) => {
+            const { from, to, empty, $from } = state.selection;
+            const types = new Set(this.options.types ?? []);
+            let modified = false;
+
+            const applyIndent = (node, pos) => {
+                if (!node || !node.isTextblock || !types.has(node.type.name)) {
+                    return;
+                }
+
+                const current = clampIndentLevel(node.attrs?.indentLevel ?? 0);
+                const next = clampIndentLevel(current + delta);
+                if (next === current) {
+                    return;
+                }
+
+                tr.setNodeMarkup(pos, undefined, { ...node.attrs, indentLevel: next });
+                modified = true;
+            };
+
+            if (empty && $from) {
+                const parent = $from.parent;
+                const pos = $from.before($from.depth);
+                applyIndent(parent, pos);
+            } else {
+                const seen = new Set();
+                state.doc.nodesBetween(from, to, (node, pos) => {
+                    if (!node.isTextblock || !types.has(node.type.name)) {
+                        return;
+                    }
+
+                    if (seen.has(pos)) {
+                        return;
+                    }
+
+                    seen.add(pos);
+                    applyIndent(node, pos);
+                });
+            }
+
+            if (modified && dispatch) {
+                dispatch(tr);
+            }
+
+            return modified;
+        };
+
+        return {
+            increaseIndent: () => updateIndent(1),
+            decreaseIndent: () => updateIndent(-1)
         };
     }
 });
@@ -202,6 +333,51 @@ function getUniformTextStyleAttr(editor, attrName) {
     return { mixed, value: currentValue };
 }
 
+function getUniformBlockAttr(editor, attrName, types) {
+    const { from, to, empty } = editor.state.selection;
+    const typeSet = new Set(types);
+
+    if (empty) {
+        for (let index = 0; index < types.length; index += 1) {
+            const type = types[index];
+            if (editor.isActive(type)) {
+                const attrs = editor.getAttributes(type) ?? {};
+                return { mixed: false, value: attrs[attrName] ?? null };
+            }
+        }
+
+        return { mixed: false, value: null };
+    }
+
+    let hasValue = false;
+    let currentValue = null;
+    let mixed = false;
+
+    editor.state.doc.nodesBetween(from, to, node => {
+        if (!node.isTextblock || !typeSet.has(node.type.name)) {
+            return;
+        }
+
+        const value = node.attrs ? node.attrs[attrName] ?? null : null;
+        if (!hasValue) {
+            currentValue = value;
+            hasValue = true;
+            return;
+        }
+
+        if (currentValue !== value) {
+            mixed = true;
+            return false;
+        }
+    });
+
+    if (!hasValue) {
+        currentValue = null;
+    }
+
+    return { mixed, value: currentValue };
+}
+
 function normalizeFontSize(value) {
     if (value === null || value === undefined) {
         return "";
@@ -289,6 +465,7 @@ function getBlockType(editor) {
 function buildFormattingState(editor) {
     const fontFamilyResult = getUniformTextStyleAttr(editor, "fontFamily");
     const fontSizeResult = getUniformTextStyleAttr(editor, "fontSize");
+    const textAlignResult = getUniformBlockAttr(editor, "textAlign", ["paragraph", "heading"]);
     const isInCodeBlock = selectionHasNodeType(editor, "codeBlock");
     const canBold = editor.can().chain().toggleBold().run();
     const canItalic = editor.can().chain().toggleItalic().run();
@@ -319,7 +496,8 @@ function buildFormattingState(editor) {
         canHorizontalRule,
         blockType: getBlockType(editor),
         fontFamily: fontFamilyResult.mixed ? null : (fontFamilyResult.value ?? ""),
-        fontSize: fontSizeResult.mixed ? null : normalizeFontSize(fontSizeResult.value)
+        fontSize: fontSizeResult.mixed ? null : normalizeFontSize(fontSizeResult.value),
+        textAlign: textAlignResult.mixed ? null : (textAlignResult.value ?? "left")
     };
 }
 
@@ -481,6 +659,8 @@ window.tiptapEditor = {
             extensions: [
                 StarterKit,
                 TextStyleWithFontSize,
+                TextAlign.configure({ types: ["heading", "paragraph"] }),
+                IndentExtension,
                 AiDecorationsExtension,
                 ShortcutExtension
             ],

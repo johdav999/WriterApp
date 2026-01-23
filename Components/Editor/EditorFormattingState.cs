@@ -18,5 +18,6 @@ namespace BlazorApp.Components.Editor
         public string? BlockType { get; set; }
         public string? FontFamily { get; set; }
         public string? FontSize { get; set; }
+        public string? TextAlign { get; set; }
     }
 }
