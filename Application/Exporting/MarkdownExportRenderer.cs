@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using WriterApp.Application.State;
 using WriterApp.Domain.Documents;
 
 namespace WriterApp.Application.Exporting
@@ -12,6 +13,7 @@ namespace WriterApp.Application.Exporting
         private static readonly Regex TagRegex = new("<[^>]+>", RegexOptions.Compiled);
         private static readonly Regex TagNameRegex = new(@"^</?\s*([a-z0-9]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
         private static readonly Regex WhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
+        private readonly SectionNumberingService _numberingService = new();
 
         public ExportFormat Format => ExportFormat.Markdown;
         public ExportKind Kind => ExportKind.Document;
@@ -20,6 +22,7 @@ namespace WriterApp.Application.Exporting
         {
             ExportOptions resolved = options ?? new ExportOptions();
             string title = ExportHelpers.GetDocumentTitle(document);
+            IReadOnlyDictionary<Guid, SectionNumberingInfo> numbering = _numberingService.BuildIndex(document);
             StringBuilder builder = new();
 
             if (resolved.IncludeTitlePage)
@@ -31,8 +34,12 @@ namespace WriterApp.Application.Exporting
             foreach (Section section in ExportHelpers.GetOrderedSections(document))
             {
                 string sectionTitle = ExportHelpers.GetSectionTitle(section);
+                SectionNumberingInfo? info = numbering.TryGetValue(section.SectionId, out SectionNumberingInfo entry)
+                    ? entry
+                    : null;
+                string heading = _numberingService.BuildHeading(section, sectionTitle, info);
                 // Section titles map to second-level headings.
-                builder.Append("## ").Append(sectionTitle).Append("\n\n");
+                builder.Append("## ").Append(heading).Append("\n\n");
 
                 string sectionMarkdown = ConvertSectionContentToMarkdown(section.Content, sectionTitle);
 
