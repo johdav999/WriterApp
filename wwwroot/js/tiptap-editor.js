@@ -634,8 +634,12 @@ window.tiptapEditor = {
                         adjustFontSize(this.editor, -1);
                         return true;
                     },
-                    "Mod-Shift-f": () => {
+                    "Mod-Alt-f": () => {
                         focusFontFamilySelect();
+                        return true;
+                    },
+                    "Mod-Shift-f": () => {
+                        safeInvoke(dotNetRef, interopState, "OnFocusModeShortcut");
                         return true;
                     },
                     "Mod-z": () => {
@@ -845,6 +849,16 @@ window.tiptapEditor = {
             editor.__interopState.enabled = false;
         }
         editor.destroy();
+    },
+
+    notifyLayoutChanged: function () {
+        if (typeof window === "undefined") {
+            return;
+        }
+
+        requestAnimationFrame(() => {
+            window.dispatchEvent(new Event("resize"));
+        });
     }
 };
 

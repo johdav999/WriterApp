@@ -73,6 +73,10 @@
     min-height: calc(100vh - 60px);
 }
 
+.app-shell.is-focus-mode .app-body {
+    grid-template-columns: minmax(0, 1fr);
+}
+
 .app-nav {
     display: flex;
     flex-direction: column;
@@ -80,6 +84,10 @@
     padding: 16px 12px;
     border-right: 1px solid #e2e2e2;
     background: #f3f2ee;
+}
+
+.app-shell.is-focus-mode .app-nav {
+    display: none;
 }
 
 .app-nav ::deep .app-nav-link {

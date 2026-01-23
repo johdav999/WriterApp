@@ -55,7 +55,7 @@
 
 @if (_hasRecoveryCandidate)
 {
-    <div class="recovery-banner">
+    <div class="recovery-banner @GetRecoveryBannerClass()">
         <span>We recovered unsaved changes from your last session.</span>
         <div class="recovery-actions">
             <button type="button" @onclick="OnAcceptRecovery">Use recovery</button>
@@ -120,6 +120,9 @@
                 <button type="button" class="panel-toggle" @onclick="ToggleContextPanel">
                     @(IsContextPanelCollapsed() ? "Show panel" : "Hide panel")
                 </button>
+                <button type="button" class="panel-toggle" @onclick="ToggleFocusMode">
+                    @(LayoutStateService.State.FocusMode ? "Exit focus" : "Focus mode")
+                </button>
             </div>
 
                 <button type="button" class="preview-toggle" @onclick="TogglePreview" aria-label="Toggle preview" aria-expanded="@_isPreviewOpen">
@@ -127,13 +130,13 @@
                 </button>
 
                 <div class="editor-toolbar" role="toolbar" aria-label="Editor formatting">
-                <div class="editor-toolbar-group" aria-label="Text emphasis">
+                <div class="editor-toolbar-group" aria-label="Text emphasis" data-compact="true">
                     <button type="button" class="@GetActiveClass(_formattingState.IsBold)" disabled="@(!_formattingState.CanBold)" @onclick="OnBoldRequested">Bold</button>
                     <button type="button" class="@GetActiveClass(_formattingState.IsItalic)" disabled="@(!_formattingState.CanItalic)" @onclick="OnItalicRequested">Italic</button>
                     <button type="button" class="@GetActiveClass(_formattingState.IsStrike)" disabled="@(!_formattingState.CanStrike)" @onclick="OnStrikeRequested">Strike</button>
                     <button type="button" class="@GetActiveClass(_formattingState.IsCode)" disabled="@(!_formattingState.CanCode)" @onclick="OnCodeRequested">Code</button>
                 </div>
-                <div class="editor-toolbar-group" aria-label="Structure">
+                <div class="editor-toolbar-group" aria-label="Structure" data-compact="true">
                     <button type="button" class="@GetActiveClass(_formattingState.BlockType == "paragraph")" disabled="@(!_formattingState.CanApplyHeading)" @onclick="OnParagraphRequested">Paragraph</button>
                     <button type="button" class="@GetActiveClass(_formattingState.BlockType == "heading:1")" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnHeadingRequested(1)">H1</button>
                     <button type="button" class="@GetActiveClass(_formattingState.BlockType == "heading:2")" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnHeadingRequested(2)">H2</button>
@@ -253,6 +256,7 @@
                                FormattingChanged="OnFormattingChanged"
                                OutlineChanged="OnOutlineChanged"
                                SelectionChanged="OnSelectionChanged"
+                               FocusModeRequested="OnFocusModeRequested"
                                UndoRequested="OnUndo"
                                RedoRequested="OnRedo"
                                ContextMenuRequested="OnEditorContextMenuRequested" />
@@ -617,6 +621,15 @@
         border-color: #d8d4ce;
     }
 
+    .recovery-banner.is-toast {
+        position: fixed;
+        right: 24px;
+        bottom: 24px;
+        z-index: 50;
+        max-width: 360px;
+        box-shadow: 0 12px 24px rgba(15, 23, 42, 0.18);
+    }
+
     .editor-workspace {
         display: grid;
         grid-template-columns: var(--section-panel-width) minmax(0, 1fr) var(--context-panel-width);
@@ -773,6 +786,14 @@
         border-radius: 10px;
         border: 1px solid #e2dfda;
         background: #f5f3ef;
+    }
+
+    .editor-shell.is-focus-mode .editor-toolbar-group {
+        display: none;
+    }
+
+    .editor-shell.is-focus-mode .editor-toolbar-group[data-compact="true"] {
+        display: flex;
     }
 
     .editor-actions {
@@ -2498,6 +2519,34 @@
     private void OnLayoutStateChanged(LayoutState state)
     {
         _ = InvokeAsync(StateHasChanged);
+    }
+
+    private string GetRecoveryBannerClass()
+    {
+        return LayoutStateService.State.FocusMode ? "is-toast" : string.Empty;
+    }
+
+    private async Task ToggleFocusMode()
+    {
+        LayoutState current = LayoutStateService.State;
+        await LayoutStateService.SetStateAsync(current with { FocusMode = !current.FocusMode });
+        await NotifyLayoutChangedAsync();
+    }
+
+    private async Task OnFocusModeRequested()
+    {
+        await ToggleFocusMode();
+    }
+
+    private async Task NotifyLayoutChangedAsync()
+    {
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("tiptapEditor.notifyLayoutChanged");
+        }
+        catch (JSException)
+        {
+        }
     }
 
     private void TogglePreview()
