@@ -78,6 +78,19 @@ export function toggleOrderedList(editor) {
     editor.chain().focus().toggleOrderedList().run();
 }
 
+export function setTextAlign(editor, alignment) {
+    if (!editor) {
+        return;
+    }
+
+    const value = typeof alignment === "string" ? alignment.toLowerCase() : "";
+    if (!value) {
+        return;
+    }
+
+    editor.chain().focus().setTextAlign(value).run();
+}
+
 export function setFontSize(editor, size) {
     if (!editor) {
         return;
@@ -89,6 +102,22 @@ export function setFontSize(editor, size) {
     }
 
     editor.chain().focus().setMark("textStyle", { fontSize: `${sizeValue}px` }).run();
+}
+
+export function increaseIndent(editor) {
+    if (!editor) {
+        return;
+    }
+
+    editor.chain().focus().increaseIndent().run();
+}
+
+export function decreaseIndent(editor) {
+    if (!editor) {
+        return;
+    }
+
+    editor.chain().focus().decreaseIndent().run();
 }
 
 export function setFontFamily(editor, fontFamily) {
