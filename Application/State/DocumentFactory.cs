@@ -56,6 +56,7 @@ namespace WriterApp.Application.State
                                 Stats = new SectionStats(),
                                 Flags = new SectionFlags(),
                                 AI = new SectionAIInfo(),
+                                Notes = string.Empty,
                                 CreatedUtc = now,
                                 ModifiedUtc = now
                             },
@@ -74,6 +75,7 @@ namespace WriterApp.Application.State
                                 Stats = new SectionStats(),
                                 Flags = new SectionFlags(),
                                 AI = new SectionAIInfo(),
+                                Notes = string.Empty,
                                 CreatedUtc = now,
                                 ModifiedUtc = now
                             },
@@ -92,6 +94,7 @@ namespace WriterApp.Application.State
                                 Stats = new SectionStats(),
                                 Flags = new SectionFlags(),
                                 AI = new SectionAIInfo(),
+                                Notes = string.Empty,
                                 CreatedUtc = now,
                                 ModifiedUtc = now
                             }
