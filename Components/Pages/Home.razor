@@ -110,13 +110,19 @@
                         <span>@GetActiveSectionTitle()</span>
                     </div>
                 </div>
-                <div class="editor-section-nav">
-                    <button type="button" @onclick="OnPrevSectionRequested" disabled="@IsFirstSection(GetActiveSection())">Prev</button>
-                    <button type="button" @onclick="OnNextSectionRequested" disabled="@IsLastSection(GetActiveSection())">Next</button>
-                </div>
-                <button type="button" class="panel-toggle" @onclick="ToggleContextPanel">
-                    @(IsContextPanelCollapsed() ? "Show panel" : "Hide panel")
+            <div class="editor-section-nav">
+                <button type="button" @onclick="OnPrevSectionRequested" disabled="@IsFirstSection(GetActiveSection())">Prev</button>
+                <button type="button" @onclick="OnNextSectionRequested" disabled="@IsLastSection(GetActiveSection())">Next</button>
+            </div>
+            @if (!LayoutStateService.State.FocusMode && GetAllAiHistoryCount() > 0)
+            {
+                <button type="button" class="ai-history-indicator" @onclick="OnAiHistoryIndicatorClicked">
+                    AI changes: @GetAllAiHistoryCount()
                 </button>
+            }
+            <button type="button" class="panel-toggle" @onclick="ToggleContextPanel">
+                @(IsContextPanelCollapsed() ? "Show panel" : "Hide panel")
+            </button>
                 <button type="button" class="panel-toggle" @onclick="ToggleFocusMode">
                     @(LayoutStateService.State.FocusMode ? "Exit focus" : "Focus mode")
                 </button>
@@ -265,16 +271,6 @@
                 <span>@_readingTime</span>
                 <span class="@GetSaveStatusClass()">@GetSaveStatusLabel()</span>
                 <span>@GetLastSavedLabel()</span>
-                @if (_aiUsageStatus is not null)
-                {
-                    long usedTokens = Math.Max(0, _aiUsageStatus.QuotaTotal - _aiUsageStatus.QuotaRemaining);
-                    <span>Plan: @_aiUsageStatus.Plan</span>
-                    <span>AI usage: @usedTokens / @_aiUsageStatus.QuotaTotal tokens this month</span>
-                    @if (!IsAiAvailable)
-                    {
-                        <span>AI is currently unavailable for this account.</span>
-                    }
-                }
             </div>
             </section>
 
@@ -299,228 +295,190 @@
             </aside>
         </div>
 
-        <aside class="context-panel @GetContextPanelClass()">
-            <div class="context-panel-header">
-                <h2>Context</h2>
-            </div>
-            <div class="context-panel-body">
-            <details class="section-settings-panel" open>
-                <summary>Section settings</summary>
-                @{
-                    Section activeSection = FindSection(_state.Document, _activeSectionId);
-                }
-                <div class="section-settings-grid">
-                    <label for="sectionKindSelect">Kind</label>
-                    <select id="sectionKindSelect" value="@activeSection.Kind" @onchange="OnSectionKindChanged">
-                        <option value="@SectionKind.Chapter">Chapter</option>
-                        <option value="@SectionKind.Section">Section</option>
-                    </select>
-                    <label for="sectionNumberingSelect">Numbering</label>
-                    <select id="sectionNumberingSelect"
-                            value="@activeSection.NumberingStyle"
-                            disabled="@(activeSection.Kind != SectionKind.Chapter)"
-                            @onchange="OnSectionNumberingStyleChanged">
-                        <option value="@SectionNumberingStyle.Decimal">Decimal</option>
-                        <option value="@SectionNumberingStyle.Roman">Roman</option>
-                        <option value="@SectionNumberingStyle.None">None</option>
-                    </select>
-                    <label class="section-settings-checkbox">
-                        <input type="checkbox"
-                               checked="@activeSection.IncludeInNumbering"
-                               disabled="@(activeSection.Kind != SectionKind.Chapter)"
-                               @onchange="OnSectionIncludeChanged" />
-                        Include in numbering
-                    </label>
+        <aside class="context-drawer @GetContextPanelClass()">
+            <div class="context-drawer-header">
+                <div class="context-drawer-tabs" role="tablist" aria-label="Context drawer">
+                    <button type="button"
+                            class="context-tab @GetContextTabClass(ContextTab.Notes)"
+                            role="tab"
+                            aria-selected="@(_activeContextTab == ContextTab.Notes)"
+                            @onclick="() => SetContextTab(ContextTab.Notes)">
+                        Notes
+                    </button>
+                    <button type="button"
+                            class="context-tab @GetContextTabClass(ContextTab.Outline)"
+                            role="tab"
+                            aria-selected="@(_activeContextTab == ContextTab.Outline)"
+                            @onclick="() => SetContextTab(ContextTab.Outline)">
+                        Outline
+                    </button>
+                    <button type="button"
+                            class="context-tab @GetContextTabClass(ContextTab.Ai)"
+                            role="tab"
+                            aria-selected="@(_activeContextTab == ContextTab.Ai)"
+                            @onclick="() => SetContextTab(ContextTab.Ai)">
+                        AI
+                    </button>
                 </div>
-            </details>
-            <div class="outline-panel">
-                <h3>Outline</h3>
-                @if (_outlineItems.Count == 0)
+            </div>
+            <div class="context-drawer-body">
+                @if (_activeContextTab == ContextTab.Notes)
                 {
-                    <div class="outline-empty">No headings</div>
+                    <div class="drawer-panel">
+                        <div class="drawer-panel-title">Notes for @GetActiveSectionTitle()</div>
+                        <textarea class="notes-input"
+                                  value="@_sectionNotesDraft"
+                                  @oninput="OnSectionNotesInput"
+                                  placeholder="Add notes for this section..."
+                                  aria-label="Section notes"></textarea>
+                    </div>
                 }
-                else
+                else if (_activeContextTab == ContextTab.Outline)
                 {
-                    <ul class="outline-list">
-                        @foreach (OutlineItem item in _outlineItems)
+                    <div class="drawer-panel">
+                        <div class="drawer-panel-title">Document outline</div>
+                        @if (_orderedSections.Count == 0)
                         {
-                            <li>
-                                <button type="button" class="outline-item level-@item.Level" @onclick="() => OnOutlineSelected(item)">
-                                    @item.Text
-                                </button>
-                            </li>
+                            <div class="drawer-empty">No sections yet.</div>
                         }
-                    </ul>
-                }
-            </div>
-            <details class="ai-usage-panel" open>
-                <summary>AI Usage</summary>
-                @if (_aiUsageStatus is null)
-                {
-                    <div class="ai-usage-empty">Usage details unavailable.</div>
-                }
-                else if (!_aiUsageStatus.UiEnabled)
-                {
-                    <div class="ai-usage-empty">AI is disabled.</div>
-                }
-                else
-                {
-                    long usedTokens = Math.Max(0, _aiUsageStatus.QuotaTotal - _aiUsageStatus.QuotaRemaining);
-                    string quotaLabel = _aiUsageStatus.QuotaTotal.ToString(CultureInfo.InvariantCulture);
-                    <div class="ai-usage-grid">
-                        <div class="ai-usage-row">
-                            <span>Plan</span>
-                            <strong>@_aiUsageStatus.Plan</strong>
-                        </div>
-                        <div class="ai-usage-row">
-                            <span>Remaining</span>
-                            <strong>@_aiUsageStatus.QuotaRemaining.ToString(CultureInfo.InvariantCulture)</strong>
-                        </div>
-                        <div class="ai-usage-row">
-                            <span>Quota</span>
-                            <strong>@quotaLabel</strong>
-                        </div>
-                    </div>
-                    <div class="ai-usage-progress">
-                        <div class="ai-usage-progress-bar" style="width: @GetAiUsagePercent().ToString("0.##", CultureInfo.InvariantCulture)%;"></div>
-                    </div>
-                    <div class="ai-usage-footnote">
-                        Used @usedTokens.ToString(CultureInfo.InvariantCulture) tokens this period.
-                    </div>
-                }
-            </details>
-            @if (ShouldShowUpgradePrompt)
-            {
-                <div class="ai-upgrade-banner">
-                    <div class="ai-upgrade-text">Upgrade to Standard or Professional to continue using AI features.</div>
-                    <button type="button" @onclick="OnViewPlansAsync">View plans</button>
-                </div>
-            }
-            @if (_showPlansPanel)
-            {
-                <div class="ai-plans-panel">
-                    <div class="ai-plans-header">
-                        <strong>Plans</strong>
-                        <button type="button" class="ai-plans-close" @onclick="ClosePlansPanel">Close</button>
-                    </div>
-                    @if (_isPlansLoading)
-                    {
-                        <div class="ai-usage-empty">Loading plans...</div>
-                    }
-                    else if (!string.IsNullOrWhiteSpace(_plansError))
-                    {
-                        <div class="ai-usage-empty">@_plansError</div>
-                    }
-                    else
-                    {
-                        <div class="ai-plans-list">
-                            @foreach (Plan plan in _planCatalog)
-                            {
-                                <div class="ai-plan-card">
-                                    <div class="ai-plan-title">@plan.Name</div>
-                                    <div class="ai-plan-meta">Key: @plan.Key</div>
-                                    <div class="ai-plan-entitlements">
-                                        <div><strong>AI Enabled:</strong> @GetEntitlementValue(plan, "ai.enabled")</div>
-                                        <div><strong>Monthly Tokens:</strong> @GetEntitlementValue(plan, "ai.monthly_tokens")</div>
-                                        <div><strong>Daily Cap:</strong> @GetEntitlementValue(plan, "ai.daily_tokens_cap")</div>
-                                        <div><strong>Cover Images:</strong> @GetEntitlementValue(plan, "ai.images.cover")</div>
-                                        <div><strong>PDF Export:</strong> @GetEntitlementValue(plan, "export.pdf")</div>
-                                    </div>
-                                </div>
-                            }
-                        </div>
-                    }
-                </div>
-            }
-            @{
-                IReadOnlyList<AIHistoryEntry> aiHistoryEntries = GetActiveSectionAiHistory();
-            }
-            @if (aiHistoryEntries.Count > 0)
-            {
-                <details class="ai-history-panel">
-                    <summary>
-                        <span>AI Changes</span>
-                        <span class="ai-history-count">@aiHistoryEntries.Count</span>
-                    </summary>
-                    <div class="ai-history-helper">AI changes are separate from undo/redo.</div>
-                    <ul class="ai-history-list">
-                        @foreach (AIHistoryEntry entry in aiHistoryEntries)
+                        else
                         {
-                            bool isActive = IsAiHistoryEntryActive(entry);
-                            bool showDetails = _aiHistoryDetailsId == entry.EditGroupId;
-                            <li class="ai-history-item">
-                                <div class="ai-history-meta">
-                                    <span class="ai-history-badge">AI</span>
-                                    <span class="ai-history-summary">@entry.OperationSummary</span>
-                                </div>
-                                <div class="ai-history-sub">
-                                    <span>@FormatRelativeTime(entry.TimestampUtc)</span>
-                                    <span class="ai-history-provider">@entry.ProviderId</span>
-                                    @if (!isActive)
-                                    {
-                                        <span class="ai-history-rolled">Rolled back</span>
-                                    }
-                                </div>
-                                <div class="ai-history-actions">
-                                    <button type="button"
-                                            disabled="@(!isActive || _isAiHistoryRollback)"
-                                            @onclick="() => OnRollbackAiHistoryEntry(entry)">
-                                        Undo this AI change
-                                    </button>
-                                    <button type="button" @onclick="() => OnToggleAiHistoryDetails(entry)">
-                                        @(showDetails ? "Hide details" : "View details")
-                                    </button>
-                                </div>
-                                @if (showDetails)
+                            <ul class="context-outline-list">
+                                @foreach (Section section in _orderedSections)
                                 {
-                                    <div class="ai-history-details">
-                                        <div class="ai-history-details-header">
-                                            <div class="ai-history-details-summary">@entry.OperationSummary</div>
-                                            <div class="ai-history-details-sub">
-                                                <span>@FormatRelativeTime(entry.TimestampUtc)</span>
-                                                <span class="ai-history-provider">@entry.ProviderId</span>
-                                            </div>
+                                    <li>
+                                        <button type="button"
+                                                class="context-outline-item @GetActiveSectionClass(section.SectionId)"
+                                                @onclick="() => OnSectionSelected(section.SectionId)">
+                                            <span class="context-outline-number">@GetSectionOrderLabel(section)</span>
+                                            <span class="context-outline-title">@GetSectionTitle(section)</span>
+                                        </button>
+                                    </li>
+                                }
+                            </ul>
+                        }
+                    </div>
+                }
+                else if (_activeContextTab == ContextTab.Ai)
+                {
+                    <div class="drawer-panel">
+                        <div class="drawer-panel-title">AI actions</div>
+                        @if (!CanShowAiMenu)
+                        {
+                            <div class="drawer-empty">AI is disabled for this account.</div>
+                        }
+                        else if (_currentSelectionRange is null)
+                        {
+                            <div class="drawer-empty">Select text in the editor to enable AI actions.</div>
+                        }
+                        else if (!AiOrchestrator.CanRunAction(RewriteSelectionAction.ActionIdValue) || _aiActions.Count == 0)
+                        {
+                            <div class="drawer-empty">No actions available for this selection.</div>
+                        }
+                        else
+                        {
+                            <div class="ai-actions-list">
+                                @foreach (AiActionOption action in _aiActions)
+                                {
+                                    <button type="button" disabled="@IsAiQuotaExceeded" @onclick="() => OnAiActionSelected(action)">
+                                        @action.Label
+                                    </button>
+                                }
+                            </div>
+                            @if (IsAiQuotaExceeded)
+                            {
+                                <div class="drawer-empty">AI quota reached.</div>
+                            }
+                        }
+                    </div>
+                    <div class="drawer-panel">
+                        <div class="drawer-panel-title">
+                            AI change history
+                            <span class="ai-history-count-pill">@GetAllAiHistoryCount()</span>
+                        </div>
+                        @{
+                            IReadOnlyList<AIHistoryEntry> aiHistoryEntries = GetAllAiHistory();
+                        }
+                        @if (aiHistoryEntries.Count == 0)
+                        {
+                            <div class="drawer-empty">No AI changes yet.</div>
+                        }
+                        else
+                        {
+                            <ul class="ai-history-list">
+                                @foreach (AIHistoryEntry entry in aiHistoryEntries)
+                                {
+                                    bool isActive = IsAiHistoryEntryActive(entry);
+                                    bool showDetails = _aiHistoryDetailsId == entry.EditGroupId;
+                                    <li class="ai-history-item">
+                                        <div class="ai-history-meta">
+                                            <span class="ai-history-badge">AI</span>
+                                            <span class="ai-history-summary">@entry.OperationSummary</span>
                                         </div>
-                                        <div class="ai-history-details-meta">
-                                            <span>Scope: @entry.TargetScope</span>
-                                            <span>Section: @GetAiHistorySectionTitle(entry)</span>
-                                            @if (TryGetCharacterDelta(entry, out int delta))
+                                        <div class="ai-history-sub">
+                                            <span>@FormatRelativeTime(entry.TimestampUtc)</span>
+                                            <span class="ai-history-provider">@entry.ActionId</span>
+                                            <span>@GetAiHistorySectionTitle(entry)</span>
+                                            @if (!isActive)
                                             {
-                                                <span>Char delta: @FormatDelta(delta)</span>
+                                                <span class="ai-history-rolled">Reverted</span>
                                             }
                                         </div>
-                                        @if (!string.IsNullOrWhiteSpace(entry.Instruction))
+                                        <div class="ai-history-actions">
+                                            <button type="button"
+                                                    disabled="@(!isActive || _isAiHistoryRollback)"
+                                                    @onclick="() => OnRollbackAiHistoryEntry(entry)">
+                                                Revert
+                                            </button>
+                                            <button type="button" @onclick="() => OnToggleAiHistoryDetails(entry)">
+                                                @(showDetails ? "Hide details" : "Details")
+                                            </button>
+                                        </div>
+                                        @if (showDetails)
                                         {
-                                            <div class="ai-history-details-intent">
-                                                <div class="ai-history-details-label">Intent</div>
-                                                <div class="ai-history-details-text">@entry.Instruction</div>
+                                            <div class="ai-history-details">
+                                                <div class="ai-history-details-header">
+                                                    <div class="ai-history-details-summary">@entry.OperationSummary</div>
+                                                    <div class="ai-history-details-sub">
+                                                        <span>@FormatRelativeTime(entry.TimestampUtc)</span>
+                                                        <span class="ai-history-provider">@entry.ProviderId</span>
+                                                    </div>
+                                                </div>
+                                                <div class="ai-history-details-meta">
+                                                    <span>Scope: @entry.TargetScope</span>
+                                                    <span>Section: @GetAiHistorySectionTitle(entry)</span>
+                                                    @if (TryGetCharacterDelta(entry, out int delta))
+                                                    {
+                                                        <span>Char delta: @FormatDelta(delta)</span>
+                                                    }
+                                                </div>
+                                                @if (!string.IsNullOrWhiteSpace(entry.Instruction))
+                                                {
+                                                    <div class="ai-history-details-intent">
+                                                        <div class="ai-history-details-label">Intent</div>
+                                                        <div class="ai-history-details-text">@entry.Instruction</div>
+                                                    </div>
+                                                }
+                                                <div class="ai-history-details-compare">
+                                                    <div class="ai-history-details-block">
+                                                        <div class="ai-history-details-label">Before</div>
+                                                        <pre>@FormatHistoryText(entry.BeforeText)</pre>
+                                                    </div>
+                                                    <div class="ai-history-details-block">
+                                                        <div class="ai-history-details-label">After</div>
+                                                        <pre>@FormatHistoryText(entry.AfterText)</pre>
+                                                    </div>
+                                                </div>
                                             </div>
                                         }
-                                        <div class="ai-history-details-compare">
-                                            <div class="ai-history-details-block">
-                                                <div class="ai-history-details-label">Before</div>
-                                                <pre>@FormatHistoryText(entry.BeforeText)</pre>
-                                            </div>
-                                            <div class="ai-history-details-block">
-                                                <div class="ai-history-details-label">After</div>
-                                                <pre>@FormatHistoryText(entry.AfterText)</pre>
-                                            </div>
-                                        </div>
-                                    </div>
+                                    </li>
                                 }
-                            </li>
+                            </ul>
                         }
-                    </ul>
-                </details>
-            }
-            @if (GetCoverImageDataUrl(_activeSectionId) is string coverUrl)
-            {
-                <div class="cover-image-preview">
-                    <img src="@coverUrl" alt="Cover image" />
-                </div>
-            }
-        </div>
-    </aside>
+                    </div>
+                }
+            </div>
+        </aside>
     </div>
 </div>
 
@@ -823,21 +781,6 @@
         background: #faf7f2;
     }
 
-    .ai-usage-summary {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 16px;
-        margin-top: 8px;
-        font-size: 0.9rem;
-        color: #546170;
-    }
-
-    .ai-usage-note {
-        margin-top: 4px;
-        font-size: 0.85rem;
-        color: #7a4d4d;
-    }
-
     .preview-panel {
         border-left: 1px solid #e2dfda;
         background: #ffffff;
@@ -874,7 +817,7 @@
         overflow: auto;
     }
 
-    .context-panel {
+    .context-drawer {
         border: 1px solid #e3e1dd;
         border-radius: 12px;
         background: #fbfaf8;
@@ -884,50 +827,289 @@
         overflow: hidden;
     }
 
-    .context-panel-header {
-        padding: 10px 12px;
+    .context-drawer-header {
+        padding: 8px 10px;
         border-bottom: 1px solid #e5e2dd;
     }
 
-    .context-panel-header h2 {
-        margin: 0;
-        font-size: 1rem;
-    }
-
-    .context-panel-body {
-        padding: 12px;
+    .context-drawer-tabs {
         display: grid;
-        gap: 16px;
-        overflow: auto;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 6px;
     }
 
-    .section-settings-panel summary {
+    .context-tab {
+        border: 1px solid transparent;
+        border-radius: 999px;
+        background: #f1eeea;
+        color: #4b5563;
+        padding: 6px 10px;
+        font-size: 0.85rem;
         cursor: pointer;
+    }
+
+    .context-tab.is-active {
+        border-color: #9bb6f0;
+        background: #e6eefc;
+        color: #1f2a44;
         font-weight: 600;
     }
 
-    .section-settings-grid {
+    .context-drawer-body {
+        padding: 12px;
         display: grid;
-        gap: 8px;
-        margin-top: 8px;
+        gap: 12px;
+        overflow: auto;
+    }
+
+    .drawer-panel {
+        display: grid;
+        gap: 10px;
+    }
+
+    .drawer-panel-title {
+        font-size: 0.85rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #6b6b6b;
+    }
+
+    .notes-input {
+        min-height: 180px;
+        resize: vertical;
+        border: 1px solid #d8d4ce;
+        border-radius: 10px;
+        padding: 10px;
+        font-size: 0.95rem;
+        background: #fff;
+        color: #1f2937;
+    }
+
+    .context-outline-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 6px;
+    }
+
+    .context-outline-item {
+        width: 100%;
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 10px;
+        align-items: center;
+        padding: 8px 10px;
+        border: 1px solid transparent;
+        border-radius: 8px;
+        background: #fff;
+        text-align: left;
+        cursor: pointer;
+    }
+
+    .context-outline-item.is-active {
+        border-color: #9bb6f0;
+        background: #e6eefc;
+    }
+
+    .context-outline-number {
+        font-size: 0.8rem;
+        color: #6b6b6b;
+        min-width: 64px;
+    }
+
+    .context-outline-title {
+        font-size: 0.95rem;
+        color: #1f2a44;
+    }
+
+    .drawer-empty {
         font-size: 0.9rem;
+        color: #6b6b6b;
     }
 
-    .section-settings-grid select {
-        padding: 6px 8px;
+    .ai-actions-list {
+        display: grid;
+        gap: 6px;
+    }
+
+    .ai-actions-list button {
+        padding: 6px 10px;
         border: 1px solid #d0d0d0;
-        border-radius: 4px;
+        border-radius: 6px;
         background: #ffffff;
+        cursor: pointer;
+        text-align: left;
     }
 
-    .section-settings-checkbox {
+    .ai-actions-list button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .ai-history-count-pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 20px;
+        height: 20px;
+        padding: 0 6px;
+        border-radius: 999px;
+        background: #e2e8f0;
+        color: #374151;
+        font-size: 0.75rem;
+        margin-left: 6px;
+    }
+
+    .ai-history-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+
+    .ai-history-item {
+        padding: 0.7rem 0.8rem;
+        border-radius: 10px;
+        background: #ffffff;
+        border: 1px solid #edf0f5;
+    }
+
+    .ai-history-meta {
         display: flex;
         align-items: center;
-        gap: 8px;
-        font-size: 0.85rem;
+        gap: 0.5rem;
+        font-weight: 600;
     }
 
-    .context-panel.is-collapsed {
+    .ai-history-badge {
+        font-size: 0.7rem;
+        padding: 0.15rem 0.45rem;
+        border-radius: 999px;
+        background: #1f2937;
+        color: #ffffff;
+        letter-spacing: 0.04em;
+    }
+
+    .ai-history-summary {
+        font-size: 0.95rem;
+        color: #111827;
+    }
+
+    .ai-history-sub {
+        margin-top: 0.35rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        font-size: 0.8rem;
+        color: #6b7280;
+    }
+
+    .ai-history-provider {
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        font-weight: 600;
+    }
+
+    .ai-history-rolled {
+        color: #a33a3a;
+        font-weight: 600;
+    }
+
+    .ai-history-actions {
+        margin-top: 0.6rem;
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+    }
+
+    .ai-history-actions button {
+        padding: 6px 10px;
+        border-radius: 6px;
+        border: 1px solid #d0d0d0;
+        background: #ffffff;
+        cursor: pointer;
+    }
+
+    .ai-history-actions button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .ai-history-details {
+        margin-top: 0.75rem;
+        padding-top: 0.75rem;
+        border-top: 1px solid #edf0f5;
+        display: flex;
+        flex-direction: column;
+        gap: 0.6rem;
+    }
+
+    .ai-history-details-header {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+
+    .ai-history-details-summary {
+        font-weight: 600;
+        color: #111827;
+    }
+
+    .ai-history-details-sub {
+        display: flex;
+        gap: 0.5rem;
+        font-size: 0.8rem;
+        color: #6b7280;
+    }
+
+    .ai-history-details-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.6rem;
+        font-size: 0.8rem;
+        color: #4b5563;
+    }
+
+    .ai-history-details-compare {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 0.6rem;
+    }
+
+    .ai-history-details-block {
+        padding: 0.5rem;
+        border-radius: 8px;
+        background: #f9fafb;
+        border: 1px solid #eef2f7;
+    }
+
+    .ai-history-details-label {
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #6b7280;
+        margin-bottom: 0.35rem;
+    }
+
+    .ai-history-details-block pre {
+        margin: 0;
+        white-space: pre-wrap;
+        font-family: "Georgia", serif;
+        font-size: 0.85rem;
+        color: #111827;
+    }
+
+    .ai-history-details-intent {
+        padding: 0.5rem;
+        border-radius: 8px;
+        background: #fff7ed;
+        border: 1px solid #fde3c5;
+    }
+
+    .context-drawer.is-collapsed {
         display: none;
     }
 
@@ -1082,6 +1264,16 @@
         display: flex;
         gap: 8px;
         align-items: center;
+    }
+
+    .ai-history-indicator {
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid #e2e8f0;
+        background: #f8fafc;
+        color: #1f2a44;
+        font-size: 0.8rem;
+        cursor: pointer;
     }
 
     .section-nav-actions button:disabled,
@@ -1309,23 +1501,6 @@
         box-shadow: 0 6px 18px rgba(0, 0, 0, 0.05);
     }
 
-    .cover-image-preview {
-        width: 100%;
-        margin: 0 0 16px;
-        padding: 12px;
-        background: #fff;
-        border: 1px solid #e2e2e2;
-        border-radius: 8px;
-        box-shadow: 0 6px 16px rgba(0, 0, 0, 0.05);
-    }
-
-    .cover-image-preview img {
-        width: 100%;
-        height: auto;
-        display: block;
-        border-radius: 6px;
-    }
-
     .document-section {
         margin-bottom: 28px;
         padding-bottom: 8px;
@@ -1338,343 +1513,10 @@
         padding-bottom: 0;
     }
 
-    .outline-panel {
-        margin-bottom: 16px;
-        padding: 12px;
-        border: 1px solid #ececec;
-        border-radius: 6px;
-        background: #fafafa;
-    }
-
-    .outline-panel h3 {
-        margin: 0 0 8px 0;
-        font-size: 1rem;
-    }
-
-    .outline-list {
-        list-style: none;
-        margin: 0;
-        padding: 0;
-    }
-
-    .outline-item {
-        display: block;
-        width: 100%;
-        text-align: left;
-        padding: 4px 6px;
-        border: 1px solid transparent;
-        border-radius: 4px;
-        background: transparent;
-        cursor: pointer;
-    }
-
-    .outline-item:hover {
-        background: #f0f3f8;
-        border-color: #d7dbe2;
-    }
-
-    .outline-item.level-1 { padding-left: 4px; }
-    .outline-item.level-2 { padding-left: 16px; }
-    .outline-item.level-3 { padding-left: 28px; }
-    .outline-item.level-4 { padding-left: 40px; }
-    .outline-item.level-5 { padding-left: 52px; }
-    .outline-item.level-6 { padding-left: 64px; }
-
-    .outline-empty {
-        font-size: 0.9rem;
-        color: #7a7a7a;
-    }
-
-    .ai-usage-panel {
-        margin-bottom: 16px;
-        padding: 12px;
-        border: 1px solid #ececec;
-        border-radius: 6px;
-        background: #fbfbfb;
-    }
-
-    .ai-usage-panel summary {
-        cursor: pointer;
-        font-weight: 600;
-        margin-bottom: 10px;
-    }
-
-    .ai-usage-grid {
-        display: grid;
-        gap: 6px;
-    }
-
-    .ai-usage-row {
-        display: flex;
-        justify-content: space-between;
-        gap: 8px;
-        font-size: 0.9rem;
-    }
-
-    .ai-usage-empty {
-        font-size: 0.9rem;
-        color: #6b7280;
-    }
-
-    .ai-usage-progress {
-        margin-top: 10px;
-        height: 8px;
-        border-radius: 999px;
-        background: #e5e7eb;
-        overflow: hidden;
-    }
-
-    .ai-usage-progress-bar {
-        height: 100%;
-        background: #2563eb;
-    }
-
-    .ai-usage-footnote {
-        margin-top: 6px;
-        font-size: 0.8rem;
-        color: #6b7280;
-    }
-
     .ai-quota-message {
         margin-left: 12px;
         font-size: 0.85rem;
         color: #b45309;
-    }
-
-    .ai-upgrade-banner {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        padding: 10px 12px;
-        margin-bottom: 16px;
-        border: 1px solid #f1d1a5;
-        border-radius: 8px;
-        background: #fff7e6;
-        font-size: 0.9rem;
-        color: #7a5a24;
-    }
-
-    .ai-upgrade-banner button {
-        padding: 6px 10px;
-        border-radius: 6px;
-        border: 1px solid #d6c79c;
-        background: #f9e8c5;
-        cursor: pointer;
-    }
-
-    .ai-plans-panel {
-        margin-bottom: 16px;
-        padding: 12px;
-        border: 1px solid #ececec;
-        border-radius: 8px;
-        background: #ffffff;
-    }
-
-    .ai-plans-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 10px;
-    }
-
-    .ai-plans-close {
-        border: none;
-        background: transparent;
-        color: #6b7280;
-        cursor: pointer;
-    }
-
-    .ai-plans-list {
-        display: grid;
-        gap: 10px;
-    }
-
-    .ai-plan-card {
-        border: 1px solid #edf0f5;
-        border-radius: 8px;
-        padding: 10px;
-        background: #f9fafb;
-    }
-
-    .ai-plan-title {
-        font-weight: 600;
-        margin-bottom: 4px;
-    }
-
-    .ai-plan-meta {
-        font-size: 0.8rem;
-        color: #6b7280;
-        margin-bottom: 6px;
-    }
-
-    .ai-plan-entitlements {
-        display: grid;
-        gap: 4px;
-        font-size: 0.85rem;
-        color: #374151;
-    }
-
-    .ai-history-panel {
-        margin: 1.5rem 0;
-        padding: 0.75rem 0.9rem;
-        border-radius: 12px;
-        border: 1px solid #e2e6ee;
-        background: #f8f9fb;
-    }
-
-    .ai-history-panel summary {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        font-weight: 600;
-        cursor: pointer;
-    }
-
-    .ai-history-count {
-        font-size: 0.8rem;
-        color: #5f6b7a;
-    }
-
-    .ai-history-helper {
-        margin: 0.5rem 0 0.75rem;
-        font-size: 0.85rem;
-        color: #6b7280;
-    }
-
-    .ai-history-list {
-        list-style: none;
-        padding: 0;
-        margin: 0;
-        display: flex;
-        flex-direction: column;
-        gap: 0.75rem;
-    }
-
-    .ai-history-item {
-        padding: 0.7rem 0.8rem;
-        border-radius: 10px;
-        background: #ffffff;
-        border: 1px solid #edf0f5;
-    }
-
-    .ai-history-meta {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        font-weight: 600;
-    }
-
-    .ai-history-badge {
-        font-size: 0.7rem;
-        padding: 0.15rem 0.45rem;
-        border-radius: 999px;
-        background: #1f2937;
-        color: #ffffff;
-        letter-spacing: 0.04em;
-    }
-
-    .ai-history-summary {
-        font-size: 0.95rem;
-        color: #111827;
-    }
-
-    .ai-history-sub {
-        margin-top: 0.35rem;
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.5rem;
-        font-size: 0.8rem;
-        color: #6b7280;
-    }
-
-    .ai-history-provider {
-        text-transform: uppercase;
-        letter-spacing: 0.06em;
-        font-weight: 600;
-    }
-
-    .ai-history-rolled {
-        color: #a33a3a;
-        font-weight: 600;
-    }
-
-    .ai-history-actions {
-        margin-top: 0.6rem;
-        display: flex;
-        gap: 0.5rem;
-        flex-wrap: wrap;
-    }
-
-    .ai-history-details {
-        margin-top: 0.75rem;
-        padding-top: 0.75rem;
-        border-top: 1px solid #edf0f5;
-        display: flex;
-        flex-direction: column;
-        gap: 0.6rem;
-    }
-
-    .ai-history-details-header {
-        display: flex;
-        flex-direction: column;
-        gap: 0.25rem;
-    }
-
-    .ai-history-details-summary {
-        font-weight: 600;
-        color: #111827;
-    }
-
-    .ai-history-details-sub {
-        display: flex;
-        gap: 0.5rem;
-        font-size: 0.8rem;
-        color: #6b7280;
-    }
-
-    .ai-history-details-meta {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.6rem;
-        font-size: 0.8rem;
-        color: #4b5563;
-    }
-
-    .ai-history-details-compare {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-        gap: 0.6rem;
-    }
-
-    .ai-history-details-block {
-        padding: 0.5rem;
-        border-radius: 8px;
-        background: #f9fafb;
-        border: 1px solid #eef2f7;
-    }
-
-    .ai-history-details-label {
-        font-size: 0.75rem;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        color: #6b7280;
-        margin-bottom: 0.35rem;
-    }
-
-    .ai-history-details-block pre {
-        margin: 0;
-        white-space: pre-wrap;
-        font-family: "Georgia", serif;
-        font-size: 0.85rem;
-        color: #111827;
-    }
-
-    .ai-history-details-intent {
-        padding: 0.5rem;
-        border-radius: 8px;
-        background: #fff7ed;
-        border: 1px solid #fde3c5;
     }
 
     .document-menu {
@@ -1707,7 +1549,7 @@
             grid-template-columns: var(--section-panel-width) minmax(0, 1fr);
         }
 
-        .context-panel {
+        .context-drawer {
             display: none;
         }
     }
@@ -1728,6 +1570,7 @@
     private SectionEditor? _editorRef;
     private Guid _activeSectionId;
     private string _activeSectionContent = string.Empty;
+    private string _sectionNotesDraft = string.Empty;
     private bool _suppressEditorEvent;
     private bool _skipNextEditorSync;
     private IJSObjectReference? _editorInstance;
@@ -1764,6 +1607,7 @@
     private DropPosition? _dropPosition;
     private bool _isContextMenuOpen;
     private bool _isPreviewOpen;
+    private ContextTab _activeContextTab = ContextTab.Notes;
     private double _contextMenuX;
     private double _contextMenuY;
     private ElementReference _contextMenuRef;
@@ -2021,6 +1865,27 @@
         ScheduleAutosave();
     }
 
+    private void OnSectionNotesInput(ChangeEventArgs args)
+    {
+        ExecuteSafe("OnSectionNotesInput", () =>
+        {
+            string nextNotes = args.Value?.ToString() ?? string.Empty;
+            if (string.Equals(_sectionNotesDraft, nextNotes, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _sectionNotesDraft = nextNotes;
+            Section activeSection = FindSection(_state.Document, _activeSectionId);
+            if (string.Equals(activeSection.Notes ?? string.Empty, nextNotes, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            _commandProcessor.Execute(new UpdateSectionNotesCommand(_activeSectionId, nextNotes));
+        });
+    }
+
     private async Task ApplyDocumentTitleChangeAsync(string nextTitle)
     {
         string previousTitle = _documentTitleDraft;
@@ -2251,6 +2116,7 @@
                 Stats = new SectionStats(),
                 Flags = new SectionFlags(),
                 AI = new SectionAIInfo(),
+                Notes = string.Empty,
                 CreatedUtc = DateTime.UtcNow,
                 ModifiedUtc = DateTime.UtcNow
             };
@@ -2374,6 +2240,7 @@
                 Stats = new SectionStats(),
                 Flags = new SectionFlags(),
                 AI = new SectionAIInfo(),
+                Notes = source.Notes ?? string.Empty,
                 CreatedUtc = DateTime.UtcNow,
                 ModifiedUtc = DateTime.UtcNow
             };
@@ -2557,6 +2424,13 @@
         Failed
     }
 
+    private enum ContextTab
+    {
+        Notes,
+        Outline,
+        Ai
+    }
+
     private Chapter GetPrimaryChapter()
     {
         if (_state.Document.Chapters.Count == 0)
@@ -2645,6 +2519,29 @@
     }
 
     private string GetContextPanelClass() => IsContextPanelCollapsed() ? "is-collapsed" : string.Empty;
+
+    private void SetContextTab(ContextTab tab)
+    {
+        _activeContextTab = tab;
+    }
+
+    private string GetContextTabClass(ContextTab tab)
+    {
+        return _activeContextTab == tab ? "is-active" : string.Empty;
+    }
+
+    private Task OnAiHistoryIndicatorClicked()
+    {
+        return ExecuteSafeAsync("OnAiHistoryIndicatorClicked", async () =>
+        {
+            _activeContextTab = ContextTab.Ai;
+            LayoutState state = LayoutStateService.State;
+            if (state.ContextCollapsed)
+            {
+                await LayoutStateService.SetStateAsync(state with { ContextCollapsed = false });
+            }
+        });
+    }
 
     private string GetWorkspaceClass()
     {
@@ -2913,7 +2810,19 @@
             _isAiHistoryRollback = true;
             try
             {
+                bool isDifferentSection = entry.AffectedSectionId != _activeSectionId;
+                if (isDifferentSection)
+                {
+                    _activeSectionId = entry.AffectedSectionId;
+                }
+
                 _commandProcessor.RollbackAiEditGroup(entry.AffectedSectionId, entry.EditGroupId);
+
+                if (isDifferentSection)
+                {
+                    _commandProcessor.ClearHistory();
+                    await InvokeCommandAsync("focusEditor");
+                }
             }
             finally
             {
@@ -3751,6 +3660,7 @@
 
         Section activeSection = FindSection(document, _activeSectionId);
         _activeSectionContent = activeSection.Content.Value ?? string.Empty;
+        _sectionNotesDraft = activeSection.Notes ?? string.Empty;
         UpdateReadingMetrics(wordCount);
     }
 
@@ -3931,7 +3841,11 @@
             return false;
         }
 
-        Section section = FindSection(_state.Document, _activeSectionId);
+        if (!TryGetSection(_state.Document, entry.AffectedSectionId, out Section? section))
+        {
+            return false;
+        }
+
         SectionAIInfo aiInfo = section.AI;
         if (aiInfo is null || aiInfo.AiEditGroups is null || aiInfo.AiEditGroups.Count == 0)
         {
@@ -3939,6 +3853,85 @@
         }
 
         return aiInfo.AiEditGroups.Exists(group => group.GroupId == entry.EditGroupId);
+    }
+
+    private IReadOnlyList<AIHistoryEntry> GetAllAiHistory()
+    {
+        if (_state?.Document is null)
+        {
+            return Array.Empty<AIHistoryEntry>();
+        }
+
+        List<AIHistoryEntry> entries = new();
+        for (int chapterIndex = 0; chapterIndex < _state.Document.Chapters.Count; chapterIndex++)
+        {
+            Chapter chapter = _state.Document.Chapters[chapterIndex];
+            for (int sectionIndex = 0; sectionIndex < chapter.Sections.Count; sectionIndex++)
+            {
+                Section section = chapter.Sections[sectionIndex];
+                if (section.AI?.AIHistory is null || section.AI.AIHistory.Count == 0)
+                {
+                    continue;
+                }
+
+                entries.AddRange(section.AI.AIHistory);
+            }
+        }
+
+        if (entries.Count == 0)
+        {
+            return Array.Empty<AIHistoryEntry>();
+        }
+
+        return entries
+            .OrderByDescending(entry => entry.TimestampUtc)
+            .ToList();
+    }
+
+    private int GetAllAiHistoryCount()
+    {
+        if (_state?.Document is null)
+        {
+            return 0;
+        }
+
+        int count = 0;
+        for (int chapterIndex = 0; chapterIndex < _state.Document.Chapters.Count; chapterIndex++)
+        {
+            Chapter chapter = _state.Document.Chapters[chapterIndex];
+            for (int sectionIndex = 0; sectionIndex < chapter.Sections.Count; sectionIndex++)
+            {
+                Section section = chapter.Sections[sectionIndex];
+                count += section.AI?.AIHistory?.Count ?? 0;
+            }
+        }
+
+        return count;
+    }
+
+    private static bool TryGetSection(Document document, Guid sectionId, out Section? section)
+    {
+        section = null;
+        if (document is null || sectionId == Guid.Empty)
+        {
+            return false;
+        }
+
+        for (int chapterIndex = 0; chapterIndex < document.Chapters.Count; chapterIndex++)
+        {
+            Chapter chapter = document.Chapters[chapterIndex];
+            for (int sectionIndex = 0; sectionIndex < chapter.Sections.Count; sectionIndex++)
+            {
+                Section candidate = chapter.Sections[sectionIndex];
+                if (candidate.SectionId == sectionId)
+                {
+                    section = candidate;
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private string GetAiHistorySectionTitle(AIHistoryEntry entry)

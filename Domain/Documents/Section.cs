@@ -30,6 +30,8 @@ namespace WriterApp.Domain.Documents
         /// </summary>
         public SectionAIInfo AI { get; init; } = new();
 
+        public string Notes { get; init; } = string.Empty;
+
         public DateTime CreatedUtc { get; init; } = DateTime.UtcNow;
 
         public DateTime ModifiedUtc { get; init; } = DateTime.UtcNow;
