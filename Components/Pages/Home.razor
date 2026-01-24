@@ -147,9 +147,9 @@
                     <button type="button" class="@GetActiveClass(_formattingState.IsLink)" @onclick="OnLinkRequested">Link</button>
                 </div>
                 <div class="editor-toolbar-group" aria-label="Zoom">
-                    <button type="button" @onclick="OnZoomOutRequested">-</button>
+                    <button type="button" @onclick="OnZoomOutRequested">A-</button>
                     <span class="editor-zoom-label">@GetZoomLabel()</span>
-                    <button type="button" @onclick="OnZoomInRequested">+</button>
+                    <button type="button" @onclick="OnZoomInRequested">A+</button>
                 </div>
                 <div class="editor-toolbar-group editor-toolbar-overflow" aria-label="More">
                     <button type="button" @onclick="ToggleToolbarOverflow">...</button>
@@ -181,6 +181,7 @@
                     {
                         <div class="document-menu-panel">
                             <button type="button" @onclick="OnRenameDocumentRequested">Rename document</button>
+                            <button type="button" @onclick="OnToggleEditorWidthMode">@GetEditorWidthLabel()</button>
                             <button type="button" @onclick="OnSave">Save now</button>
                             <button type="button" @onclick="() => OnExportRequested(ExportKind.Document, ExportFormat.Markdown)">Export Document (Markdown)</button>
                             <button type="button" @onclick="() => OnExportRequested(ExportKind.Document, ExportFormat.Html)">Export Document (HTML)</button>
@@ -241,20 +242,24 @@
                 </div>
             }
             <div class="editor-surface">
-                <SectionEditor @ref="_editorRef"
-                               Content="@_activeSectionContent"
-                               ContentChanged="OnSectionContentChanged"
-                               EditorReady="OnEditorReady"
-                               FormattingChanged="OnFormattingChanged"
-                               OutlineChanged="OnOutlineChanged"
-                               SelectionChanged="OnSelectionChanged"
-                               FocusModeRequested="OnFocusModeRequested"
-                               PrevSectionRequested="OnPrevSectionRequested"
-                               NextSectionRequested="OnNextSectionRequested"
-                               SelectionBubbleChanged="OnSelectionBubbleChanged"
-                               UndoRequested="OnUndo"
-                               RedoRequested="OnRedo"
-                               ContextMenuRequested="OnEditorContextMenuRequested" />
+                <div class="editor-viewport">
+                    <div class="editor-content">
+                        <SectionEditor @ref="_editorRef"
+                                       Content="@_activeSectionContent"
+                                       ContentChanged="OnSectionContentChanged"
+                                       EditorReady="OnEditorReady"
+                                       FormattingChanged="OnFormattingChanged"
+                                       OutlineChanged="OnOutlineChanged"
+                                       SelectionChanged="OnSelectionChanged"
+                                       FocusModeRequested="OnFocusModeRequested"
+                                       PrevSectionRequested="OnPrevSectionRequested"
+                                       NextSectionRequested="OnNextSectionRequested"
+                                       SelectionBubbleChanged="OnSelectionBubbleChanged"
+                                       UndoRequested="OnUndo"
+                                       RedoRequested="OnRedo"
+                                       ContextMenuRequested="OnEditorContextMenuRequested" />
+                    </div>
+                </div>
             </div>
             @if (_selectionBubbleVisible)
             {
@@ -268,9 +273,7 @@
             }
             <div class="editor-status">
                 <span>@_wordCount words</span>
-                <span>@_readingTime</span>
                 <span class="@GetSaveStatusClass()">@GetSaveStatusLabel()</span>
-                <span>@GetLastSavedLabel()</span>
             </div>
             </section>
 
@@ -543,6 +546,7 @@
     .editor-shell {
         --section-panel-width: 260px;
         --context-panel-width: 340px;
+        --editor-max-width: 760px;
         padding: 24px;
     }
 
@@ -584,6 +588,7 @@
         bottom: 24px;
         z-index: 50;
         max-width: 360px;
+        margin: 0;
         box-shadow: 0 12px 24px rgba(15, 23, 42, 0.18);
     }
 
@@ -756,6 +761,10 @@
         display: flex;
     }
 
+    .editor-shell.is-full-width {
+        --editor-max-width: none;
+    }
+
     .editor-actions {
         display: flex;
         flex-wrap: wrap;
@@ -763,9 +772,22 @@
     }
 
     .editor-surface {
-        padding: 12px;
-        border-radius: 12px;
-        border: 1px solid #e2dfda;
+        width: 100%;
+        padding: 0;
+        border-radius: 0;
+        border: none;
+        background: transparent;
+    }
+
+    .editor-viewport {
+        width: 100%;
+        display: flex;
+        justify-content: center;
+    }
+
+    .editor-content {
+        width: 100%;
+        max-width: var(--editor-max-width);
         background: #ffffff;
     }
 
@@ -1469,7 +1491,8 @@
         padding: 8px;
         border: none;
         background: transparent;
-        zoom: var(--editor-zoom, 1);
+        font-size: calc(1rem * var(--editor-font-scale, 1));
+        line-height: 1.6;
     }
 
     .selection-bubble {
@@ -1543,14 +1566,6 @@
     @@media (max-width: 1200px) {
         .editor-shell {
             --section-panel-width: 360px;
-        }
-
-        .editor-workspace {
-            grid-template-columns: var(--section-panel-width) minmax(0, 1fr);
-        }
-
-        .context-drawer {
-            display: none;
         }
     }
 </style>
@@ -2604,7 +2619,7 @@
 
     private string GetRecoveryBannerClass()
     {
-        return LayoutStateService.State.FocusMode ? "is-toast" : string.Empty;
+        return "is-toast";
     }
 
     private async Task ToggleFocusMode()
@@ -4166,6 +4181,26 @@
         });
     }
 
+    private Task OnToggleEditorWidthMode()
+    {
+        return ExecuteSafeAsync("OnToggleEditorWidthMode", async () =>
+        {
+            LayoutState state = LayoutStateService.State;
+            ManuscriptWidthMode nextMode = state.ManuscriptWidthMode == ManuscriptWidthMode.Manuscript
+                ? ManuscriptWidthMode.FullWidth
+                : ManuscriptWidthMode.Manuscript;
+            await LayoutStateService.SetStateAsync(state with { ManuscriptWidthMode = nextMode });
+            await NotifyLayoutChangedAsync();
+        });
+    }
+
+    private string GetEditorWidthLabel()
+    {
+        return LayoutStateService.State.ManuscriptWidthMode == ManuscriptWidthMode.Manuscript
+            ? "Full width"
+            : "Manuscript width";
+    }
+
     private string GetZoomLabel()
     {
         return $"{LayoutStateService.State.EditorZoomPercent}%";
@@ -4173,8 +4208,8 @@
 
     private string GetLayoutStateStyle()
     {
-        double zoom = LayoutStateService.State.EditorZoomPercent / 100.0;
-        return $"--editor-zoom: {zoom.ToString(CultureInfo.InvariantCulture)};";
+        double scale = LayoutStateService.State.EditorZoomPercent / 100.0;
+        return $"--editor-font-scale: {scale.ToString(CultureInfo.InvariantCulture)};";
     }
 
     private Task OnSelectionBubbleChanged(SectionEditor.EditorSelectionBubble bubble)
