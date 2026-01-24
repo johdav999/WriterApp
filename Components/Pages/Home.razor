@@ -51,7 +51,7 @@
 @inject IOptions<WriterAiOptions> AiOptionsAccessor
 @inject LayoutStateService LayoutStateService
 
-<PageTitle>Writer</PageTitle>
+<PageTitle>@GetPageTitle()</PageTitle>
 
 @if (_hasRecoveryCandidate)
 {
@@ -64,7 +64,7 @@
     </div>
 }
 
-<div class="editor-shell @GetLayoutStateClass()">
+<div class="editor-shell @GetLayoutStateClass()" style="@GetLayoutStateStyle()">
     <div class="editor-workspace @GetWorkspaceClass()">
         <aside class="section-panel @GetSectionsPanelClass()">
             <div class="section-panel-header">
@@ -114,13 +114,6 @@
                     <button type="button" @onclick="OnPrevSectionRequested" disabled="@IsFirstSection(GetActiveSection())">Prev</button>
                     <button type="button" @onclick="OnNextSectionRequested" disabled="@IsLastSection(GetActiveSection())">Next</button>
                 </div>
-                <div class="document-title-field">
-                    <label for="documentTitleInput">Document title</label>
-                    <input id="documentTitleInput"
-                           type="text"
-                           value="@_documentTitleDraft"
-                           @oninput="OnDocumentTitleInput" />
-                </div>
                 <button type="button" class="panel-toggle" @onclick="ToggleContextPanel">
                     @(IsContextPanelCollapsed() ? "Show panel" : "Hide panel")
                 </button>
@@ -134,78 +127,67 @@
                 </button>
 
                 <div class="editor-toolbar" role="toolbar" aria-label="Editor formatting">
-                <div class="editor-toolbar-group" aria-label="Text emphasis" data-compact="true">
+                <div class="editor-toolbar-group" aria-label="Essentials" data-compact="true">
                     <button type="button" class="@GetActiveClass(_formattingState.IsBold)" disabled="@(!_formattingState.CanBold)" @onclick="OnBoldRequested">Bold</button>
                     <button type="button" class="@GetActiveClass(_formattingState.IsItalic)" disabled="@(!_formattingState.CanItalic)" @onclick="OnItalicRequested">Italic</button>
-                    <button type="button" class="@GetActiveClass(_formattingState.IsStrike)" disabled="@(!_formattingState.CanStrike)" @onclick="OnStrikeRequested">Strike</button>
-                    <button type="button" class="@GetActiveClass(_formattingState.IsCode)" disabled="@(!_formattingState.CanCode)" @onclick="OnCodeRequested">Code</button>
-                </div>
-                <div class="editor-toolbar-group" aria-label="Structure" data-compact="true">
-                    <button type="button" class="@GetActiveClass(_formattingState.BlockType == "paragraph")" disabled="@(!_formattingState.CanApplyHeading)" @onclick="OnParagraphRequested">Paragraph</button>
-                    <button type="button" class="@GetActiveClass(_formattingState.BlockType == "heading:1")" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnHeadingRequested(1)">H1</button>
-                    <button type="button" class="@GetActiveClass(_formattingState.BlockType == "heading:2")" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnHeadingRequested(2)">H2</button>
-                    <button type="button" class="@GetActiveClass(_formattingState.BlockType == "heading:3")" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnHeadingRequested(3)">H3</button>
-                    <button type="button" class="@GetActiveClass(_formattingState.BlockType == "heading:4")" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnHeadingRequested(4)">H4</button>
-                    <button type="button" class="@GetActiveClass(_formattingState.BlockType == "heading:5")" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnHeadingRequested(5)">H5</button>
-                    <button type="button" class="@GetActiveClass(_formattingState.BlockType == "heading:6")" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnHeadingRequested(6)">H6</button>
+                    <select class="editor-toolbar-select" value="@GetBlockTypeValue()" @onchange="OnBlockTypeChanged" disabled="@(!_formattingState.CanApplyHeading)">
+                        <option value="paragraph">Paragraph</option>
+                        <option value="heading:1">Heading 1</option>
+                        <option value="heading:2">Heading 2</option>
+                    </select>
+                    <button type="button" disabled="@(!_formattingState.CanToggleList)" @onclick="OnBulletListRequested">Bulleted list</button>
+                    <button type="button" disabled="@(!_formattingState.CanToggleList)" @onclick="OnOrderedListRequested">Numbered list</button>
                     <button type="button" disabled="@(!_formattingState.CanBlockquote)" @onclick="OnBlockquoteRequested">Blockquote</button>
-                    <button type="button" disabled="@(!_formattingState.CanHorizontalRule)" @onclick="OnHorizontalRuleRequested">Horizontal rule</button>
+                    <button type="button" class="@GetActiveClass(_formattingState.IsLink)" @onclick="OnLinkRequested">Link</button>
                 </div>
-                <div class="editor-toolbar-group" aria-label="Alignment">
-                    <button type="button" class="@GetActiveClass(_formattingState.TextAlign == "left")" @onclick='@(() => OnAlignRequested("left"))'>Align left</button>
-                    <button type="button" class="@GetActiveClass(_formattingState.TextAlign == "center")" @onclick='@(() => OnAlignRequested("center"))'>Align center</button>
-                    <button type="button" class="@GetActiveClass(_formattingState.TextAlign == "right")" @onclick='@(() => OnAlignRequested("right"))'>Align right</button>
-                    <button type="button" @onclick="OnIndentDecreaseRequested">Indent -</button>
-                    <button type="button" @onclick="OnIndentIncreaseRequested">Indent +</button>
+                <div class="editor-toolbar-group" aria-label="Zoom">
+                    <button type="button" @onclick="OnZoomOutRequested">-</button>
+                    <span class="editor-zoom-label">@GetZoomLabel()</span>
+                    <button type="button" @onclick="OnZoomInRequested">+</button>
                 </div>
-                <div class="editor-toolbar-group" aria-label="Lists">
-                    <button type="button" disabled="@(!_formattingState.CanToggleList)" @onclick="OnBulletListRequested">Bullet list</button>
-                    <button type="button" disabled="@(!_formattingState.CanToggleList)" @onclick="OnOrderedListRequested">Ordered list</button>
-                </div>
-                <div class="editor-toolbar-group" aria-label="Typography">
-                    <label class="editor-toolbar-label" for="fontFamilySelect">Font</label>
-                    <select id="fontFamilySelect" class="editor-toolbar-select" value="@_fontFamily" @onchange="OnFontFamilyChanged">
-                        <option value="mixed" disabled>Mixed</option>
-                        <option value="">Default</option>
-                        <option value="Georgia">Georgia</option>
-                        <option value="Times New Roman">Times New Roman</option>
-                        <option value="Arial">Arial</option>
-                        <option value="Helvetica">Helvetica</option>
-                        <option value="Courier New">Courier New</option>
-                    </select>
-                    <label class="editor-toolbar-label" for="fontSizeSelect">Text size</label>
-                    <select id="fontSizeSelect" class="editor-toolbar-select" value="@_fontSize" @onchange="OnFontSizeChanged">
-                        <option value="mixed" disabled>Mixed</option>
-                        <option value="12">12px</option>
-                        <option value="14">14px</option>
-                        <option value="16">16px</option>
-                        <option value="18">18px</option>
-                        <option value="24">24px</option>
-                        <option value="32">32px</option>
-                    </select>
+                <div class="editor-toolbar-group editor-toolbar-overflow" aria-label="More">
+                    <button type="button" @onclick="ToggleToolbarOverflow">...</button>
+                    @if (_isToolbarOverflowOpen)
+                    {
+                        <div class="editor-toolbar-overflow-panel">
+                            <button type="button" class="@GetActiveClass(_formattingState.IsStrike)" disabled="@(!_formattingState.CanStrike)" @onclick="OnStrikeRequested">Strike</button>
+                            <button type="button" class="@GetActiveClass(_formattingState.IsCode)" disabled="@(!_formattingState.CanCode)" @onclick="OnCodeRequested">Code</button>
+                            <button type="button" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnHeadingRequested(3)">Heading 3</button>
+                            <button type="button" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnHeadingRequested(4)">Heading 4</button>
+                            <button type="button" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnHeadingRequested(5)">Heading 5</button>
+                            <button type="button" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnHeadingRequested(6)">Heading 6</button>
+                            <button type="button" disabled="@(!_formattingState.CanHorizontalRule)" @onclick="OnHorizontalRuleRequested">Horizontal rule</button>
+                            <button type="button" class="@GetActiveClass(_formattingState.TextAlign == "left")" @onclick='@(() => OnAlignRequested("left"))'>Align left</button>
+                            <button type="button" class="@GetActiveClass(_formattingState.TextAlign == "center")" @onclick='@(() => OnAlignRequested("center"))'>Align center</button>
+                            <button type="button" class="@GetActiveClass(_formattingState.TextAlign == "right")" @onclick='@(() => OnAlignRequested("right"))'>Align right</button>
+                            <button type="button" @onclick="OnIndentDecreaseRequested">Indent -</button>
+                            <button type="button" @onclick="OnIndentIncreaseRequested">Indent +</button>
+                        </div>
+                    }
                 </div>
             </div>
             <div class="editor-actions">
                 <button type="button" @onclick="OnUndo" disabled="@(!_commandProcessor.CanUndo)">Undo</button>
                 <button type="button" @onclick="OnRedo" disabled="@(!_commandProcessor.CanRedo)">Redo</button>
-                <button type="button" @onclick="OnSave">Save</button>
-                <div class="export-menu">
-                    <button type="button" @onclick="ToggleExportMenu">Export Document</button>
-                    @if (_isExportMenuOpen)
+                <div class="document-menu">
+                    <button type="button" @onclick="ToggleDocumentMenu">Document</button>
+                    @if (_isDocumentMenuOpen)
                     {
-                        <div class="export-menu-panel">
+                        <div class="document-menu-panel">
+                            <button type="button" @onclick="OnRenameDocumentRequested">Rename document</button>
+                            <button type="button" @onclick="OnSave">Save now</button>
                             <button type="button" @onclick="() => OnExportRequested(ExportKind.Document, ExportFormat.Markdown)">Export Document (Markdown)</button>
                             <button type="button" @onclick="() => OnExportRequested(ExportKind.Document, ExportFormat.Html)">Export Document (HTML)</button>
                             <button type="button" @onclick="OnExportPdfRequested">Export Document (PDF)</button>
                             <button type="button" @onclick="() => OnExportRequested(ExportKind.Synopsis, ExportFormat.Markdown)">Export Synopsis (Markdown)</button>
                             <button type="button" @onclick="() => OnExportRequested(ExportKind.Synopsis, ExportFormat.Html)">Export Synopsis (HTML)</button>
+                            @if (CanShowAiMenu && AiOrchestrator.CanRunAction(GenerateCoverImageAction.ActionIdValue))
+                            {
+                                <button type="button" disabled="@IsAiQuotaExceeded" @onclick="OnGenerateCoverImage">Generate cover image (mock)</button>
+                            }
                         </div>
                     }
                 </div>
-                @if (CanShowAiMenu && AiOrchestrator.CanRunAction(GenerateCoverImageAction.ActionIdValue))
-                {
-                    <button type="button" disabled="@IsAiQuotaExceeded" @onclick="OnGenerateCoverImage">Generate cover image (mock)</button>
-                }
                 @if (IsAiQuotaExceeded)
                 {
                     <span class="ai-quota-message">You've reached your monthly AI limit.</span>
@@ -263,10 +245,21 @@
                                FocusModeRequested="OnFocusModeRequested"
                                PrevSectionRequested="OnPrevSectionRequested"
                                NextSectionRequested="OnNextSectionRequested"
+                               SelectionBubbleChanged="OnSelectionBubbleChanged"
                                UndoRequested="OnUndo"
                                RedoRequested="OnRedo"
                                ContextMenuRequested="OnEditorContextMenuRequested" />
             </div>
+            @if (_selectionBubbleVisible)
+            {
+                <div class="selection-bubble" style="@GetSelectionBubbleStyle()">
+                    <button type="button" class="@GetActiveClass(_formattingState.IsBold)" disabled="@(!_formattingState.CanBold)" @onclick="OnBoldRequested">Bold</button>
+                    <button type="button" class="@GetActiveClass(_formattingState.IsItalic)" disabled="@(!_formattingState.CanItalic)" @onclick="OnItalicRequested">Italic</button>
+                    <button type="button" class="@GetActiveClass(_formattingState.IsLink)" @onclick="OnLinkRequested">Link</button>
+                    <button type="button" class="bubble-placeholder" disabled title="Align hook">Align</button>
+                    <button type="button" class="bubble-placeholder" disabled title="Indent hook">Indent</button>
+                </div>
+            }
             <div class="editor-status">
                 <span>@_wordCount words</span>
                 <span>@_readingTime</span>
@@ -704,29 +697,6 @@
         gap: 12px;
     }
 
-    .document-title-field {
-        display: grid;
-        gap: 4px;
-        min-width: 240px;
-    }
-
-    .document-title-field label {
-        font-size: 0.7rem;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        color: #7a7a7a;
-    }
-
-    .document-title-field input {
-        border: 1px solid #d8d4ce;
-        border-radius: 8px;
-        padding: 6px 10px;
-        font-size: 0.95rem;
-        background: #ffffff;
-        color: #1f2937;
-        min-width: 0;
-    }
-
     .editor-section-info {
         display: grid;
         gap: 4px;
@@ -792,6 +762,32 @@
         border-radius: 10px;
         border: 1px solid #e2dfda;
         background: #f5f3ef;
+    }
+
+    .editor-toolbar-overflow {
+        position: relative;
+    }
+
+    .editor-toolbar-overflow-panel {
+        position: absolute;
+        top: calc(100% + 6px);
+        right: 0;
+        min-width: 180px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 8px;
+        border-radius: 8px;
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12);
+        z-index: 20;
+    }
+
+    .editor-zoom-label {
+        font-size: 0.85rem;
+        color: #6b7280;
+        padding: 0 6px;
     }
 
     .editor-shell.is-focus-mode .editor-toolbar-group {
@@ -1281,6 +1277,25 @@
         padding: 8px;
         border: none;
         background: transparent;
+        zoom: var(--editor-zoom, 1);
+    }
+
+    .selection-bubble {
+        position: fixed;
+        z-index: 45;
+        transform: translate(-50%, -100%);
+        display: flex;
+        gap: 6px;
+        padding: 6px;
+        border-radius: 8px;
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        box-shadow: 0 10px 22px rgba(15, 23, 42, 0.2);
+    }
+
+    .selection-bubble .bubble-placeholder {
+        opacity: 0.5;
+        cursor: default;
     }
 
     .document-preview {
@@ -1662,12 +1677,12 @@
         border: 1px solid #fde3c5;
     }
 
-    .export-menu {
+    .document-menu {
         position: relative;
         display: inline-block;
     }
 
-    .export-menu-panel {
+    .document-menu-panel {
         position: absolute;
         top: calc(100% + 0.35rem);
         right: 0;
@@ -1719,8 +1734,6 @@
     private IJSObjectReference? _commandsModule;
     private IJSObjectReference? _exportModule;
     private bool _disposed;
-    private string _fontSize = "16";
-    private string _fontFamily = string.Empty;
     private EditorFormattingState _formattingState = new()
     {
         CanBold = true,
@@ -1731,6 +1744,7 @@
         CanToggleList = true,
         CanBlockquote = true,
         CanHorizontalRule = true,
+        IsLink = false,
         TextAlign = "left"
     };
     private int _wordCount;
@@ -1764,7 +1778,6 @@
     private PendingAiProposal? _pendingAiProposal;
     private CancellationTokenSource? _aiStreamCts;
     private bool _isAiStreaming;
-    private bool _isExportMenuOpen;
     private string? _aiStreamError;
     private string _streamedText = string.Empty;
     private string? _streamedImageReference;
@@ -1781,6 +1794,11 @@
     private bool _canShowAiMenu;
     private bool? _lastAiMenuVisibility;
     private bool _layoutStateInitialized;
+    private bool _isToolbarOverflowOpen;
+    private bool _isDocumentMenuOpen;
+    private double _selectionBubbleX;
+    private double _selectionBubbleY;
+    private bool _selectionBubbleVisible;
     private readonly List<AiActionOption> _aiActions = new()
     {
         new AiActionOption("Rewrite (Neutral)", "Rewrite (Neutral)", AiActionScope.Selection, new Dictionary<string, object?>
@@ -1859,6 +1877,8 @@
         _hasRecoveryCandidate = false;
         _recoveryCandidate = null;
         UpdateAiMenuVisibility();
+        HeaderState.DocumentTitleEdited += OnHeaderDocumentTitleEdited;
+        HeaderState.CanRenameDocumentTitle = true;
     }
 
     protected override async Task OnInitializedAsync()
@@ -1954,62 +1974,90 @@
         });
     }
 
-    private Task OnFontSizeChanged(ChangeEventArgs args)
-    {
-        return ExecuteSafeAsync("OnFontSizeChanged", async () =>
-        {
-            if (args.Value is null)
-            {
-                return;
-            }
-
-            string? value = args.Value.ToString();
-            if (string.Equals(value, "mixed", StringComparison.Ordinal))
-            {
-                return;
-            }
-
-            if (int.TryParse(value, out int size))
-            {
-                _fontSize = size.ToString(CultureInfo.InvariantCulture);
-                await InvokeCommandAsync("setFontSize", size);
-            }
-        });
-    }
-
-    private Task OnFontFamilyChanged(ChangeEventArgs args)
-    {
-        return ExecuteSafeAsync("OnFontFamilyChanged", async () =>
-        {
-            string? family = args.Value?.ToString();
-            _fontFamily = family ?? string.Empty;
-
-            if (string.Equals(_fontFamily, "mixed", StringComparison.Ordinal))
-            {
-                return;
-            }
-
-            if (string.IsNullOrWhiteSpace(_fontFamily))
-            {
-                await InvokeCommandAsync("clearFontFamily");
-                return;
-            }
-
-            await InvokeCommandAsync("setFontFamily", _fontFamily);
-        });
-    }
-
     private void OnDocumentTitleInput(ChangeEventArgs args)
     {
         ExecuteSafe("OnDocumentTitleInput", () =>
         {
-            _documentTitleDraft = args.Value?.ToString() ?? string.Empty;
-            HeaderState.DocumentTitle = string.IsNullOrWhiteSpace(_documentTitleDraft)
-                ? "Untitled"
-                : _documentTitleDraft;
-            _isDirty = true;
-            ScheduleAutosave();
+            UpdateDocumentTitle(args.Value?.ToString());
         });
+    }
+
+    private Task OnRenameDocumentRequested()
+    {
+        return ExecuteSafeAsync("OnRenameDocumentRequested", async () =>
+        {
+            _isDocumentMenuOpen = false;
+            string? response = null;
+            try
+            {
+                response = await JSRuntime.InvokeAsync<string?>("prompt", "Rename document", _documentTitleDraft);
+            }
+            catch (JSException ex)
+            {
+                Logger.LogWarning(ex, "Document title prompt failed.");
+            }
+
+            if (string.IsNullOrWhiteSpace(response))
+            {
+                return;
+            }
+
+            await ApplyDocumentTitleChangeAsync(response.Trim());
+        });
+    }
+
+    private void OnHeaderDocumentTitleEdited(string title)
+    {
+        _ = ExecuteSafeAsync("OnHeaderDocumentTitleEdited", () => ApplyDocumentTitleChangeAsync(title));
+    }
+
+    private void UpdateDocumentTitle(string? nextTitle)
+    {
+        _documentTitleDraft = nextTitle ?? string.Empty;
+        HeaderState.DocumentTitle = string.IsNullOrWhiteSpace(_documentTitleDraft)
+            ? "Untitled"
+            : _documentTitleDraft;
+        _isDirty = true;
+        ScheduleAutosave();
+    }
+
+    private async Task ApplyDocumentTitleChangeAsync(string nextTitle)
+    {
+        string previousTitle = _documentTitleDraft;
+        bool wasDirty = _isDirty;
+        UpdateDocumentTitle(nextTitle);
+        await InvokeAsync(StateHasChanged);
+
+        if (_isManualSaveInProgress)
+        {
+            return;
+        }
+
+        Document? saved = null;
+        try
+        {
+            saved = await SaveDocumentAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Document rename save failed.");
+        }
+
+        if (saved is not null)
+        {
+            return;
+        }
+
+        RestoreDocumentTitle(previousTitle);
+        _autosaveStatus = AutosaveStatus.Failed;
+        _isDirty = wasDirty;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void RestoreDocumentTitle(string previousTitle)
+    {
+        _documentTitleDraft = previousTitle;
+        HeaderState.DocumentTitle = string.IsNullOrWhiteSpace(previousTitle) ? "Untitled" : previousTitle;
     }
 
     private Task OnSectionKindChanged(ChangeEventArgs args)
@@ -2762,13 +2810,6 @@
             }
 
             _formattingState = state ?? new EditorFormattingState();
-            _fontFamily = _formattingState.FontFamily is null
-                ? "mixed"
-                : string.IsNullOrWhiteSpace(_formattingState.FontFamily) ? string.Empty : _formattingState.FontFamily;
-            _fontSize = _formattingState.FontSize is null
-                ? "mixed"
-                : string.IsNullOrWhiteSpace(_formattingState.FontSize) ? "16" : _formattingState.FontSize;
-
             return InvokeAsync(StateHasChanged);
         });
     }
@@ -2991,6 +3032,7 @@
     {
         return ExecuteSafeAsync("OnGenerateCoverImage", async () =>
         {
+            _isDocumentMenuOpen = false;
             if (!IsAiAvailable)
             {
                 ShowAiMessage(GetAiBlockedMessage());
@@ -4035,6 +4077,131 @@
 
     private Task OnOrderedListRequested() => ExecuteSafeAsync("OnOrderedListRequested", () => InvokeCommandAsync("toggleOrderedList"));
 
+    private Task OnBlockTypeChanged(ChangeEventArgs args)
+    {
+        return ExecuteSafeAsync("OnBlockTypeChanged", async () =>
+        {
+            string? value = args.Value?.ToString();
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return;
+            }
+
+            if (string.Equals(value, "paragraph", StringComparison.Ordinal))
+            {
+                await InvokeCommandAsync("setParagraph");
+                return;
+            }
+
+            if (value.StartsWith("heading:", StringComparison.Ordinal)
+                && int.TryParse(value.AsSpan("heading:".Length), out int level))
+            {
+                await InvokeCommandAsync("setHeading", level);
+            }
+        });
+    }
+
+    private string GetBlockTypeValue()
+    {
+        if (string.IsNullOrWhiteSpace(_formattingState.BlockType))
+        {
+            return "paragraph";
+        }
+
+        return _formattingState.BlockType switch
+        {
+            "heading:1" => "heading:1",
+            "heading:2" => "heading:2",
+            _ => "paragraph"
+        };
+    }
+
+    private Task OnLinkRequested()
+    {
+        return ExecuteSafeAsync("OnLinkRequested", async () =>
+        {
+            string? url;
+            try
+            {
+                url = await JSRuntime.InvokeAsync<string?>("prompt", "Link URL:");
+            }
+            catch (JSException ex)
+            {
+                Logger.LogWarning(ex, "Link prompt failed.");
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(url))
+            {
+                await InvokeCommandAsync("unsetLink");
+                return;
+            }
+
+            await InvokeCommandAsync("setLink", url);
+        });
+    }
+
+    private void ToggleToolbarOverflow()
+    {
+        _isToolbarOverflowOpen = !_isToolbarOverflowOpen;
+    }
+
+    private void ToggleDocumentMenu()
+    {
+        _isDocumentMenuOpen = !_isDocumentMenuOpen;
+    }
+
+    private Task OnZoomOutRequested()
+    {
+        return ExecuteSafeAsync("OnZoomOutRequested", async () =>
+        {
+            LayoutState state = LayoutStateService.State;
+            int next = LayoutState.ClampZoom(state.EditorZoomPercent - 10);
+            await LayoutStateService.SetStateAsync(state with { EditorZoomPercent = next });
+            await NotifyLayoutChangedAsync();
+        });
+    }
+
+    private Task OnZoomInRequested()
+    {
+        return ExecuteSafeAsync("OnZoomInRequested", async () =>
+        {
+            LayoutState state = LayoutStateService.State;
+            int next = LayoutState.ClampZoom(state.EditorZoomPercent + 10);
+            await LayoutStateService.SetStateAsync(state with { EditorZoomPercent = next });
+            await NotifyLayoutChangedAsync();
+        });
+    }
+
+    private string GetZoomLabel()
+    {
+        return $"{LayoutStateService.State.EditorZoomPercent}%";
+    }
+
+    private string GetLayoutStateStyle()
+    {
+        double zoom = LayoutStateService.State.EditorZoomPercent / 100.0;
+        return $"--editor-zoom: {zoom.ToString(CultureInfo.InvariantCulture)};";
+    }
+
+    private Task OnSelectionBubbleChanged(SectionEditor.EditorSelectionBubble bubble)
+    {
+        return ExecuteSafeAsync("OnSelectionBubbleChanged", () =>
+        {
+            _selectionBubbleVisible = bubble.IsVisible;
+            _selectionBubbleX = bubble.X;
+            _selectionBubbleY = bubble.Y;
+            return InvokeAsync(StateHasChanged);
+        });
+    }
+
+    private string GetSelectionBubbleStyle()
+    {
+        string left = _selectionBubbleX.ToString(CultureInfo.InvariantCulture);
+        string top = _selectionBubbleY.ToString(CultureInfo.InvariantCulture);
+        return $"left: {left}px; top: {top}px;";
+    }
+
     private async Task EnsureCommandsModuleAsync()
     {
         if (_commandsModule is null)
@@ -4077,6 +4244,7 @@
     {
         return ExecuteSafeAsync("OnSave", async () =>
         {
+            _isDocumentMenuOpen = false;
             await SaveDocumentAsync();
         });
     }
@@ -4116,16 +4284,11 @@
         }
     }
 
-    private void ToggleExportMenu()
-    {
-        _isExportMenuOpen = !_isExportMenuOpen;
-    }
-
     private Task OnExportRequested(ExportKind kind, ExportFormat format)
     {
         return ExecuteSafeAsync("OnExportRequested", async () =>
         {
-            _isExportMenuOpen = false;
+            _isDocumentMenuOpen = false;
             Document? saved = await SaveDocumentAsync();
             if (saved is null)
             {
@@ -4144,7 +4307,7 @@
     {
         return ExecuteSafeAsync("OnExportPdfRequested", async () =>
         {
-            _isExportMenuOpen = false;
+            _isDocumentMenuOpen = false;
             Document? saved = await SaveDocumentAsync();
             if (saved is null)
             {
@@ -4528,6 +4691,12 @@
         };
     }
 
+    private string GetPageTitle()
+    {
+        string title = HeaderState.DocumentTitle ?? string.Empty;
+        return string.IsNullOrWhiteSpace(title) ? "Writer" : $"{title} - Writer";
+    }
+
     private string GetSaveStatusClass()
     {
         return _autosaveStatus switch
@@ -4596,12 +4765,15 @@
     {
         _state.OnChanged -= _onChangedHandler;
         LayoutStateService.Changed -= OnLayoutStateChanged;
+        HeaderState.DocumentTitleEdited -= OnHeaderDocumentTitleEdited;
         _aiUsageRefreshCts?.Cancel();
         _aiUsageRefreshCts?.Dispose();
         _aiUsageRefreshCts = null;
         CancelAiStream();
         HeaderState.DocumentTitle = null;
         HeaderState.DocumentId = null;
+        HeaderState.CanRenameDocumentTitle = false;
+        HeaderState.CanRenameDocumentTitle = false;
         _autosaveCts?.Cancel();
         _autosaveCts?.Dispose();
         _autosaveCts = null;
@@ -4616,6 +4788,7 @@
 
         _disposed = true;
         LayoutStateService.Changed -= OnLayoutStateChanged;
+        HeaderState.DocumentTitleEdited -= OnHeaderDocumentTitleEdited;
         _aiUsageRefreshCts?.Cancel();
         _aiUsageRefreshCts?.Dispose();
         _aiUsageRefreshCts = null;

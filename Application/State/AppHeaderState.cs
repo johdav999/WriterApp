@@ -6,8 +6,10 @@ namespace WriterApp.Application.State
     {
         private string? _documentTitle;
         private string? _documentId;
+        private bool _canRenameDocumentTitle;
 
         public event Action? OnChange;
+        public event Action<string>? DocumentTitleEdited;
 
         public string? DocumentTitle
         {
@@ -37,6 +39,27 @@ namespace WriterApp.Application.State
                 _documentId = value;
                 OnChange?.Invoke();
             }
+        }
+
+        public bool CanRenameDocumentTitle
+        {
+            get => _canRenameDocumentTitle;
+            set
+            {
+                if (_canRenameDocumentTitle == value)
+                {
+                    return;
+                }
+
+                _canRenameDocumentTitle = value;
+                OnChange?.Invoke();
+            }
+        }
+
+        public void RequestDocumentTitleEdit(string title)
+        {
+            DocumentTitle = title;
+            DocumentTitleEdited?.Invoke(title);
         }
     }
 }

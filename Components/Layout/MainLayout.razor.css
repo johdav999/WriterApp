@@ -55,12 +55,59 @@
     color: #6b6b6b;
 }
 
+.app-breadcrumb {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.95rem;
+}
+
+.app-breadcrumb-link {
+    text-decoration: none;
+    color: #4b5563;
+}
+
+.app-breadcrumb-separator {
+    color: #b0b0b0;
+}
+
 .app-document-title {
     display: inline-block;
     max-width: 480px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.app-document-title-button {
+    display: inline-flex;
+    align-items: center;
+    border: none;
+    padding: 0;
+    background: none;
+    font: inherit;
+    color: #1f2a44;
+    cursor: pointer;
+}
+
+.app-document-title-input {
+    width: 100%;
+    max-width: 360px;
+    padding: 0 2px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: #1f2a44;
+    font: inherit;
+    line-height: 1.2;
+    height: 1.4em;
+    box-sizing: border-box;
+}
+
+.app-document-title-input:focus {
+    border-color: #d4d4d4;
+    background: #fff;
+    outline: none;
 }
 
 .app-main {
