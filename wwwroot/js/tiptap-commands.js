@@ -46,6 +46,14 @@ export function toggleHeading(editor, level) {
     editor.chain().focus().toggleHeading({ level }).run();
 }
 
+export function setHeading(editor, level) {
+    if (!editor) {
+        return;
+    }
+
+    editor.chain().focus().setHeading({ level }).run();
+}
+
 export function toggleBlockquote(editor) {
     if (!editor) {
         return;
@@ -89,6 +97,27 @@ export function setTextAlign(editor, alignment) {
     }
 
     editor.chain().focus().setTextAlign(value).run();
+}
+
+export function setLink(editor, href) {
+    if (!editor) {
+        return;
+    }
+
+    const url = typeof href === "string" ? href.trim() : "";
+    if (!url) {
+        return;
+    }
+
+    editor.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
+}
+
+export function unsetLink(editor) {
+    if (!editor) {
+        return;
+    }
+
+    editor.chain().focus().unsetLink().run();
 }
 
 export function setFontSize(editor, size) {

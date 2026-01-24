@@ -298,6 +298,7 @@
         _provenanceSectionId = ResolveProvenanceSectionId(document);
         HeaderState.DocumentTitle = document.Metadata.Title;
         HeaderState.DocumentId = document.DocumentId.ToString();
+        HeaderState.CanRenameDocumentTitle = false;
     }
 
     private static Guid ResolveProvenanceSectionId(Document document)
@@ -681,6 +682,7 @@
         {
             HeaderState.DocumentTitle = null;
             HeaderState.DocumentId = null;
+            HeaderState.CanRenameDocumentTitle = false;
         }
     }
 

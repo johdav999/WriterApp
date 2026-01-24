@@ -49,6 +49,9 @@
     [Parameter]
     public EventCallback NextSectionRequested { get; set; }
 
+    [Parameter]
+    public EventCallback<EditorSelectionBubble> SelectionBubbleChanged { get; set; }
+
     [Inject]
     private IJSRuntime JSRuntime { get; set; } = default!;
 
@@ -183,6 +186,15 @@
         }
     }
 
+    [JSInvokable]
+    public async Task OnEditorSelectionBubble(double clientX, double clientY, bool isVisible)
+    {
+        if (SelectionBubbleChanged.HasDelegate)
+        {
+            await SelectionBubbleChanged.InvokeAsync(new EditorSelectionBubble(clientX, clientY, isVisible));
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (_disposed)
@@ -246,4 +258,6 @@
     public sealed record EditorContextMenuRequest(double X, double Y);
 
     public sealed record EditorSelectionRange(int Start, int End);
+
+    public sealed record EditorSelectionBubble(double X, double Y, bool IsVisible);
 }

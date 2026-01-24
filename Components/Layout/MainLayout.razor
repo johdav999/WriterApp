@@ -1,5 +1,6 @@
 @inherits LayoutComponentBase
 @using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Components.Web
 @using WriterApp.Application.State
 @implements IDisposable
 @inject AppHeaderState HeaderState
@@ -10,13 +11,36 @@
     <header class="app-header">
         <div class="app-header-left">
             <a class="app-brand" href="">Writer</a>
-            <NavLink class="app-link" href="" Match="NavLinkMatch.All">Documents</NavLink>
         </div>
         <div class="app-header-center">
-            @if (!string.IsNullOrWhiteSpace(HeaderState.DocumentTitle))
-            {
-                <span class="app-document-title">@HeaderState.DocumentTitle</span>
-            }
+            <div class="app-breadcrumb">
+                <NavLink class="app-breadcrumb-link" href="" Match="NavLinkMatch.All">Documents</NavLink>
+                @if (!string.IsNullOrWhiteSpace(HeaderState.DocumentTitle))
+                {
+                    <span class="app-breadcrumb-separator">→</span>
+                    @if (_isEditingTitle && HeaderState.CanRenameDocumentTitle)
+                    {
+                        <input class="app-document-title-input"
+                               value="@_documentTitleDraft"
+                               @oninput="OnDocumentTitleInput"
+                               @onblur="CommitTitleEdit"
+                               @onkeydown="OnTitleKeyDown"
+                               @ref="_titleInputRef"
+                               aria-label="Rename document title"
+                               onfocus="this.select()" />
+                    }
+                    else if (HeaderState.CanRenameDocumentTitle)
+                    {
+                        <button type="button" class="app-document-title-button" @onclick="StartTitleEdit">
+                            <span class="app-document-title">@HeaderState.DocumentTitle</span>
+                        </button>
+                    }
+                    else
+                    {
+                        <span class="app-document-title">@HeaderState.DocumentTitle</span>
+                    }
+                }
+            </div>
         </div>
         <div class="app-header-right">
             <button type="button" class="app-link app-link-button" @onclick="OnAboutClicked">About</button>
@@ -58,12 +82,84 @@
 
     private void HandleHeaderChange()
     {
+        if (!HeaderState.CanRenameDocumentTitle)
+        {
+            _isEditingTitle = false;
+        }
+
         InvokeAsync(StateHasChanged);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_shouldFocusTitle && _isEditingTitle)
+        {
+            _shouldFocusTitle = false;
+            await _titleInputRef.FocusAsync();
+        }
     }
 
     private void HandleLayoutStateChange(LayoutState state)
     {
         InvokeAsync(StateHasChanged);
+    }
+
+    private void StartTitleEdit()
+    {
+        if (string.IsNullOrWhiteSpace(HeaderState.DocumentTitle) || !HeaderState.CanRenameDocumentTitle)
+        {
+            return;
+        }
+
+        _documentTitleDraft = HeaderState.DocumentTitle ?? string.Empty;
+        _isEditingTitle = true;
+        _shouldFocusTitle = true;
+    }
+
+    private void CommitTitleEdit()
+    {
+        if (!_isEditingTitle)
+        {
+            return;
+        }
+
+        string currentTitle = HeaderState.DocumentTitle ?? string.Empty;
+        string nextTitle = (_documentTitleDraft ?? string.Empty).Trim();
+        _isEditingTitle = false;
+
+        if (string.IsNullOrWhiteSpace(nextTitle))
+        {
+            _documentTitleDraft = currentTitle;
+            return;
+        }
+
+        if (string.Equals(currentTitle, nextTitle, StringComparison.Ordinal))
+        {
+            _documentTitleDraft = currentTitle;
+            return;
+        }
+
+        HeaderState.RequestDocumentTitleEdit(nextTitle);
+    }
+
+    private void OnDocumentTitleInput(ChangeEventArgs args)
+    {
+        _documentTitleDraft = args.Value?.ToString() ?? string.Empty;
+    }
+
+    private void OnTitleKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter")
+        {
+            CommitTitleEdit();
+            return;
+        }
+
+        if (args.Key == "Escape")
+        {
+            _isEditingTitle = false;
+            _documentTitleDraft = HeaderState.DocumentTitle ?? string.Empty;
+        }
     }
 
     private string GetLayoutClass()
@@ -90,4 +186,9 @@
     {
         Navigation.NavigateTo("https://learn.microsoft.com/aspnet/core/", forceLoad: true);
     }
+
+    private bool _isEditingTitle;
+    private bool _shouldFocusTitle;
+    private string _documentTitleDraft = string.Empty;
+    private ElementReference _titleInputRef;
 }

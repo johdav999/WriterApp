@@ -4,6 +4,7 @@ import { Decoration, DecorationSet } from "https://esm.sh/prosemirror-view@1.33.
 import StarterKit from "https://esm.sh/@tiptap/starter-kit@2.1.13?bundle";
 import TextStyle from "https://esm.sh/@tiptap/extension-text-style@2.1.13?bundle";
 import TextAlign from "https://esm.sh/@tiptap/extension-text-align@2.1.13?bundle";
+import Link from "https://esm.sh/@tiptap/extension-link@2.1.13?bundle";
 import {
     toggleBold,
     toggleItalic,
@@ -14,8 +15,7 @@ import {
     toggleBlockquote,
     insertHorizontalRule,
     toggleBulletList,
-    toggleOrderedList,
-    setFontSize
+    toggleOrderedList
 } from "/js/tiptap-commands.js";
 
 const TextStyleWithFontSize = TextStyle.extend({
@@ -206,8 +206,6 @@ const AiDecorationsExtension = Extension.create({
     }
 });
 
-const fontSizePresets = [12, 14, 16, 18, 24, 32];
-
 function createInteropState(dotNetRef) {
     return { enabled: !!dotNetRef };
 }
@@ -226,44 +224,6 @@ function safeInvoke(dotNetRef, interopState, method, ...args) {
         }
     } catch (error) {
         interopState.enabled = false;
-    }
-}
-
-function parseFontSize(value) {
-    if (value === null || value === undefined) {
-        return null;
-    }
-
-    const match = String(value).match(/(\d+(\.\d+)?)/);
-    if (!match) {
-        return null;
-    }
-
-    const parsed = Number(match[1]);
-    return Number.isFinite(parsed) ? parsed : null;
-}
-
-function adjustFontSize(editor, direction) {
-    const attributes = editor.getAttributes("textStyle") ?? {};
-    const currentSize = parseFontSize(attributes.fontSize) ?? 16;
-    let index = fontSizePresets.indexOf(currentSize);
-    if (index === -1) {
-        index = fontSizePresets.indexOf(16);
-    }
-
-    if (direction > 0 && index < fontSizePresets.length - 1) {
-        index += 1;
-    } else if (direction < 0 && index > 0) {
-        index -= 1;
-    }
-
-    setFontSize(editor, fontSizePresets[index]);
-}
-
-function focusFontFamilySelect() {
-    const select = document.getElementById("fontFamilySelect");
-    if (select) {
-        select.focus();
     }
 }
 
@@ -494,6 +454,7 @@ function buildFormattingState(editor) {
         canToggleList,
         canBlockquote,
         canHorizontalRule,
+        isLink: editor.isActive("link"),
         blockType: getBlockType(editor),
         fontFamily: fontFamilyResult.mixed ? null : (fontFamilyResult.value ?? ""),
         fontSize: fontSizeResult.mixed ? null : normalizeFontSize(fontSizeResult.value),
@@ -626,18 +587,6 @@ window.tiptapEditor = {
                         toggleOrderedList(this.editor);
                         return true;
                     },
-                    "Mod-Shift-.": () => {
-                        adjustFontSize(this.editor, 1);
-                        return true;
-                    },
-                    "Mod-Shift-,": () => {
-                        adjustFontSize(this.editor, -1);
-                        return true;
-                    },
-                    "Mod-Alt-f": () => {
-                        focusFontFamilySelect();
-                        return true;
-                    },
                     "Mod-Shift-f": () => {
                         safeInvoke(dotNetRef, interopState, "OnFocusModeShortcut");
                         return true;
@@ -672,6 +621,7 @@ window.tiptapEditor = {
                 StarterKit,
                 TextStyleWithFontSize,
                 TextAlign.configure({ types: ["heading", "paragraph"] }),
+                Link.configure({ openOnClick: false }),
                 IndentExtension,
                 AiDecorationsExtension,
                 ShortcutExtension
@@ -734,6 +684,46 @@ window.tiptapEditor = {
         editor.on("selectionUpdate", pushSelectionState);
         editor.on("update", pushSelectionState);
         pushSelectionState();
+
+        let lastBubbleState = "";
+        const pushSelectionBubble = () => {
+            if (!dotNetRef || !interopState.enabled) {
+                return;
+            }
+
+            const { from, to, empty } = editor.state.selection;
+            if (empty) {
+                if (lastBubbleState !== "hidden") {
+                    lastBubbleState = "hidden";
+                    safeInvoke(dotNetRef, interopState, "OnEditorSelectionBubble", 0, 0, false);
+                }
+                return;
+            }
+
+            const anchor = Math.round((from + to) / 2);
+            let coords = null;
+            try {
+                coords = editor.view.coordsAtPos(anchor);
+            } catch (error) {
+                return;
+            }
+
+            if (!coords) {
+                return;
+            }
+
+            const payload = `${coords.left}:${coords.top}`;
+            if (payload === lastBubbleState) {
+                return;
+            }
+
+            lastBubbleState = payload;
+            safeInvoke(dotNetRef, interopState, "OnEditorSelectionBubble", coords.left, coords.top, true);
+        };
+
+        editor.on("selectionUpdate", pushSelectionBubble);
+        editor.on("update", pushSelectionBubble);
+        pushSelectionBubble();
 
         let lastOutlineState = "";
         const pushOutlineState = () => {
