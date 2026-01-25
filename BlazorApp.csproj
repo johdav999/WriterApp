@@ -20,6 +20,18 @@
     <None Remove="Tests\**" />
   </ItemGroup>
 
+  <!-- Exclude client/shared project sources from server compilation -->
+  <ItemGroup>
+    <Compile Remove="WriterApp.Client\**\*.cs" />
+    <Compile Remove="WriterApp.Shared\**\*.cs" />
+    <Content Remove="WriterApp.Client\**" />
+    <Content Remove="WriterApp.Shared\**" />
+    <None Remove="WriterApp.Client\**" />
+    <None Remove="WriterApp.Shared\**" />
+    <RazorComponent Remove="WriterApp.Client\**\*.razor" />
+    <RazorComponent Remove="WriterApp.Shared\**\*.razor" />
+  </ItemGroup>
+
   <ItemGroup>
     <Compile Remove="Components\Pages\DocumentEditor.razor" />
     <Compile Remove="Components\Editor\PageEditor.razor" />
@@ -34,6 +46,13 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.4">
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
+
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="9.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="WriterApp.Client\WriterApp.Client.csproj" />
+    <ProjectReference Include="WriterApp.Shared\WriterApp.Shared.csproj" />
   </ItemGroup>
 
 </Project>
