@@ -79,6 +79,83 @@
     margin: 4px 0 10px 12px;
 }
 
+.page-list-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.page-toggle {
+    background: transparent;
+    border: none;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #6b7280;
+}
+
+.page-add {
+    padding: 4px 8px;
+    border-radius: 6px;
+    border: 1px solid #d1d5db;
+    background: #fff;
+    font-size: 0.8rem;
+}
+
+.page-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 6px;
+}
+
+.page-list-item {
+    display: grid;
+    gap: 6px;
+}
+
+.page-nav-item {
+    width: 100%;
+    text-align: left;
+    padding: 6px 8px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    background: #fff;
+}
+
+.page-nav-item.is-active {
+    border-color: #9bb6f0;
+    background: #eef4ff;
+}
+
+.page-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.page-action {
+    padding: 2px 6px;
+    border-radius: 6px;
+    border: 1px solid #d1d5db;
+    background: #fff;
+    font-size: 0.75rem;
+}
+
+.page-action.danger {
+    border-color: #fca5a5;
+    color: #b91c1c;
+}
+
+.page-list-empty,
+.page-list-collapsed {
+    font-size: 0.8rem;
+    color: #6b7280;
+}
+
 .editor-workspace.is-context-collapsed {
     grid-template-columns: var(--section-panel-width) minmax(0, 1fr);
 }
@@ -268,6 +345,8 @@
     width: 100%;
     display: flex;
     justify-content: center;
+    position: relative;
+    overflow: visible;
 }
 
 .editor-content {
@@ -276,6 +355,41 @@
     margin-left: auto;
     margin-right: auto;
     background: #ffffff;
+}
+
+::deep .pagebreak-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 8;
+}
+
+::deep .pagebreak-line {
+    position: absolute;
+    border-top: 3px dashed #000000;
+    opacity: 0.9;
+    z-index: 5;
+}
+
+::deep .pagebreak-marker {
+    position: absolute;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #8b8f96;
+    z-index: 6;
+}
+
+::deep .pagebreak-marker::before {
+    content: "";
+    width: 2px;
+    height: 14px;
+    background: #d1d5db;
+    display: inline-block;
+    border-radius: 2px;
 }
 
 .editor-surface .ProseMirror {

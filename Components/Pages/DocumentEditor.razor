@@ -42,11 +42,6 @@ else
                                 <span class="section-title">@item.Title</span>
                             </button>
                         </li>
-                        <li class="page-nav-row">
-                            <PageList Pages="GetPages(item.Id)"
-                                      ActivePageId="_activePage.Id"
-                                      OnPageSelected="(id) => OnPageSelected(item.Id, id)" />
-                        </li>
                     }
                 </ul>
             </aside>
@@ -57,11 +52,11 @@ else
                         <div class="editor-section-label">Section</div>
                         <div class="editor-section-title">@_activeSection.Title</div>
                     </div>
-                    <button type="button" class="panel-toggle" @onclick="ToggleContextPanel">
-                        @(IsContextPanelCollapsed() ? "Show panel" : "Hide panel")
-                    </button>
                     <button type="button" class="panel-toggle" @onclick="ToggleFocusMode">
                         @(LayoutStateService.State.FocusMode ? "Exit focus" : "Focus mode")
+                    </button>
+                    <button type="button" class="panel-toggle" @onclick="ToggleContextPanel">
+                        @(IsContextPanelCollapsed() ? "Show panel" : "Hide panel")
                     </button>
                 </div>
 
@@ -222,10 +217,12 @@ else
                 <div class="editor-surface">
                     <div class="editor-viewport">
                         <div class="editor-content">
+                            @* Pages are derived from continuous section content; breaks are visual only. *@
                             <PageEditor @ref="_pageEditor"
                                         @key="_activePage.Id"
                                         Page="_activePage"
                                         OnPageSaved="OnPageSaved"
+                                        PageBreaks="PageBreaks"
                                         FormattingChanged="OnFormattingChanged"
                                         SelectionChanged="OnSelectionChanged"
                                         ContextMenuRequested="OnEditorContextMenuRequested"

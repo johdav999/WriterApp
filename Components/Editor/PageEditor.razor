@@ -25,6 +25,7 @@ else
                    SelectionBubbleChanged="SelectionBubbleChanged" />
     <div class="editor-status">
         <span>@_wordCount words</span>
+        <span>Page @_currentPageIndex / @_pageCount</span>
         <span class="@GetSaveStatusClass()">@GetSaveStatusLabel()</span>
     </div>
 }
@@ -40,6 +41,11 @@ else
     private int _wordCount;
     private IJSObjectReference? _editorInstance;
     private IJSObjectReference? _commandsModule;
+    private CancellationTokenSource? _pageBreakCts;
+    private DotNetObjectReference<PageEditor>? _dotNetRef;
+    private bool _pageBreakObserverAttached;
+    private int _pageCount = 1;
+    private int _currentPageIndex = 1;
 
     [Parameter]
     public PageDto? Page { get; set; }
@@ -59,6 +65,12 @@ else
     [Parameter]
     public EventCallback<SectionEditor.EditorSelectionBubble> SelectionBubbleChanged { get; set; }
 
+    [Parameter]
+    public PageBreakOptions PageBreaks { get; set; } = new();
+
+    [Parameter]
+    public EventCallback<int> PageCountChanged { get; set; }
+
     protected override async Task OnParametersSetAsync()
     {
         if (Page is null)
@@ -77,12 +89,24 @@ else
             {
                 await _editorRef.SetContentAsync(_content);
             }
+            SchedulePageBreakUpdate();
         }
+    }
+
+    protected override Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _dotNetRef = DotNetObjectReference.Create(this);
+        }
+
+        return Task.CompletedTask;
     }
 
     private Task OnEditorReady(IJSObjectReference editor)
     {
         _editorInstance = editor;
+        _ = UpdatePageBreaksAsync();
         return Task.CompletedTask;
     }
 
@@ -92,6 +116,7 @@ else
         _isDirty = true;
         _wordCount = CountWords(_content);
         ScheduleAutosave();
+        SchedulePageBreakUpdate();
         await InvokeAsync(StateHasChanged);
     }
 
@@ -210,6 +235,13 @@ else
         _autosaveCts?.Dispose();
         _autosaveCts = null;
 
+        _pageBreakCts?.Cancel();
+        _pageBreakCts?.Dispose();
+        _pageBreakCts = null;
+
+        _dotNetRef?.Dispose();
+        _dotNetRef = null;
+
         if (_commandsModule is not null)
         {
             try
@@ -236,6 +268,11 @@ else
         Failed
     }
 
+    public sealed record PageBreakOptions(
+        int PageHeightPx = 980,
+        bool ShowHorizontalRule = true,
+        int GutterOffsetPx = 28);
+
     public Task SaveNowAsync()
     {
         if (_isDirty)
@@ -249,6 +286,81 @@ else
     public string GetContent()
     {
         return _content;
+    }
+
+    public Task ScrollToPageAsync(int pageIndex)
+    {
+        if (_editorInstance is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        return JSRuntime.InvokeVoidAsync(
+            "tiptapEditor.scrollToPage",
+            _editorInstance,
+            pageIndex,
+            PageBreaks).AsTask();
+    }
+
+    public Task RefreshPageBreaksAsync()
+    {
+        return UpdatePageBreaksAsync();
+    }
+
+    private void SchedulePageBreakUpdate()
+    {
+        _pageBreakCts?.Cancel();
+        _pageBreakCts?.Dispose();
+        _pageBreakCts = new CancellationTokenSource();
+        _ = DebouncedPageBreakUpdateAsync(_pageBreakCts);
+    }
+
+    private async Task DebouncedPageBreakUpdateAsync(CancellationTokenSource cts)
+    {
+        try
+        {
+            await Task.Delay(300, cts.Token);
+        }
+        catch (TaskCanceledException)
+        {
+            return;
+        }
+
+        if (cts.IsCancellationRequested)
+        {
+            return;
+        }
+
+        await UpdatePageBreaksAsync();
+    }
+
+    private async Task UpdatePageBreaksAsync()
+    {
+        if (_editorInstance is null)
+        {
+            return;
+        }
+
+        int count = await JSRuntime.InvokeAsync<int>(
+            "tiptapEditor.setPageBreaksEnabled",
+            _editorInstance,
+            true,
+            PageBreaks);
+
+        if (!_pageBreakObserverAttached && _dotNetRef is not null)
+        {
+            await JSRuntime.InvokeVoidAsync(
+                "tiptapEditor.registerPageBreakObserver",
+                _editorInstance,
+                _dotNetRef,
+                PageBreaks);
+            _pageBreakObserverAttached = true;
+        }
+
+        if (PageCountChanged.HasDelegate)
+        {
+            await PageCountChanged.InvokeAsync(count);
+        }
     }
 
     public async Task InvokeCommandAsync(string command, params object?[] extraArgs)
@@ -287,5 +399,19 @@ else
                 "import",
                 "/js/tiptap-commands.js");
         }
+    }
+
+    [JSInvokable]
+    public async Task OnPageBreakStatusChanged(int pageCount, int currentPage)
+    {
+        _pageCount = Math.Max(1, pageCount);
+        _currentPageIndex = Math.Clamp(currentPage, 1, _pageCount);
+
+        if (PageCountChanged.HasDelegate)
+        {
+            await PageCountChanged.InvokeAsync(_pageCount);
+        }
+
+        await InvokeAsync(StateHasChanged);
     }
 }
