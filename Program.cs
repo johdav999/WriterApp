@@ -266,6 +266,12 @@ if (!app.Environment.IsDevelopment())
     app.UseHsts();
 }
 
+bool wasmEnabled = app.Configuration.GetValue<bool>("WriterApp:WasmClient:Enabled");
+if (wasmEnabled)
+{
+    app.UseBlazorFrameworkFiles("/app");
+}
+
 app.UseStaticFiles();
 app.UseRouting();
 app.UseAuthentication();
@@ -390,6 +396,11 @@ app.MapControllers().RequireAuthorization();
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
+
+if (wasmEnabled)
+{
+    app.MapFallbackToFile("/app/{*path:nonfile}", "index.html");
+}
 
 // --------------------
 // LAST: static asset fallback
