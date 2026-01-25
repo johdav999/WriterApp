@@ -1,17 +1,31 @@
 @page "/"
-@rendermode Microsoft.AspNetCore.Components.Web.RenderMode.InteractiveServer
 @using System
 @using System.Collections.Generic
 @using System.Globalization
+@using System.Diagnostics
+@using System.Net.Http
+@using System.Threading
 @using System.Threading.Tasks
 @using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.JSInterop
+@using System.Net.Http.Json
+@using Microsoft.AspNetCore.WebUtilities
+@using Microsoft.Extensions.Hosting
 @using Microsoft.Extensions.Logging
+@using WriterApp.Application.Documents
+@using WriterApp.Application.Diagnostics
 @using WriterApp.Application.State
-@using WriterApp.Domain.Documents
-@inject DocumentStorageService DocumentStorage
+@inject LegacyDocumentMigrationService LegacyMigration
 @inject NavigationManager Navigation
 @inject ILogger<Landing> Logger
 @inject AppHeaderState HeaderState
+@inject HttpClient Http
+@inject ClientEventLog EventLog
+@inject IHostEnvironment HostEnvironment
+@inject AuthenticationStateProvider AuthStateProvider
+@inject IJSRuntime JS
+@implements IDisposable
 
 <PageTitle>Writer</PageTitle>
 
@@ -21,8 +35,18 @@
             <h1>Documents</h1>
             <p class="landing-subtitle">Pick up where you left off or start something new.</p>
         </div>
-        <button type="button" class="primary" @onclick="CreateNewDocument">Create new document</button>
+        <button type="button" class="primary" @onclick="CreateNewDocument" disabled="@_createInFlight">Create new document</button>
     </header>
+
+    @if (!string.IsNullOrWhiteSpace(_loadErrorMessage))
+    {
+        <div class="landing-error">@_loadErrorMessage</div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(_createErrorMessage))
+    {
+        <div class="landing-error">@_createErrorMessage</div>
+    }
 
     @if (_isLoading)
     {
@@ -32,18 +56,18 @@
     {
         <div class="landing-empty">
             <p>No documents yet.</p>
-            <button type="button" class="primary" @onclick="CreateNewDocument">Create new document</button>
+            <button type="button" class="primary" @onclick="CreateNewDocument" disabled="@_createInFlight">Create new document</button>
         </div>
     }
     else
     {
         <div class="landing-list">
-            @foreach (DocumentIndexEntry entry in _documents)
+            @foreach (DocumentListItemDto entry in _documents)
             {
                 <div class="landing-card">
                     <div class="landing-meta">
                         <div class="landing-title">@entry.Title</div>
-                        <div class="landing-time">Last modified @FormatRelativeTime(entry.LastModifiedUtc)</div>
+                        <div class="landing-time">Last modified @FormatRelativeTime(entry.UpdatedAt)</div>
                         @if (entry.WordCount > 0)
                         {
                             <div class="landing-words">@entry.WordCount words</div>
@@ -56,57 +80,253 @@
             }
         </div>
     }
+
+    @if (_showDebugPanel)
+    {
+        <section class="landing-debug">
+            <button type="button" class="secondary" @onclick="ToggleDebugPanel">
+                Debug @(_debugExpanded ? "Hide" : "Show")
+            </button>
+            @if (_debugExpanded)
+            {
+                <div class="landing-debug-panel">
+                    @foreach (ClientEvent entry in EventLog.Events)
+                    {
+                        <div class="landing-debug-row">
+                            <span class="landing-debug-time">@entry.TimestampUtc.ToLocalTime().ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture)</span>
+                            <span class="landing-debug-level">@entry.Level</span>
+                            <span class="landing-debug-category">@entry.Category</span>
+                            <span class="landing-debug-message">@entry.Message</span>
+                        </div>
+                        @if (!string.IsNullOrWhiteSpace(entry.Exception))
+                        {
+                            <pre class="landing-debug-ex">@entry.Exception</pre>
+                        }
+                    }
+                </div>
+            }
+        </section>
+    }
 </div>
 
 @code {
-    private readonly List<DocumentIndexEntry> _documents = new();
+    private readonly List<DocumentListItemDto> _documents = new();
     private bool _isLoading = true;
     private bool _hasLoaded;
+    private bool _debugExpanded;
+    private bool _showDebugPanel;
+    private bool _createInFlight;
+    private bool _migrationStarted;
+    private CancellationTokenSource? _migrationCts;
+    private Timer? _migrationStatusTimer;
+    private string? _loadErrorMessage;
+    private string? _createErrorMessage;
+    private string? _clientOrigin;
+    private int? _legacyKeyCount;
+    private const int ResponseBodyLogLimit = 2048;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (_hasLoaded)
+        if (!firstRender || _hasLoaded)
         {
             return;
         }
 
         _hasLoaded = true;
+        Logger.LogInformation("Landing OnAfterRender load start.");
+        EventLog.Info("Landing", "OnAfterRender load start.");
+        await LogClientStorageDiagnosticsAsync();
         await LoadDocumentsAsync();
+        Logger.LogInformation("Landing OnAfterRender load end.");
+        EventLog.Info("Landing", "OnAfterRender load end.");
     }
 
     private async Task LoadDocumentsAsync()
     {
+        Stopwatch totalTimer = Stopwatch.StartNew();
+        _loadErrorMessage = null;
+        EventLog.Info("Landing", "LoadDocumentsAsync start.");
         try
         {
+            int legacyCount = 0;
+            try
+            {
+                legacyCount = await LegacyMigration.GetLegacyDocumentCountAsync();
+                Logger.LogInformation("Landing legacy docs detected: {Count}.", legacyCount);
+                EventLog.Info("Landing", $"Legacy docs detected: {legacyCount}.");
+                if (_legacyKeyCount.HasValue && _legacyKeyCount.Value == 0 && legacyCount > 0)
+                {
+                    Logger.LogWarning(
+                        "Landing legacy detection mismatch: client origin {Origin} has 0 keys but server reports {Count}. Check http vs https origin.",
+                        _clientOrigin ?? "unknown",
+                        legacyCount);
+                    EventLog.Warn(
+                        "Landing",
+                        $"Legacy detection mismatch: client origin {_clientOrigin ?? "unknown"} has 0 keys but server reports {legacyCount}.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Landing legacy count check failed.");
+                EventLog.Warn("Landing", "Legacy count check failed.", ex);
+            }
+
+            await TryStartLegacyMigrationAsync();
+
             _documents.Clear();
-            _documents.AddRange(await DocumentStorage.LoadIndexAsync());
+            string listUrl = "api/documents";
+            bool? isAuthenticated = await TryGetAuthenticationStateAsync();
+            Logger.LogInformation(
+                "Landing list documents request start. Url={Url} Authenticated={Authenticated}.",
+                listUrl,
+                isAuthenticated);
+            EventLog.Info("Landing", $"List documents request start. Url={listUrl} Authenticated={isAuthenticated}.");
+
+            Stopwatch requestTimer = Stopwatch.StartNew();
+            using HttpResponseMessage response = await Http.GetAsync(listUrl);
+            requestTimer.Stop();
+            Logger.LogInformation(
+                "Landing list documents response {Status} in {ElapsedMs}ms.",
+                response.StatusCode,
+                requestTimer.ElapsedMilliseconds);
+            EventLog.Info(
+                "Landing",
+                $"List documents response {(int)response.StatusCode} in {requestTimer.ElapsedMilliseconds}ms.");
+
+            if (!response.IsSuccessStatusCode)
+            {
+                string body = await ReadResponseBodyAsync(response);
+                Logger.LogWarning(
+                    "Landing list documents failed with {Status}. Body={Body}.",
+                    response.StatusCode,
+                    body);
+                EventLog.Warn("Landing", $"List documents failed with {(int)response.StatusCode}. Body={body}.");
+                _loadErrorMessage = "Failed to load documents.";
+                return;
+            }
+
+            List<DocumentListItemDto>? documents =
+                await response.Content.ReadFromJsonAsync<List<DocumentListItemDto>>();
+            if (documents is not null)
+            {
+                _documents.AddRange(documents);
+            }
+
+            Logger.LogInformation("Landing documents loaded. Count={Count}.", _documents.Count);
+            EventLog.Info("Landing", $"Rendered list count: {_documents.Count}.");
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Landing document load failed.");
+            EventLog.Error("Landing", "Landing document load failed.", ex);
+            _loadErrorMessage = "Failed to load documents.";
         }
         finally
         {
+            totalTimer.Stop();
             _isLoading = false;
             await InvokeAsync(StateHasChanged);
+            Logger.LogInformation("Landing load completed in {ElapsedMs}ms.", totalTimer.ElapsedMilliseconds);
+            EventLog.Info("Landing", $"LoadDocumentsAsync completed in {totalTimer.ElapsedMilliseconds}ms.");
         }
     }
 
     private async Task CreateNewDocument()
     {
-        Document document = DocumentFactory.CreateNewDocument();
-        await DocumentStorage.SaveDocumentAsync(document);
-        Navigation.NavigateTo($"/doc/{document.DocumentId}");
+        if (_createInFlight)
+        {
+            Logger.LogInformation("Landing create document click ignored (already in flight).");
+            EventLog.Info("Landing", "Create document click ignored (already in flight).");
+            return;
+        }
+
+        _createInFlight = true;
+        _createErrorMessage = null;
+        Logger.LogInformation("Landing create document clicked.");
+        EventLog.Info("Landing", "Create document clicked.");
+        EventLog.Info("Landing", "Create document request set in-flight.");
+        await InvokeAsync(StateHasChanged);
+
+        Stopwatch requestTimer = Stopwatch.StartNew();
+        try
+        {
+            DocumentCreateRequest request = new(null, null, null, null, true);
+            Logger.LogInformation("Landing create document request start.");
+            EventLog.Info("Landing", "Create document request start.");
+            using HttpResponseMessage response = await Http.PostAsJsonAsync("api/documents", request);
+            requestTimer.Stop();
+
+            Logger.LogInformation(
+                "Landing create document response {Status} in {ElapsedMs}ms.",
+                response.StatusCode,
+                requestTimer.ElapsedMilliseconds);
+            EventLog.Info(
+                "Landing",
+                $"Create document response {(int)response.StatusCode} in {requestTimer.ElapsedMilliseconds}ms.");
+
+            if (!response.IsSuccessStatusCode)
+            {
+                string body = await ReadResponseBodyAsync(response);
+                Logger.LogWarning(
+                    "Landing create document failed with {Status}. Body={Body}.",
+                    response.StatusCode,
+                    body);
+                EventLog.Warn("Landing", $"Create document failed with {(int)response.StatusCode}. Body={body}.");
+                _createErrorMessage = "Failed to create document.";
+                return;
+            }
+
+            DocumentCreateResponse? created = await response.Content.ReadFromJsonAsync<DocumentCreateResponse>();
+            if (created is null)
+            {
+                Logger.LogWarning("Landing create document response body was empty.");
+                EventLog.Warn("Landing", "Create document response body was empty.");
+                _createErrorMessage = "Failed to create document.";
+                return;
+            }
+
+            Logger.LogInformation(
+                "Landing create document succeeded. DocumentId={DocumentId} Title={Title}.",
+                created.Document.Id,
+                created.Document.Title);
+            EventLog.Info("Landing", $"Create document succeeded. DocumentId={created.Document.Id} Title={created.Document.Title}.");
+
+            string target;
+            if (created.DefaultSectionId.HasValue && created.DefaultPageId.HasValue)
+            {
+                target = $"/documents/{created.Document.Id}/sections/{created.DefaultSectionId}/pages/{created.DefaultPageId}";
+            }
+            else
+            {
+                target = $"/documents/{created.Document.Id}";
+            }
+
+            Logger.LogInformation("Landing navigate to {Target}.", target);
+            EventLog.Info("Landing", $"Navigate to {target}.");
+            Navigation.NavigateTo(target);
+            EventLog.Info("Landing", "NavigateTo invoked.");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Landing create document failed.");
+            EventLog.Error("Landing", "Create document failed.", ex);
+            _createErrorMessage = "Failed to create document.";
+        }
+        finally
+        {
+            _createInFlight = false;
+            await InvokeAsync(StateHasChanged);
+        }
     }
 
-    private void OpenDocument(DocumentIndexEntry entry)
+    private void OpenDocument(DocumentListItemDto entry)
     {
-        Navigation.NavigateTo($"/doc/{entry.DocumentId}");
+        Navigation.NavigateTo($"/documents/{entry.Id}");
     }
 
-    private static string FormatRelativeTime(DateTime timestampUtc)
+    private static string FormatRelativeTime(DateTimeOffset timestampUtc)
     {
-        DateTime utc = timestampUtc.Kind == DateTimeKind.Utc ? timestampUtc : timestampUtc.ToUniversalTime();
+        DateTime utc = timestampUtc.UtcDateTime;
         TimeSpan delta = DateTime.UtcNow - utc;
         if (delta < TimeSpan.Zero)
         {
@@ -141,7 +361,173 @@
 
     protected override void OnInitialized()
     {
+        Logger.LogInformation("Landing OnInitialized start.");
+        EventLog.Info("Landing", "OnInitialized start.");
         HeaderState.DocumentTitle = null;
         HeaderState.CanRenameDocumentTitle = false;
+        _showDebugPanel = HostEnvironment.IsDevelopment() || HasDebugQueryFlag();
+        EventLog.OnChanged += OnEventLogChanged;
+        if (_showDebugPanel)
+        {
+            _migrationStatusTimer = new Timer(
+                _ => LogMigrationStatus(),
+                null,
+                TimeSpan.FromSeconds(5),
+                TimeSpan.FromSeconds(5));
+        }
+        Logger.LogInformation("Landing OnInitialized end. DebugPanel={DebugPanel}.", _showDebugPanel);
+        EventLog.Info("Landing", $"OnInitialized end. DebugPanel={_showDebugPanel}.");
+    }
+
+    private async Task TryStartLegacyMigrationAsync()
+    {
+        if (_migrationStarted)
+        {
+            return;
+        }
+
+        _migrationStarted = true;
+        _migrationCts = new CancellationTokenSource();
+        Logger.LogInformation("Landing legacy migration attempt start.");
+        EventLog.Info("Landing", "Legacy migration attempt start.");
+        await RunLegacyMigrationAsync();
+    }
+
+    private async Task RunLegacyMigrationAsync()
+    {
+        try
+        {
+            CancellationToken ct = _migrationCts?.Token ?? CancellationToken.None;
+            Logger.LogInformation("Legacy migration: about to snapshot.");
+            EventLog.Info("Landing", "Legacy migration: about to snapshot.");
+            int migrated = await LegacyMigration.MigrateAsync(ct);
+            LegacyDocumentMigrationService.MigrationStatusSnapshot status = LegacyMigration.GetStatusSnapshot();
+            Logger.LogInformation("Legacy migration: snapshot completed count={Count}.", status.TotalLegacyDocuments);
+            EventLog.Info("Landing", $"Legacy migration: snapshot completed count={status.TotalLegacyDocuments}.");
+            if (status.TotalLegacyDocuments == 0)
+            {
+                Logger.LogInformation("Legacy migration: snapshot empty (likely timeout or no legacy docs).");
+                EventLog.Info("Landing", "Legacy migration: snapshot empty (likely timeout or no legacy docs).");
+            }
+            Logger.LogInformation("Landing legacy migration attempt end. Migrated {Count}.", migrated);
+            EventLog.Info("Landing", $"Legacy migration attempt end. Migrated {migrated}.");
+        }
+        catch (OperationCanceledException ex)
+        {
+            Logger.LogWarning(ex, "Landing legacy migration canceled.");
+            EventLog.Warn("Landing", "Legacy migration canceled.", ex);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Landing legacy migration failed.");
+            EventLog.Error("Landing", "Legacy migration failed.", ex);
+        }
+    }
+
+    private void ToggleDebugPanel()
+    {
+        _debugExpanded = !_debugExpanded;
+        EventLog.Info("Landing", $"Debug panel toggled. Expanded={_debugExpanded}.");
+    }
+
+    private void OnEventLogChanged()
+    {
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void LogMigrationStatus()
+    {
+        if (!_showDebugPanel)
+        {
+            return;
+        }
+
+        LegacyDocumentMigrationService.MigrationStatusSnapshot status = LegacyMigration.GetStatusSnapshot();
+        EventLog.Info(
+            "Landing",
+            $"Migration status: {status.Status} Running={status.IsRunning} Total={status.TotalLegacyDocuments} Migrated={status.PersistedDocuments} Pages={status.PagesMigrated} Detail={status.LastDetail} Doc={status.LastDocumentTitle ?? status.LastDocumentId?.ToString() ?? "n/a"}.");
+    }
+
+    private async Task LogClientStorageDiagnosticsAsync()
+    {
+        try
+        {
+            _clientOrigin = await JS.InvokeAsync<string>("writerAppStorage.getOrigin");
+            _legacyKeyCount = await JS.InvokeAsync<int>("writerAppStorage.countKeysWithPrefix", "writerapp.document.");
+            Logger.LogInformation("Landing client origin: {Origin}", _clientOrigin);
+            Logger.LogInformation("Landing client legacy key count: {Count}", _legacyKeyCount);
+            EventLog.Info("Landing", $"Client origin: {_clientOrigin}");
+            EventLog.Info("Landing", $"Client legacy key count: {_legacyKeyCount}");
+        }
+        catch (JSException ex)
+        {
+            Logger.LogWarning(ex, "Landing client storage diagnostics failed.");
+            EventLog.Warn("Landing", "Client storage diagnostics failed.", ex);
+        }
+    }
+
+    private bool HasDebugQueryFlag()
+    {
+        Uri uri = new(Navigation.Uri);
+        var query = QueryHelpers.ParseQuery(uri.Query);
+        if (query.TryGetValue("debug", out var value))
+        {
+            return string.Equals(value.ToString(), "1", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
+    }
+
+    private async Task<bool?> TryGetAuthenticationStateAsync()
+    {
+        try
+        {
+            AuthenticationState authState = await AuthStateProvider.GetAuthenticationStateAsync();
+            return authState.User.Identity?.IsAuthenticated;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Landing auth state retrieval failed.");
+            EventLog.Warn("Landing", "Auth state retrieval failed.", ex);
+            return null;
+        }
+    }
+
+    private static string Truncate(string value, int limit)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length <= limit)
+        {
+            return value;
+        }
+
+        return value[..limit] + "...";
+    }
+
+    private static async Task<string> ReadResponseBodyAsync(HttpResponseMessage response)
+    {
+        try
+        {
+            string body = await response.Content.ReadAsStringAsync();
+            return Truncate(body, ResponseBodyLogLimit);
+        }
+        catch (Exception)
+        {
+            return "(unable to read response body)";
+        }
+    }
+
+    public void Dispose()
+    {
+        _migrationStatusTimer?.Dispose();
+        _migrationStatusTimer = null;
+
+        if (_migrationCts is not null)
+        {
+            _migrationCts.Cancel();
+            _migrationCts.Dispose();
+            _migrationCts = null;
+        }
+
+        EventLog.OnChanged -= OnEventLogChanged;
     }
 }

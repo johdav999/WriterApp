@@ -1,0 +1,507 @@
+@page "/documents/{DocumentId:guid}/sections/{SectionId:guid}/pages/{PageId:guid}"
+@using WriterApp.Application.Documents
+@using WriterApp.Application.Commands
+@using WriterApp.AI.Abstractions
+@using WriterApp.AI.Actions
+@using WriterApp.Application.Exporting
+
+<PageTitle>@GetPageTitle()</PageTitle>
+
+@if (_isLoading)
+{
+    <div class="landing-loading">Loading document...</div>
+}
+else if (_loadError is not null)
+{
+    <div class="landing-empty">@_loadError</div>
+}
+else if (_activeSection is null || _activePage is null)
+{
+    <div class="landing-empty">No pages available.</div>
+}
+else
+{
+    @if (!string.IsNullOrWhiteSpace(_titleErrorMessage))
+    {
+        <div class="toast-message">@_titleErrorMessage</div>
+    }
+
+    <div class="editor-shell @GetLayoutStateClass()" style="@GetLayoutStyle()">
+        <div class="editor-workspace @GetWorkspaceClass()">
+            <aside class="section-panel @GetSectionsPanelClass()">
+                <div class="section-panel-header">
+                    <h2>Sections</h2>
+                </div>
+                <ul class="section-nav-list">
+                    @foreach (SectionDto item in _sections)
+                    {
+                        <li class="section-nav-row">
+                            <button type="button"
+                                    class="section-nav-item @(item.Id == _activeSection.Id ? "is-active" : string.Empty)"
+                                    @onclick="() => OnSectionSelected(item.Id)">
+                                <span class="section-title">@item.Title</span>
+                            </button>
+                        </li>
+                        <li class="page-nav-row">
+                            <PageList Pages="GetPages(item.Id)"
+                                      ActivePageId="_activePage.Id"
+                                      OnPageSelected="(id) => OnPageSelected(item.Id, id)" />
+                        </li>
+                    }
+                </ul>
+            </aside>
+
+            <section class="editor-main">
+                <div class="editor-main-header">
+                    <div class="editor-section-info">
+                        <div class="editor-section-label">Section</div>
+                        <div class="editor-section-title">@_activeSection.Title</div>
+                    </div>
+                    <button type="button" class="panel-toggle" @onclick="ToggleContextPanel">
+                        @(IsContextPanelCollapsed() ? "Show panel" : "Hide panel")
+                    </button>
+                    <button type="button" class="panel-toggle" @onclick="ToggleFocusMode">
+                        @(LayoutStateService.State.FocusMode ? "Exit focus" : "Focus mode")
+                    </button>
+                </div>
+
+                <div class="editor-toolbar" role="toolbar" aria-label="Editor formatting">
+                    <div class="editor-toolbar-group" aria-label="Essentials" data-compact="true">
+                        <button type="button" class="@GetActiveClass(_formattingState.IsBold)" disabled="@(!_formattingState.CanBold)" @onclick="OnBoldRequested">Bold</button>
+                        <button type="button" class="@GetActiveClass(_formattingState.IsItalic)" disabled="@(!_formattingState.CanItalic)" @onclick="OnItalicRequested">Italic</button>
+                        <select class="editor-toolbar-select" value="@GetBlockTypeValue()" @onchange="OnBlockTypeChanged" disabled="@(!_formattingState.CanApplyHeading)">
+                            <option value="paragraph">Paragraph</option>
+                            <option value="heading:1">Heading 1</option>
+                            <option value="heading:2">Heading 2</option>
+                        </select>
+                        <button type="button" disabled="@(!_formattingState.CanToggleList)" @onclick="OnBulletListRequested">Bulleted list</button>
+                        <button type="button" disabled="@(!_formattingState.CanToggleList)" @onclick="OnOrderedListRequested">Numbered list</button>
+                        <button type="button" disabled="@(!_formattingState.CanBlockquote)" @onclick="OnBlockquoteRequested">Blockquote</button>
+                        <button type="button" class="@GetActiveClass(_formattingState.IsLink)" @onclick="OnLinkRequested">Link</button>
+                    </div>
+                    <div class="editor-toolbar-group" aria-label="Zoom">
+                        <button type="button" @onclick="OnZoomOutRequested">A-</button>
+                        <span class="editor-zoom-label">@GetZoomLabel()</span>
+                        <button type="button" @onclick="OnZoomInRequested">A+</button>
+                    </div>
+                    <div class="editor-toolbar-group editor-toolbar-overflow" aria-label="More">
+                        <button type="button" @onclick="ToggleToolbarOverflow">...</button>
+                        @if (_isToolbarOverflowOpen)
+                        {
+                            <div class="editor-toolbar-overflow-panel">
+                                <button type="button" class="@GetActiveClass(_formattingState.IsStrike)" disabled="@(!_formattingState.CanStrike)" @onclick="OnStrikeRequested">Strike</button>
+                                <button type="button" class="@GetActiveClass(_formattingState.IsCode)" disabled="@(!_formattingState.CanCode)" @onclick="OnCodeRequested">Code</button>
+                                <button type="button" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnHeadingRequested(3)">Heading 3</button>
+                                <button type="button" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnHeadingRequested(4)">Heading 4</button>
+                                <button type="button" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnHeadingRequested(5)">Heading 5</button>
+                                <button type="button" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnHeadingRequested(6)">Heading 6</button>
+                                <button type="button" disabled="@(!_formattingState.CanHorizontalRule)" @onclick="OnHorizontalRuleRequested">Horizontal rule</button>
+                                <button type="button" class="@GetActiveClass(_formattingState.TextAlign == "left")" @onclick='@(() => OnAlignRequested("left"))'>Align left</button>
+                                <button type="button" class="@GetActiveClass(_formattingState.TextAlign == "center")" @onclick='@(() => OnAlignRequested("center"))'>Align center</button>
+                                <button type="button" class="@GetActiveClass(_formattingState.TextAlign == "right")" @onclick='@(() => OnAlignRequested("right"))'>Align right</button>
+                                <button type="button" @onclick="OnIndentDecreaseRequested">Indent -</button>
+                                <button type="button" @onclick="OnIndentIncreaseRequested">Indent +</button>
+                            </div>
+                        }
+                    </div>
+                </div>
+                <div class="editor-actions">
+                    <button type="button" @onclick="OnUndoRequested">Undo</button>
+                    <button type="button" @onclick="OnRedoRequested">Redo</button>
+                    <div class="document-menu">
+                        <button type="button" @onclick="ToggleDocumentMenu">Document</button>
+                        @if (_isDocumentMenuOpen)
+                        {
+                            <div class="document-menu-panel">
+                                <button type="button" @onclick="OnToggleEditorWidthMode">@GetEditorWidthLabel()</button>
+                                <button type="button" @onclick="OnSaveNow">Save now</button>
+                                <button type="button" @onclick="() => OnExportRequested(ExportKind.Document, ExportFormat.Markdown)">Export Document (Markdown)</button>
+                                <button type="button" @onclick="() => OnExportRequested(ExportKind.Document, ExportFormat.Html)">Export Document (HTML)</button>
+                                <button type="button" @onclick="OnExportPdfRequested">Export Document (PDF)</button>
+                                <button type="button" @onclick="() => OnExportRequested(ExportKind.Synopsis, ExportFormat.Markdown)">Export Synopsis (Markdown)</button>
+                                <button type="button" @onclick="() => OnExportRequested(ExportKind.Synopsis, ExportFormat.Html)">Export Synopsis (HTML)</button>
+                                @if (CanShowAiMenu && AiOrchestrator.CanRunAction(GenerateCoverImageAction.ActionIdValue))
+                                {
+                                    <button type="button" disabled="@IsAiQuotaExceeded" @onclick="OnGenerateCoverImage">Generate cover image (mock)</button>
+                                }
+                            </div>
+                        }
+                    </div>
+                    @if (IsAiQuotaExceeded)
+                    {
+                        <span class="ai-quota-message">You've reached your monthly AI limit.</span>
+                    }
+                </div>
+
+                @if (_pendingAiProposal is not null)
+                {
+                    <div class="ai-preview">
+                        <div class="ai-preview-header">
+                            <strong>AI suggestion</strong>
+                            <span>@_pendingAiProposal.Instruction</span>
+                            @if (!string.IsNullOrWhiteSpace(_pendingAiProposal.ErrorMessage))
+                            {
+                                <span class="ai-preview-status error">@_pendingAiProposal.ErrorMessage</span>
+                            }
+                        </div>
+                        @if (!string.IsNullOrWhiteSpace(_pendingAiProposal.OriginalText))
+                        {
+                            <div class="ai-preview-columns">
+                                <div class="ai-preview-pane">
+                                    <div class="ai-preview-label">Original</div>
+                                    <div class="ai-preview-text">@_pendingAiProposal.OriginalText</div>
+                                </div>
+                                <div class="ai-preview-pane">
+                                    <div class="ai-preview-label">Proposed</div>
+                                    <div class="ai-preview-text">@_pendingAiProposal.ProposedText</div>
+                                </div>
+                            </div>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(_pendingAiProposal.ImageDataUrl))
+                        {
+                            <div class="ai-preview-image">
+                                <div class="ai-preview-label">Proposed image</div>
+                                <img src="@_pendingAiProposal.ImageDataUrl" alt="Proposed cover" />
+                            </div>
+                        }
+                        <div class="ai-preview-actions">
+                            <button type="button" @onclick="OnApplyPendingAiProposal">Apply</button>
+                            <button type="button" @onclick="OnDiscardPendingAiProposal">Discard</button>
+                            <button type="button"
+                                    class="ai-details-toggle"
+                                    aria-expanded="@_pendingDetailsExpanded"
+                                    aria-controls="ai-pending-details"
+                                    @onclick="TogglePendingDetails">
+                                @(_pendingDetailsExpanded ? "Hide details" : "Change details")
+                            </button>
+                        </div>
+                        @if (_pendingDetailsExpanded)
+                        {
+                            <div id="ai-pending-details" class="ai-history-details">
+                                <div class="ai-history-details-header">
+                                    <div class="ai-history-details-summary">@GetPendingSummary()</div>
+                                    <div class="ai-history-details-sub">
+                                        <span>Preview</span>
+                                        @if (_pendingAiProposal?.Proposal is not null)
+                                        {
+                                            <span class="ai-history-provider">@_pendingAiProposal.Proposal.ProviderId</span>
+                                            <span>@_pendingAiProposal.Proposal.TargetScope</span>
+                                        }
+                                        <span>@_pendingAiProposal?.Timestamp.ToLocalTime().ToString("g")</span>
+                                    </div>
+                                </div>
+                                @if (!string.IsNullOrWhiteSpace(_pendingAiProposal?.Instruction))
+                                {
+                                    <div class="ai-history-details-intent">
+                                        <div class="ai-history-details-label">Intent</div>
+                                        <div class="ai-history-details-text">@_pendingAiProposal?.Instruction</div>
+                                    </div>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(_pendingAiProposal?.Proposal?.Reason))
+                                {
+                                    <div class="ai-history-details-intent">
+                                        <div class="ai-history-details-label">Reason</div>
+                                        <div class="ai-history-details-text">@_pendingAiProposal?.Proposal?.Reason</div>
+                                    </div>
+                                }
+                                <div class="ai-history-details-compare">
+                                    <div class="ai-history-details-block">
+                                        <div class="ai-history-details-label">Before</div>
+                                        <pre>@FormatHistoryText(_pendingAiProposal?.OriginalText)</pre>
+                                    </div>
+                                    <div class="ai-history-details-block">
+                                        <div class="ai-history-details-label">After</div>
+                                        <pre>@FormatHistoryText(_pendingAiProposal?.ProposedText)</pre>
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+
+                <div class="editor-surface">
+                    <div class="editor-viewport">
+                        <div class="editor-content">
+                            <PageEditor @ref="_pageEditor"
+                                        @key="_activePage.Id"
+                                        Page="_activePage"
+                                        OnPageSaved="OnPageSaved"
+                                        FormattingChanged="OnFormattingChanged"
+                                        SelectionChanged="OnSelectionChanged"
+                                        ContextMenuRequested="OnEditorContextMenuRequested"
+                                        SelectionBubbleChanged="OnSelectionBubbleChanged" />
+                            @if (_selectionBubbleVisible)
+                            {
+                                <div class="selection-bubble" style="@GetSelectionBubbleStyle()">
+                                    <button type="button"
+                                            class="@GetActiveClass(_formattingState.IsBold)"
+                                            disabled="@(!_formattingState.CanBold)"
+                                            @onclick="OnBoldRequested">Bold</button>
+                                    <button type="button"
+                                            class="@GetActiveClass(_formattingState.IsItalic)"
+                                            disabled="@(!_formattingState.CanItalic)"
+                                            @onclick="OnItalicRequested">Italic</button>
+                                    <button type="button"
+                                            class="@GetActiveClass(_formattingState.IsStrike)"
+                                            disabled="@(!_formattingState.CanStrike)"
+                                            @onclick="OnStrikeRequested">Strike</button>
+                                    <button type="button"
+                                            class="@GetActiveClass(_formattingState.IsCode)"
+                                            disabled="@(!_formattingState.CanCode)"
+                                            @onclick="OnCodeRequested">Code</button>
+                                    <button type="button"
+                                            class="@GetActiveClass(_formattingState.IsLink)"
+                                            @onclick="OnLinkRequested">Link</button>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <aside class="context-drawer @(GetContextPanelClass())">
+                <div class="context-drawer-header">
+                    <div class="context-drawer-tabs">
+                        <button type="button"
+                                class="context-tab @GetContextTabClass(ContextTab.Notes)"
+                                aria-selected="@(_activeContextTab == ContextTab.Notes)"
+                                @onclick="() => SetContextTab(ContextTab.Notes)">
+                            Notes
+                        </button>
+                        <button type="button"
+                                class="context-tab @GetContextTabClass(ContextTab.Outline)"
+                                aria-selected="@(_activeContextTab == ContextTab.Outline)"
+                                @onclick="() => SetContextTab(ContextTab.Outline)">
+                            Outline
+                        </button>
+                        <button type="button"
+                                class="context-tab @GetContextTabClass(ContextTab.Ai)"
+                                aria-selected="@(_activeContextTab == ContextTab.Ai)"
+                                @onclick="() => SetContextTab(ContextTab.Ai)">
+                            AI
+                        </button>
+                    </div>
+                </div>
+                <div class="context-drawer-body">
+                    @if (_activeContextTab == ContextTab.Notes)
+                    {
+                        <div class="drawer-panel">
+                            <div class="drawer-panel-title">Notes</div>
+                            <textarea class="notes-input"
+                                      value="@_notesDraft"
+                                      @oninput="OnNotesInput"
+                                      placeholder="Add notes for this section..."></textarea>
+                            <button type="button" @onclick="OnNotesSave">Save notes</button>
+                            @if (!string.IsNullOrWhiteSpace(_notesStatus))
+                            {
+                                <div class="drawer-empty">@_notesStatus</div>
+                            }
+                        </div>
+                    }
+                    else if (_activeContextTab == ContextTab.Outline)
+                    {
+                        <div class="drawer-panel">
+                            <div class="drawer-panel-title">Outline</div>
+                            <ul class="outline-list">
+                                @foreach (SectionDto section in _sections)
+                                {
+                                    <li class="outline-section">
+                                        <div class="outline-section-title">@(section.Title)</div>
+                                        <ul class="outline-pages">
+                                            @foreach (PageDto page in GetPages(section.Id))
+                                            {
+                                                <li class="outline-page">@(page.Title)</li>
+                                            }
+                                        </ul>
+                                    </li>
+                                }
+                            </ul>
+                        </div>
+                    }
+                    else if (_activeContextTab == ContextTab.Ai)
+                    {
+                        <div class="drawer-panel">
+                            <div class="drawer-panel-title">AI actions</div>
+                            @if (!CanShowAiMenu)
+                            {
+                                <div class="drawer-empty">AI is disabled for this account.</div>
+                            }
+                            else if (_currentSelectionRange is null)
+                            {
+                                <div class="drawer-empty">Select text in the editor to enable AI actions.</div>
+                            }
+                            else if (!AiOrchestrator.CanRunAction(RewriteSelectionAction.ActionIdValue) || _aiActions.Count == 0)
+                            {
+                                <div class="drawer-empty">No actions available for this selection.</div>
+                            }
+                            else
+                            {
+                                <div class="ai-actions-list">
+                                    @foreach (AiActionOption action in _aiActions)
+                                    {
+                                        <button type="button" disabled="@IsAiQuotaExceeded" @onclick="() => OnAiActionSelected(action)">
+                                            @action.Label
+                                        </button>
+                                    }
+                                </div>
+                            }
+                        </div>
+                        <div class="drawer-panel">
+                            <div class="drawer-panel-title">
+                                AI history
+                                <span class="ai-history-count-pill">@_aiHistoryEntries.Count</span>
+                            </div>
+                            @if (_aiHistoryEntries.Count == 0)
+                            {
+                                <div class="drawer-empty">No AI changes yet.</div>
+                            }
+                            else
+                            {
+                                <ul class="ai-history-list">
+                                @foreach (AiHistoryEntry entry in _aiHistoryEntries)
+                                {
+                                    bool showDetails = _expandedAiHistoryId == entry.Id;
+                                    <li class="ai-history-item">
+                                        <div class="ai-history-meta">
+                                            <span class="ai-history-badge">AI</span>
+                                            <span class="ai-history-summary">@entry.Label</span>
+                                        </div>
+                                        <div class="ai-history-sub">
+                                            <span>@entry.Timestamp.ToLocalTime().ToString("g")</span>
+                                            <span class="ai-history-status">Applied</span>
+                                        </div>
+                                        <div class="ai-history-actions">
+                                            <button type="button"
+                                                    class="ai-details-toggle"
+                                                    aria-expanded="@showDetails"
+                                                    aria-controls="@GetAiHistoryDetailsId(entry)"
+                                                    @onclick="() => OnToggleAiHistoryDetails(entry)">
+                                                @(showDetails ? "Hide details" : "Details")
+                                            </button>
+                                        </div>
+                                        @if (showDetails)
+                                        {
+                                            <div id="@GetAiHistoryDetailsId(entry)" class="ai-history-details">
+                                                <div class="ai-history-details-header">
+                                                    <div class="ai-history-details-summary">@(entry.Summary ?? entry.Label)</div>
+                                                    <div class="ai-history-details-sub">
+                                                        <span>Applied</span>
+                                                        @if (!string.IsNullOrWhiteSpace(entry.ProviderId))
+                                                        {
+                                                            <span class="ai-history-provider">@entry.ProviderId</span>
+                                                        }
+                                                        @if (!string.IsNullOrWhiteSpace(entry.TargetScope))
+                                                        {
+                                                            <span>@entry.TargetScope</span>
+                                                        }
+                                                        <span>@entry.Timestamp.ToLocalTime().ToString("g")</span>
+                                                    </div>
+                                                </div>
+                                                @if (!string.IsNullOrWhiteSpace(entry.Instruction))
+                                                {
+                                                    <div class="ai-history-details-intent">
+                                                        <div class="ai-history-details-label">Intent</div>
+                                                        <div class="ai-history-details-text">@entry.Instruction</div>
+                                                    </div>
+                                                }
+                                                @if (!string.IsNullOrWhiteSpace(entry.Reason))
+                                                {
+                                                    <div class="ai-history-details-intent">
+                                                        <div class="ai-history-details-label">Reason</div>
+                                                        <div class="ai-history-details-text">@entry.Reason</div>
+                                                    </div>
+                                                }
+                                                <div class="ai-history-details-compare">
+                                                    <div class="ai-history-details-block">
+                                                        <div class="ai-history-details-label">Before</div>
+                                                        <pre>@FormatHistoryText(entry.BeforeText)</pre>
+                                                    </div>
+                                                    <div class="ai-history-details-block">
+                                                        <div class="ai-history-details-label">After</div>
+                                                        <pre>@FormatHistoryText(entry.AfterText)</pre>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        }
+                                    </li>
+                                }
+                            </ul>
+                        }
+                        </div>
+                    }
+                </div>
+            </aside>
+        </div>
+    </div>
+}
+
+@if (_isContextMenuOpen)
+{
+    <div class="editor-context-menu-backdrop" @onclick="CloseContextMenu"></div>
+    <div class="editor-context-menu"
+         style="@GetContextMenuStyle()"
+         tabindex="-1"
+         role="menu"
+         @ref="_contextMenuRef"
+         @onclick:stopPropagation="true"
+         @onkeydown="OnContextMenuKeyDown">
+        <div class="editor-context-menu-group">
+            <div class="editor-context-menu-label">Text emphasis</div>
+            <button type="button"
+                    class="@GetActiveClass(_formattingState.IsBold)"
+                    disabled="@(!_formattingState.CanBold)"
+                    @onclick="() => OnContextMenuCommand(OnBoldRequested)">Bold</button>
+            <button type="button"
+                    class="@GetActiveClass(_formattingState.IsItalic)"
+                    disabled="@(!_formattingState.CanItalic)"
+                    @onclick="() => OnContextMenuCommand(OnItalicRequested)">Italic</button>
+            <button type="button"
+                    class="@GetActiveClass(_formattingState.IsStrike)"
+                    disabled="@(!_formattingState.CanStrike)"
+                    @onclick="() => OnContextMenuCommand(OnStrikeRequested)">Strike</button>
+            <button type="button"
+                    class="@GetActiveClass(_formattingState.IsCode)"
+                    disabled="@(!_formattingState.CanCode)"
+                    @onclick="() => OnContextMenuCommand(OnCodeRequested)">Code</button>
+        </div>
+        <div class="editor-context-menu-group">
+            <div class="editor-context-menu-label">Structure</div>
+            <button type="button"
+                    class="@GetActiveClass(_formattingState.BlockType == "paragraph")"
+                    disabled="@(!_formattingState.CanApplyHeading)"
+                    @onclick="() => OnContextMenuCommand(OnParagraphRequested)">Paragraph</button>
+            <button type="button"
+                    class="@GetActiveClass(_formattingState.BlockType == "heading:1")"
+                    disabled="@(!_formattingState.CanApplyHeading)"
+                    @onclick="() => OnContextMenuCommand(() => OnHeadingRequested(1))">Heading 1</button>
+            <button type="button"
+                    class="@GetActiveClass(_formattingState.BlockType == "heading:2")"
+                    disabled="@(!_formattingState.CanApplyHeading)"
+                    @onclick="() => OnContextMenuCommand(() => OnHeadingRequested(2))">Heading 2</button>
+            <button type="button"
+                    class="@GetActiveClass(_formattingState.BlockType == "heading:3")"
+                    disabled="@(!_formattingState.CanApplyHeading)"
+                    @onclick="() => OnContextMenuCommand(() => OnHeadingRequested(3))">Heading 3</button>
+        </div>
+        <div class="editor-context-menu-group">
+            <div class="editor-context-menu-label">Lists</div>
+            <button type="button" disabled="@(!_formattingState.CanToggleList)" @onclick="() => OnContextMenuCommand(OnBulletListRequested)">Bullet list</button>
+            <button type="button" disabled="@(!_formattingState.CanToggleList)" @onclick="() => OnContextMenuCommand(OnOrderedListRequested)">Ordered list</button>
+        </div>
+        <div class="editor-context-menu-group">
+            <div class="editor-context-menu-label">Other</div>
+            <button type="button" disabled="@(!_formattingState.CanBlockquote)" @onclick="() => OnContextMenuCommand(OnBlockquoteRequested)">Blockquote</button>
+            <button type="button" class="@GetActiveClass(_formattingState.IsLink)" @onclick="() => OnContextMenuCommand(OnLinkRequested)">Link</button>
+        </div>
+        @if (_currentSelectionRange is not null && CanShowAiMenu && AiOrchestrator.CanRunAction(RewriteSelectionAction.ActionIdValue))
+        {
+            <div class="editor-context-menu-group">
+                <div class="editor-context-menu-label">AI</div>
+                @foreach (AiActionOption action in _aiActions)
+                {
+                    <button type="button" disabled="@IsAiQuotaExceeded" @onclick="() => OnContextMenuCommand(() => OnAiActionSelected(action))">@action.Label</button>
+                }
+            </div>
+        }
+    </div>
+}

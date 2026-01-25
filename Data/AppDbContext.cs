@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using WriterApp.Data.Documents;
 using WriterApp.Data.Subscriptions;
 using WriterApp.Data.Usage;
 
@@ -17,6 +18,9 @@ namespace WriterApp.Data
         public DbSet<UserPlanAssignment> UserPlanAssignments => Set<UserPlanAssignment>();
         public DbSet<UsageEvent> UsageEvents => Set<UsageEvent>();
         public DbSet<UsageAggregate> UsageAggregates => Set<UsageAggregate>();
+        public DbSet<DocumentRecord> Documents => Set<DocumentRecord>();
+        public DbSet<SectionRecord> Sections => Set<SectionRecord>();
+        public DbSet<PageRecord> Pages => Set<PageRecord>();
 
         protected override void OnModelCreating(ModelBuilder builder)
         {
@@ -72,6 +76,52 @@ namespace WriterApp.Data
                 entity.Property(aggregate => aggregate.UserId).IsRequired();
                 entity.Property(aggregate => aggregate.Kind).IsRequired();
                 entity.Property(aggregate => aggregate.UpdatedUtc).IsRequired();
+            });
+
+            builder.Entity<DocumentRecord>(entity =>
+            {
+                entity.HasKey(document => document.Id);
+                entity.Property(document => document.OwnerUserId).IsRequired();
+                entity.Property(document => document.Title).IsRequired();
+                entity.Property(document => document.CreatedAt).IsRequired();
+                entity.Property(document => document.UpdatedAt).IsRequired();
+                entity.HasMany(document => document.Sections)
+                    .WithOne(section => section.Document)
+                    .HasForeignKey(section => section.DocumentId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<SectionRecord>(entity =>
+            {
+                entity.HasKey(section => section.Id);
+                entity.Property(section => section.DocumentId).IsRequired();
+                entity.Property(section => section.Title).IsRequired();
+                entity.Property(section => section.OrderIndex).IsRequired();
+                entity.Property(section => section.CreatedAt).IsRequired();
+                entity.Property(section => section.UpdatedAt).IsRequired();
+                entity.HasIndex(section => new { section.DocumentId, section.OrderIndex });
+                entity.HasMany(section => section.Pages)
+                    .WithOne(page => page.Section)
+                    .HasForeignKey(page => page.SectionId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<PageRecord>(entity =>
+            {
+                entity.HasKey(page => page.Id);
+                entity.Property(page => page.DocumentId).IsRequired();
+                entity.Property(page => page.SectionId).IsRequired();
+                entity.Property(page => page.Title).IsRequired();
+                entity.Property(page => page.Content).IsRequired();
+                entity.Property(page => page.OrderIndex).IsRequired();
+                entity.Property(page => page.CreatedAt).IsRequired();
+                entity.Property(page => page.UpdatedAt).IsRequired();
+                entity.HasIndex(page => new { page.SectionId, page.OrderIndex });
+                entity.HasIndex(page => page.DocumentId);
+                entity.HasOne(page => page.Document)
+                    .WithMany()
+                    .HasForeignKey(page => page.DocumentId)
+                    .OnDelete(DeleteBehavior.Cascade);
             });
 
             SeedSubscriptionData(builder);
