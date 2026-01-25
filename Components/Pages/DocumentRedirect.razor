@@ -1,0 +1,101 @@
+@page "/documents/{DocumentId:guid}"
+@using System.Net.Http
+@using System.Net.Http.Json
+@using WriterApp.Application.Documents
+@inject HttpClient Http
+@inject NavigationManager Navigation
+@inject ILogger<DocumentRedirect> Logger
+
+@if (_isLoading)
+{
+    <div class="landing-loading">Loading document...</div>
+}
+
+@code {
+    [Parameter]
+    public Guid DocumentId { get; set; }
+
+    private bool _isLoading = true;
+    private bool _loaded;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loaded)
+        {
+            return;
+        }
+
+        _loaded = true;
+        await LoadAndRedirectAsync();
+    }
+
+    private async Task LoadAndRedirectAsync()
+    {
+        try
+        {
+            DocumentDetailDto? document = await Http.GetFromJsonAsync<DocumentDetailDto>($"api/documents/{DocumentId}");
+            if (document is null)
+            {
+                Navigation.NavigateTo("/", replace: true);
+                return;
+            }
+
+            List<SectionDto>? sections = await Http.GetFromJsonAsync<List<SectionDto>>($"api/documents/{DocumentId}/sections");
+            SectionDto? section = sections?.OrderBy(item => item.OrderIndex).FirstOrDefault();
+            if (section is null)
+            {
+                SectionCreateRequest sectionRequest = new(null, "Draft", null, 0, null, null);
+                using HttpResponseMessage sectionResponse = await Http.PostAsJsonAsync(
+                    $"api/documents/{DocumentId}/sections",
+                    sectionRequest);
+
+                if (!sectionResponse.IsSuccessStatusCode)
+                {
+                    Navigation.NavigateTo("/", replace: true);
+                    return;
+                }
+
+                section = await sectionResponse.Content.ReadFromJsonAsync<SectionDto>();
+                if (section is null)
+                {
+                    Navigation.NavigateTo("/", replace: true);
+                    return;
+                }
+            }
+
+            List<PageDto>? pages = await Http.GetFromJsonAsync<List<PageDto>>($"api/sections/{section.Id}/pages");
+            PageDto? page = pages?.OrderBy(item => item.OrderIndex).FirstOrDefault();
+            if (page is null)
+            {
+                PageCreateRequest pageRequest = new(null, "Page 1", string.Empty, 0, null, null);
+                using HttpResponseMessage pageResponse = await Http.PostAsJsonAsync(
+                    $"api/sections/{section.Id}/pages",
+                    pageRequest);
+
+                if (!pageResponse.IsSuccessStatusCode)
+                {
+                    Navigation.NavigateTo("/", replace: true);
+                    return;
+                }
+
+                page = await pageResponse.Content.ReadFromJsonAsync<PageDto>();
+                if (page is null)
+                {
+                    Navigation.NavigateTo("/", replace: true);
+                    return;
+                }
+            }
+
+            Navigation.NavigateTo($"/documents/{DocumentId}/sections/{section.Id}/pages/{page.Id}", replace: true);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Document redirect failed.");
+            Navigation.NavigateTo("/", replace: true);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+}

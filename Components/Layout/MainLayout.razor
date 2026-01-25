@@ -171,8 +171,8 @@
     private string GetEditorLink()
     {
         return string.IsNullOrWhiteSpace(HeaderState.DocumentId)
-            ? "/doc"
-            : $"/doc/{HeaderState.DocumentId}";
+            ? "/"
+            : $"/documents/{HeaderState.DocumentId}";
     }
 
     private string GetSynopsisLink()

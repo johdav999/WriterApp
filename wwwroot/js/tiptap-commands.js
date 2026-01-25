@@ -178,6 +178,31 @@ export function focusEditor(editor) {
     editor.commands.focus();
 }
 
+export function undo(editor) {
+    if (!editor) {
+        return;
+    }
+
+    editor.chain().focus().undo().run();
+}
+
+export function redo(editor) {
+    if (!editor) {
+        return;
+    }
+
+    editor.chain().focus().redo().run();
+}
+
+export function replaceSelection(editor, content) {
+    if (!editor) {
+        return;
+    }
+
+    const text = typeof content === "string" ? content : "";
+    editor.chain().focus().insertContent(text).run();
+}
+
 export function scrollToPosition(editor, position) {
     if (!editor) {
         return;

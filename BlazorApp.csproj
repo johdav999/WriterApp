@@ -21,6 +21,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Remove="Components\Pages\DocumentEditor.razor" />
+    <Compile Remove="Components\Editor\PageEditor.razor" />
+    <Compile Remove="Components\Editor\PageList.razor" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="AngleSharp" Version="1.1.1" />
 
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.4" />

@@ -1,0 +1,32 @@
+@using WriterApp.Application.Documents
+
+@if (Pages is null || Pages.Count == 0)
+{
+    <div class="page-list-empty">No pages</div>
+}
+else
+{
+    <ul class="page-list">
+        @foreach (PageDto item in Pages)
+        {
+            <li>
+                <button type="button"
+                        class="page-nav-item @(item.Id == ActivePageId ? "is-active" : string.Empty)"
+                        @onclick="() => OnPageSelected.InvokeAsync(item.Id)">
+                    @item.Title
+                </button>
+            </li>
+        }
+    </ul>
+}
+
+@code {
+    [Parameter]
+    public List<PageDto> Pages { get; set; } = new();
+
+    [Parameter]
+    public Guid ActivePageId { get; set; }
+
+    [Parameter]
+    public EventCallback<Guid> OnPageSelected { get; set; }
+}

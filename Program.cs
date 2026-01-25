@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components.Server.Circuits;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
@@ -26,10 +27,16 @@ using WriterApp.Application.Exporting;
 using WriterApp.Application.State;
 using WriterApp.Application.AI.StoryCoach;
 using WriterApp.Application.Synopsis;
+using WriterApp.Application.Diagnostics;
+using WriterApp.Application.Diagnostics.Circuits;
 using WriterApp.Data;
 using WriterApp.Data.Subscriptions;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Logging.AddFilter("Microsoft.AspNetCore.Components.Server.Circuits", LogLevel.Information);
+builder.Logging.AddFilter(
+    "Microsoft.AspNetCore.SignalR",
+    builder.Environment.IsDevelopment() ? LogLevel.Debug : LogLevel.Information);
 
 // --------------------
 // Services
@@ -41,9 +48,14 @@ builder.Services.AddRazorComponents()
 builder.Services.AddDbContext<AppDbContext>(options =>
 {
     string? connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
-    options.UseSqlite(string.IsNullOrWhiteSpace(connectionString)
-        ? "Data Source=writerapp.db"
-        : connectionString);
+    if (string.IsNullOrWhiteSpace(connectionString))
+    {
+        connectionString = builder.Environment.IsDevelopment()
+            ? "Data Source=writerapp.db"
+            : "Data Source=/home/site/data/writerapp.db";
+    }
+
+    options.UseSqlite(connectionString);
 });
 
 builder.Services.AddAuthentication(options =>
@@ -135,6 +147,9 @@ builder.Services.AddScoped<IUsageMeter, UsageMeter>();
 builder.Services.AddSingleton<IClock, WriterApp.Application.Usage.SystemClock>();
 builder.Services.AddScoped<IAiUsageStatusService, AiUsageStatusService>();
 builder.Services.AddScoped<IAiUsagePolicy, AiUsagePolicy>();
+builder.Services.AddScoped<WriterApp.Application.Documents.IDocumentRepository, WriterApp.Data.Documents.DocumentRepository>();
+builder.Services.AddScoped<WriterApp.Application.Documents.ISectionRepository, WriterApp.Data.Documents.SectionRepository>();
+builder.Services.AddScoped<WriterApp.Application.Documents.IPageRepository, WriterApp.Data.Documents.PageRepository>();
 
 builder.Services.AddSingleton<StoryCoachContextBuilder>();
 builder.Services.Configure<WriterAiOptions>(builder.Configuration.GetSection("WriterApp:AI"));
@@ -171,8 +186,11 @@ builder.Services.AddSingleton<IAiProposalApplier, DefaultProposalApplier>();
 builder.Services.AddScoped<IAiOrchestrator, AiOrchestrator>();
 
 builder.Services.AddScoped<DocumentStorageService>();
+builder.Services.AddScoped<LegacyDocumentMigrationService>();
 builder.Services.AddScoped<AppHeaderState>();
 builder.Services.AddScoped<LayoutStateService>();
+builder.Services.AddSingleton<ClientEventLog>();
+builder.Services.AddSingleton<CircuitHandler, CircuitLoggingHandler>();
 
 builder.Services.AddSingleton<IExportRenderer, MarkdownExportRenderer>();
 builder.Services.AddSingleton<IExportRenderer, HtmlExportRenderer>();
@@ -181,6 +199,12 @@ builder.Services.AddSingleton<IExportRenderer, SynopsisHtmlExportRenderer>();
 builder.Services.AddSingleton<ExportService>();
 
 builder.Services.AddServerSideBlazor()
+    .AddHubOptions(options =>
+    {
+        options.MaximumReceiveMessageSize = builder.Environment.IsDevelopment()
+            ? 10 * 1024 * 1024
+            : 2 * 1024 * 1024; // Keep production payloads tighter; increase if needed.
+    })
     .AddCircuitOptions(o => o.DetailedErrors = true);
 
 var app = builder.Build();
@@ -201,14 +225,16 @@ using (IServiceScope scope = app.Services.CreateScope())
     AppDbContext dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     if (app.Environment.IsDevelopment())
     {
-        dbContext.Database.EnsureCreated();
-        logger.LogInformation("Database ensured (development).");
+        await dbContext.Database.MigrateAsync();
+        logger.LogInformation("Database migrations applied (development).");
     }
     else
     {
         await dbContext.Database.MigrateAsync();
         logger.LogInformation("Database migrations applied.");
     }
+
+    ApplySqlitePragmas(dbContext, logger);
 }
 
 // Log registered auth schemes
@@ -477,6 +503,26 @@ static void ProbeSqlite(ILogger logger)
     {
         logger.LogError(ex, "SQLite probe failed.");
         LogExceptionChain(logger, ex);
+    }
+}
+
+static void ApplySqlitePragmas(AppDbContext dbContext, ILogger logger)
+{
+    try
+    {
+        dbContext.Database.OpenConnection();
+        dbContext.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");
+        dbContext.Database.ExecuteSqlRaw("PRAGMA synchronous=NORMAL;");
+        dbContext.Database.ExecuteSqlRaw("PRAGMA foreign_keys=ON;");
+        logger.LogInformation("SQLite pragmas applied.");
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Failed to apply SQLite pragmas.");
+    }
+    finally
+    {
+        dbContext.Database.CloseConnection();
     }
 }
 
