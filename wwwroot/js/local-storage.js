@@ -146,3 +146,18 @@ window.writerAppStorage.diagnostics = function (storagePrefix, indexKey, autosav
 
     return result;
 };
+
+window.writerAppStorage.getPageNotes = function (pageId) {
+    try {
+        return localStorage.getItem("writerapp.page.notes." + pageId);
+    } catch (e) {
+        return "";
+    }
+};
+
+window.writerAppStorage.setPageNotes = function (pageId, value) {
+    try {
+        localStorage.setItem("writerapp.page.notes." + pageId, value || "");
+    } catch (e) {
+    }
+};

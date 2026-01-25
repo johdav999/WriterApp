@@ -147,6 +147,11 @@ namespace BlazorApp.Components.Pages
         private PendingAiProposal? _pendingAiProposal;
         private bool _pendingDetailsExpanded;
         private IJSObjectReference? _exportModule;
+        private const int PageBreakHeightPx = 980;
+        private const int PageBreakGutterOffsetPx = 28;
+
+        private PageEditor.PageBreakOptions PageBreaks =>
+            new(PageBreakHeightPx, true, PageBreakGutterOffsetPx);
 
         protected override Task OnInitializedAsync()
         {
@@ -216,7 +221,13 @@ namespace BlazorApp.Components.Pages
                 {
                     List<PageDto>? pages = await Http.GetFromJsonAsync<List<PageDto>>(
                         $"api/sections/{section.Id}/pages");
-                    _pagesBySection[section.Id] = pages?.OrderBy(page => page.OrderIndex).ToList() ?? new List<PageDto>();
+                    List<PageDto> ordered = pages?.OrderBy(page => page.OrderIndex).ToList() ?? new List<PageDto>();
+                    if (ordered.Count > 1)
+                    {
+                        string merged = string.Join("\n\n", ordered.Select(page => page.Content ?? string.Empty));
+                        ordered = new List<PageDto> { ordered[0] with { Content = merged } };
+                    }
+                    _pagesBySection[section.Id] = ordered;
                 }
 
                 _activeSection = _sections.FirstOrDefault(section => section.Id == SectionId);
@@ -226,14 +237,21 @@ namespace BlazorApp.Components.Pages
                     return;
                 }
 
-                _activePage = GetPages(_activeSection.Id).FirstOrDefault(page => page.Id == PageId);
+                _activePage = GetPrimaryPage(_activeSection.Id);
                 if (_activePage is null)
                 {
+                    List<PageDto> pages = GetPages(_activeSection.Id);
+                    if (pages.Count > 0)
+                    {
+                        Navigation.NavigateTo($"/documents/{DocumentId}/sections/{_activeSection.Id}/pages/{pages[0].Id}", replace: true);
+                        return;
+                    }
+
                     Navigation.NavigateTo($"/documents/{DocumentId}", replace: true);
                     return;
                 }
 
-                _notesDraft = _activeSection.NarrativePurpose ?? string.Empty;
+                _notesDraft = await LoadPageNotesAsync(_activePage.Id);
                 _notesStatus = null;
             }
             catch (Exception ex)
@@ -254,6 +272,19 @@ namespace BlazorApp.Components.Pages
                 : new List<PageDto>();
         }
 
+        private PageDto? GetPrimaryPage(Guid sectionId)
+        {
+            List<PageDto> pages = GetPages(sectionId);
+            if (pages.Count == 0)
+            {
+                return null;
+            }
+
+            PageDto primary = pages[0];
+            string combined = string.Join("\n\n", pages.Select(page => page.Content ?? string.Empty));
+            return primary with { Content = combined };
+        }
+
         private void OnSectionSelected(Guid sectionId)
         {
             List<PageDto> pages = GetPages(sectionId);
@@ -266,10 +297,8 @@ namespace BlazorApp.Components.Pages
             Navigation.NavigateTo($"/documents/{DocumentId}/sections/{sectionId}/pages/{pages[0].Id}");
         }
 
-        private void OnPageSelected(Guid sectionId, Guid pageId)
-        {
-            Navigation.NavigateTo($"/documents/{DocumentId}/sections/{sectionId}/pages/{pageId}");
-        }
+
+
 
         private async Task OnPageSaved(PageDto page)
         {
@@ -289,6 +318,7 @@ namespace BlazorApp.Components.Pages
 
             await InvokeAsync(StateHasChanged);
         }
+
 
         private bool IsContextPanelCollapsed()
         {
@@ -414,6 +444,11 @@ namespace BlazorApp.Components.Pages
 
         private void OnLayoutStateChanged(LayoutState state)
         {
+            if (_pageEditor is not null)
+            {
+                _ = _pageEditor.RefreshPageBreaksAsync();
+            }
+
             InvokeAsync(StateHasChanged);
         }
 
@@ -783,24 +818,14 @@ namespace BlazorApp.Components.Pages
 
         private async Task OnNotesSave()
         {
-            if (_activeSection is null)
+            if (_activePage is null)
             {
                 return;
             }
 
             try
             {
-                SectionUpdateRequest request = new(null, _notesDraft);
-                using HttpResponseMessage response = await Http.PutAsJsonAsync(
-                    $"api/documents/{DocumentId}/sections/{_activeSection.Id}",
-                    request);
-
-                if (!response.IsSuccessStatusCode)
-                {
-                    _notesStatus = "Failed to save notes.";
-                    return;
-                }
-
+                await SavePageNotesAsync(_activePage.Id, _notesDraft);
                 _notesStatus = "Notes saved.";
             }
             catch (Exception ex)
@@ -818,6 +843,29 @@ namespace BlazorApp.Components.Pages
         {
             _notesDraft = args.Value?.ToString() ?? string.Empty;
             _notesStatus = null;
+        }
+
+        private async Task<string> LoadPageNotesAsync(Guid pageId)
+        {
+            try
+            {
+                string? value = await JSRuntime.InvokeAsync<string?>(
+                    "writerAppStorage.getPageNotes",
+                    pageId.ToString());
+                return value ?? string.Empty;
+            }
+            catch (JSException)
+            {
+                return string.Empty;
+            }
+        }
+
+        private Task SavePageNotesAsync(Guid pageId, string value)
+        {
+            return JSRuntime.InvokeVoidAsync(
+                "writerAppStorage.setPageNotes",
+                pageId.ToString(),
+                value ?? string.Empty).AsTask();
         }
 
         private async Task OnExportRequested(ExportKind kind, ExportFormat format)

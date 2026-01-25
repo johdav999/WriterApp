@@ -1,19 +1,31 @@
-@using WriterApp.Application.Documents
+<div class="page-list-header">
+    <button type="button"
+            class="page-toggle"
+            aria-expanded="@(!IsCollapsed)"
+            @onclick="() => OnToggleCollapse.InvokeAsync(SectionId)">
+        <span>Pages</span>
+    </button>
+</div>
 
-@if (Pages is null || Pages.Count == 0)
+@if (IsCollapsed)
+{
+    <div class="page-list-collapsed">Pages hidden</div>
+}
+else if (PageCount <= 0)
 {
     <div class="page-list-empty">No pages</div>
 }
 else
 {
     <ul class="page-list">
-        @foreach (PageDto item in Pages)
+        @for (int index = 0; index < PageCount; index++)
         {
-            <li>
+            int pageIndex = index + 1;
+            <li class="page-list-item">
                 <button type="button"
-                        class="page-nav-item @(item.Id == ActivePageId ? "is-active" : string.Empty)"
-                        @onclick="() => OnPageSelected.InvokeAsync(item.Id)">
-                    @item.Title
+                        class="page-nav-item @(pageIndex == ActivePageIndex ? "is-active" : string.Empty)"
+                        @onclick="() => OnPageSelected.InvokeAsync(pageIndex)">
+                    Page @pageIndex
                 </button>
             </li>
         }
@@ -22,11 +34,21 @@ else
 
 @code {
     [Parameter]
-    public List<PageDto> Pages { get; set; } = new();
+
+    public int PageCount { get; set; }
 
     [Parameter]
-    public Guid ActivePageId { get; set; }
+    public Guid SectionId { get; set; }
 
     [Parameter]
-    public EventCallback<Guid> OnPageSelected { get; set; }
+    public bool IsCollapsed { get; set; }
+
+    [Parameter]
+    public int ActivePageIndex { get; set; } = 1;
+
+    [Parameter]
+    public EventCallback<int> OnPageSelected { get; set; }
+
+    [Parameter]
+    public EventCallback<Guid> OnToggleCollapse { get; set; }
 }
