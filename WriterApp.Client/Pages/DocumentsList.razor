@@ -1,0 +1,72 @@
+@page "/documents"
+@using System.Net
+@using WriterApp.Application.Documents
+@inject HttpClient Http
+
+<PageTitle>Documents</PageTitle>
+
+<h1>Documents</h1>
+
+@if (_loading)
+{
+    <p>Loading documents...</p>
+}
+else if (_unauthorized)
+{
+    <p>Not authenticated.</p>
+}
+else if (_error is not null)
+{
+    <p>Failed to load documents: @_error</p>
+}
+else if (_documents.Count == 0)
+{
+    <p>No documents yet.</p>
+}
+else
+{
+    <ul>
+        @foreach (DocumentListItemDto doc in _documents)
+        {
+            <li>
+                <a href="@($"/documents/{doc.Id}")">@doc.Title</a>
+                <span> — @doc.UpdatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span>
+            </li>
+        }
+    </ul>
+}
+
+@code {
+    private bool _loading = true;
+    private bool _unauthorized;
+    private string? _error;
+    private List<DocumentListItemDto> _documents = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            using HttpResponseMessage response = await Http.GetAsync("api/documents");
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                _unauthorized = true;
+                return;
+            }
+
+            response.EnsureSuccessStatusCode();
+            List<DocumentListItemDto>? docs = await response.Content.ReadFromJsonAsync<List<DocumentListItemDto>>();
+            if (docs is not null)
+            {
+                _documents = docs;
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}
