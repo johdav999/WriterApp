@@ -96,6 +96,17 @@ else
                                 <button type="button" class="@GetActiveClass(_formattingState.TextAlign == "right")" @onclick='@(() => OnAlignRequested("right"))'>Align right</button>
                                 <button type="button" @onclick="OnIndentDecreaseRequested">Indent -</button>
                                 <button type="button" @onclick="OnIndentIncreaseRequested">Indent +</button>
+                                @if (CanShowAiMenu && _aiActions.Count > 0)
+                                {
+                                    <div class="editor-toolbar-divider"></div>
+                                    <div class="editor-toolbar-subtitle">AI</div>
+                                    @foreach (AiActionOption action in _aiActions)
+                                    {
+                                        <button type="button" disabled="@IsAiQuotaExceeded" @onclick="() => OnAiActionSelected(action)">
+                                            @action.Label
+                                        </button>
+                                    }
+                                }
                             </div>
                         }
                     </div>

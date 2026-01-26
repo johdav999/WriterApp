@@ -67,6 +67,98 @@ namespace WriterApp.Client.Pages
         private bool _isDocumentMenuOpen;
         private SectionEditor.EditorSelectionRange? _currentSelectionRange;
         private readonly List<AiActionOption> _aiActions = new();
+        private readonly List<AiActionOption> _aiActionPresets = new()
+        {
+            new AiActionOption(
+                "rewrite.selection",
+                "Rewrite (Neutral)",
+                "Rewrite (Neutral)",
+                true,
+                new Dictionary<string, object?>
+                {
+                    ["tone"] = "Neutral",
+                    ["length"] = "Same",
+                    ["preserve_terms"] = true
+                }),
+            new AiActionOption(
+                "rewrite.selection",
+                "Rewrite (Formal)",
+                "Rewrite (Formal)",
+                true,
+                new Dictionary<string, object?>
+                {
+                    ["tone"] = "Formal",
+                    ["length"] = "Same",
+                    ["preserve_terms"] = true
+                }),
+            new AiActionOption(
+                "rewrite.selection",
+                "Rewrite (Casual)",
+                "Rewrite (Casual)",
+                true,
+                new Dictionary<string, object?>
+                {
+                    ["tone"] = "Casual",
+                    ["length"] = "Same",
+                    ["preserve_terms"] = true
+                }),
+            new AiActionOption(
+                "rewrite.selection",
+                "Rewrite (Executive)",
+                "Rewrite (Executive)",
+                true,
+                new Dictionary<string, object?>
+                {
+                    ["tone"] = "Executive",
+                    ["length"] = "Same",
+                    ["preserve_terms"] = true
+                }),
+            new AiActionOption(
+                "rewrite.selection",
+                "Shorten (Neutral)",
+                "Shorten (Neutral)",
+                true,
+                new Dictionary<string, object?>
+                {
+                    ["tone"] = "Neutral",
+                    ["length"] = "Shorter",
+                    ["preserve_terms"] = true
+                }),
+            new AiActionOption(
+                "rewrite.selection",
+                "Fix grammar (Neutral)",
+                "Fix grammar (Neutral)",
+                true,
+                new Dictionary<string, object?>
+                {
+                    ["tone"] = "Neutral",
+                    ["length"] = "Same",
+                    ["preserve_terms"] = true
+                }),
+            new AiActionOption(
+                "rewrite.selection",
+                "Change tone (Friendly)",
+                "Change tone (Friendly)",
+                true,
+                new Dictionary<string, object?>
+                {
+                    ["tone"] = "Friendly",
+                    ["length"] = "Same",
+                    ["preserve_terms"] = true
+                }),
+            new AiActionOption(
+                "rewrite.selection",
+                "Change tone (Technical)",
+                "Change tone (Technical)",
+                true,
+                new Dictionary<string, object?>
+                {
+                    ["tone"] = "Technical",
+                    ["length"] = "Same",
+                    ["preserve_terms"] = true
+                })
+        };
+        private readonly HashSet<string> _availableActionKeys = new(StringComparer.OrdinalIgnoreCase);
         private readonly List<AiHistoryEntry> _aiHistoryEntries = new();
         private Guid? _expandedAiHistoryId;
         private AiUsageStatusDto? _aiUsageStatus;
@@ -798,6 +890,13 @@ namespace WriterApp.Client.Pages
 
         private async Task OnAiActionSelected(AiActionOption action)
         {
+            if (!IsAiAvailable)
+            {
+                ShowAiMessage(GetAiBlockedMessage());
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
             if (_currentSelectionRange is null || _activeSection is null)
             {
                 return;
@@ -808,6 +907,16 @@ namespace WriterApp.Client.Pages
             TextRange selectionRange = NormalizeRange(_currentSelectionRange, plain.Length);
             string selection = ExtractRangeText(plain, selectionRange);
 
+            if (action.RequiresSelection && string.IsNullOrWhiteSpace(selection))
+            {
+                return;
+            }
+
+            Dictionary<string, object?> parameters = new(action.Parameters)
+            {
+                ["instruction"] = action.Instruction
+            };
+
             AiActionExecuteRequestDto request = new(
                 DocumentId,
                 _activeSection.Id,
@@ -817,7 +926,7 @@ namespace WriterApp.Client.Pages
                 selection,
                 plain,
                 _outlineDraft,
-                action.Parameters);
+                parameters);
 
             AiActionExecuteResponseDto? response;
             try
@@ -849,7 +958,7 @@ namespace WriterApp.Client.Pages
 
             _pendingAiProposal = new PendingAiProposal(
                 response.ProposalId,
-                action.Label,
+                action.Instruction,
                 response.OriginalText,
                 response.ProposedText,
                 response.ChangesSummary,
@@ -905,6 +1014,8 @@ namespace WriterApp.Client.Pages
 
         private bool CanShowAiMenu => _canShowAiMenu;
 
+        private bool IsAiAvailable => IsAiUiEnabled && IsAiEntitled && !IsAiQuotaExceeded;
+
         private bool IsAiUiEnabled => _aiUsageStatus?.UiEnabled == true;
 
         private bool IsAiEntitled => _aiUsageStatus?.AiEnabled == true;
@@ -925,6 +1036,26 @@ namespace WriterApp.Client.Pages
             }
 
             _expandedAiHistoryId = entry.Id;
+        }
+
+        private static string GetActionLabel(string actionKey)
+        {
+            if (string.Equals(actionKey, "rewrite.selection", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Rewrite selection";
+            }
+
+            if (string.Equals(actionKey, "generate.image.cover", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Generate cover image";
+            }
+
+            if (string.Equals(actionKey, "synopsis.story_coach", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Story Coach";
+            }
+
+            return "AI";
         }
 
         private static string FormatHistoryText(string? text)
@@ -1004,18 +1135,32 @@ namespace WriterApp.Client.Pages
             try
             {
                 List<AiActionDescriptorDto>? actions = await Http.GetFromJsonAsync<List<AiActionDescriptorDto>>("api/ai/actions");
-                _aiActions.Clear();
+                _availableActionKeys.Clear();
                 if (actions is not null)
                 {
                     foreach (AiActionDescriptorDto action in actions)
                     {
-                        _aiActions.Add(new AiActionOption(action.ActionKey, action.DisplayName, action.RequiresSelection));
+                        _availableActionKeys.Add(action.ActionKey);
                     }
                 }
             }
             catch (Exception ex)
             {
                 Logger.LogWarning(ex, "AI actions load failed.");
+            }
+
+            _aiActions.Clear();
+            if (_availableActionKeys.Count == 0)
+            {
+                return;
+            }
+
+            foreach (AiActionOption preset in _aiActionPresets)
+            {
+                if (_availableActionKeys.Contains(preset.ActionKey))
+                {
+                    _aiActions.Add(preset);
+                }
             }
         }
 
@@ -1030,9 +1175,13 @@ namespace WriterApp.Client.Pages
                 {
                     foreach (AiActionHistoryEntryDto entry in entries.OrderByDescending(item => item.CreatedUtc))
                     {
+                        string label = string.IsNullOrWhiteSpace(entry.Summary)
+                            ? GetActionLabel(entry.ActionKey)
+                            : entry.Summary;
                         _aiHistoryEntries.Add(new AiHistoryEntry(
                             entry.ProposalId,
                             entry.ActionKey,
+                            label,
                             entry.Summary,
                             entry.OriginalText,
                             entry.ProposedText,
@@ -1091,13 +1240,16 @@ namespace WriterApp.Client.Pages
             return plainText.Substring(start, Math.Max(0, end - start));
         }
 
-        private sealed record AiActionOption(string ActionKey, string Label, bool RequiresSelection)
-        {
-            public Dictionary<string, object?> Parameters { get; } = new();
-        }
+        private sealed record AiActionOption(
+            string ActionKey,
+            string Label,
+            string Instruction,
+            bool RequiresSelection,
+            Dictionary<string, object?> Parameters);
 
         private sealed record AiHistoryEntry(
             Guid Id,
+            string ActionKey,
             string Label,
             string? Summary,
             string? BeforeText,
