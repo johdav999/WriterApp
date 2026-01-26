@@ -60,6 +60,41 @@ namespace WriterApp.Controllers
             return Ok(actions);
         }
 
+        [HttpGet("history")]
+        public async Task<ActionResult<IReadOnlyList<AiActionHistoryEntryDto>>> ListHistory(
+            [FromQuery] Guid documentId,
+            CancellationToken ct)
+        {
+            if (documentId == Guid.Empty)
+            {
+                return BadRequest(new { message = "documentId is required." });
+            }
+
+            string userId;
+            try
+            {
+                userId = _userIdResolver.ResolveUserId(User);
+            }
+            catch (SecurityException)
+            {
+                return Unauthorized();
+            }
+
+            IReadOnlyList<AiActionHistoryEntry> entries = await _historyStore.ListAsync(userId, documentId, ct);
+            List<AiActionHistoryEntryDto> result = entries
+                .OrderByDescending(entry => entry.CreatedUtc)
+                .Select(entry => new AiActionHistoryEntryDto(
+                    entry.ProposalId,
+                    entry.ActionKey,
+                    entry.Summary,
+                    entry.OriginalText,
+                    entry.ProposedText,
+                    entry.CreatedUtc))
+                .ToList();
+
+            return Ok(result);
+        }
+
         [HttpPost("{actionKey}/execute")]
         public async Task<ActionResult<AiActionExecuteResponseDto>> ExecuteAction(
             string actionKey,

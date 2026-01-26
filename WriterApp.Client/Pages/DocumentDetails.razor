@@ -1,11 +1,78 @@
 @page "/documents/{DocumentId:guid}"
+@inject HttpClient Http
 
 <PageTitle>Document</PageTitle>
 
 <h1>Document</h1>
-<p>Document details placeholder for @DocumentId.</p>
+
+@if (_loading)
+{
+    <p>Loading...</p>
+}
+else if (_error is not null)
+{
+    <p>@_error</p>
+}
+else if (_sections.Count == 0)
+{
+    <p>No sections.</p>
+}
+else
+{
+    <ul>
+        @foreach (SectionDto section in _sections)
+        {
+            <li>
+                <strong>@(section.Title)</strong>
+                @if (_pagesBySection.TryGetValue(section.Id, out List<PageDto>? pages) && pages.Count > 0)
+                {
+                    PageDto first = pages[0];
+                    <div>
+                        <a href="@($"documents/{DocumentId}/sections/{section.Id}/pages/{first.Id}")">Open editor</a>
+                    </div>
+                }
+            </li>
+        }
+    </ul>
+}
 
 @code {
     [Parameter]
     public Guid DocumentId { get; set; }
+
+    private bool _loading = true;
+    private string? _error;
+    private List<SectionDto> _sections = new();
+    private readonly Dictionary<Guid, List<PageDto>> _pagesBySection = new();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true;
+        _error = null;
+        _sections.Clear();
+        _pagesBySection.Clear();
+
+        try
+        {
+            List<SectionDto>? sections = await Http.GetFromJsonAsync<List<SectionDto>>($"api/documents/{DocumentId}/sections");
+            if (sections is not null)
+            {
+                _sections = sections.OrderBy(section => section.OrderIndex).ToList();
+            }
+
+            foreach (SectionDto section in _sections)
+            {
+                List<PageDto>? pages = await Http.GetFromJsonAsync<List<PageDto>>($"api/sections/{section.Id}/pages");
+                _pagesBySection[section.Id] = pages?.OrderBy(page => page.OrderIndex).ToList() ?? new List<PageDto>();
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = $"Load failed: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
 }

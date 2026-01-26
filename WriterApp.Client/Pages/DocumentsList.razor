@@ -29,7 +29,7 @@ else
         @foreach (DocumentListItemDto doc in _documents)
         {
             <li>
-                <a href="@($"/documents/{doc.Id}")">@doc.Title</a>
+                <a href="@($"documents/{doc.Id}")">@doc.Title</a>
                 <span> — @doc.UpdatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span>
             </li>
         }

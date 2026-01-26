@@ -20,6 +20,7 @@ namespace WriterApp.Application.AI
     public interface IAiActionHistoryStore
     {
         Task AddAsync(AiActionHistoryEntry entry, CancellationToken ct);
+        Task<IReadOnlyList<AiActionHistoryEntry>> ListAsync(string userId, Guid documentId, CancellationToken ct);
     }
 
     public sealed class InMemoryAiActionHistoryStore : IAiActionHistoryStore
@@ -37,6 +38,20 @@ namespace WriterApp.Application.AI
             }
 
             return Task.CompletedTask;
+        }
+
+        public Task<IReadOnlyList<AiActionHistoryEntry>> ListAsync(string userId, Guid documentId, CancellationToken ct)
+        {
+            string key = $"{userId}:{documentId}";
+            if (!_entries.TryGetValue(key, out List<AiActionHistoryEntry>? list))
+            {
+                return Task.FromResult<IReadOnlyList<AiActionHistoryEntry>>(Array.Empty<AiActionHistoryEntry>());
+            }
+
+            lock (list)
+            {
+                return Task.FromResult<IReadOnlyList<AiActionHistoryEntry>>(list.ToList());
+            }
         }
     }
 }

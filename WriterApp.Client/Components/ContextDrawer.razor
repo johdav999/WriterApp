@@ -1,0 +1,314 @@
+@using System.Net
+@inject HttpClient Http
+
+<div class="context-drawer">
+    <div class="context-tabs">
+        <button type="button" class="@GetTabClass(ContextTab.Notes)" @onclick="() => SetTab(ContextTab.Notes)">Notes</button>
+        <button type="button" class="@GetTabClass(ContextTab.Outline)" @onclick="() => SetTab(ContextTab.Outline)">Outline</button>
+        <button type="button" class="@GetTabClass(ContextTab.Ai)" @onclick="() => SetTab(ContextTab.Ai)">AI</button>
+    </div>
+
+    @if (_activeTab == ContextTab.Notes)
+    {
+        <div class="context-panel">
+            <textarea rows="10" @bind="_notesDraft"></textarea>
+            <div>
+                <button type="button" @onclick="SaveNotesAsync">Save notes</button>
+                @if (!string.IsNullOrWhiteSpace(_notesStatus))
+                {
+                    <span>@_notesStatus</span>
+                }
+            </div>
+        </div>
+    }
+    else if (_activeTab == ContextTab.Outline)
+    {
+        <div class="context-panel">
+            <textarea rows="10" @bind="_outlineDraft"></textarea>
+            <div>
+                <button type="button" @onclick="SaveOutlineAsync">Save outline</button>
+                @if (!string.IsNullOrWhiteSpace(_outlineStatus))
+                {
+                    <span>@_outlineStatus</span>
+                }
+            </div>
+        </div>
+    }
+    else if (_activeTab == ContextTab.Ai)
+    {
+        <div class="context-panel">
+            @if (_aiLoading)
+            {
+                <p>Loading AI actions...</p>
+            }
+            else if (!string.IsNullOrWhiteSpace(_aiError))
+            {
+                <p>@_aiError</p>
+            }
+            else
+            {
+                <div>
+                    <label>Instruction</label>
+                    <input @bind="_aiInstruction" />
+                </div>
+                <ul>
+                    @foreach (AiActionDescriptorDto action in _aiActions)
+                    {
+                        <li>
+                            <button type="button" @onclick="() => ExecuteAiAsync(action)">@action.DisplayName</button>
+                        </li>
+                    }
+                </ul>
+
+                @if (_proposal is not null)
+                {
+                    <div class="ai-proposal">
+                        <h4>Proposal preview</h4>
+                        <p><strong>Summary:</strong> @_proposal.ChangesSummary</p>
+                        <pre>@_proposal.ProposedText</pre>
+                        <button type="button" @onclick="ApplyProposalAsync">Apply</button>
+                    </div>
+                }
+
+                <div class="ai-history">
+                    <h4>History</h4>
+                    @if (_history.Count == 0)
+                    {
+                        <p>No AI history yet.</p>
+                    }
+                    else
+                    {
+                        @foreach (AiActionHistoryEntryDto entry in _history)
+                        {
+                            <div class="ai-history-entry">
+                                <button type="button" @onclick="() => ToggleHistory(entry.ProposalId)">
+                                    @entry.ActionKey — @entry.CreatedUtc.ToLocalTime().ToString("g")
+                                </button>
+                                @if (_expandedHistoryId == entry.ProposalId)
+                                {
+                                    <div class="ai-history-details">
+                                        <div><strong>Summary:</strong> @entry.Summary</div>
+                                        <div><strong>Before:</strong></div>
+                                        <pre>@entry.OriginalText</pre>
+                                        <div><strong>After:</strong></div>
+                                        <pre>@entry.ProposedText</pre>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    }
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public Guid DocumentId { get; set; }
+
+    [Parameter]
+    public Guid SectionId { get; set; }
+
+    [Parameter]
+    public Guid PageId { get; set; }
+
+    [Parameter]
+    public string PageContent { get; set; } = string.Empty;
+
+    [Parameter]
+    public EventCallback<string> OnApplyProposal { get; set; }
+
+    private ContextTab _activeTab = ContextTab.Notes;
+    private string _notesDraft = string.Empty;
+    private string? _notesStatus;
+    private string _outlineDraft = string.Empty;
+    private string? _outlineStatus;
+    private bool _aiLoading = true;
+    private string? _aiError;
+    private string _aiInstruction = string.Empty;
+    private List<AiActionDescriptorDto> _aiActions = new();
+    private AiActionExecuteResponseDto? _proposal;
+    private List<AiActionHistoryEntryDto> _history = new();
+    private Guid? _expandedHistoryId;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (PageId != Guid.Empty)
+        {
+            await LoadNotesAsync();
+        }
+
+        if (DocumentId != Guid.Empty)
+        {
+            await LoadOutlineAsync();
+            await LoadHistoryAsync();
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAiActionsAsync();
+    }
+
+    private void SetTab(ContextTab tab)
+    {
+        _activeTab = tab;
+    }
+
+    private string GetTabClass(ContextTab tab)
+    {
+        return _activeTab == tab ? "is-active" : string.Empty;
+    }
+
+    private async Task LoadNotesAsync()
+    {
+        try
+        {
+            PageNotesDto? result = await Http.GetFromJsonAsync<PageNotesDto>($"api/pages/{PageId}/notes");
+            _notesDraft = result?.Notes ?? string.Empty;
+        }
+        catch (Exception ex)
+        {
+            _notesStatus = $"Load failed: {ex.Message}";
+        }
+    }
+
+    private async Task SaveNotesAsync()
+    {
+        _notesStatus = null;
+        try
+        {
+            PageNotesDto payload = new(PageId, _notesDraft, DateTimeOffset.UtcNow);
+            using HttpResponseMessage response = await Http.PutAsJsonAsync($"api/pages/{PageId}/notes", payload);
+            response.EnsureSuccessStatusCode();
+            PageNotesDto? result = await response.Content.ReadFromJsonAsync<PageNotesDto>();
+            _notesDraft = result?.Notes ?? _notesDraft;
+            _notesStatus = "Notes saved.";
+        }
+        catch (Exception ex)
+        {
+            _notesStatus = $"Save failed: {ex.Message}";
+        }
+    }
+
+    private async Task LoadOutlineAsync()
+    {
+        try
+        {
+            DocumentOutlineDto? result = await Http.GetFromJsonAsync<DocumentOutlineDto>($"api/documents/{DocumentId}/outline");
+            _outlineDraft = result?.Outline ?? string.Empty;
+        }
+        catch (Exception ex)
+        {
+            _outlineStatus = $"Load failed: {ex.Message}";
+        }
+    }
+
+    private async Task SaveOutlineAsync()
+    {
+        _outlineStatus = null;
+        try
+        {
+            DocumentOutlineDto payload = new(DocumentId, _outlineDraft, DateTimeOffset.UtcNow);
+            using HttpResponseMessage response = await Http.PutAsJsonAsync($"api/documents/{DocumentId}/outline", payload);
+            response.EnsureSuccessStatusCode();
+            DocumentOutlineDto? result = await response.Content.ReadFromJsonAsync<DocumentOutlineDto>();
+            _outlineDraft = result?.Outline ?? _outlineDraft;
+            _outlineStatus = "Outline saved.";
+        }
+        catch (Exception ex)
+        {
+            _outlineStatus = $"Save failed: {ex.Message}";
+        }
+    }
+
+    private async Task LoadAiActionsAsync()
+    {
+        _aiLoading = true;
+        _aiError = null;
+        try
+        {
+            List<AiActionDescriptorDto>? actions = await Http.GetFromJsonAsync<List<AiActionDescriptorDto>>("api/ai/actions");
+            _aiActions = actions ?? new List<AiActionDescriptorDto>();
+        }
+        catch (Exception ex)
+        {
+            _aiError = $"AI actions failed: {ex.Message}";
+        }
+        finally
+        {
+            _aiLoading = false;
+        }
+    }
+
+    private async Task ExecuteAiAsync(AiActionDescriptorDto action)
+    {
+        _proposal = null;
+        try
+        {
+            AiActionExecuteRequestDto payload = new(
+                DocumentId,
+                SectionId,
+                PageId,
+                0,
+                PageContent?.Length ?? 0,
+                PageContent,
+                null,
+                null,
+                new Dictionary<string, object?> { ["instruction"] = _aiInstruction });
+
+            using HttpResponseMessage response = await Http.PostAsJsonAsync($"api/ai/actions/{action.ActionKey}/execute", payload);
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                _aiError = "Not authenticated.";
+                return;
+            }
+
+            response.EnsureSuccessStatusCode();
+            _proposal = await response.Content.ReadFromJsonAsync<AiActionExecuteResponseDto>();
+            await LoadHistoryAsync();
+        }
+        catch (Exception ex)
+        {
+            _aiError = $"AI execute failed: {ex.Message}";
+        }
+    }
+
+    private async Task ApplyProposalAsync()
+    {
+        if (_proposal?.ProposedText is null)
+        {
+            return;
+        }
+
+        await OnApplyProposal.InvokeAsync(_proposal.ProposedText);
+        _proposal = null;
+    }
+
+    private async Task LoadHistoryAsync()
+    {
+        try
+        {
+            List<AiActionHistoryEntryDto>? entries =
+                await Http.GetFromJsonAsync<List<AiActionHistoryEntryDto>>($"api/ai/actions/history?documentId={DocumentId}");
+            _history = entries ?? new List<AiActionHistoryEntryDto>();
+        }
+        catch
+        {
+            _history = new List<AiActionHistoryEntryDto>();
+        }
+    }
+
+    private void ToggleHistory(Guid proposalId)
+    {
+        _expandedHistoryId = _expandedHistoryId == proposalId ? null : proposalId;
+    }
+
+    private enum ContextTab
+    {
+        Notes,
+        Outline,
+        Ai
+    }
+}

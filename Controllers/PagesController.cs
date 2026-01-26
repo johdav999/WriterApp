@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 using WriterApp.Application.Documents;
 using WriterApp.Application.Security;
 using WriterApp.Data.Documents;
+using WriterApp.Data;
 
 namespace WriterApp.Controllers
 {
@@ -20,17 +21,20 @@ namespace WriterApp.Controllers
         private readonly ISectionRepository _sections;
         private readonly IPageRepository _pages;
         private readonly IUserIdResolver _userIdResolver;
+        private readonly AppDbContext _dbContext;
 
         public PagesController(
             IDocumentRepository documents,
             ISectionRepository sections,
             IPageRepository pages,
-            IUserIdResolver userIdResolver)
+            IUserIdResolver userIdResolver,
+            AppDbContext dbContext)
         {
             _documents = documents ?? throw new ArgumentNullException(nameof(documents));
             _sections = sections ?? throw new ArgumentNullException(nameof(sections));
             _pages = pages ?? throw new ArgumentNullException(nameof(pages));
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
+            _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
         }
 
         [HttpGet("sections/{sectionId:guid}/pages")]
@@ -216,6 +220,64 @@ namespace WriterApp.Controllers
                 moved.UpdatedAt);
 
             return Ok(dto);
+        }
+
+        [HttpGet("pages/{pageId:guid}/notes")]
+        public async Task<ActionResult<PageNotesDto>> GetPageNotes(Guid pageId, CancellationToken ct)
+        {
+            string userId = _userIdResolver.ResolveUserId(User);
+            PageRecord? page = await _pages.GetAsync(pageId, userId, ct);
+            if (page is null)
+            {
+                return NotFound();
+            }
+
+            PageNoteRecord? notes = await _dbContext.PageNotes
+                .FindAsync(new object?[] { pageId }, ct);
+
+            if (notes is null)
+            {
+                return Ok(new PageNotesDto(pageId, string.Empty, DateTimeOffset.UtcNow));
+            }
+
+            return Ok(new PageNotesDto(notes.PageId, notes.Notes, notes.UpdatedAt));
+        }
+
+        [HttpPut("pages/{pageId:guid}/notes")]
+        public async Task<ActionResult<PageNotesDto>> UpdatePageNotes(
+            Guid pageId,
+            [FromBody] PageNotesDto request,
+            CancellationToken ct)
+        {
+            string userId = _userIdResolver.ResolveUserId(User);
+            PageRecord? page = await _pages.GetAsync(pageId, userId, ct);
+            if (page is null)
+            {
+                return NotFound();
+            }
+
+            string notesText = request.Notes ?? string.Empty;
+            PageNoteRecord? notes = await _dbContext.PageNotes
+                .FindAsync(new object?[] { pageId }, ct);
+
+            if (notes is null)
+            {
+                notes = new PageNoteRecord
+                {
+                    PageId = pageId,
+                    Notes = notesText,
+                    UpdatedAt = DateTimeOffset.UtcNow
+                };
+                _dbContext.PageNotes.Add(notes);
+            }
+            else
+            {
+                notes.Notes = notesText;
+                notes.UpdatedAt = DateTimeOffset.UtcNow;
+            }
+
+            await _dbContext.SaveChangesAsync(ct);
+            return Ok(new PageNotesDto(pageId, notes.Notes, notes.UpdatedAt));
         }
     }
 }
