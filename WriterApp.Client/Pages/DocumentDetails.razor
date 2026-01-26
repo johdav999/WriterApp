@@ -1,0 +1,11 @@
+@page "/documents/{DocumentId:guid}"
+
+<PageTitle>Document</PageTitle>
+
+<h1>Document</h1>
+<p>Document details placeholder for @DocumentId.</p>
+
+@code {
+    [Parameter]
+    public Guid DocumentId { get; set; }
+}
