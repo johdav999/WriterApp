@@ -850,13 +850,16 @@
 
 .editor-context-menu {
     position: fixed;
-    z-index: 41;
+    z-index: 10000;
     min-width: 200px;
     padding: 6px;
-    border: 1px solid #d6d6d6;
-    border-radius: 12px;
-    background: var(--surface);
-    box-shadow: 0 16px 32px rgba(15, 23, 42, 0.18);
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    border-radius: 10px;
+    background-color: var(--surface, #ffffff);
+    opacity: 1;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    backdrop-filter: none;
+    isolation: isolate;
 }
 
 .editor-context-menu:focus {
@@ -889,12 +892,12 @@
 }
 
 .editor-context-menu button:hover:not(:disabled) {
-    background: #eef2ff;
+    background: rgba(0, 0, 0, 0.06);
 }
 
 .editor-context-menu button.is-active {
-    background: var(--accent-soft);
-    color: #1f2a44;
+    background: rgba(0, 0, 0, 0.1);
+    color: inherit;
 }
 
 @media (max-width: 1200px) {
