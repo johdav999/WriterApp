@@ -392,6 +392,41 @@ app.MapGet("/api/debug/auth", (HttpContext context, ILoggerFactory loggerFactory
 })
 .RequireAuthorization();
 
+app.MapGet("/api/auth/me", (HttpContext context, IUserIdResolver userIdResolver) =>
+{
+    ClaimsPrincipal user = context.User;
+
+    if (user.Identity?.IsAuthenticated != true)
+    {
+        return Results.Unauthorized();
+    }
+
+    string? userId;
+    try
+    {
+        userId = userIdResolver.ResolveUserId(user);
+    }
+    catch (SecurityException)
+    {
+        return Results.Unauthorized();
+    }
+
+    List<string> roles = user.FindAll(ClaimTypes.Role)
+        .Select(c => c.Value)
+        .Concat(user.FindAll("roles").Select(c => c.Value))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    return Results.Ok(new WriterApp.Application.Security.AuthMeDto
+    {
+        IsAuthenticated = true,
+        Name = user.Identity?.Name,
+        UserId = userId,
+        Roles = roles
+    });
+})
+.RequireAuthorization();
+
 app.MapControllers().RequireAuthorization();
 
 app.MapRazorComponents<App>()
@@ -399,7 +434,7 @@ app.MapRazorComponents<App>()
 
 if (wasmEnabled)
 {
-    app.MapFallbackToFile("/app/{*path:nonfile}", "index.html");
+    app.MapFallbackToFile("/app/{*path:nonfile}", "app/index.html");
 }
 
 // --------------------
