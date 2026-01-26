@@ -21,6 +21,8 @@ namespace WriterApp.Data
         public DbSet<DocumentRecord> Documents => Set<DocumentRecord>();
         public DbSet<SectionRecord> Sections => Set<SectionRecord>();
         public DbSet<PageRecord> Pages => Set<PageRecord>();
+        public DbSet<PageNoteRecord> PageNotes => Set<PageNoteRecord>();
+        public DbSet<DocumentOutlineRecord> DocumentOutlines => Set<DocumentOutlineRecord>();
 
         protected override void OnModelCreating(ModelBuilder builder)
         {
@@ -121,6 +123,28 @@ namespace WriterApp.Data
                 entity.HasOne(page => page.Document)
                     .WithMany()
                     .HasForeignKey(page => page.DocumentId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<PageNoteRecord>(entity =>
+            {
+                entity.HasKey(note => note.PageId);
+                entity.Property(note => note.Notes).IsRequired();
+                entity.Property(note => note.UpdatedAt).IsRequired();
+                entity.HasOne(note => note.Page)
+                    .WithOne()
+                    .HasForeignKey<PageNoteRecord>(note => note.PageId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<DocumentOutlineRecord>(entity =>
+            {
+                entity.HasKey(outline => outline.DocumentId);
+                entity.Property(outline => outline.Outline).IsRequired();
+                entity.Property(outline => outline.UpdatedAt).IsRequired();
+                entity.HasOne(outline => outline.Document)
+                    .WithOne()
+                    .HasForeignKey<DocumentOutlineRecord>(outline => outline.DocumentId)
                     .OnDelete(DeleteBehavior.Cascade);
             });
 

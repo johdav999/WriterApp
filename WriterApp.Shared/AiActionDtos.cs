@@ -28,4 +28,12 @@ namespace WriterApp.Application.AI
         string? ChangesSummary,
         DateTimeOffset CreatedUtc,
         string ActionKey);
+
+    public sealed record AiActionHistoryEntryDto(
+        Guid ProposalId,
+        string ActionKey,
+        string? Summary,
+        string? OriginalText,
+        string? ProposedText,
+        DateTimeOffset CreatedUtc);
 }
