@@ -1,6 +1,61 @@
 @page "/"
+@using System.Net
+@using WriterApp.Application.Security
+@inject HttpClient Http
 
 <PageTitle>Documents</PageTitle>
 
 <h1>Documents</h1>
-<p>WriterApp WebAssembly placeholder.</p>
+
+@if (_loading)
+{
+    <p>Loading auth status...</p>
+}
+else if (_unauthorized)
+{
+    <p>Not authenticated.</p>
+}
+else if (_error is not null)
+{
+    <p>Auth check failed: @_error</p>
+}
+else if (_auth is not null)
+{
+    <div>
+        <div><strong>Authenticated:</strong> @_auth.IsAuthenticated</div>
+        <div><strong>Name:</strong> @_auth.Name</div>
+        <div><strong>UserId:</strong> @_auth.UserId</div>
+        <div><strong>Roles:</strong> @_auth.Roles.Count</div>
+    </div>
+}
+
+@code {
+    private bool _loading = true;
+    private bool _unauthorized;
+    private string? _error;
+    private AuthMeDto? _auth;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            using HttpResponseMessage response = await Http.GetAsync("api/auth/me");
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                _unauthorized = true;
+                return;
+            }
+
+            response.EnsureSuccessStatusCode();
+            _auth = await response.Content.ReadFromJsonAsync<AuthMeDto>();
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}

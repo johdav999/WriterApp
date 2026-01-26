@@ -8,6 +8,9 @@ builder.RootComponents.Add<HeadOutlet>("head::after");
 
 Uri serverBase = new(builder.HostEnvironment.BaseAddress, UriKind.Absolute);
 string origin = serverBase.GetLeftPart(UriPartial.Authority);
-builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri($"{origin}/") });
+builder.Services.AddScoped(sp =>
+{
+    return new HttpClient { BaseAddress = new Uri($"{origin}/") };
+});
 
 await builder.Build().RunAsync();
