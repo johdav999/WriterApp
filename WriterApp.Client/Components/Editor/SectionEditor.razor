@@ -1,0 +1,263 @@
+@using Microsoft.JSInterop
+@implements IAsyncDisposable
+
+<div id="@_elementId" tabindex="0"></div>
+
+@code {
+    private readonly string _elementId = $"section-editor-{Guid.NewGuid():N}";
+    private IJSObjectReference? _editor;
+    private DotNetObjectReference<SectionEditor>? _dotNetRef;
+    private bool _initialized;
+    private bool _isEditing;
+    private bool _disposed;
+    private bool _contextMenuAttached;
+
+    [Parameter]
+    [EditorRequired]
+    public string Content { get; set; } = string.Empty;
+
+    [Parameter]
+    public EventCallback<string> ContentChanged { get; set; }
+
+    [Parameter]
+    public EventCallback UndoRequested { get; set; }
+
+    [Parameter]
+    public EventCallback RedoRequested { get; set; }
+
+    [Parameter]
+    public EventCallback<EditorFormattingState> FormattingChanged { get; set; }
+
+    [Parameter]
+    public EventCallback<List<OutlineItem>> OutlineChanged { get; set; }
+
+    [Parameter]
+    public EventCallback<IJSObjectReference> EditorReady { get; set; }
+
+    [Parameter]
+    public EventCallback<EditorContextMenuRequest> ContextMenuRequested { get; set; }
+
+    [Parameter]
+    public EventCallback<EditorSelectionRange> SelectionChanged { get; set; }
+
+    [Parameter]
+    public EventCallback FocusModeRequested { get; set; }
+
+    [Parameter]
+    public EventCallback PrevSectionRequested { get; set; }
+
+    [Parameter]
+    public EventCallback NextSectionRequested { get; set; }
+
+    [Parameter]
+    public EventCallback<EditorSelectionBubble> SelectionBubbleChanged { get; set; }
+
+    [Inject]
+    private IJSRuntime JSRuntime { get; set; } = default!;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || _initialized)
+        {
+            return;
+        }
+
+        _dotNetRef = DotNetObjectReference.Create(this);
+        _editor = await JSRuntime.InvokeAsync<IJSObjectReference>(
+            "tiptapEditor.create",
+            _elementId,
+            Content,
+            _dotNetRef);
+
+        await JSRuntime.InvokeVoidAsync("tiptapEditor.attachContextMenu", _elementId, _dotNetRef);
+        _contextMenuAttached = true;
+
+        _initialized = true;
+
+        if (_editor is not null && EditorReady.HasDelegate)
+        {
+            await EditorReady.InvokeAsync(_editor);
+        }
+    }
+
+    protected override bool ShouldRender()
+    {
+        return !_isEditing;
+    }
+
+    public async Task SetContentAsync(string html)
+    {
+        if (_editor is null)
+        {
+            return;
+        }
+
+        _isEditing = false;
+        string content = html ?? string.Empty;
+        await JSRuntime.InvokeVoidAsync("tiptapEditor.setContent", _editor, content);
+    }
+
+    [JSInvokable]
+    public async Task OnEditorContentChanged(string html)
+    {
+        _isEditing = true;
+        string content = html ?? string.Empty;
+        await ContentChanged.InvokeAsync(content);
+    }
+
+    [JSInvokable]
+    public async Task OnUndoShortcut()
+    {
+        if (UndoRequested.HasDelegate)
+        {
+            await UndoRequested.InvokeAsync();
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnRedoShortcut()
+    {
+        if (RedoRequested.HasDelegate)
+        {
+            await RedoRequested.InvokeAsync();
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnEditorFormattingChanged(EditorFormattingState state)
+    {
+        if (FormattingChanged.HasDelegate)
+        {
+            await FormattingChanged.InvokeAsync(state);
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnEditorOutlineChanged(List<OutlineItem> outline)
+    {
+        if (OutlineChanged.HasDelegate)
+        {
+            await OutlineChanged.InvokeAsync(outline);
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnEditorContextMenu(double clientX, double clientY)
+    {
+        if (ContextMenuRequested.HasDelegate)
+        {
+            await ContextMenuRequested.InvokeAsync(new EditorContextMenuRequest(clientX, clientY));
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnEditorSelectionChanged(int start, int end)
+    {
+        if (SelectionChanged.HasDelegate)
+        {
+            await SelectionChanged.InvokeAsync(new EditorSelectionRange(start, end));
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnFocusModeShortcut()
+    {
+        if (FocusModeRequested.HasDelegate)
+        {
+            await FocusModeRequested.InvokeAsync();
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnPrevSectionShortcut()
+    {
+        if (PrevSectionRequested.HasDelegate)
+        {
+            await PrevSectionRequested.InvokeAsync();
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnNextSectionShortcut()
+    {
+        if (NextSectionRequested.HasDelegate)
+        {
+            await NextSectionRequested.InvokeAsync();
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnEditorSelectionBubble(double clientX, double clientY, bool isVisible)
+    {
+        if (SelectionBubbleChanged.HasDelegate)
+        {
+            await SelectionBubbleChanged.InvokeAsync(new EditorSelectionBubble(clientX, clientY, isVisible));
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+
+        if (_contextMenuAttached)
+        {
+            try
+            {
+                await JSRuntime.InvokeVoidAsync("tiptapEditor.detachContextMenu", _elementId);
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            finally
+            {
+                _contextMenuAttached = false;
+            }
+        }
+
+        if (_editor is not null)
+        {
+            try
+            {
+                await JSRuntime.InvokeVoidAsync("tiptapEditor.destroy", _editor);
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+
+            try
+            {
+                await _editor.DisposeAsync();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+            finally
+            {
+                _editor = null;
+            }
+        }
+
+        _dotNetRef?.Dispose();
+        _dotNetRef = null;
+    }
+
+    public sealed record EditorContextMenuRequest(double X, double Y);
+
+    public sealed record EditorSelectionRange(int Start, int End);
+
+    public sealed record EditorSelectionBubble(double X, double Y, bool IsVisible);
+}

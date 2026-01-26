@@ -12,5 +12,6 @@ builder.Services.AddScoped(sp =>
 {
     return new HttpClient { BaseAddress = new Uri($"{origin}/") };
 });
+builder.Services.AddScoped<WriterApp.Client.State.LayoutStateService>();
 
 await builder.Build().RunAsync();
