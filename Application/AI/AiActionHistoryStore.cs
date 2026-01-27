@@ -15,7 +15,12 @@ namespace WriterApp.Application.AI
         DateTimeOffset CreatedUtc,
         string? Summary,
         string? OriginalText,
-        string? ProposedText);
+        string? ProposedText,
+        Guid? PageId = null,
+        string? ProviderId = null,
+        string? ModelId = null,
+        string? RequestJson = null,
+        string? ResultJson = null);
 
     public interface IAiActionHistoryStore
     {
