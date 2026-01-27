@@ -90,10 +90,53 @@ namespace WriterApp.Controllers
                     entry.Summary,
                     entry.OriginalText,
                     entry.ProposedText,
-                    entry.CreatedUtc))
+                    entry.CreatedUtc,
+                    entry.IsApplied,
+                    entry.LastAppliedAt,
+                    entry.AppliedCount))
                 .ToList();
 
             return Ok(result);
+        }
+
+        [HttpPost("history/{historyEntryId:guid}/applied")]
+        public async Task<IActionResult> RecordAppliedEvent(
+            Guid historyEntryId,
+            [FromBody] AiActionAppliedRequest? request,
+            CancellationToken ct)
+        {
+            if (historyEntryId == Guid.Empty)
+            {
+                return BadRequest(new { message = "historyEntryId is required." });
+            }
+
+            string userId;
+            try
+            {
+                userId = _userIdResolver.ResolveUserId(User);
+            }
+            catch (SecurityException)
+            {
+                return Unauthorized();
+            }
+
+            try
+            {
+                await _historyStore.AddAppliedEventAsync(
+                    userId,
+                    historyEntryId,
+                    DateTimeOffset.UtcNow,
+                    request?.DocumentId,
+                    request?.SectionId,
+                    request?.PageId,
+                    ct);
+            }
+            catch (InvalidOperationException)
+            {
+                return NotFound();
+            }
+
+            return NoContent();
         }
 
         [HttpPost("{actionKey}/execute")]
@@ -196,8 +239,8 @@ namespace WriterApp.Controllers
                 new DateTimeOffset(proposal.CreatedUtc),
                 actionKey);
 
-            string requestJson = JsonSerializer.Serialize(request, JsonSerializerDefaults.Web);
-            string responseJson = JsonSerializer.Serialize(response, JsonSerializerDefaults.Web);
+            string requestJson = JsonSerializer.Serialize(request, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            string responseJson = JsonSerializer.Serialize(response, new JsonSerializerOptions(JsonSerializerDefaults.Web));
 
             await _historyStore.AddAsync(new AiActionHistoryEntry(
                 proposal.ProposalId,
@@ -301,5 +344,7 @@ namespace WriterApp.Controllers
 
             return value.ToString();
         }
+
+        public sealed record AiActionAppliedRequest(Guid? DocumentId, Guid? SectionId, Guid? PageId);
     }
 }
