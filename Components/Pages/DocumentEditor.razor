@@ -35,17 +35,24 @@ else
                     {
                         <span class="section-order-status">Saving order...</span>
                     }
+                    @if (_sectionReorderDiagnosticsEnabled)
+                    {
+                        <span class="section-order-debug">
+                            Reorder debug: @_lastReorderStatus / @_lastReorderCount / @_lastReorderCorrelationId
+                        </span>
+                    }
                 </div>
                 <ul class="section-nav-list">
                     @foreach (SectionDto item in _sections)
                     {
                         <li class="section-nav-row"
-                            draggable="@(!_isReorderingSections)"
-                            @ondragstart="() => OnSectionDragStart(item.Id)"
                             @ondragover:preventDefault="true"
                             @ondrop="() => OnSectionDrop(item.Id)">
                             <button type="button"
                                     class="section-drag-handle"
+                                    draggable="@(!_isReorderingSections)"
+                                    @ondragstart="() => OnSectionDragStart(item.Id)"
+                                    @ondragstart:stopPropagation="true"
                                     disabled="@_isReorderingSections"
                                     aria-label="Reorder section">
                                 ⋮⋮

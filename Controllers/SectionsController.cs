@@ -10,6 +10,10 @@ using WriterApp.Application.Documents;
 using WriterApp.Application.Security;
 using WriterApp.Data.Documents;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using System.Diagnostics;
+using WriterApp.Application.Diagnostics;
 
 namespace WriterApp.Controllers
 {
@@ -23,19 +27,25 @@ namespace WriterApp.Controllers
         private readonly IPageRepository _pages;
         private readonly IUserIdResolver _userIdResolver;
         private readonly AppDbContext _dbContext;
+        private readonly ILogger<SectionsController> _logger;
+        private readonly IConfiguration _configuration;
 
         public SectionsController(
             IDocumentRepository documents,
             ISectionRepository sections,
             IPageRepository pages,
             IUserIdResolver userIdResolver,
-            AppDbContext dbContext)
+            AppDbContext dbContext,
+            ILogger<SectionsController> logger,
+            IConfiguration configuration)
         {
             _documents = documents ?? throw new ArgumentNullException(nameof(documents));
             _sections = sections ?? throw new ArgumentNullException(nameof(sections));
             _pages = pages ?? throw new ArgumentNullException(nameof(pages));
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         }
 
         [HttpGet]
@@ -160,34 +170,93 @@ namespace WriterApp.Controllers
             [FromBody] SectionReorderRequest request,
             CancellationToken ct)
         {
+            Stopwatch timer = Stopwatch.StartNew();
+            string correlationId = Request.Headers.TryGetValue("X-Reorder-Correlation", out var header)
+                ? header.ToString()
+                : Guid.NewGuid().ToString("N");
+            Response.Headers["X-Reorder-Correlation"] = correlationId;
+
             if (request.OrderedSectionIds is null || request.OrderedSectionIds.Count == 0)
             {
+                SectionReorderDiagnostics.LogWarning(
+                    _logger,
+                    _configuration,
+                    "Reject missing orderedSectionIds DocId={DocumentId} Corr={CorrelationId}",
+                    documentId,
+                    correlationId);
                 return BadRequest(new { message = "orderedSectionIds is required." });
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
+            SectionReorderDiagnostics.LogDebug(
+                _logger,
+                _configuration,
+                "Entry DocId={DocumentId} UserId={UserId} Count={Count} Corr={CorrelationId}",
+                documentId,
+                userId,
+                request.OrderedSectionIds.Count,
+                correlationId);
             if (!await _documents.ExistsAsync(documentId, userId, ct))
             {
+                SectionReorderDiagnostics.LogWarning(
+                    _logger,
+                    _configuration,
+                    "Document not found DocId={DocumentId} Corr={CorrelationId}",
+                    documentId,
+                    correlationId);
                 return NotFound();
             }
 
             IReadOnlyList<SectionRecord> existing = await _sections.ListByDocumentAsync(documentId, userId, ct);
             if (existing.Count != request.OrderedSectionIds.Count)
             {
+                SectionReorderDiagnostics.LogWarning(
+                    _logger,
+                    _configuration,
+                    "Count mismatch Existing={ExistingCount} Payload={PayloadCount} DocId={DocumentId} Corr={CorrelationId}",
+                    existing.Count,
+                    request.OrderedSectionIds.Count,
+                    documentId,
+                    correlationId);
                 return BadRequest(new { message = "orderedSectionIds does not match document sections." });
             }
 
             HashSet<Guid> unique = new(request.OrderedSectionIds);
             if (unique.Count != request.OrderedSectionIds.Count)
             {
+                SectionReorderDiagnostics.LogWarning(
+                    _logger,
+                    _configuration,
+                    "Duplicate ids PayloadCount={PayloadCount} UniqueCount={UniqueCount} DocId={DocumentId} Corr={CorrelationId}",
+                    request.OrderedSectionIds.Count,
+                    unique.Count,
+                    documentId,
+                    correlationId);
                 return BadRequest(new { message = "orderedSectionIds contains duplicates." });
             }
 
             HashSet<Guid> existingIds = existing.Select(section => section.Id).ToHashSet();
             if (!existingIds.SetEquals(unique))
             {
+                SectionReorderDiagnostics.LogWarning(
+                    _logger,
+                    _configuration,
+                    "Id mismatch ExistingCount={ExistingCount} PayloadCount={PayloadCount} DocId={DocumentId} Corr={CorrelationId}",
+                    existingIds.Count,
+                    unique.Count,
+                    documentId,
+                    correlationId);
                 return BadRequest(new { message = "orderedSectionIds must contain all document sections." });
             }
+
+            SectionReorderDiagnostics.LogDebug(
+                _logger,
+                _configuration,
+                "Before order DocId={DocumentId} FirstId={FirstId} LastId={LastId} Corr={CorrelationId}",
+                documentId,
+                existing.OrderBy(section => section.OrderIndex).Select(section => section.Id).FirstOrDefault(),
+                existing.OrderBy(section => section.OrderIndex).Select(section => section.Id).LastOrDefault(),
+                correlationId);
 
             await using var transaction = await _dbContext.Database.BeginTransactionAsync(ct);
             List<SectionRecord> tracked = await _dbContext.Sections
@@ -209,7 +278,7 @@ namespace WriterApp.Controllers
                 }
             }
 
-            await _dbContext.SaveChangesAsync(ct);
+            int saved = await _dbContext.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
 
             List<SectionDto> result = tracked
@@ -223,6 +292,16 @@ namespace WriterApp.Controllers
                     section.CreatedAt,
                     section.UpdatedAt))
                 .ToList();
+
+            SectionReorderDiagnostics.LogDebug(
+                _logger,
+                _configuration,
+                "Saved DocId={DocumentId} Updated={Updated} Returned={Returned} ElapsedMs={ElapsedMs} Corr={CorrelationId}",
+                documentId,
+                saved,
+                result.Count,
+                timer.ElapsedMilliseconds,
+                correlationId);
 
             return Ok(result);
         }

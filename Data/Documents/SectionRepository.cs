@@ -5,16 +5,26 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using WriterApp.Application.Documents;
+using WriterApp.Application.Diagnostics;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 
 namespace WriterApp.Data.Documents
 {
     public sealed class SectionRepository : ISectionRepository
     {
         private readonly AppDbContext _dbContext;
+        private readonly ILogger<SectionRepository> _logger;
+        private readonly IConfiguration _configuration;
 
-        public SectionRepository(AppDbContext dbContext)
+        public SectionRepository(
+            AppDbContext dbContext,
+            ILogger<SectionRepository> logger,
+            IConfiguration configuration)
         {
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         }
 
         public async Task<IReadOnlyList<SectionRecord>> ListByDocumentAsync(Guid documentId, string ownerUserId, CancellationToken ct)
@@ -30,6 +40,13 @@ namespace WriterApp.Data.Documents
                 .OrderBy(row => row.section.OrderIndex)
                 .Select(row => row.section)
                 .ToListAsync(ct);
+
+            SectionReorderDiagnostics.LogDebug(
+                _logger,
+                _configuration,
+                "ListByDocument DocId={DocumentId} Count={Count}",
+                documentId,
+                sections.Count);
 
             return sections;
         }
