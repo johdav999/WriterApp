@@ -11,6 +11,9 @@ namespace WriterApp.Data.AI
         public Guid? AppliedToPageId { get; set; }
         public Guid? AppliedToSectionId { get; set; }
         public Guid? AppliedToDocumentId { get; set; }
+        public string? BeforeContent { get; set; }
+        public string? AfterContent { get; set; }
+        public DateTimeOffset? UndoneAt { get; set; }
         public AiActionHistoryEntryRecord? HistoryEntry { get; set; }
     }
 }

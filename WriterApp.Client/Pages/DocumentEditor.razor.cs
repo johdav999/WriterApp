@@ -180,6 +180,9 @@ namespace WriterApp.Client.Pages
         private string? _outlineStatus;
         private PendingAiProposal? _pendingAiProposal;
         private bool _pendingDetailsExpanded;
+        private bool _aiUndoRedoInFlight;
+        private bool _canAiUndo;
+        private bool _canAiRedo;
         private IJSObjectReference? _exportModule;
         private const int PageBreakHeightPx = 980;
         private const int PageBreakGutterOffsetPx = 28;
@@ -1057,11 +1060,16 @@ namespace WriterApp.Client.Pages
                 return;
             }
 
+            string? beforeContent = _pageEditor is null ? null : await _pageEditor.GetContentAsync();
             await InvokePageCommandAsync("replaceSelection", pending.ProposedText);
+            string? afterContent = _pageEditor is null ? null : await _pageEditor.GetContentAsync();
+            DateTimeOffset appliedAt = DateTimeOffset.UtcNow;
+            UpdateAiHistoryAppliedState(pending.ProposalId, appliedAt);
             _expandedAiHistoryId = pending.ProposalId;
             _pendingDetailsExpanded = false;
             _pendingAiProposal = null;
-            await LoadAiHistoryAsync();
+            _ = RecordAppliedEventAsync(pending.ProposalId, appliedAt, beforeContent, afterContent);
+            UpdateAiUndoRedoAvailability();
             await InvokeAsync(StateHasChanged);
         }
 
@@ -1096,6 +1104,12 @@ namespace WriterApp.Client.Pages
             }
 
             _expandedAiHistoryId = entry.Id;
+        }
+
+        private void UpdateAiUndoRedoAvailability()
+        {
+            _canAiUndo = _aiHistoryEntries.Any(entry => entry.IsApplied);
+            _canAiRedo = _aiHistoryEntries.Any(entry => entry.AppliedCount > 0 && !entry.IsApplied);
         }
 
         private static string GetActionLabel(string actionKey)
@@ -1136,6 +1150,78 @@ namespace WriterApp.Client.Pages
         private static string GetAiHistoryDetailsId(AiHistoryEntry entry)
         {
             return $"ai-history-details-{entry.Id}";
+        }
+
+        private void UpdateAiHistoryAppliedState(Guid historyEntryId, DateTimeOffset appliedAt)
+        {
+            if (historyEntryId == Guid.Empty)
+            {
+                return;
+            }
+
+            int index = _aiHistoryEntries.FindIndex(entry => entry.Id == historyEntryId);
+            if (index >= 0)
+            {
+                AiHistoryEntry current = _aiHistoryEntries[index];
+                int nextCount = Math.Max(1, current.AppliedCount + 1);
+                DateTimeOffset nextAppliedAt = current.LastAppliedAt.HasValue && current.LastAppliedAt > appliedAt
+                    ? current.LastAppliedAt.Value
+                    : appliedAt;
+                _aiHistoryEntries[index] = current with
+                {
+                    IsApplied = true,
+                    AppliedCount = nextCount,
+                    LastAppliedAt = nextAppliedAt
+                };
+                return;
+            }
+
+            _aiHistoryEntries.Add(new AiHistoryEntry(
+                historyEntryId,
+                "unknown",
+                "AI",
+                null,
+                null,
+                null,
+                appliedAt,
+                true,
+                appliedAt,
+                1));
+        }
+
+        private async Task RecordAppliedEventAsync(
+            Guid historyEntryId,
+            DateTimeOffset appliedAt,
+            string? beforeContent,
+            string? afterContent)
+        {
+            if (historyEntryId == Guid.Empty)
+            {
+                return;
+            }
+
+            var payload = new
+            {
+                DocumentId,
+                SectionId,
+                PageId = _activePage?.Id,
+                BeforeContent = beforeContent,
+                AfterContent = afterContent
+            };
+
+            try
+            {
+                using HttpResponseMessage response =
+                    await Http.PostAsJsonAsync($"api/ai/actions/history/{historyEntryId}/applied", payload);
+                if (!response.IsSuccessStatusCode)
+                {
+                    Logger.LogWarning("Apply AI history event failed: {Status}", response.StatusCode);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Apply AI history event failed.");
+            }
         }
 
         private string GetAiBlockedMessage()
@@ -1245,13 +1331,106 @@ namespace WriterApp.Client.Pages
                             entry.Summary,
                             entry.OriginalText,
                             entry.ProposedText,
-                            entry.CreatedUtc));
+                            entry.CreatedUtc,
+                            entry.IsApplied,
+                            entry.LastAppliedAt,
+                            entry.AppliedCount));
                     }
                 }
             }
             catch
             {
                 _aiHistoryEntries.Clear();
+            }
+            finally
+            {
+                UpdateAiUndoRedoAvailability();
+            }
+        }
+
+        private async Task OnAiUndoRequested()
+        {
+            if (_aiUndoRedoInFlight || _pageEditor is null || _activeSection is null)
+            {
+                return;
+            }
+
+            _aiUndoRedoInFlight = true;
+            try
+            {
+                AiActionUndoRedoRequestDto request = new(DocumentId, _activeSection.Id, _activePage?.Id);
+                using HttpResponseMessage response = await Http.PostAsJsonAsync("api/ai/actions/history/undo", request);
+                if (response.StatusCode == System.Net.HttpStatusCode.NoContent)
+                {
+                    return;
+                }
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    Logger.LogWarning("AI undo failed: {Status}", response.StatusCode);
+                    return;
+                }
+
+                AiActionUndoRedoResponseDto? payload = await response.Content.ReadFromJsonAsync<AiActionUndoRedoResponseDto>();
+                if (payload is null || string.IsNullOrWhiteSpace(payload.Content))
+                {
+                    return;
+                }
+
+                await _pageEditor.SetContentAsync(payload.Content, markDirty: true);
+                await _pageEditor.SaveNowAsync();
+                await LoadAiHistoryAsync();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "AI undo failed.");
+            }
+            finally
+            {
+                _aiUndoRedoInFlight = false;
+            }
+        }
+
+        private async Task OnAiRedoRequested()
+        {
+            if (_aiUndoRedoInFlight || _pageEditor is null || _activeSection is null)
+            {
+                return;
+            }
+
+            _aiUndoRedoInFlight = true;
+            try
+            {
+                AiActionUndoRedoRequestDto request = new(DocumentId, _activeSection.Id, _activePage?.Id);
+                using HttpResponseMessage response = await Http.PostAsJsonAsync("api/ai/actions/history/redo", request);
+                if (response.StatusCode == System.Net.HttpStatusCode.NoContent)
+                {
+                    return;
+                }
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    Logger.LogWarning("AI redo failed: {Status}", response.StatusCode);
+                    return;
+                }
+
+                AiActionUndoRedoResponseDto? payload = await response.Content.ReadFromJsonAsync<AiActionUndoRedoResponseDto>();
+                if (payload is null || string.IsNullOrWhiteSpace(payload.Content))
+                {
+                    return;
+                }
+
+                await _pageEditor.SetContentAsync(payload.Content, markDirty: true);
+                await _pageEditor.SaveNowAsync();
+                await LoadAiHistoryAsync();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "AI redo failed.");
+            }
+            finally
+            {
+                _aiUndoRedoInFlight = false;
             }
         }
 
@@ -1314,7 +1493,10 @@ namespace WriterApp.Client.Pages
             string? Summary,
             string? BeforeText,
             string? AfterText,
-            DateTimeOffset Timestamp);
+            DateTimeOffset Timestamp,
+            bool IsApplied = false,
+            DateTimeOffset? LastAppliedAt = null,
+            int AppliedCount = 0);
 
         private sealed record PendingAiProposal(
             Guid ProposalId,

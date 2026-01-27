@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Security.Claims;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Components;
@@ -15,6 +16,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.JSInterop;
 using BlazorApp.Components.Editor;
 using WriterApp.Application.Commands;
+using WriterApp.Application.AI;
 using WriterApp.Application.Documents;
 using WriterApp.Application.State;
 using WriterApp.Application.Usage;
@@ -72,6 +74,9 @@ namespace BlazorApp.Components.Pages
 
         [Inject]
         public ExportService ExportService { get; set; } = default!;
+
+        [Inject]
+        public IAiActionHistoryStore AiActionHistoryStore { get; set; } = default!;
 
         private readonly List<SectionDto> _sections = new();
         private readonly Dictionary<Guid, List<PageDto>> _pagesBySection = new();
@@ -146,9 +151,13 @@ namespace BlazorApp.Components.Pages
         private string? _notesStatus;
         private PendingAiProposal? _pendingAiProposal;
         private bool _pendingDetailsExpanded;
+        private bool _aiUndoRedoInFlight;
+        private bool _canAiUndo;
+        private bool _canAiRedo;
         private IJSObjectReference? _exportModule;
         private const int PageBreakHeightPx = 980;
         private const int PageBreakGutterOffsetPx = 28;
+        private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
         private PageEditor.PageBreakOptions PageBreaks =>
             new(PageBreakHeightPx, true, PageBreakGutterOffsetPx);
@@ -253,6 +262,7 @@ namespace BlazorApp.Components.Pages
 
                 _notesDraft = await LoadPageNotesAsync(_activePage.Id);
                 _notesStatus = null;
+                await LoadAiHistoryAsync();
             }
             catch (Exception ex)
             {
@@ -711,6 +721,8 @@ namespace BlazorApp.Components.Pages
                 DateTime.UtcNow);
             _pendingDetailsExpanded = false;
 
+            await SaveAiHistoryEntryAsync(action, proposal, selection, selectionRange, plainText);
+            await LoadAiHistoryAsync();
             await InvokeAsync(StateHasChanged);
         }
 
@@ -1070,10 +1082,14 @@ namespace BlazorApp.Components.Pages
                 return;
             }
 
+            string? beforeContent = _pageEditor is null ? null : await _pageEditor.GetContentAsync();
             await InvokePageCommandAsync("replaceSelection", pending.ProposedText);
+            string? afterContent = _pageEditor is null ? null : await _pageEditor.GetContentAsync();
             Guid historyId = pending.Proposal?.ProposalId ?? Guid.NewGuid();
-            _aiHistoryEntries.Add(new AiHistoryEntry(
+            DateTimeOffset appliedAt = DateTimeOffset.UtcNow;
+            UpdateAiHistoryAppliedState(
                 historyId,
+                appliedAt,
                 pending.Instruction,
                 pending.Proposal?.SummaryLabel ?? pending.Instruction,
                 pending.Proposal?.ProviderId,
@@ -1081,11 +1097,12 @@ namespace BlazorApp.Components.Pages
                 pending.Proposal?.Reason,
                 pending.Proposal?.Instruction ?? pending.Instruction,
                 pending.OriginalText,
-                pending.ProposedText,
-                DateTime.UtcNow));
+                pending.ProposedText);
             _expandedAiHistoryId = historyId;
             _pendingDetailsExpanded = false;
             _pendingAiProposal = null;
+            _ = RecordAppliedEventAsync(historyId, appliedAt, beforeContent, afterContent);
+            UpdateAiUndoRedoAvailability();
             await InvokeAsync(StateHasChanged);
         }
 
@@ -1128,6 +1145,12 @@ namespace BlazorApp.Components.Pages
             _expandedAiHistoryId = entry.Id;
         }
 
+        private void UpdateAiUndoRedoAvailability()
+        {
+            _canAiUndo = _aiHistoryEntries.Any(entry => entry.IsApplied);
+            _canAiRedo = _aiHistoryEntries.Any(entry => entry.AppliedCount > 0 && !entry.IsApplied);
+        }
+
         private static string FormatHistoryText(string? text)
         {
             return string.IsNullOrWhiteSpace(text) ? "No content captured." : text;
@@ -1147,6 +1170,215 @@ namespace BlazorApp.Components.Pages
         private static string GetAiHistoryDetailsId(AiHistoryEntry entry)
         {
             return $"ai-history-details-{entry.Id}";
+        }
+
+        private void UpdateAiHistoryAppliedState(
+            Guid historyEntryId,
+            DateTimeOffset appliedAt,
+            string label,
+            string? summary,
+            string? providerId,
+            string? targetScope,
+            string? reason,
+            string? instruction,
+            string? beforeText,
+            string? afterText)
+        {
+            if (historyEntryId == Guid.Empty)
+            {
+                return;
+            }
+
+            int index = _aiHistoryEntries.FindIndex(entry => entry.Id == historyEntryId);
+            if (index >= 0)
+            {
+                AiHistoryEntry current = _aiHistoryEntries[index];
+                int nextCount = Math.Max(1, current.AppliedCount + 1);
+                DateTimeOffset nextAppliedAt = current.LastAppliedAt.HasValue && current.LastAppliedAt > appliedAt
+                    ? current.LastAppliedAt.Value
+                    : appliedAt;
+                _aiHistoryEntries[index] = current with
+                {
+                    IsApplied = true,
+                    AppliedCount = nextCount,
+                    LastAppliedAt = nextAppliedAt
+                };
+                return;
+            }
+
+            _aiHistoryEntries.Add(new AiHistoryEntry(
+                historyEntryId,
+                label,
+                summary,
+                providerId,
+                targetScope,
+                reason,
+                instruction,
+                beforeText,
+                afterText,
+                DateTime.UtcNow,
+                true,
+                appliedAt,
+                1));
+        }
+
+        private async Task RecordAppliedEventAsync(
+            Guid historyEntryId,
+            DateTimeOffset appliedAt,
+            string? beforeContent,
+            string? afterContent)
+        {
+            if (historyEntryId == Guid.Empty)
+            {
+                return;
+            }
+
+            var payload = new
+            {
+                DocumentId,
+                SectionId,
+                PageId,
+                BeforeContent = beforeContent,
+                AfterContent = afterContent
+            };
+
+            try
+            {
+                using HttpResponseMessage response =
+                    await Http.PostAsJsonAsync($"api/ai/actions/history/{historyEntryId}/applied", payload);
+                if (!response.IsSuccessStatusCode)
+                {
+                    Logger.LogWarning("Apply AI history event failed: {Status}", response.StatusCode);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Apply AI history event failed.");
+            }
+        }
+
+        private async Task LoadAiHistoryAsync()
+        {
+            try
+            {
+                List<AiActionHistoryEntryDto>? entries =
+                    await Http.GetFromJsonAsync<List<AiActionHistoryEntryDto>>($"api/ai/actions/history?documentId={DocumentId}");
+                _aiHistoryEntries.Clear();
+                if (entries is not null)
+                {
+                    foreach (AiActionHistoryEntryDto entry in entries.OrderByDescending(item => item.CreatedUtc))
+                    {
+                        _aiHistoryEntries.Add(new AiHistoryEntry(
+                            entry.ProposalId,
+                            entry.ActionKey,
+                            entry.Summary ?? entry.ActionKey,
+                            null,
+                            null,
+                            null,
+                            null,
+                            entry.OriginalText,
+                            entry.ProposedText,
+                            entry.CreatedUtc.UtcDateTime,
+                            entry.IsApplied,
+                            entry.LastAppliedAt,
+                            entry.AppliedCount));
+                    }
+                }
+            }
+            catch
+            {
+                _aiHistoryEntries.Clear();
+            }
+            finally
+            {
+                UpdateAiUndoRedoAvailability();
+            }
+        }
+
+        private async Task OnAiUndoRequested()
+        {
+            if (_aiUndoRedoInFlight || _pageEditor is null || _activeSection is null)
+            {
+                return;
+            }
+
+            _aiUndoRedoInFlight = true;
+            try
+            {
+                AiActionUndoRedoRequestDto request = new(DocumentId, _activeSection.Id, _activePage?.Id ?? PageId);
+                using HttpResponseMessage response = await Http.PostAsJsonAsync("api/ai/actions/history/undo", request);
+                if (response.StatusCode == System.Net.HttpStatusCode.NoContent)
+                {
+                    return;
+                }
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    Logger.LogWarning("AI undo failed: {Status}", response.StatusCode);
+                    return;
+                }
+
+                AiActionUndoRedoResponseDto? payload = await response.Content.ReadFromJsonAsync<AiActionUndoRedoResponseDto>();
+                if (payload is null || string.IsNullOrWhiteSpace(payload.Content))
+                {
+                    return;
+                }
+
+                await _pageEditor.SetContentAsync(payload.Content, markDirty: true);
+                await _pageEditor.SaveNowAsync();
+                await LoadAiHistoryAsync();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "AI undo failed.");
+            }
+            finally
+            {
+                _aiUndoRedoInFlight = false;
+            }
+        }
+
+        private async Task OnAiRedoRequested()
+        {
+            if (_aiUndoRedoInFlight || _pageEditor is null || _activeSection is null)
+            {
+                return;
+            }
+
+            _aiUndoRedoInFlight = true;
+            try
+            {
+                AiActionUndoRedoRequestDto request = new(DocumentId, _activeSection.Id, _activePage?.Id ?? PageId);
+                using HttpResponseMessage response = await Http.PostAsJsonAsync("api/ai/actions/history/redo", request);
+                if (response.StatusCode == System.Net.HttpStatusCode.NoContent)
+                {
+                    return;
+                }
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    Logger.LogWarning("AI redo failed: {Status}", response.StatusCode);
+                    return;
+                }
+
+                AiActionUndoRedoResponseDto? payload = await response.Content.ReadFromJsonAsync<AiActionUndoRedoResponseDto>();
+                if (payload is null || string.IsNullOrWhiteSpace(payload.Content))
+                {
+                    return;
+                }
+
+                await _pageEditor.SetContentAsync(payload.Content, markDirty: true);
+                await _pageEditor.SaveNowAsync();
+                await LoadAiHistoryAsync();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "AI redo failed.");
+            }
+            finally
+            {
+                _aiUndoRedoInFlight = false;
+            }
         }
 
         private string GetAiBlockedMessage()
@@ -1231,6 +1463,66 @@ namespace BlazorApp.Components.Pages
             return _pageEditor.InvokeCommandAsync(command, extraArgs);
         }
 
+        private async Task SaveAiHistoryEntryAsync(
+            AiActionOption action,
+            AiProposal proposal,
+            string selection,
+            TextRange selectionRange,
+            string plainText)
+        {
+            try
+            {
+                AuthenticationState authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+                string userId = UserIdResolver.ResolveUserId(authState.User);
+                Dictionary<string, object?> parameters = new(action.Inputs)
+                {
+                    ["instruction"] = action.Instruction
+                };
+
+                AiActionExecuteRequestDto request = new(
+                    DocumentId,
+                    _activeSection?.Id,
+                    _activePage?.Id ?? PageId,
+                    selectionRange.Start,
+                    selectionRange.Start + selectionRange.Length,
+                    selection,
+                    plainText,
+                    null,
+                    parameters);
+
+                AiActionExecuteResponseDto response = new(
+                    proposal.ProposalId,
+                    proposal.OriginalText ?? selection,
+                    proposal.ProposedText,
+                    proposal.UserSummary ?? proposal.SummaryLabel ?? action.Instruction,
+                    new DateTimeOffset(proposal.CreatedUtc),
+                    proposal.ActionId);
+
+                string requestJson = JsonSerializer.Serialize(request, JsonOptions);
+                string responseJson = JsonSerializer.Serialize(response, JsonOptions);
+
+                await AiActionHistoryStore.AddAsync(new AiActionHistoryEntry(
+                    proposal.ProposalId,
+                    proposal.ActionId,
+                    userId,
+                    DocumentId,
+                    _activeSection?.Id ?? SectionId,
+                    response.CreatedUtc,
+                    response.ChangesSummary,
+                    response.OriginalText,
+                    response.ProposedText,
+                    _activePage?.Id ?? PageId,
+                    proposal.ProviderId,
+                    null,
+                    requestJson,
+                    responseJson), CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to persist AI history entry.");
+            }
+        }
+
         private sealed record AiActionOption(
             string Label,
             string Instruction,
@@ -1247,7 +1539,10 @@ namespace BlazorApp.Components.Pages
             string? Instruction,
             string? BeforeText,
             string? AfterText,
-            DateTime Timestamp);
+            DateTime Timestamp,
+            bool IsApplied = false,
+            DateTimeOffset? LastAppliedAt = null,
+            int AppliedCount = 0);
 
         private sealed record PendingAiProposal(
             AiProposal? Proposal,

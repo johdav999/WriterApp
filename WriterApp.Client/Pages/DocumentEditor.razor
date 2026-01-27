@@ -326,6 +326,20 @@ else
                                 AI history
                                 <span class="ai-history-count-pill">@_aiHistoryEntries.Count</span>
                             </div>
+                            <div class="ai-history-toolbar">
+                                <button type="button"
+                                        class="ai-history-button"
+                                        @onclick="OnAiUndoRequested"
+                                        disabled="@(!_canAiUndo || _aiUndoRedoInFlight)">
+                                    AI Undo
+                                </button>
+                                <button type="button"
+                                        class="ai-history-button"
+                                        @onclick="OnAiRedoRequested"
+                                        disabled="@(!_canAiRedo || _aiUndoRedoInFlight)">
+                                    AI Redo
+                                </button>
+                            </div>
                             @if (_aiHistoryEntries.Count == 0)
                             {
                                 <div class="drawer-empty">No AI changes yet.</div>
@@ -343,7 +357,18 @@ else
                                         </div>
                                         <div class="ai-history-sub">
                                             <span>@entry.Timestamp.ToLocalTime().ToString("g")</span>
-                                            <span class="ai-history-status">Applied</span>
+                                            @if (entry.IsApplied)
+                                            {
+                                                <span class="ai-history-status is-applied">Applied</span>
+                                                @if (entry.AppliedCount > 1)
+                                                {
+                                                    <span class="ai-history-status-count">x@entry.AppliedCount</span>
+                                                }
+                                            }
+                                            else
+                                            {
+                                                <span class="ai-history-status is-pending">Pending</span>
+                                            }
                                         </div>
                                         <div class="ai-history-actions">
                                             <button type="button"
@@ -360,7 +385,11 @@ else
                                                 <div class="ai-history-details-header">
                                                     <div class="ai-history-details-summary">@(entry.Summary ?? entry.Label)</div>
                                                     <div class="ai-history-details-sub">
-                                                        <span>Applied</span>
+                                                        <span>@(entry.IsApplied ? "Applied" : "Pending")</span>
+                                                        @if (entry.LastAppliedAt.HasValue)
+                                                        {
+                                                            <span>@entry.LastAppliedAt.Value.ToLocalTime().ToString("g")</span>
+                                                        }
                                                         <span>@entry.Timestamp.ToLocalTime().ToString("g")</span>
                                                     </div>
                                                 </div>

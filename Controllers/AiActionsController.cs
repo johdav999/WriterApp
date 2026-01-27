@@ -129,6 +129,8 @@ namespace WriterApp.Controllers
                     request?.DocumentId,
                     request?.SectionId,
                     request?.PageId,
+                    request?.BeforeContent,
+                    request?.AfterContent,
                     ct);
             }
             catch (InvalidOperationException)
@@ -137,6 +139,76 @@ namespace WriterApp.Controllers
             }
 
             return NoContent();
+        }
+
+        [HttpPost("history/undo")]
+        public async Task<ActionResult<AiActionUndoRedoResponseDto>> Undo(
+            [FromBody] AiActionUndoRedoRequestDto request,
+            CancellationToken ct)
+        {
+            if (request.DocumentId is null || request.SectionId is null)
+            {
+                return BadRequest(new { message = "documentId and sectionId are required." });
+            }
+
+            string userId;
+            try
+            {
+                userId = _userIdResolver.ResolveUserId(User);
+            }
+            catch (SecurityException)
+            {
+                return Unauthorized();
+            }
+
+            AiActionUndoRedoResult? result = await _historyStore.UndoAsync(
+                userId,
+                request.DocumentId.Value,
+                request.SectionId.Value,
+                request.PageId,
+                ct);
+
+            if (result is null)
+            {
+                return NoContent();
+            }
+
+            return Ok(new AiActionUndoRedoResponseDto(result.HistoryEntryId, result.Content));
+        }
+
+        [HttpPost("history/redo")]
+        public async Task<ActionResult<AiActionUndoRedoResponseDto>> Redo(
+            [FromBody] AiActionUndoRedoRequestDto request,
+            CancellationToken ct)
+        {
+            if (request.DocumentId is null || request.SectionId is null)
+            {
+                return BadRequest(new { message = "documentId and sectionId are required." });
+            }
+
+            string userId;
+            try
+            {
+                userId = _userIdResolver.ResolveUserId(User);
+            }
+            catch (SecurityException)
+            {
+                return Unauthorized();
+            }
+
+            AiActionUndoRedoResult? result = await _historyStore.RedoAsync(
+                userId,
+                request.DocumentId.Value,
+                request.SectionId.Value,
+                request.PageId,
+                ct);
+
+            if (result is null)
+            {
+                return NoContent();
+            }
+
+            return Ok(new AiActionUndoRedoResponseDto(result.HistoryEntryId, result.Content));
         }
 
         [HttpPost("{actionKey}/execute")]
@@ -345,6 +417,11 @@ namespace WriterApp.Controllers
             return value.ToString();
         }
 
-        public sealed record AiActionAppliedRequest(Guid? DocumentId, Guid? SectionId, Guid? PageId);
+        public sealed record AiActionAppliedRequest(
+            Guid? DocumentId,
+            Guid? SectionId,
+            Guid? PageId,
+            string? BeforeContent,
+            string? AfterContent);
     }
 }

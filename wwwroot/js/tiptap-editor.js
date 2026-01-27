@@ -1010,6 +1010,14 @@ window.tiptapEditor = {
         editor.commands.setContent(content, false);
     },
 
+    getContent: function (editor) {
+        if (!editor) {
+            return "";
+        }
+
+        return editor.getHTML ? editor.getHTML() : "";
+    },
+
     setPageBreaksEnabled: function (editor, enabled, options) {
         if (!editor) {
             return 1;
