@@ -103,6 +103,7 @@ else
                                     {
                                         <div class="section-menu-panel">
                                             <button type="button" @onclick="() => BeginSectionRename(item.Id)">Rename</button>
+                                            <button type="button" @onclick="() => DuplicateSectionAsync(item.Id)">Duplicate</button>
                                             <button type="button"
                                                     class="danger"
                                                     @onclick="() => PromptDeleteSection(item.Id)">

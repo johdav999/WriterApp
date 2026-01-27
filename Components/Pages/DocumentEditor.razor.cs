@@ -481,6 +481,43 @@ namespace BlazorApp.Components.Pages
             _sectionMenuOpenId = _sectionMenuOpenId == sectionId ? null : sectionId;
         }
 
+        private async Task DuplicateSectionAsync(Guid sectionId)
+        {
+            _sectionMenuOpenId = null;
+            _titleErrorMessage = null;
+            try
+            {
+                using HttpResponseMessage response =
+                    await Http.PostAsync($"api/documents/{DocumentId}/sections/{sectionId}/duplicate", null);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _titleErrorMessage = "Duplicate section failed.";
+                    return;
+                }
+
+                SectionDto? created = await response.Content.ReadFromJsonAsync<SectionDto>();
+                if (created is null)
+                {
+                    _titleErrorMessage = "Duplicate section failed.";
+                    return;
+                }
+
+                List<PageDto>? pages = await Http.GetFromJsonAsync<List<PageDto>>(
+                    $"api/sections/{created.Id}/pages");
+                _pagesBySection[created.Id] = pages?.OrderBy(page => page.OrderIndex).ToList()
+                    ?? new List<PageDto>();
+
+                _sections.Add(created);
+                _sections.Sort((left, right) => left.OrderIndex.CompareTo(right.OrderIndex));
+                OnSectionSelected(created.Id);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Duplicate section failed.");
+                _titleErrorMessage = "Duplicate section failed.";
+            }
+        }
+
         private void PromptDeleteSection(Guid sectionId)
         {
             SectionDto? section = _sections.FirstOrDefault(item => item.Id == sectionId);

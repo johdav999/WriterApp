@@ -539,6 +539,40 @@ namespace WriterApp.Client.Pages
             _sectionMenuOpenId = _sectionMenuOpenId == sectionId ? null : sectionId;
         }
 
+        private async Task DuplicateSectionAsync(Guid sectionId)
+        {
+            _sectionMenuOpenId = null;
+            _sectionError = null;
+            try
+            {
+                using HttpResponseMessage response =
+                    await Http.PostAsync($"api/documents/{DocumentId}/sections/{sectionId}/duplicate", null);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _sectionError = "Duplicate failed.";
+                    return;
+                }
+
+                SectionDto? created = await response.Content.ReadFromJsonAsync<SectionDto>();
+                if (created is null)
+                {
+                    _sectionError = "Duplicate failed.";
+                    return;
+                }
+
+                _sections.Add(created);
+                _sections.Sort((left, right) => left.OrderIndex.CompareTo(right.OrderIndex));
+                _pagesBySection[created.Id] = new List<PageDto>();
+                await LastOpenedDocumentStateService.SaveAsync(DocumentId, created.Id);
+                Navigation.NavigateTo($"documents/{DocumentId}/sections/{created.Id}", replace: true);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Duplicate section failed.");
+                _sectionError = "Duplicate failed.";
+            }
+        }
+
         private void PromptDeleteSection(Guid sectionId)
         {
             SectionDto? section = _sections.FirstOrDefault(item => item.Id == sectionId);
