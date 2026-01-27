@@ -1,3 +1,12 @@
+@using WriterApp.Client.State
+@using System.Net.Http.Json
+@using WriterApp.Application.Documents
+@implements IDisposable
+@inject CurrentDocumentStateService CurrentDocumentStateService
+@inject LastOpenedDocumentStateService LastOpenedDocumentStateService
+@inject HttpClient Http
+@inject NavigationManager Navigation
+
 <div class="top-row ps-3 navbar navbar-dark">
     <div class="container-fluid">
         <a class="navbar-brand" href="documents">WriterApp</a>
@@ -10,19 +19,40 @@
 <div class="@NavMenuCssClass nav-scrollable" @onclick="ToggleNavMenu">
     <nav class="nav flex-column">
         <div class="nav-item px-3">
-            <NavLink class="nav-link" href="documents" Match="NavLinkMatch.All">
+            @if (HasCurrentEditorLink)
+            {
+                <NavLink class="nav-link" href="@GetEditorLink()" Match="NavLinkMatch.Prefix">
+                    <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> Editor
+                </NavLink>
+            }
+            else
+            {
+                <a class="nav-link" href="documents">
+                    <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> Editor
+                </a>
+            }
+        </div>
+        <div class="nav-item px-3">
+            <a class="nav-link @GetDocumentsActiveClass()"
+               href="documents"
+               @onclick="OnDocumentsNavClicked"
+               @onclick:preventDefault="true">
                 <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Documents
-            </NavLink>
+            </a>
         </div>
         <div class="nav-item px-3">
-            <NavLink class="nav-link" href="counter">
-                <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> Counter
-            </NavLink>
-        </div>
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="weather">
-                <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Weather
-            </NavLink>
+            @if (HasCurrentSynopsisLink)
+            {
+                <NavLink class="nav-link" href="@GetSynopsisLink()" Match="NavLinkMatch.Prefix">
+                    <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Synopsis
+                </NavLink>
+            }
+            else
+            {
+                <a class="nav-link" href="documents">
+                    <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Synopsis
+                </a>
+            }
         </div>
     </nav>
 </div>
@@ -35,5 +65,151 @@
     private void ToggleNavMenu()
     {
         collapseNavMenu = !collapseNavMenu;
+    }
+
+    protected override void OnInitialized()
+    {
+        CurrentDocumentStateService.Changed += HandleDocumentStateChange;
+    }
+
+    public void Dispose()
+    {
+        CurrentDocumentStateService.Changed -= HandleDocumentStateChange;
+    }
+
+    private void HandleDocumentStateChange()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private bool HasCurrentEditorLink =>
+        CurrentDocumentStateService.DocumentId is Guid documentId &&
+        CurrentDocumentStateService.SectionId is Guid sectionId &&
+        documentId != Guid.Empty &&
+        sectionId != Guid.Empty;
+
+    private bool HasCurrentSynopsisLink =>
+        CurrentDocumentStateService.DocumentId is Guid documentId &&
+        documentId != Guid.Empty;
+
+    private string GetEditorLink()
+    {
+        if (!HasCurrentEditorLink)
+        {
+            return "documents";
+        }
+
+        Guid documentId = CurrentDocumentStateService.DocumentId!.Value;
+        Guid sectionId = CurrentDocumentStateService.SectionId!.Value;
+        return $"documents/{documentId}/sections/{sectionId}";
+    }
+
+    private string GetSynopsisLink()
+    {
+        if (!HasCurrentSynopsisLink)
+        {
+            return "documents";
+        }
+
+        Guid documentId = CurrentDocumentStateService.DocumentId!.Value;
+        return $"synopsis/{documentId}";
+    }
+
+    private string GetDocumentsActiveClass()
+    {
+        return IsDocumentsRoute() ? "active" : string.Empty;
+    }
+
+    private async Task OnDocumentsNavClicked()
+    {
+        await NavigateDocumentsAsync();
+    }
+
+    private async Task NavigateDocumentsAsync()
+    {
+        await LastOpenedDocumentStateService.LoadAsync();
+
+        if (IsDocumentsListRoute() && LastOpenedDocumentStateService.State is { } state)
+        {
+            (Guid? sectionId, bool shouldClear) = await TryResolveSectionAsync(state);
+            if (sectionId is not null)
+            {
+                Navigation.NavigateTo($"documents/{state.DocumentId}/sections/{sectionId}");
+                return;
+            }
+
+            if (shouldClear)
+            {
+                await LastOpenedDocumentStateService.ClearAsync();
+            }
+        }
+
+        Navigation.NavigateTo("documents");
+    }
+
+    private async Task<(Guid? SectionId, bool ShouldClear)> TryResolveSectionAsync(LastOpenedDocumentState state)
+    {
+        try
+        {
+            using HttpResponseMessage response =
+                await Http.GetAsync($"api/documents/{state.DocumentId}/sections");
+            if (!response.IsSuccessStatusCode)
+            {
+                bool clear = response.StatusCode is System.Net.HttpStatusCode.NotFound
+                    or System.Net.HttpStatusCode.Unauthorized;
+                return (null, clear);
+            }
+
+            List<SectionDto>? sections = await response.Content.ReadFromJsonAsync<List<SectionDto>>();
+            if (sections is null || sections.Count == 0)
+            {
+                return (null, true);
+            }
+
+            if (state.SectionId is Guid sectionId)
+            {
+                SectionDto? match = sections.FirstOrDefault(section => section.Id == sectionId);
+                if (match is not null)
+                {
+                    return (match.Id, false);
+                }
+            }
+
+            Guid? firstId = sections
+                .OrderBy(section => section.OrderIndex)
+                .FirstOrDefault()
+                ?.Id;
+            return (firstId, firstId is null);
+        }
+        catch
+        {
+            return (null, false);
+        }
+    }
+
+    private bool IsDocumentsRoute()
+    {
+        string[] segments = GetRouteSegments();
+        return segments.Length > 0 && string.Equals(segments[0], "documents", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool IsDocumentsListRoute()
+    {
+        string[] segments = GetRouteSegments();
+        return segments.Length == 1 && string.Equals(segments[0], "documents", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string[] GetRouteSegments()
+    {
+        string relative = Navigation.ToBaseRelativePath(Navigation.Uri);
+        int queryStart = relative.IndexOfAny(['?', '#']);
+        if (queryStart >= 0)
+        {
+            relative = relative[..queryStart];
+        }
+
+        return string.IsNullOrWhiteSpace(relative)
+            ? Array.Empty<string>()
+            : relative.Split('/', StringSplitOptions.RemoveEmptyEntries);
     }
 }

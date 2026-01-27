@@ -1,5 +1,6 @@
 @page "/"
 @inject NavigationManager Navigation
+@inject WriterApp.Client.State.CurrentDocumentStateService CurrentDocumentStateService
 
 <PageTitle>WriterApp</PageTitle>
 
@@ -8,6 +9,7 @@
 @code {
     protected override void OnInitialized()
     {
+        CurrentDocumentStateService.Clear();
         Navigation.NavigateTo("documents", replace: true);
     }
 }
