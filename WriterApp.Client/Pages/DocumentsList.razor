@@ -1,6 +1,7 @@
 ﻿@page "/documents"
 @using System.Globalization
 @using System.Net
+@using Microsoft.AspNetCore.Components.Web
 @using WriterApp.Application.Documents
 @inject HttpClient Http
 @inject NavigationManager Navigation
@@ -29,6 +30,11 @@
         <div class="landing-error">@_createErrorMessage</div>
     }
 
+    @if (!string.IsNullOrWhiteSpace(_renameErrorMessage))
+    {
+        <div class="landing-error">@_renameErrorMessage</div>
+    }
+
     @if (_loading)
     {
         <div class="landing-loading">Loading documents...</div>
@@ -51,7 +57,30 @@
             {
                 <div class="landing-card">
                     <div class="landing-meta">
-                        <div class="landing-title">@entry.Title</div>
+                        @if (_editingDocumentId == entry.Id)
+                        {
+                            <div class="landing-title-edit">
+                                <input class="landing-title-input"
+                                       value="@_titleDraft"
+                                       @oninput="OnTitleInput"
+                                       @onkeydown="OnTitleKeyDown"
+                                       aria-label="Document title"
+                                       autofocus />
+                                <div class="landing-title-actions">
+                                    <button type="button"
+                                            class="secondary"
+                                            @onclick="SaveRenameAsync"
+                                            disabled="@(_renamingDocumentId is not null)">
+                                        Save
+                                    </button>
+                                    <button type="button" class="secondary" @onclick="CancelRename">Cancel</button>
+                                </div>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="landing-title">@entry.Title</div>
+                        }
                         <div class="landing-time">Last modified @FormatRelativeTime(entry.UpdatedAt)</div>
                         @if (entry.WordCount > 0)
                         {
@@ -59,6 +88,12 @@
                         }
                     </div>
                     <div class="landing-actions">
+                        <button type="button"
+                                class="secondary"
+                                @onclick="() => StartRename(entry)"
+                                disabled="@(_renamingDocumentId is not null)">
+                            Rename
+                        </button>
                         <button type="button" class="secondary" @onclick="() => OpenDocumentAsync(entry.Id)">Open</button>
                     </div>
                 </div>
@@ -71,8 +106,14 @@
     private bool _loading = true;
     private bool _unauthorized;
     private bool _creating;
+    private Guid? _editingDocumentId;
+    private Guid? _renamingDocumentId;
     private string? _loadErrorMessage;
     private string? _createErrorMessage;
+    private string? _renameErrorMessage;
+    private string _titleDraft = string.Empty;
+    private string _originalTitle = string.Empty;
+    private DateTimeOffset _originalUpdatedAt;
     private List<DocumentListItemDto> _documents = new();
 
     protected override async Task OnInitializedAsync()
@@ -223,6 +264,100 @@
         }
 
         return utc.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+    }
+
+    private void StartRename(DocumentListItemDto entry)
+    {
+        if (_renamingDocumentId is not null)
+        {
+            return;
+        }
+
+        _renameErrorMessage = null;
+        _editingDocumentId = entry.Id;
+        _titleDraft = entry.Title;
+        _originalTitle = entry.Title;
+        _originalUpdatedAt = entry.UpdatedAt;
+    }
+
+    private void CancelRename()
+    {
+        _editingDocumentId = null;
+        _titleDraft = string.Empty;
+        _originalTitle = string.Empty;
+        _renameErrorMessage = null;
+    }
+
+    private void OnTitleInput(ChangeEventArgs args)
+    {
+        _titleDraft = args.Value?.ToString() ?? string.Empty;
+    }
+
+    private async Task SaveRenameAsync()
+    {
+        if (_editingDocumentId is null || _renamingDocumentId is not null)
+        {
+            return;
+        }
+
+        string nextTitle = (_titleDraft ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(nextTitle))
+        {
+            _renameErrorMessage = "Title is required.";
+            return;
+        }
+
+        Guid documentId = _editingDocumentId.Value;
+        int index = _documents.FindIndex(doc => doc.Id == documentId);
+        if (index < 0)
+        {
+            _renameErrorMessage = "Document not found.";
+            return;
+        }
+
+        _renameErrorMessage = null;
+        _renamingDocumentId = documentId;
+
+        DocumentListItemDto current = _documents[index];
+        _documents[index] = current with { Title = nextTitle, UpdatedAt = DateTimeOffset.UtcNow };
+        _editingDocumentId = null;
+
+        try
+        {
+            DocumentUpdateRequest payload = new(nextTitle);
+            using HttpResponseMessage response = await Http.PutAsJsonAsync($"api/documents/{documentId}", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new HttpRequestException($"Rename failed: {(int)response.StatusCode}");
+            }
+
+            DocumentDetailDto? updated = await response.Content.ReadFromJsonAsync<DocumentDetailDto>();
+            if (updated is not null)
+            {
+                _documents[index] = current with { Title = updated.Title, UpdatedAt = updated.UpdatedAt };
+            }
+        }
+        catch (Exception ex)
+        {
+            _documents[index] = current with { Title = _originalTitle, UpdatedAt = _originalUpdatedAt };
+            _renameErrorMessage = $"Rename failed: {ex.Message}";
+        }
+        finally
+        {
+            _renamingDocumentId = null;
+        }
+    }
+
+    private async Task OnTitleKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter")
+        {
+            await SaveRenameAsync();
+        }
+        else if (args.Key == "Escape")
+        {
+            CancelRename();
+        }
     }
 }
 
