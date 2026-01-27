@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Security;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
@@ -195,6 +196,9 @@ namespace WriterApp.Controllers
                 new DateTimeOffset(proposal.CreatedUtc),
                 actionKey);
 
+            string requestJson = JsonSerializer.Serialize(request, JsonSerializerDefaults.Web);
+            string responseJson = JsonSerializer.Serialize(response, JsonSerializerDefaults.Web);
+
             await _historyStore.AddAsync(new AiActionHistoryEntry(
                 proposal.ProposalId,
                 proposal.ActionId,
@@ -204,7 +208,12 @@ namespace WriterApp.Controllers
                 response.CreatedUtc,
                 summary,
                 proposal.OriginalText ?? request.OriginalText,
-                proposal.ProposedText), ct);
+                proposal.ProposedText,
+                PageId: request.PageId,
+                ProviderId: proposal.ProviderId,
+                ModelId: null,
+                RequestJson: requestJson,
+                ResultJson: responseJson), ct);
 
             return Ok(response);
         }

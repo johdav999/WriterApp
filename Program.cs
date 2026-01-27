@@ -184,7 +184,7 @@ builder.Services.AddSingleton<IAiAction, StoryCoachAction>();
 builder.Services.AddSingleton<IAiActionExecutor, AiActionExecutor>();
 builder.Services.AddSingleton<IAiProposalApplier, DefaultProposalApplier>();
 builder.Services.AddScoped<IAiOrchestrator, AiOrchestrator>();
-builder.Services.AddSingleton<WriterApp.Application.AI.IAiActionHistoryStore, WriterApp.Application.AI.InMemoryAiActionHistoryStore>();
+builder.Services.AddScoped<WriterApp.Application.AI.IAiActionHistoryStore, WriterApp.Application.AI.EfCoreAiActionHistoryStore>();
 
 builder.Services.AddScoped<DocumentStorageService>();
 builder.Services.AddScoped<LegacyDocumentMigrationService>();
