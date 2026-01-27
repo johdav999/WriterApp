@@ -75,6 +75,24 @@
     font-size: 1.05rem;
 }
 
+.landing-title-edit {
+    display: grid;
+    gap: 8px;
+}
+
+.landing-title-input {
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: 1px solid #d7dbe2;
+    font: inherit;
+}
+
+.landing-title-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
 .landing-time {
     color: #6b6b6b;
     font-size: 0.9rem;
