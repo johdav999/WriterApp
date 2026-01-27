@@ -81,6 +81,7 @@
     padding: 6px 8px;
     cursor: grab;
     color: #6b7280;
+    user-select: none;
 }
 
 .section-drag-handle:disabled {
@@ -91,6 +92,11 @@
 .section-order-status {
     font-size: 0.8rem;
     color: #6b7280;
+}
+
+.section-order-debug {
+    font-size: 0.75rem;
+    color: #9a3412;
 }
 
 .section-nav-item {

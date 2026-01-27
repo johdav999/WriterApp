@@ -7,10 +7,12 @@ using System.Net.Http.Json;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.JSInterop;
 using WriterApp.Application.AI;
 using WriterApp.Application.Documents;
+using WriterApp.Client.Diagnostics;
 using WriterApp.Client.State;
 using WriterApp.Application.Usage;
 using WriterApp.Client.Components.Editor;
@@ -45,6 +47,9 @@ namespace WriterApp.Client.Pages
 
         [Inject]
         public IJSRuntime JSRuntime { get; set; } = default!;
+
+        [Inject]
+        public IConfiguration Configuration { get; set; } = default!;
 
         private readonly List<SectionDto> _sections = new();
         private readonly Dictionary<Guid, List<PageDto>> _pagesBySection = new();
@@ -185,6 +190,10 @@ namespace WriterApp.Client.Pages
         private bool _aiUndoRedoInFlight;
         private bool _canAiUndo;
         private bool _canAiRedo;
+        private string? _lastReorderStatus;
+        private int _lastReorderCount;
+        private string? _lastReorderCorrelationId;
+        private bool _sectionReorderDiagnosticsEnabled;
         private IJSObjectReference? _exportModule;
         private const int PageBreakHeightPx = 980;
         private const int PageBreakGutterOffsetPx = 28;
@@ -196,6 +205,7 @@ namespace WriterApp.Client.Pages
         {
             await LoadAiUsageStatusAsync();
             await LoadAiActionsAsync();
+            _sectionReorderDiagnosticsEnabled = SectionReorderDiagnostics.IsEnabled(Configuration);
         }
         protected override async Task OnAfterRenderAsync(bool firstRender)
         {
@@ -377,6 +387,12 @@ namespace WriterApp.Client.Pages
             }
 
             _draggedSectionId = sectionId;
+            SectionReorderDiagnostics.LogDebug(
+                Logger,
+                Configuration,
+                "UI drag start DocId={DocumentId} SectionId={SectionId}",
+                DocumentId,
+                sectionId);
         }
 
         private async Task OnSectionDrop(Guid targetSectionId)
@@ -413,6 +429,15 @@ namespace WriterApp.Client.Pages
                 _sections[index] = _sections[index] with { OrderIndex = index };
             }
 
+            SectionReorderDiagnostics.LogDebug(
+                Logger,
+                Configuration,
+                "UI drop DocId={DocumentId} Count={Count} FirstId={FirstId} LastId={LastId}",
+                DocumentId,
+                _sections.Count,
+                _sections.FirstOrDefault()?.Id,
+                _sections.LastOrDefault()?.Id);
+
             await SaveSectionOrderAsync();
         }
 
@@ -426,12 +451,51 @@ namespace WriterApp.Client.Pages
             _isReorderingSections = true;
             try
             {
+                string correlationId = Guid.NewGuid().ToString("N");
                 SectionReorderRequest payload = new(_sections.Select(section => section.Id).ToList());
-                using HttpResponseMessage response =
-                    await Http.PostAsJsonAsync($"api/documents/{DocumentId}/sections/reorder", payload);
+                using HttpRequestMessage request = new(
+                    HttpMethod.Post,
+                    $"api/documents/{DocumentId}/sections/reorder")
+                {
+                    Content = JsonContent.Create(payload)
+                };
+                request.Headers.Add("X-Reorder-Correlation", correlationId);
+
+                SectionReorderDiagnostics.LogDebug(
+                    Logger,
+                    Configuration,
+                    "HTTP send DocId={DocumentId} Count={Count} Corr={CorrelationId}",
+                    DocumentId,
+                    payload.OrderedSectionIds.Count,
+                    correlationId);
+
+                using HttpResponseMessage response = await Http.SendAsync(request);
                 if (!response.IsSuccessStatusCode)
                 {
-                    Logger.LogWarning("Section reorder failed: {Status}", response.StatusCode);
+                    string? body = null;
+                    try
+                    {
+                        body = await response.Content.ReadAsStringAsync();
+                    }
+                    catch
+                    {
+                    }
+
+                    _lastReorderStatus = response.StatusCode.ToString();
+                    _lastReorderCount = payload.OrderedSectionIds.Count;
+                    _lastReorderCorrelationId = response.Headers.TryGetValues("X-Reorder-Correlation", out var values)
+                        ? values.FirstOrDefault()
+                        : correlationId;
+
+                    SectionReorderDiagnostics.LogWarning(
+                        Logger,
+                        Configuration,
+                        "HTTP failed DocId={DocumentId} Status={Status} Body={Body} Corr={CorrelationId}",
+                        DocumentId,
+                        response.StatusCode,
+                        body ?? string.Empty,
+                        _lastReorderCorrelationId);
+
                     await ReloadSectionsAsync();
                     return;
                 }
@@ -441,11 +505,30 @@ namespace WriterApp.Client.Pages
                 {
                     _sections.Clear();
                     _sections.AddRange(updated.OrderBy(section => section.OrderIndex));
+                    _lastReorderStatus = response.StatusCode.ToString();
+                    _lastReorderCount = updated.Count;
+                    _lastReorderCorrelationId = response.Headers.TryGetValues("X-Reorder-Correlation", out var values)
+                        ? values.FirstOrDefault()
+                        : correlationId;
+                    SectionReorderDiagnostics.LogDebug(
+                        Logger,
+                        Configuration,
+                        "HTTP success DocId={DocumentId} Count={Count} Corr={CorrelationId}",
+                        DocumentId,
+                        updated.Count,
+                        _lastReorderCorrelationId);
                 }
             }
             catch (Exception ex)
             {
-                Logger.LogWarning(ex, "Section reorder failed.");
+                _lastReorderStatus = "Exception";
+                _lastReorderCount = _sections.Count;
+                SectionReorderDiagnostics.LogWarning(
+                    Logger,
+                    Configuration,
+                    "HTTP exception DocId={DocumentId} Error={Error}",
+                    DocumentId,
+                    ex.Message);
                 await ReloadSectionsAsync();
             }
             finally
