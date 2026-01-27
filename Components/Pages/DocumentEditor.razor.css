@@ -68,6 +68,25 @@
     gap: 6px;
 }
 
+.section-drag-handle {
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    background: #fff;
+    padding: 6px 8px;
+    cursor: grab;
+    color: #6b7280;
+}
+
+.section-drag-handle:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.section-order-status {
+    font-size: 0.8rem;
+    color: #6b7280;
+}
+
 .section-nav-item {
     flex: 1;
     display: flex;

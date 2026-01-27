@@ -58,6 +58,8 @@ namespace WriterApp.Client.Pages
         private string _documentTitle = string.Empty;
         private bool _layoutStateInitialized;
         private PageEditor? _pageEditor;
+        private Guid? _draggedSectionId;
+        private bool _isReorderingSections;
         private EditorFormattingState _formattingState = new()
         {
             CanBold = true,
@@ -276,6 +278,8 @@ namespace WriterApp.Client.Pages
                     return;
                 }
 
+                await EnsureSectionHasPageAsync(_activeSection.Id);
+
                 _activePage = GetPrimaryPage(_activeSection.Id);
                 if (_activePage is null)
                 {
@@ -322,10 +326,146 @@ namespace WriterApp.Client.Pages
             return primary with { Content = combined };
         }
 
+        private async Task EnsureSectionHasPageAsync(Guid sectionId)
+        {
+            List<PageDto> pages = GetPages(sectionId);
+            if (pages.Count > 0)
+            {
+                return;
+            }
+
+            try
+            {
+                DateTimeOffset now = DateTimeOffset.UtcNow;
+                PageCreateRequest request = new(
+                    Id: null,
+                    Title: "Page 1",
+                    Content: string.Empty,
+                    OrderIndex: 0,
+                    CreatedAt: now,
+                    UpdatedAt: now);
+
+                using HttpResponseMessage response =
+                    await Http.PostAsJsonAsync($"api/sections/{sectionId}/pages", request);
+                if (!response.IsSuccessStatusCode)
+                {
+                    Logger.LogWarning("Create default page failed: {Status}", response.StatusCode);
+                    return;
+                }
+
+                List<PageDto>? updated = await Http.GetFromJsonAsync<List<PageDto>>($"api/sections/{sectionId}/pages");
+                _pagesBySection[sectionId] = updated?.OrderBy(page => page.OrderIndex).ToList()
+                    ?? new List<PageDto>();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Create default page failed.");
+            }
+        }
+
         private async Task OnSectionSelected(Guid sectionId)
         {
             await LastOpenedDocumentStateService.SaveAsync(DocumentId, sectionId);
             Navigation.NavigateTo($"documents/{DocumentId}/sections/{sectionId}");
+        }
+
+        private void OnSectionDragStart(Guid sectionId)
+        {
+            if (_isReorderingSections)
+            {
+                return;
+            }
+
+            _draggedSectionId = sectionId;
+        }
+
+        private async Task OnSectionDrop(Guid targetSectionId)
+        {
+            if (_isReorderingSections || _draggedSectionId is null)
+            {
+                return;
+            }
+
+            Guid sourceSectionId = _draggedSectionId.Value;
+            _draggedSectionId = null;
+            if (sourceSectionId == targetSectionId)
+            {
+                return;
+            }
+
+            int sourceIndex = _sections.FindIndex(section => section.Id == sourceSectionId);
+            int targetIndex = _sections.FindIndex(section => section.Id == targetSectionId);
+            if (sourceIndex < 0 || targetIndex < 0)
+            {
+                return;
+            }
+
+            SectionDto moved = _sections[sourceIndex];
+            _sections.RemoveAt(sourceIndex);
+            if (targetIndex > sourceIndex)
+            {
+                targetIndex--;
+            }
+
+            _sections.Insert(targetIndex, moved);
+            for (int index = 0; index < _sections.Count; index++)
+            {
+                _sections[index] = _sections[index] with { OrderIndex = index };
+            }
+
+            await SaveSectionOrderAsync();
+        }
+
+        private async Task SaveSectionOrderAsync()
+        {
+            if (_isReorderingSections)
+            {
+                return;
+            }
+
+            _isReorderingSections = true;
+            try
+            {
+                SectionReorderRequest payload = new(_sections.Select(section => section.Id).ToList());
+                using HttpResponseMessage response =
+                    await Http.PostAsJsonAsync($"api/documents/{DocumentId}/sections/reorder", payload);
+                if (!response.IsSuccessStatusCode)
+                {
+                    Logger.LogWarning("Section reorder failed: {Status}", response.StatusCode);
+                    await ReloadSectionsAsync();
+                    return;
+                }
+
+                List<SectionDto>? updated = await response.Content.ReadFromJsonAsync<List<SectionDto>>();
+                if (updated is not null)
+                {
+                    _sections.Clear();
+                    _sections.AddRange(updated.OrderBy(section => section.OrderIndex));
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Section reorder failed.");
+                await ReloadSectionsAsync();
+            }
+            finally
+            {
+                _isReorderingSections = false;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+
+        private async Task ReloadSectionsAsync()
+        {
+            List<SectionDto>? sections = await Http.GetFromJsonAsync<List<SectionDto>>(
+                $"api/documents/{DocumentId}/sections");
+            if (sections is null)
+            {
+                return;
+            }
+
+            _sections.Clear();
+            _sections.AddRange(sections.OrderBy(section => section.OrderIndex));
         }
 
         private async Task CreateSectionAsync()

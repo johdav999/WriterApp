@@ -31,11 +31,25 @@ else
             <aside class="section-panel @GetSectionsPanelClass()">
                 <div class="section-panel-header">
                     <h2>Sections</h2>
+                    @if (_isReorderingSections)
+                    {
+                        <span class="section-order-status">Saving order...</span>
+                    }
                 </div>
                 <ul class="section-nav-list">
                     @foreach (SectionDto item in _sections)
                     {
-                        <li class="section-nav-row">
+                        <li class="section-nav-row"
+                            draggable="@(!_isReorderingSections)"
+                            @ondragstart="() => OnSectionDragStart(item.Id)"
+                            @ondragover:preventDefault="true"
+                            @ondrop="() => OnSectionDrop(item.Id)">
+                            <button type="button"
+                                    class="section-drag-handle"
+                                    disabled="@_isReorderingSections"
+                                    aria-label="Reorder section">
+                                ⋮⋮
+                            </button>
                             <button type="button"
                                     class="section-nav-item @(item.Id == _activeSection.Id ? "is-active" : string.Empty)"
                                     @onclick="() => OnSectionSelected(item.Id)">

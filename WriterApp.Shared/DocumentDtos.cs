@@ -50,6 +50,9 @@ namespace WriterApp.Application.Documents
         string? Title,
         string? NarrativePurpose);
 
+    public sealed record SectionReorderRequest(
+        IReadOnlyList<Guid> OrderedSectionIds);
+
     public sealed record PageDto(
         Guid Id,
         Guid DocumentId,
