@@ -399,5 +399,146 @@ namespace WriterApp.Controllers
             await transaction.CommitAsync(ct);
             return NoContent();
         }
+
+        [HttpPost("{sectionId:guid}/duplicate")]
+        public async Task<ActionResult<SectionDto>> DuplicateSection(Guid documentId, Guid sectionId, CancellationToken ct)
+        {
+            string userId = _userIdResolver.ResolveUserId(User);
+            if (!await _documents.ExistsAsync(documentId, userId, ct))
+            {
+                return NotFound();
+            }
+
+            SectionRecord? source = await _sections.GetAsync(sectionId, userId, ct);
+            if (source is null || source.DocumentId != documentId)
+            {
+                return NotFound();
+            }
+
+            List<SectionRecord> sections = await _dbContext.Sections
+                .Where(section => section.DocumentId == documentId)
+                .OrderBy(section => section.OrderIndex)
+                .ToListAsync(ct);
+
+            int sourceIndex = sections.FindIndex(section => section.Id == sectionId);
+            if (sourceIndex < 0)
+            {
+                return NotFound();
+            }
+
+            string title = BuildDuplicateTitle(
+                string.IsNullOrWhiteSpace(source.Title) ? "Section" : source.Title.Trim(),
+                sections.Select(section => section.Title));
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+
+            await using var transaction = await _dbContext.Database.BeginTransactionAsync(ct);
+
+            for (int index = sourceIndex + 1; index < sections.Count; index++)
+            {
+                sections[index].OrderIndex += 1;
+                sections[index].UpdatedAt = now;
+            }
+
+            SectionRecord duplicated = new()
+            {
+                Id = Guid.NewGuid(),
+                DocumentId = documentId,
+                Title = title,
+                NarrativePurpose = source.NarrativePurpose,
+                OrderIndex = sourceIndex + 1,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            _dbContext.Sections.Add(duplicated);
+
+            List<PageRecord> pages = await _dbContext.Pages
+                .Where(page => page.SectionId == sectionId)
+                .OrderBy(page => page.OrderIndex)
+                .ToListAsync(ct);
+
+            Dictionary<Guid, Guid> pageMap = new();
+            List<PageRecord> duplicatedPages = new();
+            foreach (PageRecord page in pages)
+            {
+                Guid newPageId = Guid.NewGuid();
+                pageMap[page.Id] = newPageId;
+                duplicatedPages.Add(new PageRecord
+                {
+                    Id = newPageId,
+                    DocumentId = documentId,
+                    SectionId = duplicated.Id,
+                    Title = page.Title,
+                    Content = page.Content,
+                    OrderIndex = page.OrderIndex,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                });
+            }
+
+            if (duplicatedPages.Count > 0)
+            {
+                _dbContext.Pages.AddRange(duplicatedPages);
+
+                List<Guid> sourcePageIds = pageMap.Keys.ToList();
+                List<PageNoteRecord> notes = await _dbContext.PageNotes
+                    .Where(note => sourcePageIds.Contains(note.PageId))
+                    .ToListAsync(ct);
+
+                List<PageNoteRecord> duplicatedNotes = new();
+                foreach (PageNoteRecord note in notes)
+                {
+                    if (pageMap.TryGetValue(note.PageId, out Guid newPageId))
+                    {
+                        duplicatedNotes.Add(new PageNoteRecord
+                        {
+                            PageId = newPageId,
+                            Notes = note.Notes,
+                            UpdatedAt = now
+                        });
+                    }
+                }
+
+                if (duplicatedNotes.Count > 0)
+                {
+                    _dbContext.PageNotes.AddRange(duplicatedNotes);
+                }
+            }
+
+            DocumentRecord? document = await _dbContext.Documents
+                .FirstOrDefaultAsync(item => item.Id == documentId, ct);
+            if (document is not null)
+            {
+                document.UpdatedAt = now;
+            }
+
+            await _dbContext.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+
+            SectionDto dto = new(
+                duplicated.Id,
+                duplicated.DocumentId,
+                duplicated.Title,
+                duplicated.NarrativePurpose,
+                duplicated.OrderIndex,
+                duplicated.CreatedAt,
+                duplicated.UpdatedAt);
+
+            return Ok(dto);
+        }
+
+        private static string BuildDuplicateTitle(string baseTitle, IEnumerable<string> existingTitles)
+        {
+            HashSet<string> titles = new(existingTitles.Where(title => !string.IsNullOrWhiteSpace(title)),
+                StringComparer.OrdinalIgnoreCase);
+            string candidate = $"{baseTitle} (Copy)";
+            int counter = 2;
+            while (titles.Contains(candidate))
+            {
+                candidate = $"{baseTitle} (Copy {counter})";
+                counter++;
+            }
+
+            return candidate;
+        }
     }
 }
