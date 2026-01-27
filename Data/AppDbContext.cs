@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using WriterApp.Data.AI;
 using WriterApp.Data.Documents;
 using WriterApp.Data.Subscriptions;
 using WriterApp.Data.Usage;
@@ -23,6 +24,8 @@ namespace WriterApp.Data
         public DbSet<PageRecord> Pages => Set<PageRecord>();
         public DbSet<PageNoteRecord> PageNotes => Set<PageNoteRecord>();
         public DbSet<DocumentOutlineRecord> DocumentOutlines => Set<DocumentOutlineRecord>();
+        public DbSet<AiActionHistoryEntryRecord> AiActionHistoryEntries => Set<AiActionHistoryEntryRecord>();
+        public DbSet<AiActionAppliedEventRecord> AiActionAppliedEvents => Set<AiActionAppliedEventRecord>();
 
         protected override void OnModelCreating(ModelBuilder builder)
         {
@@ -145,6 +148,34 @@ namespace WriterApp.Data
                 entity.HasOne(outline => outline.Document)
                     .WithOne()
                     .HasForeignKey<DocumentOutlineRecord>(outline => outline.DocumentId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<AiActionHistoryEntryRecord>(entity =>
+            {
+                entity.HasKey(entry => entry.Id);
+                entity.Property(entry => entry.OwnerUserId).IsRequired();
+                entity.Property(entry => entry.ActionKey).IsRequired();
+                entity.Property(entry => entry.RequestJson).IsRequired();
+                entity.Property(entry => entry.ResultJson).IsRequired();
+                entity.Property(entry => entry.CreatedAt).IsRequired();
+                entity.HasIndex(entry => entry.OwnerUserId);
+                entity.HasIndex(entry => entry.DocumentId);
+                entity.HasIndex(entry => entry.ActionKey);
+                entity.HasIndex(entry => entry.CreatedAt);
+            });
+
+            builder.Entity<AiActionAppliedEventRecord>(entity =>
+            {
+                entity.HasKey(applied => applied.Id);
+                entity.Property(applied => applied.OwnerUserId).IsRequired();
+                entity.Property(applied => applied.AppliedAt).IsRequired();
+                entity.HasIndex(applied => applied.OwnerUserId);
+                entity.HasIndex(applied => applied.HistoryEntryId);
+                entity.HasIndex(applied => applied.AppliedAt);
+                entity.HasOne(applied => applied.HistoryEntry)
+                    .WithMany()
+                    .HasForeignKey(applied => applied.HistoryEntryId)
                     .OnDelete(DeleteBehavior.Cascade);
             });
 
