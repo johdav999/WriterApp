@@ -33,14 +33,6 @@
             }
         </div>
         <div class="nav-item px-3">
-            <a class="nav-link @GetDocumentsActiveClass()"
-               href="documents"
-               @onclick="OnDocumentsNavClicked"
-               @onclick:preventDefault="true">
-                <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Documents
-            </a>
-        </div>
-        <div class="nav-item px-3">
             @if (HasCurrentSynopsisLink)
             {
                 <NavLink class="nav-link" href="@GetSynopsisLink()" Match="NavLinkMatch.Prefix">
@@ -53,6 +45,14 @@
                     <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Synopsis
                 </a>
             }
+        </div>
+        <div class="nav-item px-3">
+            <a class="nav-link @GetDocumentsActiveClass()"
+               href="documents"
+               @onclick="OnDocumentsNavClicked"
+               @onclick:preventDefault="true">
+                <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Documents
+            </a>
         </div>
     </nav>
 </div>

@@ -12,15 +12,15 @@
 <div class="app-shell @GetLayoutClass()">
     <header class="app-header">
         <div class="app-header-left">
-            <a class="app-brand" href="documents">Writer</a>
+            <a class="app-brand" href="">Writer</a>
         </div>
         <div class="app-header-center">
             <div class="app-breadcrumb">
                 <NavLink class="app-breadcrumb-link" href="documents" Match="NavLinkMatch.Prefix">Documents</NavLink>
-                @if (IsEditorRoute)
+                @if (!string.IsNullOrWhiteSpace(_documentTitle))
                 {
                     <span class="app-breadcrumb-separator">-&gt;</span>
-                    <span class="app-document-title">Editor</span>
+                    <span class="app-document-title">@_documentTitle</span>
                 }
             </div>
         </div>
@@ -40,10 +40,6 @@
                 {
                     <a class="app-nav-link" href="documents">Editor</a>
                 }
-                <a class="app-nav-link @GetDocumentsActiveClass()"
-                   href="documents"
-                   @onclick="OnDocumentsNavClicked"
-                   @onclick:preventDefault="true">Documents</a>
                 @if (HasCurrentSynopsisLink)
                 {
                     <NavLink class="app-nav-link" href="@GetSynopsisLink()" Match="NavLinkMatch.Prefix">Synopsis</NavLink>
@@ -52,6 +48,10 @@
                 {
                     <a class="app-nav-link" href="documents">Synopsis</a>
                 }
+                <a class="app-nav-link @GetDocumentsActiveClass()"
+                   href="documents"
+                   @onclick="OnDocumentsNavClicked"
+                   @onclick:preventDefault="true">Documents</a>
             </nav>
             <article class="content">
                 @Body
@@ -88,6 +88,7 @@
 
     private void HandleDocumentStateChange()
     {
+        _ = RefreshDocumentTitleAsync();
         InvokeAsync(StateHasChanged);
     }
 
@@ -96,8 +97,6 @@
         LayoutState state = LayoutStateService.State;
         return state.FocusMode || state.LeftNavCollapsed ? "is-focus-mode" : string.Empty;
     }
-
-    private bool IsEditorRoute => TryGetEditorRoute(out _);
 
     private bool HasCurrentEditorLink =>
         CurrentDocumentStateService.DocumentId is Guid documentId &&
@@ -135,6 +134,34 @@
 
         Guid documentId = CurrentDocumentStateService.DocumentId!.Value;
         return $"synopsis/{documentId}";
+    }
+
+    private async Task RefreshDocumentTitleAsync()
+    {
+        Guid? documentId = CurrentDocumentStateService.DocumentId;
+        if (documentId is null || documentId == Guid.Empty)
+        {
+            _documentTitle = string.Empty;
+            _loadedDocumentId = null;
+            return;
+        }
+
+        if (_loadedDocumentId == documentId)
+        {
+            return;
+        }
+
+        _loadedDocumentId = documentId;
+        try
+        {
+            DocumentDetailDto? document =
+                await Http.GetFromJsonAsync<DocumentDetailDto>($"api/documents/{documentId}");
+            _documentTitle = document?.Title ?? "Untitled";
+        }
+        catch
+        {
+            _documentTitle = string.Empty;
+        }
     }
 
     private async Task OnDocumentsNavClicked()
@@ -230,48 +257,11 @@
             : relative.Split('/', StringSplitOptions.RemoveEmptyEntries);
     }
 
-    private bool TryGetEditorRoute(out string editorRoute)
-    {
-        editorRoute = "documents";
-        string relative = Navigation.ToBaseRelativePath(Navigation.Uri);
-        int queryStart = relative.IndexOfAny(['?', '#']);
-        if (queryStart >= 0)
-        {
-            relative = relative[..queryStart];
-        }
-
-        if (string.IsNullOrWhiteSpace(relative))
-        {
-            return false;
-        }
-
-        string[] segments = relative.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (segments.Length < 4)
-        {
-            return false;
-        }
-
-        if (!string.Equals(segments[0], "documents", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        if (!string.Equals(segments[2], "sections", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        if (!Guid.TryParse(segments[1], out _) || !Guid.TryParse(segments[3], out _))
-        {
-            return false;
-        }
-
-        editorRoute = $"documents/{segments[1]}/sections/{segments[3]}";
-        return true;
-    }
-
     private void OnAboutClicked()
     {
         Navigation.NavigateTo("https://learn.microsoft.com/aspnet/core/", forceLoad: true);
     }
+
+    private string _documentTitle = string.Empty;
+    private Guid? _loadedDocumentId;
 }
