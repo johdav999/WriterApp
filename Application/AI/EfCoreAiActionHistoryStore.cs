@@ -51,7 +51,6 @@ namespace WriterApp.Application.AI
             List<AiActionHistoryEntryRecord> records = await _dbContext.AiActionHistoryEntries
                 .AsNoTracking()
                 .Where(entry => entry.OwnerUserId == userId && entry.DocumentId == documentId)
-                .OrderByDescending(entry => entry.CreatedAt)
                 .ToListAsync(ct);
 
             if (records.Count == 0)
@@ -60,17 +59,25 @@ namespace WriterApp.Application.AI
             }
 
             Guid[] ids = records.Select(record => record.Id).ToArray();
-            Dictionary<Guid, AppliedStats> applied = await _dbContext.AiActionAppliedEvents
+            List<AiActionAppliedEventRecord> appliedEvents = await _dbContext.AiActionAppliedEvents
                 .AsNoTracking()
                 .Where(evt => evt.OwnerUserId == userId && ids.Contains(evt.HistoryEntryId))
-                .GroupBy(evt => evt.HistoryEntryId)
-                .Select(group => new AppliedStats(
-                    group.Key,
-                    group.Count(),
-                    group.Max(evt => evt.AppliedAt)))
-                .ToDictionaryAsync(stat => stat.HistoryEntryId, ct);
+                .ToListAsync(ct);
 
-            return records.Select(record => MapToEntry(record, applied)).ToList();
+            Dictionary<Guid, AppliedStats> applied = appliedEvents
+                .GroupBy(evt => evt.HistoryEntryId)
+                .ToDictionary(
+                    group => group.Key,
+                    group => new AppliedStats(
+                        group.Key,
+                        group.Count(),
+                        group.Max(evt => evt.AppliedAt),
+                        group.Any(evt => evt.UndoneAt == null)));
+
+            return records
+                .OrderByDescending(record => record.CreatedAt)
+                .Select(record => MapToEntry(record, applied))
+                .ToList();
         }
 
         public async Task AddAppliedEventAsync(
@@ -80,6 +87,8 @@ namespace WriterApp.Application.AI
             Guid? documentId,
             Guid? sectionId,
             Guid? pageId,
+            string? beforeContent,
+            string? afterContent,
             CancellationToken ct)
         {
             bool exists = await _dbContext.AiActionHistoryEntries
@@ -98,17 +107,77 @@ namespace WriterApp.Application.AI
                 AppliedAt = appliedAt,
                 AppliedToDocumentId = documentId,
                 AppliedToSectionId = sectionId,
-                AppliedToPageId = pageId
+                AppliedToPageId = pageId,
+                BeforeContent = beforeContent,
+                AfterContent = afterContent,
+                UndoneAt = null
             };
 
             _dbContext.AiActionAppliedEvents.Add(record);
             await _dbContext.SaveChangesAsync(ct);
         }
 
+        public async Task<AiActionUndoRedoResult?> UndoAsync(
+            string userId,
+            Guid documentId,
+            Guid sectionId,
+            Guid? pageId,
+            CancellationToken ct)
+        {
+            List<AiActionAppliedEventRecord> events = await _dbContext.AiActionAppliedEvents
+                .Where(evt => evt.OwnerUserId == userId
+                              && evt.AppliedToDocumentId == documentId
+                              && evt.AppliedToSectionId == sectionId
+                              && evt.AppliedToPageId == pageId
+                              && evt.UndoneAt == null)
+                .ToListAsync(ct);
+
+            AiActionAppliedEventRecord? target = events
+                .OrderByDescending(evt => evt.AppliedAt)
+                .FirstOrDefault();
+            if (target is null || string.IsNullOrWhiteSpace(target.BeforeContent))
+            {
+                return null;
+            }
+
+            target.UndoneAt = DateTimeOffset.UtcNow;
+            await _dbContext.SaveChangesAsync(ct);
+            return new AiActionUndoRedoResult(target.HistoryEntryId, target.BeforeContent);
+        }
+
+        public async Task<AiActionUndoRedoResult?> RedoAsync(
+            string userId,
+            Guid documentId,
+            Guid sectionId,
+            Guid? pageId,
+            CancellationToken ct)
+        {
+            List<AiActionAppliedEventRecord> events = await _dbContext.AiActionAppliedEvents
+                .Where(evt => evt.OwnerUserId == userId
+                              && evt.AppliedToDocumentId == documentId
+                              && evt.AppliedToSectionId == sectionId
+                              && evt.AppliedToPageId == pageId
+                              && evt.UndoneAt != null)
+                .ToListAsync(ct);
+
+            AiActionAppliedEventRecord? target = events
+                .OrderByDescending(evt => evt.UndoneAt)
+                .FirstOrDefault();
+            if (target is null || string.IsNullOrWhiteSpace(target.AfterContent))
+            {
+                return null;
+            }
+
+            target.UndoneAt = null;
+            target.AppliedAt = DateTimeOffset.UtcNow;
+            await _dbContext.SaveChangesAsync(ct);
+            return new AiActionUndoRedoResult(target.HistoryEntryId, target.AfterContent);
+        }
+
         private static AiActionHistoryEntry MapToEntry(AiActionHistoryEntryRecord record, Dictionary<Guid, AppliedStats> applied)
         {
             AiActionExecuteResponseDto? response = TryReadResponse(record.ResultJson);
-            bool isApplied = applied.TryGetValue(record.Id, out AppliedStats? stats) && stats.AppliedCount > 0;
+            bool isApplied = applied.TryGetValue(record.Id, out AppliedStats? stats) && stats.IsApplied;
             int appliedCount = stats?.AppliedCount ?? 0;
             DateTimeOffset? lastAppliedAt = stats?.LastAppliedAt;
 
@@ -149,6 +218,10 @@ namespace WriterApp.Application.AI
             }
         }
 
-        private sealed record AppliedStats(Guid HistoryEntryId, int AppliedCount, DateTimeOffset? LastAppliedAt);
+        private sealed record AppliedStats(
+            Guid HistoryEntryId,
+            int AppliedCount,
+            DateTimeOffset? LastAppliedAt,
+            bool IsApplied);
     }
 }

@@ -26,6 +26,8 @@ namespace WriterApp.Application.AI
         DateTimeOffset? LastAppliedAt = null,
         int AppliedCount = 0);
 
+    public sealed record AiActionUndoRedoResult(Guid HistoryEntryId, string Content);
+
     public interface IAiActionHistoryStore
     {
         Task AddAsync(AiActionHistoryEntry entry, CancellationToken ct);
@@ -37,13 +39,27 @@ namespace WriterApp.Application.AI
             Guid? documentId,
             Guid? sectionId,
             Guid? pageId,
+            string? beforeContent,
+            string? afterContent,
+            CancellationToken ct);
+        Task<AiActionUndoRedoResult?> UndoAsync(
+            string userId,
+            Guid documentId,
+            Guid sectionId,
+            Guid? pageId,
+            CancellationToken ct);
+        Task<AiActionUndoRedoResult?> RedoAsync(
+            string userId,
+            Guid documentId,
+            Guid sectionId,
+            Guid? pageId,
             CancellationToken ct);
     }
 
     public sealed class InMemoryAiActionHistoryStore : IAiActionHistoryStore
     {
         private readonly ConcurrentDictionary<string, List<AiActionHistoryEntry>> _entries = new();
-        private readonly ConcurrentDictionary<Guid, List<DateTimeOffset>> _appliedEvents = new();
+        private readonly ConcurrentDictionary<Guid, List<AppliedEvent>> _appliedEvents = new();
 
         public Task AddAsync(AiActionHistoryEntry entry, CancellationToken ct)
         {
@@ -82,6 +98,8 @@ namespace WriterApp.Application.AI
             Guid? documentId,
             Guid? sectionId,
             Guid? pageId,
+            string? beforeContent,
+            string? afterContent,
             CancellationToken ct)
         {
             if (!_entries.Values.Any(list => list.Any(entry => entry.ProposalId == historyEntryId && entry.UserId == userId)))
@@ -89,18 +107,60 @@ namespace WriterApp.Application.AI
                 throw new InvalidOperationException("History entry not found.");
             }
 
-            List<DateTimeOffset> applied = _appliedEvents.GetOrAdd(historyEntryId, _ => new List<DateTimeOffset>());
+            List<AppliedEvent> applied = _appliedEvents.GetOrAdd(historyEntryId, _ => new List<AppliedEvent>());
             lock (applied)
             {
-                applied.Add(appliedAt);
+                applied.Add(new AppliedEvent(appliedAt, beforeContent, afterContent, null)
+                {
+                    HistoryEntryId = historyEntryId,
+                    UserId = userId,
+                    DocumentId = documentId ?? Guid.Empty,
+                    SectionId = sectionId ?? Guid.Empty,
+                    PageId = pageId
+                });
             }
 
             return Task.CompletedTask;
         }
 
+        public Task<AiActionUndoRedoResult?> UndoAsync(
+            string userId,
+            Guid documentId,
+            Guid sectionId,
+            Guid? pageId,
+            CancellationToken ct)
+        {
+            AppliedEvent? target = FindLatestAppliedEvent(userId, documentId, sectionId, pageId, undone: false);
+            if (target is null || string.IsNullOrWhiteSpace(target.BeforeContent))
+            {
+                return Task.FromResult<AiActionUndoRedoResult?>(null);
+            }
+
+            target.UndoneAt = DateTimeOffset.UtcNow;
+            return Task.FromResult<AiActionUndoRedoResult?>(new AiActionUndoRedoResult(target.HistoryEntryId, target.BeforeContent));
+        }
+
+        public Task<AiActionUndoRedoResult?> RedoAsync(
+            string userId,
+            Guid documentId,
+            Guid sectionId,
+            Guid? pageId,
+            CancellationToken ct)
+        {
+            AppliedEvent? target = FindLatestAppliedEvent(userId, documentId, sectionId, pageId, undone: true);
+            if (target is null || string.IsNullOrWhiteSpace(target.AfterContent))
+            {
+                return Task.FromResult<AiActionUndoRedoResult?>(null);
+            }
+
+            target.UndoneAt = null;
+            target.AppliedAt = DateTimeOffset.UtcNow;
+            return Task.FromResult<AiActionUndoRedoResult?>(new AiActionUndoRedoResult(target.HistoryEntryId, target.AfterContent));
+        }
+
         private AiActionHistoryEntry ApplyInMemoryAppliedState(AiActionHistoryEntry entry)
         {
-            if (!_appliedEvents.TryGetValue(entry.ProposalId, out List<DateTimeOffset>? applied))
+            if (!_appliedEvents.TryGetValue(entry.ProposalId, out List<AppliedEvent>? applied))
             {
                 return entry with { IsApplied = false, AppliedCount = 0, LastAppliedAt = null };
             }
@@ -112,9 +172,60 @@ namespace WriterApp.Application.AI
                     return entry with { IsApplied = false, AppliedCount = 0, LastAppliedAt = null };
                 }
 
-                DateTimeOffset lastApplied = applied.Max();
-                return entry with { IsApplied = true, AppliedCount = applied.Count, LastAppliedAt = lastApplied };
+                int appliedCount = applied.Count;
+                DateTimeOffset lastApplied = applied.Max(item => item.AppliedAt);
+                bool isApplied = applied.Any(item => item.UndoneAt is null);
+                return entry with { IsApplied = isApplied, AppliedCount = appliedCount, LastAppliedAt = lastApplied };
             }
+        }
+
+        private AppliedEvent? FindLatestAppliedEvent(
+            string userId,
+            Guid documentId,
+            Guid sectionId,
+            Guid? pageId,
+            bool undone)
+        {
+            IEnumerable<AppliedEvent> all = _appliedEvents.Values.SelectMany(list => list);
+            IEnumerable<AppliedEvent> filtered = all
+                .Where(item => item.UserId == userId)
+                .Where(item => item.DocumentId == documentId)
+                .Where(item => item.SectionId == sectionId)
+                .Where(item => item.PageId == pageId);
+
+            if (undone)
+            {
+                return filtered
+                    .Where(item => item.UndoneAt.HasValue)
+                    .OrderByDescending(item => item.UndoneAt)
+                    .FirstOrDefault();
+            }
+
+            return filtered
+                .Where(item => item.UndoneAt is null)
+                .OrderByDescending(item => item.AppliedAt)
+                .FirstOrDefault();
+        }
+
+        private sealed class AppliedEvent
+        {
+            public AppliedEvent(DateTimeOffset appliedAt, string? beforeContent, string? afterContent, DateTimeOffset? undoneAt)
+            {
+                AppliedAt = appliedAt;
+                BeforeContent = beforeContent;
+                AfterContent = afterContent;
+                UndoneAt = undoneAt;
+            }
+
+            public Guid HistoryEntryId { get; init; }
+            public string UserId { get; init; } = string.Empty;
+            public Guid DocumentId { get; init; }
+            public Guid SectionId { get; init; }
+            public Guid? PageId { get; init; }
+            public DateTimeOffset AppliedAt { get; set; }
+            public string? BeforeContent { get; }
+            public string? AfterContent { get; }
+            public DateTimeOffset? UndoneAt { get; set; }
         }
     }
 }

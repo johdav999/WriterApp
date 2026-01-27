@@ -170,9 +170,12 @@ namespace WriterApp.Data
                 entity.HasKey(applied => applied.Id);
                 entity.Property(applied => applied.OwnerUserId).IsRequired();
                 entity.Property(applied => applied.AppliedAt).IsRequired();
+                entity.Property(applied => applied.BeforeContent);
+                entity.Property(applied => applied.AfterContent);
                 entity.HasIndex(applied => applied.OwnerUserId);
                 entity.HasIndex(applied => applied.HistoryEntryId);
                 entity.HasIndex(applied => applied.AppliedAt);
+                entity.HasIndex(applied => applied.UndoneAt);
                 entity.HasOne(applied => applied.HistoryEntry)
                     .WithMany()
                     .HasForeignKey(applied => applied.HistoryEntryId)

@@ -288,6 +288,39 @@ else
         return _content;
     }
 
+    public async Task<string> GetContentAsync()
+    {
+        if (_editorRef is null)
+        {
+            return _content;
+        }
+
+        string html = await _editorRef.GetContentAsync();
+        _content = html ?? string.Empty;
+        return _content;
+    }
+
+    public async Task SetContentAsync(string html, bool markDirty = true)
+    {
+        string next = html ?? string.Empty;
+        _content = next;
+        _wordCount = CountWords(_content);
+        _isDirty = markDirty;
+        _saveState = SaveState.Idle;
+
+        if (_editorRef is not null)
+        {
+            await _editorRef.SetContentAsync(_content);
+        }
+
+        if (markDirty)
+        {
+            ScheduleAutosave();
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
     public Task ScrollToPageAsync(int pageIndex)
     {
         if (_editorInstance is null)

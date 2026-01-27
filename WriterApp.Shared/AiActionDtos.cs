@@ -39,4 +39,13 @@ namespace WriterApp.Application.AI
         bool IsApplied = false,
         DateTimeOffset? LastAppliedAt = null,
         int AppliedCount = 0);
+
+    public sealed record AiActionUndoRedoRequestDto(
+        Guid? DocumentId,
+        Guid? SectionId,
+        Guid? PageId);
+
+    public sealed record AiActionUndoRedoResponseDto(
+        Guid HistoryEntryId,
+        string Content);
 }
