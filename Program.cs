@@ -278,6 +278,8 @@ app.UseRouting();
 app.UseAuthentication();
 app.UseAuthorization();
 
+app.MapGet("/", () => Results.Redirect("/app/documents"));
+
 app.MapGet("/__ping", () => Results.Ok("pong"));
 
 app.UseAntiforgery();
@@ -435,6 +437,7 @@ app.MapRazorComponents<App>()
 
 if (wasmEnabled)
 {
+    app.MapFallbackToFile("/app", "app/index.html");
     app.MapFallbackToFile("/app/{*path:nonfile}", "app/index.html");
 }
 

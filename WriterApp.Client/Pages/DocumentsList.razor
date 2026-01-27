@@ -1,45 +1,77 @@
-@page "/documents"
+﻿@page "/documents"
+@using System.Globalization
 @using System.Net
 @using WriterApp.Application.Documents
 @inject HttpClient Http
+@inject NavigationManager Navigation
 
 <PageTitle>Documents</PageTitle>
 
-<h1>Documents</h1>
+<div class="landing">
+    <header class="landing-header">
+        <div>
+            <h1>Documents</h1>
+            <p class="landing-subtitle">Pick up where you left off or start something new.</p>
+        </div>
+        <button type="button" class="primary" @onclick="CreateDocumentAsync" disabled="@_creating">
+            @(_creating ? "Creating..." : "Create new document")
+        </button>
+    </header>
 
-@if (_loading)
-{
-    <p>Loading documents...</p>
-}
-else if (_unauthorized)
-{
-    <p>Not authenticated.</p>
-}
-else if (_error is not null)
-{
-    <p>Failed to load documents: @_error</p>
-}
-else if (_documents.Count == 0)
-{
-    <p>No documents yet.</p>
-}
-else
-{
-    <ul>
-        @foreach (DocumentListItemDto doc in _documents)
-        {
-            <li>
-                <a href="@($"documents/{doc.Id}")">@doc.Title</a>
-                <span> — @doc.UpdatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</span>
-            </li>
-        }
-    </ul>
-}
+    @if (!string.IsNullOrWhiteSpace(_loadErrorMessage))
+    {
+        <div class="landing-error">@_loadErrorMessage</div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(_createErrorMessage))
+    {
+        <div class="landing-error">@_createErrorMessage</div>
+    }
+
+    @if (_loading)
+    {
+        <div class="landing-loading">Loading documents...</div>
+    }
+    else if (_unauthorized)
+    {
+        <div class="landing-error">Not authenticated.</div>
+    }
+    else if (_documents.Count == 0)
+    {
+        <div class="landing-empty">
+            <p>No documents yet.</p>
+            <button type="button" class="primary" @onclick="CreateDocumentAsync" disabled="@_creating">Create new document</button>
+        </div>
+    }
+    else
+    {
+        <div class="landing-list">
+            @foreach (DocumentListItemDto entry in _documents)
+            {
+                <div class="landing-card">
+                    <div class="landing-meta">
+                        <div class="landing-title">@entry.Title</div>
+                        <div class="landing-time">Last modified @FormatRelativeTime(entry.UpdatedAt)</div>
+                        @if (entry.WordCount > 0)
+                        {
+                            <div class="landing-words">@entry.WordCount words</div>
+                        }
+                    </div>
+                    <div class="landing-actions">
+                        <button type="button" class="secondary" @onclick="() => OpenDocumentAsync(entry.Id)">Open</button>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</div>
 
 @code {
     private bool _loading = true;
     private bool _unauthorized;
-    private string? _error;
+    private bool _creating;
+    private string? _loadErrorMessage;
+    private string? _createErrorMessage;
     private List<DocumentListItemDto> _documents = new();
 
     protected override async Task OnInitializedAsync()
@@ -62,11 +94,133 @@ else
         }
         catch (Exception ex)
         {
-            _error = ex.Message;
+            _loadErrorMessage = ex.Message;
         }
         finally
         {
             _loading = false;
         }
     }
+
+    private async Task CreateDocumentAsync()
+    {
+        if (_creating)
+        {
+            return;
+        }
+
+        _creating = true;
+        _createErrorMessage = null;
+
+        try
+        {
+            DocumentCreateRequest request = new(
+                Id: null,
+                Title: null,
+                CreatedAt: null,
+                UpdatedAt: null,
+                CreateDefaultStructure: true);
+
+            using HttpResponseMessage response = await Http.PostAsJsonAsync("api/documents", request);
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                _unauthorized = true;
+                return;
+            }
+
+            response.EnsureSuccessStatusCode();
+            DocumentCreateResponse? created = await response.Content.ReadFromJsonAsync<DocumentCreateResponse>();
+            if (created is null)
+            {
+                _createErrorMessage = "Failed to create document.";
+                return;
+            }
+
+            Guid? sectionId = created.DefaultSectionId;
+            if (sectionId is null)
+            {
+                sectionId = await GetFirstSectionIdAsync(created.Document.Id);
+            }
+
+            if (sectionId is null)
+            {
+                _createErrorMessage = "Create succeeded, but no section was found.";
+                return;
+            }
+
+            Navigation.NavigateTo($"documents/{created.Document.Id}/sections/{sectionId}");
+        }
+        catch (Exception ex)
+        {
+            _createErrorMessage = ex.Message;
+        }
+        finally
+        {
+            _creating = false;
+        }
+    }
+
+    private async Task OpenDocumentAsync(Guid documentId)
+    {
+        try
+        {
+            Guid? sectionId = await GetFirstSectionIdAsync(documentId);
+            if (sectionId is null)
+            {
+                _loadErrorMessage = "No sections found for this document.";
+                return;
+            }
+
+            Navigation.NavigateTo($"documents/{documentId}/sections/{sectionId}");
+        }
+        catch (Exception ex)
+        {
+            _loadErrorMessage = $"Open failed: {ex.Message}";
+        }
+    }
+
+    private async Task<Guid?> GetFirstSectionIdAsync(Guid documentId)
+    {
+        List<SectionDto>? sections = await Http.GetFromJsonAsync<List<SectionDto>>($"api/documents/{documentId}/sections");
+        SectionDto? first = sections?
+            .OrderBy(section => section.OrderIndex)
+            .FirstOrDefault();
+        return first?.Id;
+    }
+
+    private static string FormatRelativeTime(DateTimeOffset timestampUtc)
+    {
+        DateTime utc = timestampUtc.UtcDateTime;
+        TimeSpan delta = DateTime.UtcNow - utc;
+        if (delta < TimeSpan.Zero)
+        {
+            delta = TimeSpan.Zero;
+        }
+
+        if (delta < TimeSpan.FromMinutes(1))
+        {
+            return "just now";
+        }
+
+        if (delta < TimeSpan.FromHours(1))
+        {
+            int minutes = Math.Max(1, (int)delta.TotalMinutes);
+            return minutes == 1 ? "1 min ago" : $"{minutes} min ago";
+        }
+
+        if (delta < TimeSpan.FromDays(1))
+        {
+            int hours = Math.Max(1, (int)delta.TotalHours);
+            return hours == 1 ? "1 hr ago" : $"{hours} hr ago";
+        }
+
+        int days = Math.Max(1, (int)delta.TotalDays);
+        if (days < 7)
+        {
+            return days == 1 ? "1 day ago" : $"{days} days ago";
+        }
+
+        return utc.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+    }
 }
+
