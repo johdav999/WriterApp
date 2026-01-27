@@ -48,6 +48,12 @@
     color: var(--text-muted);
 }
 
+.section-panel-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
 .section-panel.is-collapsed {
     display: none;
 }

@@ -46,6 +46,8 @@ namespace WriterApp.Client.Pages
         private PageDto? _activePage;
         private bool _isLoading = true;
         private string? _loadError;
+        private string? _sectionError;
+        private bool _isCreatingSection;
         private Guid _loadedDocumentId;
         private string _documentTitle = string.Empty;
         private bool _layoutStateInitialized;
@@ -311,6 +313,54 @@ namespace WriterApp.Client.Pages
         private void OnSectionSelected(Guid sectionId)
         {
             Navigation.NavigateTo($"documents/{DocumentId}/sections/{sectionId}");
+        }
+
+        private async Task CreateSectionAsync()
+        {
+            if (_isCreatingSection)
+            {
+                return;
+            }
+
+            _isCreatingSection = true;
+            _sectionError = null;
+
+            try
+            {
+                SectionCreateRequest request = new(
+                    Id: null,
+                    Title: "New section",
+                    NarrativePurpose: null,
+                    OrderIndex: _sections.Count,
+                    CreatedAt: null,
+                    UpdatedAt: null);
+
+                using HttpResponseMessage response =
+                    await Http.PostAsJsonAsync($"api/documents/{DocumentId}/sections", request);
+                response.EnsureSuccessStatusCode();
+
+                SectionDto? created = await response.Content.ReadFromJsonAsync<SectionDto>();
+                if (created is null)
+                {
+                    _sectionError = "Failed to create section.";
+                    return;
+                }
+
+                _sections.Add(created);
+                _sections.Sort((left, right) => left.OrderIndex.CompareTo(right.OrderIndex));
+                _pagesBySection[created.Id] = new List<PageDto>();
+                Navigation.NavigateTo($"documents/{DocumentId}/sections/{created.Id}");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Create section failed.");
+                _sectionError = "Failed to create section.";
+            }
+            finally
+            {
+                _isCreatingSection = false;
+                await InvokeAsync(StateHasChanged);
+            }
         }
 
         private async Task OnPageSaved(PageDto page)

@@ -1,6 +1,13 @@
 @page "/"
+@inject NavigationManager Navigation
 
 <PageTitle>WriterApp</PageTitle>
 
-<h1>WriterApp</h1>
-<p><a href="documents">Go to documents</a></p>
+<p>Redirecting...</p>
+
+@code {
+    protected override void OnInitialized()
+    {
+        Navigation.NavigateTo("documents", replace: true);
+    }
+}

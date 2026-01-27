@@ -1,16 +1,67 @@
 ﻿@inherits LayoutComponentBase
-<div class="page">
-    <div class="sidebar">
-        <NavMenu />
-    </div>
+@using WriterApp.Client.State
+@implements IDisposable
+@inject LayoutStateService LayoutStateService
+@inject NavigationManager Navigation
 
-    <main>
-        <div class="top-row px-4">
-            <a href="https://learn.microsoft.com/aspnet/core/" target="_blank">About</a>
+<div class="app-shell @GetLayoutClass()">
+    <header class="app-header">
+        <div class="app-header-left">
+            <a class="app-brand" href="documents">Writer</a>
         </div>
+        <div class="app-header-center">
+            <div class="app-breadcrumb">
+                <NavLink class="app-breadcrumb-link" href="documents" Match="NavLinkMatch.Prefix">Documents</NavLink>
+            </div>
+        </div>
+        <div class="app-header-right">
+            <button type="button" class="app-link app-link-button" @onclick="OnAboutClicked">About</button>
+        </div>
+    </header>
 
-        <article class="content px-4">
-            @Body
-        </article>
+    <main class="app-main">
+        <div class="app-body">
+            <nav class="app-nav">
+                <NavLink class="app-nav-link" href="documents" Match="NavLinkMatch.Prefix">Documents</NavLink>
+            </nav>
+            <article class="content">
+                @Body
+            </article>
+        </div>
     </main>
 </div>
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">×</span>
+</div>
+
+@code {
+    protected override async Task OnInitializedAsync()
+    {
+        LayoutStateService.Changed += HandleLayoutStateChange;
+        await LayoutStateService.InitializeAsync();
+    }
+
+    public void Dispose()
+    {
+        LayoutStateService.Changed -= HandleLayoutStateChange;
+    }
+
+    private void HandleLayoutStateChange(LayoutState state)
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private string GetLayoutClass()
+    {
+        LayoutState state = LayoutStateService.State;
+        return state.FocusMode || state.LeftNavCollapsed ? "is-focus-mode" : string.Empty;
+    }
+
+    private void OnAboutClicked()
+    {
+        Navigation.NavigateTo("https://learn.microsoft.com/aspnet/core/", forceLoad: true);
+    }
+}

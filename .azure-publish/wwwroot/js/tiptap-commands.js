@@ -46,6 +46,14 @@ export function toggleHeading(editor, level) {
     editor.chain().focus().toggleHeading({ level }).run();
 }
 
+export function setHeading(editor, level) {
+    if (!editor) {
+        return;
+    }
+
+    editor.chain().focus().setHeading({ level }).run();
+}
+
 export function toggleBlockquote(editor) {
     if (!editor) {
         return;
@@ -78,6 +86,40 @@ export function toggleOrderedList(editor) {
     editor.chain().focus().toggleOrderedList().run();
 }
 
+export function setTextAlign(editor, alignment) {
+    if (!editor) {
+        return;
+    }
+
+    const value = typeof alignment === "string" ? alignment.toLowerCase() : "";
+    if (!value) {
+        return;
+    }
+
+    editor.chain().focus().setTextAlign(value).run();
+}
+
+export function setLink(editor, href) {
+    if (!editor) {
+        return;
+    }
+
+    const url = typeof href === "string" ? href.trim() : "";
+    if (!url) {
+        return;
+    }
+
+    editor.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
+}
+
+export function unsetLink(editor) {
+    if (!editor) {
+        return;
+    }
+
+    editor.chain().focus().unsetLink().run();
+}
+
 export function setFontSize(editor, size) {
     if (!editor) {
         return;
@@ -89,6 +131,22 @@ export function setFontSize(editor, size) {
     }
 
     editor.chain().focus().setMark("textStyle", { fontSize: `${sizeValue}px` }).run();
+}
+
+export function increaseIndent(editor) {
+    if (!editor) {
+        return;
+    }
+
+    editor.chain().focus().increaseIndent().run();
+}
+
+export function decreaseIndent(editor) {
+    if (!editor) {
+        return;
+    }
+
+    editor.chain().focus().decreaseIndent().run();
 }
 
 export function setFontFamily(editor, fontFamily) {
@@ -118,6 +176,31 @@ export function focusEditor(editor) {
     }
 
     editor.commands.focus();
+}
+
+export function undo(editor) {
+    if (!editor) {
+        return;
+    }
+
+    editor.chain().focus().undo().run();
+}
+
+export function redo(editor) {
+    if (!editor) {
+        return;
+    }
+
+    editor.chain().focus().redo().run();
+}
+
+export function replaceSelection(editor, content) {
+    if (!editor) {
+        return;
+    }
+
+    const text = typeof content === "string" ? content : "";
+    editor.chain().focus().insertContent(text).run();
 }
 
 export function scrollToPosition(editor, position) {

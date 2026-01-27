@@ -3,6 +3,8 @@ import { Plugin, PluginKey } from "https://esm.sh/prosemirror-state@1.4.3?bundle
 import { Decoration, DecorationSet } from "https://esm.sh/prosemirror-view@1.33.6?bundle";
 import StarterKit from "https://esm.sh/@tiptap/starter-kit@2.1.13?bundle";
 import TextStyle from "https://esm.sh/@tiptap/extension-text-style@2.1.13?bundle";
+import TextAlign from "https://esm.sh/@tiptap/extension-text-align@2.1.13?bundle";
+import Link from "https://esm.sh/@tiptap/extension-link@2.1.13?bundle";
 import {
     toggleBold,
     toggleItalic,
@@ -13,8 +15,7 @@ import {
     toggleBlockquote,
     insertHorizontalRule,
     toggleBulletList,
-    toggleOrderedList,
-    setFontSize
+    toggleOrderedList
 } from "/js/tiptap-commands.js";
 
 const TextStyleWithFontSize = TextStyle.extend({
@@ -42,6 +43,136 @@ const TextStyleWithFontSize = TextStyle.extend({
                     return { style: `font-family: ${attributes.fontFamily}` };
                 }
             }
+        };
+    }
+});
+
+const indentUnitEm = 2;
+// Left indent only; right indent omitted to keep stored HTML predictable.
+const indentMaxLevel = 8;
+
+function parseIndentLevel(element) {
+    if (!element) {
+        return 0;
+    }
+
+    const dataValue = element.getAttribute?.("data-indent-level");
+    if (dataValue) {
+        const parsed = Number.parseInt(dataValue, 10);
+        if (Number.isFinite(parsed)) {
+            return Math.max(0, Math.min(indentMaxLevel, parsed));
+        }
+    }
+
+    const styleValue = element.style?.marginLeft;
+    if (!styleValue) {
+        return 0;
+    }
+
+    const match = String(styleValue).match(/([\d.]+)/);
+    if (!match) {
+        return 0;
+    }
+
+    const parsed = Number.parseFloat(match[1]);
+    if (!Number.isFinite(parsed)) {
+        return 0;
+    }
+
+    const level = Math.round(parsed / indentUnitEm);
+    return Math.max(0, Math.min(indentMaxLevel, level));
+}
+
+function clampIndentLevel(level) {
+    if (!Number.isFinite(level)) {
+        return 0;
+    }
+
+    return Math.max(0, Math.min(indentMaxLevel, Math.round(level)));
+}
+
+const IndentExtension = Extension.create({
+    name: "indent",
+    addOptions() {
+        return {
+            types: ["paragraph", "heading"]
+        };
+    },
+    addGlobalAttributes() {
+        return [
+            {
+                types: this.options.types,
+                attributes: {
+                    indentLevel: {
+                        default: 0,
+                        parseHTML: element => parseIndentLevel(element),
+                        renderHTML: attributes => {
+                            const level = clampIndentLevel(attributes.indentLevel);
+                            if (!level) {
+                                return {};
+                            }
+
+                            return {
+                                "data-indent-level": String(level),
+                                style: `margin-left: ${level * indentUnitEm}em;`
+                            };
+                        }
+                    }
+                }
+            }
+        ];
+    },
+    addCommands() {
+        const updateIndent = (delta) => ({ state, tr, dispatch }) => {
+            const { from, to, empty, $from } = state.selection;
+            const types = new Set(this.options.types ?? []);
+            let modified = false;
+
+            const applyIndent = (node, pos) => {
+                if (!node || !node.isTextblock || !types.has(node.type.name)) {
+                    return;
+                }
+
+                const current = clampIndentLevel(node.attrs?.indentLevel ?? 0);
+                const next = clampIndentLevel(current + delta);
+                if (next === current) {
+                    return;
+                }
+
+                tr.setNodeMarkup(pos, undefined, { ...node.attrs, indentLevel: next });
+                modified = true;
+            };
+
+            if (empty && $from) {
+                const parent = $from.parent;
+                const pos = $from.before($from.depth);
+                applyIndent(parent, pos);
+            } else {
+                const seen = new Set();
+                state.doc.nodesBetween(from, to, (node, pos) => {
+                    if (!node.isTextblock || !types.has(node.type.name)) {
+                        return;
+                    }
+
+                    if (seen.has(pos)) {
+                        return;
+                    }
+
+                    seen.add(pos);
+                    applyIndent(node, pos);
+                });
+            }
+
+            if (modified && dispatch) {
+                dispatch(tr);
+            }
+
+            return modified;
+        };
+
+        return {
+            increaseIndent: () => updateIndent(1),
+            decreaseIndent: () => updateIndent(-1)
         };
     }
 });
@@ -75,8 +206,6 @@ const AiDecorationsExtension = Extension.create({
     }
 });
 
-const fontSizePresets = [12, 14, 16, 18, 24, 32];
-
 function createInteropState(dotNetRef) {
     return { enabled: !!dotNetRef };
 }
@@ -95,44 +224,6 @@ function safeInvoke(dotNetRef, interopState, method, ...args) {
         }
     } catch (error) {
         interopState.enabled = false;
-    }
-}
-
-function parseFontSize(value) {
-    if (value === null || value === undefined) {
-        return null;
-    }
-
-    const match = String(value).match(/(\d+(\.\d+)?)/);
-    if (!match) {
-        return null;
-    }
-
-    const parsed = Number(match[1]);
-    return Number.isFinite(parsed) ? parsed : null;
-}
-
-function adjustFontSize(editor, direction) {
-    const attributes = editor.getAttributes("textStyle") ?? {};
-    const currentSize = parseFontSize(attributes.fontSize) ?? 16;
-    let index = fontSizePresets.indexOf(currentSize);
-    if (index === -1) {
-        index = fontSizePresets.indexOf(16);
-    }
-
-    if (direction > 0 && index < fontSizePresets.length - 1) {
-        index += 1;
-    } else if (direction < 0 && index > 0) {
-        index -= 1;
-    }
-
-    setFontSize(editor, fontSizePresets[index]);
-}
-
-function focusFontFamilySelect() {
-    const select = document.getElementById("fontFamilySelect");
-    if (select) {
-        select.focus();
     }
 }
 
@@ -202,6 +293,51 @@ function getUniformTextStyleAttr(editor, attrName) {
     return { mixed, value: currentValue };
 }
 
+function getUniformBlockAttr(editor, attrName, types) {
+    const { from, to, empty } = editor.state.selection;
+    const typeSet = new Set(types);
+
+    if (empty) {
+        for (let index = 0; index < types.length; index += 1) {
+            const type = types[index];
+            if (editor.isActive(type)) {
+                const attrs = editor.getAttributes(type) ?? {};
+                return { mixed: false, value: attrs[attrName] ?? null };
+            }
+        }
+
+        return { mixed: false, value: null };
+    }
+
+    let hasValue = false;
+    let currentValue = null;
+    let mixed = false;
+
+    editor.state.doc.nodesBetween(from, to, node => {
+        if (!node.isTextblock || !typeSet.has(node.type.name)) {
+            return;
+        }
+
+        const value = node.attrs ? node.attrs[attrName] ?? null : null;
+        if (!hasValue) {
+            currentValue = value;
+            hasValue = true;
+            return;
+        }
+
+        if (currentValue !== value) {
+            mixed = true;
+            return false;
+        }
+    });
+
+    if (!hasValue) {
+        currentValue = null;
+    }
+
+    return { mixed, value: currentValue };
+}
+
 function normalizeFontSize(value) {
     if (value === null || value === undefined) {
         return "";
@@ -231,6 +367,168 @@ function buildOutline(editor) {
     });
 
     return outline;
+}
+
+function resolvePageBreakOptions(options) {
+    return {
+        pageHeightPx: Number(options?.pageHeightPx) || 980,
+        showHorizontalRule: options?.showHorizontalRule !== false,
+        gutterOffsetPx: Number(options?.gutterOffsetPx) || 28
+    };
+}
+
+function getPageBreakContext(editor) {
+    const view = editor?.view?.dom;
+    if (!view) {
+        return null;
+    }
+
+    const viewport = view.closest(".editor-viewport");
+    if (!viewport) {
+        return null;
+    }
+
+    const content = view.closest(".editor-content") || view;
+    return { view, viewport, content };
+}
+
+function findScrollContainer(element) {
+    let current = element;
+    while (current && current !== document.body) {
+        const style = window.getComputedStyle(current);
+        const overflowY = style?.overflowY || "";
+        if ((overflowY === "auto" || overflowY === "scroll") && current.scrollHeight > current.clientHeight) {
+            return current;
+        }
+        current = current.parentElement;
+    }
+
+    return window;
+}
+
+function ensurePageBreakOverlay(viewport) {
+    if (!viewport) {
+        return null;
+    }
+
+    let overlay = viewport.querySelector(".pagebreak-overlay");
+    if (!overlay) {
+        overlay = document.createElement("div");
+        overlay.className = "pagebreak-overlay";
+        viewport.appendChild(overlay);
+    }
+
+    return overlay;
+}
+
+function computePageBreaks(editor, options) {
+    const ctx = getPageBreakContext(editor);
+    if (!ctx) {
+        return { count: 1, breaks: [], options: resolvePageBreakOptions(options), ctx: null };
+    }
+
+    const opts = resolvePageBreakOptions(options);
+    const contentHeight = ctx.view.scrollHeight || 0;
+    const count = Math.max(1, Math.ceil(contentHeight / opts.pageHeightPx));
+
+    const viewportRect = ctx.viewport.getBoundingClientRect();
+    const viewRect = ctx.view.getBoundingClientRect();
+    const contentRect = ctx.content.getBoundingClientRect();
+    const baseTop = viewRect.top - viewportRect.top;
+    const leftOffset = contentRect.left - viewportRect.left;
+    const width = contentRect.width;
+
+    const breaks = [];
+    for (let pageIndex = 1; pageIndex <= count; pageIndex += 1) {
+        const topPx = baseTop + (pageIndex - 1) * opts.pageHeightPx;
+        breaks.push({ pageIndex, topPx });
+    }
+
+    return { count, breaks, leftOffset, width, options: opts, ctx };
+}
+
+function renderPageBreakOverlay(editor, options) {
+    const info = computePageBreaks(editor, options);
+    const ctx = info.ctx;
+    if (!ctx) {
+        return info.count;
+    }
+
+    const overlay = ensurePageBreakOverlay(ctx.viewport);
+    if (!overlay) {
+        return info.count;
+    }
+
+    overlay.innerHTML = "";
+
+    info.breaks.forEach(entry => {
+        if (info.options.showHorizontalRule && entry.pageIndex > 1) {
+            const line = document.createElement("div");
+            line.className = "pagebreak-line";
+            line.style.top = `${entry.topPx}px`;
+            line.style.left = `${info.leftOffset}px`;
+            line.style.width = `${info.width}px`;
+            overlay.appendChild(line);
+        }
+    });
+
+    return info.count;
+}
+
+function getCurrentPageIndex(info) {
+    if (!info || !info.ctx) {
+        return 1;
+    }
+
+    const viewportRect = info.ctx.viewport.getBoundingClientRect();
+    const centerLine = viewportRect.height / 2;
+    let current = 1;
+
+    for (let index = 0; index < info.breaks.length; index += 1) {
+        if (info.breaks[index].topPx <= centerLine + 1) {
+            current = info.breaks[index].pageIndex;
+        }
+    }
+
+    return current;
+}
+
+function notifyPageBreakStatus(editor) {
+    if (!editor || !editor.__pageBreakState) {
+        return;
+    }
+
+    const info = computePageBreaks(editor, editor.__pageBreakState.options);
+    const count = renderPageBreakOverlay(editor, editor.__pageBreakState.options);
+    const current = getCurrentPageIndex(info);
+
+    if (editor.__pageBreakState.dotNetRef) {
+        safeInvoke(editor.__pageBreakState.dotNetRef, editor.__pageBreakState.interopState, "OnPageBreakStatusChanged", count, current);
+    }
+}
+
+function schedulePageBreakUpdate(editor) {
+    if (!editor) {
+        return;
+    }
+
+    if (!editor.__pageBreakState) {
+        editor.__pageBreakState = { enabled: false, options: resolvePageBreakOptions(null) };
+    }
+
+    const state = editor.__pageBreakState;
+    if (!state.enabled) {
+        return;
+    }
+
+    if (state.timer) {
+        clearTimeout(state.timer);
+    }
+
+    state.timer = setTimeout(() => {
+        state.timer = null;
+        notifyPageBreakStatus(editor);
+    }, 120);
 }
 
 function getBlockType(editor) {
@@ -289,6 +587,7 @@ function getBlockType(editor) {
 function buildFormattingState(editor) {
     const fontFamilyResult = getUniformTextStyleAttr(editor, "fontFamily");
     const fontSizeResult = getUniformTextStyleAttr(editor, "fontSize");
+    const textAlignResult = getUniformBlockAttr(editor, "textAlign", ["paragraph", "heading"]);
     const isInCodeBlock = selectionHasNodeType(editor, "codeBlock");
     const canBold = editor.can().chain().toggleBold().run();
     const canItalic = editor.can().chain().toggleItalic().run();
@@ -317,9 +616,11 @@ function buildFormattingState(editor) {
         canToggleList,
         canBlockquote,
         canHorizontalRule,
+        isLink: editor.isActive("link"),
         blockType: getBlockType(editor),
         fontFamily: fontFamilyResult.mixed ? null : (fontFamilyResult.value ?? ""),
-        fontSize: fontSizeResult.mixed ? null : normalizeFontSize(fontSizeResult.value)
+        fontSize: fontSizeResult.mixed ? null : normalizeFontSize(fontSizeResult.value),
+        textAlign: textAlignResult.mixed ? null : (textAlignResult.value ?? "left")
     };
 }
 
@@ -448,16 +749,16 @@ window.tiptapEditor = {
                         toggleOrderedList(this.editor);
                         return true;
                     },
-                    "Mod-Shift-.": () => {
-                        adjustFontSize(this.editor, 1);
-                        return true;
-                    },
-                    "Mod-Shift-,": () => {
-                        adjustFontSize(this.editor, -1);
-                        return true;
-                    },
                     "Mod-Shift-f": () => {
-                        focusFontFamilySelect();
+                        safeInvoke(dotNetRef, interopState, "OnFocusModeShortcut");
+                        return true;
+                    },
+                    "Alt-ArrowUp": () => {
+                        safeInvoke(dotNetRef, interopState, "OnPrevSectionShortcut");
+                        return true;
+                    },
+                    "Alt-ArrowDown": () => {
+                        safeInvoke(dotNetRef, interopState, "OnNextSectionShortcut");
                         return true;
                     },
                     "Mod-z": () => {
@@ -481,6 +782,9 @@ window.tiptapEditor = {
             extensions: [
                 StarterKit,
                 TextStyleWithFontSize,
+                TextAlign.configure({ types: ["heading", "paragraph"] }),
+                Link.configure({ openOnClick: false }),
+                IndentExtension,
                 AiDecorationsExtension,
                 ShortcutExtension
             ],
@@ -494,6 +798,7 @@ window.tiptapEditor = {
             },
             onUpdate({ editor }) {
                 safeInvoke(dotNetRef, interopState, "OnEditorContentChanged", editor.getHTML());
+                schedulePageBreakUpdate(editor);
             }
         });
 
@@ -543,6 +848,46 @@ window.tiptapEditor = {
         editor.on("update", pushSelectionState);
         pushSelectionState();
 
+        let lastBubbleState = "";
+        const pushSelectionBubble = () => {
+            if (!dotNetRef || !interopState.enabled) {
+                return;
+            }
+
+            const { from, to, empty } = editor.state.selection;
+            if (empty) {
+                if (lastBubbleState !== "hidden") {
+                    lastBubbleState = "hidden";
+                    safeInvoke(dotNetRef, interopState, "OnEditorSelectionBubble", 0, 0, false);
+                }
+                return;
+            }
+
+            const anchor = Math.round((from + to) / 2);
+            let coords = null;
+            try {
+                coords = editor.view.coordsAtPos(anchor);
+            } catch (error) {
+                return;
+            }
+
+            if (!coords) {
+                return;
+            }
+
+            const payload = `${coords.left}:${coords.top}`;
+            if (payload === lastBubbleState) {
+                return;
+            }
+
+            lastBubbleState = payload;
+            safeInvoke(dotNetRef, interopState, "OnEditorSelectionBubble", coords.left, coords.top, true);
+        };
+
+        editor.on("selectionUpdate", pushSelectionBubble);
+        editor.on("update", pushSelectionBubble);
+        pushSelectionBubble();
+
         let lastOutlineState = "";
         const pushOutlineState = () => {
             if (!dotNetRef || !interopState.enabled) {
@@ -561,6 +906,11 @@ window.tiptapEditor = {
 
         editor.on("update", pushOutlineState);
         pushOutlineState();
+
+        editor.__pageBreakState = { enabled: false, options: resolvePageBreakOptions(null) };
+        const resizeHandler = () => schedulePageBreakUpdate(editor);
+        window.addEventListener("resize", resizeHandler);
+        editor.__pageBreakResizeHandler = resizeHandler;
 
         const setupScrollSync = () => {
             const editorScroll = editor.view?.dom?.closest(".editor-pane")?.querySelector(".pane-body");
@@ -660,11 +1010,116 @@ window.tiptapEditor = {
         editor.commands.setContent(content, false);
     },
 
+    setPageBreaksEnabled: function (editor, enabled, options) {
+        if (!editor) {
+            return 1;
+        }
+
+        if (!editor.__pageBreakState) {
+            editor.__pageBreakState = { enabled: false, options: resolvePageBreakOptions(options) };
+        }
+
+        editor.__pageBreakState.enabled = !!enabled;
+        editor.__pageBreakState.options = resolvePageBreakOptions(options);
+
+        if (!enabled) {
+            const ctx = getPageBreakContext(editor);
+            const overlay = ctx?.viewport?.querySelector?.(".pagebreak-overlay");
+            if (overlay) {
+                overlay.innerHTML = "";
+            }
+
+            return 1;
+        }
+
+        return renderPageBreakOverlay(editor, editor.__pageBreakState.options);
+    },
+
+    registerPageBreakObserver: function (editor, dotNetRef, options) {
+        if (!editor) {
+            return;
+        }
+
+        if (!editor.__pageBreakState) {
+            editor.__pageBreakState = { enabled: false, options: resolvePageBreakOptions(options) };
+        }
+
+        editor.__pageBreakState.dotNetRef = dotNetRef;
+        editor.__pageBreakState.interopState = createInteropState(dotNetRef);
+        editor.__pageBreakState.options = resolvePageBreakOptions(options);
+        editor.__pageBreakState.enabled = true;
+
+        if (!editor.__pageBreakState.scrollHandler) {
+            const ctx = getPageBreakContext(editor);
+            const scrollContainer = ctx ? findScrollContainer(ctx.viewport) : window;
+            const handler = () => schedulePageBreakUpdate(editor);
+            const rafHandler = () => {
+                if (editor.__pageBreakState.rafPending) {
+                    return;
+                }
+                editor.__pageBreakState.rafPending = true;
+                requestAnimationFrame(() => {
+                    editor.__pageBreakState.rafPending = false;
+                    handler();
+                });
+            };
+
+            editor.__pageBreakState.scrollContainer = scrollContainer;
+            editor.__pageBreakState.scrollHandler = rafHandler;
+            if (scrollContainer === window) {
+                window.addEventListener("scroll", rafHandler, { passive: true });
+            } else {
+                scrollContainer.addEventListener("scroll", rafHandler, { passive: true });
+            }
+        }
+
+        notifyPageBreakStatus(editor);
+    },
+
+    scrollToPage: function (editor, pageIndex, options) {
+        const info = computePageBreaks(editor, options);
+        const ctx = info.ctx;
+        if (!ctx) {
+            return;
+        }
+
+        const target = Math.max(1, Math.min(info.count, pageIndex));
+        const topPx = info.breaks[target - 1]?.topPx ?? 0;
+        const viewportRect = ctx.viewport.getBoundingClientRect();
+        const absoluteTop = window.scrollY + viewportRect.top + topPx - 80;
+        window.scrollTo({ top: Math.max(0, absoluteTop), behavior: "smooth" });
+    },
+
     destroy: function (editor) {
         if (editor && editor.__interopState) {
             editor.__interopState.enabled = false;
         }
+
+        if (editor && editor.__pageBreakResizeHandler) {
+            window.removeEventListener("resize", editor.__pageBreakResizeHandler);
+            editor.__pageBreakResizeHandler = null;
+        }
+        if (editor && editor.__pageBreakState && editor.__pageBreakState.scrollHandler) {
+            const container = editor.__pageBreakState.scrollContainer || window;
+            if (container === window) {
+                window.removeEventListener("scroll", editor.__pageBreakState.scrollHandler);
+            } else {
+                container.removeEventListener("scroll", editor.__pageBreakState.scrollHandler);
+            }
+            editor.__pageBreakState.scrollHandler = null;
+            editor.__pageBreakState.scrollContainer = null;
+        }
         editor.destroy();
+    },
+
+    notifyLayoutChanged: function () {
+        if (typeof window === "undefined") {
+            return;
+        }
+
+        requestAnimationFrame(() => {
+            window.dispatchEvent(new Event("resize"));
+        });
     }
 };
 

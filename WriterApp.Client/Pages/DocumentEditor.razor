@@ -25,6 +25,19 @@ else
             <aside class="section-panel @GetSectionsPanelClass()">
                 <div class="section-panel-header">
                     <h2>Sections</h2>
+                    <div class="section-panel-actions">
+                        @if (!string.IsNullOrWhiteSpace(_sectionError))
+                        {
+                            <span class="ai-preview-status error">@_sectionError</span>
+                        }
+                        <button type="button"
+                                class="panel-toggle"
+                                aria-label="Add section"
+                                @onclick="CreateSectionAsync"
+                                disabled="@_isCreatingSection">
+                            @(_isCreatingSection ? "Adding..." : "Add section")
+                        </button>
+                    </div>
                 </div>
                 <ul class="section-nav-list">
                     @foreach (SectionDto item in _sections)

@@ -14,7 +14,7 @@
         </div>
         <div class="app-header-center">
             <div class="app-breadcrumb">
-                <NavLink class="app-breadcrumb-link" href="" Match="NavLinkMatch.All">Documents</NavLink>
+                <NavLink class="app-breadcrumb-link" href="/documents" Match="NavLinkMatch.All">Documents</NavLink>
                 @if (!string.IsNullOrWhiteSpace(HeaderState.DocumentTitle))
                 {
                     <span class="app-breadcrumb-separator">→</span>
@@ -52,7 +52,7 @@
             <nav class="app-nav">
                 <NavLink class="app-nav-link" href="@GetEditorLink()" Match="NavLinkMatch.Prefix">Editor</NavLink>
                 <NavLink class="app-nav-link" href="@GetSynopsisLink()" Match="NavLinkMatch.Prefix">Synopsis</NavLink>
-                <NavLink class="app-nav-link" href="" Match="NavLinkMatch.All">Documents</NavLink>
+                <NavLink class="app-nav-link" href="/documents" Match="NavLinkMatch.All">Documents</NavLink>
             </nav>
             <article class="content">
                 @Body
@@ -171,7 +171,7 @@
     private string GetEditorLink()
     {
         return string.IsNullOrWhiteSpace(HeaderState.DocumentId)
-            ? "/"
+            ? "/documents"
             : $"/documents/{HeaderState.DocumentId}";
     }
 
