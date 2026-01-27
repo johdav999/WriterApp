@@ -63,11 +63,55 @@ else
                                     aria-label="Reorder section">
                                 ⋮⋮
                             </button>
-                            <button type="button"
-                                    class="section-nav-item @(item.Id == _activeSection.Id ? "is-active" : string.Empty)"
-                                    @onclick="() => OnSectionSelected(item.Id)">
-                                <span class="section-title">@item.Title</span>
-                            </button>
+                            @if (_renamingSectionId == item.Id)
+                            {
+                                <div class="section-rename">
+                                    <input class="section-rename-input"
+                                           value="@_sectionRenameDraft"
+                                           maxlength="120"
+                                           @oninput="OnSectionRenameInput"
+                                           @onkeydown="(args) => OnSectionRenameKeyDown(args, item.Id)"
+                                           @onblur="() => OnSectionRenameBlurAsync(item.Id)" />
+                                    @if (!string.IsNullOrWhiteSpace(_sectionRenameError))
+                                    {
+                                        <div class="section-rename-error">@_sectionRenameError</div>
+                                    }
+                                </div>
+                            }
+                            else
+                            {
+                                <button type="button"
+                                        class="section-nav-item @(item.Id == _activeSection.Id ? "is-active" : string.Empty)"
+                                        @onclick="() => OnSectionSelected(item.Id)">
+                                    <span class="section-title section-title-editable"
+                                          @onclick="() => BeginSectionRename(item.Id)"
+                                          @onclick:stopPropagation="true"
+                                          @onclick:preventDefault="true">
+                                        @item.Title
+                                    </span>
+                                </button>
+                                <div class="section-menu">
+                                    <button type="button"
+                                            class="section-menu-toggle"
+                                            aria-label="Section actions"
+                                            @onclick="() => ToggleSectionMenu(item.Id)"
+                                            @onclick:stopPropagation="true"
+                                            @onclick:preventDefault="true">
+                                        ...
+                                    </button>
+                                    @if (_sectionMenuOpenId == item.Id)
+                                    {
+                                        <div class="section-menu-panel">
+                                            <button type="button" @onclick="() => BeginSectionRename(item.Id)">Rename</button>
+                                            <button type="button"
+                                                    class="danger"
+                                                    @onclick="() => PromptDeleteSection(item.Id)">
+                                                Delete
+                                            </button>
+                                        </div>
+                                    }
+                                </div>
+                            }
                         </li>
                     }
                 </ul>
@@ -434,6 +478,32 @@ else
                     }
                 </div>
             </aside>
+        </div>
+    </div>
+}
+
+@if (_isDeleteDialogOpen)
+{
+    <div class="modal-backdrop" @onclick="CancelDeleteSection"></div>
+    <div class="modal" role="dialog" aria-modal="true">
+        <div class="modal-title">Delete '@_pendingDeleteSectionTitle'?</div>
+        <div class="modal-body">This removes its pages. Cannot be undone.</div>
+        @if (!string.IsNullOrWhiteSpace(_sectionDeleteError))
+        {
+            <div class="modal-error">@_sectionDeleteError</div>
+        }
+        <div class="modal-actions">
+            <button type="button"
+                    class="danger"
+                    @onclick="ConfirmDeleteSectionAsync"
+                    disabled="@_isDeletingSection">
+                Delete
+            </button>
+            <button type="button"
+                    @onclick="CancelDeleteSection"
+                    disabled="@_isDeletingSection">
+                Cancel
+            </button>
         </div>
     </div>
 }

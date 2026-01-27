@@ -132,6 +132,149 @@
     text-overflow: ellipsis;
 }
 
+.section-title-editable {
+    cursor: text;
+}
+
+.section-rename {
+    flex: 1;
+    display: grid;
+    gap: 4px;
+}
+
+.section-rename-input {
+    width: 100%;
+    padding: 6px 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 10px;
+    background: #fff;
+    font-size: 0.9rem;
+}
+
+.section-rename-error {
+    font-size: 0.75rem;
+    color: #b91c1c;
+}
+
+.section-rename-button {
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    background: #fff;
+    padding: 4px 6px;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #6b7280;
+}
+
+.section-rename-button:hover {
+    border-color: #c9d7f6;
+    color: #1f2937;
+}
+
+.section-menu {
+    position: relative;
+}
+
+.section-menu-toggle {
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    background: #fff;
+    padding: 4px 6px;
+    font-size: 0.8rem;
+    color: #6b7280;
+    min-width: 28px;
+}
+
+.section-menu-panel {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    min-width: 140px;
+    display: grid;
+    gap: 4px;
+    padding: 6px;
+    border-radius: 10px;
+    border: 1px solid #e5e7eb;
+    background: var(--surface);
+    box-shadow: 0 12px 24px rgba(15, 23, 42, 0.15);
+    z-index: 20;
+}
+
+.section-menu-panel button {
+    border: none;
+    background: transparent;
+    text-align: left;
+    padding: 6px 8px;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.section-menu-panel button:hover {
+    background: rgba(47, 111, 235, 0.08);
+}
+
+.section-menu-panel .danger {
+    color: #b91c1c;
+}
+
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.4);
+    z-index: 80;
+}
+
+.modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(360px, 90vw);
+    padding: 16px;
+    border-radius: 14px;
+    border: 1px solid #e5e7eb;
+    background: var(--surface);
+    box-shadow: 0 20px 40px rgba(15, 23, 42, 0.2);
+    z-index: 90;
+    display: grid;
+    gap: 10px;
+}
+
+.modal-title {
+    font-weight: 600;
+    color: var(--text-strong);
+}
+
+.modal-body {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.modal-error {
+    color: #b91c1c;
+    font-size: 0.85rem;
+}
+
+.modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.modal-actions button {
+    padding: 6px 12px;
+    border-radius: 10px;
+    border: 1px solid #d1d5db;
+    background: #fff;
+}
+
+.modal-actions .danger {
+    border-color: #fca5a5;
+    color: #b91c1c;
+}
+
 .page-nav-row {
     margin: 4px 0 10px 12px;
 }
