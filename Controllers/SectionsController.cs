@@ -337,5 +337,67 @@ namespace WriterApp.Controllers
 
             return Ok(dto);
         }
+
+        [HttpDelete("{sectionId:guid}")]
+        public async Task<IActionResult> DeleteSection(Guid documentId, Guid sectionId, CancellationToken ct)
+        {
+            string userId = _userIdResolver.ResolveUserId(User);
+            if (!await _documents.ExistsAsync(documentId, userId, ct))
+            {
+                return NotFound();
+            }
+
+            SectionRecord? target = await _sections.GetAsync(sectionId, userId, ct);
+            if (target is null || target.DocumentId != documentId)
+            {
+                return NotFound();
+            }
+
+            IReadOnlyList<SectionRecord> existing = await _sections.ListByDocumentAsync(documentId, userId, ct);
+            if (existing.Count <= 1)
+            {
+                return Conflict(new { message = "Document must have at least one section." });
+            }
+
+            await using var transaction = await _dbContext.Database.BeginTransactionAsync(ct);
+
+            SectionRecord? removed = await _sections.DeleteAsync(sectionId, userId, ct);
+            if (removed is null)
+            {
+                await transaction.RollbackAsync(ct);
+                return NotFound();
+            }
+
+            List<SectionRecord> remaining = await _dbContext.Sections
+                .Where(section => section.DocumentId == documentId)
+                .OrderBy(section => section.OrderIndex)
+                .ToListAsync(ct);
+
+            bool reordered = false;
+            for (int index = 0; index < remaining.Count; index++)
+            {
+                if (remaining[index].OrderIndex != index)
+                {
+                    remaining[index].OrderIndex = index;
+                    remaining[index].UpdatedAt = DateTimeOffset.UtcNow;
+                    reordered = true;
+                }
+            }
+
+            if (reordered)
+            {
+                DocumentRecord? document = await _dbContext.Documents
+                    .FirstOrDefaultAsync(item => item.Id == documentId, ct);
+                if (document is not null)
+                {
+                    document.UpdatedAt = DateTimeOffset.UtcNow;
+                }
+
+                await _dbContext.SaveChangesAsync(ct);
+            }
+
+            await transaction.CommitAsync(ct);
+            return NoContent();
+        }
     }
 }

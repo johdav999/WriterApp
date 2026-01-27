@@ -117,6 +117,29 @@ namespace WriterApp.Data.Documents
             return section;
         }
 
+        public async Task<SectionRecord?> DeleteAsync(Guid sectionId, string ownerUserId, CancellationToken ct)
+        {
+            SectionRecord? section = await _dbContext.Sections
+                .Where(item => item.Id == sectionId)
+                .Join(_dbContext.Documents,
+                    item => item.DocumentId,
+                    document => document.Id,
+                    (item, document) => new { section = item, document })
+                .Where(row => row.document.OwnerUserId == ownerUserId)
+                .Select(row => row.section)
+                .FirstOrDefaultAsync(ct);
+
+            if (section is null)
+            {
+                return null;
+            }
+
+            _dbContext.Sections.Remove(section);
+            await TouchDocumentAsync(section.DocumentId, ct);
+            await SqliteRetryHelper.ExecuteAsync(() => _dbContext.SaveChangesAsync(ct), ct);
+            return section;
+        }
+
         private async Task TouchDocumentAsync(Guid documentId, CancellationToken ct)
         {
             DocumentRecord? document = await _dbContext.Documents

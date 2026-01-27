@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Threading.Tasks;
@@ -59,6 +60,17 @@ namespace WriterApp.Client.Pages
         private string? _loadError;
         private string? _sectionError;
         private bool _isCreatingSection;
+        private Guid? _renamingSectionId;
+        private string _sectionRenameDraft = string.Empty;
+        private string _sectionRenameOriginal = string.Empty;
+        private string? _sectionRenameError;
+        private bool _isRenamingSectionSaving;
+        private Guid? _sectionMenuOpenId;
+        private bool _isDeleteDialogOpen;
+        private Guid? _pendingDeleteSectionId;
+        private string _pendingDeleteSectionTitle = string.Empty;
+        private string? _sectionDeleteError;
+        private bool _isDeletingSection;
         private Guid _loadedDocumentId;
         private string _documentTitle = string.Empty;
         private bool _layoutStateInitialized;
@@ -195,6 +207,7 @@ namespace WriterApp.Client.Pages
         private string? _lastReorderCorrelationId;
         private bool _sectionReorderDiagnosticsEnabled;
         private IJSObjectReference? _exportModule;
+        private const int SectionTitleMaxLength = 120;
         private const int PageBreakHeightPx = 980;
         private const int PageBreakGutterOffsetPx = 28;
 
@@ -234,6 +247,8 @@ namespace WriterApp.Client.Pages
         {
             _isLoading = true;
             _loadError = null;
+            ResetSectionRename();
+            CancelDeleteSection();
 
             try
             {
@@ -377,6 +392,263 @@ namespace WriterApp.Client.Pages
         {
             await LastOpenedDocumentStateService.SaveAsync(DocumentId, sectionId);
             Navigation.NavigateTo($"documents/{DocumentId}/sections/{sectionId}");
+        }
+
+        private void BeginSectionRename(Guid sectionId)
+        {
+            SectionDto? section = _sections.FirstOrDefault(item => item.Id == sectionId);
+            if (section is null)
+            {
+                return;
+            }
+
+            _sectionMenuOpenId = null;
+            _renamingSectionId = sectionId;
+            _sectionRenameDraft = section.Title ?? string.Empty;
+            _sectionRenameOriginal = section.Title?.Trim() ?? string.Empty;
+            _sectionRenameError = null;
+        }
+
+        private void ResetSectionRename()
+        {
+            _renamingSectionId = null;
+            _sectionRenameDraft = string.Empty;
+            _sectionRenameOriginal = string.Empty;
+            _sectionRenameError = null;
+            _isRenamingSectionSaving = false;
+        }
+
+        private void CancelSectionRename()
+        {
+            ResetSectionRename();
+        }
+
+        private void OnSectionRenameInput(ChangeEventArgs args)
+        {
+            _sectionRenameDraft = args.Value?.ToString() ?? string.Empty;
+            _ = TryGetTrimmedSectionTitle(out _);
+        }
+
+        private async Task OnSectionRenameBlurAsync(Guid sectionId)
+        {
+            await CommitSectionRenameAsync(sectionId);
+        }
+
+        private async Task OnSectionRenameKeyDown(KeyboardEventArgs args, Guid sectionId)
+        {
+            if (args.Key == "Escape")
+            {
+                CancelSectionRename();
+                return;
+            }
+
+            if (args.Key == "Enter")
+            {
+                await CommitSectionRenameAsync(sectionId);
+            }
+        }
+
+        private bool TryGetTrimmedSectionTitle(out string trimmed)
+        {
+            trimmed = _sectionRenameDraft.Trim();
+            if (trimmed.Length == 0)
+            {
+                _sectionRenameError = "Title is required.";
+                return false;
+            }
+
+            if (trimmed.Length > SectionTitleMaxLength)
+            {
+                _sectionRenameError = $"Keep the title under {SectionTitleMaxLength} characters.";
+                return false;
+            }
+
+            _sectionRenameError = null;
+            return true;
+        }
+
+        private async Task CommitSectionRenameAsync(Guid sectionId)
+        {
+            if (_isRenamingSectionSaving || _renamingSectionId != sectionId)
+            {
+                return;
+            }
+
+            if (!TryGetTrimmedSectionTitle(out string trimmed))
+            {
+                return;
+            }
+
+            if (string.Equals(trimmed, _sectionRenameOriginal, StringComparison.Ordinal))
+            {
+                CancelSectionRename();
+                return;
+            }
+
+            _isRenamingSectionSaving = true;
+            try
+            {
+                SectionDto? current = _sections.FirstOrDefault(item => item.Id == sectionId);
+                SectionUpdateRequest request = new(trimmed, current?.NarrativePurpose);
+                using HttpResponseMessage response =
+                    await Http.PutAsJsonAsync($"api/documents/{DocumentId}/sections/{sectionId}", request);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    _sectionRenameError = "Rename failed.";
+                    return;
+                }
+
+                SectionDto? updated = await response.Content.ReadFromJsonAsync<SectionDto>();
+                if (updated is null)
+                {
+                    _sectionRenameError = "Rename failed.";
+                    return;
+                }
+
+                ApplySectionRename(updated);
+                ResetSectionRename();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Rename section failed.");
+                _sectionRenameError = "Rename failed.";
+            }
+            finally
+            {
+                _isRenamingSectionSaving = false;
+            }
+        }
+
+        private void ApplySectionRename(SectionDto updated)
+        {
+            int index = _sections.FindIndex(section => section.Id == updated.Id);
+            if (index >= 0)
+            {
+                _sections[index] = updated;
+            }
+
+            if (_activeSection?.Id == updated.Id)
+            {
+                _activeSection = updated;
+            }
+        }
+
+        private void ToggleSectionMenu(Guid sectionId)
+        {
+            _sectionMenuOpenId = _sectionMenuOpenId == sectionId ? null : sectionId;
+        }
+
+        private void PromptDeleteSection(Guid sectionId)
+        {
+            SectionDto? section = _sections.FirstOrDefault(item => item.Id == sectionId);
+            if (section is null)
+            {
+                return;
+            }
+
+            _sectionMenuOpenId = null;
+            _pendingDeleteSectionId = sectionId;
+            _pendingDeleteSectionTitle = section.Title;
+            _sectionDeleteError = null;
+            _isDeleteDialogOpen = true;
+        }
+
+        private void CancelDeleteSection()
+        {
+            _isDeleteDialogOpen = false;
+            _pendingDeleteSectionId = null;
+            _pendingDeleteSectionTitle = string.Empty;
+            _sectionDeleteError = null;
+        }
+
+        private async Task ConfirmDeleteSectionAsync()
+        {
+            if (_pendingDeleteSectionId is null)
+            {
+                CancelDeleteSection();
+                return;
+            }
+
+            Guid sectionId = _pendingDeleteSectionId.Value;
+            Guid? nextSectionId = ResolveNextSectionId(sectionId);
+            _isDeletingSection = true;
+            try
+            {
+                using HttpResponseMessage response =
+                    await Http.DeleteAsync($"api/documents/{DocumentId}/sections/{sectionId}");
+
+                if (response.StatusCode == HttpStatusCode.Conflict)
+                {
+                    string? message = await TryReadMessageAsync(response);
+                    _sectionDeleteError = message ?? "Delete blocked.";
+                    return;
+                }
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    _sectionDeleteError = "Delete failed.";
+                    return;
+                }
+
+                _sections.RemoveAll(section => section.Id == sectionId);
+                _pagesBySection.Remove(sectionId);
+                _isDeleteDialogOpen = false;
+
+                if (_activeSection?.Id == sectionId && nextSectionId is not null)
+                {
+                    await LastOpenedDocumentStateService.SaveAsync(DocumentId, nextSectionId.Value);
+                    Navigation.NavigateTo($"documents/{DocumentId}/sections/{nextSectionId}", replace: true);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Delete section failed.");
+                _sectionDeleteError = "Delete failed.";
+            }
+            finally
+            {
+                _isDeletingSection = false;
+            }
+        }
+
+        private Guid? ResolveNextSectionId(Guid sectionId)
+        {
+            int index = _sections.FindIndex(section => section.Id == sectionId);
+            if (index < 0)
+            {
+                return _sections.FirstOrDefault()?.Id;
+            }
+
+            if (index + 1 < _sections.Count)
+            {
+                return _sections[index + 1].Id;
+            }
+
+            if (index - 1 >= 0)
+            {
+                return _sections[index - 1].Id;
+            }
+
+            return null;
+        }
+
+        private static async Task<string?> TryReadMessageAsync(HttpResponseMessage response)
+        {
+            try
+            {
+                Dictionary<string, string>? payload =
+                    await response.Content.ReadFromJsonAsync<Dictionary<string, string>>();
+                if (payload is not null && payload.TryGetValue("message", out string? message))
+                {
+                    return message;
+                }
+            }
+            catch
+            {
+            }
+
+            return null;
         }
 
         private void OnSectionDragStart(Guid sectionId)
