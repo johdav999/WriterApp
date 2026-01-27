@@ -54,12 +54,63 @@ namespace WriterApp.Application.AI
                 .OrderByDescending(entry => entry.CreatedAt)
                 .ToListAsync(ct);
 
-            return records.Select(MapToEntry).ToList();
+            if (records.Count == 0)
+            {
+                return Array.Empty<AiActionHistoryEntry>();
+            }
+
+            Guid[] ids = records.Select(record => record.Id).ToArray();
+            Dictionary<Guid, AppliedStats> applied = await _dbContext.AiActionAppliedEvents
+                .AsNoTracking()
+                .Where(evt => evt.OwnerUserId == userId && ids.Contains(evt.HistoryEntryId))
+                .GroupBy(evt => evt.HistoryEntryId)
+                .Select(group => new AppliedStats(
+                    group.Key,
+                    group.Count(),
+                    group.Max(evt => evt.AppliedAt)))
+                .ToDictionaryAsync(stat => stat.HistoryEntryId, ct);
+
+            return records.Select(record => MapToEntry(record, applied)).ToList();
         }
 
-        private static AiActionHistoryEntry MapToEntry(AiActionHistoryEntryRecord record)
+        public async Task AddAppliedEventAsync(
+            string userId,
+            Guid historyEntryId,
+            DateTimeOffset appliedAt,
+            Guid? documentId,
+            Guid? sectionId,
+            Guid? pageId,
+            CancellationToken ct)
+        {
+            bool exists = await _dbContext.AiActionHistoryEntries
+                .AsNoTracking()
+                .AnyAsync(entry => entry.Id == historyEntryId && entry.OwnerUserId == userId, ct);
+            if (!exists)
+            {
+                throw new InvalidOperationException("History entry not found.");
+            }
+
+            AiActionAppliedEventRecord record = new()
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = userId,
+                HistoryEntryId = historyEntryId,
+                AppliedAt = appliedAt,
+                AppliedToDocumentId = documentId,
+                AppliedToSectionId = sectionId,
+                AppliedToPageId = pageId
+            };
+
+            _dbContext.AiActionAppliedEvents.Add(record);
+            await _dbContext.SaveChangesAsync(ct);
+        }
+
+        private static AiActionHistoryEntry MapToEntry(AiActionHistoryEntryRecord record, Dictionary<Guid, AppliedStats> applied)
         {
             AiActionExecuteResponseDto? response = TryReadResponse(record.ResultJson);
+            bool isApplied = applied.TryGetValue(record.Id, out AppliedStats? stats) && stats.AppliedCount > 0;
+            int appliedCount = stats?.AppliedCount ?? 0;
+            DateTimeOffset? lastAppliedAt = stats?.LastAppliedAt;
 
             return new AiActionHistoryEntry(
                 record.Id,
@@ -75,7 +126,10 @@ namespace WriterApp.Application.AI
                 record.ProviderId,
                 record.ModelId,
                 record.RequestJson,
-                record.ResultJson);
+                record.ResultJson,
+                isApplied,
+                lastAppliedAt,
+                appliedCount);
         }
 
         private static AiActionExecuteResponseDto? TryReadResponse(string? json)
@@ -94,5 +148,7 @@ namespace WriterApp.Application.AI
                 return null;
             }
         }
+
+        private sealed record AppliedStats(Guid HistoryEntryId, int AppliedCount, DateTimeOffset? LastAppliedAt);
     }
 }

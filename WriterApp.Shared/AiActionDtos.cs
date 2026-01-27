@@ -35,5 +35,8 @@ namespace WriterApp.Application.AI
         string? Summary,
         string? OriginalText,
         string? ProposedText,
-        DateTimeOffset CreatedUtc);
+        DateTimeOffset CreatedUtc,
+        bool IsApplied = false,
+        DateTimeOffset? LastAppliedAt = null,
+        int AppliedCount = 0);
 }
