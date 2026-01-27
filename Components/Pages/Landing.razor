@@ -29,6 +29,14 @@
 
 <PageTitle>Writer</PageTitle>
 
+@if (_showWasmBanner)
+{
+    <div class="landing-wasm-banner">
+        <span>Try the new app experience.</span>
+        <a class="secondary" href="/app/documents">Open new app</a>
+    </div>
+}
+
 <div class="landing">
     <header class="landing-header">
         <div>
@@ -365,7 +373,16 @@
         EventLog.Info("Landing", "OnInitialized start.");
         HeaderState.DocumentTitle = null;
         HeaderState.CanRenameDocumentTitle = false;
-        _showDebugPanel = HostEnvironment.IsDevelopment() || HasDebugQueryFlag();
+        bool isDevelopment = HostEnvironment.IsDevelopment();
+        bool hasDebugFlag = HasDebugQueryFlag();
+        _showDebugPanel = isDevelopment || hasDebugFlag;
+        if (!isDevelopment && !hasDebugFlag)
+        {
+            Navigation.NavigateTo("/app/documents", replace: true);
+            return;
+        }
+
+        _showWasmBanner = isDevelopment && !hasDebugFlag;
         EventLog.OnChanged += OnEventLogChanged;
         if (_showDebugPanel)
         {
@@ -530,4 +547,6 @@
 
         EventLog.OnChanged -= OnEventLogChanged;
     }
+
+    private bool _showWasmBanner;
 }
