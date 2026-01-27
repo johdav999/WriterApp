@@ -4,6 +4,7 @@
 @using WriterApp.Application.Documents
 @inject HttpClient Http
 @inject NavigationManager Navigation
+@inject WriterApp.Client.State.CurrentDocumentStateService CurrentDocumentStateService
 
 <PageTitle>Documents</PageTitle>
 
@@ -76,6 +77,7 @@
 
     protected override async Task OnInitializedAsync()
     {
+        CurrentDocumentStateService.Clear();
         try
         {
             using HttpResponseMessage response = await Http.GetAsync("api/documents");

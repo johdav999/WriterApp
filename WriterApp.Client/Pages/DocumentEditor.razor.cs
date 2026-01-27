@@ -38,6 +38,12 @@ namespace WriterApp.Client.Pages
         public LayoutStateService LayoutStateService { get; set; } = default!;
 
         [Inject]
+        public CurrentDocumentStateService CurrentDocumentStateService { get; set; } = default!;
+
+        [Inject]
+        public LastOpenedDocumentStateService LastOpenedDocumentStateService { get; set; } = default!;
+
+        [Inject]
         public IJSRuntime JSRuntime { get; set; } = default!;
 
         private readonly List<SectionDto> _sections = new();
@@ -205,6 +211,7 @@ namespace WriterApp.Client.Pages
 
         protected override async Task OnParametersSetAsync()
         {
+            CurrentDocumentStateService.SetCurrent(DocumentId, SectionId);
             await LoadDocumentAsync();
         }
 
@@ -273,6 +280,8 @@ namespace WriterApp.Client.Pages
                     return;
                 }
 
+                await LastOpenedDocumentStateService.SaveAsync(DocumentId, _activeSection.Id);
+
                 _notesDraft = await LoadPageNotesAsync(_activePage.Id);
                 _outlineDraft = await LoadDocumentOutlineAsync(DocumentId);
                 _notesStatus = null;
@@ -310,8 +319,9 @@ namespace WriterApp.Client.Pages
             return primary with { Content = combined };
         }
 
-        private void OnSectionSelected(Guid sectionId)
+        private async Task OnSectionSelected(Guid sectionId)
         {
+            await LastOpenedDocumentStateService.SaveAsync(DocumentId, sectionId);
             Navigation.NavigateTo($"documents/{DocumentId}/sections/{sectionId}");
         }
 

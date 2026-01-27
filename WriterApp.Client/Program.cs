@@ -13,5 +13,7 @@ builder.Services.AddScoped(sp =>
     return new HttpClient { BaseAddress = new Uri($"{origin}/") };
 });
 builder.Services.AddScoped<WriterApp.Client.State.LayoutStateService>();
+builder.Services.AddScoped<WriterApp.Client.State.CurrentDocumentStateService>();
+builder.Services.AddSingleton<WriterApp.Client.State.LastOpenedDocumentStateService>();
 
 await builder.Build().RunAsync();

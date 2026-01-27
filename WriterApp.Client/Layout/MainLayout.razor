@@ -1,7 +1,12 @@
 ﻿@inherits LayoutComponentBase
 @using WriterApp.Client.State
+@using System.Net.Http.Json
+@using WriterApp.Application.Documents
 @implements IDisposable
 @inject LayoutStateService LayoutStateService
+@inject CurrentDocumentStateService CurrentDocumentStateService
+@inject LastOpenedDocumentStateService LastOpenedDocumentStateService
+@inject HttpClient Http
 @inject NavigationManager Navigation
 
 <div class="app-shell @GetLayoutClass()">
@@ -12,6 +17,11 @@
         <div class="app-header-center">
             <div class="app-breadcrumb">
                 <NavLink class="app-breadcrumb-link" href="documents" Match="NavLinkMatch.Prefix">Documents</NavLink>
+                @if (IsEditorRoute)
+                {
+                    <span class="app-breadcrumb-separator">-&gt;</span>
+                    <span class="app-document-title">Editor</span>
+                }
             </div>
         </div>
         <div class="app-header-right">
@@ -22,7 +32,26 @@
     <main class="app-main">
         <div class="app-body">
             <nav class="app-nav">
-                <NavLink class="app-nav-link" href="documents" Match="NavLinkMatch.Prefix">Documents</NavLink>
+                @if (HasCurrentEditorLink)
+                {
+                    <NavLink class="app-nav-link" href="@GetEditorLink()" Match="NavLinkMatch.Prefix">Editor</NavLink>
+                }
+                else
+                {
+                    <a class="app-nav-link" href="documents">Editor</a>
+                }
+                <a class="app-nav-link @GetDocumentsActiveClass()"
+                   href="documents"
+                   @onclick="OnDocumentsNavClicked"
+                   @onclick:preventDefault="true">Documents</a>
+                @if (HasCurrentSynopsisLink)
+                {
+                    <NavLink class="app-nav-link" href="@GetSynopsisLink()" Match="NavLinkMatch.Prefix">Synopsis</NavLink>
+                }
+                else
+                {
+                    <a class="app-nav-link" href="documents">Synopsis</a>
+                }
             </nav>
             <article class="content">
                 @Body
@@ -41,15 +70,23 @@
     protected override async Task OnInitializedAsync()
     {
         LayoutStateService.Changed += HandleLayoutStateChange;
+        CurrentDocumentStateService.Changed += HandleDocumentStateChange;
         await LayoutStateService.InitializeAsync();
+        await LastOpenedDocumentStateService.LoadAsync();
     }
 
     public void Dispose()
     {
         LayoutStateService.Changed -= HandleLayoutStateChange;
+        CurrentDocumentStateService.Changed -= HandleDocumentStateChange;
     }
 
     private void HandleLayoutStateChange(LayoutState state)
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void HandleDocumentStateChange()
     {
         InvokeAsync(StateHasChanged);
     }
@@ -58,6 +95,179 @@
     {
         LayoutState state = LayoutStateService.State;
         return state.FocusMode || state.LeftNavCollapsed ? "is-focus-mode" : string.Empty;
+    }
+
+    private bool IsEditorRoute => TryGetEditorRoute(out _);
+
+    private bool HasCurrentEditorLink =>
+        CurrentDocumentStateService.DocumentId is Guid documentId &&
+        CurrentDocumentStateService.SectionId is Guid sectionId &&
+        documentId != Guid.Empty &&
+        sectionId != Guid.Empty;
+
+    private bool HasCurrentSynopsisLink =>
+        CurrentDocumentStateService.DocumentId is Guid documentId &&
+        documentId != Guid.Empty;
+
+    private string GetDocumentsActiveClass()
+    {
+        return IsDocumentsRoute() ? "active" : string.Empty;
+    }
+
+    private string GetEditorLink()
+    {
+        if (!HasCurrentEditorLink)
+        {
+            return "documents";
+        }
+
+        Guid documentId = CurrentDocumentStateService.DocumentId!.Value;
+        Guid sectionId = CurrentDocumentStateService.SectionId!.Value;
+        return $"documents/{documentId}/sections/{sectionId}";
+    }
+
+    private string GetSynopsisLink()
+    {
+        if (!HasCurrentSynopsisLink)
+        {
+            return "documents";
+        }
+
+        Guid documentId = CurrentDocumentStateService.DocumentId!.Value;
+        return $"synopsis/{documentId}";
+    }
+
+    private async Task OnDocumentsNavClicked()
+    {
+        await NavigateDocumentsAsync();
+    }
+
+    private async Task NavigateDocumentsAsync()
+    {
+        await LastOpenedDocumentStateService.LoadAsync();
+
+        if (IsDocumentsListRoute() && LastOpenedDocumentStateService.State is { } state)
+        {
+            (Guid? sectionId, bool shouldClear) = await TryResolveSectionAsync(state);
+            if (sectionId is not null)
+            {
+                Navigation.NavigateTo($"documents/{state.DocumentId}/sections/{sectionId}");
+                return;
+            }
+
+            if (shouldClear)
+            {
+                await LastOpenedDocumentStateService.ClearAsync();
+            }
+        }
+
+        Navigation.NavigateTo("documents");
+    }
+
+    private async Task<(Guid? SectionId, bool ShouldClear)> TryResolveSectionAsync(LastOpenedDocumentState state)
+    {
+        try
+        {
+            using HttpResponseMessage response =
+                await Http.GetAsync($"api/documents/{state.DocumentId}/sections");
+            if (!response.IsSuccessStatusCode)
+            {
+                bool clear = response.StatusCode is System.Net.HttpStatusCode.NotFound
+                    or System.Net.HttpStatusCode.Unauthorized;
+                return (null, clear);
+            }
+
+            List<SectionDto>? sections = await response.Content.ReadFromJsonAsync<List<SectionDto>>();
+            if (sections is null || sections.Count == 0)
+            {
+                return (null, true);
+            }
+
+            if (state.SectionId is Guid sectionId)
+            {
+                SectionDto? match = sections.FirstOrDefault(section => section.Id == sectionId);
+                if (match is not null)
+                {
+                    return (match.Id, false);
+                }
+            }
+
+            Guid? firstId = sections
+                .OrderBy(section => section.OrderIndex)
+                .FirstOrDefault()
+                ?.Id;
+            return (firstId, firstId is null);
+        }
+        catch
+        {
+            return (null, false);
+        }
+    }
+
+    private bool IsDocumentsRoute()
+    {
+        string[] segments = GetRouteSegments();
+        return segments.Length > 0 && string.Equals(segments[0], "documents", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool IsDocumentsListRoute()
+    {
+        string[] segments = GetRouteSegments();
+        return segments.Length == 1 && string.Equals(segments[0], "documents", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string[] GetRouteSegments()
+    {
+        string relative = Navigation.ToBaseRelativePath(Navigation.Uri);
+        int queryStart = relative.IndexOfAny(['?', '#']);
+        if (queryStart >= 0)
+        {
+            relative = relative[..queryStart];
+        }
+
+        return string.IsNullOrWhiteSpace(relative)
+            ? Array.Empty<string>()
+            : relative.Split('/', StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    private bool TryGetEditorRoute(out string editorRoute)
+    {
+        editorRoute = "documents";
+        string relative = Navigation.ToBaseRelativePath(Navigation.Uri);
+        int queryStart = relative.IndexOfAny(['?', '#']);
+        if (queryStart >= 0)
+        {
+            relative = relative[..queryStart];
+        }
+
+        if (string.IsNullOrWhiteSpace(relative))
+        {
+            return false;
+        }
+
+        string[] segments = relative.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length < 4)
+        {
+            return false;
+        }
+
+        if (!string.Equals(segments[0], "documents", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!string.Equals(segments[2], "sections", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!Guid.TryParse(segments[1], out _) || !Guid.TryParse(segments[3], out _))
+        {
+            return false;
+        }
+
+        editorRoute = $"documents/{segments[1]}/sections/{segments[3]}";
+        return true;
     }
 
     private void OnAboutClicked()
