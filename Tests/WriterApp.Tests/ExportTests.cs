@@ -1,6 +1,9 @@
+using System;
 using System.Text;
+using System.Threading;
 using WriterApp.Application.Exporting;
 using WriterApp.Application.State;
+using WriterApp.Data.Exporting;
 using WriterApp.Domain.Documents;
 using Xunit;
 
@@ -13,10 +16,10 @@ namespace WriterApp.Tests
             return new ExportService(new IExportRenderer[]
             {
                 new MarkdownExportRenderer(),
-                new HtmlExportRenderer(),
+                new TemplatedHtmlExportRenderer(),
                 new SynopsisMarkdownExportRenderer(),
                 new SynopsisHtmlExportRenderer()
-            });
+            }, new StubExportTemplateResolver());
         }
 
         [Fact]
@@ -27,7 +30,14 @@ namespace WriterApp.Tests
             ReplaceFirstSectionContent(document, "Body text.");
 
             ExportService service = BuildExportService();
-            ExportResult result = service.ExportAsync(document, ExportKind.Document, ExportFormat.Markdown, new ExportOptions()).GetAwaiter().GetResult();
+            ExportResult result = service.ExportAsync(
+                document,
+                ExportKind.Document,
+                ExportFormat.Markdown,
+                new ExportOptions(),
+                "user",
+                null,
+                CancellationToken.None).GetAwaiter().GetResult();
 
             string output = Encoding.UTF8.GetString(result.Content);
             Assert.DoesNotContain("SYNOPSIS_ONLY_TEXT", output);
@@ -41,7 +51,14 @@ namespace WriterApp.Tests
             ReplaceFirstSectionContent(document, "DOC_ONLY_TEXT");
 
             ExportService service = BuildExportService();
-            ExportResult result = service.ExportAsync(document, ExportKind.Synopsis, ExportFormat.Markdown, new ExportOptions()).GetAwaiter().GetResult();
+            ExportResult result = service.ExportAsync(
+                document,
+                ExportKind.Synopsis,
+                ExportFormat.Markdown,
+                new ExportOptions(),
+                "user",
+                null,
+                CancellationToken.None).GetAwaiter().GetResult();
 
             string output = Encoding.UTF8.GetString(result.Content);
             Assert.DoesNotContain("DOC_ONLY_TEXT", output);
@@ -56,7 +73,14 @@ namespace WriterApp.Tests
             ReplaceFirstSectionContent(document, "Body text.");
 
             ExportService service = BuildExportService();
-            ExportResult result = service.ExportAsync(document, ExportKind.Document, ExportFormat.Html, new ExportOptions()).GetAwaiter().GetResult();
+            ExportResult result = service.ExportAsync(
+                document,
+                ExportKind.Document,
+                ExportFormat.Html,
+                new ExportOptions(),
+                "user",
+                null,
+                CancellationToken.None).GetAwaiter().GetResult();
 
             string output = Encoding.UTF8.GetString(result.Content);
             Assert.DoesNotContain("SYNOPSIS_ONLY_TEXT", output);
@@ -70,7 +94,14 @@ namespace WriterApp.Tests
             ReplaceFirstSectionContent(document, "DOC_ONLY_TEXT");
 
             ExportService service = BuildExportService();
-            ExportResult result = service.ExportAsync(document, ExportKind.Synopsis, ExportFormat.Html, new ExportOptions()).GetAwaiter().GetResult();
+            ExportResult result = service.ExportAsync(
+                document,
+                ExportKind.Synopsis,
+                ExportFormat.Html,
+                new ExportOptions(),
+                "user",
+                null,
+                CancellationToken.None).GetAwaiter().GetResult();
 
             string output = Encoding.UTF8.GetString(result.Content);
             Assert.DoesNotContain("DOC_ONLY_TEXT", output);
@@ -88,6 +119,14 @@ namespace WriterApp.Tests
                     Value = value
                 }
             };
+        }
+
+        private sealed class StubExportTemplateResolver : IExportTemplateResolver
+        {
+            public Task<ExportTemplate> ResolveAsync(string ownerUserId, Guid? templateId, CancellationToken ct)
+            {
+                return Task.FromResult(ExportTemplateDefaults.CreateManuscript(ownerUserId, DateTimeOffset.UtcNow));
+            }
         }
     }
 }

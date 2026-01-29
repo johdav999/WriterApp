@@ -1,6 +1,7 @@
 @page "/documents/{DocumentId:guid}/sections/{SectionId:guid}"
 @using WriterApp.Application.Documents
 @using WriterApp.Application.AI
+@using WriterApp.Application.Exporting
 @using WriterApp.Client.Components.Editor
 
 <PageTitle>@GetPageTitle()</PageTitle>
@@ -186,9 +187,7 @@ else
                             <div class="document-menu-panel">
                                 <button type="button" @onclick="OnToggleEditorWidthMode">@GetEditorWidthLabel()</button>
                                 <button type="button" @onclick="OnSaveNow">Save now</button>
-                                <button type="button" @onclick='@(() => OnExportRequested("document", "markdown"))'>Export Document (Markdown)</button>
-                                <button type="button" @onclick='@(() => OnExportRequested("document", "html"))'>Export Document (HTML)</button>
-                                <button type="button" @onclick="OnExportPdfRequested">Export Document (PDF)</button>
+                                <button type="button" @onclick="OnExportDialogOpenAsync">Export...</button>
                                 <button type="button" @onclick='@(() => OnExportRequested("synopsis", "markdown"))'>Export Synopsis (Markdown)</button>
                                 <button type="button" @onclick='@(() => OnExportRequested("synopsis", "html"))'>Export Synopsis (HTML)</button>
                             </div>
@@ -742,6 +741,181 @@ else
                     disabled="@_isDeletingSection">
                 Cancel
             </button>
+        </div>
+    </div>
+}
+
+@if (_isExportDialogOpen)
+{
+    <div class="modal-backdrop" @onclick="CloseExportDialog"></div>
+    <div class="modal export-dialog" role="dialog" aria-modal="true">
+        <div class="modal-title">Export document</div>
+        <div class="modal-body">
+            <div class="export-panel-row">
+                <label class="export-panel-label" for="export-format">Format</label>
+                <select id="export-format" class="export-panel-select" @bind="_exportFormatSelection">
+                    <option value="html">HTML</option>
+                    <option value="markdown">Markdown</option>
+                    <option value="pdf">PDF (print)</option>
+                </select>
+            </div>
+            <div class="export-panel-row">
+                <label class="export-panel-label" for="export-template">Template</label>
+                @if (_isTemplatesLoading)
+                {
+                    <div class="export-panel-note">Loading templates...</div>
+                }
+                else
+                {
+                    <select id="export-template"
+                            class="export-panel-select"
+                            @bind="SelectedTemplateIdValue"
+                            disabled="@string.Equals(_exportFormatSelection, "markdown", StringComparison.OrdinalIgnoreCase)">
+                        @foreach (ExportTemplateDto template in _exportTemplates)
+                        {
+                            <option value="@template.Id">@template.Name @GetPresetTag(template.PresetKey)</option>
+                        }
+                    </select>
+                }
+            </div>
+            <div class="export-panel-row export-panel-actions">
+                <button type="button" class="link-button" @onclick="OpenTemplateManagerAsync">Manage templates...</button>
+                <span class="export-panel-hint">Templates apply to HTML/PDF exports.</span>
+            </div>
+            @if (!string.IsNullOrWhiteSpace(_templateLoadError))
+            {
+                <div class="modal-error">@_templateLoadError</div>
+            }
+            @if (!string.IsNullOrWhiteSpace(_templateActionError))
+            {
+                <div class="modal-error">@_templateActionError</div>
+            }
+        </div>
+        <div class="modal-actions">
+            <button type="button" @onclick="ExecuteExportSelectionAsync" disabled="@_isTemplatesLoading">Export</button>
+            <button type="button" @onclick="CloseExportDialog">Cancel</button>
+        </div>
+    </div>
+}
+
+@if (_isTemplateManagerOpen)
+{
+    <div class="modal-backdrop" @onclick="CloseTemplateManager"></div>
+    <div class="modal export-dialog template-manager" role="dialog" aria-modal="true">
+        <div class="modal-title">Export templates</div>
+        <div class="modal-body">
+            <div class="template-manager-row">
+                <label class="export-panel-label" for="template-preset-create">New template</label>
+                <div class="template-manager-create">
+                    <select id="template-preset-create" class="export-panel-select" @bind="_createPresetKey">
+                        <option value="manuscript">Manuscript</option>
+                        <option value="paperback_6x9">Paperback 6x9</option>
+                        <option value="a4">A4</option>
+                    </select>
+                    <button type="button" @onclick="CreateTemplateFromPresetAsync">Create</button>
+                </div>
+            </div>
+
+            <div class="template-manager-list">
+                @foreach (ExportTemplateDto template in _exportTemplates.OrderBy(item => item.Name))
+                {
+                    <div class="template-card">
+                        <div class="template-card-main">
+                            <div class="template-name">@template.Name</div>
+                            <div class="template-tag">@GetPresetTag(template.PresetKey)</div>
+                        </div>
+                        <div class="template-card-actions">
+                            <button type="button" @onclick="() => DuplicateTemplateAsync(template)">Duplicate</button>
+                            <button type="button" @onclick="() => StartEditTemplate(template)">Edit</button>
+                            <button type="button" class="danger" disabled="@_isTemplateDeleting" @onclick="() => DeleteTemplateAsync(template)">Delete</button>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            @if (_isTemplateEditorOpen && _templateEditor is not null)
+            {
+                <div class="template-editor">
+                    <h3>Edit template</h3>
+                    <div class="template-grid">
+                        <label class="export-panel-label" for="template-name">Name</label>
+                        <input id="template-name" class="export-panel-input" @bind="_templateEditor.Name" />
+
+                        <label class="export-panel-label" for="template-page-size">Page size</label>
+                        <select id="template-page-size" class="export-panel-select" value="@_templateEditorPagePreset" @onchange="OnTemplatePresetChanged">
+                            <option value="manuscript">Manuscript (216x279)</option>
+                            <option value="paperback_6x9">Paperback 6x9 (152x229)</option>
+                            <option value="a4">A4 (210x297)</option>
+                            <option value="custom">Custom</option>
+                        </select>
+
+                        <label class="export-panel-label">Width/Height (mm)</label>
+                        <div class="template-inline-inputs">
+                            <input type="number" class="export-panel-input" @bind="_templateEditor.PageWidthMm" />
+                            <input type="number" class="export-panel-input" @bind="_templateEditor.PageHeightMm" />
+                        </div>
+
+                        <label class="export-panel-label">Margins (mm)</label>
+                        <div class="template-inline-inputs">
+                            <input type="number" class="export-panel-input" @bind="_templateEditor.MarginTopMm" placeholder="Top" />
+                            <input type="number" class="export-panel-input" @bind="_templateEditor.MarginRightMm" placeholder="Right" />
+                            <input type="number" class="export-panel-input" @bind="_templateEditor.MarginBottomMm" placeholder="Bottom" />
+                            <input type="number" class="export-panel-input" @bind="_templateEditor.MarginLeftMm" placeholder="Left" />
+                        </div>
+
+                        <label class="export-panel-label">Typography</label>
+                        <div class="template-inline-inputs">
+                            <input class="export-panel-input" @bind="_templateEditor.FontFamily" placeholder="Font family" />
+                            <input type="number" class="export-panel-input" @bind="_templateEditor.BodyFontSizePt" placeholder="Font size (pt)" />
+                            <input type="number" step="0.1" class="export-panel-input" @bind="_templateEditor.LineHeight" placeholder="Line height" />
+                        </div>
+
+                        <label class="export-panel-label">Header</label>
+                        <div class="template-section">
+                            <label><input type="checkbox" @bind="_templateEditor.HeaderEnabled" /> Enabled</label>
+                            <div class="template-inline-inputs">
+                                <input class="export-panel-input" @bind="_templateEditor.HeaderLeft" placeholder="Left" title="Tokens: {DocumentTitle}, {SectionTitle}, {Date}, {PageNumber}, {TotalPages}" />
+                                <input class="export-panel-input" @bind="_templateEditor.HeaderCenter" placeholder="Center" title="Tokens: {DocumentTitle}, {SectionTitle}, {Date}, {PageNumber}, {TotalPages}" />
+                                <input class="export-panel-input" @bind="_templateEditor.HeaderRight" placeholder="Right" title="Tokens: {DocumentTitle}, {SectionTitle}, {Date}, {PageNumber}, {TotalPages}" />
+                            </div>
+                        </div>
+
+                        <label class="export-panel-label">Footer</label>
+                        <div class="template-section">
+                            <label><input type="checkbox" @bind="_templateEditor.FooterEnabled" /> Enabled</label>
+                            <div class="template-inline-inputs">
+                                <input class="export-panel-input" @bind="_templateEditor.FooterLeft" placeholder="Left" title="Tokens: {DocumentTitle}, {SectionTitle}, {Date}, {PageNumber}, {TotalPages}" />
+                                <input class="export-panel-input" @bind="_templateEditor.FooterCenter" placeholder="Center" title="Tokens: {DocumentTitle}, {SectionTitle}, {Date}, {PageNumber}, {TotalPages}" />
+                                <input class="export-panel-input" @bind="_templateEditor.FooterRight" placeholder="Right" title="Tokens: {DocumentTitle}, {SectionTitle}, {Date}, {PageNumber}, {TotalPages}" />
+                            </div>
+                        </div>
+
+                        <label class="export-panel-label">TOC</label>
+                        <div class="template-inline-inputs">
+                            <label><input type="checkbox" @bind="_templateEditor.TocEnabled" /> Enabled</label>
+                            <input type="number" class="export-panel-input" @bind="_templateEditor.TocDepth" placeholder="Depth" />
+                        </div>
+
+                        <label class="export-panel-label">Page numbers</label>
+                        <div class="template-inline-inputs">
+                            <label><input type="checkbox" @bind="_templateEditor.PageNumbersEnabled" /> Enabled</label>
+                            <input type="number" class="export-panel-input" @bind="_templateEditor.PageNumberStart" placeholder="Start" />
+                        </div>
+                    </div>
+                    <div class="modal-actions">
+                        <button type="button" @onclick="SaveTemplateAsync" disabled="@_isTemplateSaving">Save</button>
+                        <button type="button" @onclick="CancelTemplateEdit">Cancel</button>
+                    </div>
+                </div>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(_templateActionError))
+            {
+                <div class="modal-error">@_templateActionError</div>
+            }
+        </div>
+        <div class="modal-actions">
+            <button type="button" @onclick="CloseTemplateManager">Close</button>
         </div>
     </div>
 }
