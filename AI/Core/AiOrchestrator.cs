@@ -444,6 +444,11 @@ namespace WriterApp.AI.Core
                 return "Section";
             }
 
+            if (string.Equals(actionId, ProposeNextParagraphAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Section";
+            }
+
             return "Selection";
         }
 
@@ -456,7 +461,9 @@ namespace WriterApp.AI.Core
 
             if (!string.Equals(actionId, RewriteSelectionAction.ActionIdValue, StringComparison.Ordinal))
             {
-                return "Apply AI change";
+                return string.Equals(actionId, ProposeNextParagraphAction.ActionIdValue, StringComparison.Ordinal)
+                    ? "Propose next paragraph"
+                    : "Apply AI change";
             }
 
             string normalized = instruction?.Trim().ToLowerInvariant() ?? string.Empty;

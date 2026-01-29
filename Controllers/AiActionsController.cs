@@ -326,7 +326,7 @@ namespace WriterApp.Controllers
                 options["max_sections"] = OutlineMaxSections;
                 options["truncated"] = outlineTruncated;
             }
-            if (IsSceneCardAction(actionKey))
+            if (RequiresSceneMetadata(actionKey))
             {
                 SectionSceneCardRecord? sceneCard = await _dbContext.SectionSceneCards
                     .FindAsync(new object?[] { sectionId }, ct);
@@ -334,7 +334,10 @@ namespace WriterApp.Controllers
                 options["emotional_beat"] = sceneCard?.EmotionalBeat ?? string.Empty;
                 options["key_events"] = sceneCard?.KeyEvents ?? string.Empty;
                 options["open_questions"] = sceneCard?.OpenQuestions ?? string.Empty;
-                options["max_section_chars"] = SceneMaxSectionChars;
+                if (IsSceneCardAction(actionKey))
+                {
+                    options["max_section_chars"] = SceneMaxSectionChars;
+                }
             }
 
             AiActionInput input = new(
@@ -620,6 +623,12 @@ namespace WriterApp.Controllers
             return string.Equals(actionKey, SceneSuggestAction.ActionIdValue, StringComparison.Ordinal)
                 || string.Equals(actionKey, SceneRefineAction.ActionIdValue, StringComparison.Ordinal)
                 || string.Equals(actionKey, SceneFindOpenQuestionsAction.ActionIdValue, StringComparison.Ordinal);
+        }
+
+        private static bool RequiresSceneMetadata(string actionKey)
+        {
+            return IsSceneCardAction(actionKey)
+                || string.Equals(actionKey, ProposeNextParagraphAction.ActionIdValue, StringComparison.Ordinal);
         }
 
         private static bool TryParseSceneCardProposal(

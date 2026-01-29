@@ -62,6 +62,12 @@ namespace WriterApp.Controllers
             [FromBody] ExportTemplateCreateRequest request,
             CancellationToken ct)
         {
+            ExportTemplatePresetDefinition? preset = ExportTemplatePresets.GetByKey(request.PresetKey);
+            if (preset is not null && string.IsNullOrWhiteSpace(request.Name))
+            {
+                request = ApplyPreset(request, preset);
+            }
+
             if (!TryValidate(request, out string? error))
             {
                 return BadRequest(new { message = error });
@@ -223,6 +229,37 @@ namespace WriterApp.Controllers
                 template.TocDepth,
                 template.CreatedAt,
                 template.UpdatedAt);
+        }
+
+        private static ExportTemplateCreateRequest ApplyPreset(
+            ExportTemplateCreateRequest request,
+            ExportTemplatePresetDefinition preset)
+        {
+            return new ExportTemplateCreateRequest(
+                preset.Name,
+                preset.Key,
+                preset.PageWidthMm,
+                preset.PageHeightMm,
+                preset.MarginTopMm,
+                preset.MarginRightMm,
+                preset.MarginBottomMm,
+                preset.MarginLeftMm,
+                preset.FontFamily,
+                preset.BodyFontSizePt,
+                preset.LineHeight,
+                preset.ParagraphSpacingPt,
+                preset.HeaderEnabled,
+                preset.HeaderLeft,
+                preset.HeaderCenter,
+                preset.HeaderRight,
+                preset.FooterEnabled,
+                preset.FooterLeft,
+                preset.FooterCenter,
+                preset.FooterRight,
+                preset.PageNumbersEnabled,
+                preset.PageNumberStart,
+                preset.TocEnabled,
+                preset.TocDepth);
         }
 
         private static bool TryValidate(ExportTemplateCreateRequest request, out string? error)

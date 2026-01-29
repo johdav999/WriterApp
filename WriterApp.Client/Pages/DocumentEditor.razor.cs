@@ -110,6 +110,12 @@ namespace WriterApp.Client.Pages
         private Guid? _editingTemplateId;
         private ExportTemplateEditorModel? _templateEditor;
         private string _templateEditorPagePreset = "custom";
+        private bool _isExportPreviewOpen;
+        private bool _isPreviewLoading;
+        private string? _previewError;
+        private string _previewHtml = string.Empty;
+        private double _previewZoom = 1.0;
+        private string _previewScope = "document";
         private SectionEditor.EditorSelectionRange? _currentSelectionRange;
         private readonly List<AiActionOption> _aiActions = new();
         private readonly List<AiActionOption> _aiActionPresets = new()
@@ -201,7 +207,14 @@ namespace WriterApp.Client.Pages
                     ["tone"] = "Technical",
                     ["length"] = "Same",
                     ["preserve_terms"] = true
-                })
+                }),
+            new AiActionOption(
+                "propose.next-paragraph",
+                "Propose next paragraph",
+                "Propose next paragraph",
+                false,
+                new Dictionary<string, object?>(),
+                "Generate a 10-12 sentence continuation based on current section + scene beats.")
         };
         private readonly HashSet<string> _availableActionKeys = new(StringComparer.OrdinalIgnoreCase);
         private readonly List<AiHistoryEntry> _aiHistoryEntries = new();
@@ -273,6 +286,10 @@ namespace WriterApp.Client.Pages
 
         private PageEditor.PageBreakOptions PageBreaks =>
             new(PageBreakHeightPx, true, PageBreakGutterOffsetPx);
+        private IEnumerable<AiActionOption> SelectionAiActions =>
+            _aiActions.Where(action => action.RequiresSelection);
+        private IEnumerable<AiActionOption> SectionAiActions =>
+            _aiActions.Where(action => !action.RequiresSelection);
 
         protected override async Task OnInitializedAsync()
         {
@@ -2537,6 +2554,84 @@ namespace WriterApp.Client.Pages
             }
         }
 
+        private async Task OpenPreviewAsync()
+        {
+            _previewError = null;
+            _isPreviewLoading = true;
+            _isExportPreviewOpen = true;
+            try
+            {
+                ExportTemplateDto? template = GetSelectedTemplate();
+                ExportPreviewRequest request = new(
+                    DocumentId,
+                    _selectedTemplateId,
+                    template?.TocEnabled ?? true,
+                    _previewScope,
+                    _previewScope == "section" ? _activeSection?.Id : null);
+
+                using HttpResponseMessage response = await Http.PostAsJsonAsync("api/export/preview", request);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _previewError = "Preview failed.";
+                    return;
+                }
+
+                ExportPreviewResponse? payload = await response.Content.ReadFromJsonAsync<ExportPreviewResponse>();
+                if (payload is null || string.IsNullOrWhiteSpace(payload.Html))
+                {
+                    _previewError = "Preview failed.";
+                    return;
+                }
+
+                _previewHtml = payload.Html;
+                _previewZoom = 1.0;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Export preview failed.");
+                _previewError = "Preview failed.";
+            }
+            finally
+            {
+                _isPreviewLoading = false;
+            }
+        }
+
+        private void ClosePreview()
+        {
+            _isExportPreviewOpen = false;
+            _previewHtml = string.Empty;
+            _previewError = null;
+        }
+
+        private ExportTemplateDto? GetSelectedTemplate()
+        {
+            return _exportTemplates.FirstOrDefault(template => template.Id == _selectedTemplateId);
+        }
+
+        private string GetPreviewStyle()
+        {
+            ExportTemplateDto? template = GetSelectedTemplate();
+            int width = template?.PageWidthMm ?? 210;
+            return $"--preview-page-width:{width}mm; --preview-zoom:{_previewZoom.ToString(CultureInfo.InvariantCulture)};";
+        }
+
+        private async Task PrintPreviewAsync()
+        {
+            await EnsureExportModuleAsync();
+            if (_exportModule is null)
+            {
+                return;
+            }
+
+            await _exportModule.InvokeVoidAsync("printIframe", "export-preview-frame");
+        }
+
+        private void SetPreviewZoom(double zoom)
+        {
+            _previewZoom = zoom;
+        }
+
         private async Task OnExportDialogOpenAsync()
         {
             _isDocumentMenuOpen = false;
@@ -2860,86 +2955,38 @@ namespace WriterApp.Client.Pages
 
         private static ExportTemplateCreateRequest BuildCreateRequestFromPreset(string presetKey)
         {
-            ExportTemplateCreateRequest baseRequest = presetKey switch
+            ExportTemplatePresetDefinition? preset = ExportTemplatePresets.GetByKey(presetKey);
+            preset ??= ExportTemplatePresets.GetByKey("manuscript");
+            if (preset is null)
             {
-                "paperback_6x9" => new ExportTemplateCreateRequest(
-                    "Paperback 6x9",
-                    "paperback_6x9",
-                    152,
-                    229,
-                    16,
-                    16,
-                    20,
-                    20,
-                    "Georgia",
-                    11,
-                    1.4m,
-                    6,
-                    true,
-                    null,
-                    "{DocumentTitle}",
-                    null,
-                    false,
-                    null,
-                    null,
-                    null,
-                    true,
-                    1,
-                    false,
-                    2),
-                "a4" => new ExportTemplateCreateRequest(
-                    "A4",
-                    "a4",
-                    210,
-                    297,
-                    20,
-                    20,
-                    20,
-                    20,
-                    "Georgia",
-                    12,
-                    1.5m,
-                    6,
-                    false,
-                    null,
-                    null,
-                    null,
-                    true,
-                    null,
-                    "{PageNumber}",
-                    null,
-                    true,
-                    1,
-                    true,
-                    2),
-                _ => new ExportTemplateCreateRequest(
-                    "Manuscript",
-                    "manuscript",
-                    216,
-                    279,
-                    25,
-                    25,
-                    25,
-                    30,
-                    "Georgia",
-                    12,
-                    2.0m,
-                    12,
-                    true,
-                    "{DocumentTitle}",
-                    null,
-                    "{SectionTitle}",
-                    false,
-                    null,
-                    null,
-                    null,
-                    true,
-                    1,
-                    true,
-                    2)
-            };
+                throw new InvalidOperationException("Export template presets are missing.");
+            }
 
-            return baseRequest;
+            return new ExportTemplateCreateRequest(
+                preset.Name,
+                preset.Key,
+                preset.PageWidthMm,
+                preset.PageHeightMm,
+                preset.MarginTopMm,
+                preset.MarginRightMm,
+                preset.MarginBottomMm,
+                preset.MarginLeftMm,
+                preset.FontFamily,
+                preset.BodyFontSizePt,
+                preset.LineHeight,
+                preset.ParagraphSpacingPt,
+                preset.HeaderEnabled,
+                preset.HeaderLeft,
+                preset.HeaderCenter,
+                preset.HeaderRight,
+                preset.FooterEnabled,
+                preset.FooterLeft,
+                preset.FooterCenter,
+                preset.FooterRight,
+                preset.PageNumbersEnabled,
+                preset.PageNumberStart,
+                preset.TocEnabled,
+                preset.TocDepth);
         }
 
         private static string BuildCopyName(string baseName, IEnumerable<string> existingNames)
@@ -2973,6 +3020,8 @@ namespace WriterApp.Client.Pages
             };
         }
 
+        private static IReadOnlyList<ExportTemplatePresetDefinition> PresetOptions => ExportTemplatePresets.All;
+
         private async Task DownloadExportAsync(string base64, string mimeType, string fileName)
         {
             await EnsureExportModuleAsync();
@@ -3001,7 +3050,7 @@ namespace WriterApp.Client.Pages
             {
                 _exportModule = await JSRuntime.InvokeAsync<IJSObjectReference>(
                     "import",
-                    "/js/export.js");
+                    $"{Navigation.BaseUri}js/export.js");
             }
         }
 
@@ -3014,19 +3063,29 @@ namespace WriterApp.Client.Pages
                 return;
             }
 
-            if (_currentSelectionRange is null || _activeSection is null)
+            if (_activeSection is null)
             {
                 return;
             }
 
             string? html = _pageEditor?.GetContent();
-            string plain = PlainTextMapper.ToPlainText(html);
-            TextRange selectionRange = NormalizeRange(_currentSelectionRange, plain.Length);
-            string selection = ExtractRangeText(plain, selectionRange);
+            string plain = PlainTextMapper.ToPlainText(html ?? string.Empty);
+            TextRange selectionRange = new(0, 0);
+            string selection = string.Empty;
 
-            if (action.RequiresSelection && string.IsNullOrWhiteSpace(selection))
+            if (action.RequiresSelection)
             {
-                return;
+                if (_currentSelectionRange is null)
+                {
+                    return;
+                }
+
+                selectionRange = NormalizeRange(_currentSelectionRange, plain.Length);
+                selection = ExtractRangeText(plain, selectionRange);
+                if (string.IsNullOrWhiteSpace(selection))
+                {
+                    return;
+                }
             }
 
             Dictionary<string, object?> parameters = new(action.Parameters)
@@ -3034,13 +3093,17 @@ namespace WriterApp.Client.Pages
                 ["instruction"] = action.Instruction
             };
 
+            int? selectionStart = action.RequiresSelection ? selectionRange.Start : null;
+            int? selectionEnd = action.RequiresSelection ? selectionRange.Start + selectionRange.Length : null;
+            string? originalText = action.RequiresSelection ? selection : null;
+
             AiActionExecuteRequestDto request = new(
                 DocumentId,
                 _activeSection.Id,
                 _activePage?.Id,
-                selectionRange.Start,
-                selectionRange.Start + selectionRange.Length,
-                selection,
+                selectionStart,
+                selectionEnd,
+                originalText,
                 plain,
                 GetOutlineTextForAi(),
                 parameters);
@@ -3073,11 +3136,18 @@ namespace WriterApp.Client.Pages
                 return;
             }
 
+            string? proposedText = response.ProposedText;
+            if (string.Equals(action.ActionKey, "propose.next-paragraph", StringComparison.OrdinalIgnoreCase))
+            {
+                proposedText = NormalizeSingleParagraph(proposedText ?? string.Empty);
+            }
+
             _pendingAiProposal = new PendingAiProposal(
                 response.ProposalId,
+                action.ActionKey,
                 action.Instruction,
                 response.OriginalText,
-                response.ProposedText,
+                proposedText,
                 response.ChangesSummary,
                 null,
                 response.CreatedUtc);
@@ -3090,6 +3160,7 @@ namespace WriterApp.Client.Pages
         {
             _pendingAiProposal = new PendingAiProposal(
                 Guid.NewGuid(),
+                string.Empty,
                 "AI",
                 null,
                 null,
@@ -3115,7 +3186,22 @@ namespace WriterApp.Client.Pages
             }
 
             string? beforeContent = _pageEditor is null ? null : await _pageEditor.GetContentAsync();
-            await InvokePageCommandAsync("replaceSelection", pending.ProposedText);
+            bool appendParagraph = string.Equals(
+                pending.ActionKey,
+                "propose.next-paragraph",
+                StringComparison.OrdinalIgnoreCase);
+            string proposedText = appendParagraph
+                ? NormalizeSingleParagraph(pending.ProposedText)
+                : pending.ProposedText;
+
+            if (appendParagraph)
+            {
+                await InvokePageCommandAsync("appendParagraph", proposedText);
+            }
+            else
+            {
+                await InvokePageCommandAsync("replaceSelection", proposedText);
+            }
             string? afterContent = _pageEditor is null ? null : await _pageEditor.GetContentAsync();
             DateTimeOffset appliedAt = DateTimeOffset.UtcNow;
             UpdateAiHistoryAppliedState(pending.ProposalId, appliedAt);
@@ -3196,6 +3282,11 @@ namespace WriterApp.Client.Pages
             if (string.Equals(actionKey, "scene.find-open-questions", StringComparison.OrdinalIgnoreCase))
             {
                 return "Find open questions";
+            }
+
+            if (string.Equals(actionKey, "propose.next-paragraph", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Propose next paragraph";
             }
 
             return "AI";
@@ -3548,12 +3639,33 @@ namespace WriterApp.Client.Pages
             return plainText.Substring(start, Math.Max(0, end - start));
         }
 
+        private static string NormalizeSingleParagraph(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return string.Empty;
+            }
+
+            string normalized = text
+                .Replace("\r\n", " ", StringComparison.Ordinal)
+                .Replace('\n', ' ')
+                .Replace('\r', ' ');
+
+            while (normalized.Contains("  ", StringComparison.Ordinal))
+            {
+                normalized = normalized.Replace("  ", " ", StringComparison.Ordinal);
+            }
+
+            return normalized.Trim();
+        }
+
         private sealed record AiActionOption(
             string ActionKey,
             string Label,
             string Instruction,
             bool RequiresSelection,
-            Dictionary<string, object?> Parameters);
+            Dictionary<string, object?> Parameters,
+            string? Description = null);
 
         private sealed record AiHistoryEntry(
             Guid Id,
@@ -3569,6 +3681,7 @@ namespace WriterApp.Client.Pages
 
         private sealed record PendingAiProposal(
             Guid ProposalId,
+            string ActionKey,
             string ActionLabel,
             string? OriginalText,
             string? ProposedText,

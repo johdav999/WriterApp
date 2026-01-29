@@ -80,6 +80,30 @@ namespace WriterApp.AI.Providers.Mock
                 return Task.FromResult(sceneResult);
             }
 
+            if (string.Equals(request.ActionId, ProposeNextParagraphAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                string text = BuildMockNextParagraph(request);
+                AiArtifact paragraphArtifact = new(
+                    Guid.NewGuid(),
+                    AiModality.Text,
+                    "text/plain",
+                    text,
+                    null,
+                    null);
+
+                AiResult paragraphResult = new(
+                    request.RequestId,
+                    new List<AiArtifact> { paragraphArtifact },
+                    new AiUsage(0, 0, TimeSpan.Zero),
+                    new Dictionary<string, object>
+                    {
+                        ["provider"] = ProviderId,
+                        ["model"] = "mock-text"
+                    });
+
+                return Task.FromResult(paragraphResult);
+            }
+
             string instruction = GetInstruction(request);
             string original = request.Context.SelectionText ?? request.Context.OriginalText ?? string.Empty;
             string tone = GetInputValue(request, "tone", "Neutral");
@@ -139,6 +163,20 @@ namespace WriterApp.AI.Providers.Mock
                 string json = BuildMockSceneCardJson(request);
                 yield return new AiStreamEvent.Started();
                 foreach (string chunk in ChunkText(json, MaxChunkSize))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    yield return new AiStreamEvent.TextDelta(chunk);
+                    await Task.Delay(DeltaDelay, ct);
+                }
+                yield return new AiStreamEvent.Completed();
+                yield break;
+            }
+
+            if (string.Equals(request.ActionId, ProposeNextParagraphAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                string text = BuildMockNextParagraph(request);
+                yield return new AiStreamEvent.Started();
+                foreach (string chunk in ChunkText(text, MaxChunkSize))
                 {
                     ct.ThrowIfCancellationRequested();
                     yield return new AiStreamEvent.TextDelta(chunk);
@@ -274,6 +312,28 @@ namespace WriterApp.AI.Providers.Mock
             };
 
             return JsonSerializer.Serialize(card, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        }
+
+        private static string BuildMockNextParagraph(AiRequest request)
+        {
+            string purpose = GetInputValue(request, "narrative_purpose", "advance the scene");
+            string beat = GetInputValue(request, "emotional_beat", "steady tension");
+            string events = GetInputValue(request, "key_events", "a pivotal moment");
+            string questions = GetInputValue(request, "open_questions", "an unresolved thread");
+
+            return string.Join(" ", new[]
+            {
+                "The story leans forward without breaking its rhythm.",
+                $"It keeps its focus on {purpose}.",
+                $"The mood holds to {beat} even as details sharpen.",
+                $"A new beat hints at {events} without spelling it out.",
+                "The point of view stays anchored and grounded in the moment.",
+                "Sensory detail threads through the action to keep the scene tangible.",
+                "Small decisions stack into a larger shift the reader can feel.",
+                "The pacing stays natural, neither rushed nor stalled.",
+                $"Subtext keeps {questions} alive in the background.",
+                "The paragraph closes on a forward motion that invites the next line."
+            });
         }
 
         private static string TrimToWords(string text, int maxWords)

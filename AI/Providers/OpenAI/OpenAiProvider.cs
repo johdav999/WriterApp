@@ -26,6 +26,7 @@ namespace WriterApp.AI.Providers.OpenAI
         private const string ActionSceneSuggest = "scene.suggest";
         private const string ActionSceneRefine = "scene.refine";
         private const string ActionSceneFindOpenQuestions = "scene.find-open-questions";
+        private const string ActionProposeNextParagraph = "propose.next-paragraph";
         private const int ImageTokenCost = 1000;
 
         private readonly IHttpClientFactory _httpClientFactory;
@@ -169,6 +170,31 @@ namespace WriterApp.AI.Providers.OpenAI
                     || string.Equals(request.ActionId, ActionSceneFindOpenQuestions, StringComparison.Ordinal))
                 {
                     (string outputText, int inputTokens, int outputTokens) = await ExecuteSceneCardAsync(request, apiKey, ct);
+                    AiArtifact artifact = new(
+                        Guid.NewGuid(),
+                        AiModality.Text,
+                        "text/plain",
+                        outputText,
+                        null,
+                        null);
+
+                    AiUsage usage = new(inputTokens, outputTokens, stopwatch.Elapsed);
+                    LogUsage(request, _options.TextModel, outputTokens, stopwatch.Elapsed);
+
+                    return new AiResult(
+                        request.RequestId,
+                        new List<AiArtifact> { artifact },
+                        usage,
+                        new Dictionary<string, object>
+                        {
+                            ["provider"] = ProviderIdValue,
+                            ["model"] = _options.TextModel
+                        });
+                }
+
+                if (string.Equals(request.ActionId, ActionProposeNextParagraph, StringComparison.Ordinal))
+                {
+                    (string outputText, int inputTokens, int outputTokens) = await ExecuteNextParagraphAsync(request, apiKey, ct);
                     AiArtifact artifact = new(
                         Guid.NewGuid(),
                         AiModality.Text,
@@ -353,6 +379,21 @@ namespace WriterApp.AI.Providers.OpenAI
             CancellationToken ct)
         {
             HttpRequestMessage requestMessage = BuildSceneCardRequest(request, apiKey);
+            HttpClient client = _httpClientFactory.CreateClient(nameof(OpenAiProvider));
+
+            using HttpResponseMessage response = await client.SendAsync(requestMessage, ct);
+            await EnsureSuccessAsync(response, ct);
+
+            string json = await response.Content.ReadAsStringAsync(ct);
+            return ExtractResponseTextAndUsage(json);
+        }
+
+        private async Task<(string OutputText, int InputTokens, int OutputTokens)> ExecuteNextParagraphAsync(
+            AiRequest request,
+            string apiKey,
+            CancellationToken ct)
+        {
+            HttpRequestMessage requestMessage = BuildNextParagraphRequest(request, apiKey);
             HttpClient client = _httpClientFactory.CreateClient(nameof(OpenAiProvider));
 
             using HttpResponseMessage response = await client.SendAsync(requestMessage, ct);
@@ -655,6 +696,91 @@ namespace WriterApp.AI.Providers.OpenAI
                         ["type"] = "json_object"
                     }
                 }
+            };
+
+            HttpRequestMessage requestMessage = new(HttpMethod.Post, BuildUri(ResponsesEndpoint))
+            {
+                Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
+            };
+
+            ApplyAuthHeaders(requestMessage, apiKey);
+            return requestMessage;
+        }
+
+        private HttpRequestMessage BuildNextParagraphRequest(AiRequest request, string apiKey)
+        {
+            string instruction = GetInputValue(request, "instruction", "Propose the next paragraph for the current section.");
+            string sectionTitle = GetInputValue(request, "section_title", string.Empty);
+            string recentContext = GetInputValue(request, "recent_context", string.Empty);
+            string narrativePurpose = GetInputValue(request, "narrative_purpose", string.Empty);
+            string emotionalBeat = GetInputValue(request, "emotional_beat", string.Empty);
+            string keyEvents = GetInputValue(request, "key_events", string.Empty);
+            string openQuestions = GetInputValue(request, "open_questions", string.Empty);
+            string language = string.IsNullOrWhiteSpace(request.Context.LanguageHint) ? "en" : request.Context.LanguageHint;
+
+            string systemPrompt = $"You are a writing assistant. Language: {language}. Output one paragraph of prose only. "
+                                  + "Use at least 10 sentences. No headings, lists, or markdown. "
+                                  + "Maintain the section's voice, POV, tense, and style. "
+                                  + "Continue naturally from the provided context. Avoid meta language.";
+
+            StringBuilder userPrompt = new();
+            userPrompt.AppendLine("Task: Write the next paragraph of the current section.");
+            userPrompt.AppendLine("Rules:");
+            userPrompt.AppendLine("- Output a single paragraph only (no line breaks).");
+            userPrompt.AppendLine("- Minimum 10 sentences.");
+            userPrompt.AppendLine("- No headings, lists, or markdown.");
+            userPrompt.AppendLine("- Stay consistent with voice, POV, tense, and style.");
+            userPrompt.AppendLine("- Use the scene metadata and continue from the recent context.");
+            userPrompt.AppendLine("- Avoid meta language (no references to being an AI).");
+
+            if (!string.IsNullOrWhiteSpace(sectionTitle))
+            {
+                userPrompt.AppendLine($"Section title: {sectionTitle}");
+            }
+
+            userPrompt.AppendLine("Scene metadata:");
+            userPrompt.AppendLine($"Narrative purpose: {narrativePurpose}");
+            userPrompt.AppendLine($"Emotional beat: {emotionalBeat}");
+            userPrompt.AppendLine($"Key events: {keyEvents}");
+            userPrompt.AppendLine($"Open questions: {openQuestions}");
+
+            if (!string.IsNullOrWhiteSpace(recentContext))
+            {
+                userPrompt.AppendLine("Recent context:");
+                userPrompt.AppendLine(recentContext);
+            }
+
+            Dictionary<string, object> payload = new()
+            {
+                ["model"] = _options.TextModel,
+                ["input"] = new object[]
+                {
+                    new Dictionary<string, object>
+                    {
+                        ["role"] = "system",
+                        ["content"] = new object[]
+                        {
+                            new Dictionary<string, object>
+                            {
+                                ["type"] = "input_text",
+                                ["text"] = systemPrompt
+                            }
+                        }
+                    },
+                    new Dictionary<string, object>
+                    {
+                        ["role"] = "user",
+                        ["content"] = new object[]
+                        {
+                            new Dictionary<string, object>
+                            {
+                                ["type"] = "input_text",
+                                ["text"] = $"{instruction}\n\n{userPrompt}"
+                            }
+                        }
+                    }
+                },
+                ["max_output_tokens"] = _options.MaxOutputTokens
             };
 
             HttpRequestMessage requestMessage = new(HttpMethod.Post, BuildUri(ResponsesEndpoint))
