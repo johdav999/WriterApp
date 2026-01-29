@@ -54,7 +54,8 @@ else
                                     @ondragstart="() => OnSectionDragStart(item.Id)"
                                     @ondragstart:stopPropagation="true"
                                     disabled="@_isReorderingSections"
-                                    aria-label="Reorder section">
+                                    aria-label="Reorder section"
+                                    title='@GetTooltip("Drag to reorder sections.")'>
                                 ⋮⋮
                             </button>
                             @if (_renamingSectionId == item.Id)
@@ -76,7 +77,8 @@ else
                             {
                                 <button type="button"
                                         class="section-nav-item @(item.Id == _activeSection.Id ? "is-active" : string.Empty)"
-                                        @onclick="() => OnSectionSelected(item.Id)">
+                                        @onclick="() => OnSectionSelected(item.Id)"
+                                        title='@GetTooltip("Select this section to edit.")'>
                                     <span class="section-title section-title-editable"
                                           @onclick="() => BeginSectionRename(item.Id)"
                                           @onclick:stopPropagation="true"
@@ -88,6 +90,7 @@ else
                                     <button type="button"
                                             class="section-menu-toggle"
                                             aria-label="Section actions"
+                                            title='@GetTooltip("Section actions: rename, duplicate, or delete.")'
                                             @onclick="() => ToggleSectionMenu(item.Id)"
                                             @onclick:stopPropagation="true"
                                             @onclick:preventDefault="true">
@@ -118,35 +121,35 @@ else
                         <div class="editor-section-label">Section</div>
                         <div class="editor-section-title">@_activeSection.Title</div>
                     </div>
-                    <button type="button" class="panel-toggle" @onclick="ToggleFocusMode">
+                    <button type="button" class="panel-toggle" title='@GetTooltip("Hide panels and focus on writing.")' @onclick="ToggleFocusMode">
                         @(LayoutStateService.State.FocusMode ? "Exit focus" : "Focus mode")
                     </button>
-                    <button type="button" class="panel-toggle" @onclick="ToggleContextPanel">
+                    <button type="button" class="panel-toggle" title='@GetTooltip("Toggle the right-hand panel.")' @onclick="ToggleContextPanel">
                         @(IsContextPanelCollapsed() ? "Show panel" : "Hide panel")
                     </button>
                 </div>
 
                 <div class="editor-toolbar" role="toolbar" aria-label="Editor formatting">
                     <div class="editor-toolbar-group" aria-label="Essentials" data-compact="true">
-                        <button type="button" class="@GetActiveClass(_formattingState.IsBold)" disabled="@(!_formattingState.CanBold)" @onclick="OnBoldRequested">Bold</button>
-                        <button type="button" class="@GetActiveClass(_formattingState.IsItalic)" disabled="@(!_formattingState.CanItalic)" @onclick="OnItalicRequested">Italic</button>
-                        <select class="editor-toolbar-select" value="@GetBlockTypeValue()" @onchange="OnBlockTypeChanged" disabled="@(!_formattingState.CanApplyHeading)">
+                        <button type="button" class="@GetActiveClass(_formattingState.IsBold)" disabled="@(!_formattingState.CanBold)" title='@GetTooltip("Make selected text bold.")' @onclick="OnBoldRequested">Bold</button>
+                        <button type="button" class="@GetActiveClass(_formattingState.IsItalic)" disabled="@(!_formattingState.CanItalic)" title='@GetTooltip("Italicize selected text.")' @onclick="OnItalicRequested">Italic</button>
+                        <select class="editor-toolbar-select" value="@GetBlockTypeValue()" title='@GetTooltip("Change text style.")' @onchange="OnBlockTypeChanged" disabled="@(!_formattingState.CanApplyHeading)">
                             <option value="paragraph">Paragraph</option>
                             <option value="heading:1">Heading 1</option>
                             <option value="heading:2">Heading 2</option>
                         </select>
-                        <button type="button" disabled="@(!_formattingState.CanToggleList)" @onclick="OnBulletListRequested">Bulleted list</button>
-                        <button type="button" disabled="@(!_formattingState.CanToggleList)" @onclick="OnOrderedListRequested">Numbered list</button>
-                        <button type="button" disabled="@(!_formattingState.CanBlockquote)" @onclick="OnBlockquoteRequested">Blockquote</button>
-                        <button type="button" class="@GetActiveClass(_formattingState.IsLink)" @onclick="OnLinkRequested">Link</button>
+                        <button type="button" disabled="@(!_formattingState.CanToggleList)" title='@GetTooltip("Create a bulleted list.")' @onclick="OnBulletListRequested">Bulleted list</button>
+                        <button type="button" disabled="@(!_formattingState.CanToggleList)" title='@GetTooltip("Create a numbered list.")' @onclick="OnOrderedListRequested">Numbered list</button>
+                        <button type="button" disabled="@(!_formattingState.CanBlockquote)" title='@GetTooltip("Format text as a quotation.")' @onclick="OnBlockquoteRequested">Blockquote</button>
+                        <button type="button" class="@GetActiveClass(_formattingState.IsLink)" title='@GetTooltip("Insert or edit a link.")' @onclick="OnLinkRequested">Link</button>
                     </div>
                     <div class="editor-toolbar-group" aria-label="Zoom">
-                        <button type="button" @onclick="OnZoomOutRequested">A-</button>
+                        <button type="button" title='@GetTooltip("Decrease text size.")' @onclick="OnZoomOutRequested">A-</button>
                         <span class="editor-zoom-label">@GetZoomLabel()</span>
-                        <button type="button" @onclick="OnZoomInRequested">A+</button>
+                        <button type="button" title='@GetTooltip("Increase text size.")' @onclick="OnZoomInRequested">A+</button>
                     </div>
                     <div class="editor-toolbar-group editor-toolbar-overflow" aria-label="More">
-                        <button type="button" @onclick="ToggleToolbarOverflow">...</button>
+                        <button type="button" title='@GetTooltip("More formatting options.")' @onclick="ToggleToolbarOverflow">...</button>
                         @if (_isToolbarOverflowOpen)
                         {
                             <div class="editor-toolbar-overflow-panel">
@@ -178,10 +181,10 @@ else
                     </div>
                 </div>
                 <div class="editor-actions">
-                    <button type="button" @onclick="OnUndoRequested">Undo</button>
-                    <button type="button" @onclick="OnRedoRequested">Redo</button>
+                    <button type="button" title='@GetTooltip("Undo last change.")' @onclick="OnUndoRequested">Undo</button>
+                    <button type="button" title='@GetTooltip("Redo last change.")' @onclick="OnRedoRequested">Redo</button>
                     <div class="document-menu">
-                        <button type="button" @onclick="ToggleDocumentMenu">Document</button>
+                        <button type="button" title='@GetTooltip("Document-level actions.")' @onclick="ToggleDocumentMenu">Document</button>
                         @if (_isDocumentMenuOpen)
                         {
                             <div class="document-menu-panel">
@@ -339,18 +342,28 @@ else
                         <button type="button"
                                 class="context-tab @GetContextTabClass(ContextTab.Notes)"
                                 aria-selected="@(_activeContextTab == ContextTab.Notes)"
+                                title='@GetTooltip("Personal notes for this section.")'
                                 @onclick="() => SetContextTab(ContextTab.Notes)">
                             Notes
                         </button>
                         <button type="button"
+                                class="context-tab @GetContextTabClass(ContextTab.Scene)"
+                                aria-selected="@(_activeContextTab == ContextTab.Scene)"
+                                title='@GetTooltip("Structure and plan this scene.")'
+                                @onclick="() => SetContextTab(ContextTab.Scene)">
+                            Scene
+                        </button>
+                        <button type="button"
                                 class="context-tab @GetContextTabClass(ContextTab.Outline)"
                                 aria-selected="@(_activeContextTab == ContextTab.Outline)"
+                                title='@GetTooltip("View and edit the document outline.")'
                                 @onclick="() => SetContextTab(ContextTab.Outline)">
                             Outline
                         </button>
                         <button type="button"
                                 class="context-tab @GetContextTabClass(ContextTab.Ai)"
                                 aria-selected="@(_activeContextTab == ContextTab.Ai)"
+                                title='@GetTooltip("AI tools for writing and planning.")'
                                 @onclick="() => SetContextTab(ContextTab.Ai)">
                             AI
                         </button>
@@ -372,24 +385,242 @@ else
                             }
                         </div>
                     }
+                    else if (_activeContextTab == ContextTab.Scene)
+                    {
+                        <div class="drawer-panel scene-card-panel">
+                            <div class="drawer-panel-title">Scene card</div>
+                            <div class="drawer-panel-subtitle">Capture metadata for this section.</div>
+                            <div class="scene-card-actions">
+                                <button type="button"
+                                        class="btn btn-secondary"
+                                        disabled="@_sceneAiInFlight"
+                                        title='@GetTooltip("Generate scene details from the current text.")'
+                                        @onclick='() => RunSceneAiAsync("scene.suggest", "Suggest scene card fields based on the section text.")'>
+                                    Suggest from text
+                                </button>
+                                <button type="button"
+                                        class="btn btn-secondary"
+                                        disabled="@_sceneAiInFlight"
+                                        title='@GetTooltip("Improve or clarify this scene card.")'
+                                        @onclick='() => RunSceneAiAsync("scene.refine", "Refine the scene card fields while keeping intent.")'>
+                                    Refine
+                                </button>
+                                <button type="button"
+                                        class="btn btn-secondary"
+                                        disabled="@_sceneAiInFlight"
+                                        title='@GetTooltip("Identify unresolved story questions.")'
+                                        @onclick='() => RunSceneAiAsync("scene.find-open-questions", "Find open questions in this section.")'>
+                                    Find open questions
+                                </button>
+                            </div>
+                            @if (!string.IsNullOrWhiteSpace(_sceneAiError))
+                            {
+                                <div class="drawer-empty">@_sceneAiError</div>
+                            }
+                            @if (_sceneAiProposal is not null)
+                            {
+                                <div class="scene-card-preview">
+                                    <div class="scene-card-preview-header">AI suggestion</div>
+                                    @if (!string.IsNullOrWhiteSpace(_sceneAiExplanation))
+                                    {
+                                        <div class="scene-card-preview-explanation">@_sceneAiExplanation</div>
+                                    }
+                                    <div class="scene-card-preview-grid">
+                                        <div class="scene-card-preview-col">
+                                            <div class="scene-card-preview-label">Current</div>
+                                            <div class="scene-card-preview-field">
+                                                <strong>Narrative purpose</strong>
+                                                <div>@_sceneNarrativePurpose</div>
+                                            </div>
+                                            <div class="scene-card-preview-field">
+                                                <strong>Emotional beat</strong>
+                                                <div>@_sceneEmotionalBeat</div>
+                                            </div>
+                                            <div class="scene-card-preview-field">
+                                                <strong>Key events</strong>
+                                                <div>@_sceneKeyEvents</div>
+                                            </div>
+                                            <div class="scene-card-preview-field">
+                                                <strong>Open questions</strong>
+                                                <div>@_sceneOpenQuestions</div>
+                                            </div>
+                                        </div>
+                                        <div class="scene-card-preview-col">
+                                            <div class="scene-card-preview-label">Proposed</div>
+                                            <div class="scene-card-preview-field">
+                                                <strong>Narrative purpose</strong>
+                                                <div>@_sceneAiProposal.NarrativePurpose</div>
+                                            </div>
+                                            <div class="scene-card-preview-field">
+                                                <strong>Emotional beat</strong>
+                                                <div>@_sceneAiProposal.EmotionalBeat</div>
+                                            </div>
+                                            <div class="scene-card-preview-field">
+                                                <strong>Key events</strong>
+                                                <div>@_sceneAiProposal.KeyEvents</div>
+                                            </div>
+                                            <div class="scene-card-preview-field">
+                                                <strong>Open questions</strong>
+                                                <div>@_sceneAiProposal.OpenQuestions</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="scene-card-preview-actions">
+                                        <button type="button" class="btn btn-primary" @onclick="ApplySceneAiProposalAsync">Apply</button>
+                                        <button type="button" class="btn btn-ghost" @onclick="DiscardSceneAiProposal">Discard</button>
+                                    </div>
+                                </div>
+                            }
+                            <label class="scene-card-label" for="scene-narrative-purpose" title='@GetTooltip("Why this scene exists in the story.")'>Narrative purpose</label>
+                            <textarea id="scene-narrative-purpose"
+                                      class="notes-input scene-card-input"
+                                      value="@_sceneNarrativePurpose"
+                                      @oninput="OnSceneNarrativePurposeInput"
+                                      title='@GetTooltip("Why this scene exists in the story.")'
+                                      placeholder="Why this scene exists in the story..."></textarea>
+                            <label class="scene-card-label" for="scene-emotional-beat" title='@GetTooltip("How the emotion changes in this scene.")'>Emotional beat</label>
+                            <textarea id="scene-emotional-beat"
+                                      class="notes-input scene-card-input"
+                                      value="@_sceneEmotionalBeat"
+                                      @oninput="OnSceneEmotionalBeatInput"
+                                      title='@GetTooltip("How the emotion changes in this scene.")'
+                                      placeholder="How the emotional tone shifts..."></textarea>
+                            <label class="scene-card-label" for="scene-key-events" title='@GetTooltip("The main things that happen.")'>Key events</label>
+                            <textarea id="scene-key-events"
+                                      class="notes-input scene-card-input"
+                                      value="@_sceneKeyEvents"
+                                      @oninput="OnSceneKeyEventsInput"
+                                      title='@GetTooltip("The main things that happen.")'
+                                      placeholder="- Bullet your key events..."></textarea>
+                            <label class="scene-card-label" for="scene-open-questions" title='@GetTooltip("Loose ends to resolve later.")'>Open questions</label>
+                            <textarea id="scene-open-questions"
+                                      class="notes-input scene-card-input"
+                                      value="@_sceneOpenQuestions"
+                                      @oninput="OnSceneOpenQuestionsInput"
+                                      title='@GetTooltip("Loose ends to resolve later.")'
+                                      placeholder="Loose ends or questions to answer later..."></textarea>
+                            <button type="button" title='@GetTooltip("Save scene metadata.")' @onclick="OnSceneCardSave">Save scene card</button>
+                            @if (!string.IsNullOrWhiteSpace(_sceneStatus))
+                            {
+                                <div class="drawer-empty">@_sceneStatus</div>
+                            }
+                        </div>
+                    }
                     else if (_activeContextTab == ContextTab.Outline)
                     {
-                        <div class="drawer-panel">
-                            <div class="drawer-panel-title">Outline</div>
-                            <ul class="outline-list">
-                                @foreach (SectionDto section in _sections)
+                        <div class="drawer-panel outline-panel">
+                            <div class="outline-panel-header">
+                                <div class="outline-panel-heading">
+                                    <div class="drawer-panel-title">Outline</div>
+                                    <div class="outline-panel-subtitle">Organize chapters, scenes, and beats.</div>
+                                    <div class="outline-panel-note">
+                                        Connect outline items to sections for navigation and Apply Outline operations.
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="outline-tree">
+                                @if (_outlineNodes.Count == 0)
                                 {
-                                    <li class="outline-section">
-                                        <div class="outline-section-title">@(section.Title)</div>
-                                        <ul class="outline-pages">
-                                            @foreach (PageDto page in GetPages(section.Id))
-                                            {
-                                                <li class="outline-page">@(page.Title)</li>
-                                            }
-                                        </ul>
-                                    </li>
+                                    <div class="drawer-empty">No outline nodes yet.</div>
                                 }
-                            </ul>
+                                else
+                                {
+                                    <ul class="outline-tree-list">
+                                        @foreach (DocumentOutlineNodeDto node in GetOutlineChildren(null))
+                                        {
+                                            @RenderOutlineNode(node, 0)
+                                        }
+                                    </ul>
+                                }
+                            </div>
+                            <div class="outline-controls">
+                                <div class="outline-action-bar">
+                                    <div class="outline-action-bar__hint">
+                                        @if (SelectedOutlineNode is null)
+                                        {
+                                            <span>Select an outline item to edit.</span>
+                                        }
+                                    </div>
+                                    <div class="outline-action-bar__buttons">
+                                        <button type="button"
+                                                class="outline-btn outline-btn--ghost"
+                                                disabled="@(SelectedOutlineNode is null)"
+                                                @onclick="() => AddSiblingNodeAsync(SelectedOutlineNode!.Id)">
+                                            Add sibling
+                                        </button>
+                                        <button type="button"
+                                                class="outline-btn outline-btn--ghost"
+                                                disabled="@(SelectedOutlineNode is null)"
+                                                @onclick="() => AddChildNodeAsync(SelectedOutlineNode!.Id)">
+                                            Add child
+                                        </button>
+                                        <button type="button"
+                                                class="outline-btn outline-btn--ghost"
+                                                disabled="@(SelectedOutlineNode is null)"
+                                                @onclick="() => StartRenameNode(SelectedOutlineNode!.Id)">
+                                            Rename
+                                        </button>
+                                        <button type="button"
+                                                class="outline-btn outline-btn--ghost outline-btn--danger"
+                                                disabled="@(SelectedOutlineNode is null)"
+                                                @onclick="() => DeleteNodeAsync(SelectedOutlineNode!.Id)">
+                                            Delete
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="outline-apply-options">
+                                    <label><input type="checkbox" @bind="_outlineApplyCreateMissing" /> Create missing sections</label>
+                                    <label><input type="checkbox" @bind="_outlineApplyReorder" /> Reorder sections</label>
+                                    <label><input type="checkbox" @bind="_outlineApplyRename" /> Rename sections to match outline</label>
+                                    <label><input type="checkbox" @bind="_outlineApplyLinkNodes" /> Link nodes to sections</label>
+                                </div>
+                                <div class="outline-actions">
+                                    <button type="button"
+                                            class="outline-btn outline-btn--ghost"
+                                            @onclick="AddRootNodeAsync">
+                                        Add top-level
+                                    </button>
+                                    <button type="button"
+                                            class="outline-btn outline-btn--secondary"
+                                            @onclick="GenerateOutlineAsync"
+                                            disabled="@_outlineGenerateInFlight">
+                                        @(_outlineGenerateInFlight ? "Generating..." : "Generate from content")
+                                    </button>
+                                    <button type="button"
+                                            class="outline-btn outline-btn--primary"
+                                            @onclick="ApplyOutlineToSectionsAsync"
+                                        disabled="@_outlineApplyInFlight">
+                                        @(_outlineApplyInFlight ? "Applying..." : "Apply outline to sections")
+                                    </button>
+                                </div>
+                            </div>
+                            @if (_outlineProposalPreview is not null)
+                            {
+                                <div class="outline-proposal">
+                                    <div class="outline-proposal-title">Proposed outline</div>
+                                    <pre class="outline-proposal-preview">@_outlineProposalPreview</pre>
+                                    @if (_outlineProposalTruncated)
+                                    {
+                                        <div class="outline-proposal-note">Some section content was truncated for generation.</div>
+                                    }
+                                    <div class="outline-proposal-actions">
+                                        <button type="button" @onclick="ApplyOutlineProposalAsync">Apply outline</button>
+                                        <button type="button" @onclick="DiscardOutlineProposal">Discard</button>
+                                    </div>
+                                </div>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(_outlineGenerateError))
+                            {
+                                <div class="outline-status outline-status--error">@_outlineGenerateError</div>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(_outlineApplyError))
+                            {
+                                <div class="outline-status outline-status--error">@_outlineApplyError</div>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(_outlineStatus))
+                            {
+                                <div class="outline-status">@_outlineStatus</div>
+                            }
                         </div>
                     }
                     else if (_activeContextTab == ContextTab.Ai)

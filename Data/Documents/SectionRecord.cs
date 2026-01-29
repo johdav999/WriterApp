@@ -22,5 +22,7 @@ namespace WriterApp.Data.Documents
         public DateTimeOffset UpdatedAt { get; set; }
 
         public List<PageRecord> Pages { get; set; } = new();
+
+        public SectionSceneCardRecord? SceneCard { get; set; }
     }
 }

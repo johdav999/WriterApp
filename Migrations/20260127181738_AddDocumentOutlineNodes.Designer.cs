@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using WriterApp.Data;
 
@@ -10,9 +11,11 @@ using WriterApp.Data;
 namespace BlazorApp.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260127181738_AddDocumentOutlineNodes")]
+    partial class AddDocumentOutlineNodes
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.4");
@@ -280,31 +283,6 @@ namespace BlazorApp.Migrations
                     b.HasIndex("DocumentId", "OrderIndex");
 
                     b.ToTable("Sections");
-                });
-
-            modelBuilder.Entity("WriterApp.Data.Documents.SectionSceneCardRecord", b =>
-                {
-                    b.Property<Guid>("SectionId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("EmotionalBeat")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("KeyEvents")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("NarrativePurpose")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("OpenQuestions")
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTimeOffset>("UpdatedUtc")
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("SectionId");
-
-                    b.ToTable("SectionSceneCards");
                 });
 
             modelBuilder.Entity("WriterApp.Data.Subscriptions.Plan", b =>
@@ -659,17 +637,6 @@ namespace BlazorApp.Migrations
                     b.Navigation("Document");
                 });
 
-            modelBuilder.Entity("WriterApp.Data.Documents.SectionSceneCardRecord", b =>
-                {
-                    b.HasOne("WriterApp.Data.Documents.SectionRecord", "Section")
-                        .WithOne("SceneCard")
-                        .HasForeignKey("WriterApp.Data.Documents.SectionSceneCardRecord", "SectionId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Section");
-                });
-
             modelBuilder.Entity("WriterApp.Data.Subscriptions.PlanEntitlement", b =>
                 {
                     b.HasOne("WriterApp.Data.Subscriptions.Plan", "Plan")
@@ -707,8 +674,6 @@ namespace BlazorApp.Migrations
             modelBuilder.Entity("WriterApp.Data.Documents.SectionRecord", b =>
                 {
                     b.Navigation("Pages");
-
-                    b.Navigation("SceneCard");
                 });
 
             modelBuilder.Entity("WriterApp.Data.Subscriptions.Plan", b =>

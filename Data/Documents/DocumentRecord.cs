@@ -16,5 +16,7 @@ namespace WriterApp.Data.Documents
         public DateTimeOffset UpdatedAt { get; set; }
 
         public List<SectionRecord> Sections { get; set; } = new();
+
+        public List<DocumentOutlineNodeRecord> OutlineNodes { get; set; } = new();
     }
 }

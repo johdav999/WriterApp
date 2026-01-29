@@ -181,6 +181,10 @@ builder.Services.AddSingleton<IAiRouter, DefaultAiRouter>();
 builder.Services.AddSingleton<IAiAction, RewriteSelectionAction>();
 builder.Services.AddSingleton<IAiAction, GenerateCoverImageAction>();
 builder.Services.AddSingleton<IAiAction, StoryCoachAction>();
+builder.Services.AddSingleton<IAiAction, GenerateOutlineAction>();
+builder.Services.AddSingleton<IAiAction, SceneSuggestAction>();
+builder.Services.AddSingleton<IAiAction, SceneRefineAction>();
+builder.Services.AddSingleton<IAiAction, SceneFindOpenQuestionsAction>();
 builder.Services.AddSingleton<IAiActionExecutor, AiActionExecutor>();
 builder.Services.AddSingleton<IAiProposalApplier, DefaultProposalApplier>();
 builder.Services.AddScoped<IAiOrchestrator, AiOrchestrator>();
@@ -237,6 +241,17 @@ using (IServiceScope scope = app.Services.CreateScope())
 
     ApplySqlitePragmas(dbContext, logger);
 }
+
+
+if (app.Environment.IsDevelopment())
+{
+    IServiceScope scope = app.Services.CreateScope();
+       var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
+
+    app.UseWebAssemblyDebugging();
+    logger.LogInformation("Applied Web assembly loggin.");
+}
+
 
 // Log registered auth schemes
 {
