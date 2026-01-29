@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using WriterApp.Data.AI;
 using WriterApp.Data.Documents;
+using WriterApp.Data.Exporting;
 using WriterApp.Data.Subscriptions;
 using WriterApp.Data.Usage;
 
@@ -28,6 +29,7 @@ namespace WriterApp.Data
         public DbSet<DocumentOutlineRecord> DocumentOutlines => Set<DocumentOutlineRecord>();
         public DbSet<AiActionHistoryEntryRecord> AiActionHistoryEntries => Set<AiActionHistoryEntryRecord>();
         public DbSet<AiActionAppliedEventRecord> AiActionAppliedEvents => Set<AiActionAppliedEventRecord>();
+        public DbSet<ExportTemplate> ExportTemplates => Set<ExportTemplate>();
 
         protected override void OnModelCreating(ModelBuilder builder)
         {
@@ -213,6 +215,18 @@ namespace WriterApp.Data
                     .WithMany()
                     .HasForeignKey(applied => applied.HistoryEntryId)
                     .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<ExportTemplate>(entity =>
+            {
+                entity.HasKey(template => template.Id);
+                entity.Property(template => template.OwnerUserId).IsRequired();
+                entity.Property(template => template.Name).IsRequired();
+                entity.Property(template => template.FontFamily).IsRequired();
+                entity.Property(template => template.CreatedAt).IsRequired();
+                entity.Property(template => template.UpdatedAt).IsRequired();
+                entity.HasIndex(template => template.OwnerUserId);
+                entity.HasIndex(template => new { template.OwnerUserId, template.PresetKey });
             });
 
             SeedSubscriptionData(builder);

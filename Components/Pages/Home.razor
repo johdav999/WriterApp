@@ -4322,7 +4322,15 @@
                 return;
             }
 
-            ExportResult result = await ExportService.ExportAsync(saved, kind, format, new ExportOptions());
+            string userId = await ResolveCurrentUserIdAsync();
+            ExportResult result = await ExportService.ExportAsync(
+                saved,
+                kind,
+                format,
+                new ExportOptions(),
+                userId,
+                null,
+                CancellationToken.None);
             await DownloadExportAsync(result);
         });
     }
@@ -4341,7 +4349,14 @@
                 return;
             }
 
-            string bodyHtml = await ExportService.ExportHtmlBodyAsync(saved, ExportKind.Document, new ExportOptions());
+            string userId = await ResolveCurrentUserIdAsync();
+            string bodyHtml = await ExportService.ExportHtmlBodyAsync(
+                saved,
+                ExportKind.Document,
+                new ExportOptions(),
+                userId,
+                null,
+                CancellationToken.None);
             string printShell = BuildPrintShell(bodyHtml, saved.Metadata.Title);
             await PrintExportAsync(printShell);
         });
@@ -4353,6 +4368,12 @@
         string normalizedBody = ExportHelpers.NormalizeLineEndings(bodyHtml ?? string.Empty);
 
         return $"<!DOCTYPE html>\n<html>\n<head>\n  <title>{safeTitle}</title>\n  <link rel=\"stylesheet\" href=\"/css/print.css\">\n</head>\n<body class=\"print\">\n{normalizedBody}\n</body>\n</html>\n";
+    }
+
+    private async Task<string> ResolveCurrentUserIdAsync()
+    {
+        AuthenticationState authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        return UserIdResolver.ResolveUserId(authState.User);
     }
 
 

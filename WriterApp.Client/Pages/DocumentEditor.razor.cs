@@ -15,6 +15,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.JSInterop;
 using WriterApp.Application.AI;
 using WriterApp.Application.Documents;
+using WriterApp.Application.Exporting;
 using WriterApp.Client.Diagnostics;
 using WriterApp.Client.State;
 using WriterApp.Application.Usage;
@@ -94,6 +95,21 @@ namespace WriterApp.Client.Pages
         private ElementReference _contextMenuRef;
         private bool _isToolbarOverflowOpen;
         private bool _isDocumentMenuOpen;
+        private bool _isExportDialogOpen;
+        private bool _isTemplateManagerOpen;
+        private bool _isTemplateEditorOpen;
+        private bool _isTemplatesLoading;
+        private bool _isTemplateSaving;
+        private bool _isTemplateDeleting;
+        private string? _templateLoadError;
+        private string? _templateActionError;
+        private readonly List<ExportTemplateDto> _exportTemplates = new();
+        private Guid? _selectedTemplateId;
+        private string _exportFormatSelection = "html";
+        private string _createPresetKey = "manuscript";
+        private Guid? _editingTemplateId;
+        private ExportTemplateEditorModel? _templateEditor;
+        private string _templateEditorPagePreset = "custom";
         private SectionEditor.EditorSelectionRange? _currentSelectionRange;
         private readonly List<AiActionOption> _aiActions = new();
         private readonly List<AiActionOption> _aiActionPresets = new()
@@ -2467,8 +2483,16 @@ namespace WriterApp.Client.Pages
             _isDocumentMenuOpen = false;
             try
             {
+                string templateQuery = string.Empty;
+                if (string.Equals(kind, "document", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(format, "html", StringComparison.OrdinalIgnoreCase)
+                    && _selectedTemplateId.HasValue)
+                {
+                    templateQuery = $"&templateId={_selectedTemplateId.Value}";
+                }
+
                 using HttpResponseMessage response = await Http.GetAsync(
-                    $"api/documents/{DocumentId}/export?kind={kind}&format={format}");
+                    $"api/documents/{DocumentId}/export?kind={kind}&format={format}{templateQuery}");
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -2495,8 +2519,11 @@ namespace WriterApp.Client.Pages
             _isDocumentMenuOpen = false;
             try
             {
+                string templateQuery = _selectedTemplateId.HasValue
+                    ? $"&templateId={_selectedTemplateId.Value}"
+                    : string.Empty;
                 ExportPrintPayload? payload = await Http.GetFromJsonAsync<ExportPrintPayload>(
-                    $"api/documents/{DocumentId}/export/print?kind=document");
+                    $"api/documents/{DocumentId}/export/print?kind=document{templateQuery}");
                 if (payload is null || string.IsNullOrWhiteSpace(payload.Html))
                 {
                     return;
@@ -2508,6 +2535,442 @@ namespace WriterApp.Client.Pages
             {
                 Logger.LogError(ex, "PDF export failed.");
             }
+        }
+
+        private async Task OnExportDialogOpenAsync()
+        {
+            _isDocumentMenuOpen = false;
+            _isExportDialogOpen = true;
+            _templateActionError = null;
+            await EnsureTemplatesLoadedAsync();
+        }
+
+        private void CloseExportDialog()
+        {
+            _isExportDialogOpen = false;
+            _templateActionError = null;
+        }
+
+        private async Task OpenTemplateManagerAsync()
+        {
+            _isExportDialogOpen = false;
+            _isTemplateManagerOpen = true;
+            _templateActionError = null;
+            await EnsureTemplatesLoadedAsync();
+        }
+
+        private void CloseTemplateManager()
+        {
+            _isTemplateManagerOpen = false;
+            _isTemplateEditorOpen = false;
+            _editingTemplateId = null;
+            _templateEditor = null;
+            _templateActionError = null;
+        }
+
+        private async Task ExecuteExportSelectionAsync()
+        {
+            if (string.Equals(_exportFormatSelection, "pdf", StringComparison.OrdinalIgnoreCase))
+            {
+                await OnExportPdfRequested();
+                _isExportDialogOpen = false;
+                return;
+            }
+
+            string format = string.Equals(_exportFormatSelection, "markdown", StringComparison.OrdinalIgnoreCase)
+                ? "markdown"
+                : "html";
+
+            await OnExportRequested("document", format);
+            _isExportDialogOpen = false;
+        }
+
+        private async Task EnsureTemplatesLoadedAsync()
+        {
+            if (_isTemplatesLoading)
+            {
+                return;
+            }
+
+            if (_exportTemplates.Count > 0)
+            {
+                return;
+            }
+
+            await LoadExportTemplatesAsync();
+        }
+
+        private async Task LoadExportTemplatesAsync()
+        {
+            _isTemplatesLoading = true;
+            _templateLoadError = null;
+            try
+            {
+                List<ExportTemplateDto>? templates = await Http.GetFromJsonAsync<List<ExportTemplateDto>>(
+                    "api/export/templates");
+                _exportTemplates.Clear();
+                if (templates is not null)
+                {
+                    _exportTemplates.AddRange(templates.OrderBy(template => template.Name));
+                }
+
+                if (_selectedTemplateId is null && _exportTemplates.Count > 0)
+                {
+                    ExportTemplateDto? manuscript = _exportTemplates
+                        .FirstOrDefault(template => string.Equals(template.PresetKey, "manuscript", StringComparison.OrdinalIgnoreCase));
+                    _selectedTemplateId = manuscript?.Id ?? _exportTemplates[0].Id;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to load export templates.");
+                _templateLoadError = "Unable to load templates.";
+            }
+            finally
+            {
+                _isTemplatesLoading = false;
+            }
+        }
+
+        private string SelectedTemplateIdValue
+        {
+            get => _selectedTemplateId?.ToString() ?? string.Empty;
+            set => _selectedTemplateId = Guid.TryParse(value, out Guid parsed) ? parsed : null;
+        }
+
+        private async Task CreateTemplateFromPresetAsync()
+        {
+            _templateActionError = null;
+            ExportTemplateCreateRequest request = BuildCreateRequestFromPreset(_createPresetKey);
+            try
+            {
+                using HttpResponseMessage response = await Http.PostAsJsonAsync("api/export/templates", request);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _templateActionError = "Failed to create template.";
+                    return;
+                }
+
+                ExportTemplateDto? created = await response.Content.ReadFromJsonAsync<ExportTemplateDto>();
+                if (created is not null)
+                {
+                    _exportTemplates.Add(created);
+                    _selectedTemplateId = created.Id;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to create export template.");
+                _templateActionError = "Failed to create template.";
+            }
+        }
+
+        private void StartEditTemplate(ExportTemplateDto template)
+        {
+            _templateActionError = null;
+            _editingTemplateId = template.Id;
+            _templateEditor = ExportTemplateEditorModel.FromDto(template);
+            _templateEditorPagePreset = GuessPagePreset(_templateEditor.PageWidthMm, _templateEditor.PageHeightMm);
+            _isTemplateEditorOpen = true;
+        }
+
+        private void CancelTemplateEdit()
+        {
+            _isTemplateEditorOpen = false;
+            _editingTemplateId = null;
+            _templateEditor = null;
+        }
+
+        private async Task SaveTemplateAsync()
+        {
+            if (_templateEditor is null || _editingTemplateId is null)
+            {
+                return;
+            }
+
+            _isTemplateSaving = true;
+            _templateActionError = null;
+            try
+            {
+                ExportTemplateUpdateRequest request = _templateEditor.ToUpdateRequest();
+                using HttpResponseMessage response = await Http.PutAsJsonAsync(
+                    $"api/export/templates/{_editingTemplateId}", request);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _templateActionError = "Failed to save template.";
+                    return;
+                }
+
+                ExportTemplateDto? updated = await response.Content.ReadFromJsonAsync<ExportTemplateDto>();
+                if (updated is not null)
+                {
+                    int index = _exportTemplates.FindIndex(item => item.Id == updated.Id);
+                    if (index >= 0)
+                    {
+                        _exportTemplates[index] = updated;
+                    }
+                }
+
+                _isTemplateEditorOpen = false;
+                _editingTemplateId = null;
+                _templateEditor = null;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to save export template.");
+                _templateActionError = "Failed to save template.";
+            }
+            finally
+            {
+                _isTemplateSaving = false;
+            }
+        }
+
+        private async Task DuplicateTemplateAsync(ExportTemplateDto template)
+        {
+            _templateActionError = null;
+            string copyName = BuildCopyName(template.Name, _exportTemplates.Select(item => item.Name));
+            ExportTemplateCreateRequest request = new(
+                copyName,
+                null,
+                template.PageWidthMm,
+                template.PageHeightMm,
+                template.MarginTopMm,
+                template.MarginRightMm,
+                template.MarginBottomMm,
+                template.MarginLeftMm,
+                template.FontFamily,
+                template.BodyFontSizePt,
+                template.LineHeight,
+                template.ParagraphSpacingPt,
+                template.HeaderEnabled,
+                template.HeaderLeft,
+                template.HeaderCenter,
+                template.HeaderRight,
+                template.FooterEnabled,
+                template.FooterLeft,
+                template.FooterCenter,
+                template.FooterRight,
+                template.PageNumbersEnabled,
+                template.PageNumberStart,
+                template.TocEnabled,
+                template.TocDepth);
+
+            try
+            {
+                using HttpResponseMessage response = await Http.PostAsJsonAsync("api/export/templates", request);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _templateActionError = "Failed to duplicate template.";
+                    return;
+                }
+
+                ExportTemplateDto? created = await response.Content.ReadFromJsonAsync<ExportTemplateDto>();
+                if (created is not null)
+                {
+                    _exportTemplates.Add(created);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to duplicate export template.");
+                _templateActionError = "Failed to duplicate template.";
+            }
+        }
+
+        private async Task DeleteTemplateAsync(ExportTemplateDto template)
+        {
+            _isTemplateDeleting = true;
+            _templateActionError = null;
+            try
+            {
+                using HttpResponseMessage response = await Http.DeleteAsync($"api/export/templates/{template.Id}");
+                if (!response.IsSuccessStatusCode)
+                {
+                    _templateActionError = "Failed to delete template.";
+                    return;
+                }
+
+                _exportTemplates.RemoveAll(item => item.Id == template.Id);
+                if (_selectedTemplateId == template.Id)
+                {
+                    _selectedTemplateId = _exportTemplates.FirstOrDefault()?.Id;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to delete export template.");
+                _templateActionError = "Failed to delete template.";
+            }
+            finally
+            {
+                _isTemplateDeleting = false;
+            }
+        }
+
+        private void ApplyPagePreset(string preset)
+        {
+            if (_templateEditor is null)
+            {
+                return;
+            }
+
+            switch (preset)
+            {
+                case "paperback_6x9":
+                    _templateEditor.PageWidthMm = 152;
+                    _templateEditor.PageHeightMm = 229;
+                    break;
+                case "a4":
+                    _templateEditor.PageWidthMm = 210;
+                    _templateEditor.PageHeightMm = 297;
+                    break;
+                case "manuscript":
+                    _templateEditor.PageWidthMm = 216;
+                    _templateEditor.PageHeightMm = 279;
+                    break;
+            }
+        }
+
+        private void OnTemplatePresetChanged(ChangeEventArgs args)
+        {
+            _templateEditorPagePreset = args.Value?.ToString() ?? "custom";
+            ApplyPagePreset(_templateEditorPagePreset);
+        }
+
+        private static string GuessPagePreset(int width, int height)
+        {
+            if (width == 152 && height == 229)
+            {
+                return "paperback_6x9";
+            }
+
+            if (width == 210 && height == 297)
+            {
+                return "a4";
+            }
+
+            if (width == 216 && height == 279)
+            {
+                return "manuscript";
+            }
+
+            return "custom";
+        }
+
+        private static ExportTemplateCreateRequest BuildCreateRequestFromPreset(string presetKey)
+        {
+            ExportTemplateCreateRequest baseRequest = presetKey switch
+            {
+                "paperback_6x9" => new ExportTemplateCreateRequest(
+                    "Paperback 6x9",
+                    "paperback_6x9",
+                    152,
+                    229,
+                    16,
+                    16,
+                    20,
+                    20,
+                    "Georgia",
+                    11,
+                    1.4m,
+                    6,
+                    true,
+                    null,
+                    "{DocumentTitle}",
+                    null,
+                    false,
+                    null,
+                    null,
+                    null,
+                    true,
+                    1,
+                    false,
+                    2),
+                "a4" => new ExportTemplateCreateRequest(
+                    "A4",
+                    "a4",
+                    210,
+                    297,
+                    20,
+                    20,
+                    20,
+                    20,
+                    "Georgia",
+                    12,
+                    1.5m,
+                    6,
+                    false,
+                    null,
+                    null,
+                    null,
+                    true,
+                    null,
+                    "{PageNumber}",
+                    null,
+                    true,
+                    1,
+                    true,
+                    2),
+                _ => new ExportTemplateCreateRequest(
+                    "Manuscript",
+                    "manuscript",
+                    216,
+                    279,
+                    25,
+                    25,
+                    25,
+                    30,
+                    "Georgia",
+                    12,
+                    2.0m,
+                    12,
+                    true,
+                    "{DocumentTitle}",
+                    null,
+                    "{SectionTitle}",
+                    false,
+                    null,
+                    null,
+                    null,
+                    true,
+                    1,
+                    true,
+                    2)
+            };
+
+            return baseRequest;
+        }
+
+        private static string BuildCopyName(string baseName, IEnumerable<string> existingNames)
+        {
+            string trimmed = string.IsNullOrWhiteSpace(baseName) ? "Template" : baseName.Trim();
+            string candidate = $"{trimmed} (copy)";
+            HashSet<string> names = new(existingNames.Where(name => !string.IsNullOrWhiteSpace(name)),
+                StringComparer.OrdinalIgnoreCase);
+            if (!names.Contains(candidate))
+            {
+                return candidate;
+            }
+
+            int counter = 2;
+            while (names.Contains($"{trimmed} (copy {counter})"))
+            {
+                counter++;
+            }
+
+            return $"{trimmed} (copy {counter})";
+        }
+
+        private static string GetPresetTag(string? presetKey)
+        {
+            return presetKey switch
+            {
+                "manuscript" => "(Manuscript)",
+                "paperback_6x9" => "(Paperback)",
+                "a4" => "(A4)",
+                _ => "(Custom)"
+            };
         }
 
         private async Task DownloadExportAsync(string base64, string mimeType, string fileName)
@@ -3116,6 +3579,91 @@ namespace WriterApp.Client.Pages
         private sealed record ExportPrintPayload(string Html);
 
         private sealed record TextRange(int Start, int Length);
+
+        private sealed class ExportTemplateEditorModel
+        {
+            public string Name { get; set; } = string.Empty;
+            public int PageWidthMm { get; set; }
+            public int PageHeightMm { get; set; }
+            public int MarginTopMm { get; set; }
+            public int MarginRightMm { get; set; }
+            public int MarginBottomMm { get; set; }
+            public int MarginLeftMm { get; set; }
+            public string FontFamily { get; set; } = "Georgia";
+            public int BodyFontSizePt { get; set; }
+            public decimal LineHeight { get; set; }
+            public int ParagraphSpacingPt { get; set; }
+            public bool HeaderEnabled { get; set; }
+            public string? HeaderLeft { get; set; }
+            public string? HeaderCenter { get; set; }
+            public string? HeaderRight { get; set; }
+            public bool FooterEnabled { get; set; }
+            public string? FooterLeft { get; set; }
+            public string? FooterCenter { get; set; }
+            public string? FooterRight { get; set; }
+            public bool PageNumbersEnabled { get; set; }
+            public int PageNumberStart { get; set; }
+            public bool TocEnabled { get; set; }
+            public int TocDepth { get; set; }
+
+            public static ExportTemplateEditorModel FromDto(ExportTemplateDto template)
+            {
+                return new ExportTemplateEditorModel
+                {
+                    Name = template.Name,
+                    PageWidthMm = template.PageWidthMm,
+                    PageHeightMm = template.PageHeightMm,
+                    MarginTopMm = template.MarginTopMm,
+                    MarginRightMm = template.MarginRightMm,
+                    MarginBottomMm = template.MarginBottomMm,
+                    MarginLeftMm = template.MarginLeftMm,
+                    FontFamily = template.FontFamily,
+                    BodyFontSizePt = template.BodyFontSizePt,
+                    LineHeight = template.LineHeight,
+                    ParagraphSpacingPt = template.ParagraphSpacingPt,
+                    HeaderEnabled = template.HeaderEnabled,
+                    HeaderLeft = template.HeaderLeft,
+                    HeaderCenter = template.HeaderCenter,
+                    HeaderRight = template.HeaderRight,
+                    FooterEnabled = template.FooterEnabled,
+                    FooterLeft = template.FooterLeft,
+                    FooterCenter = template.FooterCenter,
+                    FooterRight = template.FooterRight,
+                    PageNumbersEnabled = template.PageNumbersEnabled,
+                    PageNumberStart = template.PageNumberStart,
+                    TocEnabled = template.TocEnabled,
+                    TocDepth = template.TocDepth
+                };
+            }
+
+            public ExportTemplateUpdateRequest ToUpdateRequest()
+            {
+                return new ExportTemplateUpdateRequest(
+                    Name?.Trim(),
+                    PageWidthMm,
+                    PageHeightMm,
+                    MarginTopMm,
+                    MarginRightMm,
+                    MarginBottomMm,
+                    MarginLeftMm,
+                    FontFamily,
+                    BodyFontSizePt,
+                    LineHeight,
+                    ParagraphSpacingPt,
+                    HeaderEnabled,
+                    HeaderLeft,
+                    HeaderCenter,
+                    HeaderRight,
+                    FooterEnabled,
+                    FooterLeft,
+                    FooterCenter,
+                    FooterRight,
+                    PageNumbersEnabled,
+                    PageNumberStart,
+                    TocEnabled,
+                    TocDepth);
+            }
+        }
 
         private enum ContextTab
         {

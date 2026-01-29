@@ -198,10 +198,12 @@ builder.Services.AddSingleton<ClientEventLog>();
 builder.Services.AddSingleton<CircuitHandler, CircuitLoggingHandler>();
 
 builder.Services.AddSingleton<IExportRenderer, MarkdownExportRenderer>();
-builder.Services.AddSingleton<IExportRenderer, HtmlExportRenderer>();
+builder.Services.AddSingleton<IExportRenderer, TemplatedHtmlExportRenderer>();
 builder.Services.AddSingleton<IExportRenderer, SynopsisMarkdownExportRenderer>();
 builder.Services.AddSingleton<IExportRenderer, SynopsisHtmlExportRenderer>();
-builder.Services.AddSingleton<ExportService>();
+builder.Services.AddScoped<IExportTemplateSeeder, ExportTemplateSeeder>();
+builder.Services.AddScoped<IExportTemplateResolver, ExportTemplateResolver>();
+builder.Services.AddScoped<ExportService>();
 
 builder.Services.AddServerSideBlazor()
     .AddHubOptions(options =>
