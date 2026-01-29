@@ -185,6 +185,7 @@ builder.Services.AddSingleton<IAiAction, GenerateOutlineAction>();
 builder.Services.AddSingleton<IAiAction, SceneSuggestAction>();
 builder.Services.AddSingleton<IAiAction, SceneRefineAction>();
 builder.Services.AddSingleton<IAiAction, SceneFindOpenQuestionsAction>();
+builder.Services.AddSingleton<IAiAction, ProposeNextParagraphAction>();
 builder.Services.AddSingleton<IAiActionExecutor, AiActionExecutor>();
 builder.Services.AddSingleton<IAiProposalApplier, DefaultProposalApplier>();
 builder.Services.AddScoped<IAiOrchestrator, AiOrchestrator>();

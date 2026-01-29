@@ -137,41 +137,94 @@ namespace BlazorApp.Components.Pages
         private string _createPresetKey = "manuscript";
         private Guid? _editingTemplateId;
         private ExportTemplateEditorModel? _templateEditor;
+        private bool _isExportPreviewOpen;
+        private bool _isPreviewLoading;
+        private string? _previewError;
+        private string _previewHtml = string.Empty;
+        private double _previewZoom = 1.0;
+        private string _previewScope = "document";
         private SectionEditor.EditorSelectionRange? _currentSelectionRange;
         private readonly List<AiActionOption> _aiActions = new()
         {
-            new AiActionOption("Rewrite (Neutral)", "Rewrite (Neutral)", AiActionScope.Selection, new Dictionary<string, object?>
-            {
-                ["tone"] = "Neutral"
-            }),
-            new AiActionOption("Rewrite (Formal)", "Rewrite (Formal)", AiActionScope.Selection, new Dictionary<string, object?>
-            {
-                ["tone"] = "Formal"
-            }),
-            new AiActionOption("Rewrite (Casual)", "Rewrite (Casual)", AiActionScope.Selection, new Dictionary<string, object?>
-            {
-                ["tone"] = "Casual"
-            }),
-            new AiActionOption("Rewrite (Executive)", "Rewrite (Executive)", AiActionScope.Selection, new Dictionary<string, object?>
-            {
-                ["tone"] = "Executive"
-            }),
-            new AiActionOption("Shorten (Neutral)", "Shorten (Neutral)", AiActionScope.Selection, new Dictionary<string, object?>
-            {
-                ["tone"] = "Neutral"
-            }),
-            new AiActionOption("Fix grammar (Neutral)", "Fix grammar (Neutral)", AiActionScope.Selection, new Dictionary<string, object?>
-            {
-                ["tone"] = "Neutral"
-            }),
-            new AiActionOption("Change tone (Friendly)", "Change tone (Friendly)", AiActionScope.Selection, new Dictionary<string, object?>
-            {
-                ["tone"] = "Friendly"
-            }),
-            new AiActionOption("Change tone (Technical)", "Change tone (Technical)", AiActionScope.Selection, new Dictionary<string, object?>
-            {
-                ["tone"] = "Technical"
-            })
+            new AiActionOption(
+                RewriteSelectionAction.ActionIdValue,
+                "Rewrite (Neutral)",
+                "Rewrite (Neutral)",
+                true,
+                new Dictionary<string, object?>
+                {
+                    ["tone"] = "Neutral"
+                }),
+            new AiActionOption(
+                RewriteSelectionAction.ActionIdValue,
+                "Rewrite (Formal)",
+                "Rewrite (Formal)",
+                true,
+                new Dictionary<string, object?>
+                {
+                    ["tone"] = "Formal"
+                }),
+            new AiActionOption(
+                RewriteSelectionAction.ActionIdValue,
+                "Rewrite (Casual)",
+                "Rewrite (Casual)",
+                true,
+                new Dictionary<string, object?>
+                {
+                    ["tone"] = "Casual"
+                }),
+            new AiActionOption(
+                RewriteSelectionAction.ActionIdValue,
+                "Rewrite (Executive)",
+                "Rewrite (Executive)",
+                true,
+                new Dictionary<string, object?>
+                {
+                    ["tone"] = "Executive"
+                }),
+            new AiActionOption(
+                RewriteSelectionAction.ActionIdValue,
+                "Shorten (Neutral)",
+                "Shorten (Neutral)",
+                true,
+                new Dictionary<string, object?>
+                {
+                    ["tone"] = "Neutral"
+                }),
+            new AiActionOption(
+                RewriteSelectionAction.ActionIdValue,
+                "Fix grammar (Neutral)",
+                "Fix grammar (Neutral)",
+                true,
+                new Dictionary<string, object?>
+                {
+                    ["tone"] = "Neutral"
+                }),
+            new AiActionOption(
+                RewriteSelectionAction.ActionIdValue,
+                "Change tone (Friendly)",
+                "Change tone (Friendly)",
+                true,
+                new Dictionary<string, object?>
+                {
+                    ["tone"] = "Friendly"
+                }),
+            new AiActionOption(
+                RewriteSelectionAction.ActionIdValue,
+                "Change tone (Technical)",
+                "Change tone (Technical)",
+                true,
+                new Dictionary<string, object?>
+                {
+                    ["tone"] = "Technical"
+                }),
+            new AiActionOption(
+                ProposeNextParagraphAction.ActionIdValue,
+                "Propose next paragraph",
+                "Propose next paragraph",
+                false,
+                new Dictionary<string, object?>(),
+                "Generate a 10-12 sentence continuation based on current section + scene beats.")
         };
         private readonly List<AiHistoryEntry> _aiHistoryEntries = new();
         private Guid? _expandedAiHistoryId;
@@ -235,6 +288,10 @@ namespace BlazorApp.Components.Pages
             _selectedOutlineNodeId.HasValue
                 ? _outlineNodes.FirstOrDefault(node => node.Id == _selectedOutlineNodeId.Value)
                 : null;
+        private IEnumerable<AiActionOption> SelectionAiActions =>
+            _aiActions.Where(action => action.RequiresSelection);
+        private IEnumerable<AiActionOption> SectionAiActions =>
+            _aiActions.Where(action => !action.RequiresSelection);
 
         private PageEditor.PageBreakOptions PageBreaks =>
             new(PageBreakHeightPx, true, PageBreakGutterOffsetPx);
@@ -1267,26 +1324,49 @@ namespace BlazorApp.Components.Pages
                 return;
             }
 
-            if (_activeSection is null || _currentSelectionRange is null || _pageEditor is null)
+            if (_activeSection is null || _pageEditor is null)
             {
                 return;
             }
 
-            if (!AiOrchestrator.CanRunAction(RewriteSelectionAction.ActionIdValue))
+            if (!AiOrchestrator.CanRunAction(action.ActionKey))
             {
                 return;
             }
 
             string html = _pageEditor.GetContent();
             string plainText = PlainTextMapper.ToPlainText(html);
-            if (plainText.Length == 0)
+            if (plainText.Length == 0 && action.RequiresSelection)
             {
                 return;
             }
 
-            TextRange selectionRange = NormalizeRange(_currentSelectionRange, plainText.Length);
-            string selection = ExtractRangeText(plainText, selectionRange);
+            TextRange selectionRange = new(0, 0);
+            string selection = string.Empty;
+            if (action.RequiresSelection)
+            {
+                if (_currentSelectionRange is null)
+                {
+                    return;
+                }
+
+                selectionRange = NormalizeRange(_currentSelectionRange, plainText.Length);
+                selection = ExtractRangeText(plainText, selectionRange);
+                if (string.IsNullOrWhiteSpace(selection))
+                {
+                    return;
+                }
+            }
             Document aiDocument = BuildAiDocument(html);
+            Dictionary<string, object?> inputs = new(action.Inputs);
+
+            if (string.Equals(action.ActionKey, ProposeNextParagraphAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                inputs["narrative_purpose"] = _sceneNarrativePurpose ?? string.Empty;
+                inputs["emotional_beat"] = _sceneEmotionalBeat ?? string.Empty;
+                inputs["key_events"] = _sceneKeyEvents ?? string.Empty;
+                inputs["open_questions"] = _sceneOpenQuestions ?? string.Empty;
+            }
 
             AiActionInput input = new(
                 aiDocument,
@@ -1294,13 +1374,13 @@ namespace BlazorApp.Components.Pages
                 selectionRange,
                 selection,
                 action.Instruction,
-                action.Inputs);
+                inputs);
 
             AiExecutionResult result;
             try
             {
                 result = await AiOrchestrator.ExecuteActionAsync(
-                    RewriteSelectionAction.ActionIdValue,
+                    action.ActionKey,
                     input,
                     CancellationToken.None);
             }
@@ -1319,17 +1399,23 @@ namespace BlazorApp.Components.Pages
             }
 
             AiProposal proposal = result.Proposal;
+            string? proposedText = proposal.ProposedText ?? string.Empty;
+            if (string.Equals(action.ActionKey, ProposeNextParagraphAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                proposedText = NormalizeSingleParagraph(proposedText);
+            }
+
             _pendingAiProposal = new PendingAiProposal(
                 proposal,
                 BuildActionLabel(action),
-                selection,
-                proposal.ProposedText ?? string.Empty,
+                action.RequiresSelection ? selection : null,
+                proposedText,
                 null,
                 null,
                 DateTime.UtcNow);
             _pendingDetailsExpanded = false;
 
-            await SaveAiHistoryEntryAsync(action, proposal, selection, selectionRange, plainText);
+            await SaveAiHistoryEntryAsync(action, proposal, selectionRange, selection, plainText, inputs);
             await LoadAiHistoryAsync();
             await InvokeAsync(StateHasChanged);
         }
@@ -2621,6 +2707,84 @@ namespace BlazorApp.Components.Pages
             _isExportDialogOpen = false;
         }
 
+        private async Task OpenPreviewAsync()
+        {
+            _previewError = null;
+            _isPreviewLoading = true;
+            _isExportPreviewOpen = true;
+            try
+            {
+                ExportTemplateDto? template = GetSelectedTemplate();
+                ExportPreviewRequest request = new(
+                    DocumentId,
+                    _selectedTemplateId,
+                    template?.TocEnabled ?? true,
+                    _previewScope,
+                    _previewScope == "section" ? _activeSection?.Id : null);
+
+                using HttpResponseMessage response = await Http.PostAsJsonAsync("api/export/preview", request);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _previewError = "Preview failed.";
+                    return;
+                }
+
+                ExportPreviewResponse? payload = await response.Content.ReadFromJsonAsync<ExportPreviewResponse>();
+                if (payload is null || string.IsNullOrWhiteSpace(payload.Html))
+                {
+                    _previewError = "Preview failed.";
+                    return;
+                }
+
+                _previewHtml = payload.Html;
+                _previewZoom = 1.0;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Export preview failed.");
+                _previewError = "Preview failed.";
+            }
+            finally
+            {
+                _isPreviewLoading = false;
+            }
+        }
+
+        private void ClosePreview()
+        {
+            _isExportPreviewOpen = false;
+            _previewHtml = string.Empty;
+            _previewError = null;
+        }
+
+        private ExportTemplateDto? GetSelectedTemplate()
+        {
+            return _exportTemplates.FirstOrDefault(template => template.Id == _selectedTemplateId);
+        }
+
+        private string GetPreviewStyle()
+        {
+            ExportTemplateDto? template = GetSelectedTemplate();
+            int width = template?.PageWidthMm ?? 210;
+            return $"--preview-page-width:{width}mm; --preview-zoom:{_previewZoom.ToString(CultureInfo.InvariantCulture)};";
+        }
+
+        private async Task PrintPreviewAsync()
+        {
+            await EnsureExportModuleAsync();
+            if (_exportModule is null)
+            {
+                return;
+            }
+
+            await _exportModule.InvokeVoidAsync("printIframe", "export-preview-frame");
+        }
+
+        private void SetPreviewZoom(double zoom)
+        {
+            _previewZoom = zoom;
+        }
+
         private async Task EnsureTemplatesLoadedAsync()
         {
             if (_isTemplatesLoading)
@@ -2898,86 +3062,38 @@ namespace BlazorApp.Components.Pages
 
         private static ExportTemplateCreateRequest BuildCreateRequestFromPreset(string presetKey)
         {
-            ExportTemplateCreateRequest baseRequest = presetKey switch
+            ExportTemplatePresetDefinition? preset = ExportTemplatePresets.GetByKey(presetKey);
+            preset ??= ExportTemplatePresets.GetByKey("manuscript");
+            if (preset is null)
             {
-                "paperback_6x9" => new ExportTemplateCreateRequest(
-                    "Paperback 6x9",
-                    "paperback_6x9",
-                    152,
-                    229,
-                    16,
-                    16,
-                    20,
-                    20,
-                    "Georgia",
-                    11,
-                    1.4m,
-                    6,
-                    true,
-                    null,
-                    "{DocumentTitle}",
-                    null,
-                    false,
-                    null,
-                    null,
-                    null,
-                    true,
-                    1,
-                    false,
-                    2),
-                "a4" => new ExportTemplateCreateRequest(
-                    "A4",
-                    "a4",
-                    210,
-                    297,
-                    20,
-                    20,
-                    20,
-                    20,
-                    "Georgia",
-                    12,
-                    1.5m,
-                    6,
-                    false,
-                    null,
-                    null,
-                    null,
-                    true,
-                    null,
-                    "{PageNumber}",
-                    null,
-                    true,
-                    1,
-                    true,
-                    2),
-                _ => new ExportTemplateCreateRequest(
-                    "Manuscript",
-                    "manuscript",
-                    216,
-                    279,
-                    25,
-                    25,
-                    25,
-                    30,
-                    "Georgia",
-                    12,
-                    2.0m,
-                    12,
-                    true,
-                    "{DocumentTitle}",
-                    null,
-                    "{SectionTitle}",
-                    false,
-                    null,
-                    null,
-                    null,
-                    true,
-                    1,
-                    true,
-                    2)
-            };
+                throw new InvalidOperationException("Export template presets are missing.");
+            }
 
-            return baseRequest;
+            return new ExportTemplateCreateRequest(
+                preset.Name,
+                preset.Key,
+                preset.PageWidthMm,
+                preset.PageHeightMm,
+                preset.MarginTopMm,
+                preset.MarginRightMm,
+                preset.MarginBottomMm,
+                preset.MarginLeftMm,
+                preset.FontFamily,
+                preset.BodyFontSizePt,
+                preset.LineHeight,
+                preset.ParagraphSpacingPt,
+                preset.HeaderEnabled,
+                preset.HeaderLeft,
+                preset.HeaderCenter,
+                preset.HeaderRight,
+                preset.FooterEnabled,
+                preset.FooterLeft,
+                preset.FooterCenter,
+                preset.FooterRight,
+                preset.PageNumbersEnabled,
+                preset.PageNumberStart,
+                preset.TocEnabled,
+                preset.TocDepth);
         }
 
         private static string BuildCopyName(string baseName, IEnumerable<string> existingNames)
@@ -3011,6 +3127,8 @@ namespace BlazorApp.Components.Pages
             };
         }
 
+        private static IReadOnlyList<ExportTemplatePresetDefinition> PresetOptions => ExportTemplatePresets.All;
+
         private async Task DownloadExportAsync(ExportResult result)
         {
             await EnsureExportModuleAsync();
@@ -3040,7 +3158,7 @@ namespace BlazorApp.Components.Pages
             {
                 _exportModule = await JSRuntime.InvokeAsync<IJSObjectReference>(
                     "import",
-                    "/js/export.js");
+                    $"{Navigation.BaseUri}js/export.js");
             }
         }
 
@@ -3159,6 +3277,26 @@ namespace BlazorApp.Components.Pages
             return plainText.Substring(start, Math.Max(0, end - start));
         }
 
+        private static string NormalizeSingleParagraph(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return string.Empty;
+            }
+
+            string normalized = text
+                .Replace("\r\n", " ", StringComparison.Ordinal)
+                .Replace('\n', ' ')
+                .Replace('\r', ' ');
+
+            while (normalized.Contains("  ", StringComparison.Ordinal))
+            {
+                normalized = normalized.Replace("  ", " ", StringComparison.Ordinal);
+            }
+
+            return normalized.Trim();
+        }
+
         private static string BuildActionLabel(AiActionOption action)
         {
             return action.Label;
@@ -3193,7 +3331,22 @@ namespace BlazorApp.Components.Pages
             }
 
             string? beforeContent = _pageEditor is null ? null : await _pageEditor.GetContentAsync();
-            await InvokePageCommandAsync("replaceSelection", pending.ProposedText);
+            bool appendParagraph = string.Equals(
+                pending.Proposal?.ActionId,
+                ProposeNextParagraphAction.ActionIdValue,
+                StringComparison.Ordinal);
+            string proposedText = appendParagraph
+                ? NormalizeSingleParagraph(pending.ProposedText)
+                : pending.ProposedText;
+
+            if (appendParagraph)
+            {
+                await InvokePageCommandAsync("appendParagraph", proposedText);
+            }
+            else
+            {
+                await InvokePageCommandAsync("replaceSelection", proposedText);
+            }
             string? afterContent = _pageEditor is null ? null : await _pageEditor.GetContentAsync();
             Guid historyId = pending.Proposal?.ProposalId ?? Guid.NewGuid();
             DateTimeOffset appliedAt = DateTimeOffset.UtcNow;
@@ -3207,7 +3360,7 @@ namespace BlazorApp.Components.Pages
                 pending.Proposal?.Reason,
                 pending.Proposal?.Instruction ?? pending.Instruction,
                 pending.OriginalText,
-                pending.ProposedText);
+                proposedText);
             _expandedAiHistoryId = historyId;
             _pendingDetailsExpanded = false;
             _pendingAiProposal = null;
@@ -3576,42 +3729,47 @@ namespace BlazorApp.Components.Pages
         private async Task SaveAiHistoryEntryAsync(
             AiActionOption action,
             AiProposal proposal,
-            string selection,
             TextRange selectionRange,
-            string plainText)
+            string? selection,
+            string? plainText,
+            Dictionary<string, object?> inputs)
         {
             try
             {
                 AuthenticationState authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
                 string userId = UserIdResolver.ResolveUserId(authState.User);
-                Dictionary<string, object?> parameters = new(action.Inputs)
+                Dictionary<string, object?> parameters = new(inputs)
                 {
                     ["instruction"] = action.Instruction
                 };
+
+                int? selectionStart = action.RequiresSelection ? selectionRange.Start : null;
+                int? selectionEnd = action.RequiresSelection ? selectionRange.Start + selectionRange.Length : null;
+                string? originalText = action.RequiresSelection ? selection : null;
 
                 AiActionExecuteRequestDto request = new(
                     DocumentId,
                     _activeSection?.Id,
                     _activePage?.Id ?? PageId,
-                    selectionRange.Start,
-                    selectionRange.Start + selectionRange.Length,
-                    selection,
+                    selectionStart,
+                    selectionEnd,
+                    originalText,
                     plainText,
                     null,
                     parameters);
 
-            AiActionExecuteResponseDto response = new(
-                proposal.ProposalId,
-                proposal.OriginalText ?? selection,
-                proposal.ProposedText,
-                proposal.UserSummary ?? proposal.SummaryLabel ?? action.Instruction,
-                new DateTimeOffset(proposal.CreatedUtc),
-                proposal.ActionId,
-                null,
-                null,
-                null,
-                null,
-                null);
+                AiActionExecuteResponseDto response = new(
+                    proposal.ProposalId,
+                    proposal.OriginalText ?? originalText,
+                    proposal.ProposedText,
+                    proposal.UserSummary ?? proposal.SummaryLabel ?? action.Instruction,
+                    new DateTimeOffset(proposal.CreatedUtc),
+                    proposal.ActionId,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null);
 
                 string requestJson = JsonSerializer.Serialize(request, JsonOptions);
                 string responseJson = JsonSerializer.Serialize(response, JsonOptions);
@@ -3639,10 +3797,12 @@ namespace BlazorApp.Components.Pages
         }
 
         private sealed record AiActionOption(
+            string ActionKey,
             string Label,
             string Instruction,
-            AiActionScope Scope,
-            Dictionary<string, object?> Inputs);
+            bool RequiresSelection,
+            Dictionary<string, object?> Inputs,
+            string? Description = null);
 
         private sealed record AiHistoryEntry(
             Guid Id,

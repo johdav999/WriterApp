@@ -165,11 +165,11 @@ else
                                 <button type="button" class="@GetActiveClass(_formattingState.TextAlign == "right")" @onclick='@(() => OnAlignRequested("right"))'>Align right</button>
                                 <button type="button" @onclick="OnIndentDecreaseRequested">Indent -</button>
                                 <button type="button" @onclick="OnIndentIncreaseRequested">Indent +</button>
-                                @if (CanShowAiMenu && _aiActions.Count > 0)
+                                @if (CanShowAiMenu && SelectionAiActions.Any())
                                 {
                                     <div class="editor-toolbar-divider"></div>
                                     <div class="editor-toolbar-subtitle">AI</div>
-                                    @foreach (AiActionOption action in _aiActions)
+                                    @foreach (AiActionOption action in SelectionAiActions)
                                     {
                                         <button type="button" disabled="@IsAiQuotaExceeded" @onclick="() => OnAiActionSelected(action)">
                                             @action.Label
@@ -629,24 +629,66 @@ else
                             {
                                 <div class="drawer-empty">AI is disabled for this account.</div>
                             }
-                            else if (_currentSelectionRange is null)
-                            {
-                                <div class="drawer-empty">Select text in the editor to enable AI actions.</div>
-                            }
-                            else if (!AiOrchestrator.CanRunAction(RewriteSelectionAction.ActionIdValue) || _aiActions.Count == 0)
-                            {
-                                <div class="drawer-empty">No actions available for this selection.</div>
-                            }
                             else
                             {
-                                <div class="ai-actions-list">
-                                    @foreach (AiActionOption action in _aiActions)
+                                bool hasSelectionActions = SelectionAiActions.Any(action => AiOrchestrator.CanRunAction(action.ActionKey));
+                                bool hasSectionActions = SectionAiActions.Any(action => AiOrchestrator.CanRunAction(action.ActionKey));
+                                @if (!hasSelectionActions && !hasSectionActions)
+                                {
+                                    <div class="drawer-empty">No AI actions available right now.</div>
+                                }
+                                else
+                                {
+                                    @if (hasSectionActions)
                                     {
-                                        <button type="button" disabled="@IsAiQuotaExceeded" @onclick="() => OnAiActionSelected(action)">
-                                            @action.Label
-                                        </button>
+                                        <div class="ai-action-group">
+                                            <div class="ai-action-group-title">Section</div>
+                                            <div class="ai-actions-list">
+                                                @foreach (AiActionOption action in SectionAiActions)
+                                                {
+                                                    if (!AiOrchestrator.CanRunAction(action.ActionKey))
+                                                    {
+                                                        continue;
+                                                    }
+                                                    <div class="ai-action-item">
+                                                        <button type="button" disabled="@IsAiQuotaExceeded" @onclick="() => OnAiActionSelected(action)">
+                                                            @action.Label
+                                                        </button>
+                                                        @if (!string.IsNullOrWhiteSpace(action.Description))
+                                                        {
+                                                            <div class="ai-action-description">@action.Description</div>
+                                                        }
+                                                    </div>
+                                                }
+                                            </div>
+                                        </div>
                                     }
-                                </div>
+                                    @if (_currentSelectionRange is null)
+                                    {
+                                        @if (hasSelectionActions)
+                                        {
+                                            <div class="drawer-empty">Select text in the editor to enable selection actions.</div>
+                                        }
+                                    }
+                                    else if (hasSelectionActions)
+                                    {
+                                        <div class="ai-action-group">
+                                            <div class="ai-action-group-title">Selection</div>
+                                            <div class="ai-actions-list">
+                                                @foreach (AiActionOption action in SelectionAiActions)
+                                                {
+                                                    if (!AiOrchestrator.CanRunAction(action.ActionKey))
+                                                    {
+                                                        continue;
+                                                    }
+                                                    <button type="button" disabled="@IsAiQuotaExceeded" @onclick="() => OnAiActionSelected(action)">
+                                                        @action.Label
+                                                    </button>
+                                                }
+                                            </div>
+                                        </div>
+                                    }
+                                }
                             }
                         </div>
                         <div class="drawer-panel">
@@ -795,10 +837,13 @@ else
 
 @if (_isExportDialogOpen)
 {
-    <div class="modal-backdrop" @onclick="CloseExportDialog"></div>
-    <div class="modal export-dialog" role="dialog" aria-modal="true">
-        <div class="modal-title">Export document</div>
-        <div class="modal-body">
+    <div class="modal-overlay" @onclick="CloseExportDialog">
+        @* Standard modal layout *@
+        <div class="modal export-dialog modal-panel" role="dialog" aria-modal="true" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <div class="modal-title">Export document</div>
+            </div>
+            <div class="modal-body">
             <div class="export-panel-row">
                 <label class="export-panel-label" for="export-format">Format</label>
                 <select id="export-format" class="export-panel-select" @bind="_exportFormatSelection">
@@ -826,6 +871,13 @@ else
                     </select>
                 }
             </div>
+            <div class="export-panel-row">
+                <label class="export-panel-label" for="preview-scope">Preview scope</label>
+                <select id="preview-scope" class="export-panel-select" @bind="_previewScope">
+                    <option value="document">Document</option>
+                    <option value="section">Current section</option>
+                </select>
+            </div>
             <div class="export-panel-row export-panel-actions">
                 <button type="button" class="link-button" @onclick="OpenTemplateManagerAsync">Manage templates...</button>
                 <span class="export-panel-hint">Templates apply to HTML/PDF exports.</span>
@@ -838,27 +890,33 @@ else
             {
                 <div class="modal-error">@_templateActionError</div>
             }
-        </div>
-        <div class="modal-actions">
-            <button type="button" @onclick="ExecuteExportSelectionAsync" disabled="@_isTemplatesLoading">Export</button>
-            <button type="button" @onclick="CloseExportDialog">Cancel</button>
+            </div>
+            <div class="modal-footer">
+                <button type="button" @onclick="OpenPreviewAsync" disabled="@_isTemplatesLoading">Preview</button>
+                <button type="button" @onclick="ExecuteExportSelectionAsync" disabled="@_isTemplatesLoading">Export</button>
+                <button type="button" @onclick="CloseExportDialog">Cancel</button>
+            </div>
         </div>
     </div>
 }
 
 @if (_isTemplateManagerOpen)
 {
-    <div class="modal-backdrop" @onclick="CloseTemplateManager"></div>
-    <div class="modal export-dialog template-manager" role="dialog" aria-modal="true">
-        <div class="modal-title">Export templates</div>
-        <div class="modal-body">
+    <div class="modal-overlay" @onclick="CloseTemplateManager">
+        @* Standard modal layout *@
+        <div class="modal export-dialog template-manager modal-panel" role="dialog" aria-modal="true" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <div class="modal-title">Export templates</div>
+            </div>
+            <div class="modal-body">
             <div class="template-manager-row">
                 <label class="export-panel-label" for="template-preset-create">New template</label>
                 <div class="template-manager-create">
                     <select id="template-preset-create" class="export-panel-select" @bind="_createPresetKey">
-                        <option value="manuscript">Manuscript</option>
-                        <option value="paperback_6x9">Paperback 6x9</option>
-                        <option value="a4">A4</option>
+                        @foreach (ExportTemplatePresetDefinition preset in PresetOptions)
+                        {
+                            <option value="@preset.Key">@preset.Name</option>
+                        }
                     </select>
                     <button type="button" @onclick="CreateTemplateFromPresetAsync">Create</button>
                 </div>
@@ -891,9 +949,10 @@ else
 
                         <label class="export-panel-label" for="template-page-size">Page size</label>
                         <select id="template-page-size" class="export-panel-select" value="@_templateEditorPagePreset" @onchange="OnTemplatePresetChanged">
-                            <option value="manuscript">Manuscript (216x279)</option>
-                            <option value="paperback_6x9">Paperback 6x9 (152x229)</option>
-                            <option value="a4">A4 (210x297)</option>
+                            @foreach (ExportTemplatePresetDefinition preset in PresetOptions)
+                            {
+                                <option value="@preset.Key">@preset.Name (@preset.PageWidthMm x @preset.PageHeightMm)</option>
+                            }
                             <option value="custom">Custom</option>
                         </select>
 
@@ -961,9 +1020,53 @@ else
             {
                 <div class="modal-error">@_templateActionError</div>
             }
+            </div>
+            <div class="modal-footer">
+                <button type="button" @onclick="CloseTemplateManager">Close</button>
+            </div>
         </div>
-        <div class="modal-actions">
-            <button type="button" @onclick="CloseTemplateManager">Close</button>
+    </div>
+}
+
+@if (_isExportPreviewOpen)
+{
+    <div class="modal-overlay" @onclick="ClosePreview">
+        @* Standard modal layout *@
+        <div class="modal export-preview modal-panel" role="dialog" aria-modal="true" style="@GetPreviewStyle()" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <div class="modal-title">Export preview</div>
+            </div>
+            <div class="modal-body">
+            <div class="preview-toolbar">
+                <div class="preview-zoom">
+                    <span>Zoom</span>
+                    <button type="button" @onclick="() => SetPreviewZoom(1.0)">100%</button>
+                    <button type="button" @onclick="() => SetPreviewZoom(1.25)">125%</button>
+                    <button type="button" @onclick="() => SetPreviewZoom(1.5)">150%</button>
+                </div>
+                <button type="button" @onclick="PrintPreviewAsync">Print</button>
+            </div>
+            @if (_isPreviewLoading)
+            {
+                <div class="export-panel-note">Rendering preview...</div>
+            }
+            else if (!string.IsNullOrWhiteSpace(_previewError))
+            {
+                <div class="modal-error">@_previewError</div>
+            }
+            else
+            {
+                <div class="preview-frame-wrap">
+                    <iframe id="export-preview-frame"
+                            class="export-preview-frame"
+                            srcdoc="@_previewHtml"
+                            sandbox="allow-same-origin allow-scripts allow-modals"></iframe>
+                </div>
+            }
+            </div>
+            <div class="modal-footer">
+                <button type="button" @onclick="ClosePreview">Close</button>
+            </div>
         </div>
     </div>
 }
@@ -1030,7 +1133,7 @@ else
         {
             <div class="editor-context-menu-group">
                 <div class="editor-context-menu-label">AI</div>
-                @foreach (AiActionOption action in _aiActions)
+                @foreach (AiActionOption action in SelectionAiActions)
                 {
                     <button type="button" disabled="@IsAiQuotaExceeded" @onclick="() => OnContextMenuCommand(() => OnAiActionSelected(action))">@action.Label</button>
                 }

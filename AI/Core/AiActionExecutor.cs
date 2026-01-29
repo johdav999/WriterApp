@@ -96,6 +96,11 @@ namespace WriterApp.AI.Core
                 AiArtifact? textArtifact = result.Artifacts.FirstOrDefault(artifact => artifact.Modality == AiModality.Text);
                 proposedText = textArtifact?.TextContent ?? string.Empty;
             }
+            else if (string.Equals(action.ActionId, ProposeNextParagraphAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                AiArtifact? textArtifact = result.Artifacts.FirstOrDefault(artifact => artifact.Modality == AiModality.Text);
+                proposedText = textArtifact?.TextContent ?? string.Empty;
+            }
             else if (string.Equals(action.ActionId, SceneSuggestAction.ActionIdValue, StringComparison.Ordinal)
                 || string.Equals(action.ActionId, SceneRefineAction.ActionIdValue, StringComparison.Ordinal)
                 || string.Equals(action.ActionId, SceneFindOpenQuestionsAction.ActionIdValue, StringComparison.Ordinal))
@@ -158,6 +163,11 @@ namespace WriterApp.AI.Core
                 return "Section";
             }
 
+            if (string.Equals(actionId, ProposeNextParagraphAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Section";
+            }
+
             return "Selection";
         }
 
@@ -191,6 +201,11 @@ namespace WriterApp.AI.Core
             if (string.Equals(actionId, SceneFindOpenQuestionsAction.ActionIdValue, StringComparison.Ordinal))
             {
                 return "Find open questions";
+            }
+
+            if (string.Equals(actionId, ProposeNextParagraphAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Propose next paragraph";
             }
 
             if (!string.Equals(actionId, RewriteSelectionAction.ActionIdValue, StringComparison.Ordinal))
