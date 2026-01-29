@@ -22,7 +22,9 @@ namespace WriterApp.Data
         public DbSet<DocumentRecord> Documents => Set<DocumentRecord>();
         public DbSet<SectionRecord> Sections => Set<SectionRecord>();
         public DbSet<PageRecord> Pages => Set<PageRecord>();
+        public DbSet<DocumentOutlineNodeRecord> DocumentOutlineNodes => Set<DocumentOutlineNodeRecord>();
         public DbSet<PageNoteRecord> PageNotes => Set<PageNoteRecord>();
+        public DbSet<SectionSceneCardRecord> SectionSceneCards => Set<SectionSceneCardRecord>();
         public DbSet<DocumentOutlineRecord> DocumentOutlines => Set<DocumentOutlineRecord>();
         public DbSet<AiActionHistoryEntryRecord> AiActionHistoryEntries => Set<AiActionHistoryEntryRecord>();
         public DbSet<AiActionAppliedEventRecord> AiActionAppliedEvents => Set<AiActionAppliedEventRecord>();
@@ -94,6 +96,27 @@ namespace WriterApp.Data
                     .WithOne(section => section.Document)
                     .HasForeignKey(section => section.DocumentId)
                     .OnDelete(DeleteBehavior.Cascade);
+                entity.HasMany(document => document.OutlineNodes)
+                    .WithOne(node => node.Document)
+                    .HasForeignKey(node => node.DocumentId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<DocumentOutlineNodeRecord>(entity =>
+            {
+                entity.HasKey(node => node.Id);
+                entity.Property(node => node.DocumentId).IsRequired();
+                entity.Property(node => node.Title).IsRequired();
+                entity.Property(node => node.Order).IsRequired();
+                entity.HasIndex(node => new { node.DocumentId, node.ParentId, node.Order });
+                entity.HasOne(node => node.Parent)
+                    .WithMany(node => node.Children)
+                    .HasForeignKey(node => node.ParentId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                entity.HasOne(node => node.LinkedSection)
+                    .WithMany()
+                    .HasForeignKey(node => node.LinkedSectionId)
+                    .OnDelete(DeleteBehavior.SetNull);
             });
 
             builder.Entity<SectionRecord>(entity =>
@@ -137,6 +160,16 @@ namespace WriterApp.Data
                 entity.HasOne(note => note.Page)
                     .WithOne()
                     .HasForeignKey<PageNoteRecord>(note => note.PageId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<SectionSceneCardRecord>(entity =>
+            {
+                entity.HasKey(card => card.SectionId);
+                entity.Property(card => card.UpdatedUtc).IsRequired();
+                entity.HasOne(card => card.Section)
+                    .WithOne(section => section.SceneCard)
+                    .HasForeignKey<SectionSceneCardRecord>(card => card.SectionId)
                     .OnDelete(DeleteBehavior.Cascade);
             });
 

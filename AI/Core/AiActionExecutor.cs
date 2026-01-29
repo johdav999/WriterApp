@@ -91,6 +91,18 @@ namespace WriterApp.AI.Core
                 proposedText = proposedText.Trim();
                 operations.Add(new ReplaceSynopsisFieldOperation(fieldKey, proposedText));
             }
+            else if (string.Equals(action.ActionId, GenerateOutlineAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                AiArtifact? textArtifact = result.Artifacts.FirstOrDefault(artifact => artifact.Modality == AiModality.Text);
+                proposedText = textArtifact?.TextContent ?? string.Empty;
+            }
+            else if (string.Equals(action.ActionId, SceneSuggestAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(action.ActionId, SceneRefineAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(action.ActionId, SceneFindOpenQuestionsAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                AiArtifact? textArtifact = result.Artifacts.FirstOrDefault(artifact => artifact.Modality == AiModality.Text);
+                proposedText = textArtifact?.TextContent ?? string.Empty;
+            }
             else if (string.Equals(action.ActionId, GenerateCoverImageAction.ActionIdValue, StringComparison.Ordinal))
             {
                 AiArtifact? imageArtifact = result.Artifacts.FirstOrDefault(artifact => artifact.Modality == AiModality.Image);
@@ -134,6 +146,18 @@ namespace WriterApp.AI.Core
                 return "Synopsis";
             }
 
+            if (string.Equals(actionId, GenerateOutlineAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Document";
+            }
+
+            if (string.Equals(actionId, SceneSuggestAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(actionId, SceneRefineAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(actionId, SceneFindOpenQuestionsAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Section";
+            }
+
             return "Selection";
         }
 
@@ -147,6 +171,26 @@ namespace WriterApp.AI.Core
             if (string.Equals(actionId, StoryCoachAction.ActionIdValue, StringComparison.Ordinal))
             {
                 return "Story Coach suggestion";
+            }
+
+            if (string.Equals(actionId, GenerateOutlineAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Generate outline";
+            }
+
+            if (string.Equals(actionId, SceneSuggestAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Suggest scene card";
+            }
+
+            if (string.Equals(actionId, SceneRefineAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Refine scene card";
+            }
+
+            if (string.Equals(actionId, SceneFindOpenQuestionsAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Find open questions";
             }
 
             if (!string.Equals(actionId, RewriteSelectionAction.ActionIdValue, StringComparison.Ordinal))

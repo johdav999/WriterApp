@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using WriterApp.Application.Documents;
 
 namespace WriterApp.Application.AI
 {
@@ -27,7 +28,12 @@ namespace WriterApp.Application.AI
         string? ProposedText,
         string? ChangesSummary,
         DateTimeOffset CreatedUtc,
-        string ActionKey);
+        string ActionKey,
+        IReadOnlyList<DocumentOutlineNodeDto>? OutlineNodes = null,
+        string? PreviewText = null,
+        bool? WasTruncated = null,
+        SectionSceneCardProposalDto? ProposedSceneCard = null,
+        string? ProposalExplanation = null);
 
     public sealed record AiActionHistoryEntryDto(
         Guid ProposalId,

@@ -5,6 +5,8 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
@@ -195,8 +197,48 @@ namespace WriterApp.Client.Pages
         private ContextTab _activeContextTab = ContextTab.Notes;
         private string _notesDraft = string.Empty;
         private string? _notesStatus;
-        private string _outlineDraft = string.Empty;
+        private string _sceneNarrativePurpose = string.Empty;
+        private string _sceneEmotionalBeat = string.Empty;
+        private string _sceneKeyEvents = string.Empty;
+        private string _sceneOpenQuestions = string.Empty;
+        private string? _sceneStatus;
+        private bool _sceneSaveInFlight;
+        private CancellationTokenSource? _sceneAutosaveCts;
+        private Guid? _sceneCardSectionId;
+        private SectionSceneCardProposalDto? _sceneAiProposal;
+        private string? _sceneAiExplanation;
+        private Guid? _sceneAiProposalId;
+        private string? _sceneAiError;
+        private bool _sceneAiInFlight;
         private string? _outlineStatus;
+        /*
+         * Feature flag: outline node <-> section linking
+         * - Disables link badges, connect picker, unlink action
+         * - Disables navigation from outline node -> section
+         * - Disables UI-driven updates to LinkedSectionId
+         * Re-enable: set to true and rebuild.
+         */
+        private static readonly bool EnableOutlineSectionLinking = false;
+        private readonly List<DocumentOutlineNodeDto> _outlineNodes = new();
+        private readonly HashSet<Guid> _outlineCollapsed = new();
+        private Guid? _outlineRenameId;
+        private string _outlineRenameDraft = string.Empty;
+        private string? _outlineRenameError;
+        private Guid? _outlineLinkPickerOpenId;
+        private string? _outlineLinkPickerError;
+        private Guid? _outlineDragId;
+        private Guid? _activeOutlineNodeId;
+        private IReadOnlyList<DocumentOutlineNodeDto>? _outlineProposalNodes;
+        private string? _outlineProposalPreview;
+        private bool _outlineProposalTruncated;
+        private bool _outlineGenerateInFlight;
+        private string? _outlineGenerateError;
+        private bool _outlineApplyInFlight;
+        private string? _outlineApplyError;
+        private bool _outlineApplyCreateMissing = true;
+        private bool _outlineApplyReorder = true;
+        private bool _outlineApplyRename;
+        private bool _outlineApplyLinkNodes = true;
         private PendingAiProposal? _pendingAiProposal;
         private bool _pendingDetailsExpanded;
         private bool _aiUndoRedoInFlight;
@@ -210,6 +252,8 @@ namespace WriterApp.Client.Pages
         private const int SectionTitleMaxLength = 120;
         private const int PageBreakHeightPx = 980;
         private const int PageBreakGutterOffsetPx = 28;
+        private static readonly TimeSpan SceneCardAutosaveDebounce = TimeSpan.FromSeconds(2.5);
+        private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
         private PageEditor.PageBreakOptions PageBreaks =>
             new(PageBreakHeightPx, true, PageBreakGutterOffsetPx);
@@ -315,9 +359,10 @@ namespace WriterApp.Client.Pages
                 await LastOpenedDocumentStateService.SaveAsync(DocumentId, _activeSection.Id);
 
                 _notesDraft = await LoadPageNotesAsync(_activePage.Id);
-                _outlineDraft = await LoadDocumentOutlineAsync(DocumentId);
                 _notesStatus = null;
+                await LoadSceneCardAsync(_activeSection.Id);
                 _outlineStatus = null;
+                await LoadOutlineNodesAsync();
                 await LoadAiHistoryAsync();
             }
             catch (Exception ex)
@@ -973,6 +1018,11 @@ namespace WriterApp.Client.Pages
             return string.Empty;
         }
 
+        private string? GetTooltip(string text)
+        {
+            return LayoutStateService.State.FocusMode ? null : text;
+        }
+
         private async Task ToggleContextPanel()
         {
             LayoutState current = LayoutStateService.State;
@@ -982,6 +1032,9 @@ namespace WriterApp.Client.Pages
         public void Dispose()
         {
             LayoutStateService.Changed -= OnLayoutStateChanged;
+            _sceneAutosaveCts?.Cancel();
+            _sceneAutosaveCts?.Dispose();
+            _sceneAutosaveCts = null;
 
             if (_exportModule is not null)
             {
@@ -1335,28 +1388,532 @@ namespace WriterApp.Client.Pages
             _notesStatus = null;
         }
 
-        private async Task OnOutlineSave()
+        private void OnSceneNarrativePurposeInput(ChangeEventArgs args)
         {
+            _sceneNarrativePurpose = args.Value?.ToString() ?? string.Empty;
+            OnSceneCardInputChanged();
+        }
+
+        private void OnSceneEmotionalBeatInput(ChangeEventArgs args)
+        {
+            _sceneEmotionalBeat = args.Value?.ToString() ?? string.Empty;
+            OnSceneCardInputChanged();
+        }
+
+        private void OnSceneKeyEventsInput(ChangeEventArgs args)
+        {
+            _sceneKeyEvents = args.Value?.ToString() ?? string.Empty;
+            OnSceneCardInputChanged();
+        }
+
+        private void OnSceneOpenQuestionsInput(ChangeEventArgs args)
+        {
+            _sceneOpenQuestions = args.Value?.ToString() ?? string.Empty;
+            OnSceneCardInputChanged();
+        }
+
+        private void OnSceneCardInputChanged()
+        {
+            _sceneStatus = null;
+            QueueSceneCardAutosave();
+        }
+
+        private async Task OnSceneCardSave()
+        {
+            if (_activeSection is null)
+            {
+                return;
+            }
+
+            await SaveSceneCardAsync(_activeSection.Id, isAutosave: false);
+        }
+
+        private async Task LoadSceneCardAsync(Guid sectionId)
+        {
+            _sceneAutosaveCts?.Cancel();
+            _sceneAutosaveCts = null;
+            _sceneStatus = null;
+            _sceneAiProposal = null;
+            _sceneAiExplanation = null;
+            _sceneAiProposalId = null;
+            _sceneAiError = null;
+            _sceneCardSectionId = sectionId;
+
             try
             {
-                await SaveDocumentOutlineAsync(DocumentId, _outlineDraft);
-                _outlineStatus = "Outline saved.";
+                SectionSceneCardDto? card =
+                    await Http.GetFromJsonAsync<SectionSceneCardDto>($"api/sections/{sectionId}/scene-card");
+
+                _sceneNarrativePurpose = card?.NarrativePurpose ?? string.Empty;
+                _sceneEmotionalBeat = card?.EmotionalBeat ?? string.Empty;
+                _sceneKeyEvents = card?.KeyEvents ?? string.Empty;
+                _sceneOpenQuestions = card?.OpenQuestions ?? string.Empty;
             }
             catch (Exception ex)
             {
-                Logger.LogError(ex, "Outline save failed.");
-                _outlineStatus = "Failed to save outline.";
-            }
-            finally
-            {
-                await InvokeAsync(StateHasChanged);
+                Logger.LogWarning(ex, "Scene card load failed.");
+                _sceneStatus = "Failed to load scene card.";
             }
         }
 
-        private void OnOutlineInput(ChangeEventArgs args)
+        private void QueueSceneCardAutosave()
         {
-            _outlineDraft = args.Value?.ToString() ?? string.Empty;
+            if (_activeSection is null)
+            {
+                return;
+            }
+
+            _sceneAutosaveCts?.Cancel();
+            _sceneAutosaveCts = new CancellationTokenSource();
+            _ = DebouncedSceneCardSaveAsync(_sceneAutosaveCts, _activeSection.Id);
+        }
+
+        private async Task DebouncedSceneCardSaveAsync(CancellationTokenSource cts, Guid sectionId)
+        {
+            try
+            {
+                await Task.Delay(SceneCardAutosaveDebounce, cts.Token);
+                if (cts.IsCancellationRequested || _sceneCardSectionId != sectionId)
+                {
+                    return;
+                }
+
+                await SaveSceneCardAsync(sectionId, isAutosave: true);
+            }
+            catch (TaskCanceledException)
+            {
+            }
+        }
+
+        private async Task SaveSceneCardAsync(Guid sectionId, bool isAutosave)
+        {
+            if (_sceneSaveInFlight || _sceneCardSectionId != sectionId)
+            {
+                return;
+            }
+
+            _sceneSaveInFlight = true;
+            try
+            {
+                SectionSceneCardUpdateRequest payload = new(
+                    _sceneNarrativePurpose,
+                    _sceneEmotionalBeat,
+                    _sceneKeyEvents,
+                    _sceneOpenQuestions);
+
+                using HttpResponseMessage response =
+                    await Http.PutAsJsonAsync($"api/sections/{sectionId}/scene-card", payload);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    _sceneStatus = "Failed to save scene card.";
+                    return;
+                }
+
+                SectionSceneCardDto? updated = await response.Content.ReadFromJsonAsync<SectionSceneCardDto>();
+                if (updated is not null)
+                {
+                    _sceneNarrativePurpose = updated.NarrativePurpose ?? string.Empty;
+                    _sceneEmotionalBeat = updated.EmotionalBeat ?? string.Empty;
+                    _sceneKeyEvents = updated.KeyEvents ?? string.Empty;
+                    _sceneOpenQuestions = updated.OpenQuestions ?? string.Empty;
+                }
+
+                _sceneStatus = isAutosave ? "Scene card saved." : "Scene card saved.";
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Scene card save failed.");
+                _sceneStatus = "Failed to save scene card.";
+            }
+            finally
+            {
+                _sceneSaveInFlight = false;
+            }
+        }
+
+        private async Task RunSceneAiAsync(string actionKey, string instruction)
+        {
+            if (_sceneAiInFlight || _activeSection is null)
+            {
+                return;
+            }
+
+            _sceneAiInFlight = true;
+            _sceneAiError = null;
+            try
+            {
+                string originalSnapshot = BuildSceneCardSnapshotJson();
+                AiActionExecuteRequestDto payload = new(
+                    DocumentId,
+                    _activeSection.Id,
+                    _activePage?.Id,
+                    null,
+                    null,
+                    originalSnapshot,
+                    null,
+                    null,
+                    new Dictionary<string, object?>
+                    {
+                        ["instruction"] = instruction
+                    });
+
+                using HttpResponseMessage response =
+                    await Http.PostAsJsonAsync($"api/ai/actions/{actionKey}/execute", payload);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _sceneAiError = "AI action failed.";
+                    return;
+                }
+
+                AiActionExecuteResponseDto? result =
+                    await response.Content.ReadFromJsonAsync<AiActionExecuteResponseDto>();
+                if (result?.ProposedSceneCard is null)
+                {
+                    _sceneAiError = "AI action returned no scene card.";
+                    return;
+                }
+
+                _sceneAiProposal = result.ProposedSceneCard;
+                _sceneAiExplanation = result.ProposalExplanation ?? result.ChangesSummary;
+                _sceneAiProposalId = result.ProposalId;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Scene card AI failed.");
+                _sceneAiError = "AI action failed.";
+            }
+            finally
+            {
+                _sceneAiInFlight = false;
+            }
+        }
+
+        private async Task ApplySceneAiProposalAsync()
+        {
+            if (_sceneAiProposal is null || _activeSection is null || !_sceneAiProposalId.HasValue)
+            {
+                return;
+            }
+
+            string beforeSnapshot = BuildSceneCardSnapshotJson();
+            _sceneNarrativePurpose = _sceneAiProposal.NarrativePurpose ?? string.Empty;
+            _sceneEmotionalBeat = _sceneAiProposal.EmotionalBeat ?? string.Empty;
+            _sceneKeyEvents = _sceneAiProposal.KeyEvents ?? string.Empty;
+            _sceneOpenQuestions = _sceneAiProposal.OpenQuestions ?? string.Empty;
+
+            await SaveSceneCardAsync(_activeSection.Id, isAutosave: false);
+
+            string afterSnapshot = BuildSceneCardSnapshotJson();
+            await RecordAiSceneCardAppliedAsync(_sceneAiProposalId.Value, beforeSnapshot, afterSnapshot);
+            _sceneAiProposal = null;
+            _sceneAiExplanation = null;
+            _sceneAiProposalId = null;
+            await LoadAiHistoryAsync();
+        }
+
+        private void DiscardSceneAiProposal()
+        {
+            _sceneAiProposal = null;
+            _sceneAiExplanation = null;
+            _sceneAiProposalId = null;
+            _sceneAiError = null;
+        }
+
+        private string BuildSceneCardSnapshotJson()
+        {
+            SectionSceneCardProposalDto snapshot = new(
+                _sceneNarrativePurpose,
+                _sceneEmotionalBeat,
+                _sceneKeyEvents,
+                _sceneOpenQuestions);
+            return JsonSerializer.Serialize(snapshot, JsonOptions);
+        }
+
+        private async Task RecordAiSceneCardAppliedAsync(Guid proposalId, string before, string after)
+        {
+            var payload = new
+            {
+                DocumentId,
+                SectionId = _activeSection?.Id,
+                PageId = _activePage?.Id,
+                BeforeContent = before,
+                AfterContent = after
+            };
+
+            try
+            {
+                using HttpResponseMessage response =
+                    await Http.PostAsJsonAsync($"api/ai/actions/history/{proposalId}/applied", payload);
+                if (!response.IsSuccessStatusCode)
+                {
+                    Logger.LogWarning("AI history apply failed: {Status}", response.StatusCode);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "AI history apply failed.");
+            }
+        }
+
+        private async Task LoadOutlineNodesAsync()
+        {
+            _outlineNodes.Clear();
+            _outlineCollapsed.Clear();
             _outlineStatus = null;
+            _outlineProposalNodes = null;
+            _outlineProposalPreview = null;
+            _outlineProposalTruncated = false;
+            _outlineGenerateError = null;
+            try
+            {
+                List<DocumentOutlineNodeDto>? nodes =
+                    await Http.GetFromJsonAsync<List<DocumentOutlineNodeDto>>(
+                        $"api/documents/{DocumentId}/outline/nodes");
+                if (nodes is not null)
+                {
+                    _outlineNodes.AddRange(nodes.OrderBy(node => node.ParentId).ThenBy(node => node.Order));
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Outline load failed.");
+                _outlineStatus = "Failed to load outline.";
+            }
+        }
+
+        private IEnumerable<DocumentOutlineNodeDto> GetOutlineChildren(Guid? parentId)
+        {
+            return _outlineNodes
+                .Where(node => node.ParentId == parentId)
+                .OrderBy(node => node.Order);
+        }
+
+        private RenderFragment RenderOutlineNode(DocumentOutlineNodeDto node, int depth) => builder =>
+        {
+            int seq = 0;
+            bool hasChildren = _outlineNodes.Any(child => child.ParentId == node.Id);
+            bool isCollapsed = _outlineCollapsed.Contains(node.Id);
+            bool isActive = _activeOutlineNodeId == node.Id;
+            bool isLinkEditorOpen = _outlineLinkPickerOpenId == node.Id;
+
+            builder.OpenElement(seq++, "li");
+            builder.AddAttribute(seq++, "class", isActive ? "outline-tree-node outline-node outline-node--active" : "outline-tree-node outline-node");
+            builder.AddAttribute(seq++, "ondragover", EventCallback.Factory.Create<DragEventArgs>(this, OnOutlineDragOver));
+            builder.AddAttribute(seq++, "ondragover:preventDefault", true);
+            builder.AddAttribute(seq++, "ondrop", EventCallback.Factory.Create<DragEventArgs>(this, () => OnOutlineDrop(node.Id)));
+
+            builder.OpenElement(seq++, "div");
+            builder.AddAttribute(seq++, "class", "outline-node-row outline-node__row");
+            builder.AddAttribute(seq++, "style", $"--outline-depth: {depth};");
+            builder.AddAttribute(seq++, "tabindex", "0");
+            builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => SetActiveOutlineNode(node.Id)));
+            builder.AddAttribute(seq++, "onkeydown", EventCallback.Factory.Create<KeyboardEventArgs>(this, args => OnOutlineRowKeyDown(args, node.Id)));
+
+            builder.OpenElement(seq++, "span");
+            builder.AddAttribute(seq++, "class", "outline-node-indent");
+            builder.CloseElement();
+
+            if (hasChildren)
+            {
+            builder.OpenElement(seq++, "button");
+            builder.AddAttribute(seq++, "type", "button");
+            builder.AddAttribute(seq++, "class", "outline-node-toggle");
+            builder.AddAttribute(seq++, "title", isCollapsed ? "Expand" : "Collapse");
+            builder.AddAttribute(seq++, "aria-label", isCollapsed ? "Expand node" : "Collapse node");
+            builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => ToggleOutlineNode(node.Id)));
+            builder.AddAttribute(seq++, "onclick:stopPropagation", true);
+            builder.AddContent(seq++, isCollapsed ? "+" : "-");
+            builder.CloseElement();
+            }
+            else
+            {
+                builder.OpenElement(seq++, "span");
+                builder.AddAttribute(seq++, "class", "outline-node-spacer");
+                builder.AddContent(seq++, " ");
+                builder.CloseElement();
+            }
+
+            builder.OpenElement(seq++, "button");
+            builder.AddAttribute(seq++, "type", "button");
+            builder.AddAttribute(seq++, "class", "outline-drag-handle outline-node__handle btn-icon");
+            builder.AddAttribute(seq++, "draggable", "true");
+            builder.AddAttribute(seq++, "ondragstart", EventCallback.Factory.Create<DragEventArgs>(this, () => OnOutlineDragStart(node.Id)));
+            builder.AddAttribute(seq++, "title", "Drag to reorder");
+            builder.AddAttribute(seq++, "aria-label", "Drag to reorder");
+            builder.AddAttribute(seq++, "onclick:stopPropagation", true);
+            builder.AddMarkupContent(seq++, "<svg viewBox=\"0 0 24 24\" width=\"14\" height=\"14\" aria-hidden=\"true\" fill=\"currentColor\"><circle cx=\"9\" cy=\"6\" r=\"1.5\"/><circle cx=\"15\" cy=\"6\" r=\"1.5\"/><circle cx=\"9\" cy=\"12\" r=\"1.5\"/><circle cx=\"15\" cy=\"12\" r=\"1.5\"/><circle cx=\"9\" cy=\"18\" r=\"1.5\"/><circle cx=\"15\" cy=\"18\" r=\"1.5\"/></svg>");
+            builder.CloseElement();
+
+            builder.OpenElement(seq++, "div");
+            builder.AddAttribute(seq++, "class", "outline-node-main outline-node__content");
+
+            if (_outlineRenameId == node.Id)
+            {
+                builder.OpenElement(seq++, "input");
+                builder.AddAttribute(seq++, "class", "outline-rename-input");
+                builder.AddAttribute(seq++, "value", _outlineRenameDraft);
+                builder.AddAttribute(seq++, "oninput", EventCallback.Factory.Create<ChangeEventArgs>(this, OnOutlineRenameInput));
+                builder.AddAttribute(seq++, "onblur", EventCallback.Factory.Create(this, () => CommitRenameNodeAsync(node.Id)));
+                builder.AddAttribute(seq++, "autofocus", "autofocus");
+                builder.CloseElement();
+
+                if (!string.IsNullOrWhiteSpace(_outlineRenameError))
+                {
+                    builder.OpenElement(seq++, "span");
+                    builder.AddAttribute(seq++, "class", "outline-rename-error");
+                    builder.AddContent(seq++, _outlineRenameError);
+                    builder.CloseElement();
+                }
+            }
+            else
+            {
+                builder.OpenElement(seq++, "button");
+                builder.AddAttribute(seq++, "type", "button");
+                builder.AddAttribute(seq++, "class", node.LinkedSectionId.HasValue ? "outline-node-title outline-node__title is-link" : "outline-node-title outline-node__title");
+                builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => OnOutlineNodeClicked(node)));
+                builder.AddContent(seq++, node.Title);
+                builder.CloseElement();
+            }
+
+            if (EnableOutlineSectionLinking)
+            {
+                builder.OpenElement(seq++, "span");
+                builder.AddAttribute(seq++, "class", "outline-node__badge");
+                builder.OpenElement(seq++, "button");
+                builder.AddAttribute(seq++, "type", "button");
+                builder.AddAttribute(seq++, "class", node.LinkedSectionId.HasValue ? "outline-badge outline-badge--linked outline-badge-button" : "outline-badge outline-badge--outlineonly outline-badge-button");
+                if (node.LinkedSectionId.HasValue)
+                {
+                    string? linkedTitle = GetLinkedSectionTitle(node.LinkedSectionId.Value);
+                    builder.AddAttribute(seq++, "title", string.IsNullOrWhiteSpace(linkedTitle)
+                        ? "Connected to a section. Click title to navigate."
+                        : $"Connected to section: {linkedTitle}. Click title to navigate.");
+                }
+                else
+                {
+                    builder.AddAttribute(seq++, "title", "This outline item isn't connected to a manuscript section yet.");
+                }
+                builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => ToggleLinkPicker(node.Id)));
+                builder.AddAttribute(seq++, "onclick:stopPropagation", true);
+                builder.AddContent(seq++, node.LinkedSectionId.HasValue ? "Linked" : "Outline-only");
+                builder.CloseElement();
+                if (node.LinkedSectionId.HasValue)
+                {
+                    string? linkedTitle = GetLinkedSectionTitle(node.LinkedSectionId.Value);
+                    if (!string.IsNullOrWhiteSpace(linkedTitle))
+                    {
+                        builder.OpenElement(seq++, "span");
+                        builder.AddAttribute(seq++, "class", "outline-badge-detail");
+                        builder.AddContent(seq++, linkedTitle);
+                        builder.CloseElement();
+                    }
+                }
+                builder.CloseElement();
+            }
+
+            builder.CloseElement();
+
+            builder.CloseElement();
+
+            if (isLinkEditorOpen)
+            {
+                string linkSelectId = $"outline-link-{node.Id}";
+                builder.OpenElement(seq++, "div");
+                builder.AddAttribute(seq++, "class", "outline-link-popover outline-node__linkpanel");
+
+                builder.OpenElement(seq++, "label");
+                builder.AddAttribute(seq++, "class", "visually-hidden");
+                builder.AddAttribute(seq++, "for", linkSelectId);
+                builder.AddContent(seq++, "Connect to section");
+                builder.CloseElement();
+
+                builder.OpenElement(seq++, "select");
+                builder.AddAttribute(seq++, "id", linkSelectId);
+                builder.AddAttribute(seq++, "class", "outline-link-select outline-node__linkselect");
+                builder.AddAttribute(seq++, "title", "Connect to a section");
+                builder.AddAttribute(seq++, "value", GetLinkedSectionValue(node));
+                builder.AddAttribute(seq++, "onchange", EventCallback.Factory.Create<ChangeEventArgs>(this, args => OnOutlineLinkSelected(node.Id, args)));
+                builder.OpenElement(seq++, "option");
+                builder.AddAttribute(seq++, "value", string.Empty);
+                builder.AddContent(seq++, "Outline-only");
+                builder.CloseElement();
+                foreach (SectionDto section in _sections)
+                {
+                    builder.OpenElement(seq++, "option");
+                    builder.AddAttribute(seq++, "value", section.Id.ToString());
+                    builder.AddContent(seq++, section.Title);
+                    builder.CloseElement();
+                }
+                builder.CloseElement();
+
+                if (node.LinkedSectionId.HasValue)
+                {
+                    builder.OpenElement(seq++, "button");
+                    builder.AddAttribute(seq++, "type", "button");
+                    builder.AddAttribute(seq++, "class", "outline-link-unlink outline-btn outline-btn--ghost");
+                    builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => UnlinkOutlineNodeAsync(node.Id)));
+                    builder.AddContent(seq++, "Unlink");
+                    builder.CloseElement();
+                }
+
+                if (!string.IsNullOrWhiteSpace(_outlineLinkPickerError))
+                {
+                    builder.OpenElement(seq++, "div");
+                    builder.AddAttribute(seq++, "class", "outline-link-error");
+                    builder.AddContent(seq++, _outlineLinkPickerError);
+                    builder.CloseElement();
+                }
+
+                builder.CloseElement();
+            }
+
+            if (hasChildren && !isCollapsed)
+            {
+                builder.OpenElement(seq++, "ul");
+                builder.AddAttribute(seq++, "class", "outline-tree-children");
+                foreach (DocumentOutlineNodeDto child in GetOutlineChildren(node.Id))
+                {
+                    builder.AddContent(seq++, RenderOutlineNode(child, depth + 1));
+                }
+                builder.CloseElement();
+            }
+
+            builder.CloseElement();
+        };
+
+        private void SetActiveOutlineNode(Guid nodeId)
+        {
+            _activeOutlineNodeId = nodeId;
+        }
+
+        private void ToggleLinkPicker(Guid nodeId)
+        {
+            _outlineLinkPickerOpenId = _outlineLinkPickerOpenId == nodeId ? null : nodeId;
+            _outlineLinkPickerError = null;
+        }
+
+        private void CloseLinkPicker(Guid nodeId)
+        {
+            if (_outlineLinkPickerOpenId == nodeId)
+            {
+                _outlineLinkPickerOpenId = null;
+                _outlineLinkPickerError = null;
+            }
+        }
+
+        private void OnOutlineRowKeyDown(KeyboardEventArgs args, Guid nodeId)
+        {
+            if (string.Equals(args.Key, "Escape", StringComparison.Ordinal))
+            {
+                CloseLinkPicker(nodeId);
+            }
+        }
+
+        private string? GetLinkedSectionTitle(Guid sectionId)
+        {
+            SectionDto? section = _sections.FirstOrDefault(item => item.Id == sectionId);
+            return section?.Title;
         }
 
         private async Task<string> LoadPageNotesAsync(Guid pageId)
@@ -1380,25 +1937,530 @@ namespace WriterApp.Client.Pages
             response.EnsureSuccessStatusCode();
         }
 
-        private async Task<string> LoadDocumentOutlineAsync(Guid documentId)
+        private string GetLinkedSectionValue(DocumentOutlineNodeDto node)
         {
-            try
+            return node.LinkedSectionId?.ToString() ?? string.Empty;
+        }
+
+        private bool IsSectionLinkedElsewhere(Guid sectionId, Guid currentNodeId)
+        {
+            return _outlineNodes.Any(node => node.Id != currentNodeId && node.LinkedSectionId == sectionId);
+        }
+
+        private async Task OnOutlineLinkSelected(Guid nodeId, ChangeEventArgs args)
+        {
+            _outlineLinkPickerError = null;
+            string raw = args.Value?.ToString() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(raw) && Guid.TryParse(raw, out Guid selected))
             {
-                DocumentOutlineDto? result = await Http.GetFromJsonAsync<DocumentOutlineDto>($"api/documents/{documentId}/outline");
-                return result?.Outline ?? string.Empty;
+                if (IsSectionLinkedElsewhere(selected, nodeId))
+                {
+                    _outlineLinkPickerError = "That section is already linked to another outline item.";
+                    return;
+                }
             }
-            catch (Exception ex)
+
+            await OnOutlineLinkChanged(nodeId, args);
+        }
+
+        private async Task UnlinkOutlineNodeAsync(Guid nodeId)
+        {
+            ChangeEventArgs args = new() { Value = string.Empty };
+            await OnOutlineLinkChanged(nodeId, args);
+        }
+
+        private void ToggleOutlineNode(Guid nodeId)
+        {
+            if (_outlineCollapsed.Contains(nodeId))
             {
-                Logger.LogWarning(ex, "Outline load failed.");
-                return string.Empty;
+                _outlineCollapsed.Remove(nodeId);
+            }
+            else
+            {
+                _outlineCollapsed.Add(nodeId);
             }
         }
 
-        private async Task SaveDocumentOutlineAsync(Guid documentId, string outline)
+        private Task OnOutlineDragOver(DragEventArgs args)
         {
-            DocumentOutlineDto payload = new(documentId, outline ?? string.Empty, DateTimeOffset.UtcNow);
-            using HttpResponseMessage response = await Http.PutAsJsonAsync($"api/documents/{documentId}/outline", payload);
-            response.EnsureSuccessStatusCode();
+            return Task.CompletedTask;
+        }
+
+        private void OnOutlineDragStart(Guid nodeId)
+        {
+            _outlineDragId = nodeId;
+        }
+
+        private async Task OnOutlineDrop(Guid targetNodeId)
+        {
+            if (_outlineDragId is null || _outlineDragId == targetNodeId)
+            {
+                return;
+            }
+
+            DocumentOutlineNodeDto? dragged = _outlineNodes.FirstOrDefault(node => node.Id == _outlineDragId.Value);
+            DocumentOutlineNodeDto? target = _outlineNodes.FirstOrDefault(node => node.Id == targetNodeId);
+            if (dragged is null || target is null || dragged.ParentId != target.ParentId)
+            {
+                _outlineDragId = null;
+                return;
+            }
+
+            List<DocumentOutlineNodeDto> siblings = GetOutlineChildren(dragged.ParentId).ToList();
+            int fromIndex = siblings.FindIndex(node => node.Id == dragged.Id);
+            int toIndex = siblings.FindIndex(node => node.Id == target.Id);
+            if (fromIndex < 0 || toIndex < 0 || fromIndex == toIndex)
+            {
+                _outlineDragId = null;
+                return;
+            }
+
+            DocumentOutlineNodeDto moving = siblings[fromIndex];
+            siblings.RemoveAt(fromIndex);
+            siblings.Insert(toIndex, moving);
+            for (int index = 0; index < siblings.Count; index++)
+            {
+                DocumentOutlineNodeDto current = siblings[index];
+                UpdateNode(current with { Order = index });
+            }
+
+            _outlineDragId = null;
+            await SaveOutlineNodesAsync("Outline order saved.");
+        }
+
+        private async Task AddRootNodeAsync()
+        {
+            await InsertNodeAsync(null, GetOutlineChildren(null).Count());
+        }
+
+        private async Task AddSiblingNodeAsync(Guid nodeId)
+        {
+            DocumentOutlineNodeDto? node = _outlineNodes.FirstOrDefault(item => item.Id == nodeId);
+            if (node is null)
+            {
+                return;
+            }
+
+            List<DocumentOutlineNodeDto> siblings = GetOutlineChildren(node.ParentId).ToList();
+            int index = siblings.FindIndex(entry => entry.Id == nodeId);
+            int insertIndex = Math.Max(0, index + 1);
+            await InsertNodeAsync(node.ParentId, insertIndex);
+        }
+
+        private async Task AddChildNodeAsync(Guid nodeId)
+        {
+            await InsertNodeAsync(nodeId, GetOutlineChildren(nodeId).Count());
+            _outlineCollapsed.Remove(nodeId);
+        }
+
+        private async Task InsertNodeAsync(Guid? parentId, int insertIndex)
+        {
+            List<DocumentOutlineNodeDto> siblings = GetOutlineChildren(parentId).ToList();
+            for (int index = 0; index < siblings.Count; index++)
+            {
+                DocumentOutlineNodeDto sibling = siblings[index];
+                int nextOrder = index >= insertIndex ? index + 1 : index;
+                if (sibling.Order != nextOrder)
+                {
+                    UpdateNode(sibling with { Order = nextOrder });
+                }
+            }
+
+            DocumentOutlineNodeDto created = new(
+                Guid.NewGuid(),
+                DocumentId,
+                parentId,
+                insertIndex,
+                "New node",
+                null,
+                null);
+            _outlineNodes.Add(created);
+            _activeOutlineNodeId = created.Id;
+            _outlineRenameId = created.Id;
+            _outlineRenameDraft = created.Title;
+            _outlineRenameError = null;
+            await SaveOutlineNodesAsync("Outline updated.");
+        }
+
+        private async Task DeleteNodeAsync(Guid nodeId)
+        {
+            HashSet<Guid> toRemove = CollectDescendants(nodeId);
+            if (toRemove.Count == 0)
+            {
+                return;
+            }
+
+            DocumentOutlineNodeDto? removedNode = _outlineNodes.FirstOrDefault(node => node.Id == nodeId);
+            Guid? parentId = removedNode?.ParentId;
+            List<DocumentOutlineNodeDto> siblingsBefore = GetOutlineChildren(parentId).ToList();
+            int removedIndex = siblingsBefore.FindIndex(node => node.Id == nodeId);
+            bool selectionRemoved = _activeOutlineNodeId.HasValue && toRemove.Contains(_activeOutlineNodeId.Value);
+            _outlineNodes.RemoveAll(node => toRemove.Contains(node.Id));
+            ReorderSiblings(parentId);
+            if (selectionRemoved)
+            {
+                if (parentId.HasValue)
+                {
+                    _activeOutlineNodeId = parentId.Value;
+                }
+                else
+                {
+                    List<DocumentOutlineNodeDto> siblingsAfter = GetOutlineChildren(parentId).ToList();
+                    if (removedIndex >= 0 && removedIndex < siblingsAfter.Count)
+                    {
+                        _activeOutlineNodeId = siblingsAfter[removedIndex].Id;
+                    }
+                    else if (removedIndex > 0 && siblingsAfter.Count > 0)
+                    {
+                        int previousIndex = Math.Min(removedIndex - 1, siblingsAfter.Count - 1);
+                        _activeOutlineNodeId = siblingsAfter[previousIndex].Id;
+                    }
+                    else
+                    {
+                        _activeOutlineNodeId = siblingsAfter.FirstOrDefault()?.Id;
+                    }
+                }
+            }
+            await SaveOutlineNodesAsync("Outline updated.");
+        }
+
+        private HashSet<Guid> CollectDescendants(Guid nodeId)
+        {
+            HashSet<Guid> ids = new() { nodeId };
+            Queue<Guid> queue = new();
+            queue.Enqueue(nodeId);
+            while (queue.Count > 0)
+            {
+                Guid current = queue.Dequeue();
+                foreach (DocumentOutlineNodeDto child in _outlineNodes.Where(node => node.ParentId == current))
+                {
+                    if (ids.Add(child.Id))
+                    {
+                        queue.Enqueue(child.Id);
+                    }
+                }
+            }
+
+            return ids;
+        }
+
+        private void ReorderSiblings(Guid? parentId)
+        {
+            List<DocumentOutlineNodeDto> siblings = GetOutlineChildren(parentId).ToList();
+            for (int index = 0; index < siblings.Count; index++)
+            {
+                UpdateNode(siblings[index] with { Order = index });
+            }
+        }
+
+        private void StartRenameNode(Guid nodeId)
+        {
+            DocumentOutlineNodeDto? node = _outlineNodes.FirstOrDefault(item => item.Id == nodeId);
+            if (node is null)
+            {
+                return;
+            }
+
+            _activeOutlineNodeId = nodeId;
+            _outlineRenameId = nodeId;
+            _outlineRenameDraft = node.Title;
+            _outlineRenameError = null;
+        }
+
+        private void OnOutlineRenameInput(ChangeEventArgs args)
+        {
+            _outlineRenameDraft = args.Value?.ToString() ?? string.Empty;
+        }
+
+        private async Task CommitRenameNodeAsync(Guid nodeId)
+        {
+            if (_outlineRenameId != nodeId)
+            {
+                return;
+            }
+
+            string trimmed = _outlineRenameDraft.Trim();
+            if (string.IsNullOrWhiteSpace(trimmed))
+            {
+                _outlineRenameError = "Title is required.";
+                return;
+            }
+
+            DocumentOutlineNodeDto? node = _outlineNodes.FirstOrDefault(item => item.Id == nodeId);
+            if (node is null)
+            {
+                return;
+            }
+
+            UpdateNode(node with { Title = trimmed });
+            _outlineRenameId = null;
+            _outlineRenameDraft = string.Empty;
+            _outlineRenameError = null;
+            await SaveOutlineNodesAsync("Outline updated.");
+        }
+
+        private async Task OnOutlineLinkChanged(Guid nodeId, ChangeEventArgs args)
+        {
+            Guid? sectionId = null;
+            string raw = args.Value?.ToString() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(raw) && Guid.TryParse(raw, out Guid parsed))
+            {
+                sectionId = parsed;
+            }
+
+            try
+            {
+                DocumentOutlineLinkRequest payload = new(sectionId);
+                using HttpResponseMessage response =
+                    await Http.PostAsJsonAsync(
+                        $"api/documents/{DocumentId}/outline/nodes/{nodeId}/link-section",
+                        payload);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _outlineStatus = "Failed to link section.";
+                    return;
+                }
+
+                DocumentOutlineNodeDto? updated =
+                    await response.Content.ReadFromJsonAsync<DocumentOutlineNodeDto>();
+                if (updated is null)
+                {
+                    return;
+                }
+
+                UpdateNode(updated);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Outline link failed.");
+                _outlineStatus = "Failed to link section.";
+            }
+        }
+
+        private async Task OnOutlineNodeClicked(DocumentOutlineNodeDto node)
+        {
+            _activeOutlineNodeId = node.Id;
+            if (node.LinkedSectionId.HasValue)
+            {
+                await OnSectionSelected(node.LinkedSectionId.Value);
+            }
+        }
+
+        private void UpdateNode(DocumentOutlineNodeDto updated)
+        {
+            int index = _outlineNodes.FindIndex(node => node.Id == updated.Id);
+            if (index >= 0)
+            {
+                _outlineNodes[index] = updated;
+            }
+            else
+            {
+                _outlineNodes.Add(updated);
+            }
+        }
+
+        private async Task SaveOutlineNodesAsync(string statusMessage)
+        {
+            try
+            {
+                using HttpResponseMessage response =
+                    await Http.PutAsJsonAsync(
+                        $"api/documents/{DocumentId}/outline/nodes",
+                        _outlineNodes);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _outlineStatus = "Outline save failed.";
+                    return;
+                }
+
+                List<DocumentOutlineNodeDto>? updated =
+                    await response.Content.ReadFromJsonAsync<List<DocumentOutlineNodeDto>>();
+                if (updated is not null)
+                {
+                    _outlineNodes.Clear();
+                    _outlineNodes.AddRange(updated.OrderBy(node => node.ParentId).ThenBy(node => node.Order));
+                }
+
+                _outlineStatus = statusMessage;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Outline save failed.");
+                _outlineStatus = "Outline save failed.";
+            }
+        }
+
+        private async Task GenerateOutlineAsync()
+        {
+            if (_outlineGenerateInFlight)
+            {
+                return;
+            }
+
+            _outlineGenerateInFlight = true;
+            _outlineGenerateError = null;
+            try
+            {
+                AiActionExecuteRequestDto payload = new(
+                    DocumentId,
+                    _activeSection?.Id ?? SectionId,
+                    _activePage?.Id,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    new Dictionary<string, object?>
+                    {
+                        ["instruction"] = "Generate a hierarchical outline as JSON."
+                    });
+
+                using HttpResponseMessage response =
+                    await Http.PostAsJsonAsync("api/ai/actions/generate.outline/execute", payload);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _outlineGenerateError = "Outline generation failed.";
+                    return;
+                }
+
+                AiActionExecuteResponseDto? result =
+                    await response.Content.ReadFromJsonAsync<AiActionExecuteResponseDto>();
+                if (result?.OutlineNodes is null || result.OutlineNodes.Count == 0)
+                {
+                    _outlineGenerateError = "Outline generation returned no nodes.";
+                    return;
+                }
+
+                _outlineProposalNodes = result.OutlineNodes;
+                _outlineProposalPreview = result.PreviewText ?? string.Empty;
+                _outlineProposalTruncated = result.WasTruncated == true;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Outline generation failed.");
+                _outlineGenerateError = "Outline generation failed.";
+            }
+            finally
+            {
+                _outlineGenerateInFlight = false;
+            }
+        }
+
+        private async Task ApplyOutlineProposalAsync()
+        {
+            if (_outlineProposalNodes is null || _outlineProposalNodes.Count == 0)
+            {
+                return;
+            }
+
+            _outlineNodes.Clear();
+            _outlineNodes.AddRange(_outlineProposalNodes);
+            _outlineCollapsed.Clear();
+            await SaveOutlineNodesAsync("Outline applied.");
+            DiscardOutlineProposal();
+        }
+
+        private void DiscardOutlineProposal()
+        {
+            _outlineProposalNodes = null;
+            _outlineProposalPreview = null;
+            _outlineProposalTruncated = false;
+            _outlineGenerateError = null;
+        }
+
+        private async Task ApplyOutlineToSectionsAsync()
+        {
+            if (_outlineApplyInFlight)
+            {
+                return;
+            }
+
+            _outlineApplyInFlight = true;
+            _outlineApplyError = null;
+            try
+            {
+                OutlineApplyOptionsDto payload = new(
+                    _outlineApplyCreateMissing,
+                    _outlineApplyReorder,
+                    _outlineApplyRename,
+                    _outlineApplyLinkNodes,
+                    MatchByTitle: true,
+                    MaxDepth: 1);
+
+                using HttpResponseMessage response =
+                    await Http.PostAsJsonAsync($"api/documents/{DocumentId}/outline/apply-to-sections", payload);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _outlineApplyError = "Failed to apply outline.";
+                    return;
+                }
+
+                OutlineApplyResultDto? result =
+                    await response.Content.ReadFromJsonAsync<OutlineApplyResultDto>();
+                if (result is null)
+                {
+                    _outlineApplyError = "Failed to apply outline.";
+                    return;
+                }
+
+                _sections.Clear();
+                _sections.AddRange(result.Sections.OrderBy(section => section.OrderIndex));
+                _outlineNodes.Clear();
+                _outlineNodes.AddRange(result.Nodes.OrderBy(node => node.ParentId).ThenBy(node => node.Order));
+
+                if (_activeSection is not null)
+                {
+                    SectionDto? match = _sections.FirstOrDefault(section => section.Id == _activeSection.Id);
+                    if (match is not null)
+                    {
+                        _activeSection = match;
+                    }
+                }
+
+                _outlineStatus = "Outline applied to sections.";
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Apply outline to sections failed.");
+                _outlineApplyError = "Failed to apply outline.";
+            }
+            finally
+            {
+                _outlineApplyInFlight = false;
+            }
+        }
+
+        private string GetOutlineTextForAi()
+        {
+            if (_outlineNodes.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            Dictionary<Guid, List<DocumentOutlineNodeDto>> byParent = _outlineNodes
+                .GroupBy(node => node.ParentId ?? Guid.Empty)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.OrderBy(node => node.Order).ToList());
+
+            List<string> lines = new();
+            void Walk(Guid parentId, int depth)
+            {
+                if (!byParent.TryGetValue(parentId, out List<DocumentOutlineNodeDto>? children))
+                {
+                    return;
+                }
+
+                foreach (DocumentOutlineNodeDto child in children)
+                {
+                    string indent = new string(' ', depth * 2);
+                    lines.Add($"{indent}- {child.Title}");
+                    Walk(child.Id, depth + 1);
+                }
+            }
+
+            Walk(Guid.Empty, 0);
+            return string.Join(Environment.NewLine, lines);
         }
         private async Task OnExportRequested(string kind, string format)
         {
@@ -1517,7 +2579,7 @@ namespace WriterApp.Client.Pages
                 selectionRange.Start + selectionRange.Length,
                 selection,
                 plain,
-                _outlineDraft,
+                GetOutlineTextForAi(),
                 parameters);
 
             AiActionExecuteResponseDto? response;
@@ -1656,6 +2718,21 @@ namespace WriterApp.Client.Pages
             if (string.Equals(actionKey, "synopsis.story_coach", StringComparison.OrdinalIgnoreCase))
             {
                 return "Story Coach";
+            }
+
+            if (string.Equals(actionKey, "scene.suggest", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Suggest scene card";
+            }
+
+            if (string.Equals(actionKey, "scene.refine", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Refine scene card";
+            }
+
+            if (string.Equals(actionKey, "scene.find-open-questions", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Find open questions";
             }
 
             return "AI";
@@ -2043,6 +3120,7 @@ namespace WriterApp.Client.Pages
         private enum ContextTab
         {
             Notes,
+            Scene,
             Outline,
             Ai
         }

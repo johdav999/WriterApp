@@ -42,6 +42,89 @@ h1:focus {
     color: white;
 }
 
+/* Outline tree nodes (RenderTreeBuilder nodes don't get scoped CSS) */
+.outline-node__row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.outline-node-title {
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: var(--surface, #fff);
+    text-align: left;
+    font-size: 0.95rem;
+    color: var(--text-strong, #111827);
+    cursor: pointer;
+    padding: 6px 10px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.outline-node-title:hover {
+    border-color: #c9d7f6;
+    transform: translateY(-1px);
+}
+
+.outline-node--active .outline-node-title {
+    border-color: #9fbaf5;
+    background: var(--accent-soft, #eef2ff);
+    box-shadow: 0 6px 14px rgba(47, 111, 235, 0.12);
+}
+
+.btn-icon,
+.outline-icon-button {
+    border: 1px solid #d1d5db;
+    border-radius: 10px;
+    background: var(--surface, #fff);
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    font-size: 0.75rem;
+    color: #6b7280;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.btn-icon:hover,
+.outline-icon-button:hover {
+    border-color: #c9d7f6;
+    color: #1f2937;
+}
+
+.outline-badge--outlineonly {
+    color: #6b7280;
+    border-color: #e5e7eb;
+    background: #f8fafc;
+}
+
+.outline-badge-button {
+    border: none;
+    background: transparent;
+    padding: 0;
+    cursor: pointer;
+}
+
+.outline-link-popover {
+    margin-top: 6px;
+    padding: 8px;
+    border-radius: 10px;
+    border: 1px solid #e2e8f0;
+    background: #fff;
+    display: grid;
+    gap: 8px;
+}
+
+.outline-link-error {
+    font-size: 0.78rem;
+    color: #b91c1c;
+}
+
     .blazor-error-boundary::after {
         content: "An error has occurred."
     }

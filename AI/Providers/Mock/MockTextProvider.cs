@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading.Tasks;
 using WriterApp.AI.Abstractions;
+using WriterApp.AI.Actions;
 
 namespace WriterApp.AI.Providers.Mock
 {
@@ -28,6 +30,54 @@ namespace WriterApp.AI.Providers.Mock
             if (request is null)
             {
                 throw new ArgumentNullException(nameof(request));
+            }
+
+            if (string.Equals(request.ActionId, GenerateOutlineAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                string json = BuildMockOutlineJson(request);
+                AiArtifact outlineArtifact = new(
+                    Guid.NewGuid(),
+                    AiModality.Text,
+                    "application/json",
+                    json,
+                    null,
+                    null);
+                AiResult outlineResult = new(
+                    request.RequestId,
+                    new List<AiArtifact> { outlineArtifact },
+                    new AiUsage(0, 0, TimeSpan.Zero),
+                    new Dictionary<string, object>
+                    {
+                        ["provider"] = ProviderId,
+                        ["model"] = "mock-text"
+                    });
+                return Task.FromResult(outlineResult);
+            }
+
+            if (string.Equals(request.ActionId, SceneSuggestAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(request.ActionId, SceneRefineAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(request.ActionId, SceneFindOpenQuestionsAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                string json = BuildMockSceneCardJson(request);
+                AiArtifact sceneArtifact = new(
+                    Guid.NewGuid(),
+                    AiModality.Text,
+                    "application/json",
+                    json,
+                    null,
+                    null);
+
+                AiResult sceneResult = new(
+                    request.RequestId,
+                    new List<AiArtifact> { sceneArtifact },
+                    new AiUsage(0, 0, TimeSpan.Zero),
+                    new Dictionary<string, object>
+                    {
+                        ["provider"] = ProviderId,
+                        ["model"] = "mock-text"
+                    });
+
+                return Task.FromResult(sceneResult);
             }
 
             string instruction = GetInstruction(request);
@@ -66,6 +116,36 @@ namespace WriterApp.AI.Providers.Mock
             if (request is null)
             {
                 throw new ArgumentNullException(nameof(request));
+            }
+
+            if (string.Equals(request.ActionId, GenerateOutlineAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                string json = BuildMockOutlineJson(request);
+                yield return new AiStreamEvent.Started();
+                foreach (string chunk in ChunkText(json, MaxChunkSize))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    yield return new AiStreamEvent.TextDelta(chunk);
+                    await Task.Delay(DeltaDelay, ct);
+                }
+                yield return new AiStreamEvent.Completed();
+                yield break;
+            }
+
+            if (string.Equals(request.ActionId, SceneSuggestAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(request.ActionId, SceneRefineAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(request.ActionId, SceneFindOpenQuestionsAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                string json = BuildMockSceneCardJson(request);
+                yield return new AiStreamEvent.Started();
+                foreach (string chunk in ChunkText(json, MaxChunkSize))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    yield return new AiStreamEvent.TextDelta(chunk);
+                    await Task.Delay(DeltaDelay, ct);
+                }
+                yield return new AiStreamEvent.Completed();
+                yield break;
             }
 
             string instruction = GetInstruction(request);
@@ -134,6 +214,66 @@ namespace WriterApp.AI.Providers.Mock
             }
 
             return $"{header}{trimmed}";
+        }
+
+        private static string BuildMockOutlineJson(AiRequest request)
+        {
+            List<string> titles = new();
+            if (request.Inputs is not null && request.Inputs.TryGetValue("section_titles", out object? value))
+            {
+                if (value is IEnumerable<string> stringList)
+                {
+                    titles.AddRange(stringList);
+                }
+                else if (value is IEnumerable<object> objectList)
+                {
+                    foreach (object? item in objectList)
+                    {
+                        if (item is not null)
+                        {
+                            titles.Add(item.ToString() ?? string.Empty);
+                        }
+                    }
+                }
+            }
+
+            if (titles.Count == 0)
+            {
+                titles.Add("Outline node");
+            }
+
+            List<Dictionary<string, object?>> nodes = new();
+            for (int index = 0; index < titles.Count; index++)
+            {
+                nodes.Add(new Dictionary<string, object?>
+                {
+                    ["id"] = Guid.NewGuid(),
+                    ["documentId"] = request.Context.DocumentId,
+                    ["parentId"] = null,
+                    ["order"] = index,
+                    ["title"] = string.IsNullOrWhiteSpace(titles[index]) ? $"Node {index + 1}" : titles[index],
+                    ["notes"] = null,
+                    ["linkedSectionId"] = null
+                });
+            }
+
+            return JsonSerializer.Serialize(nodes, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        }
+
+        private static string BuildMockSceneCardJson(AiRequest request)
+        {
+            string mode = GetInputValue(request, "mode", "suggest");
+            string sectionTitle = GetInputValue(request, "section_title", "Section");
+            Dictionary<string, object?> card = new()
+            {
+                ["narrativePurpose"] = $"Purpose for {sectionTitle}",
+                ["emotionalBeat"] = "Emotional shift goes here.",
+                ["keyEvents"] = "- Key event 1\n- Key event 2",
+                ["openQuestions"] = mode == "open_questions" ? "- What happens next?" : "- Open thread to resolve.",
+                ["explanation"] = $"Mock scene card ({mode})."
+            };
+
+            return JsonSerializer.Serialize(card, new JsonSerializerOptions(JsonSerializerDefaults.Web));
         }
 
         private static string TrimToWords(string text, int maxWords)

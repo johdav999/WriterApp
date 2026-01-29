@@ -21,13 +21,13 @@
         <div class="nav-item px-3">
             @if (HasCurrentEditorLink)
             {
-                <NavLink class="nav-link" href="@GetEditorLink()" Match="NavLinkMatch.Prefix">
+                <NavLink class="nav-link" href="@GetEditorLink()" Match="NavLinkMatch.Prefix" title="Write and edit your document.">
                     <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> Editor
                 </NavLink>
             }
             else
             {
-                <a class="nav-link" href="documents">
+                <a class="nav-link" href="documents" title="Write and edit your document.">
                     <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> Editor
                 </a>
             }
@@ -35,13 +35,13 @@
         <div class="nav-item px-3">
             @if (HasCurrentSynopsisLink)
             {
-                <NavLink class="nav-link" href="@GetSynopsisLink()" Match="NavLinkMatch.Prefix">
+                <NavLink class="nav-link" href="@GetSynopsisLink()" Match="NavLinkMatch.Prefix" title="Summarize the story at a high level.">
                     <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Synopsis
                 </NavLink>
             }
             else
             {
-                <a class="nav-link" href="documents">
+                <a class="nav-link" href="documents" title="Summarize the story at a high level.">
                     <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Synopsis
                 </a>
             }
@@ -49,6 +49,7 @@
         <div class="nav-item px-3">
             <a class="nav-link @GetDocumentsActiveClass()"
                href="documents"
+               title="Browse and manage your documents."
                @onclick="OnDocumentsNavClicked"
                @onclick:preventDefault="true">
                 <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Documents

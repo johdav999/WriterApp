@@ -24,9 +24,9 @@ else
                    ContextMenuRequested="ContextMenuRequested"
                    SelectionBubbleChanged="SelectionBubbleChanged" />
     <div class="editor-status">
-        <span>@_wordCount words</span>
-        <span>Page @_currentPageIndex / @_pageCount</span>
-        <span class="@GetSaveStatusClass()">@GetSaveStatusLabel()</span>
+        <span title="Total words in this section.">@_wordCount words</span>
+        <span title="Estimated page count.">Page @_currentPageIndex / @_pageCount</span>
+        <span class="@GetSaveStatusClass()" title="Your work is saved automatically.">@GetSaveStatusLabel()</span>
     </div>
 }
 
