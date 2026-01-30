@@ -1,7 +1,16 @@
 @using Microsoft.JSInterop
 @implements IAsyncDisposable
 
-<div id="@_elementId" tabindex="0"></div>
+<div class="editor-canvas">
+    <div class="page-lane">
+        <div class="pagebreak-overlay" aria-hidden="true"></div>
+        <div class="editor-page-viewport">
+            <div class="editor-page-content">
+                <div id="@_elementId" tabindex="0"></div>
+            </div>
+        </div>
+    </div>
+</div>
 
 @code {
     private readonly string _elementId = $"section-editor-{Guid.NewGuid():N}";

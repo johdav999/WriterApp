@@ -186,6 +186,7 @@ else
                         {
                             <div class="document-menu-panel">
                                 <button type="button" @onclick="OnToggleEditorWidthMode">@GetEditorWidthLabel()</button>
+                                <button type="button" @onclick="OnTogglePrintLayout">@GetPrintLayoutLabel()</button>
                                 <button type="button" @onclick="OnSaveNow">Save now</button>
                                 <button type="button" @onclick="OnExportDialogOpenAsync">Export...</button>
                                 <button type="button" @onclick='@(() => OnExportRequested("synopsis", "markdown"))'>Export Synopsis (Markdown)</button>

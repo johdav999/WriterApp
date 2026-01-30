@@ -271,7 +271,10 @@ else
     public sealed record PageBreakOptions(
         int PageHeightPx = 980,
         bool ShowHorizontalRule = true,
-        int GutterOffsetPx = 28);
+        int GutterOffsetPx = 28,
+        int PageGapPx = 32,
+        string LayoutMode = "simple",
+        bool Debug = false);
 
     public Task SaveNowAsync()
     {
