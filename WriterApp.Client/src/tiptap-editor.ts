@@ -1,10 +1,16 @@
-import { Editor, Extension } from "https://esm.sh/@tiptap/core@2.1.13?bundle";
-import { Plugin, PluginKey } from "https://esm.sh/prosemirror-state@1.4.3?bundle";
-import { Decoration, DecorationSet } from "https://esm.sh/prosemirror-view@1.33.6?bundle";
-import StarterKit from "https://esm.sh/@tiptap/starter-kit@2.1.13?bundle";
-import TextStyle from "https://esm.sh/@tiptap/extension-text-style@2.1.13?bundle";
-import TextAlign from "https://esm.sh/@tiptap/extension-text-align@2.1.13?bundle";
-import Link from "https://esm.sh/@tiptap/extension-link@2.1.13?bundle";
+declare global {
+    interface Window {
+        tiptapEditor?: { create: (elementId: string, initialContent: string, dotNetRef: any) => any };
+        __writer_disable_page_gaps?: boolean;
+    }
+}
+import { Editor, Extension } from "@tiptap/core";
+import { Plugin, PluginKey } from "prosemirror-state";
+import { Decoration, DecorationSet } from "prosemirror-view";
+import StarterKit from "@tiptap/starter-kit";
+import TextStyle from "@tiptap/extension-text-style";
+import TextAlign from "@tiptap/extension-text-align";
+import Link from "@tiptap/extension-link";
 import {
     toggleBold,
     toggleItalic,
@@ -16,7 +22,11 @@ import {
     insertHorizontalRule,
     toggleBulletList,
     toggleOrderedList
-} from "/js/tiptap-commands.js";
+} from "./tiptap-commands";
+
+if (typeof window !== "undefined" && window.__writer_disable_page_gaps === undefined) {
+    window.__writer_disable_page_gaps = false;
+}
 
 const TextStyleWithFontSize = TextStyle.extend({
     addAttributes() {
@@ -189,17 +199,18 @@ const AiDecorationsExtension = Extension.create({
                 state: {
                     init: () => DecorationSet.empty,
                     apply: (tr, value) => {
+                        const current = value ?? DecorationSet.empty;
                         const next = tr.getMeta(aiDecorationsKey);
                         if (next) {
                             return next;
                         }
 
-                        return value.map(tr.mapping, tr.doc);
+                        return current.map(tr.mapping, tr.doc);
                     }
                 },
                 props: {
                     decorations(state) {
-                        return aiDecorationsKey.getState(state);
+                        return aiDecorationsKey.getState(state) ?? DecorationSet.empty;
                     }
                 }
             })
@@ -216,17 +227,18 @@ const PageGapDecorationsExtension = Extension.create({
                 state: {
                     init: () => DecorationSet.empty,
                     apply: (tr, value) => {
+                        const current = value ?? DecorationSet.empty;
                         const next = tr.getMeta(pageGapDecorationsKey);
                         if (next) {
                             return next;
                         }
 
-                        return value.map(tr.mapping, tr.doc);
+                        return current.map(tr.mapping, tr.doc);
                     }
                 },
                 props: {
                     decorations(state) {
-                        return pageGapDecorationsKey.getState(state);
+                        return pageGapDecorationsKey.getState(state) ?? DecorationSet.empty;
                     }
                 }
             })
@@ -419,8 +431,10 @@ function getPageBreakContext(editor) {
         return null;
     }
 
-    const content = view.closest(".editor-content") || view;
-    const overlayHost = content || viewport;
+    const lane = view.closest(".page-lane");
+    const content = lane || view.closest(".editor-content") || view;
+    const canvas = view.closest(".editor-canvas") || content || view;
+    const overlayHost = lane || canvas || content || viewport;
     return { view, viewport, content, overlayHost };
 }
 
@@ -479,7 +493,7 @@ function computePageBreaks(editor, options) {
         breaks.push({ pageIndex, topPx });
     }
 
-    return { count, breaks, leftOffset, width, options: opts, ctx };
+    return { count, breaks, leftOffset, width, options: opts, ctx, baseTop };
 }
 
 function renderPageBreakOverlay(editor, options) {
@@ -495,8 +509,16 @@ function renderPageBreakOverlay(editor, options) {
     }
 
     overlay.innerHTML = "";
-    overlay.style.height = `${ctx.view.scrollHeight || 0}px`;
-    overlay.style.width = `${ctx.content.clientWidth || ctx.content.getBoundingClientRect().width}px`;
+    const overlayHeight = ctx.view.scrollHeight || 0;
+    const overlayWidth = ctx.content.clientWidth || ctx.content.getBoundingClientRect().width;
+    overlay.style.height = `${overlayHeight}px`;
+    overlay.style.width = `${overlayWidth}px`;
+    if (ctx.overlayHost) {
+        ctx.overlayHost.style.setProperty("--lane-height", `${overlayHeight}px`);
+        if (Number.isFinite(info.baseTop)) {
+            ctx.overlayHost.style.setProperty("--lane-offset-y", `${info.baseTop}px`);
+        }
+    }
 
     const mode = info.options.layoutMode || "simple";
     const sheetHeight = Math.max(0, info.options.pageHeightPx);
@@ -850,6 +872,7 @@ function buildAiDecorations(editor, ranges) {
 window.tiptapEditor = {
     create: function (elementId, initialContent, dotNetRef) {
         const interopState = createInteropState(dotNetRef);
+        console.info("[tiptap] page gaps disabled:", window.__writer_disable_page_gaps);
         const ShortcutExtension = Extension.create({
             name: "appShortcuts",
             addKeyboardShortcuts() {
@@ -930,31 +953,56 @@ window.tiptapEditor = {
             }
         });
 
-        const editor = new Editor({
-            element: document.getElementById(elementId),
-            extensions: [
+        let editor;
+        try {
+            console.info("[tiptap] create editor", { elementId });
+            const extensions = [
                 StarterKit,
                 TextStyleWithFontSize,
                 TextAlign.configure({ types: ["heading", "paragraph"] }),
                 Link.configure({ openOnClick: false }),
                 IndentExtension,
                 AiDecorationsExtension,
-                PageGapDecorationsExtension,
                 ShortcutExtension
-            ],
-            content: initialContent,
-            editorProps: {
-                attributes: {
-                    class: "ProseMirror tiptap-content",
-                    spellcheck: "true",
-                    style: "white-space: pre-wrap;"
-                }
+            ];
+            if (!window.__writer_disable_page_gaps) {
+                extensions.splice(6, 0, PageGapDecorationsExtension);
+            }
+            editor = new Editor({
+                element: document.getElementById(elementId),
+                extensions,
+                content: initialContent,
+                editorProps: {
+                    attributes: {
+                        class: "ProseMirror tiptap-content",
+                        spellcheck: "true",
+                        style: "white-space: pre-wrap;"
+                    }
             },
             onUpdate({ editor }) {
                 safeInvoke(dotNetRef, interopState, "OnEditorContentChanged", editor.getHTML());
-                schedulePageBreakUpdate(editor);
+                if (!window.__writer_disable_page_gaps) {
+                    schedulePageBreakUpdate(editor);
+                }
             }
         });
+        } catch (error) {
+            console.error("[tiptap] editor creation failed", error);
+            throw error;
+        }
+
+        try {
+            const emptySet = DecorationSet.empty;
+            console.info("[tiptap] prosemirror diagnostics", {
+                decorationSetType: DecorationSet?.name,
+                decorationSetHasLocalsInner: typeof DecorationSet?.prototype?.localsInner === "function",
+                emptyDecorationSetType: emptySet?.constructor?.name,
+                emptyHasLocalsInner: typeof emptySet?.localsInner === "function",
+                viewConstructor: editor?.view?.constructor?.name,
+                viewHasDocView: !!editor?.view?.docView
+            });
+        } catch {
+        }
 
         editor.__interopState = interopState;
 
@@ -1323,3 +1371,6 @@ if (!window.__writerAppDragInit) {
         event.dataTransfer.dropEffect = "move";
     });
 }
+
+console.log('tiptap bundle loaded', !!(window as any).tiptapEditor);
+

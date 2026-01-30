@@ -282,6 +282,9 @@ namespace BlazorApp.Components.Pages
         private const int SectionTitleMaxLength = 120;
         private const int PageBreakHeightPx = 980;
         private const int PageBreakGutterOffsetPx = 28;
+        private const int PageBreakGapPx = 32;
+        private const int PagePaddingX = 20;
+        private const int PagePaddingY = 24;
         private static readonly TimeSpan SceneCardAutosaveDebounce = TimeSpan.FromSeconds(2.5);
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
         private DocumentOutlineNodeDto? SelectedOutlineNode =>
@@ -293,8 +296,23 @@ namespace BlazorApp.Components.Pages
         private IEnumerable<AiActionOption> SectionAiActions =>
             _aiActions.Where(action => !action.RequiresSelection);
 
-        private PageEditor.PageBreakOptions PageBreaks =>
-            new(PageBreakHeightPx, true, PageBreakGutterOffsetPx);
+        private PageEditor.PageBreakOptions PageBreaks
+        {
+            get
+            {
+                LayoutState state = LayoutStateService.State;
+                string mode = state.PrintLayoutEnabled ? "print" : "simple";
+                bool showRule = !state.PrintLayoutEnabled;
+                bool debug = IsDevelopmentEnvironment();
+                return new PageEditor.PageBreakOptions(
+                    PageBreakHeightPx,
+                    showRule,
+                    PageBreakGutterOffsetPx,
+                    PageBreakGapPx,
+                    mode,
+                    debug);
+            }
+        }
 
         protected override Task OnInitializedAsync()
         {
@@ -1010,7 +1028,26 @@ namespace BlazorApp.Components.Pages
             string maxWidth = state.ManuscriptWidthMode == ManuscriptWidthMode.Manuscript ? "760px" : "none";
             double scale = state.EditorZoomPercent / 100.0;
             string scaleText = scale.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
-            return "--editor-max-width: " + maxWidth + "; --editor-font-scale: " + scaleText + ";";
+            string pageWidth = state.ManuscriptWidthMode == ManuscriptWidthMode.Manuscript ? "760px" : "900px";
+            return "--editor-max-width: " + maxWidth
+                   + "; --editor-font-scale: " + scaleText
+                   + "; --page-width-px: " + pageWidth
+                   + "; --page-height-px: " + PageBreakHeightPx + "px"
+                   + "; --page-gap-px: " + PageBreakGapPx + "px"
+                   + "; --page-padding-x: " + PagePaddingX + "px"
+                   + "; --page-padding-y: " + PagePaddingY + "px"
+                   + "; --canvas-bg: #e1e1e1;";
+        }
+
+        private bool IsDevelopmentEnvironment()
+        {
+            string? env = Configuration?["ASPNETCORE_ENVIRONMENT"];
+            if (string.IsNullOrWhiteSpace(env))
+            {
+                env = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT");
+            }
+
+            return string.Equals(env, "Development", StringComparison.OrdinalIgnoreCase);
         }
 
         private string GetWorkspaceClass()
@@ -1140,6 +1177,15 @@ namespace BlazorApp.Components.Pages
             if (state.FocusMode)
             {
                 classes.Add("is-focus-mode");
+            }
+
+            if (state.PrintLayoutEnabled)
+            {
+                classes.Add("is-print-layout");
+            }
+            else
+            {
+                classes.Add("is-simple-layout");
             }
 
             if (state.ManuscriptWidthMode == ManuscriptWidthMode.FullWidth)
@@ -1504,12 +1550,25 @@ namespace BlazorApp.Components.Pages
             await LayoutStateService.SetStateAsync(current with { ManuscriptWidthMode = next });
         }
 
+        private async Task OnTogglePrintLayout()
+        {
+            LayoutState current = LayoutStateService.State;
+            await LayoutStateService.SetStateAsync(current with { PrintLayoutEnabled = !current.PrintLayoutEnabled });
+        }
+
         private string GetEditorWidthLabel()
         {
             LayoutState current = LayoutStateService.State;
             return current.ManuscriptWidthMode == ManuscriptWidthMode.Manuscript
                 ? "Switch to full width"
                 : "Switch to manuscript width";
+        }
+
+        private string GetPrintLayoutLabel()
+        {
+            return LayoutStateService.State.PrintLayoutEnabled
+                ? "Switch to simple page breaks"
+                : "Switch to print layout";
         }
 
         private void SetContextTab(ContextTab tab)

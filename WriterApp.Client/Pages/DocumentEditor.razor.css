@@ -828,25 +828,113 @@
     overflow: visible;
 }
 
+.editor-canvas {
+    position: relative;
+    width: 100%;
+}
+
+.page-lane {
+    position: relative;
+    width: 100%;
+}
+
+.editor-page-viewport {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+.editor-page-content {
+    padding: var(--page-padding-y) var(--page-padding-x);
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 100%;
+}
+
 .editor-content {
     width: 100%;
     max-width: var(--editor-max-width);
     margin-left: auto;
     margin-right: auto;
     background: var(--surface);
+    position: relative;
+}
+
+.editor-shell.is-print-layout .editor-viewport {
+    background: var(--canvas-bg);
+}
+
+.editor-shell.is-print-layout .editor-canvas {
+    background: var(--canvas-bg);
+    padding: var(--page-gap-px) 0;
+}
+
+.editor-shell.is-print-layout .page-lane {
+    width: calc(var(--page-width-px) * var(--editor-font-scale, 1));
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.editor-shell.is-print-layout .editor-content {
+    background: transparent;
+    max-width: calc(var(--page-width-px) * var(--editor-font-scale, 1));
+    position: relative;
+    z-index: 1;
+}
+
+.editor-shell.is-print-layout ::deep .pagebreak-overlay {
+    /* Page backgrounds must sit behind ProseMirror content. */
+    position: absolute;
+    inset: 0;
+    z-index: 0 !important;
+    pointer-events: none;
+    width: 100% !important;
+    height: 100% !important;
+}
+
+.editor-shell.is-print-layout ::deep .pagebreak-line,
+.editor-shell.is-print-layout ::deep .pagebreak-marker {
+    display: none;
+}
+
+.editor-shell.is-print-layout ::deep .pagebreak-sheet {
+    position: absolute;
+    background: #ffffff;
+    border-radius: 4px;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
+    z-index: 0 !important;
+    pointer-events: none;
+    left: 0 !important;
+    width: 100% !important;
+    height: var(--page-height-px);
+}
+
+.editor-shell.is-print-layout ::deep .wa-page-gap {
+    display: block;
+    width: 100%;
+    height: var(--page-gap-px);
+    background: transparent;
+    pointer-events: none;
+    user-select: none;
 }
 
 ::deep .pagebreak-overlay {
     position: absolute;
-    inset: 0;
+    top: 0;
+    left: 0;
+    right: 0;
     pointer-events: none;
     z-index: 8;
 }
 
 ::deep .pagebreak-line {
     position: absolute;
-    border-top: 3px dashed #000000;
-    opacity: 0.9;
+    border-top: 1px solid rgba(15, 23, 42, 0.2);
+    opacity: 0.8;
     z-index: 5;
 }
 
@@ -879,6 +967,17 @@
     font-size: calc(1rem * var(--editor-font-scale, 1));
     line-height: 1.6;
     color: var(--text-strong);
+    width: 100%;
+}
+
+.editor-shell.is-print-layout .editor-surface .ProseMirror {
+    position: relative;
+    z-index: 2 !important;
+    padding: 0;
+}
+
+.editor-shell.is-print-layout .editor-surface .ProseMirror > :first-child {
+    margin-top: 0;
 }
 
 .context-drawer {
