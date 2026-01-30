@@ -179,6 +179,9 @@ if (openAiOptions.Enabled && openAiKeyProvider.HasKey)
 builder.Services.AddSingleton<IAiProviderRegistry, DefaultAiProviderRegistry>();
 builder.Services.AddSingleton<IAiRouter, DefaultAiRouter>();
 builder.Services.AddSingleton<IAiAction, RewriteSelectionAction>();
+builder.Services.AddSingleton<IAiAction, TranslateSelectionAction>();
+builder.Services.AddSingleton<IAiAction, TranslateSectionAction>();
+builder.Services.AddSingleton<IAiAction, TranslateDocumentAction>();
 builder.Services.AddSingleton<IAiAction, GenerateCoverImageAction>();
 builder.Services.AddSingleton<IAiAction, StoryCoachAction>();
 builder.Services.AddSingleton<IAiAction, GenerateOutlineAction>();

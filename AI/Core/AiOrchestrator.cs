@@ -390,6 +390,18 @@ namespace WriterApp.AI.Core
                 originalText = input.SelectedText;
                 resolvedProposedText = proposedText;
             }
+            else if (string.Equals(action.ActionId, TranslateSelectionAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                operations.Add(new ReplaceTextRangeOperation(input.ActiveSectionId, input.SelectionRange, proposedText ?? string.Empty));
+                originalText = input.SelectedText;
+                resolvedProposedText = proposedText;
+            }
+            else if (string.Equals(action.ActionId, TranslateSectionAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(action.ActionId, TranslateDocumentAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                originalText = input.SelectedText;
+                resolvedProposedText = proposedText;
+            }
             else if (string.Equals(action.ActionId, GenerateCoverImageAction.ActionIdValue, StringComparison.Ordinal))
             {
                 if (!string.IsNullOrWhiteSpace(imageReference))
@@ -444,6 +456,16 @@ namespace WriterApp.AI.Core
                 return "Section";
             }
 
+            if (string.Equals(actionId, TranslateDocumentAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Document";
+            }
+
+            if (string.Equals(actionId, TranslateSectionAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Section";
+            }
+
             if (string.Equals(actionId, ProposeNextParagraphAction.ActionIdValue, StringComparison.Ordinal))
             {
                 return "Section";
@@ -457,6 +479,21 @@ namespace WriterApp.AI.Core
             if (string.Equals(actionId, GenerateCoverImageAction.ActionIdValue, StringComparison.Ordinal))
             {
                 return "Generate cover image";
+            }
+
+            if (string.Equals(actionId, TranslateSelectionAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Translate selection";
+            }
+
+            if (string.Equals(actionId, TranslateSectionAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Translate section";
+            }
+
+            if (string.Equals(actionId, TranslateDocumentAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Translate document";
             }
 
             if (!string.Equals(actionId, RewriteSelectionAction.ActionIdValue, StringComparison.Ordinal))

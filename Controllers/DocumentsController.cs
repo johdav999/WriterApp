@@ -6,7 +6,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using WriterApp.Data;
 using WriterApp.Application.Documents;
 using WriterApp.Application.Security;
 using WriterApp.Application.State;
@@ -23,6 +25,7 @@ namespace WriterApp.Controllers
         private readonly ISectionRepository _sections;
         private readonly IPageRepository _pages;
         private readonly IUserIdResolver _userIdResolver;
+        private readonly AppDbContext _dbContext;
         private readonly ILogger<DocumentsController> _logger;
 
         public DocumentsController(
@@ -30,12 +33,14 @@ namespace WriterApp.Controllers
             ISectionRepository sections,
             IPageRepository pages,
             IUserIdResolver userIdResolver,
+            AppDbContext dbContext,
             ILogger<DocumentsController> logger)
         {
             _documents = documents ?? throw new ArgumentNullException(nameof(documents));
             _sections = sections ?? throw new ArgumentNullException(nameof(sections));
             _pages = pages ?? throw new ArgumentNullException(nameof(pages));
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
+            _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -97,7 +102,157 @@ namespace WriterApp.Controllers
                 return NotFound();
             }
 
-            return Ok(new DocumentDetailDto(document.Id, document.Title, document.CreatedAt, document.UpdatedAt));
+            return Ok(new DocumentDetailDto(
+                document.Id,
+                document.Title,
+                document.CreatedAt,
+                document.UpdatedAt,
+                document.LanguageCode,
+                document.TranslationGroupId));
+        }
+
+        [HttpGet("{documentId:guid}/translations")]
+        public async Task<ActionResult<IReadOnlyList<DocumentTranslationLinkDto>>> GetTranslations(
+            Guid documentId,
+            CancellationToken ct)
+        {
+            string userId = _userIdResolver.ResolveUserId(User);
+            DocumentRecord? document = await _documents.GetAsync(documentId, userId, ct);
+            if (document is null)
+            {
+                return NotFound();
+            }
+
+            if (!document.TranslationGroupId.HasValue)
+            {
+                return Ok(Array.Empty<DocumentTranslationLinkDto>());
+            }
+
+            Guid groupId = document.TranslationGroupId.Value;
+            List<DocumentTranslationLinkDto> result = await _dbContext.Documents
+                .AsNoTracking()
+                .Where(item => item.OwnerUserId == userId && item.TranslationGroupId == groupId)
+                .OrderBy(item => item.Title)
+                .Select(item => new DocumentTranslationLinkDto(
+                    item.Id,
+                    item.Title,
+                    item.LanguageCode,
+                    groupId))
+                .ToListAsync(ct);
+
+            return Ok(result);
+        }
+
+        [HttpPost("{documentId:guid}/translations/duplicate")]
+        public async Task<ActionResult<TranslationDuplicateDocumentResponse>> DuplicateTranslation(
+            Guid documentId,
+            [FromBody] TranslationDuplicateDocumentRequest request,
+            CancellationToken ct)
+        {
+            string userId = _userIdResolver.ResolveUserId(User);
+            DocumentRecord? source = await _dbContext.Documents
+                .Include(doc => doc.Sections)
+                .FirstOrDefaultAsync(doc => doc.Id == documentId && doc.OwnerUserId == userId, ct);
+            if (source is null)
+            {
+                return NotFound();
+            }
+
+            List<SectionRecord> sourceSections = await _dbContext.Sections
+                .Where(section => section.DocumentId == source.Id)
+                .OrderBy(section => section.OrderIndex)
+                .ToListAsync(ct);
+
+            Guid translationGroupId = source.TranslationGroupId ?? Guid.NewGuid();
+            if (source.TranslationGroupId != translationGroupId)
+            {
+                source.TranslationGroupId = translationGroupId;
+            }
+
+            if (string.IsNullOrWhiteSpace(source.LanguageCode) && !string.IsNullOrWhiteSpace(request.SourceLanguage))
+            {
+                source.LanguageCode = request.SourceLanguage;
+            }
+
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            DocumentRecord translated = new()
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = userId,
+                Title = BuildTranslatedTitle(source.Title, request.TargetLanguage, request.Title),
+                CreatedAt = now,
+                UpdatedAt = now,
+                LanguageCode = request.TargetLanguage,
+                TranslationGroupId = translationGroupId
+            };
+
+            Dictionary<Guid, TranslatedSectionPayload> payloadMap = request.Sections
+                .GroupBy(item => item.SectionId)
+                .Select(group => group.First())
+                .ToDictionary(item => item.SectionId, item => item);
+
+            await using var transaction = await _dbContext.Database.BeginTransactionAsync(ct);
+            _dbContext.Documents.Add(translated);
+
+            Guid? firstSectionId = null;
+            Guid? firstPageId = null;
+
+            foreach (SectionRecord sourceSection in sourceSections)
+            {
+                Guid newSectionId = Guid.NewGuid();
+                TranslatedSectionPayload? translatedSection = payloadMap.TryGetValue(sourceSection.Id, out TranslatedSectionPayload? payload)
+                    ? payload
+                    : null;
+                string content = translatedSection?.Content ?? string.Empty;
+                string title = translatedSection?.Title ?? sourceSection.Title;
+
+                SectionRecord newSection = new()
+                {
+                    Id = newSectionId,
+                    DocumentId = translated.Id,
+                    Title = title,
+                    NarrativePurpose = sourceSection.NarrativePurpose,
+                    OrderIndex = sourceSection.OrderIndex,
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    LanguageCode = request.TargetLanguage,
+                    TranslationGroupId = translationGroupId
+                };
+                _dbContext.Sections.Add(newSection);
+
+                PageRecord page = new()
+                {
+                    Id = Guid.NewGuid(),
+                    DocumentId = translated.Id,
+                    SectionId = newSectionId,
+                    Title = "Page 1",
+                    Content = content,
+                    OrderIndex = 0,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                };
+                _dbContext.Pages.Add(page);
+
+                if (!firstSectionId.HasValue)
+                {
+                    firstSectionId = newSectionId;
+                    firstPageId = page.Id;
+                }
+            }
+
+            await _dbContext.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+
+            return Ok(new TranslationDuplicateDocumentResponse(
+                new DocumentDetailDto(
+                    translated.Id,
+                    translated.Title,
+                    translated.CreatedAt,
+                    translated.UpdatedAt,
+                    translated.LanguageCode,
+                    translated.TranslationGroupId),
+                firstSectionId,
+                firstPageId));
         }
 
         [HttpPost]
@@ -136,7 +291,13 @@ namespace WriterApp.Controllers
                     userId,
                     existing.Id);
                 return Ok(new DocumentCreateResponse(
-                    new DocumentDetailDto(existing.Id, existing.Title, existing.CreatedAt, existing.UpdatedAt),
+                    new DocumentDetailDto(
+                        existing.Id,
+                        existing.Title,
+                        existing.CreatedAt,
+                        existing.UpdatedAt,
+                        existing.LanguageCode,
+                        existing.TranslationGroupId),
                     null,
                     null));
             }
@@ -197,7 +358,13 @@ namespace WriterApp.Controllers
                 defaultSectionId,
                 defaultPageId);
             return Ok(new DocumentCreateResponse(
-                new DocumentDetailDto(document.Id, document.Title, document.CreatedAt, document.UpdatedAt),
+                new DocumentDetailDto(
+                    document.Id,
+                    document.Title,
+                    document.CreatedAt,
+                    document.UpdatedAt,
+                    document.LanguageCode,
+                    document.TranslationGroupId),
                 defaultSectionId,
                 defaultPageId));
         }
@@ -221,7 +388,13 @@ namespace WriterApp.Controllers
                 return NotFound();
             }
 
-            return Ok(new DocumentDetailDto(document.Id, document.Title, document.CreatedAt, document.UpdatedAt));
+            return Ok(new DocumentDetailDto(
+                document.Id,
+                document.Title,
+                document.CreatedAt,
+                document.UpdatedAt,
+                document.LanguageCode,
+                document.TranslationGroupId));
         }
 
         private static int CountWords(string? html)
@@ -234,6 +407,18 @@ namespace WriterApp.Controllers
             string decoded = PlainTextMapper.ToPlainText(html);
             MatchCollection matches = Regex.Matches(decoded, @"\b[\p{L}\p{N}']+\b");
             return matches.Count;
+        }
+
+        private static string BuildTranslatedTitle(string originalTitle, string? languageCode, string? overrideTitle)
+        {
+            if (!string.IsNullOrWhiteSpace(overrideTitle))
+            {
+                return overrideTitle.Trim();
+            }
+
+            string normalized = string.IsNullOrWhiteSpace(originalTitle) ? "Untitled" : originalTitle.Trim();
+            string lang = string.IsNullOrWhiteSpace(languageCode) ? string.Empty : languageCode.Trim().ToUpperInvariant();
+            return string.IsNullOrWhiteSpace(lang) ? normalized : $"{normalized} ({lang})";
         }
     }
 }

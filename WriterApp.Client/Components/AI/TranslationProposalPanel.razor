@@ -1,0 +1,136 @@
+@using System.Text.RegularExpressions
+
+<div class="translation-proposal">
+    <div class="translation-proposal-header">
+        <div class="translation-proposal-title">Translation proposal</div>
+        <div class="translation-proposal-controls">
+            <button type="button" class="translation-control" @onclick="OnCopyTranslated">Copy translation</button>
+            <button type="button" class="translation-control" @onclick="ToggleAlignmentMode">Alignment: @GetAlignmentLabel()</button>
+            <button type="button" class="translation-control" @onclick="OnChangeLanguage">Change language</button>
+        </div>
+    </div>
+    <div class="translation-proposal-body">
+        <div class="translation-proposal-columns">
+            <div class="translation-proposal-label">Source</div>
+            <div class="translation-proposal-label">Translation</div>
+        </div>
+        <div class="translation-proposal-grid">
+            @foreach (AlignedRow row in GetAlignedRows())
+            {
+                <div class="translation-proposal-cell">
+                    <div class="translation-proposal-text">@row.Source</div>
+                </div>
+                <div class="translation-proposal-cell">
+                    <div class="translation-proposal-text">@row.Translated</div>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private static readonly Regex ParagraphSplitRegex = new(@"\r?\n\s*\r?\n", RegexOptions.Compiled);
+    private static readonly Regex SentenceSplitRegex = new(@"(?<=[\.!?])\s+", RegexOptions.Compiled);
+
+    [Parameter]
+    public string? SourceText { get; set; }
+
+    [Parameter]
+    public string? TranslatedText { get; set; }
+
+    [Parameter]
+    public string AlignmentMode { get; set; } = "paragraph";
+
+    [Parameter]
+    public EventCallback<string> AlignmentModeChanged { get; set; }
+
+    [Parameter]
+    public EventCallback OnCopyTranslated { get; set; }
+
+    [Parameter]
+    public EventCallback OnChangeLanguage { get; set; }
+
+    private IEnumerable<AlignedRow> GetAlignedRows()
+    {
+        string source = SourceText ?? string.Empty;
+        string translated = TranslatedText ?? string.Empty;
+
+        string mode = ResolveAlignmentMode(source, translated);
+        List<string> left = SplitText(source, mode);
+        List<string> right = SplitText(translated, mode);
+
+        int count = Math.Max(left.Count, right.Count);
+        if (count == 0)
+        {
+            yield return new AlignedRow(string.Empty, string.Empty);
+            yield break;
+        }
+
+        for (int i = 0; i < count; i++)
+        {
+            string leftValue = i < left.Count ? left[i] : string.Empty;
+            string rightValue = i < right.Count ? right[i] : string.Empty;
+            yield return new AlignedRow(leftValue, rightValue);
+        }
+    }
+
+    private string ResolveAlignmentMode(string source, string translated)
+    {
+        if (string.Equals(AlignmentMode, "sentence", StringComparison.OrdinalIgnoreCase))
+        {
+            return "sentence";
+        }
+
+        List<string> left = SplitText(source, "paragraph");
+        List<string> right = SplitText(translated, "paragraph");
+        if (left.Count == 0 || right.Count == 0)
+        {
+            return "paragraph";
+        }
+
+        double ratio = Math.Max(left.Count, right.Count) / (double)Math.Max(1, Math.Min(left.Count, right.Count));
+        if (ratio >= 1.6 || Math.Abs(left.Count - right.Count) >= 4)
+        {
+            return "sentence";
+        }
+
+        return "paragraph";
+    }
+
+    private static List<string> SplitText(string text, string mode)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return new List<string>();
+        }
+
+        string normalized = text.Replace("\r\n", "\n").Replace("\r", "\n").Trim();
+        if (string.Equals(mode, "sentence", StringComparison.OrdinalIgnoreCase))
+        {
+            string compact = Regex.Replace(normalized, @"\s+", " ");
+            return SentenceSplitRegex.Split(compact)
+                .Select(item => item.Trim())
+                .Where(item => item.Length > 0)
+                .ToList();
+        }
+
+        return ParagraphSplitRegex.Split(normalized)
+            .Select(item => item.TrimEnd())
+            .ToList();
+    }
+
+    private async Task ToggleAlignmentMode()
+    {
+        string next = string.Equals(AlignmentMode, "paragraph", StringComparison.OrdinalIgnoreCase)
+            ? "sentence"
+            : "paragraph";
+        await AlignmentModeChanged.InvokeAsync(next);
+    }
+
+    private string GetAlignmentLabel()
+    {
+        return string.Equals(AlignmentMode, "sentence", StringComparison.OrdinalIgnoreCase) ? "Sentence" : "Paragraph";
+    }
+
+    private sealed record AlignedRow(string Source, string Translated);
+}

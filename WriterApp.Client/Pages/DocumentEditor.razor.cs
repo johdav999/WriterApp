@@ -5,7 +5,9 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Components;
@@ -76,6 +78,12 @@ namespace WriterApp.Client.Pages
         private bool _isDeletingSection;
         private Guid _loadedDocumentId;
         private string _documentTitle = string.Empty;
+        private string? _documentLanguageCode;
+        private Guid? _documentTranslationGroupId;
+        private string? _sectionLanguageCode;
+        private Guid? _sectionTranslationGroupId;
+        private readonly List<DocumentTranslationLinkDto> _documentTranslationLinks = new();
+        private readonly List<SectionTranslationLinkDto> _sectionTranslationLinks = new();
         private bool _layoutStateInitialized;
         private PageEditor? _pageEditor;
         private Guid? _draggedSectionId;
@@ -209,6 +217,24 @@ namespace WriterApp.Client.Pages
                     ["preserve_terms"] = true
                 }),
             new AiActionOption(
+                "translate.selection",
+                "Translate selection...",
+                "Translate selection",
+                true,
+                new Dictionary<string, object?>()),
+            new AiActionOption(
+                "translate.section",
+                "Translate section...",
+                "Translate section",
+                false,
+                new Dictionary<string, object?>()),
+            new AiActionOption(
+                "translate.document",
+                "Translate document...",
+                "Translate document",
+                false,
+                new Dictionary<string, object?>()),
+            new AiActionOption(
                 "propose.next-paragraph",
                 "Propose next paragraph",
                 "Propose next paragraph",
@@ -223,6 +249,14 @@ namespace WriterApp.Client.Pages
         private bool _aiUsageRefreshInProgress;
         private bool _canShowAiMenu;
         private bool? _lastAiMenuVisibility;
+        private bool _isTranslateModalOpen;
+        private AiActionOption? _pendingTranslateAction;
+        private string _translateSourceLanguage = "auto";
+        private string _translateTargetLanguage = "en";
+        private string _translateStyle = "natural";
+        private string _translationAlignmentMode = "paragraph";
+        private string _translationApplyMode = "replace";
+        private TranslateContext? _pendingTranslateContext;
         private ContextTab _activeContextTab = ContextTab.Notes;
         private string _notesDraft = string.Empty;
         private string? _notesStatus;
@@ -308,6 +342,8 @@ namespace WriterApp.Client.Pages
             _aiActions.Where(action => action.RequiresSelection);
         private IEnumerable<AiActionOption> SectionAiActions =>
             _aiActions.Where(action => !action.RequiresSelection);
+        private bool IsTranslationProposal => IsTranslationActionKey(_pendingAiProposal?.ActionKey);
+        private bool ShowTranslationSwitcher => GetTranslationLinks().Any(item => !item.IsActive);
 
         protected override async Task OnInitializedAsync()
         {
@@ -355,6 +391,8 @@ namespace WriterApp.Client.Pages
                 }
 
                 _documentTitle = document.Title;
+                _documentLanguageCode = document.LanguageCode;
+                _documentTranslationGroupId = document.TranslationGroupId;
 
                 if (_loadedDocumentId != DocumentId)
                 {
@@ -399,6 +437,8 @@ namespace WriterApp.Client.Pages
                 }
 
                 await EnsureSectionHasPageAsync(_activeSection.Id);
+                _sectionLanguageCode = _activeSection.LanguageCode;
+                _sectionTranslationGroupId = _activeSection.TranslationGroupId;
 
                 _activePage = GetPrimaryPage(_activeSection.Id);
                 if (_activePage is null)
@@ -415,6 +455,7 @@ namespace WriterApp.Client.Pages
                 _outlineStatus = null;
                 await LoadOutlineNodesAsync();
                 await LoadAiHistoryAsync();
+                await LoadTranslationLinksAsync();
             }
             catch (Exception ex)
             {
@@ -3147,6 +3188,13 @@ namespace WriterApp.Client.Pages
                 }
             }
 
+            if (IsTranslationActionKey(action.ActionKey))
+            {
+                OpenTranslateModal(action, plain, selectionRange, selection);
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
             Dictionary<string, object?> parameters = new(action.Parameters)
             {
                 ["instruction"] = action.Instruction
@@ -3201,6 +3249,7 @@ namespace WriterApp.Client.Pages
                 proposedText = NormalizeSingleParagraph(proposedText ?? string.Empty);
             }
 
+            _translationApplyMode = "replace";
             _pendingAiProposal = new PendingAiProposal(
                 response.ProposalId,
                 action.ActionKey,
@@ -3213,6 +3262,168 @@ namespace WriterApp.Client.Pages
             _pendingDetailsExpanded = false;
             await LoadAiHistoryAsync();
             await InvokeAsync(StateHasChanged);
+        }
+
+        private void OpenTranslateModal(
+            AiActionOption action,
+            string plainText,
+            TextRange selectionRange,
+            string selectionText)
+        {
+            _pendingTranslateAction = action;
+            _pendingTranslateContext = new TranslateContext(plainText, selectionRange, selectionText);
+            _translationApplyMode = "replace";
+            if (string.IsNullOrWhiteSpace(_translateSourceLanguage) || string.Equals(_translateSourceLanguage, "auto", StringComparison.OrdinalIgnoreCase))
+            {
+                _translateSourceLanguage = _documentLanguageCode ?? "auto";
+            }
+            _isTranslateModalOpen = true;
+        }
+
+        private void CloseTranslateModal()
+        {
+            _isTranslateModalOpen = false;
+        }
+
+        private async Task ConfirmTranslateAsync()
+        {
+            if (_pendingTranslateAction is null || _pendingTranslateContext is null || _activeSection is null)
+            {
+                CloseTranslateModal();
+                return;
+            }
+
+            await ExecuteTranslateActionAsync(_pendingTranslateAction, _pendingTranslateContext);
+            _isTranslateModalOpen = false;
+            await InvokeAsync(StateHasChanged);
+        }
+
+        private async Task ExecuteTranslateActionAsync(AiActionOption action, TranslateContext context)
+        {
+            Dictionary<string, object?> parameters = new(action.Parameters)
+            {
+                ["instruction"] = action.Instruction,
+                ["source_language"] = _translateSourceLanguage,
+                ["target_language"] = _translateTargetLanguage,
+                ["style"] = _translateStyle
+            };
+
+            int? selectionStart = action.RequiresSelection ? context.SelectionRange.Start : null;
+            int? selectionEnd = action.RequiresSelection ? context.SelectionRange.Start + context.SelectionRange.Length : null;
+            string? originalText = action.RequiresSelection ? context.SelectionText : null;
+
+            AiActionExecuteRequestDto request = new(
+                DocumentId,
+                _activeSection!.Id,
+                _activePage?.Id,
+                selectionStart,
+                selectionEnd,
+                originalText,
+                context.PlainText,
+                GetOutlineTextForAi(),
+                parameters);
+
+            AiActionExecuteResponseDto? response;
+            try
+            {
+                using HttpResponseMessage result = await Http.PostAsJsonAsync(
+                    $"api/ai/actions/{action.ActionKey}/execute",
+                    request);
+                if (!result.IsSuccessStatusCode)
+                {
+                    ShowAiMessage("AI translation failed.");
+                    await InvokeAsync(StateHasChanged);
+                    return;
+                }
+
+                response = await result.Content.ReadFromJsonAsync<AiActionExecuteResponseDto>();
+                if (response is null)
+                {
+                    ShowAiMessage("AI translation failed.");
+                    await InvokeAsync(StateHasChanged);
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                ShowAiMessage(ex.Message);
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            _pendingAiProposal = new PendingAiProposal(
+                response.ProposalId,
+                action.ActionKey,
+                action.Instruction,
+                response.OriginalText,
+                response.ProposedText,
+                response.ChangesSummary,
+                null,
+                response.CreatedUtc);
+            _pendingDetailsExpanded = false;
+            await LoadAiHistoryAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+
+        private Task OnTranslationAlignmentChanged(string next)
+        {
+            _translationAlignmentMode = string.IsNullOrWhiteSpace(next) ? "paragraph" : next;
+            return InvokeAsync(StateHasChanged);
+        }
+
+        private async Task CopyTranslatedTextAsync()
+        {
+            string text = _pendingAiProposal?.ProposedText ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return;
+            }
+
+            try
+            {
+                await JSRuntime.InvokeVoidAsync("navigator.clipboard.writeText", text);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Copy translated text failed.");
+            }
+        }
+
+        private void OpenTranslateModalFromProposal()
+        {
+            if (_pendingAiProposal is null)
+            {
+                return;
+            }
+
+            AiActionOption? action = _aiActions.FirstOrDefault(
+                candidate => string.Equals(candidate.ActionKey, _pendingAiProposal.ActionKey, StringComparison.OrdinalIgnoreCase));
+            if (action is null)
+            {
+                return;
+            }
+
+            if (action.RequiresSelection && _pendingTranslateContext is not null)
+            {
+                OpenTranslateModal(
+                    action,
+                    _pendingTranslateContext.PlainText,
+                    _pendingTranslateContext.SelectionRange,
+                    _pendingTranslateContext.SelectionText);
+                return;
+            }
+
+            string? html = _pageEditor?.GetContent();
+            string plain = PlainTextMapper.ToPlainText(html ?? string.Empty);
+            TextRange selectionRange = new(0, 0);
+            string selection = string.Empty;
+            if (action.RequiresSelection && _currentSelectionRange is not null)
+            {
+                selectionRange = NormalizeRange(_currentSelectionRange, plain.Length);
+                selection = ExtractRangeText(plain, selectionRange);
+            }
+
+            OpenTranslateModal(action, plain, selectionRange, selection);
         }
 
         private void ShowAiMessage(string message)
@@ -3237,6 +3448,11 @@ namespace WriterApp.Client.Pages
             }
 
             PendingAiProposal pending = _pendingAiProposal;
+            if (IsTranslationActionKey(pending.ActionKey))
+            {
+                await ApplyTranslationProposalAsync(pending);
+                return;
+            }
             if (pending.ProposedText is null)
             {
                 _pendingAiProposal = null;
@@ -3279,6 +3495,261 @@ namespace WriterApp.Client.Pages
             await InvokeAsync(StateHasChanged);
         }
 
+        private async Task ApplyTranslationProposalAsync(PendingAiProposal pending)
+        {
+            if (_activeSection is null || string.IsNullOrWhiteSpace(pending.ProposedText))
+            {
+                _pendingAiProposal = null;
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            string? beforeContent = _pageEditor is null ? null : await _pageEditor.GetContentAsync();
+            string translatedText = pending.ProposedText ?? string.Empty;
+            DateTimeOffset appliedAt = DateTimeOffset.UtcNow;
+
+            if (string.Equals(pending.ActionKey, "translate.selection", StringComparison.OrdinalIgnoreCase))
+            {
+                await InvokePageCommandAsync("replaceSelection", translatedText);
+            }
+            else if (string.Equals(pending.ActionKey, "translate.section", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.Equals(_translationApplyMode, "duplicate-section", StringComparison.OrdinalIgnoreCase))
+                {
+                    await DuplicateTranslatedSectionAsync(translatedText);
+                }
+                else
+                {
+                    string html = PlainTextToHtml(translatedText);
+                    if (_pageEditor is not null)
+                    {
+                        await _pageEditor.SetContentAsync(html);
+                    }
+                }
+            }
+            else if (string.Equals(pending.ActionKey, "translate.document", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.Equals(_translationApplyMode, "duplicate-document", StringComparison.OrdinalIgnoreCase))
+                {
+                    await DuplicateTranslatedDocumentAsync(translatedText);
+                }
+                else
+                {
+                    await ReplaceTranslatedDocumentAsync(translatedText);
+                }
+            }
+
+            string? afterContent = _pageEditor is null ? null : await _pageEditor.GetContentAsync();
+            UpdateAiHistoryAppliedState(pending.ProposalId, appliedAt);
+            _expandedAiHistoryId = pending.ProposalId;
+            _pendingDetailsExpanded = false;
+            _pendingAiProposal = null;
+            _ = RecordAppliedEventAsync(pending.ProposalId, appliedAt, beforeContent, afterContent);
+            UpdateAiUndoRedoAvailability();
+            await InvokeAsync(StateHasChanged);
+        }
+
+        private async Task DuplicateTranslatedSectionAsync(string translatedText)
+        {
+            if (_activeSection is null)
+            {
+                return;
+            }
+
+            string html = PlainTextToHtml(translatedText);
+            TranslationDuplicateSectionRequest payload = new(
+                html,
+                _translateTargetLanguage,
+                _translateSourceLanguage,
+                BuildTranslatedTitle(_activeSection.Title, _translateTargetLanguage));
+
+            using HttpResponseMessage response =
+                await Http.PostAsJsonAsync($"api/sections/{_activeSection.Id}/translations", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                Logger.LogWarning("Translate duplicate section failed: {Status}", response.StatusCode);
+                return;
+            }
+
+            TranslationDuplicateSectionResponse? result =
+                await response.Content.ReadFromJsonAsync<TranslationDuplicateSectionResponse>();
+            if (result is null)
+            {
+                return;
+            }
+
+            Navigation.NavigateTo($"/documents/{result.Section.DocumentId}/sections/{result.Section.Id}");
+        }
+
+        private async Task DuplicateTranslatedDocumentAsync(string translatedText)
+        {
+            if (_sections.Count == 0)
+            {
+                return;
+            }
+
+            List<TranslatedSectionPayload> sections = BuildTranslatedSectionsPayload(translatedText);
+            TranslationDuplicateDocumentRequest payload = new(
+                BuildTranslatedTitle(_documentTitle, _translateTargetLanguage),
+                _translateTargetLanguage,
+                _translateSourceLanguage,
+                sections);
+
+            using HttpResponseMessage response =
+                await Http.PostAsJsonAsync($"api/documents/{DocumentId}/translations/duplicate", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                Logger.LogWarning("Translate duplicate document failed: {Status}", response.StatusCode);
+                return;
+            }
+
+            TranslationDuplicateDocumentResponse? result =
+                await response.Content.ReadFromJsonAsync<TranslationDuplicateDocumentResponse>();
+            if (result is null)
+            {
+                return;
+            }
+
+            Guid? targetSectionId = result.DefaultSectionId;
+            if (!targetSectionId.HasValue)
+            {
+                List<SectionDto>? sectionsList =
+                    await Http.GetFromJsonAsync<List<SectionDto>>($"api/documents/{result.Document.Id}/sections");
+                targetSectionId = sectionsList?.OrderBy(section => section.OrderIndex).FirstOrDefault()?.Id;
+            }
+
+            if (targetSectionId.HasValue)
+            {
+                Navigation.NavigateTo($"/documents/{result.Document.Id}/sections/{targetSectionId.Value}");
+            }
+        }
+
+        private async Task ReplaceTranslatedDocumentAsync(string translatedText)
+        {
+            Dictionary<Guid, string> mapping = ParseTranslatedSections(translatedText);
+            foreach (SectionDto section in _sections)
+            {
+                if (!mapping.TryGetValue(section.Id, out string? sectionText))
+                {
+                    continue;
+                }
+
+                string html = PlainTextToHtml(sectionText);
+                if (_activeSection is not null && section.Id == _activeSection.Id)
+                {
+                    if (_pageEditor is not null)
+                    {
+                        await _pageEditor.SetContentAsync(html);
+                    }
+
+                    if (_pagesBySection.TryGetValue(section.Id, out List<PageDto>? activePages) && activePages.Count > 0)
+                    {
+                        activePages[0] = activePages[0] with { Content = html };
+                    }
+
+                    continue;
+                }
+
+                if (_pagesBySection.TryGetValue(section.Id, out List<PageDto>? pages) && pages.Count > 0)
+                {
+                    PageDto page = pages[0] with { Content = html };
+                    using HttpResponseMessage response = await Http.PutAsJsonAsync(
+                        $"api/pages/{page.Id}",
+                        new PageUpdateRequest(page.Title, page.Content));
+                    if (response.IsSuccessStatusCode)
+                    {
+                        pages[0] = page;
+                    }
+                }
+            }
+        }
+
+        private List<TranslatedSectionPayload> BuildTranslatedSectionsPayload(string translatedText)
+        {
+            Dictionary<Guid, string> mapping = ParseTranslatedSections(translatedText);
+            List<TranslatedSectionPayload> result = new();
+            foreach (SectionDto section in _sections.OrderBy(item => item.OrderIndex))
+            {
+                string content = mapping.TryGetValue(section.Id, out string? sectionText)
+                    ? PlainTextToHtml(sectionText)
+                    : string.Empty;
+                result.Add(new TranslatedSectionPayload(section.Id, content, BuildTranslatedTitle(section.Title, _translateTargetLanguage)));
+            }
+
+            return result;
+        }
+
+        private static Dictionary<Guid, string> ParseTranslatedSections(string translatedText)
+        {
+            Dictionary<Guid, string> result = new();
+            if (string.IsNullOrWhiteSpace(translatedText))
+            {
+                return result;
+            }
+
+            Regex markerRegex = new(@"\[\[SECTION:(?<id>[0-9a-fA-F\-]{36})\]\]", RegexOptions.Compiled);
+            MatchCollection matches = markerRegex.Matches(translatedText);
+            if (matches.Count == 0)
+            {
+                return result;
+            }
+
+            for (int i = 0; i < matches.Count; i++)
+            {
+                Match match = matches[i];
+                if (!Guid.TryParse(match.Groups["id"].Value, out Guid sectionId))
+                {
+                    continue;
+                }
+
+                int startIndex = match.Index + match.Length;
+                int endIndex = i + 1 < matches.Count ? matches[i + 1].Index : translatedText.Length;
+                string sectionText = translatedText.Substring(startIndex, Math.Max(0, endIndex - startIndex)).Trim();
+                result[sectionId] = sectionText;
+            }
+
+            return result;
+        }
+
+        private static string PlainTextToHtml(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return string.Empty;
+            }
+
+            string normalized = text.Replace("\r\n", "\n").Replace("\r", "\n").TrimEnd();
+            string[] paragraphs = Regex.Split(normalized, @"\n\s*\n");
+            StringBuilder builder = new();
+            foreach (string paragraph in paragraphs)
+            {
+                string trimmed = paragraph.TrimEnd();
+                if (string.IsNullOrEmpty(trimmed))
+                {
+                    continue;
+                }
+
+                string encoded = WebUtility.HtmlEncode(trimmed);
+                encoded = encoded.Replace("\n", "<br />\n");
+                builder.Append("<p>").Append(encoded).Append("</p>");
+            }
+
+            return builder.ToString();
+        }
+
+        private static string BuildTranslatedTitle(string title, string? languageCode)
+        {
+            string normalized = string.IsNullOrWhiteSpace(title) ? "Untitled" : title.Trim();
+            string lang = string.IsNullOrWhiteSpace(languageCode) ? "" : languageCode.Trim().ToUpperInvariant();
+            return string.IsNullOrWhiteSpace(lang) ? normalized : $"{normalized} ({lang})";
+        }
+
+        private static bool IsTranslationActionKey(string? actionKey)
+        {
+            return !string.IsNullOrWhiteSpace(actionKey)
+                && actionKey.StartsWith("translate.", StringComparison.OrdinalIgnoreCase);
+        }
+
         private bool CanShowAiMenu => _canShowAiMenu;
 
         private bool IsAiAvailable => IsAiUiEnabled && IsAiEntitled && !IsAiQuotaExceeded;
@@ -3309,6 +3780,32 @@ namespace WriterApp.Client.Pages
         {
             _canAiUndo = _aiHistoryEntries.Any(entry => entry.IsApplied);
             _canAiRedo = _aiHistoryEntries.Any(entry => entry.AppliedCount > 0 && !entry.IsApplied);
+        }
+
+        private IEnumerable<TranslationApplyOption> GetTranslationApplyOptions()
+        {
+            string actionKey = _pendingAiProposal?.ActionKey ?? _pendingTranslateAction?.ActionKey ?? string.Empty;
+            if (string.Equals(actionKey, "translate.selection", StringComparison.OrdinalIgnoreCase))
+            {
+                yield return new TranslationApplyOption("replace", "Replace selection");
+                yield break;
+            }
+
+            if (string.Equals(actionKey, "translate.section", StringComparison.OrdinalIgnoreCase))
+            {
+                yield return new TranslationApplyOption("replace", "Replace section");
+                yield return new TranslationApplyOption("duplicate-section", "Duplicate as new section");
+                yield break;
+            }
+
+            if (string.Equals(actionKey, "translate.document", StringComparison.OrdinalIgnoreCase))
+            {
+                yield return new TranslationApplyOption("replace", "Replace document");
+                yield return new TranslationApplyOption("duplicate-document", "Duplicate as new document");
+                yield break;
+            }
+
+            yield return new TranslationApplyOption("replace", "Apply");
         }
 
         private static string GetActionLabel(string actionKey)
@@ -3346,6 +3843,21 @@ namespace WriterApp.Client.Pages
             if (string.Equals(actionKey, "propose.next-paragraph", StringComparison.OrdinalIgnoreCase))
             {
                 return "Propose next paragraph";
+            }
+
+            if (string.Equals(actionKey, "translate.selection", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Translate selection";
+            }
+
+            if (string.Equals(actionKey, "translate.section", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Translate section";
+            }
+
+            if (string.Equals(actionKey, "translate.document", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Translate document";
             }
 
             return "AI";
@@ -3567,6 +4079,102 @@ namespace WriterApp.Client.Pages
             }
         }
 
+        private async Task LoadTranslationLinksAsync()
+        {
+            _documentTranslationLinks.Clear();
+            _sectionTranslationLinks.Clear();
+
+            if (_documentTranslationGroupId is null && _sectionTranslationGroupId is null)
+            {
+                return;
+            }
+
+            try
+            {
+                if (_documentTranslationGroupId is not null)
+                {
+                    List<DocumentTranslationLinkDto>? documents =
+                        await Http.GetFromJsonAsync<List<DocumentTranslationLinkDto>>(
+                            $"api/documents/{DocumentId}/translations");
+                    if (documents is not null)
+                    {
+                        _documentTranslationLinks.AddRange(documents);
+                    }
+                }
+
+                if (_sectionTranslationGroupId is not null && _activeSection is not null)
+                {
+                    List<SectionTranslationLinkDto>? sections =
+                        await Http.GetFromJsonAsync<List<SectionTranslationLinkDto>>(
+                            $"api/sections/{_activeSection.Id}/translations");
+                    if (sections is not null)
+                    {
+                        _sectionTranslationLinks.AddRange(sections);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Translation links load failed.");
+            }
+        }
+
+        private IEnumerable<TranslationLinkItem> GetTranslationLinks()
+        {
+            if (_sectionTranslationLinks.Count > 0)
+            {
+                foreach (SectionTranslationLinkDto link in _sectionTranslationLinks)
+                {
+                    bool isActive = _activeSection is not null && link.SectionId == _activeSection.Id;
+                    string label = BuildLanguageLabel(link.LanguageCode);
+                    yield return new TranslationLinkItem(
+                        link.DocumentId,
+                        link.SectionId,
+                        label,
+                        link.Title,
+                        isActive);
+                }
+
+                yield break;
+            }
+
+            foreach (DocumentTranslationLinkDto link in _documentTranslationLinks)
+            {
+                bool isActive = link.DocumentId == DocumentId;
+                string label = BuildLanguageLabel(link.LanguageCode);
+                yield return new TranslationLinkItem(
+                    link.DocumentId,
+                    null,
+                    label,
+                    link.Title,
+                    isActive);
+            }
+        }
+
+        private async Task NavigateToTranslation(TranslationLinkItem item)
+        {
+            if (item.SectionId.HasValue)
+            {
+                Navigation.NavigateTo($"/documents/{item.DocumentId}/sections/{item.SectionId.Value}");
+                return;
+            }
+
+            List<SectionDto>? sections = await Http.GetFromJsonAsync<List<SectionDto>>(
+                $"api/documents/{item.DocumentId}/sections");
+            SectionDto? target = sections?.OrderBy(section => section.OrderIndex).FirstOrDefault();
+            if (target is not null)
+            {
+                Navigation.NavigateTo($"/documents/{item.DocumentId}/sections/{target.Id}");
+            }
+        }
+
+        private static string BuildLanguageLabel(string? languageCode)
+        {
+            return string.IsNullOrWhiteSpace(languageCode)
+                ? "??"
+                : languageCode.Trim().ToUpperInvariant();
+        }
+
         private async Task OnAiUndoRequested()
         {
             if (_aiUndoRedoInFlight || _pageEditor is null || _activeSection is null)
@@ -3747,6 +4355,20 @@ namespace WriterApp.Client.Pages
             string? ChangesSummary,
             string? ErrorMessage,
             DateTimeOffset CreatedUtc);
+
+        private sealed record TranslationApplyOption(string Value, string Label);
+
+        private sealed record TranslationLinkItem(
+            Guid DocumentId,
+            Guid? SectionId,
+            string Label,
+            string Title,
+            bool IsActive);
+
+        private sealed record TranslateContext(
+            string PlainText,
+            TextRange SelectionRange,
+            string SelectionText);
 
         private sealed record ExportPrintPayload(string Html);
 

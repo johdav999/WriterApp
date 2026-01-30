@@ -13,7 +13,9 @@ namespace WriterApp.Application.Documents
         Guid Id,
         string Title,
         DateTimeOffset CreatedAt,
-        DateTimeOffset UpdatedAt);
+        DateTimeOffset UpdatedAt,
+        string? LanguageCode,
+        Guid? TranslationGroupId);
 
     public sealed record DocumentCreateRequest(
         Guid? Id,
@@ -36,7 +38,9 @@ namespace WriterApp.Application.Documents
         string? NarrativePurpose,
         int OrderIndex,
         DateTimeOffset CreatedAt,
-        DateTimeOffset UpdatedAt);
+        DateTimeOffset UpdatedAt,
+        string? LanguageCode,
+        Guid? TranslationGroupId);
 
     public sealed record SectionCreateRequest(
         Guid? Id,

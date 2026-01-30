@@ -11,6 +11,10 @@ namespace WriterApp.Data.Documents
 
         public string Title { get; set; } = string.Empty;
 
+        public string? LanguageCode { get; set; }
+
+        public Guid? TranslationGroupId { get; set; }
+
         public DateTimeOffset CreatedAt { get; set; }
 
         public DateTimeOffset UpdatedAt { get; set; }

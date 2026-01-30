@@ -3,6 +3,7 @@
 @using WriterApp.Application.AI
 @using WriterApp.Application.Exporting
 @using WriterApp.Client.Components.Editor
+@using WriterApp.Client.Components.AI
 
 <PageTitle>@GetPageTitle()</PageTitle>
 
@@ -129,6 +130,23 @@ else
                         <div class="editor-section-label">Section</div>
                         <div class="editor-section-title">@_activeSection.Title</div>
                     </div>
+                    @if (ShowTranslationSwitcher)
+                    {
+                        <div class="translation-switcher">
+                            <div class="translation-switcher-label">Translation</div>
+                            <div class="translation-switcher-links">
+                                @foreach (TranslationLinkItem item in GetTranslationLinks())
+                                {
+                                    <button type="button"
+                                            class="translation-switcher-link @(item.IsActive ? "is-active" : string.Empty)"
+                                            title='@GetTooltip(item.Title)'
+                                            @onclick="() => NavigateToTranslation(item)">
+                                        @item.Label
+                                    </button>
+                                }
+                            </div>
+                        </div>
+                    }
                     <button type="button" class="panel-toggle" title='@GetTooltip("Hide panels and focus on writing.")' @onclick="ToggleFocusMode">
                         @(LayoutStateService.State.FocusMode ? "Exit focus" : "Focus mode")
                     </button>
@@ -211,7 +229,31 @@ else
                                 <span class="ai-preview-status error">@_pendingAiProposal.ErrorMessage</span>
                             }
                         </div>
-                        @if (!string.IsNullOrWhiteSpace(_pendingAiProposal.OriginalText))
+                        @if (IsTranslationProposal)
+                        {
+                            <TranslationProposalPanel SourceText="@_pendingAiProposal.OriginalText"
+                                                      TranslatedText="@_pendingAiProposal.ProposedText"
+                                                      AlignmentMode="@_translationAlignmentMode"
+                                                      AlignmentModeChanged="OnTranslationAlignmentChanged"
+                                                      OnCopyTranslated="CopyTranslatedTextAsync"
+                                                      OnChangeLanguage="OpenTranslateModalFromProposal" />
+                            <div class="translation-apply">
+                                <div class="translation-apply-mode">
+                                    <label for="translation-apply-mode">Apply</label>
+                                    <select id="translation-apply-mode" @bind="_translationApplyMode">
+                                        @foreach (TranslationApplyOption option in GetTranslationApplyOptions())
+                                        {
+                                            <option value="@option.Value">@option.Label</option>
+                                        }
+                                    </select>
+                                </div>
+                                <div class="translation-apply-actions">
+                                    <button type="button" @onclick="OnApplyPendingAiProposal">Apply</button>
+                                    <button type="button" class="btn btn-ghost" @onclick="OnDiscardPendingAiProposal">Discard</button>
+                                </div>
+                            </div>
+                        }
+                        else if (!string.IsNullOrWhiteSpace(_pendingAiProposal.OriginalText))
                         {
                             <div class="ai-preview-columns">
                                 <div class="ai-preview-pane">
@@ -224,17 +266,20 @@ else
                                 </div>
                             </div>
                         }
-                        <div class="ai-preview-actions">
-                            <button type="button" @onclick="OnApplyPendingAiProposal">Apply</button>
-                            <button type="button" @onclick="OnDiscardPendingAiProposal">Discard</button>
-                            <button type="button"
-                                    class="ai-details-toggle"
-                                    aria-expanded="@_pendingDetailsExpanded"
-                                    aria-controls="ai-pending-details"
-                                    @onclick="TogglePendingDetails">
-                                @(_pendingDetailsExpanded ? "Hide details" : "Change details")
-                            </button>
-                        </div>
+                        @if (!IsTranslationProposal)
+                        {
+                            <div class="ai-preview-actions">
+                                <button type="button" @onclick="OnApplyPendingAiProposal">Apply</button>
+                                <button type="button" @onclick="OnDiscardPendingAiProposal">Discard</button>
+                                <button type="button"
+                                        class="ai-details-toggle"
+                                        aria-expanded="@_pendingDetailsExpanded"
+                                        aria-controls="ai-pending-details"
+                                        @onclick="TogglePendingDetails">
+                                    @(_pendingDetailsExpanded ? "Hide details" : "Change details")
+                                </button>
+                            </div>
+                        }
                         @if (_pendingDetailsExpanded)
                         {
                             <div id="ai-pending-details" class="ai-history-details">
@@ -776,6 +821,59 @@ else
                     disabled="@_isDeletingSection">
                 Cancel
             </button>
+        </div>
+    </div>
+}
+
+@if (_isTranslateModalOpen)
+{
+    <div class="modal-overlay" @onclick="CloseTranslateModal">
+        <div class="modal translate-dialog modal-panel" role="dialog" aria-modal="true" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <div class="modal-title">Translate</div>
+            </div>
+            <div class="modal-body">
+                <div class="translate-form">
+                    <label for="translate-source-language">Source language</label>
+                    <select id="translate-source-language" @bind="_translateSourceLanguage">
+                        <option value="auto">Auto-detect</option>
+                        <option value="en">English</option>
+                        <option value="sv">Swedish</option>
+                        <option value="de">German</option>
+                        <option value="fr">French</option>
+                        <option value="es">Spanish</option>
+                        <option value="it">Italian</option>
+                        <option value="nl">Dutch</option>
+                        <option value="no">Norwegian</option>
+                        <option value="da">Danish</option>
+                    </select>
+
+                    <label for="translate-target-language">Target language</label>
+                    <select id="translate-target-language" @bind="_translateTargetLanguage">
+                        <option value="en">English</option>
+                        <option value="sv">Swedish</option>
+                        <option value="de">German</option>
+                        <option value="fr">French</option>
+                        <option value="es">Spanish</option>
+                        <option value="it">Italian</option>
+                        <option value="nl">Dutch</option>
+                        <option value="no">Norwegian</option>
+                        <option value="da">Danish</option>
+                    </select>
+
+                    <label for="translate-style">Style</label>
+                    <select id="translate-style" @bind="_translateStyle">
+                        <option value="literal">Literal</option>
+                        <option value="natural">Natural</option>
+                        <option value="formal">Formal</option>
+                        <option value="informal">Informal</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" @onclick="CloseTranslateModal">Cancel</button>
+                <button type="button" class="btn btn-primary" @onclick="ConfirmTranslateAsync">Translate</button>
+            </div>
         </div>
     </div>
 }

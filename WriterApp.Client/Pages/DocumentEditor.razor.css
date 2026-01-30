@@ -201,6 +201,89 @@
     z-index: 20;
 }
 
+.translation-switcher {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px 12px;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    background: #ffffff;
+    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+}
+
+.translation-switcher-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: #6b7280;
+}
+
+.translation-switcher-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.translation-switcher-link {
+    border: 1px solid #d1d5db;
+    border-radius: 999px;
+    padding: 4px 10px;
+    background: #fff;
+    font-size: 0.8rem;
+}
+
+.translation-switcher-link.is-active {
+    border-color: #2f6feb;
+    background: #e7efff;
+    color: #1f2937;
+}
+
+.translation-apply {
+    margin-top: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.translation-apply-mode {
+    display: grid;
+    gap: 6px;
+    font-size: 0.85rem;
+    color: #374151;
+}
+
+.translation-apply-mode select {
+    border: 1px solid #d1d5db;
+    border-radius: 10px;
+    padding: 6px 10px;
+    background: #fff;
+}
+
+.translation-apply-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.translate-dialog .translate-form {
+    display: grid;
+    gap: 10px;
+}
+
+.translate-dialog label {
+    font-size: 0.85rem;
+    color: #4b5563;
+}
+
+.translate-dialog select {
+    border: 1px solid #d1d5db;
+    border-radius: 10px;
+    padding: 6px 10px;
+    background: #fff;
+}
+
 .section-menu-panel button {
     border: none;
     background: transparent;
