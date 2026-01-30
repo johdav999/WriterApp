@@ -416,7 +416,9 @@ namespace WriterApp.Controllers
                     section.NarrativePurpose,
                     section.OrderIndex,
                     section.CreatedAt,
-                    section.UpdatedAt))
+                    section.UpdatedAt,
+                    section.LanguageCode,
+                    section.TranslationGroupId))
                 .ToList();
 
             List<DocumentOutlineNodeDto> nodeDtos = await _dbContext.DocumentOutlineNodes

@@ -5,6 +5,7 @@
 @using WriterApp.Application.Documents
 @using WriterApp.Client.State
 @inject HttpClient Http
+@inject NavigationManager Navigation
 @inject IJSRuntime JSRuntime
 @inject ILogger<PageEditor> Logger
 @implements IDisposable
@@ -433,7 +434,7 @@ else
         {
             _commandsModule = await JSRuntime.InvokeAsync<IJSObjectReference>(
                 "import",
-                "/js/tiptap-commands.js");
+                $"{Navigation.BaseUri}js/tiptap-commands.js");
         }
     }
 

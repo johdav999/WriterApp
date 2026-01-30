@@ -66,7 +66,9 @@ namespace WriterApp.Controllers
                     section.NarrativePurpose,
                     section.OrderIndex,
                     section.CreatedAt,
-                    section.UpdatedAt))
+                    section.UpdatedAt,
+                    section.LanguageCode,
+                    section.TranslationGroupId))
                 .ToList();
 
             return Ok(result);
@@ -102,7 +104,9 @@ namespace WriterApp.Controllers
                         existing.NarrativePurpose,
                         existing.OrderIndex,
                         existing.CreatedAt,
-                        existing.UpdatedAt));
+                        existing.UpdatedAt,
+                        existing.LanguageCode,
+                        existing.TranslationGroupId));
                 }
             }
 
@@ -159,9 +163,127 @@ namespace WriterApp.Controllers
                 section.NarrativePurpose,
                 section.OrderIndex,
                 section.CreatedAt,
-                section.UpdatedAt);
+                section.UpdatedAt,
+                section.LanguageCode,
+                section.TranslationGroupId);
 
             return Ok(dto);
+        }
+
+        [HttpGet("~/api/sections/{sectionId:guid}/translations")]
+        public async Task<ActionResult<IReadOnlyList<SectionTranslationLinkDto>>> GetTranslations(
+            Guid sectionId,
+            CancellationToken ct)
+        {
+            string userId = _userIdResolver.ResolveUserId(User);
+            SectionRecord? section = await _sections.GetAsync(sectionId, userId, ct);
+            if (section is null)
+            {
+                return NotFound();
+            }
+
+            if (!section.TranslationGroupId.HasValue)
+            {
+                return Ok(Array.Empty<SectionTranslationLinkDto>());
+            }
+
+            Guid groupId = section.TranslationGroupId.Value;
+            List<SectionTranslationLinkDto> result = await _dbContext.Sections
+                .AsNoTracking()
+                .Where(item => item.Document!.OwnerUserId == userId && item.TranslationGroupId == groupId)
+                .OrderBy(item => item.OrderIndex)
+                .Select(item => new SectionTranslationLinkDto(
+                    item.Id,
+                    item.DocumentId,
+                    item.Title,
+                    item.LanguageCode,
+                    groupId))
+                .ToListAsync(ct);
+
+            return Ok(result);
+        }
+
+        [HttpPost("~/api/sections/{sectionId:guid}/translations")]
+        public async Task<ActionResult<TranslationDuplicateSectionResponse>> DuplicateTranslation(
+            Guid sectionId,
+            [FromBody] TranslationDuplicateSectionRequest request,
+            CancellationToken ct)
+        {
+            string userId = _userIdResolver.ResolveUserId(User);
+            SectionRecord? source = await _dbContext.Sections
+                .Include(item => item.Document)
+                .FirstOrDefaultAsync(item => item.Id == sectionId && item.Document!.OwnerUserId == userId, ct);
+            if (source is null)
+            {
+                return NotFound();
+            }
+
+            Guid translationGroupId = source.TranslationGroupId ?? Guid.NewGuid();
+            if (source.TranslationGroupId != translationGroupId)
+            {
+                source.TranslationGroupId = translationGroupId;
+            }
+
+            if (string.IsNullOrWhiteSpace(source.LanguageCode) && !string.IsNullOrWhiteSpace(request.SourceLanguage))
+            {
+                source.LanguageCode = request.SourceLanguage;
+            }
+
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            int insertIndex = source.OrderIndex + 1;
+            List<SectionRecord> reorder = await _dbContext.Sections
+                .Where(item => item.DocumentId == source.DocumentId && item.OrderIndex >= insertIndex)
+                .OrderByDescending(item => item.OrderIndex)
+                .ToListAsync(ct);
+
+            foreach (SectionRecord item in reorder)
+            {
+                item.OrderIndex += 1;
+            }
+
+            SectionRecord translated = new()
+            {
+                Id = Guid.NewGuid(),
+                DocumentId = source.DocumentId,
+                Title = BuildTranslatedTitle(source.Title, request.TargetLanguage, request.Title),
+                NarrativePurpose = source.NarrativePurpose,
+                OrderIndex = insertIndex,
+                CreatedAt = now,
+                UpdatedAt = now,
+                LanguageCode = request.TargetLanguage,
+                TranslationGroupId = translationGroupId
+            };
+
+            PageRecord page = new()
+            {
+                Id = Guid.NewGuid(),
+                DocumentId = source.DocumentId,
+                SectionId = translated.Id,
+                Title = "Page 1",
+                Content = request.Content ?? string.Empty,
+                OrderIndex = 0,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+
+            await using var transaction = await _dbContext.Database.BeginTransactionAsync(ct);
+            _dbContext.Sections.Add(translated);
+            _dbContext.Pages.Add(page);
+            await _dbContext.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+
+            SectionDto dto = new(
+                translated.Id,
+                translated.DocumentId,
+                translated.Title,
+                translated.NarrativePurpose,
+                translated.OrderIndex,
+                translated.CreatedAt,
+                translated.UpdatedAt,
+                translated.LanguageCode,
+                translated.TranslationGroupId);
+
+            return Ok(new TranslationDuplicateSectionResponse(dto, page.Id));
         }
 
         [HttpPost("reorder")]
@@ -290,7 +412,9 @@ namespace WriterApp.Controllers
                     section.NarrativePurpose,
                     section.OrderIndex,
                     section.CreatedAt,
-                    section.UpdatedAt))
+                    section.UpdatedAt,
+                    section.LanguageCode,
+                    section.TranslationGroupId))
                 .ToList();
 
             SectionReorderDiagnostics.LogDebug(
@@ -333,7 +457,9 @@ namespace WriterApp.Controllers
                 updated.NarrativePurpose,
                 updated.OrderIndex,
                 updated.CreatedAt,
-                updated.UpdatedAt);
+                updated.UpdatedAt,
+                updated.LanguageCode,
+                updated.TranslationGroupId);
 
             return Ok(dto);
         }
@@ -521,9 +647,23 @@ namespace WriterApp.Controllers
                 duplicated.NarrativePurpose,
                 duplicated.OrderIndex,
                 duplicated.CreatedAt,
-                duplicated.UpdatedAt);
+                duplicated.UpdatedAt,
+                duplicated.LanguageCode,
+                duplicated.TranslationGroupId);
 
             return Ok(dto);
+        }
+
+        private static string BuildTranslatedTitle(string originalTitle, string? languageCode, string? overrideTitle)
+        {
+            if (!string.IsNullOrWhiteSpace(overrideTitle))
+            {
+                return overrideTitle.Trim();
+            }
+
+            string normalized = string.IsNullOrWhiteSpace(originalTitle) ? "Section" : originalTitle.Trim();
+            string lang = string.IsNullOrWhiteSpace(languageCode) ? string.Empty : languageCode.Trim().ToUpperInvariant();
+            return string.IsNullOrWhiteSpace(lang) ? normalized : $"{normalized} ({lang})";
         }
 
         private static string BuildDuplicateTitle(string baseTitle, IEnumerable<string> existingTitles)

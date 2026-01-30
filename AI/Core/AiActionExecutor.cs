@@ -57,6 +57,20 @@ namespace WriterApp.AI.Core
                 originalText = input.SelectedText;
                 operations.Add(new ReplaceTextRangeOperation(input.ActiveSectionId, input.SelectionRange, proposedText));
             }
+            else if (string.Equals(action.ActionId, TranslateSelectionAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                AiArtifact? textArtifact = result.Artifacts.FirstOrDefault(artifact => artifact.Modality == AiModality.Text);
+                proposedText = textArtifact?.TextContent ?? string.Empty;
+                originalText = request.Context.SelectionText ?? request.Context.OriginalText ?? input.SelectedText;
+                operations.Add(new ReplaceTextRangeOperation(input.ActiveSectionId, input.SelectionRange, proposedText));
+            }
+            else if (string.Equals(action.ActionId, TranslateSectionAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(action.ActionId, TranslateDocumentAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                AiArtifact? textArtifact = result.Artifacts.FirstOrDefault(artifact => artifact.Modality == AiModality.Text);
+                proposedText = textArtifact?.TextContent ?? string.Empty;
+                originalText = request.Context.OriginalText ?? input.SelectedText;
+            }
             else if (string.Equals(action.ActionId, StoryCoachAction.ActionIdValue, StringComparison.Ordinal))
             {
                 AiArtifact? textArtifact = result.Artifacts.FirstOrDefault(artifact => artifact.Modality == AiModality.Text);
@@ -146,6 +160,16 @@ namespace WriterApp.AI.Core
                 return "Section";
             }
 
+            if (string.Equals(actionId, TranslateDocumentAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Document";
+            }
+
+            if (string.Equals(actionId, TranslateSectionAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Section";
+            }
+
             if (string.Equals(actionId, StoryCoachAction.ActionIdValue, StringComparison.Ordinal))
             {
                 return "Synopsis";
@@ -176,6 +200,21 @@ namespace WriterApp.AI.Core
             if (string.Equals(actionId, GenerateCoverImageAction.ActionIdValue, StringComparison.Ordinal))
             {
                 return "Generate cover image";
+            }
+
+            if (string.Equals(actionId, TranslateSelectionAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Translate selection";
+            }
+
+            if (string.Equals(actionId, TranslateSectionAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Translate section";
+            }
+
+            if (string.Equals(actionId, TranslateDocumentAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Translate document";
             }
 
             if (string.Equals(actionId, StoryCoachAction.ActionIdValue, StringComparison.Ordinal))

@@ -20,6 +20,9 @@ namespace WriterApp.AI.Providers.OpenAI
         private const string DefaultBaseUrl = "https://api.openai.com/v1/";
         private const string ResponsesEndpoint = "responses";
         private const string ActionRewrite = "rewrite.selection";
+        private const string ActionTranslateSelection = "translate.selection";
+        private const string ActionTranslateSection = "translate.section";
+        private const string ActionTranslateDocument = "translate.document";
         private const string ActionCoverImage = "generate.image.cover";
         private const string ActionStoryCoach = "synopsis.story_coach";
         private const string ActionGenerateOutline = "generate.outline";
@@ -77,7 +80,10 @@ namespace WriterApp.AI.Providers.OpenAI
             Stopwatch stopwatch = Stopwatch.StartNew();
             try
             {
-                if (string.Equals(request.ActionId, ActionRewrite, StringComparison.Ordinal))
+                if (string.Equals(request.ActionId, ActionRewrite, StringComparison.Ordinal)
+                    || string.Equals(request.ActionId, ActionTranslateSelection, StringComparison.Ordinal)
+                    || string.Equals(request.ActionId, ActionTranslateSection, StringComparison.Ordinal)
+                    || string.Equals(request.ActionId, ActionTranslateDocument, StringComparison.Ordinal))
                 {
                     (string outputText, int inputTokens, int outputTokens) = await ExecuteTextAsync(request, apiKey, ct);
                     AiArtifact artifact = new(

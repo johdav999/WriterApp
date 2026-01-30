@@ -15,6 +15,10 @@ namespace WriterApp.Data.Documents
 
         public string? NarrativePurpose { get; set; }
 
+        public string? LanguageCode { get; set; }
+
+        public Guid? TranslationGroupId { get; set; }
+
         public int OrderIndex { get; set; }
 
         public DateTimeOffset CreatedAt { get; set; }

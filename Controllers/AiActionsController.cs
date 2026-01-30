@@ -501,7 +501,7 @@ namespace WriterApp.Controllers
                 Metadata = new DocumentMetadata
                 {
                     Title = record.Title,
-                    Language = "en",
+                    Language = string.IsNullOrWhiteSpace(record.LanguageCode) ? "en" : record.LanguageCode,
                     CreatedUtc = record.CreatedAt.UtcDateTime,
                     ModifiedUtc = record.UpdatedAt.UtcDateTime
                 },
@@ -562,7 +562,7 @@ namespace WriterApp.Controllers
                 Metadata = new DocumentMetadata
                 {
                     Title = record.Title,
-                    Language = "en",
+                    Language = string.IsNullOrWhiteSpace(record.LanguageCode) ? "en" : record.LanguageCode,
                     CreatedUtc = record.CreatedAt.UtcDateTime,
                     ModifiedUtc = record.UpdatedAt.UtcDateTime
                 },
