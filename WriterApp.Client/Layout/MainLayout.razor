@@ -1,5 +1,6 @@
 ﻿@inherits LayoutComponentBase
 @using WriterApp.Client.State
+@using WriterApp.Client.Components.Search
 @using System.Net.Http.Json
 @using WriterApp.Application.Documents
 @implements IDisposable
@@ -23,6 +24,7 @@
                     <span class="app-document-title">@_documentTitle</span>
                 }
             </div>
+            <GlobalSearch />
         </div>
         <div class="app-header-right">
             <button type="button" class="app-link app-link-button" @onclick="OnAboutClicked">About</button>

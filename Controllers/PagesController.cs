@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using WriterApp.Application.Documents;
+using WriterApp.Application.Search;
 using WriterApp.Application.Security;
 using WriterApp.Data.Documents;
 using WriterApp.Data;
@@ -22,6 +23,7 @@ namespace WriterApp.Controllers
         private readonly ISectionRepository _sections;
         private readonly IPageRepository _pages;
         private readonly IUserIdResolver _userIdResolver;
+        private readonly ISearchIndexService _searchIndex;
         private readonly AppDbContext _dbContext;
         private readonly ILogger<PagesController> _logger;
 
@@ -30,6 +32,7 @@ namespace WriterApp.Controllers
             ISectionRepository sections,
             IPageRepository pages,
             IUserIdResolver userIdResolver,
+            ISearchIndexService searchIndex,
             AppDbContext dbContext,
             ILogger<PagesController> logger)
         {
@@ -37,6 +40,7 @@ namespace WriterApp.Controllers
             _sections = sections ?? throw new ArgumentNullException(nameof(sections));
             _pages = pages ?? throw new ArgumentNullException(nameof(pages));
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
+            _searchIndex = searchIndex ?? throw new ArgumentNullException(nameof(searchIndex));
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
@@ -147,6 +151,7 @@ namespace WriterApp.Controllers
             };
 
             await _pages.CreateAsync(page, ct);
+            await _searchIndex.UpsertPageAsync(page, ct);
 
             PageDto dto = new(
                 page.Id,
@@ -202,6 +207,8 @@ namespace WriterApp.Controllers
             {
                 return NotFound();
             }
+
+            await _searchIndex.UpsertPageAsync(page, ct);
 
             ContentFingerprint afterFp = BuildFingerprint(page.Content ?? string.Empty);
             _logger.LogDebug(
@@ -263,6 +270,11 @@ namespace WriterApp.Controllers
         {
             string userId = _userIdResolver.ResolveUserId(User);
             bool removed = await _pages.DeleteAsync(pageId, userId, ct);
+            if (removed)
+            {
+                await _searchIndex.DeleteByEntityAsync(SearchEntityTypes.Page, pageId, ct);
+                await _searchIndex.DeleteByEntityAsync(SearchEntityTypes.Note, pageId, ct);
+            }
             return removed ? NoContent() : NotFound();
         }
 
@@ -295,6 +307,8 @@ namespace WriterApp.Controllers
             {
                 return NotFound();
             }
+
+            await _searchIndex.UpsertPageAsync(moved, ct);
 
             PageDto dto = new(
                 moved.Id,
@@ -364,6 +378,7 @@ namespace WriterApp.Controllers
             }
 
             await _dbContext.SaveChangesAsync(ct);
+            await _searchIndex.UpsertPageNotesAsync(page, notes, ct);
             return Ok(new PageNotesDto(pageId, notes.Notes, notes.UpdatedAt));
         }
     }

@@ -1,0 +1,115 @@
+.global-search {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    position: relative;
+    min-width: 320px;
+    max-width: 560px;
+    width: 100%;
+}
+
+.global-search-field {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.global-search-input {
+    flex: 1;
+    padding: 8px 10px;
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    border-radius: 8px;
+    font-size: 0.95rem;
+}
+
+.global-search-clear {
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    background: #fff;
+    cursor: pointer;
+}
+
+.global-search-toggle {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    font-size: 0.85rem;
+    color: rgba(0, 0, 0, 0.7);
+}
+
+.global-search-results {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    max-height: 420px;
+    overflow: auto;
+    background: #fff;
+    border-radius: 10px;
+    border: 1px solid rgba(0, 0, 0, 0.15);
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.15);
+    padding: 10px 12px;
+    z-index: 20;
+}
+
+.global-search-status {
+    padding: 12px;
+    color: rgba(0, 0, 0, 0.7);
+}
+
+.global-search-group {
+    margin-bottom: 10px;
+}
+
+.global-search-group-title {
+    font-weight: 600;
+    font-size: 0.9rem;
+    margin-bottom: 6px;
+}
+
+.global-search-group ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.global-search-result {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+.global-search-result:hover {
+    border-color: rgba(0, 0, 0, 0.1);
+    background: rgba(0, 0, 0, 0.02);
+}
+
+.global-search-type {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: rgba(0, 0, 0, 0.55);
+}
+
+.global-search-title {
+    font-weight: 600;
+}
+
+.global-search-snippet {
+    font-size: 0.85rem;
+    color: rgba(0, 0, 0, 0.75);
+}
+
+.global-search-snippet mark {
+    background: #ffe27a;
+    padding: 0 2px;
+    border-radius: 2px;
+}

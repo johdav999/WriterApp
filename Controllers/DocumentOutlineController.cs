@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using WriterApp.Application.Documents;
+using WriterApp.Application.Search;
 using WriterApp.Application.Security;
 using WriterApp.Data;
 using WriterApp.Data.Documents;
@@ -21,15 +22,18 @@ namespace WriterApp.Controllers
         private readonly IDocumentRepository _documents;
         private readonly IUserIdResolver _userIdResolver;
         private readonly AppDbContext _dbContext;
+        private readonly ISearchIndexService _searchIndex;
 
         public DocumentOutlineController(
             IDocumentRepository documents,
             IUserIdResolver userIdResolver,
-            AppDbContext dbContext)
+            AppDbContext dbContext,
+            ISearchIndexService searchIndex)
         {
             _documents = documents ?? throw new ArgumentNullException(nameof(documents));
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
+            _searchIndex = searchIndex ?? throw new ArgumentNullException(nameof(searchIndex));
         }
 
         [HttpGet]
@@ -88,6 +92,11 @@ namespace WriterApp.Controllers
             }
 
             await _dbContext.SaveChangesAsync(ct);
+
+            List<DocumentOutlineNodeRecord> nodes = await _dbContext.DocumentOutlineNodes
+                .Where(node => node.DocumentId == documentId)
+                .ToListAsync(ct);
+            await _searchIndex.ReplaceOutlineAsync(document, outline.Outline, nodes, ct);
             return Ok(new DocumentOutlineDto(documentId, outline.Outline, outline.UpdatedAt));
         }
 
@@ -216,6 +225,8 @@ namespace WriterApp.Controllers
             await _dbContext.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
 
+            await _searchIndex.ReplaceOutlineAsync(document, outline.Outline, records, ct);
+
             List<DocumentOutlineNodeDto> result = records
                 .OrderBy(node => node.ParentId)
                 .ThenBy(node => node.Order)
@@ -267,6 +278,13 @@ namespace WriterApp.Controllers
             node.LinkedSectionId = sectionId;
             await _dbContext.SaveChangesAsync(ct);
 
+            DocumentOutlineRecord? outline = await _dbContext.DocumentOutlines
+                .FindAsync(new object?[] { documentId }, ct);
+            List<DocumentOutlineNodeRecord> nodes = await _dbContext.DocumentOutlineNodes
+                .Where(entry => entry.DocumentId == documentId)
+                .ToListAsync(ct);
+            await _searchIndex.ReplaceOutlineAsync(document, outline?.Outline ?? string.Empty, nodes, ct);
+
             return Ok(new DocumentOutlineNodeDto(
                 node.Id,
                 node.DocumentId,
@@ -316,6 +334,7 @@ namespace WriterApp.Controllers
 
             DateTimeOffset now = DateTimeOffset.UtcNow;
             List<SectionRecord> ordered = new();
+            List<PageRecord> createdPages = new();
             await using var transaction = await _dbContext.Database.BeginTransactionAsync(ct);
 
             foreach (DocumentOutlineNodeRecord node in applyNodes)
@@ -367,6 +386,7 @@ namespace WriterApp.Controllers
                         UpdatedAt = now
                     };
                     _dbContext.Pages.Add(page);
+                    createdPages.Add(page);
                 }
 
                 if (section is not null)
@@ -406,6 +426,15 @@ namespace WriterApp.Controllers
             document.UpdatedAt = now;
             await _dbContext.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
+
+            foreach (SectionRecord section in ordered)
+            {
+                await _searchIndex.UpsertSectionAsync(section, ct);
+            }
+            foreach (PageRecord page in createdPages)
+            {
+                await _searchIndex.UpsertPageAsync(page, ct);
+            }
 
             List<SectionDto> sectionDtos = ordered
                 .OrderBy(section => section.OrderIndex)

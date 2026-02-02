@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using WriterApp.Data;
 using WriterApp.Application.Documents;
+using WriterApp.Application.Search;
 using WriterApp.Application.Security;
 using WriterApp.Data.Documents;
 using Microsoft.EntityFrameworkCore;
@@ -26,6 +27,7 @@ namespace WriterApp.Controllers
         private readonly ISectionRepository _sections;
         private readonly IPageRepository _pages;
         private readonly IUserIdResolver _userIdResolver;
+        private readonly ISearchIndexService _searchIndex;
         private readonly AppDbContext _dbContext;
         private readonly ILogger<SectionsController> _logger;
         private readonly IConfiguration _configuration;
@@ -35,6 +37,7 @@ namespace WriterApp.Controllers
             ISectionRepository sections,
             IPageRepository pages,
             IUserIdResolver userIdResolver,
+            ISearchIndexService searchIndex,
             AppDbContext dbContext,
             ILogger<SectionsController> logger,
             IConfiguration configuration)
@@ -43,6 +46,7 @@ namespace WriterApp.Controllers
             _sections = sections ?? throw new ArgumentNullException(nameof(sections));
             _pages = pages ?? throw new ArgumentNullException(nameof(pages));
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
+            _searchIndex = searchIndex ?? throw new ArgumentNullException(nameof(searchIndex));
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
@@ -155,6 +159,9 @@ namespace WriterApp.Controllers
             };
             await _pages.CreateAsync(page, ct);
             await transaction.CommitAsync(ct);
+
+            await _searchIndex.UpsertSectionAsync(section, ct);
+            await _searchIndex.UpsertPageAsync(page, ct);
 
             SectionDto dto = new(
                 section.Id,
@@ -271,6 +278,9 @@ namespace WriterApp.Controllers
             _dbContext.Pages.Add(page);
             await _dbContext.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
+
+            await _searchIndex.UpsertSectionAsync(translated, ct);
+            await _searchIndex.UpsertPageAsync(page, ct);
 
             SectionDto dto = new(
                 translated.Id,
@@ -450,6 +460,8 @@ namespace WriterApp.Controllers
                 return NotFound();
             }
 
+            await _searchIndex.UpsertSectionAsync(updated, ct);
+
             SectionDto dto = new(
                 updated.Id,
                 updated.DocumentId,
@@ -478,6 +490,10 @@ namespace WriterApp.Controllers
             {
                 return NotFound();
             }
+
+            List<PageRecord> pagesToDelete = await _dbContext.Pages
+                .Where(page => page.SectionId == sectionId)
+                .ToListAsync(ct);
 
             IReadOnlyList<SectionRecord> existing = await _sections.ListByDocumentAsync(documentId, userId, ct);
             if (existing.Count <= 1)
@@ -523,6 +539,14 @@ namespace WriterApp.Controllers
             }
 
             await transaction.CommitAsync(ct);
+
+            await _searchIndex.DeleteByEntityAsync(SearchEntityTypes.Section, sectionId, ct);
+            await _searchIndex.DeleteByEntityAsync(SearchEntityTypes.SceneCard, sectionId, ct);
+            foreach (PageRecord page in pagesToDelete)
+            {
+                await _searchIndex.DeleteByEntityAsync(SearchEntityTypes.Page, page.Id, ct);
+                await _searchIndex.DeleteByEntityAsync(SearchEntityTypes.Note, page.Id, ct);
+            }
             return NoContent();
         }
 
@@ -639,6 +663,26 @@ namespace WriterApp.Controllers
 
             await _dbContext.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
+
+            await _searchIndex.UpsertSectionAsync(duplicated, ct);
+            foreach (PageRecord page in duplicatedPages)
+            {
+                await _searchIndex.UpsertPageAsync(page, ct);
+            }
+            if (duplicatedPages.Count > 0)
+            {
+                List<PageNoteRecord> newNotes = await _dbContext.PageNotes
+                    .Where(note => duplicatedPages.Select(page => page.Id).Contains(note.PageId))
+                    .ToListAsync(ct);
+                foreach (PageNoteRecord note in newNotes)
+                {
+                    PageRecord? page = duplicatedPages.FirstOrDefault(item => item.Id == note.PageId);
+                    if (page is not null)
+                    {
+                        await _searchIndex.UpsertPageNotesAsync(page, note, ct);
+                    }
+                }
+            }
 
             SectionDto dto = new(
                 duplicated.Id,

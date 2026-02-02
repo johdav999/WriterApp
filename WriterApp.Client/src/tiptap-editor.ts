@@ -195,6 +195,7 @@ const IndentExtension = Extension.create({
 const aiDecorationsKey = new PluginKey("aiDecorations");
 const pageGapDecorationsKey = new PluginKey("pageGapDecorations");
 const headingNumberDecorationsKey = new PluginKey("headingNumberDecorations");
+const searchHighlightDecorationsKey = new PluginKey("searchHighlightDecorations");
 const WA_LAYOUT_META = "wa_layout_tx";
 const WA_HEADING_NUMBERING_REBUILD = "wa_heading_numbering_rebuild";
 
@@ -371,6 +372,34 @@ const HeadingNumberingExtension = Extension.create({
                             }
                         }
                     };
+                }
+            })
+        ];
+    }
+});
+
+const SearchHighlightExtension = Extension.create({
+    name: "searchHighlight",
+    addProseMirrorPlugins() {
+        return [
+            new Plugin({
+                key: searchHighlightDecorationsKey,
+                state: {
+                    init: () => DecorationSet.empty,
+                    apply: (tr, value) => {
+                        const current = value ?? DecorationSet.empty;
+                        const next = tr.getMeta(searchHighlightDecorationsKey);
+                        if (next) {
+                            return next;
+                        }
+
+                        return current.map(tr.mapping, tr.doc);
+                    }
+                },
+                props: {
+                    decorations(state) {
+                        return searchHighlightDecorationsKey.getState(state) ?? DecorationSet.empty;
+                    }
                 }
             })
         ];
@@ -1141,6 +1170,74 @@ function requestHeadingNumberingRebuild(editor, reason) {
     runHeadingNumberingRebuild(editor, editor.view, reason, editor.__headingNumberingTraceId);
 }
 
+function extractSearchTerms(query) {
+    if (!query) {
+        return [];
+    }
+
+    const terms = [];
+    const matches = String(query).match(/"([^"]+)"|\S+/g) ?? [];
+    matches.forEach(token => {
+        const trimmed = token.trim();
+        if (!trimmed) {
+            return;
+        }
+
+        const unquoted = trimmed.startsWith("\"") && trimmed.endsWith("\"")
+            ? trimmed.slice(1, -1)
+            : trimmed;
+        const normalized = unquoted.trim();
+        if (!normalized) {
+            return;
+        }
+
+        terms.push(normalized.toLowerCase());
+    });
+
+    return Array.from(new Set(terms));
+}
+
+function buildSearchHighlightDecorations(editor, query) {
+    const view = editor?.view;
+    if (!view) {
+        return DecorationSet.empty;
+    }
+
+    const terms = extractSearchTerms(query);
+    if (terms.length === 0) {
+        return DecorationSet.empty;
+    }
+
+    const decorations = [];
+    view.state.doc.descendants((node, pos) => {
+        if (!node.isText || !node.text) {
+            return;
+        }
+
+        const lower = node.text.toLowerCase();
+        terms.forEach(term => {
+            if (!term) {
+                return;
+            }
+
+            let startIndex = 0;
+            while (startIndex < lower.length) {
+                const matchIndex = lower.indexOf(term, startIndex);
+                if (matchIndex === -1) {
+                    break;
+                }
+
+                const from = pos + matchIndex;
+                const to = from + term.length;
+                decorations.push(Decoration.inline(from, to, { class: "wa-search-highlight" }));
+                startIndex = matchIndex + term.length;
+            }
+        });
+    });
+
+    return DecorationSet.create(view.state.doc, decorations);
+}
+
 function buildPageGapDecorations(editor, options) {
     const view = editor?.view;
     const ctx = getPageBreakContext(editor);
@@ -1899,6 +1996,7 @@ window.tiptapEditor = {
                 AiDecorationsExtension,
                 PageGapDecorationsExtension,
                 HeadingNumberingExtension,
+                SearchHighlightExtension,
                 ShortcutExtension
             ];
             editor = new Editor({
@@ -2117,6 +2215,23 @@ window.tiptapEditor = {
 
         const decorations = buildAiDecorations(editor, ranges);
         const tr = editor.state.tr.setMeta(aiDecorationsKey, decorations);
+        editor.view.dispatch(tr);
+    },
+    setSearchHighlights: function (editor, query) {
+        if (!editor || !editor.view) {
+            return;
+        }
+
+        const decorations = buildSearchHighlightDecorations(editor, query);
+        const tr = editor.view.state.tr.setMeta(searchHighlightDecorationsKey, decorations);
+        editor.view.dispatch(tr);
+    },
+    clearSearchHighlights: function (editor) {
+        if (!editor || !editor.view) {
+            return;
+        }
+
+        const tr = editor.view.state.tr.setMeta(searchHighlightDecorationsKey, DecorationSet.empty);
         editor.view.dispatch(tr);
     },
 
