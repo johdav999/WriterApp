@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using WriterApp.Application.Documents;
+using WriterApp.Application.Search;
 using WriterApp.Application.Security;
 using WriterApp.Data;
 using WriterApp.Data.Documents;
@@ -18,15 +19,18 @@ namespace WriterApp.Controllers
         private readonly ISectionRepository _sections;
         private readonly IUserIdResolver _userIdResolver;
         private readonly AppDbContext _dbContext;
+        private readonly ISearchIndexService _searchIndex;
 
         public SectionSceneCardsController(
             ISectionRepository sections,
             IUserIdResolver userIdResolver,
-            AppDbContext dbContext)
+            AppDbContext dbContext,
+            ISearchIndexService searchIndex)
         {
             _sections = sections ?? throw new ArgumentNullException(nameof(sections));
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
+            _searchIndex = searchIndex ?? throw new ArgumentNullException(nameof(searchIndex));
         }
 
         [HttpGet("sections/{sectionId:guid}/scene-card")]
@@ -94,6 +98,7 @@ namespace WriterApp.Controllers
             card.UpdatedUtc = DateTimeOffset.UtcNow;
 
             await _dbContext.SaveChangesAsync(ct);
+            await _searchIndex.UpsertSceneCardAsync(section, card, ct);
 
             return Ok(new SectionSceneCardDto(
                 card.SectionId,

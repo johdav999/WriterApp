@@ -1022,6 +1022,13 @@
     font-variant-numeric: tabular-nums;
 }
 
+.editor-shell ::deep .wa-search-highlight {
+    background: #ffe27a;
+    color: inherit;
+    border-radius: 2px;
+    box-shadow: 0 0 0 1px rgba(186, 131, 0, 0.3);
+}
+
 .editor-shell.is-print-layout ::deep .wa-pagination-debug {
     position: absolute;
     inset: 0;

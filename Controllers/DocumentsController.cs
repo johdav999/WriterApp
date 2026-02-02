@@ -10,6 +10,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using WriterApp.Data;
 using WriterApp.Application.Documents;
+using WriterApp.Application.Search;
 using WriterApp.Application.Security;
 using WriterApp.Application.State;
 using WriterApp.Data.Documents;
@@ -25,6 +26,7 @@ namespace WriterApp.Controllers
         private readonly ISectionRepository _sections;
         private readonly IPageRepository _pages;
         private readonly IUserIdResolver _userIdResolver;
+        private readonly ISearchIndexService _searchIndex;
         private readonly AppDbContext _dbContext;
         private readonly ILogger<DocumentsController> _logger;
 
@@ -33,6 +35,7 @@ namespace WriterApp.Controllers
             ISectionRepository sections,
             IPageRepository pages,
             IUserIdResolver userIdResolver,
+            ISearchIndexService searchIndex,
             AppDbContext dbContext,
             ILogger<DocumentsController> logger)
         {
@@ -40,6 +43,7 @@ namespace WriterApp.Controllers
             _sections = sections ?? throw new ArgumentNullException(nameof(sections));
             _pages = pages ?? throw new ArgumentNullException(nameof(pages));
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
+            _searchIndex = searchIndex ?? throw new ArgumentNullException(nameof(searchIndex));
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
@@ -304,6 +308,8 @@ namespace WriterApp.Controllers
 
             Guid? firstSectionId = null;
             Guid? firstPageId = null;
+            List<SectionRecord> createdSections = new();
+            List<PageRecord> createdPages = new();
 
             foreach (SectionRecord sourceSection in sourceSections)
             {
@@ -327,6 +333,7 @@ namespace WriterApp.Controllers
                     TranslationGroupId = translationGroupId
                 };
                 _dbContext.Sections.Add(newSection);
+                createdSections.Add(newSection);
 
                 PageRecord page = new()
                 {
@@ -340,6 +347,7 @@ namespace WriterApp.Controllers
                     UpdatedAt = now
                 };
                 _dbContext.Pages.Add(page);
+                createdPages.Add(page);
 
                 if (!firstSectionId.HasValue)
                 {
@@ -350,6 +358,16 @@ namespace WriterApp.Controllers
 
             await _dbContext.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
+
+            await _searchIndex.UpsertDocumentAsync(translated, ct);
+            foreach (SectionRecord section in createdSections)
+            {
+                await _searchIndex.UpsertSectionAsync(section, ct);
+            }
+            foreach (PageRecord page in createdPages)
+            {
+                await _searchIndex.UpsertPageAsync(page, ct);
+            }
 
             return Ok(new TranslationDuplicateDocumentResponse(
                 new DocumentDetailDto(
@@ -423,6 +441,7 @@ namespace WriterApp.Controllers
             };
 
             await _documents.CreateAsync(document, ct);
+            await _searchIndex.UpsertDocumentAsync(document, ct);
 
             Guid? defaultSectionId = null;
             Guid? defaultPageId = null;
@@ -440,6 +459,7 @@ namespace WriterApp.Controllers
                     UpdatedAt = updatedAt
                 };
                 await _sections.CreateAsync(section, ct);
+                await _searchIndex.UpsertSectionAsync(section, ct);
 
                 PageRecord page = new()
                 {
@@ -453,6 +473,7 @@ namespace WriterApp.Controllers
                     UpdatedAt = updatedAt
                 };
                 await _pages.CreateAsync(page, ct);
+                await _searchIndex.UpsertPageAsync(page, ct);
 
                 defaultSectionId = section.Id;
                 defaultPageId = page.Id;
@@ -495,6 +516,8 @@ namespace WriterApp.Controllers
             {
                 return NotFound();
             }
+
+            await _searchIndex.UpsertDocumentAsync(document, ct);
 
             return Ok(new DocumentDetailDto(
                 document.Id,

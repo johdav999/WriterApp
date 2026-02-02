@@ -29,6 +29,7 @@ using WriterApp.Application.AI.StoryCoach;
 using WriterApp.Application.Synopsis;
 using WriterApp.Application.Diagnostics;
 using WriterApp.Application.Diagnostics.Circuits;
+using WriterApp.Application.Search;
 using WriterApp.Data;
 using WriterApp.Data.Subscriptions;
 
@@ -150,6 +151,10 @@ builder.Services.AddScoped<IAiUsagePolicy, AiUsagePolicy>();
 builder.Services.AddScoped<WriterApp.Application.Documents.IDocumentRepository, WriterApp.Data.Documents.DocumentRepository>();
 builder.Services.AddScoped<WriterApp.Application.Documents.ISectionRepository, WriterApp.Data.Documents.SectionRepository>();
 builder.Services.AddScoped<WriterApp.Application.Documents.IPageRepository, WriterApp.Data.Documents.PageRepository>();
+builder.Services.AddSingleton<ISearchIndexBackfillQueue, SearchIndexBackfillQueue>();
+builder.Services.AddHostedService<SearchIndexBackfillHostedService>();
+builder.Services.AddScoped<ISearchIndexBackfillWorker, SearchIndexService>();
+builder.Services.AddScoped<ISearchIndexService, SearchIndexService>();
 
 builder.Services.AddSingleton<StoryCoachContextBuilder>();
 builder.Services.Configure<WriterAiOptions>(builder.Configuration.GetSection("WriterApp:AI"));

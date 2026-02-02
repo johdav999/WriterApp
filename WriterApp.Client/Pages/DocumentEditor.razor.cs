@@ -34,6 +34,9 @@ namespace WriterApp.Client.Pages
         [Parameter]
         public Guid SectionId { get; set; }
 
+        [SupplyParameterFromQuery(Name = "search")]
+        public string? SearchQuery { get; set; }
+
         [Inject]
         public HttpClient Http { get; set; } = default!;
 
@@ -414,13 +417,12 @@ namespace WriterApp.Client.Pages
 
                 List<SectionDto>? sections = await Http.GetFromJsonAsync<List<SectionDto>>(
                     $"api/documents/{DocumentId}/sections");
+                List<SectionDto> orderedSections = sections?.OrderBy(section => section.OrderIndex).ToList()
+                    ?? new List<SectionDto>();
                 _sections.Clear();
-                if (sections is not null)
-                {
-                    _sections.AddRange(sections.OrderBy(section => section.OrderIndex));
-                }
+                _sections.AddRange(orderedSections);
 
-                foreach (SectionDto section in _sections)
+                foreach (SectionDto section in orderedSections)
                 {
                     List<PageDto>? pages = await Http.GetFromJsonAsync<List<PageDto>>(
                         $"api/sections/{section.Id}/pages");

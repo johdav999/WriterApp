@@ -53,6 +53,9 @@ else
     private bool _pageBreakObserverAttached;
     private int _pageCount = 1;
     private int _currentPageIndex = 1;
+    private string? _lastSearchHighlightQuery;
+    private string? _pendingSearchHighlightQuery;
+    private bool _searchHighlightActive;
 
     [Parameter]
     public PageDto? Page { get; set; }
@@ -89,6 +92,9 @@ else
 
     [Parameter]
     public string HeadingNumberingTraceId { get; set; } = string.Empty;
+
+    [Parameter]
+    public string? SearchHighlightQuery { get; set; }
 
     private bool _lastHeadingNumberingEnabled = true;
     private string _lastHeadingNumberingScope = "document";
@@ -152,6 +158,12 @@ else
             _lastHeadingTraceId = HeadingNumberingTraceId;
             await SetHeadingNumberingContextAsync();
         }
+
+        if (!string.Equals(_lastSearchHighlightQuery, SearchHighlightQuery, StringComparison.Ordinal))
+        {
+            _lastSearchHighlightQuery = SearchHighlightQuery;
+            await ApplySearchHighlightAsync(SearchHighlightQuery);
+        }
     }
 
     protected override Task OnAfterRenderAsync(bool firstRender)
@@ -177,6 +189,7 @@ else
         _ = SetHeadingNumberingPrefixAsync(HeadingNumberingPrefix);
         _ = SetHeadingNumberingContextAsync();
         _ = ForceHeadingNumberingRebuildAsync("editorReady");
+        _ = ApplySearchHighlightAsync(_pendingSearchHighlightQuery ?? SearchHighlightQuery);
         if (_pendingSetContent && _editorRef is not null)
         {
             _ = ApplyContentToEditorAsync("editorReady");
@@ -204,6 +217,7 @@ else
         });
         await SetHeadingNumberingContextAsync();
         await ForceHeadingNumberingRebuildAsync("afterSetContent");
+        await ApplySearchHighlightAsync(_pendingSearchHighlightQuery ?? SearchHighlightQuery);
         _isLoadingPage = false;
     }
 
@@ -225,9 +239,47 @@ else
         _isDirty = true;
         _hasUserEditedSinceLoad = true;
         _wordCount = CountWords(_content);
+        if (_searchHighlightActive)
+        {
+            await ClearSearchHighlightAsync();
+        }
         ScheduleAutosave();
         SchedulePageBreakUpdate();
         await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task ApplySearchHighlightAsync(string? query)
+    {
+        string normalized = query?.Trim() ?? string.Empty;
+        if (_editorInstance is null)
+        {
+            _pendingSearchHighlightQuery = normalized;
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            await ClearSearchHighlightAsync();
+            return;
+        }
+
+        _pendingSearchHighlightQuery = null;
+        _searchHighlightActive = true;
+        await JSRuntime.InvokeVoidAsync("tiptapEditor.setSearchHighlights", _editorInstance, normalized);
+    }
+
+    private async Task ClearSearchHighlightAsync()
+    {
+        if (_editorInstance is null)
+        {
+            _searchHighlightActive = false;
+            _pendingSearchHighlightQuery = null;
+            return;
+        }
+
+        _searchHighlightActive = false;
+        _pendingSearchHighlightQuery = null;
+        await JSRuntime.InvokeVoidAsync("tiptapEditor.clearSearchHighlights", _editorInstance);
     }
 
     private void ScheduleAutosave()
