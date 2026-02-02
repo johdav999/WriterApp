@@ -8,6 +8,12 @@ namespace WriterApp.Client.State
         Manuscript
     }
 
+    public enum HeadingNumberingScope
+    {
+        Section,
+        Document
+    }
+
     public sealed record LayoutState
     {
         public bool FocusMode { get; init; }
@@ -16,6 +22,7 @@ namespace WriterApp.Client.State
         public bool ContextCollapsed { get; init; }
         public bool PrintLayoutEnabled { get; init; } = true;
         public bool HeadingNumberingEnabled { get; init; } = true;
+        public HeadingNumberingScope HeadingNumberingScope { get; init; } = HeadingNumberingScope.Document;
         public ManuscriptWidthMode ManuscriptWidthMode { get; init; } = ManuscriptWidthMode.Manuscript;
         public int EditorZoomPercent { get; init; } = 100;
 

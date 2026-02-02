@@ -335,6 +335,7 @@ const PageGapDecorationsExtension = Extension.create({
 const HeadingNumberingExtension = Extension.create({
     name: "headingNumbering",
     addProseMirrorPlugins() {
+        const editor = this.editor;
         return [
             new Plugin({
                 key: headingNumberDecorationsKey,
@@ -354,6 +355,22 @@ const HeadingNumberingExtension = Extension.create({
                     decorations(state) {
                         return headingNumberDecorationsKey.getState(state) ?? DecorationSet.empty;
                     }
+                },
+                view(view) {
+                    const scheduler = createHeadingNumberingScheduler(editor, view);
+                    if (editor) {
+                        editor.__headingNumberingScheduler = scheduler;
+                    }
+                    return {
+                        destroy() {
+                            if (scheduler?.destroy) {
+                                scheduler.destroy();
+                            }
+                            if (editor && editor.__headingNumberingScheduler === scheduler) {
+                                editor.__headingNumberingScheduler = null;
+                            }
+                        }
+                    };
                 }
             })
         ];
@@ -853,16 +870,74 @@ function renderPageBreakOverlay(editor, options) {
     return info.count;
 }
 
-function buildHeadingNumberDecorations(editor) {
+function getHeadingNumberingSettingsKey(editor) {
+    const enabled = editor?.__headingNumberingEnabled !== false;
+    const scope = editor?.__headingNumberingScope ?? "document";
+    const prefix = Array.isArray(editor?.__headingNumberingPrefix)
+        ? editor.__headingNumberingPrefix
+        : [0, 0, 0, 0, 0, 0, 0];
+    const normalized = [];
+    for (let index = 1; index <= 6; index += 1) {
+        normalized.push(Number(prefix[index]) || 0);
+    }
+    return `${enabled ? "1" : "0"}:${scope}:${normalized.join(",")}`;
+}
+
+function buildHeadingNumberSignature(docSize, headingCount, firstPos, lastPos) {
+    const safeFirst = Number.isFinite(firstPos) ? firstPos : 0;
+    const safeLast = Number.isFinite(lastPos) ? lastPos : 0;
+    return `${docSize}:${headingCount}:${safeFirst}:${safeLast}`;
+}
+
+function countHeadingsInDoc(doc) {
+    if (!doc) {
+        return 0;
+    }
+
+    let count = 0;
+    doc.descendants(node => {
+        if (node.type?.name === "heading") {
+            count += 1;
+        }
+    });
+    return count;
+}
+
+function ensureHeadingNumberingState(editor) {
+    if (!editor) {
+        return null;
+    }
+
+    if (!editor.__headingNumberingState) {
+        editor.__headingNumberingState = {
+            lastGoodDecorations: DecorationSet.empty,
+            lastSignature: null,
+            lastSettingsKey: null,
+            pendingRebuild: false,
+            pendingReason: null,
+            pendingTraceId: null,
+            pendingFrameId: null
+        };
+    }
+
+    return editor.__headingNumberingState;
+}
+
+function buildHeadingNumberDecorations(editor, state) {
     const view = editor?.view;
-    if (!view) {
-        return { decorations: DecorationSet.empty, headingCount: 0, samples: [] };
+    const doc = state?.doc;
+    if (!view || !doc) {
+        return {
+            decorations: DecorationSet.empty,
+            headingCount: 0,
+            decorationsCreated: 0,
+            samples: [],
+            headingLevelsCounts: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 },
+            signature: buildHeadingNumberSignature(0, 0, 0, 0)
+        };
     }
 
-    if (editor.__headingNumberingEnabled === false) {
-        return { decorations: DecorationSet.empty, headingCount: 0, samples: [] };
-    }
-
+    const numberingEnabled = editor.__headingNumberingEnabled !== false;
     const decorations = [];
     const prefix = Array.isArray(editor.__headingNumberingPrefix)
         ? editor.__headingNumberingPrefix
@@ -870,19 +945,31 @@ function buildHeadingNumberDecorations(editor) {
     const counters = [0, 0, 0, 0, 0, 0, 0];
     const samples = [];
     let headingCount = 0;
+    let firstHeadingPos = null;
+    let lastHeadingPos = null;
     const headingLevelsCounts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
     for (let index = 1; index <= 6; index += 1) {
         counters[index] = Number(prefix[index]) || 0;
     }
 
-    view.state.doc.descendants((node, pos) => {
+    doc.descendants((node, pos) => {
         if (node.type?.name !== "heading") {
             return;
         }
 
         headingCount += 1;
+        if (firstHeadingPos === null) {
+            firstHeadingPos = pos;
+        }
+        lastHeadingPos = pos;
+
         const level = Math.max(1, Math.min(6, Number(node.attrs?.level ?? 1)));
         headingLevelsCounts[level] += 1;
+
+        if (!numberingEnabled) {
+            return;
+        }
+
         counters[level] += 1;
         for (let index = level + 1; index <= 6; index += 1) {
             counters[index] = 0;
@@ -913,45 +1000,145 @@ function buildHeadingNumberDecorations(editor) {
         decorations.push(deco);
     });
 
+    const signature = buildHeadingNumberSignature(doc.content.size, headingCount, firstHeadingPos, lastHeadingPos);
+
     return {
-        decorations: DecorationSet.create(view.state.doc, decorations),
+        decorations: DecorationSet.create(doc, decorations),
         headingCount,
+        decorationsCreated: decorations.length,
         samples,
-        headingLevelsCounts
+        headingLevelsCounts,
+        signature
     };
 }
 
-function updateHeadingNumberDecorations(editor, reason) {
-    if (!editor?.view) {
+function runHeadingNumberingRebuild(editor, view, reason, traceId) {
+    if (!editor || !view) {
         return;
     }
 
-    const result = buildHeadingNumberDecorations(editor);
-    const tr = editor.view.state.tr.setMeta(headingNumberDecorationsKey, result.decorations);
+    const headingState = ensureHeadingNumberingState(editor);
+    if (!headingState) {
+        return;
+    }
+
+    const state = view.state;
+    const settingsKey = getHeadingNumberingSettingsKey(editor);
+    const result = buildHeadingNumberDecorations(editor, state);
+    const signature = result.signature;
+    const effectiveTraceId = traceId ?? editor.__headingNumberingTraceId;
+
+    if (headingState.lastSignature === signature && headingState.lastSettingsKey === settingsKey) {
+        debugHeading("REBUILD_SKIPPED_NO_CHANGE", { traceId: effectiveTraceId, signature });
+        return;
+    }
+
+    const numberingEnabled = editor.__headingNumberingEnabled !== false;
+    let decorationsToApply = result.decorations;
+    let keptPrevious = false;
+    if (numberingEnabled && result.headingCount > 0 && result.decorationsCreated === 0) {
+        decorationsToApply = headingState.lastGoodDecorations ?? DecorationSet.empty;
+        keptPrevious = true;
+        debugHeading("REBUILD_GUARD_KEEP_PREVIOUS", {
+            traceId: effectiveTraceId,
+            reason: reason ?? "unknown",
+            headingsFound: result.headingCount,
+            decorationsCreated: result.decorationsCreated
+        });
+    }
+
+    const tr = state.tr.setMeta(headingNumberDecorationsKey, decorationsToApply);
     tr.setMeta(WA_LAYOUT_META, true);
     editor.__headingNumberingApplying = true;
     try {
-        editor.view.dispatch(tr);
+        view.dispatch(tr);
     } finally {
         editor.__headingNumberingApplying = false;
     }
 
-    const traceId = editor.__headingNumberingTraceId;
+    if (numberingEnabled && result.headingCount > 0 && !keptPrevious) {
+        headingState.lastGoodDecorations = decorationsToApply;
+    }
+
+    headingState.lastSignature = signature;
+    headingState.lastSettingsKey = settingsKey;
+
     debugHeading("REBUILD_DONE", {
-        traceId,
+        traceId: effectiveTraceId,
         reason: reason ?? "unknown",
-        enabled: editor.__headingNumberingEnabled !== false,
+        enabled: numberingEnabled,
+        scope: editor.__headingNumberingScope ?? "document",
         headingCount: result.headingCount,
-        decorationsCreated: result.decorations.find().length,
+        decorationsCreated: result.decorationsCreated,
         samples: result.samples,
         headingLevelsCounts: result.headingLevelsCounts,
         prefixCountersUsed: (editor.__headingNumberingPrefix ?? []).slice(1, 4)
     });
 
     requestAnimationFrame(() => {
-        const count = editor?.view?.dom?.querySelectorAll?.(".wa-heading-number")?.length ?? 0;
-        debugHeading("DOM_VERIFY", { traceId, count });
+        const domCount = editor?.view?.dom?.querySelectorAll?.(".wa-heading-number")?.length ?? 0;
+        const headingCount = countHeadingsInDoc(view.state.doc);
+        debugHeading("DOM_VERIFY", { traceId: effectiveTraceId, domCount, headingCount });
     });
+}
+
+function createHeadingNumberingScheduler(editor, view) {
+    const headingState = ensureHeadingNumberingState(editor);
+    if (!headingState) {
+        return null;
+    }
+
+    const scheduleRebuild = (reason, traceId) => {
+        const nextReason = reason ?? "unknown";
+        const nextTraceId = traceId ?? editor?.__headingNumberingTraceId;
+        headingState.pendingReason = nextReason;
+        headingState.pendingTraceId = nextTraceId;
+        debugHeading("REBUILD_SCHEDULED", { traceId: nextTraceId, reason: nextReason });
+        if (headingState.pendingRebuild) {
+            return;
+        }
+
+        headingState.pendingRebuild = true;
+        const schedule = typeof requestAnimationFrame === "function"
+            ? requestAnimationFrame
+            : (callback) => queueMicrotask(callback);
+        const frameId = schedule(() => {
+            headingState.pendingRebuild = false;
+            headingState.pendingFrameId = null;
+            const pendingReason = headingState.pendingReason;
+            const pendingTraceId = headingState.pendingTraceId;
+            headingState.pendingReason = null;
+            headingState.pendingTraceId = null;
+            runHeadingNumberingRebuild(editor, view, pendingReason, pendingTraceId);
+        });
+        headingState.pendingFrameId = typeof frameId === "number" ? frameId : null;
+    };
+
+    const destroy = () => {
+        if (headingState.pendingFrameId !== null && typeof cancelAnimationFrame === "function") {
+            cancelAnimationFrame(headingState.pendingFrameId);
+        }
+        headingState.pendingRebuild = false;
+        headingState.pendingFrameId = null;
+        headingState.pendingReason = null;
+        headingState.pendingTraceId = null;
+    };
+
+    return { requestRebuild: scheduleRebuild, destroy };
+}
+
+function requestHeadingNumberingRebuild(editor, reason) {
+    if (!editor?.view) {
+        return;
+    }
+
+    const scheduler = editor.__headingNumberingScheduler;
+    if (scheduler?.requestRebuild) {
+        scheduler.requestRebuild(reason, editor.__headingNumberingTraceId);
+        return;
+    }
+
+    runHeadingNumberingRebuild(editor, editor.view, reason, editor.__headingNumberingTraceId);
 }
 
 function buildPageGapDecorations(editor, options) {
@@ -1737,7 +1924,7 @@ window.tiptapEditor = {
                 if ((transaction?.docChanged || transaction?.getMeta?.(WA_HEADING_NUMBERING_REBUILD))
                     && !editor.__headingNumberingApplying) {
                     const reason = transaction?.docChanged ? "docChanged" : "forceRebuild";
-                    updateHeadingNumberDecorations(editor, reason);
+                    requestHeadingNumberingRebuild(editor, reason);
                 }
             },
             onUpdate({ editor }) {
@@ -1775,7 +1962,10 @@ window.tiptapEditor = {
         if (!Array.isArray(editor.__headingNumberingPrefix)) {
             editor.__headingNumberingPrefix = [0, 0, 0, 0, 0, 0, 0];
         }
-        updateHeadingNumberDecorations(editor, "init");
+        if (!editor.__headingNumberingScope) {
+            editor.__headingNumberingScope = "document";
+        }
+        requestHeadingNumberingRebuild(editor, "init");
 
         let lastFormattingState = "";
         const pushFormattingState = () => {
@@ -1986,9 +2176,6 @@ window.tiptapEditor = {
         const contentHash = typeof content === "string" ? hashStringFNV1a(content) : "0";
         debugHeading("SET_CONTENT_START", { traceId, pageId, contentLength, contentHash });
         editor.commands.setContent(content, false);
-        const tr = editor.view.state.tr.setMeta(WA_HEADING_NUMBERING_REBUILD, true);
-        editor.view.dispatch(tr);
-        updateHeadingNumberDecorations(editor, "setContent");
         const summary = getHeadingDocSummary(editor);
         debugHeading("SET_CONTENT_DONE", { traceId, pageId, summary });
         if (summary) {
@@ -2052,7 +2239,7 @@ window.tiptapEditor = {
 
         editor.__headingNumberingEnabled = enabled !== false;
         debugHeading("TOGGLE", { traceId: editor.__headingNumberingTraceId, enabled: editor.__headingNumberingEnabled });
-        updateHeadingNumberDecorations(editor, "toggle");
+        requestHeadingNumberingRebuild(editor, "toggle");
     },
 
     setHeadingNumberingPrefix: function (editor, counters) {
@@ -2068,7 +2255,7 @@ window.tiptapEditor = {
         }
         editor.__headingNumberingPrefix = normalized;
         debugHeading("PREFIX_SET", { traceId: editor.__headingNumberingTraceId, counters: normalized.slice(1) });
-        updateHeadingNumberDecorations(editor, "prefix");
+        requestHeadingNumberingRebuild(editor, "prefix");
     },
 
     setHeadingNumberingContext: function (editor, context) {
@@ -2080,6 +2267,9 @@ window.tiptapEditor = {
         editor.__headingNumberingEnabled = enabled;
         editor.__headingNumberingTraceId = context?.traceId;
         editor.__headingNumberingPageId = context?.pageId;
+        if (context?.scope) {
+            editor.__headingNumberingScope = context.scope;
+        }
         if (Array.isArray(context?.prefixCounters)) {
             const normalized = [0, 0, 0, 0, 0, 0, 0];
             for (let index = 1; index <= 6; index += 1) {
@@ -2092,10 +2282,11 @@ window.tiptapEditor = {
         debugHeading("CONTEXT_SET", {
             traceId: editor.__headingNumberingTraceId,
             enabled: editor.__headingNumberingEnabled,
+            scope: editor.__headingNumberingScope ?? "document",
             counters: editor.__headingNumberingPrefix?.slice(1),
             pageId: editor.__headingNumberingPageId
         });
-        updateHeadingNumberDecorations(editor, "context");
+        requestHeadingNumberingRebuild(editor, "context");
     },
 
     setHeadingNumberingTraceId: function (editor, traceId) {
@@ -2116,7 +2307,6 @@ window.tiptapEditor = {
         debugHeading("FORCE_REBUILD", { traceId: editor.__headingNumberingTraceId, reason });
         const tr = editor.view.state.tr.setMeta(WA_HEADING_NUMBERING_REBUILD, true);
         editor.view.dispatch(tr);
-        updateHeadingNumberDecorations(editor, reason ?? "force");
     },
 
     debugLog: function (stage, payload) {
