@@ -32,6 +32,7 @@ namespace WriterApp.Controllers
         private readonly AppDbContext _dbContext;
         private readonly IUserIdResolver _userIdResolver;
         private readonly IAiActionHistoryStore _historyStore;
+        private readonly IPageVersionService _pageVersions;
         private const int OutlineMaxSectionChars = 2000;
         private const int OutlineMaxSections = 60;
         private const int SceneMaxSectionChars = 4000;
@@ -43,7 +44,8 @@ namespace WriterApp.Controllers
             IPageRepository pages,
             AppDbContext dbContext,
             IUserIdResolver userIdResolver,
-            IAiActionHistoryStore historyStore)
+            IAiActionHistoryStore historyStore,
+            IPageVersionService pageVersions)
         {
             _orchestrator = orchestrator ?? throw new ArgumentNullException(nameof(orchestrator));
             _documents = documents ?? throw new ArgumentNullException(nameof(documents));
@@ -52,6 +54,7 @@ namespace WriterApp.Controllers
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
             _historyStore = historyStore ?? throw new ArgumentNullException(nameof(historyStore));
+            _pageVersions = pageVersions ?? throw new ArgumentNullException(nameof(pageVersions));
         }
 
         [HttpGet]
@@ -131,6 +134,21 @@ namespace WriterApp.Controllers
 
             try
             {
+                if (request?.PageId is not null && !string.IsNullOrWhiteSpace(request.BeforeContent))
+                {
+                    PageRecord? page = await _pages.GetAsync(request.PageId.Value, userId, ct);
+                    if (page is not null)
+                    {
+                        await _pageVersions.CreateSnapshotAsync(
+                            userId,
+                            page,
+                            request.BeforeContent,
+                            "pre-ai",
+                            allowDuplicate: true,
+                            ct);
+                    }
+                }
+
                 await _historyStore.AddAppliedEventAsync(
                     userId,
                     historyEntryId,

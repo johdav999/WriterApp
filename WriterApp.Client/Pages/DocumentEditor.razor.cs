@@ -264,6 +264,17 @@ namespace WriterApp.Client.Pages
         private string _translationApplyMode = "replace";
         private TranslateContext? _pendingTranslateContext;
         private ContextTab _activeContextTab = ContextTab.Notes;
+        private readonly List<PageVersionListItemDto> _pageVersions = new();
+        private bool _versionsLoading;
+        private string? _versionsError;
+        private Guid? _selectedVersionId;
+        private PageVersionDetailDto? _selectedVersionDetail;
+        private List<VersionDiffLine> _versionDiffLines = new();
+        private string? _versionDiffNote;
+        private bool _isRestoreDialogOpen;
+        private PageVersionListItemDto? _pendingRestoreVersion;
+        private bool _restoreInFlight;
+        private string? _restoreError;
         private string _notesDraft = string.Empty;
         private string? _notesStatus;
         private string _sceneNarrativePurpose = string.Empty;
@@ -487,6 +498,7 @@ namespace WriterApp.Client.Pages
                 _outlineStatus = null;
                 await LoadOutlineNodesAsync();
                 await LoadAiHistoryAsync();
+                await LoadPageVersionsAsync();
                 await LoadTranslationLinksAsync();
             }
             catch (Exception ex)
@@ -1094,6 +1106,7 @@ namespace WriterApp.Client.Pages
             if (_activePage?.Id == page.Id)
             {
                 _activePage = page;
+                await LoadPageVersionsAsync();
             }
 
             await InvokeAsync(StateHasChanged);
@@ -4125,6 +4138,266 @@ namespace WriterApp.Client.Pages
             }
         }
 
+        private async Task LoadPageVersionsAsync()
+        {
+            if (_activePage is null)
+            {
+                _pageVersions.Clear();
+                _versionsError = null;
+                return;
+            }
+
+            _versionsLoading = true;
+            _versionsError = null;
+            try
+            {
+                List<PageVersionListItemDto>? versions =
+                    await Http.GetFromJsonAsync<List<PageVersionListItemDto>>(
+                        $"api/pages/{_activePage.Id}/versions");
+                _pageVersions.Clear();
+                if (versions is not null)
+                {
+                    _pageVersions.AddRange(versions);
+                }
+            }
+            catch (Exception ex)
+            {
+                _pageVersions.Clear();
+                _versionsError = $"Failed to load versions: {ex.Message}";
+            }
+            finally
+            {
+                _versionsLoading = false;
+            }
+        }
+
+        private async Task ToggleVersionDiffAsync(PageVersionListItemDto version)
+        {
+            if (_selectedVersionId == version.Id)
+            {
+                _selectedVersionId = null;
+                _selectedVersionDetail = null;
+                _versionDiffLines = new List<VersionDiffLine>();
+                _versionDiffNote = null;
+                return;
+            }
+
+            _selectedVersionId = version.Id;
+            _versionDiffLines = new List<VersionDiffLine>();
+            _versionDiffNote = null;
+
+            try
+            {
+                _selectedVersionDetail =
+                    await Http.GetFromJsonAsync<PageVersionDetailDto>($"api/page-versions/{version.Id}");
+                if (_selectedVersionDetail is null)
+                {
+                    _versionDiffNote = "Version not found.";
+                    return;
+                }
+
+                string fromText = PlainTextMapper.ToPlainText(_selectedVersionDetail.Content);
+                string toText = PlainTextMapper.ToPlainText(_activePage?.Content ?? string.Empty);
+                _versionDiffLines = BuildLineDiff(fromText, toText, out string? note);
+                _versionDiffNote = note;
+            }
+            catch (Exception ex)
+            {
+                _versionDiffNote = $"Diff failed: {ex.Message}";
+            }
+        }
+
+        private void PromptRestoreVersion(PageVersionListItemDto version)
+        {
+            _pendingRestoreVersion = version;
+            _restoreError = null;
+            _isRestoreDialogOpen = true;
+        }
+
+        private void CancelRestoreVersion()
+        {
+            _pendingRestoreVersion = null;
+            _restoreError = null;
+            _isRestoreDialogOpen = false;
+        }
+
+        private async Task ConfirmRestoreVersionAsync()
+        {
+            if (_pendingRestoreVersion is null || _activePage is null || _restoreInFlight)
+            {
+                CancelRestoreVersion();
+                return;
+            }
+
+            _restoreInFlight = true;
+            _restoreError = null;
+
+            try
+            {
+                using HttpResponseMessage response = await Http.PostAsync(
+                    $"api/pages/{_activePage.Id}/versions/{_pendingRestoreVersion.Id}/restore",
+                    null);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    _restoreError = "Restore failed.";
+                    return;
+                }
+
+                PageDto? updated = await response.Content.ReadFromJsonAsync<PageDto>();
+                if (updated is null)
+                {
+                    _restoreError = "Restore failed.";
+                    return;
+                }
+
+                _activePage = updated;
+                if (_pagesBySection.TryGetValue(updated.SectionId, out List<PageDto>? pages) && pages.Count > 0)
+                {
+                    pages[0] = updated;
+                }
+
+                if (_pageEditor is not null)
+                {
+                    await _pageEditor.SetContentAsync(updated.Content ?? string.Empty, markDirty: false);
+                }
+
+                await LoadPageVersionsAsync();
+                CancelRestoreVersion();
+            }
+            catch (Exception ex)
+            {
+                _restoreError = $"Restore failed: {ex.Message}";
+            }
+            finally
+            {
+                _restoreInFlight = false;
+            }
+        }
+
+        private static string GetVersionReasonLabel(string reason)
+        {
+            if (string.Equals(reason, "pre-ai", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Pre-AI";
+            }
+
+            if (string.Equals(reason, "pre-restore", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Pre-restore";
+            }
+
+            if (string.Equals(reason, "autosnap", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Autosnap";
+            }
+
+            return string.IsNullOrWhiteSpace(reason) ? "Snapshot" : reason;
+        }
+
+        private static IReadOnlyList<string> SplitLines(string text, int maxLines, out bool truncated)
+        {
+            truncated = false;
+            if (string.IsNullOrEmpty(text))
+            {
+                return Array.Empty<string>();
+            }
+
+            string normalized = text.Replace("\r\n", "\n").Replace("\r", "\n");
+            string[] lines = normalized.Split('\n');
+            if (lines.Length <= maxLines)
+            {
+                return lines;
+            }
+
+            truncated = true;
+            return lines.Take(maxLines).ToArray();
+        }
+
+        private static List<VersionDiffLine> BuildLineDiff(string fromText, string toText, out string? note)
+        {
+            const int maxLines = 800;
+            bool fromTruncated;
+            bool toTruncated;
+            IReadOnlyList<string> fromLines = SplitLines(fromText, maxLines, out fromTruncated);
+            IReadOnlyList<string> toLines = SplitLines(toText, maxLines, out toTruncated);
+            note = fromTruncated || toTruncated ? "Diff truncated to first 800 lines." : null;
+
+            int n = fromLines.Count;
+            int m = toLines.Count;
+            int[,] lcs = new int[n + 1, m + 1];
+
+            for (int i = n - 1; i >= 0; i--)
+            {
+                for (int j = m - 1; j >= 0; j--)
+                {
+                    if (string.Equals(fromLines[i], toLines[j], StringComparison.Ordinal))
+                    {
+                        lcs[i, j] = lcs[i + 1, j + 1] + 1;
+                    }
+                    else
+                    {
+                        lcs[i, j] = Math.Max(lcs[i + 1, j], lcs[i, j + 1]);
+                    }
+                }
+            }
+
+            List<VersionDiffLine> diff = new();
+            int x = 0;
+            int y = 0;
+            while (x < n && y < m)
+            {
+                if (string.Equals(fromLines[x], toLines[y], StringComparison.Ordinal))
+                {
+                    diff.Add(new VersionDiffLine(VersionDiffKind.Unchanged, fromLines[x]));
+                    x++;
+                    y++;
+                }
+                else if (lcs[x + 1, y] >= lcs[x, y + 1])
+                {
+                    diff.Add(new VersionDiffLine(VersionDiffKind.Removed, fromLines[x]));
+                    x++;
+                }
+                else
+                {
+                    diff.Add(new VersionDiffLine(VersionDiffKind.Added, toLines[y]));
+                    y++;
+                }
+            }
+
+            while (x < n)
+            {
+                diff.Add(new VersionDiffLine(VersionDiffKind.Removed, fromLines[x++]));
+            }
+
+            while (y < m)
+            {
+                diff.Add(new VersionDiffLine(VersionDiffKind.Added, toLines[y++]));
+            }
+
+            return diff;
+        }
+
+        private static string GetDiffClass(VersionDiffKind kind)
+        {
+            return kind switch
+            {
+                VersionDiffKind.Added => "is-added",
+                VersionDiffKind.Removed => "is-removed",
+                _ => "is-unchanged"
+            };
+        }
+
+        private static string GetDiffPrefix(VersionDiffKind kind)
+        {
+            return kind switch
+            {
+                VersionDiffKind.Added => "+",
+                VersionDiffKind.Removed => "-",
+                _ => " "
+            };
+        }
+
         private async Task LoadTranslationLinksAsync()
         {
             _documentTranslationLinks.Clear();
@@ -4586,12 +4859,22 @@ namespace WriterApp.Client.Pages
             }
         }
 
+        private sealed record VersionDiffLine(VersionDiffKind Kind, string Text);
+
+        private enum VersionDiffKind
+        {
+            Unchanged,
+            Added,
+            Removed
+        }
+
         private enum ContextTab
         {
             Notes,
             Scene,
             Outline,
-            Ai
+            Ai,
+            History
         }
     }
 }

@@ -390,6 +390,13 @@ else
                                 @onclick="() => SetContextTab(ContextTab.Ai)">
                             AI
                         </button>
+                        <button type="button"
+                                class="context-tab @GetContextTabClass(ContextTab.History)"
+                                aria-selected="@(_activeContextTab == ContextTab.History)"
+                                title='@GetTooltip("Version history for this page.")'
+                                @onclick="() => SetContextTab(ContextTab.History)">
+                            History
+                        </button>
                     </div>
                 </div>
                 <div class="context-drawer-body">
@@ -798,8 +805,102 @@ else
                         }
                         </div>
                     }
+                    else if (_activeContextTab == ContextTab.History)
+                    {
+                        <div class="drawer-panel version-history-panel">
+                            <div class="drawer-panel-title">History</div>
+                            @if (_versionsLoading)
+                            {
+                                <div class="drawer-empty">Loading versions...</div>
+                            }
+                            else if (!string.IsNullOrWhiteSpace(_versionsError))
+                            {
+                                <div class="drawer-empty">@_versionsError</div>
+                            }
+                            else if (_pageVersions.Count == 0)
+                            {
+                                <div class="drawer-empty">No versions yet.</div>
+                            }
+                            else
+                            {
+                                <ul class="version-history-list">
+                                    @foreach (PageVersionListItemDto version in _pageVersions)
+                                    {
+                                        bool showDiff = _selectedVersionId == version.Id;
+                                        <li class="version-history-item">
+                                            <div class="version-history-meta">
+                                                <span class="version-history-badge">@GetVersionReasonLabel(version.Reason)</span>
+                                                <span class="version-history-time">@version.CreatedAt.ToLocalTime().ToString("g")</span>
+                                            </div>
+                                            <div class="version-history-sub">Words: @version.WordCount</div>
+                                            <div class="version-history-actions">
+                                                <button type="button" @onclick="() => ToggleVersionDiffAsync(version)">
+                                                    @(showDiff ? "Hide diff" : "View diff")
+                                                </button>
+                                                <button type="button" class="danger" @onclick="() => PromptRestoreVersion(version)">
+                                                    Restore
+                                                </button>
+                                            </div>
+                                            @if (showDiff)
+                                            {
+                                                <div class="version-diff">
+                                                    @if (!string.IsNullOrWhiteSpace(_versionDiffNote))
+                                                    {
+                                                        <div class="version-diff-note">@_versionDiffNote</div>
+                                                    }
+                                                    <div class="version-diff-lines">
+                                                        @foreach (VersionDiffLine line in _versionDiffLines)
+                                                        {
+                                                            <div class="version-diff-line @GetDiffClass(line.Kind)">
+                                                                <span class="version-diff-prefix">@GetDiffPrefix(line.Kind)</span>
+                                                                <span>@line.Text</span>
+                                                            </div>
+                                                        }
+                                                    </div>
+                                                </div>
+                                            }
+                                        </li>
+                                    }
+                                </ul>
+                            }
+                        </div>
+                    }
                 </div>
             </aside>
+        </div>
+    </div>
+}
+
+@if (_isRestoreDialogOpen)
+{
+    <div class="modal-backdrop" @onclick="CancelRestoreVersion"></div>
+    <div class="modal" role="dialog" aria-modal="true">
+        <div class="modal-title">Restore this version?</div>
+        <div class="modal-body">
+            This will replace the current page content. A pre-restore snapshot will be created automatically.
+            @if (_pendingRestoreVersion is not null)
+            {
+                <div class="version-restore-meta">
+                    Version: @_pendingRestoreVersion.CreatedAt.ToLocalTime().ToString("g")
+                </div>
+            }
+        </div>
+        @if (!string.IsNullOrWhiteSpace(_restoreError))
+        {
+            <div class="modal-error">@_restoreError</div>
+        }
+        <div class="modal-actions">
+            <button type="button"
+                    class="danger"
+                    @onclick="ConfirmRestoreVersionAsync"
+                    disabled="@_restoreInFlight">
+                Restore
+            </button>
+            <button type="button"
+                    @onclick="CancelRestoreVersion"
+                    disabled="@_restoreInFlight">
+                Cancel
+            </button>
         </div>
     </div>
 }

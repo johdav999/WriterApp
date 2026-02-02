@@ -23,6 +23,7 @@ namespace WriterApp.Data
         public DbSet<DocumentRecord> Documents => Set<DocumentRecord>();
         public DbSet<SectionRecord> Sections => Set<SectionRecord>();
         public DbSet<PageRecord> Pages => Set<PageRecord>();
+        public DbSet<PageVersionRecord> PageVersions => Set<PageVersionRecord>();
         public DbSet<DocumentOutlineNodeRecord> DocumentOutlineNodes => Set<DocumentOutlineNodeRecord>();
         public DbSet<PageNoteRecord> PageNotes => Set<PageNoteRecord>();
         public DbSet<SectionSceneCardRecord> SectionSceneCards => Set<SectionSceneCardRecord>();
@@ -154,6 +155,26 @@ namespace WriterApp.Data
                     .OnDelete(DeleteBehavior.Cascade);
             });
 
+            builder.Entity<PageVersionRecord>(entity =>
+            {
+                entity.HasKey(version => version.Id);
+                entity.Property(version => version.PageId).IsRequired();
+                entity.Property(version => version.DocumentId).IsRequired();
+                entity.Property(version => version.CreatedAt).IsRequired();
+                entity.Property(version => version.Reason).IsRequired();
+                entity.Property(version => version.ContentCompressed).IsRequired();
+                entity.Property(version => version.ContentTextHash).IsRequired();
+                entity.Property(version => version.SizeBytes).IsRequired();
+                entity.Property(version => version.WordCount).IsRequired();
+                entity.HasIndex(version => version.PageId);
+                entity.HasIndex(version => version.DocumentId);
+                entity.HasIndex(version => version.CreatedAt);
+                entity.HasOne(version => version.Page)
+                    .WithMany()
+                    .HasForeignKey(version => version.PageId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
             builder.Entity<PageNoteRecord>(entity =>
             {
                 entity.HasKey(note => note.PageId);
@@ -275,7 +296,13 @@ namespace WriterApp.Data
                 new PlanEntitlement { PlanId = professionalPlanId, Key = "export.pdf", Value = "true" },
                 new PlanEntitlement { PlanId = freePlanId, Key = "ai.images.cover", Value = "false" },
                 new PlanEntitlement { PlanId = standardPlanId, Key = "ai.images.cover", Value = "false" },
-                new PlanEntitlement { PlanId = professionalPlanId, Key = "ai.images.cover", Value = "true" }
+                new PlanEntitlement { PlanId = professionalPlanId, Key = "ai.images.cover", Value = "true" },
+                new PlanEntitlement { PlanId = freePlanId, Key = "history.enabled", Value = "true" },
+                new PlanEntitlement { PlanId = standardPlanId, Key = "history.enabled", Value = "true" },
+                new PlanEntitlement { PlanId = professionalPlanId, Key = "history.enabled", Value = "true" },
+                new PlanEntitlement { PlanId = freePlanId, Key = "history.max_versions", Value = "5" },
+                new PlanEntitlement { PlanId = standardPlanId, Key = "history.retention_days", Value = "30" },
+                new PlanEntitlement { PlanId = professionalPlanId, Key = "history.retention_days", Value = "30" }
             );
 
             builder.Entity<UserProfile>().HasData(
