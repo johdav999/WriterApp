@@ -24,6 +24,7 @@ namespace WriterApp.Controllers
         private readonly IPageRepository _pages;
         private readonly IUserIdResolver _userIdResolver;
         private readonly ISearchIndexService _searchIndex;
+        private readonly IPageVersionService _pageVersions;
         private readonly AppDbContext _dbContext;
         private readonly ILogger<PagesController> _logger;
 
@@ -33,6 +34,7 @@ namespace WriterApp.Controllers
             IPageRepository pages,
             IUserIdResolver userIdResolver,
             ISearchIndexService searchIndex,
+            IPageVersionService pageVersions,
             AppDbContext dbContext,
             ILogger<PagesController> logger)
         {
@@ -41,6 +43,7 @@ namespace WriterApp.Controllers
             _pages = pages ?? throw new ArgumentNullException(nameof(pages));
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
             _searchIndex = searchIndex ?? throw new ArgumentNullException(nameof(searchIndex));
+            _pageVersions = pageVersions ?? throw new ArgumentNullException(nameof(pageVersions));
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
@@ -152,6 +155,12 @@ namespace WriterApp.Controllers
 
             await _pages.CreateAsync(page, ct);
             await _searchIndex.UpsertPageAsync(page, ct);
+            await _pageVersions.CreateAutosnapshotIfDueAsync(
+                userId,
+                page,
+                page.Content ?? string.Empty,
+                TimeSpan.FromMinutes(5),
+                ct);
 
             PageDto dto = new(
                 page.Id,

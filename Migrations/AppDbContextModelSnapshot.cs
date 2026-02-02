@@ -256,6 +256,50 @@ namespace BlazorApp.Migrations
                     b.ToTable("Pages");
                 });
 
+            modelBuilder.Entity("WriterApp.Data.Documents.PageVersionRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("ContentCompressed")
+                        .IsRequired()
+                        .HasColumnType("BLOB");
+
+                    b.Property<string>("ContentTextHash")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("PageId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("SizeBytes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("WordCount")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt");
+
+                    b.HasIndex("DocumentId");
+
+                    b.HasIndex("PageId");
+
+                    b.ToTable("PageVersions");
+                });
+
             modelBuilder.Entity("WriterApp.Data.Documents.SectionRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -554,6 +598,42 @@ namespace BlazorApp.Migrations
                             PlanId = new Guid("6d1d34ef-2a0f-4b24-8b3f-7f3f4a4b9f0b"),
                             Key = "ai.images.cover",
                             Value = "true"
+                        },
+                        new
+                        {
+                            PlanId = new Guid("5f4d2c6f-98fd-4a26-9c0f-0a2a1f2d7c4b"),
+                            Key = "history.enabled",
+                            Value = "true"
+                        },
+                        new
+                        {
+                            PlanId = new Guid("83d8f8f0-6d2f-4d68-b7df-4192dce1a6f5"),
+                            Key = "history.enabled",
+                            Value = "true"
+                        },
+                        new
+                        {
+                            PlanId = new Guid("6d1d34ef-2a0f-4b24-8b3f-7f3f4a4b9f0b"),
+                            Key = "history.enabled",
+                            Value = "true"
+                        },
+                        new
+                        {
+                            PlanId = new Guid("5f4d2c6f-98fd-4a26-9c0f-0a2a1f2d7c4b"),
+                            Key = "history.max_versions",
+                            Value = "5"
+                        },
+                        new
+                        {
+                            PlanId = new Guid("83d8f8f0-6d2f-4d68-b7df-4192dce1a6f5"),
+                            Key = "history.retention_days",
+                            Value = "30"
+                        },
+                        new
+                        {
+                            PlanId = new Guid("6d1d34ef-2a0f-4b24-8b3f-7f3f4a4b9f0b"),
+                            Key = "history.retention_days",
+                            Value = "30"
                         });
                 });
 
@@ -779,6 +859,17 @@ namespace BlazorApp.Migrations
                         .IsRequired();
 
                     b.Navigation("Section");
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Documents.PageVersionRecord", b =>
+                {
+                    b.HasOne("WriterApp.Data.Documents.PageRecord", "Page")
+                        .WithMany()
+                        .HasForeignKey("PageId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Page");
                 });
 
             modelBuilder.Entity("WriterApp.Data.Subscriptions.PlanEntitlement", b =>

@@ -11,6 +11,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.Data.Sqlite;
+using System.IO;
 using System.Security;
 using System.Security.Claims;
 using System.Runtime.InteropServices;
@@ -32,6 +33,7 @@ using WriterApp.Application.Diagnostics.Circuits;
 using WriterApp.Application.Search;
 using WriterApp.Data;
 using WriterApp.Data.Subscriptions;
+using Microsoft.Data.Sqlite;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.AddFilter("Microsoft.AspNetCore.Components.Server.Circuits", LogLevel.Information);
@@ -54,6 +56,13 @@ builder.Services.AddDbContext<AppDbContext>(options =>
         connectionString = builder.Environment.IsDevelopment()
             ? "Data Source=writerapp.db"
             : "Data Source=/home/site/data/writerapp.db";
+    }
+
+    var sqliteBuilder = new SqliteConnectionStringBuilder(connectionString);
+    if (!string.IsNullOrWhiteSpace(sqliteBuilder.DataSource) && !Path.IsPathRooted(sqliteBuilder.DataSource))
+    {
+        sqliteBuilder.DataSource = Path.Combine(builder.Environment.ContentRootPath, sqliteBuilder.DataSource);
+        connectionString = sqliteBuilder.ToString();
     }
 
     options.UseSqlite(connectionString);
@@ -151,6 +160,7 @@ builder.Services.AddScoped<IAiUsagePolicy, AiUsagePolicy>();
 builder.Services.AddScoped<WriterApp.Application.Documents.IDocumentRepository, WriterApp.Data.Documents.DocumentRepository>();
 builder.Services.AddScoped<WriterApp.Application.Documents.ISectionRepository, WriterApp.Data.Documents.SectionRepository>();
 builder.Services.AddScoped<WriterApp.Application.Documents.IPageRepository, WriterApp.Data.Documents.PageRepository>();
+builder.Services.AddScoped<WriterApp.Application.Documents.IPageVersionService, WriterApp.Application.Documents.PageVersionService>();
 builder.Services.AddSingleton<ISearchIndexBackfillQueue, SearchIndexBackfillQueue>();
 builder.Services.AddHostedService<SearchIndexBackfillHostedService>();
 builder.Services.AddScoped<ISearchIndexBackfillWorker, SearchIndexService>();
@@ -248,6 +258,11 @@ using (IServiceScope scope = app.Services.CreateScope())
     {
         await dbContext.Database.MigrateAsync();
         logger.LogInformation("Database migrations applied.");
+    }
+
+    if (app.Environment.IsDevelopment())
+    {
+        LogTablePresence(dbContext, logger, "PageVersions");
     }
 
     ApplySqlitePragmas(dbContext, logger);
@@ -595,6 +610,37 @@ static void ApplySqlitePragmas(AppDbContext dbContext, ILogger logger)
     catch (Exception ex)
     {
         logger.LogError(ex, "Failed to apply SQLite pragmas.");
+    }
+    finally
+    {
+        dbContext.Database.CloseConnection();
+    }
+}
+
+static void LogTablePresence(AppDbContext dbContext, ILogger logger, string tableName)
+{
+    try
+    {
+        dbContext.Database.OpenConnection();
+        using var command = dbContext.Database.GetDbConnection().CreateCommand();
+        command.CommandText = "SELECT name FROM sqlite_master WHERE type = 'table' AND name = $tableName;";
+        var parameter = command.CreateParameter();
+        parameter.ParameterName = "$tableName";
+        parameter.Value = tableName;
+        command.Parameters.Add(parameter);
+        object? result = command.ExecuteScalar();
+        if (result is null)
+        {
+            logger.LogWarning("SQLite table check: {Table} not found.", tableName);
+        }
+        else
+        {
+            logger.LogInformation("SQLite table check: {Table} exists.", tableName);
+        }
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning(ex, "SQLite table check failed for {Table}.", tableName);
     }
     finally
     {
