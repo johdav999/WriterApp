@@ -194,7 +194,87 @@ const IndentExtension = Extension.create({
 
 const aiDecorationsKey = new PluginKey("aiDecorations");
 const pageGapDecorationsKey = new PluginKey("pageGapDecorations");
+const headingNumberDecorationsKey = new PluginKey("headingNumberDecorations");
 const WA_LAYOUT_META = "wa_layout_tx";
+const WA_HEADING_NUMBERING_REBUILD = "wa_heading_numbering_rebuild";
+
+function isWriterDebugEnabled() {
+    try {
+        return window?.localStorage?.getItem("writerapp.debug") === "true";
+    } catch {
+        return false;
+    }
+}
+
+function debugHeading(stage, payload) {
+    if (!isWriterDebugEnabled()) {
+        return;
+    }
+    try {
+        console.log("[heading-numbering]", { stage, ...payload });
+    } catch {
+    }
+}
+
+// Debug: localStorage.setItem("writerapp.debug","true"); location.reload();
+// Disable: localStorage.removeItem("writerapp.debug"); location.reload();
+
+function hashStringFNV1a(value) {
+    if (!value) {
+        return "0";
+    }
+    let hash = 0x811c9dc5;
+    for (let index = 0; index < value.length; index += 1) {
+        hash ^= value.charCodeAt(index);
+        hash = (hash * 0x01000193) >>> 0;
+    }
+    return hash.toString(16);
+}
+
+function getHeadingDocSummary(editor) {
+    const view = editor?.view;
+    if (!view) {
+        return null;
+    }
+
+    const nodeTypeCounts = {
+        heading: 0,
+        paragraph: 0,
+        bulletList: 0,
+        orderedList: 0,
+        blockquote: 0,
+        codeBlock: 0,
+        hardBreak: 0
+    };
+    const headingLevelsCounts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
+    const firstHeadingSamples = [];
+
+    view.state.doc.descendants((node, pos) => {
+        const type = node.type?.name;
+        if (type && Object.prototype.hasOwnProperty.call(nodeTypeCounts, type)) {
+            nodeTypeCounts[type] += 1;
+        }
+
+        if (type === "heading") {
+            const level = Math.max(1, Math.min(6, Number(node.attrs?.level ?? 1)));
+            headingLevelsCounts[level] += 1;
+            if (firstHeadingSamples.length < 3) {
+                const text = (node.textContent || "").slice(0, 40);
+                firstHeadingSamples.push({ level, textSnippet: text, pos });
+            }
+        }
+    });
+
+    const docSize = view.state.doc.content.size;
+    const textLength = view.state.doc.textBetween(0, docSize, "\n", "\n").length;
+    return {
+        docSize,
+        textLength,
+        nodeTypeCounts,
+        headingLevelsCounts,
+        firstHeadingSamples
+    };
+}
 
 const AiDecorationsExtension = Extension.create({
     name: "aiDecorations",
@@ -245,6 +325,34 @@ const PageGapDecorationsExtension = Extension.create({
                 props: {
                     decorations(state) {
                         return pageGapDecorationsKey.getState(state) ?? DecorationSet.empty;
+                    }
+                }
+            })
+        ];
+    }
+});
+
+const HeadingNumberingExtension = Extension.create({
+    name: "headingNumbering",
+    addProseMirrorPlugins() {
+        return [
+            new Plugin({
+                key: headingNumberDecorationsKey,
+                state: {
+                    init: () => DecorationSet.empty,
+                    apply: (tr, value) => {
+                        const current = value ?? DecorationSet.empty;
+                        const next = tr.getMeta(headingNumberDecorationsKey);
+                        if (next) {
+                            return next;
+                        }
+
+                        return current.map(tr.mapping, tr.doc);
+                    }
+                },
+                props: {
+                    decorations(state) {
+                        return headingNumberDecorationsKey.getState(state) ?? DecorationSet.empty;
                     }
                 }
             })
@@ -646,7 +754,8 @@ function renderPaginationDebug(ctx, info, gapInfo, debugMeta) {
 
     const label = document.createElement("div");
     label.className = "wa-debug-label";
-    label.textContent = `pageHeight=${Math.round(metrics.pageHeight)} padY=${Math.round(metrics.padY)} printable=${Math.round(metrics.contentHeight)} gap=${Math.round(metrics.pageGap)} band=${Math.round(metrics.band)} | scrollTop=${Math.round(scrollTop)} laneTop=${Math.round(laneTop)}`;
+    const headingNumbers = debugMeta?.headingNumbers ? "on" : "off";
+    label.textContent = `pageHeight=${Math.round(metrics.pageHeight)} padY=${Math.round(metrics.padY)} printable=${Math.round(metrics.contentHeight)} gap=${Math.round(metrics.pageGap)} band=${Math.round(metrics.band)} | scrollTop=${Math.round(scrollTop)} laneTop=${Math.round(laneTop)} | headingNumbers=${headingNumbers}`;
     overlay.appendChild(label);
 
     window.__writer_pagination_debug = {
@@ -742,6 +851,107 @@ function renderPageBreakOverlay(editor, options) {
     }
 
     return info.count;
+}
+
+function buildHeadingNumberDecorations(editor) {
+    const view = editor?.view;
+    if (!view) {
+        return { decorations: DecorationSet.empty, headingCount: 0, samples: [] };
+    }
+
+    if (editor.__headingNumberingEnabled === false) {
+        return { decorations: DecorationSet.empty, headingCount: 0, samples: [] };
+    }
+
+    const decorations = [];
+    const prefix = Array.isArray(editor.__headingNumberingPrefix)
+        ? editor.__headingNumberingPrefix
+        : [0, 0, 0, 0, 0, 0, 0];
+    const counters = [0, 0, 0, 0, 0, 0, 0];
+    const samples = [];
+    let headingCount = 0;
+    const headingLevelsCounts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
+    for (let index = 1; index <= 6; index += 1) {
+        counters[index] = Number(prefix[index]) || 0;
+    }
+
+    view.state.doc.descendants((node, pos) => {
+        if (node.type?.name !== "heading") {
+            return;
+        }
+
+        headingCount += 1;
+        const level = Math.max(1, Math.min(6, Number(node.attrs?.level ?? 1)));
+        headingLevelsCounts[level] += 1;
+        counters[level] += 1;
+        for (let index = level + 1; index <= 6; index += 1) {
+            counters[index] = 0;
+        }
+
+        // Render a fixed 3-part version using H1/H2/H3 counters.
+        const part1 = counters[1] || 0;
+        const part2 = counters[2] || 0;
+        const part3 = counters[3] || 0;
+        const label = `${part1}.${part2}.${part3}`;
+        if (samples.length < 3) {
+            samples.push(label);
+        }
+
+        const marker = document.createElement("span");
+        marker.className = "wa-heading-number";
+        marker.setAttribute("data-number", label);
+        marker.setAttribute("contenteditable", "false");
+        marker.setAttribute("draggable", "false");
+        marker.textContent = label;
+
+        const deco = Decoration.widget(pos + 1, marker, {
+            key: `wa-heading-number:${pos}`,
+            side: -1,
+            stopEvent: () => false,
+            ignoreSelection: true
+        });
+        decorations.push(deco);
+    });
+
+    return {
+        decorations: DecorationSet.create(view.state.doc, decorations),
+        headingCount,
+        samples,
+        headingLevelsCounts
+    };
+}
+
+function updateHeadingNumberDecorations(editor, reason) {
+    if (!editor?.view) {
+        return;
+    }
+
+    const result = buildHeadingNumberDecorations(editor);
+    const tr = editor.view.state.tr.setMeta(headingNumberDecorationsKey, result.decorations);
+    tr.setMeta(WA_LAYOUT_META, true);
+    editor.__headingNumberingApplying = true;
+    try {
+        editor.view.dispatch(tr);
+    } finally {
+        editor.__headingNumberingApplying = false;
+    }
+
+    const traceId = editor.__headingNumberingTraceId;
+    debugHeading("REBUILD_DONE", {
+        traceId,
+        reason: reason ?? "unknown",
+        enabled: editor.__headingNumberingEnabled !== false,
+        headingCount: result.headingCount,
+        decorationsCreated: result.decorations.find().length,
+        samples: result.samples,
+        headingLevelsCounts: result.headingLevelsCounts,
+        prefixCountersUsed: (editor.__headingNumberingPrefix ?? []).slice(1, 4)
+    });
+
+    requestAnimationFrame(() => {
+        const count = editor?.view?.dom?.querySelectorAll?.(".wa-heading-number")?.length ?? 0;
+        debugHeading("DOM_VERIFY", { traceId, count });
+    });
 }
 
 function buildPageGapDecorations(editor, options) {
@@ -1180,7 +1390,8 @@ function notifyPageBreakStatus(editor, reason) {
             insertEpsPx: gapInfo?.insertEpsPx ?? fallbackGapInfo?.insertEpsPx,
             removeEpsPx: gapInfo?.removeEpsPx ?? fallbackGapInfo?.removeEpsPx,
             reason: reason ?? "update",
-            lastLayoutTx: !!editor.__waLastWasLayoutTx
+            lastLayoutTx: !!editor.__waLastWasLayoutTx,
+            headingNumbers: editor.__headingNumberingEnabled !== false
         };
         renderPaginationDebug(info.ctx, info, fallbackGapInfo, debugMeta);
     }
@@ -1491,6 +1702,7 @@ window.tiptapEditor = {
         try {
             console.info("[tiptap] create editor", { elementId });
             console.info("[pagination] real pagination enabled");
+            debugHeading("INIT", { debug: isWriterDebugEnabled() });
             const extensions = [
                 StarterKit,
                 TextStyleWithFontSize,
@@ -1499,11 +1711,12 @@ window.tiptapEditor = {
                 IndentExtension,
                 AiDecorationsExtension,
                 PageGapDecorationsExtension,
+                HeadingNumberingExtension,
                 ShortcutExtension
             ];
-        editor = new Editor({
-            element: document.getElementById(elementId),
-            extensions,
+            editor = new Editor({
+                element: document.getElementById(elementId),
+                extensions,
             content: initialContent,
             editorProps: {
                 attributes: {
@@ -1518,6 +1731,13 @@ window.tiptapEditor = {
                     requestAnimationFrame(() => {
                         editor.__waLastWasLayoutTx = false;
                     });
+                    return;
+                }
+
+                if ((transaction?.docChanged || transaction?.getMeta?.(WA_HEADING_NUMBERING_REBUILD))
+                    && !editor.__headingNumberingApplying) {
+                    const reason = transaction?.docChanged ? "docChanged" : "forceRebuild";
+                    updateHeadingNumberDecorations(editor, reason);
                 }
             },
             onUpdate({ editor }) {
@@ -1549,6 +1769,13 @@ window.tiptapEditor = {
         }
 
         editor.__interopState = interopState;
+        if (editor.__headingNumberingEnabled === undefined) {
+            editor.__headingNumberingEnabled = true;
+        }
+        if (!Array.isArray(editor.__headingNumberingPrefix)) {
+            editor.__headingNumberingPrefix = [0, 0, 0, 0, 0, 0, 0];
+        }
+        updateHeadingNumberDecorations(editor, "init");
 
         let lastFormattingState = "";
         const pushFormattingState = () => {
@@ -1753,7 +1980,25 @@ window.tiptapEditor = {
     },
 
     setContent: function (editor, content) {
+        const traceId = editor?.__headingNumberingTraceId;
+        const pageId = editor?.__headingNumberingPageId;
+        const contentLength = typeof content === "string" ? content.length : 0;
+        const contentHash = typeof content === "string" ? hashStringFNV1a(content) : "0";
+        debugHeading("SET_CONTENT_START", { traceId, pageId, contentLength, contentHash });
         editor.commands.setContent(content, false);
+        const tr = editor.view.state.tr.setMeta(WA_HEADING_NUMBERING_REBUILD, true);
+        editor.view.dispatch(tr);
+        updateHeadingNumberDecorations(editor, "setContent");
+        const summary = getHeadingDocSummary(editor);
+        debugHeading("SET_CONTENT_DONE", { traceId, pageId, summary });
+        if (summary) {
+            debugHeading("DOC_SUMMARY", {
+                traceId,
+                pageId,
+                elementId: editor?.view?.dom?.id,
+                ...summary
+            });
+        }
     },
 
     getContent: function (editor) {
@@ -1798,6 +2043,102 @@ window.tiptapEditor = {
         const count = renderPageBreakOverlay(editor, editor.__pageBreakState.options);
         updatePageGapDecorations(editor);
         return count;
+    },
+
+    setHeadingNumberingEnabled: function (editor, enabled) {
+        if (!editor) {
+            return;
+        }
+
+        editor.__headingNumberingEnabled = enabled !== false;
+        debugHeading("TOGGLE", { traceId: editor.__headingNumberingTraceId, enabled: editor.__headingNumberingEnabled });
+        updateHeadingNumberDecorations(editor, "toggle");
+    },
+
+    setHeadingNumberingPrefix: function (editor, counters) {
+        if (!editor) {
+            return;
+        }
+
+        const prefix = Array.isArray(counters) ? counters : [];
+        const normalized = [0, 0, 0, 0, 0, 0, 0];
+        for (let index = 1; index <= 6; index += 1) {
+            const value = Number(prefix[index]) || 0;
+            normalized[index] = Math.max(0, value);
+        }
+        editor.__headingNumberingPrefix = normalized;
+        debugHeading("PREFIX_SET", { traceId: editor.__headingNumberingTraceId, counters: normalized.slice(1) });
+        updateHeadingNumberDecorations(editor, "prefix");
+    },
+
+    setHeadingNumberingContext: function (editor, context) {
+        if (!editor) {
+            return;
+        }
+
+        const enabled = context?.enabled !== false;
+        editor.__headingNumberingEnabled = enabled;
+        editor.__headingNumberingTraceId = context?.traceId;
+        editor.__headingNumberingPageId = context?.pageId;
+        if (Array.isArray(context?.prefixCounters)) {
+            const normalized = [0, 0, 0, 0, 0, 0, 0];
+            for (let index = 1; index <= 6; index += 1) {
+                const value = Number(context.prefixCounters[index]) || 0;
+                normalized[index] = Math.max(0, value);
+            }
+            editor.__headingNumberingPrefix = normalized;
+        }
+
+        debugHeading("CONTEXT_SET", {
+            traceId: editor.__headingNumberingTraceId,
+            enabled: editor.__headingNumberingEnabled,
+            counters: editor.__headingNumberingPrefix?.slice(1),
+            pageId: editor.__headingNumberingPageId
+        });
+        updateHeadingNumberDecorations(editor, "context");
+    },
+
+    setHeadingNumberingTraceId: function (editor, traceId) {
+        if (!editor) {
+            return;
+        }
+
+        editor.__headingNumberingTraceId = traceId;
+        debugHeading("TRACE_SET", { traceId });
+    },
+
+    forceHeadingNumberingRebuild: function (editor, traceId, reason) {
+        if (!editor) {
+            return;
+        }
+
+        editor.__headingNumberingTraceId = traceId ?? editor.__headingNumberingTraceId;
+        debugHeading("FORCE_REBUILD", { traceId: editor.__headingNumberingTraceId, reason });
+        const tr = editor.view.state.tr.setMeta(WA_HEADING_NUMBERING_REBUILD, true);
+        editor.view.dispatch(tr);
+        updateHeadingNumberDecorations(editor, reason ?? "force");
+    },
+
+    debugLog: function (stage, payload) {
+        debugHeading(stage, payload ?? {});
+    },
+
+    saveDebugPageBackup: function (pageId, content, hash) {
+        if (!isWriterDebugEnabled()) {
+            return;
+        }
+        try {
+            const key = `writerapp.pagebackup.${pageId}`;
+            const payload = {
+                pageId,
+                hash,
+                content,
+                savedAt: new Date().toISOString()
+            };
+            window.localStorage.setItem(key, JSON.stringify(payload));
+            debugHeading("BACKUP_SAVED", { pageId, hash });
+        } catch {
+        }
     },
 
     registerPageBreakObserver: function (editor, dotNetRef, options) {

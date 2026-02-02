@@ -972,7 +972,7 @@ namespace WriterApp.Controllers
             }
 
             List<(Guid Id, Guid? ParentId, int Depth)> stack = new();
-            Dictionary<Guid?, int> orderByParent = new();
+            Dictionary<Guid, int> orderByParent = new();
 
             string[] lines = text.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
             foreach (string rawLine in lines)
@@ -1023,8 +1023,9 @@ namespace WriterApp.Controllers
                 }
 
                 Guid? parentId = stack.Count == 0 ? null : stack[^1].Id;
-                int order = orderByParent.TryGetValue(parentId, out int current) ? current : 0;
-                orderByParent[parentId] = order + 1;
+                Guid parentKey = parentId ?? Guid.Empty;
+                int order = orderByParent.TryGetValue(parentKey, out int current) ? current : 0;
+                orderByParent[parentKey] = order + 1;
 
                 Guid id = Guid.NewGuid();
                 nodes.Add(new DocumentOutlineNodeDto(

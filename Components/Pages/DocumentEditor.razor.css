@@ -870,6 +870,13 @@
     user-select: none;
 }
 
+.editor-shell ::deep .wa-heading-number {
+    user-select: none;
+    opacity: 0.6;
+    margin-right: 0.5rem;
+    font-variant-numeric: tabular-nums;
+}
+
 ::deep .pagebreak-overlay {
     position: absolute;
     top: 0;

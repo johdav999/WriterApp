@@ -8,6 +8,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Components;
@@ -86,6 +87,7 @@ namespace WriterApp.Client.Pages
         private readonly List<SectionTranslationLinkDto> _sectionTranslationLinks = new();
         private bool _layoutStateInitialized;
         private PageEditor? _pageEditor;
+        private string _headingTraceId = string.Empty;
         private Guid? _draggedSectionId;
         private bool _isReorderingSections;
         private EditorFormattingState _formattingState = new()
@@ -109,6 +111,7 @@ namespace WriterApp.Client.Pages
         private bool _isTemplatesLoading;
         private bool _isTemplateSaving;
         private bool _isTemplateDeleting;
+        private int[] _headingPrefixCounters = new int[7];
         private string? _templateLoadError;
         private string? _templateActionError;
         private readonly List<ExportTemplateDto> _exportTemplates = new();
@@ -383,6 +386,14 @@ namespace WriterApp.Client.Pages
 
             try
             {
+                _headingTraceId = Guid.NewGuid().ToString("N");
+                await DebugHeadingLogAsync("NAVIGATE_BEGIN", new
+                {
+                    traceId = _headingTraceId,
+                    documentId = DocumentId,
+                    sectionId = SectionId
+                });
+
                 DocumentDetailDto? document = await Http.GetFromJsonAsync<DocumentDetailDto>($"api/documents/{DocumentId}");
                 if (document is null)
                 {
@@ -447,8 +458,27 @@ namespace WriterApp.Client.Pages
                     return;
                 }
 
+                Logger.LogDebug(
+                    "HeadingPrefix PageContentLoaded TraceId={TraceId} DocumentId={DocumentId} SectionId={SectionId} PageId={PageId} Length={Length} Hash={Hash} Source={Source}",
+                    _headingTraceId,
+                    DocumentId,
+                    _activeSection.Id,
+                    _activePage.Id,
+                    _activePage.Content?.Length ?? 0,
+                    ComputeShortHash(_activePage.Content),
+                    "db");
+
+                await DebugHeadingLogAsync("PAGE_OPEN", new
+                {
+                    traceId = _headingTraceId,
+                    documentId = DocumentId,
+                    sectionId = _activeSection.Id,
+                    pageId = _activePage.Id
+                });
+
                 await LastOpenedDocumentStateService.SaveAsync(DocumentId, _activeSection.Id);
 
+                await LoadHeadingPrefixCountersAsync();
                 _notesDraft = await LoadPageNotesAsync(_activePage.Id);
                 _notesStatus = null;
                 await LoadSceneCardAsync(_activeSection.Id);
@@ -527,6 +557,11 @@ namespace WriterApp.Client.Pages
 
         private async Task OnSectionSelected(Guid sectionId)
         {
+            if (_pageEditor is not null)
+            {
+                await _pageEditor.ForceSaveIfDifferentAsync("navigate");
+            }
+
             await LastOpenedDocumentStateService.SaveAsync(DocumentId, sectionId);
             Navigation.NavigateTo($"documents/{DocumentId}/sections/{sectionId}");
         }
@@ -960,6 +995,7 @@ namespace WriterApp.Client.Pages
                         DocumentId,
                         updated.Count,
                         _lastReorderCorrelationId);
+                    await LoadHeadingPrefixCountersAsync();
                 }
             }
             catch (Exception ex)
@@ -1171,6 +1207,7 @@ namespace WriterApp.Client.Pages
             if (_pageEditor is not null)
             {
                 _ = _pageEditor.RefreshPageBreaksAsync();
+                _ = _pageEditor.SetHeadingNumberingEnabledAsync(state.HeadingNumberingEnabled);
             }
 
             InvokeAsync(StateHasChanged);
@@ -4117,6 +4154,87 @@ namespace WriterApp.Client.Pages
             {
                 Logger.LogWarning(ex, "Translation links load failed.");
             }
+        }
+
+        private async Task LoadHeadingPrefixCountersAsync()
+        {
+            if (_activePage is null)
+            {
+                _headingPrefixCounters = new int[7];
+                return;
+            }
+
+            try
+            {
+                await DebugHeadingLogAsync("FETCH_PREFIX_START", new
+                {
+                    traceId = _headingTraceId,
+                    documentId = DocumentId,
+                    sectionId = _activeSection?.Id,
+                    pageId = _activePage.Id
+                });
+
+                using HttpRequestMessage request = new(
+                    HttpMethod.Get,
+                    $"api/documents/{DocumentId}/heading-outline?upToPageId={_activePage.Id}");
+                request.Headers.Add("X-Trace-Id", _headingTraceId);
+                using HttpResponseMessage response = await Http.SendAsync(request);
+                response.EnsureSuccessStatusCode();
+                HeadingPrefixCountersDto? payload = await response.Content.ReadFromJsonAsync<HeadingPrefixCountersDto>();
+                _headingPrefixCounters = payload?.Counters?.ToArray() ?? new int[7];
+
+                await DebugHeadingLogAsync("FETCH_PREFIX_SUCCESS", new
+                {
+                    traceId = _headingTraceId,
+                    counters = _headingPrefixCounters.Skip(1).ToArray()
+                });
+
+                Logger.LogDebug(
+                    "HeadingPrefix ClientLoaded TraceId={TraceId} DocumentId={DocumentId} PageId={PageId} Length={Length}",
+                    _headingTraceId,
+                    DocumentId,
+                    _activePage.Id,
+                    _activePage.Content?.Length ?? 0);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Heading prefix counters load failed.");
+                _headingPrefixCounters = new int[7];
+                await DebugHeadingLogAsync("FETCH_PREFIX_FAIL", new
+                {
+                    traceId = _headingTraceId,
+                    error = ex.Message
+                });
+            }
+        }
+
+        private async Task DebugHeadingLogAsync(string stage, object payload)
+        {
+            try
+            {
+                await JSRuntime.InvokeVoidAsync("tiptapEditor.debugLog", stage, payload);
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            catch (JSException)
+            {
+            }
+        }
+
+        private static string ComputeShortHash(string? value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return "0";
+            }
+
+            byte[] bytes = Encoding.UTF8.GetBytes(value);
+            byte[] hash = SHA256.HashData(bytes);
+            return Convert.ToHexString(hash.AsSpan(0, 4));
         }
 
         private IEnumerable<TranslationLinkItem> GetTranslationLinks()

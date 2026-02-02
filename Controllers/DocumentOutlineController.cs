@@ -468,9 +468,14 @@ namespace WriterApp.Controllers
                 {
                     children = roots;
                 }
-                else if (!byParent.TryGetValue(parentId.Value, out children))
+                else if (!byParent.TryGetValue(parentId.Value, out List<DocumentOutlineNodeRecord>? childrenFromMap)
+                    || childrenFromMap is null)
                 {
                     return;
+                }
+                else
+                {
+                    children = childrenFromMap;
                 }
 
                 foreach (DocumentOutlineNodeRecord child in children)
