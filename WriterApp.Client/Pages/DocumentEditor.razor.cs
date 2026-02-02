@@ -1165,6 +1165,13 @@ namespace WriterApp.Client.Pages
             return string.Empty;
         }
 
+        private string GetHeadingNumberingScope()
+        {
+            return LayoutStateService.State.HeadingNumberingScope == HeadingNumberingScope.Section
+                ? "section"
+                : "document";
+        }
+
         private string? GetTooltip(string text)
         {
             return LayoutStateService.State.FocusMode ? null : text;

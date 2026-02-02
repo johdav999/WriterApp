@@ -82,12 +82,16 @@ else
     public bool HeadingNumberingEnabled { get; set; } = true;
 
     [Parameter]
+    public string HeadingNumberingScope { get; set; } = "document";
+
+    [Parameter]
     public IReadOnlyList<int>? HeadingNumberingPrefix { get; set; }
 
     [Parameter]
     public string HeadingNumberingTraceId { get; set; } = string.Empty;
 
     private bool _lastHeadingNumberingEnabled = true;
+    private string _lastHeadingNumberingScope = "document";
     private IReadOnlyList<int>? _lastHeadingNumberingPrefix;
     private string _lastHeadingTraceId = string.Empty;
 
@@ -127,6 +131,12 @@ else
         {
             _lastHeadingNumberingEnabled = HeadingNumberingEnabled;
             await SetHeadingNumberingEnabledAsync(HeadingNumberingEnabled);
+            await SetHeadingNumberingContextAsync();
+        }
+
+        if (!string.Equals(_lastHeadingNumberingScope, HeadingNumberingScope, StringComparison.OrdinalIgnoreCase))
+        {
+            _lastHeadingNumberingScope = HeadingNumberingScope;
             await SetHeadingNumberingContextAsync();
         }
 
@@ -639,6 +649,7 @@ else
             {
                 enabled = HeadingNumberingEnabled,
                 traceId = HeadingNumberingTraceId,
+                scope = HeadingNumberingScope,
                 pageId = Page?.Id,
                 prefixCounters = payload,
                 scheme = "v1"

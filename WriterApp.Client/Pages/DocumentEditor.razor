@@ -322,6 +322,7 @@ else
                                         OnPageSaved="OnPageSaved"
                                         PageBreaks="PageBreaks"
                                         HeadingNumberingEnabled="@LayoutStateService.State.HeadingNumberingEnabled"
+                                        HeadingNumberingScope="@GetHeadingNumberingScope()"
                                         HeadingNumberingPrefix="@_headingPrefixCounters"
                                         HeadingNumberingTraceId="@_headingTraceId"
                                         FormattingChanged="OnFormattingChanged"
