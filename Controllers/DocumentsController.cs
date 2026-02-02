@@ -143,6 +143,114 @@ namespace WriterApp.Controllers
             return Ok(result);
         }
 
+        [HttpGet("{documentId:guid}/heading-outline")]
+        public async Task<ActionResult<HeadingPrefixCountersDto>> GetHeadingPrefix(
+            Guid documentId,
+            [FromQuery] Guid upToPageId,
+            CancellationToken ct)
+        {
+            string traceId = Request.Headers["X-Trace-Id"].FirstOrDefault()
+                ?? HttpContext.TraceIdentifier;
+
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            _logger.LogDebug(
+                "HeadingPrefix START TraceId={TraceId} DocumentId={DocumentId} PageId={PageId}",
+                traceId,
+                documentId,
+                upToPageId);
+
+            if (upToPageId == Guid.Empty)
+            {
+                return BadRequest(new { message = "upToPageId is required." });
+            }
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            DocumentRecord? document = await _documents.GetAsync(documentId, userId, ct);
+            if (document is null)
+            {
+                return NotFound();
+            }
+
+            List<SectionRecord> sections = await _dbContext.Sections
+                .AsNoTracking()
+                .Where(section => section.DocumentId == documentId)
+                .OrderBy(section => section.OrderIndex)
+                .ToListAsync(ct);
+
+            HeadingPrefixCountersService countersService = new();
+            int[] counters = countersService.CreateCounters();
+            bool found = false;
+            int pagesScanned = 0;
+            int totalHeadings = 0;
+
+            _logger.LogDebug(
+                "HeadingPrefix SectionsLoaded TraceId={TraceId} SectionCount={SectionCount}",
+                traceId,
+                sections.Count);
+
+            foreach (SectionRecord section in sections)
+            {
+                List<PageRecord> pages = await _dbContext.Pages
+                    .AsNoTracking()
+                    .Where(page => page.SectionId == section.Id)
+                    .OrderBy(page => page.OrderIndex)
+                    .ToListAsync(ct);
+
+                foreach (PageRecord page in pages)
+                {
+                    if (page.Id == upToPageId)
+                    {
+                        found = true;
+                        break;
+                    }
+
+                    pagesScanned += 1;
+                    bool jsonParseFailed;
+                    int headingsInPage = countersService.CountHeadings(page.Content, counters, out jsonParseFailed);
+                    totalHeadings += headingsInPage;
+                    if (jsonParseFailed)
+                    {
+                        _logger.LogDebug(
+                            "HeadingPrefix JsonParseFailed TraceId={TraceId} PageId={PageId}",
+                            traceId,
+                            page.Id);
+                    }
+                }
+
+                if (found)
+                {
+                    break;
+                }
+            }
+
+            if (!found)
+            {
+                _logger.LogDebug(
+                    "HeadingPrefix NotFound TraceId={TraceId} DocumentId={DocumentId} PageId={PageId}",
+                    traceId,
+                    documentId,
+                    upToPageId);
+                return NotFound();
+            }
+
+            timer.Stop();
+            _logger.LogDebug(
+                "HeadingPrefix END TraceId={TraceId} PagesScanned={PagesScanned} HeadingsBeforeTarget={Headings} Counters={Counters} DurationMs={DurationMs}",
+                traceId,
+                pagesScanned,
+                totalHeadings,
+                string.Join(",", counters.Skip(1)),
+                timer.ElapsedMilliseconds);
+
+            _logger.LogDebug(
+                "HeadingPrefix Response TraceId={TraceId} Status={Status} Counters={Counters}",
+                traceId,
+                "200",
+                string.Join(",", counters.Skip(1)));
+
+            return Ok(new HeadingPrefixCountersDto(counters));
+        }
+
         [HttpPost("{documentId:guid}/translations/duplicate")]
         public async Task<ActionResult<TranslationDuplicateDocumentResponse>> DuplicateTranslation(
             Guid documentId,

@@ -1015,6 +1015,13 @@
     background: transparent !important;
 }
 
+.editor-shell ::deep .wa-heading-number {
+    user-select: none;
+    opacity: 0.6;
+    margin-right: 0.5rem;
+    font-variant-numeric: tabular-nums;
+}
+
 .editor-shell.is-print-layout ::deep .wa-pagination-debug {
     position: absolute;
     inset: 0;

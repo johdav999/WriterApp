@@ -650,6 +650,7 @@ namespace WriterApp.AI.Core
         {
             async IAsyncEnumerable<AiStreamEvent> BlockedEvents()
             {
+                await Task.Yield();
                 yield return new AiStreamEvent.Started();
                 yield return new AiStreamEvent.Failed($"{errorCode}: {errorMessage}");
             }
