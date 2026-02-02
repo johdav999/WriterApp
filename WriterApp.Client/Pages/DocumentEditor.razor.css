@@ -284,6 +284,10 @@
     background: #fff;
 }
 
+.ai-preview ::deep .translation-proposal {
+    background: #ffffff;
+}
+
 .section-menu-panel button {
     border: none;
     background: transparent;
@@ -921,22 +925,6 @@
     width: 100%;
 }
 
-.editor-page-viewport {
-    position: relative;
-    z-index: 1;
-    width: 100%;
-    height: 100%;
-    padding: 0;
-    box-sizing: border-box;
-}
-
-.editor-page-content {
-    padding: var(--page-padding-y) var(--page-padding-x);
-    box-sizing: border-box;
-    width: 100%;
-    min-height: 100%;
-}
-
 .editor-content {
     width: 100%;
     max-width: var(--editor-max-width);
@@ -952,7 +940,7 @@
 
 .editor-shell.is-print-layout .editor-canvas {
     background: var(--canvas-bg);
-    padding: var(--page-gap-px) 0;
+    padding: 0;
 }
 
 .editor-shell.is-print-layout .page-lane {
@@ -961,11 +949,23 @@
     margin-right: auto;
 }
 
+.editor-shell.is-print-layout .page-lane > div:not(.pagebreak-overlay) {
+    position: relative;
+    z-index: 1;
+}
+
 .editor-shell.is-print-layout .editor-content {
     background: transparent;
     max-width: calc(var(--page-width-px) * var(--editor-font-scale, 1));
     position: relative;
     z-index: 1;
+}
+
+.editor-shell.is-print-layout ::deep .tiptap-content {
+    width: 100%;
+    box-sizing: border-box;
+    padding: calc(var(--page-padding-y) * var(--editor-font-scale, 1))
+        calc(var(--page-padding-x) * var(--editor-font-scale, 1));
 }
 
 .editor-shell.is-print-layout ::deep .pagebreak-overlay {
@@ -1001,8 +1001,98 @@
     width: 100%;
     height: var(--page-gap-px);
     background: transparent;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    line-height: 0;
     pointer-events: none;
     user-select: none;
+    color: transparent;
+    caret-color: transparent;
+}
+
+.editor-shell.is-print-layout ::deep .wa-page-gap::selection {
+    background: transparent !important;
+}
+
+.editor-shell.is-print-layout ::deep .wa-pagination-debug {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+}
+
+.editor-shell.is-print-layout ::deep .wa-debug-page,
+.editor-shell.is-print-layout ::deep .wa-debug-gap,
+.editor-shell.is-print-layout ::deep .wa-debug-break {
+    position: absolute;
+    left: 0;
+    right: 0;
+}
+
+.editor-shell.is-print-layout ::deep .wa-debug-page {
+    outline: 1px dashed rgba(15, 23, 42, 0.35);
+    background: rgba(16, 185, 129, 0.04);
+}
+
+.editor-shell.is-print-layout ::deep .wa-debug-gap {
+    background: rgba(239, 68, 68, 0.08);
+}
+
+.editor-shell.is-print-layout ::deep .wa-debug-break {
+    height: 0;
+    border-top: 2px solid rgba(37, 99, 235, 0.7);
+}
+
+.editor-shell.is-print-layout ::deep .wa-debug-tall-break {
+    border-top-color: rgba(249, 115, 22, 0.75);
+}
+
+.editor-shell.is-print-layout ::deep .wa-debug-line {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 0;
+    border-top: 1px dashed rgba(15, 23, 42, 0.4);
+}
+
+.editor-shell.is-print-layout ::deep .wa-debug-line::after {
+    content: attr(data-label);
+    position: absolute;
+    left: 6px;
+    top: -10px;
+    font-size: 10px;
+    color: rgba(15, 23, 42, 0.65);
+    background: rgba(255, 255, 255, 0.8);
+    padding: 1px 4px;
+    border-radius: 4px;
+}
+
+.editor-shell.is-print-layout ::deep .wa-debug-break::after {
+    content: attr(data-label);
+    position: absolute;
+    left: 6px;
+    top: -12px;
+    font-size: 10px;
+    color: rgba(37, 99, 235, 0.8);
+    background: rgba(255, 255, 255, 0.8);
+    padding: 1px 4px;
+    border-radius: 4px;
+}
+
+.editor-shell.is-print-layout ::deep .wa-debug-label {
+    position: sticky;
+    top: 6px;
+    left: 6px;
+    margin-left: 6px;
+    margin-top: 6px;
+    background: rgba(15, 23, 42, 0.7);
+    color: #f8fafc;
+    font-size: 12px;
+    line-height: 1.4;
+    padding: 4px 8px;
+    border-radius: 4px;
+    max-width: calc(100% - 12px);
 }
 
 ::deep .pagebreak-overlay {
