@@ -1,7 +1,8 @@
 declare global {
     interface Window {
         tiptapEditor?: { create: (elementId: string, initialContent: string, dotNetRef: any) => any };
-        __writer_disable_page_gaps?: boolean;
+        __writer_disable_mask_pagination?: boolean;
+        __writer_pagination_debug?: { enabled?: boolean; last?: any };
     }
 }
 import { Editor, Extension } from "@tiptap/core";
@@ -24,8 +25,12 @@ import {
     toggleOrderedList
 } from "./tiptap-commands";
 
-if (typeof window !== "undefined" && window.__writer_disable_page_gaps === undefined) {
-    window.__writer_disable_page_gaps = false;
+if (typeof window !== "undefined" && window.__writer_disable_mask_pagination === undefined) {
+    window.__writer_disable_mask_pagination = false;
+}
+
+if (typeof window !== "undefined" && window.__writer_pagination_debug === undefined) {
+    window.__writer_pagination_debug = { enabled: false };
 }
 
 const TextStyleWithFontSize = TextStyle.extend({
@@ -189,6 +194,7 @@ const IndentExtension = Extension.create({
 
 const aiDecorationsKey = new PluginKey("aiDecorations");
 const pageGapDecorationsKey = new PluginKey("pageGapDecorations");
+const WA_LAYOUT_META = "wa_layout_tx";
 
 const AiDecorationsExtension = Extension.create({
     name: "aiDecorations",
@@ -435,7 +441,7 @@ function getPageBreakContext(editor) {
     const content = lane || view.closest(".editor-content") || view;
     const canvas = view.closest(".editor-canvas") || content || view;
     const overlayHost = lane || canvas || content || viewport;
-    return { view, viewport, content, overlayHost };
+    return { view, viewport, content, overlayHost, lane };
 }
 
 function findScrollContainer(element) {
@@ -467,33 +473,222 @@ function ensurePageBreakOverlay(overlayHost) {
     return overlay;
 }
 
+function getCssNumber(style, name, fallback) {
+    if (!style) {
+        return fallback;
+    }
+
+    const raw = style.getPropertyValue(name);
+    if (!raw) {
+        return fallback;
+    }
+
+    const parsed = Number.parseFloat(raw);
+    return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function resolvePaginationMetrics(ctx, options) {
+    const opts = resolvePageBreakOptions(options);
+    const host = ctx?.lane || ctx?.overlayHost || ctx?.content;
+    const hostStyle = host ? window.getComputedStyle(host) : null;
+    const shell = host?.closest?.(".editor-shell");
+    const shellStyle = shell ? window.getComputedStyle(shell) : hostStyle;
+
+    // Single source of truth for scaled page geometry (overlay + spacers must use the same values).
+    const scale = getCssNumber(shellStyle, "--editor-font-scale", 1);
+    const pageWidth = getCssNumber(shellStyle, "--page-width-px", opts.pageWidthPx ?? 760) * scale;
+    const pageHeight = getCssNumber(shellStyle, "--page-height-px", opts.pageHeightPx ?? 980) * scale;
+    const pageGap = getCssNumber(shellStyle, "--page-gap-px", opts.pageGapPx ?? 32) * scale;
+    const padY = getCssNumber(shellStyle, "--page-padding-y", 24) * scale;
+    const padX = getCssNumber(shellStyle, "--page-padding-x", 20) * scale;
+    const band = pageHeight + pageGap;
+    const contentHeight = Math.max(0, pageHeight - padY * 2);
+
+    return {
+        scale,
+        pageWidth,
+        pageHeight,
+        pageGap,
+        padY,
+        padX,
+        band,
+        contentHeight,
+        options: opts
+    };
+}
+
+function toLaneLocalY(ctx, coords) {
+    if (!ctx?.lane || !coords) {
+        return coords?.top ?? 0;
+    }
+
+    const laneRect = ctx.lane.getBoundingClientRect();
+    return coords.top - laneRect.top;
+}
+
+function ensurePaginationDebugOverlay(ctx) {
+    const lane = ctx?.lane;
+    if (!lane) {
+        return null;
+    }
+
+    let overlay = lane.querySelector(".wa-pagination-debug");
+    if (!overlay) {
+        overlay = document.createElement("div");
+        overlay.className = "wa-pagination-debug";
+        overlay.setAttribute("aria-hidden", "true");
+        lane.appendChild(overlay);
+    }
+
+    return overlay;
+}
+
+function renderPaginationDebug(ctx, info, gapInfo, debugMeta) {
+    const state = window.__writer_pagination_debug;
+    const metrics = info?.metrics;
+    const lane = ctx?.lane;
+    if (!lane || !metrics) {
+        return;
+    }
+
+    const overlay = ensurePaginationDebugOverlay(ctx);
+    if (!overlay) {
+        return;
+    }
+
+    if (!state?.enabled) {
+        overlay.innerHTML = "";
+        overlay.style.display = "none";
+        return;
+    }
+
+    overlay.style.display = "block";
+    overlay.innerHTML = "";
+    if (debugMeta) {
+        const insertEps = debugMeta.insertEpsPx ?? "n/a";
+        const removeEps = debugMeta.removeEpsPx ?? "n/a";
+        const reason = debugMeta.reason ?? "update";
+        const layout = debugMeta.lastLayoutTx ? "layout" : "content";
+        overlay.setAttribute("data-label", `insert=${insertEps} remove=${removeEps} reason=${reason} lastTx=${layout}`);
+    }
+
+    const band = metrics.band;
+    const pageCount = info?.count ?? 1;
+    const scrollContainer = findScrollContainer(ctx.viewport);
+    const scrollTop = gapInfo?.scrollTop ?? (scrollContainer === window ? window.scrollY : scrollContainer.scrollTop);
+    const laneTop = gapInfo?.laneTop ?? ctx.lane?.getBoundingClientRect?.().top ?? 0;
+
+    for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
+        const pageTop = pageIndex * band;
+        const contentStart = pageTop + metrics.padY;
+        const contentEnd = contentStart + metrics.contentHeight;
+        const pageEnd = pageTop + metrics.pageHeight;
+        const bandEnd = pageTop + band;
+
+        const pageStartLine = document.createElement("div");
+        pageStartLine.className = "wa-debug-line wa-debug-page-start";
+        pageStartLine.style.top = `${pageTop}px`;
+        pageStartLine.setAttribute("data-label", `p${pageIndex + 1} start`);
+        overlay.appendChild(pageStartLine);
+
+        const contentStartLine = document.createElement("div");
+        contentStartLine.className = "wa-debug-line wa-debug-content-start";
+        contentStartLine.style.top = `${contentStart}px`;
+        contentStartLine.setAttribute("data-label", `p${pageIndex + 1} content start`);
+        overlay.appendChild(contentStartLine);
+
+        const contentEndLine = document.createElement("div");
+        contentEndLine.className = "wa-debug-line wa-debug-content-end";
+        contentEndLine.style.top = `${contentEnd}px`;
+        contentEndLine.setAttribute("data-label", `p${pageIndex + 1} content end`);
+        overlay.appendChild(contentEndLine);
+
+        if (metrics.pageGap > 0) {
+            const gapStartLine = document.createElement("div");
+            gapStartLine.className = "wa-debug-line wa-debug-gap-start";
+            gapStartLine.style.top = `${pageEnd}px`;
+            gapStartLine.setAttribute("data-label", `p${pageIndex + 1} gap start`);
+            overlay.appendChild(gapStartLine);
+
+            const gapBand = document.createElement("div");
+            gapBand.className = "wa-debug-gap";
+            gapBand.style.top = `${pageEnd}px`;
+            gapBand.style.height = `${metrics.pageGap}px`;
+            overlay.appendChild(gapBand);
+
+            const gapEndLine = document.createElement("div");
+            gapEndLine.className = "wa-debug-line wa-debug-gap-end";
+            gapEndLine.style.top = `${bandEnd}px`;
+            gapEndLine.setAttribute("data-label", `p${pageIndex + 1} gap end`);
+            overlay.appendChild(gapEndLine);
+        }
+    }
+
+    if (gapInfo?.breaks?.length) {
+        gapInfo.breaks.forEach(entry => {
+            const marker = document.createElement("div");
+            marker.className = "wa-debug-break";
+            marker.style.top = `${entry.blockTop}px`;
+            marker.setAttribute("data-label", `p${entry.pageIndex + 1} ${Math.round(entry.spacerPx)}px @${entry.pos}`);
+            overlay.appendChild(marker);
+        });
+    }
+
+    if (gapInfo?.tallBreaks?.length) {
+        gapInfo.tallBreaks.forEach(entry => {
+            const marker = document.createElement("div");
+            marker.className = "wa-debug-break wa-debug-tall-break";
+            marker.style.top = `${entry.yAtSplit}px`;
+            marker.setAttribute("data-label", `p${entry.pageIndex + 1} ${Math.round(entry.spacerPx)}px @${entry.pos}`);
+            overlay.appendChild(marker);
+        });
+    }
+
+    const label = document.createElement("div");
+    label.className = "wa-debug-label";
+    label.textContent = `pageHeight=${Math.round(metrics.pageHeight)} padY=${Math.round(metrics.padY)} printable=${Math.round(metrics.contentHeight)} gap=${Math.round(metrics.pageGap)} band=${Math.round(metrics.band)} | scrollTop=${Math.round(scrollTop)} laneTop=${Math.round(laneTop)}`;
+    overlay.appendChild(label);
+
+    window.__writer_pagination_debug = {
+        ...(state ?? {}),
+        last: {
+            metrics,
+            pageCount,
+            breaks: gapInfo?.breaks ?? [],
+            tallBreaks: gapInfo?.tallBreaks ?? [],
+            scrollTop,
+            laneTop,
+            boundaries: Array.from({ length: pageCount }, (_, index) => {
+                const pageTop = index * band;
+                const contentStart = pageTop + metrics.padY;
+                const contentEnd = contentStart + metrics.contentHeight;
+                const pageEnd = pageTop + metrics.pageHeight;
+                return { pageIndex: index, pageTop, contentStart, contentEnd, pageEnd };
+            })
+        }
+    };
+}
+
 function computePageBreaks(editor, options) {
     const ctx = getPageBreakContext(editor);
     if (!ctx) {
         return { count: 1, breaks: [], options: resolvePageBreakOptions(options), ctx: null };
     }
 
-    const opts = resolvePageBreakOptions(options);
-    const gapCount = editor?.__pageGapState?.gapCount ?? 0;
+    const metrics = resolvePaginationMetrics(ctx, options);
     const rawHeight = ctx.view.scrollHeight || 0;
-    const contentHeight = Math.max(0, rawHeight - gapCount * opts.pageGapPx);
-    const count = Math.max(1, Math.ceil(contentHeight / opts.pageHeightPx));
+    const count = Math.max(1, Math.ceil((rawHeight + metrics.pageGap) / metrics.band));
 
-    const viewportRect = ctx.viewport.getBoundingClientRect();
-    const viewRect = ctx.view.getBoundingClientRect();
-    const contentRect = ctx.content.getBoundingClientRect();
-    const baseTop = viewRect.top - contentRect.top;
+    const baseTop = 0;
     const leftOffset = 0;
-    const width = ctx.content.clientWidth || contentRect.width;
-    const blockHeight = opts.pageHeightPx + opts.pageGapPx;
-
+    const width = metrics.pageWidth;
     const breaks = [];
     for (let pageIndex = 1; pageIndex <= count; pageIndex += 1) {
-        const topPx = baseTop + (pageIndex - 1) * blockHeight;
+        const topPx = baseTop + (pageIndex - 1) * metrics.band;
         breaks.push({ pageIndex, topPx });
     }
 
-    return { count, breaks, leftOffset, width, options: opts, ctx, baseTop };
+    return { count, breaks, leftOffset, width, options: metrics.options, ctx, baseTop, metrics };
 }
 
 function renderPageBreakOverlay(editor, options) {
@@ -509,19 +704,19 @@ function renderPageBreakOverlay(editor, options) {
     }
 
     overlay.innerHTML = "";
-    const overlayHeight = ctx.view.scrollHeight || 0;
-    const overlayWidth = ctx.content.clientWidth || ctx.content.getBoundingClientRect().width;
+    const overlayHeight = info.metrics
+        ? Math.max(ctx.view.scrollHeight || 0, info.count * info.metrics.band - info.metrics.pageGap)
+        : (ctx.view.scrollHeight || 0);
+    const overlayWidth = info.metrics?.pageWidth
+        ?? (ctx.content.clientWidth || ctx.content.getBoundingClientRect().width);
     overlay.style.height = `${overlayHeight}px`;
     overlay.style.width = `${overlayWidth}px`;
     if (ctx.overlayHost) {
         ctx.overlayHost.style.setProperty("--lane-height", `${overlayHeight}px`);
-        if (Number.isFinite(info.baseTop)) {
-            ctx.overlayHost.style.setProperty("--lane-offset-y", `${info.baseTop}px`);
-        }
     }
 
     const mode = info.options.layoutMode || "simple";
-    const sheetHeight = Math.max(0, info.options.pageHeightPx);
+    const sheetHeight = Math.max(0, info.metrics?.pageHeight ?? info.options.pageHeightPx);
 
     if (mode === "print") {
         info.breaks.forEach(entry => {
@@ -556,83 +751,401 @@ function buildPageGapDecorations(editor, options) {
         return { decorations: DecorationSet.empty, gapCount: 0, pageCount: 1 };
     }
 
-    const opts = resolvePageBreakOptions(options);
-    if (opts.layoutMode !== "print" || opts.pageGapPx <= 0) {
+    const metrics = resolvePaginationMetrics(ctx, options);
+    if (metrics.options.layoutMode !== "print" || metrics.pageGap <= 0) {
         return { decorations: DecorationSet.empty, gapCount: 0, pageCount: 1 };
     }
 
-    const gapPx = Math.max(0, opts.pageGapPx);
-    const previousGapCount = editor?.__pageGapState?.gapCount ?? 0;
-    const rawHeight = ctx.view.scrollHeight || 0;
-    const contentHeight = Math.max(0, rawHeight - previousGapCount * gapPx);
-    const pageCount = Math.max(1, Math.ceil(contentHeight / opts.pageHeightPx));
-    const blockHeight = opts.pageHeightPx + gapPx;
-
-    const viewportRect = ctx.viewport.getBoundingClientRect();
-    const viewRect = ctx.view.getBoundingClientRect();
-    const contentRect = ctx.content.getBoundingClientRect();
-    const baseTop = viewRect.top - contentRect.top;
-
     const decorations = [];
+    const breaks = [];
+    const tallBreaks = [];
+    const prevBreakMap = editor?.__pageGapState?.breakMap;
+    const nextBreakMap = new Map();
     let lastPos = -1;
-    const probeX = Math.round(contentRect.left + Math.max(8, Math.min(24, contentRect.width / 2)));
-    for (let pageIndex = 2; pageIndex <= pageCount; pageIndex += 1) {
-        const topPx = baseTop + (pageIndex - 1) * blockHeight;
-        const probeY = Math.round(contentRect.top + topPx + 2);
-        const posAt = view.posAtCoords({ left: probeX, top: probeY });
-        if (!posAt || typeof posAt.pos !== "number") {
-            continue;
-        }
+    let warned = false;
+    const scrollContainer = findScrollContainer(ctx.viewport);
+    const scrollTop = scrollContainer === window ? window.scrollY : scrollContainer.scrollTop;
+    const band = metrics.band;
+    const printableHeight = metrics.contentHeight;
+    const contentStartOffset = metrics.padY;
 
-        let insertPos = posAt.pos;
+    if (window.__writer_pagination_debug?.enabled && !editor.__pageGapState?.loggedCoords) {
+        const samplePos = Math.min(2, view.state.doc.content.size);
         try {
-            const resolved = view.state.doc.resolve(insertPos);
-            if (resolved.depth > 0) {
-                insertPos = resolved.before(resolved.depth);
+            const sampleCoords = view.coordsAtPos(samplePos);
+            const laneRect = ctx.lane?.getBoundingClientRect?.();
+            console.debug("[pagination] coords sample", {
+                pos: samplePos,
+                coordsTop: sampleCoords?.top,
+                laneTop: laneRect?.top ?? 0
+            });
+        } catch {
+        }
+
+        if (!editor.__pageGapState) {
+            editor.__pageGapState = { gapCount: 0, pageCount: 0, pass: 0 };
+        }
+        editor.__pageGapState.loggedCoords = true;
+    }
+
+    // Quantized measurements + asymmetric hysteresis to avoid subpixel jitter and oscillation.
+    const INSERT_EPS_PX = 6;
+    const REMOVE_EPS_PX = 18;
+    const MIN_GAP_PX = 2;
+
+    const root = view.dom;
+    if (root && !root.style.position) {
+        root.style.position = "relative";
+    }
+
+    const blockElements = root
+        ? Array.from(root.children).filter(element => {
+            if (!(element instanceof HTMLElement)) {
+                return false;
             }
+            if (element.classList.contains("wa-page-gap") || element.classList.contains("wa-pagination-debug")) {
+                return false;
+            }
+            if (element.getAttribute("aria-hidden") === "true") {
+                return false;
+            }
+            return true;
+        })
+        : [];
+
+    const getTextblockRangeAtPos = (pos) => {
+        const doc = view.state.doc;
+        if (pos <= 0 || pos > doc.content.size) {
+            return null;
+        }
+
+        const resolved = doc.resolve(pos);
+        for (let depth = resolved.depth; depth >= 0; depth -= 1) {
+            const node = resolved.node(depth);
+            if (node?.isTextblock) {
+                return {
+                    from: resolved.start(depth),
+                    to: resolved.end(depth)
+                };
+            }
+        }
+
+        return null;
+    };
+
+    const getLaneYAtPos = (pos) => {
+        if (pos <= 0 || pos > view.state.doc.content.size) {
+            return null;
+        }
+
+        try {
+            const coords = view.coordsAtPos(pos);
+            return toLaneLocalY(ctx, coords);
         } catch (error) {
-            continue;
+            return null;
+        }
+    };
+
+    const findSplitPos = (from, to, thresholdY) => {
+        const startY = getLaneYAtPos(from);
+        const endY = getLaneYAtPos(to);
+        if (startY === null || endY === null) {
+            return null;
         }
 
-        if (insertPos <= 0 || insertPos === lastPos) {
-            continue;
+        if (endY < thresholdY - 0.5) {
+            return null;
         }
 
-        const gap = document.createElement("div");
+        if (startY >= thresholdY) {
+            return from;
+        }
+
+        let low = from;
+        let high = to;
+        while (low < high) {
+            const mid = Math.floor((low + high) / 2);
+            const midY = getLaneYAtPos(mid);
+            if (midY === null) {
+                return null;
+            }
+
+            if (midY >= thresholdY) {
+                high = mid;
+            } else {
+                low = mid + 1;
+            }
+        }
+
+        const finalY = getLaneYAtPos(low);
+        if (finalY === null || finalY < thresholdY) {
+            return null;
+        }
+
+        return low;
+    };
+
+    blockElements.forEach(element => {
+        const top = Math.round(element.offsetTop);
+        const bottom = Math.round(top + element.offsetHeight);
+        const blockHeight = Math.max(0, bottom - top);
+        let pos = view.posAtDOM(element, 0);
+        pos = Math.max(1, Math.min(pos, view.state.doc.content.size));
+        if (pos <= 0 || pos === lastPos) {
+            return;
+        }
+
+        if (blockHeight <= printableHeight) {
+            const yInBand = Math.round(((top % band) + band) % band);
+            const yInContent = Math.round(yInBand - contentStartOffset);
+            const pageIndex = Math.floor(Math.max(0, top) / band);
+            const pageStart = pageIndex * band;
+            const contentStart = pageStart + contentStartOffset;
+            const contentEnd = Math.round(contentStart + printableHeight);
+            const nextPageContentStart = Math.round(pageStart + band + contentStartOffset);
+
+            // Sticky gaps: keep prior breaks unless they clearly fit by REMOVE_EPS_PX.
+            const key = `tb:${pos}`;
+            const prevGap = prevBreakMap?.get(key);
+            const overflow = bottom - contentEnd;
+            const shouldInsert = overflow > INSERT_EPS_PX;
+            const shouldRemove = overflow < -REMOVE_EPS_PX;
+            if (!prevGap && !shouldInsert) {
+                return;
+            }
+            if (prevGap && shouldRemove) {
+                return;
+            }
+
+            let spacerPx = Math.round(Math.max(0, nextPageContentStart - top));
+            spacerPx = Math.max(0, Math.min(spacerPx, band));
+            if (prevGap) {
+                const prevHeight = prevGap.height ?? prevGap.spacerPx ?? 0;
+                if (Math.abs(spacerPx - prevHeight) <= 2 || spacerPx < MIN_GAP_PX) {
+                    spacerPx = prevHeight;
+                }
+            }
+
+            if (spacerPx < MIN_GAP_PX) {
+                return;
+            }
+
+            const gap = document.createElement("span");
+            gap.className = "wa-page-gap";
+            gap.setAttribute("aria-hidden", "true");
+            gap.setAttribute("contenteditable", "false");
+            gap.style.display = "block";
+            gap.style.height = `${spacerPx}px`;
+            gap.style.width = "100%";
+            gap.style.pointerEvents = "none";
+            gap.style.userSelect = "none";
+
+            const deco = Decoration.widget(pos, gap, {
+                key: `wa-gap:${pos}`,
+                side: 0,
+                stopEvent: () => false,
+                ignoreSelection: true
+            });
+            decorations.push(deco);
+            breaks.push({
+                pos,
+                blockTop: top,
+                blockBottom: bottom,
+                pageIndex,
+                spacerPx,
+                yInBand,
+                yInContent,
+                blockHeight
+            });
+            nextBreakMap.set(key, { height: spacerPx, pos, pageIndex });
+            lastPos = pos;
+            return;
+        }
+
+        const range = getTextblockRangeAtPos(pos);
+        if (!range) {
+            return;
+        }
+
+        if (!warned) {
+            console.warn("[pagination] tall block; using coordsAtPos fallback for splits.");
+            warned = true;
+        }
+
+        const scanFrom = Math.min(range.from, view.state.doc.content.size);
+        const scanTo = Math.min(range.to, view.state.doc.content.size);
+        if (scanTo <= scanFrom) {
+            return;
+        }
+
+        const scanTop = getLaneYAtPos(scanFrom);
+        if (scanTop === null) {
+            return;
+        }
+
+        const pageIndex = Math.floor(Math.max(0, scanTop) / band);
+        const pageStart = pageIndex * band;
+        const contentStart = pageStart + contentStartOffset;
+        const contentEnd = contentStart + printableHeight;
+        const splitPos = findSplitPos(scanFrom, scanTo, contentEnd);
+        if (splitPos === null || splitPos >= scanTo || splitPos === lastPos) {
+            return;
+        }
+
+        const yAtSplit = getLaneYAtPos(splitPos);
+        if (yAtSplit === null) {
+            return;
+        }
+
+        const yInBand = Math.round(((yAtSplit % band) + band) % band);
+        let spacerPx = (printableHeight - (yInBand - contentStartOffset)) + metrics.pageGap;
+        spacerPx = Math.round(Math.max(0, Math.min(spacerPx, band)));
+        if (spacerPx < MIN_GAP_PX) {
+            return;
+        }
+
+        const gap = document.createElement("span");
         gap.className = "wa-page-gap";
         gap.setAttribute("aria-hidden", "true");
         gap.setAttribute("contenteditable", "false");
-        gap.style.height = `${gapPx}px`;
-        const deco = Decoration.widget(insertPos, gap, {
-            key: `wa-gap-${pageIndex}`,
-            side: -1,
-            stopEvent: () => true,
+        gap.style.display = "block";
+        gap.style.height = `${spacerPx}px`;
+        gap.style.width = "100%";
+        gap.style.pointerEvents = "none";
+        gap.style.userSelect = "none";
+
+        const deco = Decoration.widget(splitPos, gap, {
+            key: `wa-gap:${splitPos}`,
+            side: 0,
+            stopEvent: () => false,
             ignoreSelection: true
         });
         decorations.push(deco);
-        lastPos = insertPos;
+        tallBreaks.push({
+            pos: splitPos,
+            yAtSplit,
+            pageIndex,
+            spacerPx
+        });
+        lastPos = splitPos;
+    });
+
+    const rawHeight = ctx.view.scrollHeight || 0;
+    const pageCount = Math.max(1, Math.ceil((rawHeight + metrics.pageGap) / band));
+    const signature = [...breaks, ...tallBreaks]
+        .map(entry => `${entry.pageIndex}:${entry.pos}:${Math.round(entry.spacerPx)}`)
+        .join("|");
+    if (!window.__writer_pagination_debug) {
+        window.__writer_pagination_debug = { enabled: false };
     }
+    window.__writer_pagination_debug.last = {
+        metrics,
+        breaks,
+        tallBreaks,
+        pageCount,
+        scrollTop,
+        laneTop: ctx.lane?.getBoundingClientRect?.().top ?? 0
+    };
 
     return {
         decorations: DecorationSet.create(view.state.doc, decorations),
-        gapCount: Math.max(0, pageCount - 1),
-        pageCount
+        gapCount: Math.max(0, breaks.length + tallBreaks.length),
+        pageCount,
+        breaks,
+        tallBreaks,
+        metrics,
+        ctx,
+        signature,
+        scrollTop,
+        breakMap: nextBreakMap,
+        insertEpsPx: INSERT_EPS_PX,
+        removeEpsPx: REMOVE_EPS_PX,
+        minGapPx: MIN_GAP_PX
     };
 }
 
 function updatePageGapDecorations(editor) {
     if (!editor?.view) {
-        return;
+        return null;
     }
 
     const info = buildPageGapDecorations(editor, editor.__pageBreakState?.options);
+    if (!editor.__pageGapState) {
+        editor.__pageGapState = { gapCount: 0, pageCount: 0, pass: 0 };
+    }
+
+    const now = Date.now();
+    if (editor.__pageGapState.freezeUntil && now < editor.__pageGapState.freezeUntil) {
+        return editor.__pageGapState.lastGapInfo ?? info;
+    }
+
+    const MAX_PASSES = 8;
+    const signatureChanged = !!info?.signature && editor.__pageGapState.lastSignature !== info.signature;
+    if (signatureChanged) {
+        const sigHistory = [...(editor.__pageGapState.sigHistory ?? []), info.signature].slice(-8);
+        const lastFour = sigHistory.slice(-4);
+        editor.__pageGapState.sigHistory = sigHistory;
+        if (lastFour.length === 4 && lastFour[0] === lastFour[2] && lastFour[1] === lastFour[3]) {
+            if (!editor.__pageGapState.oscillationWarned) {
+                editor.__pageGapState.oscillationWarned = true;
+                console.warn("[pagination] detected oscillation; freezing signature");
+            }
+            editor.__pageGapState.freezeUntil = now + 300;
+            return editor.__pageGapState.lastGapInfo ?? info;
+        }
+
+        editor.__pageGapState.lastSignature = info.signature;
+        editor.__pageGapState.pass = (editor.__pageGapState.pass ?? 0) + 1;
+        console.info(`[pagination] pass ${editor.__pageGapState.pass} signature=${info.signature} gaps=${info.gapCount}`);
+        if (editor.__pageGapState.pass < MAX_PASSES) {
+            if (!editor.__pageGapState.pendingReflow) {
+                editor.__pageGapState.pendingReflow = true;
+                requestAnimationFrame(() => {
+                    editor.__pageGapState.pendingReflow = false;
+                    schedulePageBreakUpdate(editor);
+                });
+            }
+        } else if (!editor.__pageGapState.warned) {
+            editor.__pageGapState.warned = true;
+            const lastFour = (editor.__pageGapState.sigHistory ?? []).slice(-4);
+            const sampleBreaks = (info.breaks ?? []).slice(0, 3).map(entry => ({
+                pos: entry.pos,
+                spacerPx: Math.round(entry.spacerPx),
+                blockTop: Math.round(entry.blockTop)
+            }));
+            console.warn(`[pagination] spacer layout did not converge after ${MAX_PASSES} passes.`, {
+                lastSignatures: lastFour,
+                gapCount: info.gapCount,
+                sampleBreaks
+            });
+        }
+    } else {
+        editor.__pageGapState.pass = 0;
+    }
+
     editor.__pageGapState = {
         gapCount: info.gapCount,
-        pageCount: info.pageCount
+        pageCount: info.pageCount,
+        lastSignature: editor.__pageGapState.lastSignature,
+        pass: editor.__pageGapState.pass,
+        pendingReflow: editor.__pageGapState.pendingReflow,
+        warned: editor.__pageGapState.warned,
+        breakMap: info.breakMap ?? editor.__pageGapState.breakMap,
+        sigHistory: editor.__pageGapState.sigHistory,
+        freezeUntil: editor.__pageGapState.freezeUntil,
+        oscillationWarned: editor.__pageGapState.oscillationWarned,
+        lastGapInfo: info
     };
 
     const tr = editor.view.state.tr.setMeta(pageGapDecorationsKey, info.decorations);
-    editor.view.dispatch(tr);
+    tr.setMeta(WA_LAYOUT_META, true);
+    editor.__paginationApplying = true;
+    try {
+        editor.view.dispatch(tr);
+    } finally {
+        editor.__paginationApplying = false;
+    }
+    return info;
 }
 
 function getCurrentPageIndex(info) {
@@ -653,14 +1166,24 @@ function getCurrentPageIndex(info) {
     return current;
 }
 
-function notifyPageBreakStatus(editor) {
+function notifyPageBreakStatus(editor, reason) {
     if (!editor || !editor.__pageBreakState) {
         return;
     }
 
     const info = computePageBreaks(editor, editor.__pageBreakState.options);
     const count = renderPageBreakOverlay(editor, editor.__pageBreakState.options);
-    updatePageGapDecorations(editor);
+    const gapInfo = reason === "scroll" ? null : updatePageGapDecorations(editor);
+    if (info?.ctx) {
+        const fallbackGapInfo = gapInfo ?? editor.__pageGapState?.lastGapInfo;
+        const debugMeta = {
+            insertEpsPx: gapInfo?.insertEpsPx ?? fallbackGapInfo?.insertEpsPx,
+            removeEpsPx: gapInfo?.removeEpsPx ?? fallbackGapInfo?.removeEpsPx,
+            reason: reason ?? "update",
+            lastLayoutTx: !!editor.__waLastWasLayoutTx
+        };
+        renderPaginationDebug(info.ctx, info, fallbackGapInfo, debugMeta);
+    }
     const current = getCurrentPageIndex(info);
 
     if (editor.__pageBreakState.options?.debug && info?.ctx) {
@@ -682,8 +1205,14 @@ function notifyPageBreakStatus(editor) {
     }
 }
 
-function schedulePageBreakUpdate(editor) {
+function schedulePageBreakUpdate(editor, reason) {
     if (!editor) {
+        return;
+    }
+    if (editor.__paginationApplying) {
+        return;
+    }
+    if (editor.__waLastWasLayoutTx) {
         return;
     }
 
@@ -702,7 +1231,7 @@ function schedulePageBreakUpdate(editor) {
 
     state.timer = setTimeout(() => {
         state.timer = null;
-        notifyPageBreakStatus(editor);
+        notifyPageBreakStatus(editor, reason);
     }, 120);
 }
 
@@ -869,10 +1398,15 @@ function buildAiDecorations(editor, ranges) {
     return DecorationSet.create(editor.state.doc, decorations);
 }
 
+function hasExtension(editor, name) {
+    const extensions = editor?.extensionManager?.extensions ?? [];
+    return extensions.some(extension => extension?.name === name);
+}
+
 window.tiptapEditor = {
     create: function (elementId, initialContent, dotNetRef) {
         const interopState = createInteropState(dotNetRef);
-        console.info("[tiptap] page gaps disabled:", window.__writer_disable_page_gaps);
+        console.info("[tiptap] mask pagination disabled:", window.__writer_disable_mask_pagination);
         const ShortcutExtension = Extension.create({
             name: "appShortcuts",
             addKeyboardShortcuts() {
@@ -956,6 +1490,7 @@ window.tiptapEditor = {
         let editor;
         try {
             console.info("[tiptap] create editor", { elementId });
+            console.info("[pagination] real pagination enabled");
             const extensions = [
                 StarterKit,
                 TextStyleWithFontSize,
@@ -963,33 +1498,42 @@ window.tiptapEditor = {
                 Link.configure({ openOnClick: false }),
                 IndentExtension,
                 AiDecorationsExtension,
+                PageGapDecorationsExtension,
                 ShortcutExtension
             ];
-            if (!window.__writer_disable_page_gaps) {
-                extensions.splice(6, 0, PageGapDecorationsExtension);
-            }
-            editor = new Editor({
-                element: document.getElementById(elementId),
-                extensions,
-                content: initialContent,
-                editorProps: {
-                    attributes: {
-                        class: "ProseMirror tiptap-content",
-                        spellcheck: "true",
-                        style: "white-space: pre-wrap;"
-                    }
+        editor = new Editor({
+            element: document.getElementById(elementId),
+            extensions,
+            content: initialContent,
+            editorProps: {
+                attributes: {
+                    class: "ProseMirror tiptap-content",
+                    spellcheck: "true",
+                    style: "white-space: pre-wrap;"
+                }
+            },
+            onTransaction({ editor, transaction }) {
+                if (transaction?.getMeta?.(WA_LAYOUT_META)) {
+                    editor.__waLastWasLayoutTx = true;
+                    requestAnimationFrame(() => {
+                        editor.__waLastWasLayoutTx = false;
+                    });
+                }
             },
             onUpdate({ editor }) {
-                safeInvoke(dotNetRef, interopState, "OnEditorContentChanged", editor.getHTML());
-                if (!window.__writer_disable_page_gaps) {
-                    schedulePageBreakUpdate(editor);
+                if (editor.__waLastWasLayoutTx) {
+                    return;
                 }
+                safeInvoke(dotNetRef, interopState, "OnEditorContentChanged", editor.getHTML());
+                schedulePageBreakUpdate(editor);
             }
         });
         } catch (error) {
             console.error("[tiptap] editor creation failed", error);
             throw error;
         }
+
+        console.log("[pagination] extensions:", editor.extensionManager.extensions.map(extension => extension.name));
 
         try {
             const emptySet = DecorationSet.empty;
@@ -1232,6 +1776,12 @@ window.tiptapEditor = {
         editor.__pageBreakState.enabled = !!enabled;
         editor.__pageBreakState.options = resolvePageBreakOptions(options);
 
+        const shouldUseGaps = editor.__pageBreakState.options.layoutMode === "print"
+            && editor.__pageBreakState.options.pageGapPx > 0;
+        if (shouldUseGaps && !hasExtension(editor, "pageGapDecorations")) {
+            console.error("[pagination] PageGapDecorationsExtension missing — gaps will not render");
+        }
+
         if (!enabled) {
             const ctx = getPageBreakContext(editor);
             const overlay = ctx?.overlayHost?.querySelector?.(".pagebreak-overlay");
@@ -1264,10 +1814,16 @@ window.tiptapEditor = {
         editor.__pageBreakState.options = resolvePageBreakOptions(options);
         editor.__pageBreakState.enabled = true;
 
+        const shouldUseGaps = editor.__pageBreakState.options.layoutMode === "print"
+            && editor.__pageBreakState.options.pageGapPx > 0;
+        if (shouldUseGaps && !hasExtension(editor, "pageGapDecorations")) {
+            console.error("[pagination] PageGapDecorationsExtension missing — gaps will not render");
+        }
+
         if (!editor.__pageBreakState.scrollHandler) {
             const ctx = getPageBreakContext(editor);
             const scrollContainer = ctx ? findScrollContainer(ctx.viewport) : window;
-            const handler = () => schedulePageBreakUpdate(editor);
+            const handler = () => schedulePageBreakUpdate(editor, "scroll");
             const rafHandler = () => {
                 if (editor.__pageBreakState.rafPending) {
                     return;
