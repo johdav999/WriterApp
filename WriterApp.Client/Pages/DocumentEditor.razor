@@ -1385,8 +1385,46 @@ else
             </div>
             <div class="modal-body">
             <div class="export-panel-row">
+                <label class="export-panel-label" for="export-preset">Preset</label>
+                <select id="export-preset" class="export-panel-select" @bind="SelectedPresetIdValue">
+                    <option value="">Custom</option>
+                    @foreach (ExportPresetDto preset in _exportPresets)
+                    {
+                        <option value="@preset.Id">@($"{preset.Name}{(preset.IsGlobalDefault ? " (Default)" : string.Empty)}")</option>
+                    }
+                </select>
+            </div>
+            <div class="export-panel-row export-panel-actions">
+                <div class="export-panel-action-group">
+                    <button type="button" class="link-button" @onclick="OpenPresetSave">Save as preset...</button>
+                    <button type="button" class="link-button" @onclick="UpdateSelectedPresetAsync" disabled="@(_selectedExportPresetId is null)">Update preset</button>
+                </div>
+                <button type="button" class="link-button" @onclick="SetProjectDefaultPresetAsync" disabled="@(_selectedExportPresetId is null)">Set as project default</button>
+            </div>
+            @if (_isPresetSaveOpen)
+            {
+                <div class="export-panel-row">
+                    <label class="export-panel-label" for="preset-name">Preset name</label>
+                    <input id="preset-name" class="export-panel-input" @bind="_presetNameDraft" />
+                </div>
+                <div class="export-panel-row">
+                    <label class="export-panel-label" for="preset-global-default">Default</label>
+                    <div class="export-panel-checkbox">
+                        <input id="preset-global-default" type="checkbox" @bind="_presetMakeGlobalDefault" />
+                        <span>Make this my global default</span>
+                    </div>
+                </div>
+                <div class="export-panel-row export-panel-actions">
+                    <span></span>
+                    <div class="export-panel-action-group">
+                        <button type="button" @onclick="SavePresetAsync">Save preset</button>
+                        <button type="button" @onclick="ClosePresetSave">Cancel</button>
+                    </div>
+                </div>
+            }
+            <div class="export-panel-row">
                 <label class="export-panel-label" for="export-format">Format</label>
-                <select id="export-format" class="export-panel-select" @bind="_exportFormatSelection">
+                <select id="export-format" class="export-panel-select" @bind="_exportFormatSelection" @bind:after="MarkPresetAsCustom">
                     <option value="html">HTML</option>
                     <option value="markdown">Markdown</option>
                     <option value="pdf">PDF (print)</option>
@@ -1403,6 +1441,7 @@ else
                     <select id="export-template"
                             class="export-panel-select"
                             @bind="SelectedTemplateIdValue"
+                            @bind:after="MarkPresetAsCustom"
                             disabled="@string.Equals(_exportFormatSelection, "markdown", StringComparison.OrdinalIgnoreCase)">
                         @foreach (ExportTemplateDto template in _exportTemplates)
                         {
@@ -1413,7 +1452,7 @@ else
             </div>
             <div class="export-panel-row">
                 <label class="export-panel-label" for="preview-scope">Preview scope</label>
-                <select id="preview-scope" class="export-panel-select" @bind="_previewScope">
+                <select id="preview-scope" class="export-panel-select" @bind="_previewScope" @bind:after="MarkPresetAsCustom">
                     <option value="document">Document</option>
                     <option value="section">Current section</option>
                 </select>
@@ -1429,6 +1468,14 @@ else
             @if (!string.IsNullOrWhiteSpace(_templateActionError))
             {
                 <div class="modal-error">@_templateActionError</div>
+            }
+            @if (!string.IsNullOrWhiteSpace(_presetLoadError))
+            {
+                <div class="modal-error">@_presetLoadError</div>
+            }
+            @if (!string.IsNullOrWhiteSpace(_presetActionError))
+            {
+                <div class="modal-error">@_presetActionError</div>
             }
             </div>
             <div class="modal-footer">

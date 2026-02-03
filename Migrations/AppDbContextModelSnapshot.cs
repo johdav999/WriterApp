@@ -715,6 +715,70 @@ namespace BlazorApp.Migrations
                     b.ToTable("ExportTemplates");
                 });
 
+            modelBuilder.Entity("WriterApp.Data.Exporting.ExportPreset", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsGlobalDefault")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OwnerUserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SettingsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OwnerUserId");
+
+                    b.HasIndex("OwnerUserId", "IsGlobalDefault");
+
+                    b.HasIndex("UpdatedAt");
+
+                    b.ToTable("ExportPresets");
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Exporting.ProjectExportSettings", b =>
+                {
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("DefaultPresetId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OverridesJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("DocumentId", "UserId");
+
+                    b.HasIndex("DefaultPresetId");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("ProjectExportSettings");
+                });
+
             modelBuilder.Entity("WriterApp.Data.Subscriptions.Plan", b =>
                 {
                     b.Property<Guid>("PlanId")
@@ -1082,6 +1146,20 @@ namespace BlazorApp.Migrations
                         .IsRequired();
 
                     b.Navigation("Document");
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Exporting.ProjectExportSettings", b =>
+                {
+                    b.HasOne("WriterApp.Data.Documents.DocumentRecord", null)
+                        .WithMany()
+                        .HasForeignKey("DocumentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("WriterApp.Data.Exporting.ExportPreset", null)
+                        .WithMany()
+                        .HasForeignKey("DefaultPresetId")
+                        .OnDelete(DeleteBehavior.SetNull);
                 });
 
             modelBuilder.Entity("WriterApp.Data.Documents.PageAnnotationRecord", b =>

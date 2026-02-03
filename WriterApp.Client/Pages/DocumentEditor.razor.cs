@@ -119,7 +119,9 @@ namespace WriterApp.Client.Pages
         private string? _templateLoadError;
         private string? _templateActionError;
         private readonly List<ExportTemplateDto> _exportTemplates = new();
+        private readonly List<ExportPresetDto> _exportPresets = new();
         private Guid? _selectedTemplateId;
+        private Guid? _selectedExportPresetId;
         private string _exportFormatSelection = "html";
         private string _createPresetKey = "manuscript";
         private Guid? _editingTemplateId;
@@ -131,6 +133,13 @@ namespace WriterApp.Client.Pages
         private string _previewHtml = string.Empty;
         private double _previewZoom = 1.0;
         private string _previewScope = "document";
+        private bool _isPresetsLoading;
+        private bool _isPresetSaveOpen;
+        private bool _presetMakeGlobalDefault;
+        private string _presetNameDraft = string.Empty;
+        private string? _presetLoadError;
+        private string? _presetActionError;
+        private ProjectExportSettingsDto? _projectExportSettings;
         private SectionEditor.EditorSelectionRange? _currentSelectionRange;
         private readonly List<AiActionOption> _aiActions = new();
         private readonly List<AiActionOption> _aiActionPresets = new()
@@ -2854,13 +2863,19 @@ namespace WriterApp.Client.Pages
             _isDocumentMenuOpen = false;
             _isExportDialogOpen = true;
             _templateActionError = null;
+            _presetActionError = null;
             await EnsureTemplatesLoadedAsync();
+            await LoadExportPresetsAsync();
+            await LoadProjectExportSettingsAsync();
+            ApplyDefaultExportPreset();
         }
 
         private void CloseExportDialog()
         {
             _isExportDialogOpen = false;
             _templateActionError = null;
+            _presetActionError = null;
+            _isPresetSaveOpen = false;
         }
 
         private async Task OpenTemplateManagerAsync()
@@ -2944,10 +2959,275 @@ namespace WriterApp.Client.Pages
             }
         }
 
+        private async Task LoadExportPresetsAsync()
+        {
+            _isPresetsLoading = true;
+            _presetLoadError = null;
+            try
+            {
+                List<ExportPresetDto>? presets = await Http.GetFromJsonAsync<List<ExportPresetDto>>(
+                    "api/export/presets");
+                _exportPresets.Clear();
+                if (presets is not null)
+                {
+                    _exportPresets.AddRange(presets.OrderBy(preset => preset.Name));
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to load export presets.");
+                _presetLoadError = "Unable to load export presets.";
+            }
+            finally
+            {
+                _isPresetsLoading = false;
+            }
+        }
+
+        private async Task LoadProjectExportSettingsAsync()
+        {
+            try
+            {
+                _projectExportSettings = await Http.GetFromJsonAsync<ProjectExportSettingsDto>(
+                    $"api/documents/{DocumentId}/export-settings");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to load project export settings.");
+                _projectExportSettings = null;
+            }
+        }
+
+        private void ApplyDefaultExportPreset()
+        {
+            Guid? presetId = _projectExportSettings?.DefaultPresetId;
+            if (presetId is null)
+            {
+                presetId = _exportPresets.FirstOrDefault(preset => preset.IsGlobalDefault)?.Id;
+            }
+
+            if (presetId.HasValue)
+            {
+                ExportPresetDto? preset = _exportPresets.FirstOrDefault(item => item.Id == presetId.Value);
+                if (preset is not null)
+                {
+                    _selectedExportPresetId = preset.Id;
+                    ApplyExportPreset(preset);
+                }
+            }
+        }
+
+        private void ApplyExportPreset(ExportPresetDto preset)
+        {
+            ExportPresetSettingsDto settings = preset.Settings;
+            _exportFormatSelection = string.IsNullOrWhiteSpace(settings.Format) ? "html" : settings.Format;
+            _previewScope = string.IsNullOrWhiteSpace(settings.Scope) ? "document" : settings.Scope;
+
+            Guid? templateId = settings.TemplateId;
+            if (templateId.HasValue && _exportTemplates.All(template => template.Id != templateId.Value))
+            {
+                templateId = null;
+            }
+
+            if (templateId.HasValue)
+            {
+                _selectedTemplateId = templateId;
+            }
+            else if (_selectedTemplateId is null && _exportTemplates.Count > 0)
+            {
+                _selectedTemplateId = _exportTemplates[0].Id;
+            }
+        }
+
+        private ExportPresetSettingsDto BuildPresetSettingsFromForm()
+        {
+            ExportTemplateDto? template = GetSelectedTemplate();
+            return new ExportPresetSettingsDto(
+                _exportFormatSelection,
+                _selectedTemplateId,
+                _previewScope,
+                template?.TocEnabled ?? false,
+                template?.TocDepth ?? 0,
+                false,
+                template?.HeaderEnabled ?? false,
+                template?.HeaderLeft,
+                template?.HeaderCenter,
+                template?.HeaderRight,
+                template?.FooterEnabled ?? false,
+                template?.FooterLeft,
+                template?.FooterCenter,
+                template?.FooterRight,
+                null,
+                null,
+                null);
+        }
+
+        private void MarkPresetAsCustom()
+        {
+            _selectedExportPresetId = null;
+        }
+
+        private void OpenPresetSave()
+        {
+            _presetActionError = null;
+            _isPresetSaveOpen = true;
+            _presetNameDraft = string.Empty;
+            _presetMakeGlobalDefault = false;
+        }
+
+        private void ClosePresetSave()
+        {
+            _isPresetSaveOpen = false;
+        }
+
+        private async Task SavePresetAsync()
+        {
+            _presetActionError = null;
+            string name = _presetNameDraft.Trim();
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                _presetActionError = "Preset name is required.";
+                return;
+            }
+
+            ExportPresetCreateRequest request = new(
+                name,
+                _presetMakeGlobalDefault,
+                BuildPresetSettingsFromForm());
+
+            try
+            {
+                using HttpResponseMessage response = await Http.PostAsJsonAsync("api/export/presets", request);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _presetActionError = "Failed to save preset.";
+                    return;
+                }
+
+                ExportPresetDto? created = await response.Content.ReadFromJsonAsync<ExportPresetDto>();
+                if (created is not null)
+                {
+                    _exportPresets.Add(created);
+                    _selectedExportPresetId = created.Id;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to save export preset.");
+                _presetActionError = "Failed to save preset.";
+            }
+            finally
+            {
+                _isPresetSaveOpen = false;
+            }
+        }
+
+        private async Task UpdateSelectedPresetAsync()
+        {
+            _presetActionError = null;
+            if (_selectedExportPresetId is null)
+            {
+                return;
+            }
+
+            ExportPresetDto? existing = _exportPresets.FirstOrDefault(item => item.Id == _selectedExportPresetId);
+            if (existing is null)
+            {
+                _presetActionError = "Preset not found.";
+                return;
+            }
+
+            ExportPresetUpdateRequest request = new(
+                existing.Name,
+                existing.IsGlobalDefault,
+                BuildPresetSettingsFromForm());
+
+            try
+            {
+                using HttpResponseMessage response = await Http.PutAsJsonAsync(
+                    $"api/export/presets/{existing.Id}",
+                    request);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _presetActionError = "Failed to update preset.";
+                    return;
+                }
+
+                ExportPresetDto? updated = await response.Content.ReadFromJsonAsync<ExportPresetDto>();
+                if (updated is not null)
+                {
+                    int index = _exportPresets.FindIndex(item => item.Id == updated.Id);
+                    if (index >= 0)
+                    {
+                        _exportPresets[index] = updated;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to update export preset.");
+                _presetActionError = "Failed to update preset.";
+            }
+        }
+
+        private async Task SetProjectDefaultPresetAsync()
+        {
+            _presetActionError = null;
+            if (_selectedExportPresetId is null)
+            {
+                return;
+            }
+
+            ProjectExportSettingsUpdateRequest request = new(
+                _selectedExportPresetId,
+                null);
+
+            try
+            {
+                using HttpResponseMessage response = await Http.PutAsJsonAsync(
+                    $"api/documents/{DocumentId}/export-settings",
+                    request);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _presetActionError = "Failed to set project default.";
+                    return;
+                }
+
+                ProjectExportSettingsDto? updated = await response.Content.ReadFromJsonAsync<ProjectExportSettingsDto>();
+                if (updated is not null)
+                {
+                    _projectExportSettings = updated;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to set project export default.");
+                _presetActionError = "Failed to set project default.";
+            }
+        }
+
         private string SelectedTemplateIdValue
         {
             get => _selectedTemplateId?.ToString() ?? string.Empty;
             set => _selectedTemplateId = Guid.TryParse(value, out Guid parsed) ? parsed : null;
+        }
+
+        private string SelectedPresetIdValue
+        {
+            get => _selectedExportPresetId?.ToString() ?? string.Empty;
+            set
+            {
+                Guid? presetId = Guid.TryParse(value, out Guid parsed) ? parsed : null;
+                _selectedExportPresetId = presetId;
+                if (presetId.HasValue)
+                {
+                    ExportPresetDto? preset = _exportPresets.FirstOrDefault(item => item.Id == presetId.Value);
+                    if (preset is not null)
+                    {
+                        ApplyExportPreset(preset);
+                    }
+                }
+            }
         }
 
         private async Task CreateTemplateFromPresetAsync()

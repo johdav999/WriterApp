@@ -36,6 +36,8 @@ namespace WriterApp.Data
         public DbSet<AiActionHistoryEntryRecord> AiActionHistoryEntries => Set<AiActionHistoryEntryRecord>();
         public DbSet<AiActionAppliedEventRecord> AiActionAppliedEvents => Set<AiActionAppliedEventRecord>();
         public DbSet<ExportTemplate> ExportTemplates => Set<ExportTemplate>();
+        public DbSet<ExportPreset> ExportPresets => Set<ExportPreset>();
+        public DbSet<ProjectExportSettings> ProjectExportSettings => Set<ProjectExportSettings>();
 
         protected override void OnModelCreating(ModelBuilder builder)
         {
@@ -366,6 +368,35 @@ namespace WriterApp.Data
                 entity.Property(template => template.UpdatedAt).IsRequired();
                 entity.HasIndex(template => template.OwnerUserId);
                 entity.HasIndex(template => new { template.OwnerUserId, template.PresetKey });
+            });
+
+            builder.Entity<ExportPreset>(entity =>
+            {
+                entity.HasKey(preset => preset.Id);
+                entity.Property(preset => preset.OwnerUserId).IsRequired();
+                entity.Property(preset => preset.Name).IsRequired();
+                entity.Property(preset => preset.SettingsJson).IsRequired();
+                entity.Property(preset => preset.CreatedAt).IsRequired();
+                entity.Property(preset => preset.UpdatedAt).IsRequired();
+                entity.HasIndex(preset => preset.OwnerUserId);
+                entity.HasIndex(preset => new { preset.OwnerUserId, preset.IsGlobalDefault });
+                entity.HasIndex(preset => preset.UpdatedAt);
+            });
+
+            builder.Entity<ProjectExportSettings>(entity =>
+            {
+                entity.HasKey(settings => new { settings.DocumentId, settings.UserId });
+                entity.Property(settings => settings.UserId).IsRequired();
+                entity.Property(settings => settings.UpdatedAt).IsRequired();
+                entity.HasIndex(settings => settings.UserId);
+                entity.HasOne<DocumentRecord>()
+                    .WithMany()
+                    .HasForeignKey(settings => settings.DocumentId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                entity.HasOne<ExportPreset>()
+                    .WithMany()
+                    .HasForeignKey(settings => settings.DefaultPresetId)
+                    .OnDelete(DeleteBehavior.SetNull);
             });
 
             SeedSubscriptionData(builder);
