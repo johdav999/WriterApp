@@ -114,6 +114,8 @@ namespace WriterApp.Tests
                 format,
                 null,
                 "document",
+                null,
+                null,
                 false,
                 0,
                 false,

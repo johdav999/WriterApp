@@ -51,15 +51,20 @@ namespace WriterApp.Controllers
                 return BadRequest(new { message = "documentId is required." });
             }
 
-            string scope = request.Scope?.Trim() ?? "document";
-            if (!string.Equals(scope, "document", StringComparison.OrdinalIgnoreCase)
-                && !string.Equals(scope, "section", StringComparison.OrdinalIgnoreCase))
+            string scope = request.ScopeType?.Trim() ?? "document";
+            if (!TryValidateScope(scope, request.ScopeIds, request.SelectionText, out string? error))
             {
-                return BadRequest(new { message = "scope must be 'document' or 'section'." });
+                return BadRequest(new { message = error });
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
-            Document? document = await BuildExportDocumentAsync(request.DocumentId, userId, scope, request.SectionId, ct);
+            Document? document = await BuildExportDocumentAsync(
+                request.DocumentId,
+                userId,
+                scope,
+                request.ScopeIds,
+                request.SelectionText,
+                ct);
             if (document is null)
             {
                 return NotFound();
@@ -97,7 +102,8 @@ namespace WriterApp.Controllers
             Guid documentId,
             string userId,
             string scope,
-            Guid? sectionId,
+            IReadOnlyList<Guid>? scopeIds,
+            string? selectionText,
             CancellationToken ct)
         {
             DocumentRecord? documentRecord = await _dbContext.Documents
@@ -108,74 +114,17 @@ namespace WriterApp.Controllers
                 return null;
             }
 
-            IQueryable<SectionRecord> sectionQuery = _dbContext.Sections
-                .AsNoTracking()
-                .Where(section => section.DocumentId == documentId)
-                .OrderBy(section => section.OrderIndex);
-
-            if (string.Equals(scope, "section", StringComparison.OrdinalIgnoreCase))
-            {
-                if (sectionId.HasValue)
-                {
-                    sectionQuery = sectionQuery.Where(section => section.Id == sectionId.Value);
-                }
-                else
-                {
-                    SectionRecord? first = await sectionQuery.FirstOrDefaultAsync(ct);
-                    if (first is null)
-                    {
-                        return null;
-                    }
-
-                    sectionQuery = _dbContext.Sections
-                        .AsNoTracking()
-                        .Where(section => section.Id == first.Id);
-                }
-            }
-
-            List<SectionRecord> sections = await sectionQuery.ToListAsync(ct);
+            List<SectionRecord> sections = await ResolveSectionsAsync(documentId, scope, scopeIds, ct);
             if (sections.Count == 0)
             {
                 return null;
             }
 
-            List<Guid> sectionIds = sections.Select(section => section.Id).ToList();
-            List<PageRecord> pages = await _dbContext.Pages
-                .AsNoTracking()
-                .Where(page => page.DocumentId == documentId && sectionIds.Contains(page.SectionId))
-                .OrderBy(page => page.SectionId)
-                .ThenBy(page => page.OrderIndex)
-                .ToListAsync(ct);
-
-            Dictionary<Guid, List<PageRecord>> pagesBySection = pages
-                .GroupBy(page => page.SectionId)
-                .ToDictionary(group => group.Key, group => group.OrderBy(page => page.OrderIndex).ToList());
-
-            Chapter chapter = new()
+            Chapter chapter = await BuildChapterAsync(documentRecord, sections, scope, scopeIds, selectionText, ct);
+            if (chapter.Sections.Count == 0)
             {
-                Order = 0,
-                Title = string.IsNullOrWhiteSpace(documentRecord.Title) ? "Draft" : documentRecord.Title,
-                Sections = sections.Select(section =>
-                {
-                    string content = string.Join("\n", pagesBySection.TryGetValue(section.Id, out List<PageRecord>? sectionPages)
-                        ? sectionPages.Select(page => page.Content ?? string.Empty)
-                        : Array.Empty<string>());
-
-                    return new Section
-                    {
-                        SectionId = section.Id,
-                        Order = section.OrderIndex,
-                        Title = section.Title,
-                        Content = new SectionContent
-                        {
-                            Format = "html",
-                            Value = content
-                        },
-                        Notes = section.NarrativePurpose ?? string.Empty,
-                        AI = new SectionAIInfo()
-                    };
-                }).ToList()
-            };
+                return null;
+            }
 
             return new Document
             {
@@ -189,6 +138,180 @@ namespace WriterApp.Controllers
                 },
                 Chapters = new List<Chapter> { chapter }
             };
+        }
+
+        private async Task<List<SectionRecord>> ResolveSectionsAsync(
+            Guid documentId,
+            string scope,
+            IReadOnlyList<Guid>? scopeIds,
+            CancellationToken ct)
+        {
+            IQueryable<SectionRecord> sectionQuery = _dbContext.Sections
+                .AsNoTracking()
+                .Where(section => section.DocumentId == documentId)
+                .OrderBy(section => section.OrderIndex);
+
+            if (string.Equals(scope, "section", StringComparison.OrdinalIgnoreCase))
+            {
+                Guid sectionId = scopeIds?.FirstOrDefault() ?? Guid.Empty;
+                if (sectionId != Guid.Empty)
+                {
+                    sectionQuery = sectionQuery.Where(section => section.Id == sectionId);
+                }
+            }
+
+            if (string.Equals(scope, "sections", StringComparison.OrdinalIgnoreCase) && scopeIds is not null)
+            {
+                sectionQuery = sectionQuery.Where(section => scopeIds.Contains(section.Id));
+            }
+
+            if (string.Equals(scope, "page", StringComparison.OrdinalIgnoreCase) && scopeIds is not null)
+            {
+                Guid pageId = scopeIds.FirstOrDefault();
+                if (pageId == Guid.Empty)
+                {
+                    return new List<SectionRecord>();
+                }
+
+                Guid? sectionId = await _dbContext.Pages
+                    .AsNoTracking()
+                    .Where(page => page.Id == pageId && page.DocumentId == documentId)
+                    .Select(page => (Guid?)page.SectionId)
+                    .FirstOrDefaultAsync(ct);
+
+                if (!sectionId.HasValue)
+                {
+                    return new List<SectionRecord>();
+                }
+
+                sectionQuery = sectionQuery.Where(section => section.Id == sectionId.Value);
+            }
+
+            return await sectionQuery.ToListAsync(ct);
+        }
+
+        private async Task<Chapter> BuildChapterAsync(
+            DocumentRecord documentRecord,
+            List<SectionRecord> sections,
+            string scope,
+            IReadOnlyList<Guid>? scopeIds,
+            string? selectionText,
+            CancellationToken ct)
+        {
+            List<Guid> sectionIds = sections.Select(section => section.Id).ToList();
+            Dictionary<Guid, List<PageRecord>> pagesBySection = new();
+
+            if (!string.Equals(scope, "selection", StringComparison.OrdinalIgnoreCase))
+            {
+                List<PageRecord> pages = await _dbContext.Pages
+                    .AsNoTracking()
+                    .Where(page => page.DocumentId == documentRecord.Id && sectionIds.Contains(page.SectionId))
+                    .OrderBy(page => page.SectionId)
+                    .ThenBy(page => page.OrderIndex)
+                    .ToListAsync(ct);
+
+                if (string.Equals(scope, "page", StringComparison.OrdinalIgnoreCase) && scopeIds is not null)
+                {
+                    Guid pageId = scopeIds.FirstOrDefault();
+                    pages = pages.Where(page => page.Id == pageId).ToList();
+                }
+
+                pagesBySection = pages
+                    .GroupBy(page => page.SectionId)
+                    .ToDictionary(group => group.Key, group => group.OrderBy(page => page.OrderIndex).ToList());
+            }
+
+            if (string.Equals(scope, "selection", StringComparison.OrdinalIgnoreCase))
+            {
+                string safeText = System.Net.WebUtility.HtmlEncode(selectionText ?? string.Empty);
+                return new Chapter
+                {
+                    Order = 0,
+                    Title = string.IsNullOrWhiteSpace(documentRecord.Title) ? "Draft" : documentRecord.Title,
+                    Sections = new List<Section>
+                    {
+                        new()
+                        {
+                            SectionId = Guid.Empty,
+                            Order = 0,
+                            Title = "Selection",
+                            Content = new SectionContent
+                            {
+                                Format = "html",
+                                Value = $"<p>{safeText}</p>"
+                            },
+                            Notes = string.Empty,
+                            AI = new SectionAIInfo()
+                        }
+                    }
+                };
+            }
+
+            List<Section> exportSections = sections.Select(section =>
+            {
+                string content = string.Join("\n", pagesBySection.TryGetValue(section.Id, out List<PageRecord>? sectionPages)
+                    ? sectionPages.Select(page => page.Content ?? string.Empty)
+                    : Array.Empty<string>());
+
+                return new Section
+                {
+                    SectionId = section.Id,
+                    Order = section.OrderIndex,
+                    Title = section.Title,
+                    Content = new SectionContent
+                    {
+                        Format = "html",
+                        Value = content
+                    },
+                    Notes = section.NarrativePurpose ?? string.Empty,
+                    AI = new SectionAIInfo()
+                };
+            }).ToList();
+
+            return new Chapter
+            {
+                Order = 0,
+                Title = string.IsNullOrWhiteSpace(documentRecord.Title) ? "Draft" : documentRecord.Title,
+                Sections = exportSections
+            };
+        }
+
+        private static bool TryValidateScope(
+            string scope,
+            IReadOnlyList<Guid>? scopeIds,
+            string? selectionText,
+            out string? error)
+        {
+            error = null;
+            string normalized = scope.Trim().ToLowerInvariant();
+            if (normalized is not ("document" or "manuscript" or "section" or "page" or "sections" or "selection"))
+            {
+                error = "scopeType is invalid.";
+                return false;
+            }
+
+            if (normalized is "sections" && (scopeIds is null || scopeIds.Count == 0))
+            {
+                error = "scopeIds are required for selected sections.";
+                return false;
+            }
+
+            if (normalized is "section" or "page")
+            {
+                if (scopeIds is null || scopeIds.Count == 0)
+                {
+                    error = "scopeIds are required for the selected scope.";
+                    return false;
+                }
+            }
+
+            if (normalized is "selection" && string.IsNullOrWhiteSpace(selectionText))
+            {
+                error = "selectionText is required for selection scope.";
+                return false;
+            }
+
+            return true;
         }
 
         private static ExportTemplate CloneTemplate(ExportTemplate template)

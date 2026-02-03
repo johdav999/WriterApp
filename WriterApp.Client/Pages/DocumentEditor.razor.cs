@@ -132,7 +132,11 @@ namespace WriterApp.Client.Pages
         private string? _previewError;
         private string _previewHtml = string.Empty;
         private double _previewZoom = 1.0;
-        private string _previewScope = "document";
+        private string _exportScopeType = "document";
+        private readonly HashSet<Guid> _exportScopeSectionIds = new();
+        private string _exportScopeSearch = string.Empty;
+        private string? _exportSelectionText;
+        private SectionEditor.EditorSelectionRange? _exportSelectionRange;
         private bool _isPresetsLoading;
         private bool _isPresetSaveOpen;
         private bool _presetMakeGlobalDefault;
@@ -2726,30 +2730,67 @@ namespace WriterApp.Client.Pages
             _isDocumentMenuOpen = false;
             try
             {
-                string templateQuery = string.Empty;
-                if (string.Equals(kind, "document", StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(format, "html", StringComparison.OrdinalIgnoreCase)
-                    && _selectedTemplateId.HasValue)
+                if (!string.Equals(kind, "document", StringComparison.OrdinalIgnoreCase))
                 {
-                    templateQuery = $"&templateId={_selectedTemplateId.Value}";
-                }
+                    string templateQuery = string.Empty;
+                    if (string.Equals(format, "html", StringComparison.OrdinalIgnoreCase)
+                        && _selectedTemplateId.HasValue)
+                    {
+                        templateQuery = $"&templateId={_selectedTemplateId.Value}";
+                    }
 
-                using HttpResponseMessage response = await Http.GetAsync(
-                    $"api/documents/{DocumentId}/export?kind={kind}&format={format}{templateQuery}");
+                    using (HttpResponseMessage legacyResponse = await Http.GetAsync(
+                               $"api/documents/{DocumentId}/export?kind={kind}&format={format}{templateQuery}"))
+                    {
+                        if (!legacyResponse.IsSuccessStatusCode)
+                        {
+                            Logger.LogWarning("Export failed: {Status}", legacyResponse.StatusCode);
+                            return;
+                        }
 
-                if (!response.IsSuccessStatusCode)
-                {
-                    Logger.LogWarning("Export failed: {Status}", response.StatusCode);
+                        byte[] legacyPayload = await legacyResponse.Content.ReadAsByteArrayAsync();
+                        string legacyBase64 = Convert.ToBase64String(legacyPayload);
+                        string legacyFileName = legacyResponse.Content.Headers.ContentDisposition?.FileNameStar
+                            ?? legacyResponse.Content.Headers.ContentDisposition?.FileName
+                            ?? $"export.{format}";
+                        string legacyMime = legacyResponse.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
+                        await DownloadExportAsync(legacyBase64, legacyMime, legacyFileName.Trim('"'));
+                    }
                     return;
                 }
 
-                byte[] payload = await response.Content.ReadAsByteArrayAsync();
-                string base64 = Convert.ToBase64String(payload);
-                string fileName = response.Content.Headers.ContentDisposition?.FileNameStar
-                    ?? response.Content.Headers.ContentDisposition?.FileName
+                if (!ValidateScope(out string? error))
+                {
+                    _templateActionError = error;
+                    return;
+                }
+
+                ExportDocumentRequest request = new(
+                    DocumentId,
+                    format,
+                    _selectedTemplateId,
+                    _exportScopeType,
+                    BuildScopeIdsForRequest(),
+                    _exportSelectionRange is null ? null : new SelectionRangeDto(_exportSelectionRange.Start, _exportSelectionRange.End),
+                    _exportSelectionText);
+
+                using HttpResponseMessage exportResponse = await Http.PostAsJsonAsync(
+                    $"api/documents/{DocumentId}/export",
+                    request);
+
+                if (!exportResponse.IsSuccessStatusCode)
+                {
+                    Logger.LogWarning("Export failed: {Status}", exportResponse.StatusCode);
+                    return;
+                }
+
+                byte[] exportPayload = await exportResponse.Content.ReadAsByteArrayAsync();
+                string exportBase64 = Convert.ToBase64String(exportPayload);
+                string exportFileName = exportResponse.Content.Headers.ContentDisposition?.FileNameStar
+                    ?? exportResponse.Content.Headers.ContentDisposition?.FileName
                     ?? $"export.{format}";
-                string mime = response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
-                await DownloadExportAsync(base64, mime, fileName.Trim('"'));
+                string exportMime = exportResponse.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
+                await DownloadExportAsync(exportBase64, exportMime, exportFileName.Trim('"'));
             }
             catch (Exception ex)
             {
@@ -2762,11 +2803,31 @@ namespace WriterApp.Client.Pages
             _isDocumentMenuOpen = false;
             try
             {
-                string templateQuery = _selectedTemplateId.HasValue
-                    ? $"&templateId={_selectedTemplateId.Value}"
-                    : string.Empty;
-                ExportPrintPayload? payload = await Http.GetFromJsonAsync<ExportPrintPayload>(
-                    $"api/documents/{DocumentId}/export/print?kind=document{templateQuery}");
+                if (!ValidateScope(out string? error))
+                {
+                    _templateActionError = error;
+                    return;
+                }
+
+                ExportDocumentRequest request = new(
+                    DocumentId,
+                    "pdf",
+                    _selectedTemplateId,
+                    _exportScopeType,
+                    BuildScopeIdsForRequest(),
+                    _exportSelectionRange is null ? null : new SelectionRangeDto(_exportSelectionRange.Start, _exportSelectionRange.End),
+                    _exportSelectionText);
+
+                using HttpResponseMessage response = await Http.PostAsJsonAsync(
+                    $"api/documents/{DocumentId}/export/print",
+                    request);
+                if (!response.IsSuccessStatusCode)
+                {
+                    Logger.LogWarning("PDF export failed: {Status}", response.StatusCode);
+                    return;
+                }
+
+                ExportPrintPayload? payload = await response.Content.ReadFromJsonAsync<ExportPrintPayload>();
                 if (payload is null || string.IsNullOrWhiteSpace(payload.Html))
                 {
                     return;
@@ -2788,12 +2849,20 @@ namespace WriterApp.Client.Pages
             try
             {
                 ExportTemplateDto? template = GetSelectedTemplate();
+                if (!ValidateScope(out string? error))
+                {
+                    _previewError = error;
+                    return;
+                }
+
                 ExportPreviewRequest request = new(
                     DocumentId,
                     _selectedTemplateId,
                     template?.TocEnabled ?? true,
-                    _previewScope,
-                    _previewScope == "section" ? _activeSection?.Id : null);
+                    _exportScopeType,
+                    BuildScopeIdsForRequest(),
+                    _exportSelectionRange is null ? null : new SelectionRangeDto(_exportSelectionRange.Start, _exportSelectionRange.End),
+                    _exportSelectionText);
 
                 using HttpResponseMessage response = await Http.PostAsJsonAsync("api/export/preview", request);
                 if (!response.IsSuccessStatusCode)
@@ -3021,7 +3090,15 @@ namespace WriterApp.Client.Pages
         {
             ExportPresetSettingsDto settings = preset.Settings;
             _exportFormatSelection = string.IsNullOrWhiteSpace(settings.Format) ? "html" : settings.Format;
-            _previewScope = string.IsNullOrWhiteSpace(settings.Scope) ? "document" : settings.Scope;
+            _exportScopeType = string.IsNullOrWhiteSpace(settings.Scope) ? "document" : settings.Scope;
+            _exportScopeSectionIds.Clear();
+            if (settings.ScopeIds is not null)
+            {
+                foreach (Guid id in settings.ScopeIds)
+                {
+                    _exportScopeSectionIds.Add(id);
+                }
+            }
 
             Guid? templateId = settings.TemplateId;
             if (templateId.HasValue && _exportTemplates.All(template => template.Id != templateId.Value))
@@ -3045,7 +3122,9 @@ namespace WriterApp.Client.Pages
             return new ExportPresetSettingsDto(
                 _exportFormatSelection,
                 _selectedTemplateId,
-                _previewScope,
+                _exportScopeType,
+                BuildScopeIdsForPreset(),
+                _exportSelectionRange is null ? null : new SelectionRangeDto(_exportSelectionRange.Start, _exportSelectionRange.End),
                 template?.TocEnabled ?? false,
                 template?.TocDepth ?? 0,
                 false,
@@ -3060,6 +3139,139 @@ namespace WriterApp.Client.Pages
                 null,
                 null,
                 null);
+        }
+
+        private IReadOnlyList<Guid>? BuildScopeIdsForPreset()
+        {
+            return _exportScopeType switch
+            {
+                "sections" => _exportScopeSectionIds.Count == 0 ? null : _exportScopeSectionIds.ToList(),
+                "section" => _activeSection is null ? null : new List<Guid> { _activeSection.Id },
+                "page" => _activePage is null ? null : new List<Guid> { _activePage.Id },
+                _ => null
+            };
+        }
+
+        private IEnumerable<SectionDto> FilteredScopeSections =>
+            _sections.Where(section =>
+                string.IsNullOrWhiteSpace(_exportScopeSearch)
+                || section.Title.Contains(_exportScopeSearch, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(section => section.OrderIndex);
+
+        private bool IsSectionSelected(Guid sectionId) => _exportScopeSectionIds.Contains(sectionId);
+
+        private void ToggleSectionSelection(Guid sectionId, ChangeEventArgs args)
+        {
+            bool isSelected = args.Value switch
+            {
+                bool value => value,
+                string text when bool.TryParse(text, out bool parsed) => parsed,
+                _ => false
+            };
+            if (isSelected)
+            {
+                _exportScopeSectionIds.Add(sectionId);
+            }
+            else
+            {
+                _exportScopeSectionIds.Remove(sectionId);
+            }
+
+            MarkPresetAsCustom();
+        }
+
+        private void ToggleSelectAllSections()
+        {
+            if (_sections.Count == 0)
+            {
+                return;
+            }
+
+            if (_exportScopeSectionIds.Count == _sections.Count)
+            {
+                _exportScopeSectionIds.Clear();
+            }
+            else
+            {
+                _exportScopeSectionIds.Clear();
+                foreach (SectionDto section in _sections)
+                {
+                    _exportScopeSectionIds.Add(section.Id);
+                }
+            }
+
+            MarkPresetAsCustom();
+        }
+
+        private string ExportSelectionSummary =>
+            string.IsNullOrWhiteSpace(_exportSelectionText)
+                ? "No selection captured."
+                : $"{_exportSelectionText.Length} chars selected";
+
+        private async Task CaptureSelectionAsync()
+        {
+            _presetActionError = null;
+            if (_pageEditor is null)
+            {
+                _presetActionError = "Editor is not ready.";
+                return;
+            }
+
+            string? selectionText = await _pageEditor.GetSelectionTextAsync();
+            SectionEditor.EditorSelectionRange? range = _currentSelectionRange;
+            if (string.IsNullOrWhiteSpace(selectionText))
+            {
+                _presetActionError = "Selection is empty.";
+                return;
+            }
+
+            _exportSelectionText = selectionText;
+            _exportSelectionRange = range;
+        }
+
+        private IReadOnlyList<Guid>? BuildScopeIdsForRequest()
+        {
+            return _exportScopeType switch
+            {
+                "sections" => _exportScopeSectionIds.Count == 0 ? null : _exportScopeSectionIds.ToList(),
+                "section" => _activeSection is null ? null : new List<Guid> { _activeSection.Id },
+                "page" => _activePage is null ? null : new List<Guid> { _activePage.Id },
+                _ => null
+            };
+        }
+
+        private bool ValidateScope(out string? error)
+        {
+            error = null;
+            if (string.Equals(_exportScopeType, "sections", StringComparison.OrdinalIgnoreCase)
+                && _exportScopeSectionIds.Count == 0)
+            {
+                error = "Select at least one section.";
+                return false;
+            }
+
+            if (string.Equals(_exportScopeType, "section", StringComparison.OrdinalIgnoreCase)
+                && _activeSection is null)
+            {
+                error = "No active section.";
+                return false;
+            }
+
+            if (string.Equals(_exportScopeType, "page", StringComparison.OrdinalIgnoreCase)
+                && _activePage is null)
+            {
+                error = "No active page.";
+                return false;
+            }
+
+            if (string.Equals(_exportScopeType, "selection", StringComparison.OrdinalIgnoreCase)
+                && string.IsNullOrWhiteSpace(_exportSelectionText))
+            {
+                error = "Capture a selection first.";
+                return false;
+            }
+
+            return true;
         }
 
         private void MarkPresetAsCustom()
