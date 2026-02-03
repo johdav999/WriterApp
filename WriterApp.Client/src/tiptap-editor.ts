@@ -196,6 +196,7 @@ const aiDecorationsKey = new PluginKey("aiDecorations");
 const pageGapDecorationsKey = new PluginKey("pageGapDecorations");
 const headingNumberDecorationsKey = new PluginKey("headingNumberDecorations");
 const searchHighlightDecorationsKey = new PluginKey("searchHighlightDecorations");
+const annotationDecorationsKey = new PluginKey("annotationDecorations");
 const WA_LAYOUT_META = "wa_layout_tx";
 const WA_HEADING_NUMBERING_REBUILD = "wa_heading_numbering_rebuild";
 
@@ -399,6 +400,51 @@ const SearchHighlightExtension = Extension.create({
                 props: {
                     decorations(state) {
                         return searchHighlightDecorationsKey.getState(state) ?? DecorationSet.empty;
+                    }
+                }
+            })
+        ];
+    }
+});
+
+const AnnotationDecorationsExtension = Extension.create({
+    name: "annotationDecorations",
+    addProseMirrorPlugins() {
+        return [
+            new Plugin({
+                key: annotationDecorationsKey,
+                state: {
+                    init: () => ({
+                        decorations: DecorationSet.empty,
+                        items: []
+                    }),
+                    apply: (tr, value) => {
+                        const current = value ?? { decorations: DecorationSet.empty, items: [] };
+                        let next = current;
+
+                        const meta = tr.getMeta(annotationDecorationsKey);
+                        if (meta) {
+                            return meta;
+                        }
+
+                        if (tr.docChanged && current.items.length > 0) {
+                            const mapped = mapAnnotationItems(current.items, tr);
+                            const decorations = buildAnnotationDecorations(tr.doc, mapped);
+                            next = { items: mapped, decorations };
+                        } else if (tr.docChanged && current.decorations && current.decorations !== DecorationSet.empty) {
+                            next = {
+                                items: current.items,
+                                decorations: current.decorations.map(tr.mapping, tr.doc)
+                            };
+                        }
+
+                        return next;
+                    }
+                },
+                props: {
+                    decorations(state) {
+                        const stored = annotationDecorationsKey.getState(state);
+                        return stored?.decorations ?? DecorationSet.empty;
                     }
                 }
             })
@@ -1238,6 +1284,87 @@ function buildSearchHighlightDecorations(editor, query) {
     return DecorationSet.create(view.state.doc, decorations);
 }
 
+function normalizeAnnotationItem(item) {
+    if (!item) {
+        return null;
+    }
+
+    const from = Number.isFinite(item.from) ? item.from : 0;
+    const to = Number.isFinite(item.to) ? item.to : 0;
+    const normalized = {
+        id: String(item.id ?? ""),
+        from: Math.max(0, Math.min(from, to)),
+        to: Math.max(0, Math.max(from, to)),
+        kind: String(item.kind ?? "comment"),
+        status: String(item.status ?? "open")
+    };
+
+    if (!normalized.id) {
+        return null;
+    }
+
+    return normalized;
+}
+
+function mapAnnotationItems(items, tr) {
+    if (!Array.isArray(items) || !tr?.mapping) {
+        return [];
+    }
+
+    return items
+        .map(item => normalizeAnnotationItem(item))
+        .filter(item => !!item)
+        .map(item => {
+            const mappedFrom = tr.mapping.map(item.from, 1);
+            const mappedTo = tr.mapping.map(item.to, -1);
+            const from = Math.max(0, Math.min(mappedFrom, mappedTo));
+            const to = Math.max(0, Math.max(mappedFrom, mappedTo));
+            return { ...item, from, to };
+        });
+}
+
+function buildAnnotationDecorations(doc, items) {
+    if (!doc || !Array.isArray(items) || items.length === 0) {
+        return DecorationSet.empty;
+    }
+
+    const decorations = [];
+    const maxPos = doc.content.size;
+    for (const item of items) {
+        const normalized = normalizeAnnotationItem(item);
+        if (!normalized) {
+            continue;
+        }
+
+        let from = Math.max(0, Math.min(maxPos, normalized.from));
+        let to = Math.max(0, Math.min(maxPos, normalized.to));
+        if (to < from) {
+            [from, to] = [to, from];
+        }
+
+        if (from === to) {
+            continue;
+        }
+
+        const kindClass = `wa-annotation-${normalized.kind}`;
+        const statusClass = normalized.status === "resolved" ? "wa-annotation-resolved" : "wa-annotation-open";
+        const className = `wa-annotation ${kindClass} ${statusClass}`;
+        decorations.push(
+            Decoration.inline(
+                from,
+                to,
+                {
+                    class: className,
+                    "data-annotation-id": normalized.id
+                },
+                { id: normalized.id }
+            )
+        );
+    }
+
+    return DecorationSet.create(doc, decorations);
+}
+
 function buildPageGapDecorations(editor, options) {
     const view = editor?.view;
     const ctx = getPageBreakContext(editor);
@@ -1994,6 +2121,7 @@ window.tiptapEditor = {
                 Link.configure({ openOnClick: false }),
                 IndentExtension,
                 AiDecorationsExtension,
+                AnnotationDecorationsExtension,
                 PageGapDecorationsExtension,
                 HeadingNumberingExtension,
                 SearchHighlightExtension,
@@ -2216,6 +2344,125 @@ window.tiptapEditor = {
         const decorations = buildAiDecorations(editor, ranges);
         const tr = editor.state.tr.setMeta(aiDecorationsKey, decorations);
         editor.view.dispatch(tr);
+    },
+    setAnnotations: function (editor, items) {
+        if (!editor || !editor.view) {
+            return;
+        }
+
+        const normalized = Array.isArray(items) ? items : [];
+        const decorations = buildAnnotationDecorations(editor.state.doc, normalized);
+        const tr = editor.view.state.tr.setMeta(annotationDecorationsKey, {
+            decorations,
+            items: normalized
+        });
+        editor.view.dispatch(tr);
+    },
+    getAnnotations: function (editor) {
+        if (!editor || !editor.view) {
+            return [];
+        }
+
+        const state = annotationDecorationsKey.getState(editor.view.state);
+        if (!state || !Array.isArray(state.items)) {
+            return [];
+        }
+
+        const doc = editor.view.state.doc;
+        return state.items.map(item => ({
+            ...item,
+            text: doc.textBetween(item.from, item.to, " ", " ")
+        }));
+    },
+    clearAnnotations: function (editor) {
+        if (!editor || !editor.view) {
+            return;
+        }
+
+        const tr = editor.view.state.tr.setMeta(annotationDecorationsKey, {
+            decorations: DecorationSet.empty,
+            items: []
+        });
+        editor.view.dispatch(tr);
+    },
+    attachAnnotationClicks: function (editor, dotNetRef) {
+        if (!editor?.view?.dom || !dotNetRef) {
+            return;
+        }
+
+        const root = editor.view.dom;
+        if (root.__annotationClickHandler) {
+            root.removeEventListener("click", root.__annotationClickHandler);
+        }
+
+        const interopState = createInteropState(dotNetRef);
+        const handler = event => {
+            const target = event?.target instanceof HTMLElement ? event.target : null;
+            if (!target) {
+                return;
+            }
+
+            const element = target.closest?.("[data-annotation-id]");
+            if (!element) {
+                return;
+            }
+
+            const id = element.getAttribute("data-annotation-id");
+            if (!id) {
+                return;
+            }
+
+            safeInvoke(dotNetRef, interopState, "OnAnnotationClicked", id);
+        };
+
+        root.addEventListener("click", handler);
+        root.__annotationClickHandler = handler;
+        root.__annotationClickInteropState = interopState;
+    },
+    detachAnnotationClicks: function (editor) {
+        const root = editor?.view?.dom;
+        if (!root) {
+            return;
+        }
+
+        if (root.__annotationClickHandler) {
+            root.removeEventListener("click", root.__annotationClickHandler);
+        }
+
+        if (root.__annotationClickInteropState) {
+            root.__annotationClickInteropState.enabled = false;
+        }
+
+        root.__annotationClickHandler = null;
+        root.__annotationClickInteropState = null;
+    },
+    getSelectionDocRange: function (editor) {
+        if (!editor?.state?.selection) {
+            return null;
+        }
+
+        const { from, to } = editor.state.selection;
+        return { from, to };
+    },
+    getSelectionText: function (editor) {
+        if (!editor?.state?.selection) {
+            return "";
+        }
+
+        const { from, to } = editor.state.selection;
+        return editor.state.doc.textBetween(from, to, " ", " ");
+    },
+    scrollToElement: function (elementId) {
+        if (!elementId) {
+            return;
+        }
+
+        const element = document.getElementById(elementId);
+        if (!element) {
+            return;
+        }
+
+        element.scrollIntoView({ behavior: "smooth", block: "center" });
     },
     setSearchHighlights: function (editor, query) {
         if (!editor || !editor.view) {

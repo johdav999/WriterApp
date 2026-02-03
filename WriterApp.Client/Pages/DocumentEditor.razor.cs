@@ -23,6 +23,7 @@ using WriterApp.Client.Diagnostics;
 using WriterApp.Client.State;
 using WriterApp.Application.Usage;
 using WriterApp.Client.Components.Editor;
+using SelectionDocRange = WriterApp.Client.Components.Editor.PageEditor.SelectionDocRange;
 
 namespace WriterApp.Client.Pages
 {
@@ -275,6 +276,17 @@ namespace WriterApp.Client.Pages
         private PageVersionListItemDto? _pendingRestoreVersion;
         private bool _restoreInFlight;
         private string? _restoreError;
+        private readonly List<PageAnnotationDto> _annotations = new();
+        private bool _annotationsLoading;
+        private string? _annotationsError;
+        private string _annotationFilterStatus = "open";
+        private string _annotationFilterKind = "all";
+        private string _annotationDraftContent = string.Empty;
+        private bool _annotationSaving;
+        private bool _annotationAnchorsUpdating;
+        private string? _annotationActionError;
+        private bool _canCreateAnnotation;
+        private Guid? _annotationFocusedId;
         private string _notesDraft = string.Empty;
         private string? _notesStatus;
         private string _sceneNarrativePurpose = string.Empty;
@@ -505,6 +517,7 @@ namespace WriterApp.Client.Pages
                 await LoadOutlineNodesAsync();
                 await LoadAiHistoryAsync();
                 await LoadPageVersionsAsync();
+                await LoadAnnotationsAsync();
                 await LoadTranslationLinksAsync();
             }
             catch (Exception ex)
@@ -1113,6 +1126,7 @@ namespace WriterApp.Client.Pages
             {
                 _activePage = page;
                 await LoadPageVersionsAsync();
+                await UpdateAnnotationAnchorsAsync();
             }
 
             await InvokeAsync(StateHasChanged);
@@ -1284,10 +1298,13 @@ namespace WriterApp.Client.Pages
             if (range is null || range.End <= range.Start)
             {
                 _currentSelectionRange = null;
+                _canCreateAnnotation = false;
             }
             else
             {
                 _currentSelectionRange = range;
+                _canCreateAnnotation = true;
+                _annotationActionError = null;
             }
 
             UpdateAiMenuVisibility();
@@ -1550,6 +1567,10 @@ namespace WriterApp.Client.Pages
         private void SetContextTab(ContextTab tab)
         {
             _activeContextTab = tab;
+            if (tab == ContextTab.Annotations)
+            {
+                _ = LoadAnnotationsAsync();
+            }
         }
 
         private string GetContextTabClass(ContextTab tab)
@@ -4177,6 +4198,339 @@ namespace WriterApp.Client.Pages
             }
         }
 
+        private async Task LoadAnnotationsAsync()
+        {
+            if (_activePage is null)
+            {
+                _annotations.Clear();
+                _annotationsError = null;
+                return;
+            }
+
+            _annotationsLoading = true;
+            _annotationsError = null;
+
+            try
+            {
+                string status = string.IsNullOrWhiteSpace(_annotationFilterStatus) ? "open" : _annotationFilterStatus;
+                string url = $"api/pages/{_activePage.Id}/annotations?status={Uri.EscapeDataString(status)}";
+                if (!string.IsNullOrWhiteSpace(_annotationFilterKind) && !_annotationFilterKind.Equals("all", StringComparison.OrdinalIgnoreCase))
+                {
+                    url += $"&kind={Uri.EscapeDataString(_annotationFilterKind)}";
+                }
+
+                List<PageAnnotationDto>? annotations = await Http.GetFromJsonAsync<List<PageAnnotationDto>>(url);
+                _annotations.Clear();
+                if (annotations is not null)
+                {
+                    _annotations.AddRange(annotations);
+                }
+            }
+            catch (Exception ex)
+            {
+                _annotations.Clear();
+                _annotationsError = $"Failed to load annotations: {ex.Message}";
+            }
+            finally
+            {
+                _annotationsLoading = false;
+            }
+
+            if (_annotationFocusedId.HasValue)
+            {
+                await ScrollAnnotationIntoViewAsync(_annotationFocusedId.Value);
+            }
+        }
+
+        private async Task OnAnnotationStatusFilterChanged(ChangeEventArgs args)
+        {
+            _annotationFilterStatus = args.Value?.ToString() ?? "open";
+            await LoadAnnotationsAsync();
+        }
+
+        private async Task OnAnnotationKindFilterChanged(ChangeEventArgs args)
+        {
+            _annotationFilterKind = args.Value?.ToString() ?? "all";
+            await LoadAnnotationsAsync();
+        }
+
+        private void OnAnnotationDraftInput(ChangeEventArgs args)
+        {
+            _annotationDraftContent = args.Value?.ToString() ?? string.Empty;
+        }
+
+        private string GetAnnotationSelectionLabel()
+        {
+            if (_currentSelectionRange is null || _currentSelectionRange.End <= _currentSelectionRange.Start)
+            {
+                return "Select text in the editor to add a comment, TODO, or highlight.";
+            }
+
+            int length = Math.Abs(_currentSelectionRange.End - _currentSelectionRange.Start);
+            return $"Selected {length} characters.";
+        }
+
+        private async Task CreateAnnotationAsync(string kind)
+        {
+            if (_activePage is null || _currentSelectionRange is null)
+            {
+                _annotationActionError = "Select text in the editor first.";
+                return;
+            }
+
+            if (_annotationSaving)
+            {
+                return;
+            }
+
+            _annotationActionError = null;
+
+            SelectionDocRange docRange = await GetSelectionDocRangeAsync();
+            int from = docRange.From;
+            int to = docRange.To;
+            if (to <= from)
+            {
+                _annotationActionError = "Select text in the editor first.";
+                return;
+            }
+
+            bool isHighlight = string.Equals(kind, "highlight", StringComparison.OrdinalIgnoreCase);
+            string content = isHighlight ? string.Empty : _annotationDraftContent.Trim();
+            if (!isHighlight && string.IsNullOrWhiteSpace(content))
+            {
+                _annotationActionError = "Enter a comment or TODO before saving.";
+                return;
+            }
+
+            string? anchorText = await GetSelectionTextAsync();
+            if (string.IsNullOrWhiteSpace(anchorText))
+            {
+                anchorText = null;
+            }
+
+            _annotationSaving = true;
+            try
+            {
+                PageAnnotationCreateRequest request = new(
+                    kind,
+                    from,
+                    to,
+                    anchorText,
+                    content);
+
+                using HttpResponseMessage response =
+                    await Http.PostAsJsonAsync($"api/pages/{_activePage.Id}/annotations", request);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _annotationActionError = "Failed to create annotation.";
+                    return;
+                }
+
+                PageAnnotationDto? created = await response.Content.ReadFromJsonAsync<PageAnnotationDto>();
+                if (created is null)
+                {
+                    _annotationActionError = "Failed to create annotation.";
+                    return;
+                }
+
+                _annotationDraftContent = string.Empty;
+                _annotationFocusedId = created.Id;
+                await LoadAnnotationsAsync();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Create annotation failed.");
+                _annotationActionError = "Failed to create annotation.";
+            }
+            finally
+            {
+                _annotationSaving = false;
+            }
+        }
+
+        private async Task ResolveAnnotationAsync(PageAnnotationDto annotation)
+        {
+            if (_activePage is null)
+            {
+                return;
+            }
+
+            try
+            {
+                using HttpResponseMessage response =
+                    await Http.PostAsync($"api/pages/{_activePage.Id}/annotations/{annotation.Id}/resolve", null);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _annotationActionError = "Failed to resolve annotation.";
+                    return;
+                }
+
+                await LoadAnnotationsAsync();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Resolve annotation failed.");
+                _annotationActionError = "Failed to resolve annotation.";
+            }
+        }
+
+        private async Task ReopenAnnotationAsync(PageAnnotationDto annotation)
+        {
+            if (_activePage is null)
+            {
+                return;
+            }
+
+            try
+            {
+                using HttpResponseMessage response =
+                    await Http.PostAsync($"api/pages/{_activePage.Id}/annotations/{annotation.Id}/reopen", null);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _annotationActionError = "Failed to reopen annotation.";
+                    return;
+                }
+
+                await LoadAnnotationsAsync();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Reopen annotation failed.");
+                _annotationActionError = "Failed to reopen annotation.";
+            }
+        }
+
+        private async Task UpdateAnnotationAnchorsAsync()
+        {
+            if (_annotationAnchorsUpdating || _activePage is null || _pageEditor is null || _annotations.Count == 0)
+            {
+                return;
+            }
+
+            _annotationAnchorsUpdating = true;
+            try
+            {
+                IReadOnlyList<PageAnnotationAnchorUpdateRequest> updates = await _pageEditor.GetAnnotationAnchorsAsync();
+                if (updates.Count == 0)
+                {
+                    return;
+                }
+
+                using HttpResponseMessage response =
+                    await Http.PutAsJsonAsync($"api/pages/{_activePage.Id}/annotations/anchors", updates);
+                if (!response.IsSuccessStatusCode)
+                {
+                    return;
+                }
+
+                foreach (PageAnnotationAnchorUpdateRequest update in updates)
+                {
+                    int index = _annotations.FindIndex(item => item.Id == update.Id);
+                    if (index >= 0)
+                    {
+                        PageAnnotationDto existing = _annotations[index];
+                        _annotations[index] = existing with
+                        {
+                            AnchorFrom = update.AnchorFrom,
+                            AnchorTo = update.AnchorTo,
+                            AnchorText = update.AnchorText
+                        };
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogDebug(ex, "Update annotation anchors failed.");
+            }
+            finally
+            {
+                _annotationAnchorsUpdating = false;
+            }
+        }
+
+        private async Task<SelectionDocRange> GetSelectionDocRangeAsync()
+        {
+            if (_pageEditor is null)
+            {
+                return new SelectionDocRange(0, 0);
+            }
+
+            SelectionDocRange? range = await _pageEditor.GetSelectionDocRangeAsync();
+            if (range is null)
+            {
+                return new SelectionDocRange(0, 0);
+            }
+
+            int from = Math.Min(range.From, range.To);
+            int to = Math.Max(range.From, range.To);
+            return new SelectionDocRange(from, to);
+        }
+
+        private async Task<string?> GetSelectionTextAsync()
+        {
+            if (_pageEditor is null)
+            {
+                return null;
+            }
+
+            return await _pageEditor.GetSelectionTextAsync();
+        }
+
+        private async Task ScrollAnnotationIntoViewAsync(Guid annotationId)
+        {
+            string elementId = $"annotation-item-{annotationId}";
+            try
+            {
+                await JSRuntime.InvokeVoidAsync("tiptapEditor.scrollToElement", elementId);
+            }
+            catch (JSException)
+            {
+            }
+        }
+
+        private async Task OnAnnotationClickedAsync(Guid annotationId)
+        {
+            _annotationFocusedId = annotationId;
+            _annotationFilterStatus = "all";
+            _annotationFilterKind = "all";
+            _activeContextTab = ContextTab.Annotations;
+            await LoadAnnotationsAsync();
+        }
+
+        private static string GetAnnotationElementId(PageAnnotationDto annotation)
+        {
+            return $"annotation-item-{annotation.Id}";
+        }
+
+        private string GetAnnotationFocusClass(PageAnnotationDto annotation)
+        {
+            return _annotationFocusedId.HasValue && _annotationFocusedId.Value == annotation.Id
+                ? "annotation-item--focused"
+                : string.Empty;
+        }
+
+        private static string GetAnnotationItemClass(PageAnnotationDto annotation)
+        {
+            string kind = annotation.Kind?.ToLowerInvariant() ?? "comment";
+            string status = annotation.Status?.ToLowerInvariant() ?? "open";
+            return $"annotation-item--{kind} annotation-item--{status}";
+        }
+
+        private static string GetAnnotationKindLabel(string kind)
+        {
+            if (string.Equals(kind, "todo", StringComparison.OrdinalIgnoreCase))
+            {
+                return "TODO";
+            }
+
+            if (string.Equals(kind, "highlight", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Highlight";
+            }
+
+            return "Comment";
+        }
+
         private async Task ToggleVersionDiffAsync(PageVersionListItemDto version)
         {
             if (_selectedVersionId == version.Id)
@@ -4880,6 +5234,7 @@ namespace WriterApp.Client.Pages
             Scene,
             Outline,
             Ai,
+            Annotations,
             History
         }
     }

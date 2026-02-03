@@ -324,6 +324,65 @@ namespace BlazorApp.Migrations
                     b.ToTable("Pages");
                 });
 
+            modelBuilder.Entity("WriterApp.Data.Documents.PageAnnotationRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("PageId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("AnchorFrom")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("AnchorTo")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("AnchorText")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Content")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AuthorUserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("ResolvedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt");
+
+                    b.HasIndex("DocumentId");
+
+                    b.HasIndex("Kind");
+
+                    b.HasIndex("PageId");
+
+                    b.HasIndex("Status");
+
+                    b.ToTable("PageAnnotations");
+                });
+
             modelBuilder.Entity("WriterApp.Data.Documents.PageVersionRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -886,6 +945,25 @@ namespace BlazorApp.Migrations
                         .IsRequired();
 
                     b.Navigation("Document");
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Documents.PageAnnotationRecord", b =>
+                {
+                    b.HasOne("WriterApp.Data.Documents.DocumentRecord", "Document")
+                        .WithMany()
+                        .HasForeignKey("DocumentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("WriterApp.Data.Documents.PageRecord", "Page")
+                        .WithMany()
+                        .HasForeignKey("PageId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Document");
+
+                    b.Navigation("Page");
                 });
 
             modelBuilder.Entity("WriterApp.Data.Documents.PageNoteRecord", b =>
