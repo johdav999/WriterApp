@@ -172,6 +172,8 @@ namespace WriterApp.Controllers
                 "html",
                 null,
                 "document",
+                null,
+                null,
                 false,
                 0,
                 false,

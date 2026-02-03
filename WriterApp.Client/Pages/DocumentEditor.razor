@@ -1451,12 +1451,51 @@ else
                 }
             </div>
             <div class="export-panel-row">
-                <label class="export-panel-label" for="preview-scope">Preview scope</label>
-                <select id="preview-scope" class="export-panel-select" @bind="_previewScope" @bind:after="MarkPresetAsCustom">
-                    <option value="document">Document</option>
+                <label class="export-panel-label" for="preview-scope">Scope</label>
+                <select id="preview-scope" class="export-panel-select" @bind="_exportScopeType" @bind:after="MarkPresetAsCustom">
+                    <option value="document">Whole manuscript</option>
                     <option value="section">Current section</option>
+                    <option value="page">Current page</option>
+                    <option value="sections">Selected sections</option>
+                    <option value="selection">Selection</option>
                 </select>
             </div>
+            @if (string.Equals(_exportScopeType, "sections", StringComparison.OrdinalIgnoreCase))
+            {
+                <div class="export-panel-row export-panel-sections">
+                    <label class="export-panel-label" for="scope-search">Sections</label>
+                    <div class="export-panel-section-list">
+                        <div class="export-panel-section-actions">
+                            <input id="scope-search"
+                                   class="export-panel-input"
+                                   placeholder="Search sections..."
+                                   @bind="_exportScopeSearch" />
+                            <button type="button" class="link-button" @onclick="ToggleSelectAllSections">Select all</button>
+                        </div>
+                        <div class="export-panel-section-items">
+                            @foreach (SectionDto scopeItem in FilteredScopeSections)
+                            {
+                                <label class="export-panel-section-item">
+                                    <input type="checkbox"
+                                           checked="@IsSectionSelected(scopeItem.Id)"
+                                           @onchange="(args => ToggleSectionSelection(scopeItem.Id, args))" />
+                                    <span>@(scopeItem.Title)</span>
+                                </label>
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+            @if (string.Equals(_exportScopeType, "selection", StringComparison.OrdinalIgnoreCase))
+            {
+                <div class="export-panel-row export-panel-selection">
+                    <label class="export-panel-label">Selection</label>
+                    <div class="export-panel-selection-body">
+                        <button type="button" @onclick="CaptureSelectionAsync">Use current editor selection</button>
+                        <div class="export-panel-hint">@ExportSelectionSummary</div>
+                    </div>
+                </div>
+            }
             <div class="export-panel-row export-panel-actions">
                 <button type="button" class="link-button" @onclick="OpenTemplateManagerAsync">Manage templates...</button>
                 <span class="export-panel-hint">Templates apply to HTML/PDF exports.</span>

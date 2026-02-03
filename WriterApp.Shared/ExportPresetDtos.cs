@@ -7,6 +7,8 @@ namespace WriterApp.Application.Exporting
         string Format,
         Guid? TemplateId,
         string Scope,
+        IReadOnlyList<Guid>? ScopeIds,
+        SelectionRangeDto? SelectionRange,
         bool IncludeToc,
         int TocDepth,
         bool IncludeTitlePage,

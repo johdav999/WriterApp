@@ -418,7 +418,8 @@
 }
 
 .export-dialog {
-    width: min(560px, 92vw);
+    C:\Users\Johan\source\repos\WriterApp\Controllers\DocumentExportController.cs(479,17): error CS8852: Init-only property or indexer 'Chapter.Sections' can only be assigned in an object initializer, or on 'this' or 'base' in an instance constructor or an 'init' accessor.
+    C:\Users\Johan\source\repos\WriterApp\Controllers\DocumentExportController.cs(498,13): error CS8852: Init-only property or indexer 'Chapter.Sections' can only be assigned in an object initializer, or on 'this' or 'base' in an instance constructor or an 'init' accessor.    width: min(560px, 92vw);
     background: #ffffff;
 }
 
@@ -463,6 +464,47 @@
     align-items: center;
     font-size: 0.85rem;
     color: var(--text-muted);
+}
+
+.export-panel-sections,
+.export-panel-selection {
+    align-items: start;
+}
+
+.export-panel-section-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.export-panel-section-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.export-panel-section-items {
+    max-height: 220px;
+    overflow: auto;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 8px;
+    background: #fff;
+}
+
+.export-panel-section-item {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    font-size: 0.85rem;
+    color: var(--text-primary);
+    padding: 4px 0;
+}
+
+.export-panel-selection-body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
 }
 
 .export-panel-note {

@@ -2774,12 +2774,21 @@ namespace BlazorApp.Components.Pages
             try
             {
                 ExportTemplateDto? template = GetSelectedTemplate();
+                IReadOnlyList<Guid>? scopeIds = null;
+                if (string.Equals(_previewScope, "section", StringComparison.OrdinalIgnoreCase)
+                    && _activeSection?.Id is Guid sectionId)
+                {
+                    scopeIds = new List<Guid> { sectionId };
+                }
+
                 ExportPreviewRequest request = new(
                     DocumentId,
                     _selectedTemplateId,
                     template?.TocEnabled ?? true,
                     _previewScope,
-                    _previewScope == "section" ? _activeSection?.Id : null);
+                    scopeIds,
+                    null,
+                    null);
 
                 using HttpResponseMessage response = await Http.PostAsJsonAsync("api/export/preview", request);
                 if (!response.IsSuccessStatusCode)

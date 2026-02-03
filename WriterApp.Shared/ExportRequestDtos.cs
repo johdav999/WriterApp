@@ -1,17 +1,14 @@
 using System;
+using System.Collections.Generic;
 
 namespace WriterApp.Application.Exporting
 {
-    public sealed record SelectionRangeDto(int From, int To);
-
-    public sealed record ExportPreviewRequest(
+    public sealed record ExportDocumentRequest(
         Guid DocumentId,
+        string Format,
         Guid? TemplateId,
-        bool IncludeToc,
         string ScopeType,
         IReadOnlyList<Guid>? ScopeIds = null,
         SelectionRangeDto? SelectionRange = null,
         string? SelectionText = null);
-
-    public sealed record ExportPreviewResponse(string Html);
 }
