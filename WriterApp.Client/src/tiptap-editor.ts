@@ -2613,6 +2613,19 @@ window.tiptapEditor = {
 
         element.scrollIntoView({ behavior: "smooth", block: "center" });
     },
+    syncDiffScroll: function (sourceId, targetId) {
+        if (!sourceId || !targetId) {
+            return;
+        }
+
+        const source = document.getElementById(sourceId);
+        const target = document.getElementById(targetId);
+        if (!source || !target) {
+            return;
+        }
+
+        target.scrollTop = source.scrollTop;
+    },
     setSearchHighlights: function (editor, query) {
         if (!editor || !editor.view) {
             return;

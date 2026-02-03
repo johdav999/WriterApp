@@ -33,13 +33,29 @@ namespace WriterApp.Application.Documents
         bool CompareToCurrent,
         string Granularity,
         bool Truncated,
-        int MaxLines,
-        IReadOnlyList<PageVersionDiffLineDto> Lines);
+        int MaxBlocks,
+        IReadOnlyList<PageVersionDiffBlockDto> Blocks,
+        PageVersionDiffStatsDto Stats);
 
-    public sealed record PageVersionDiffLineDto(
-        string Kind,
+    public sealed record PageVersionDiffBlockDto(
+        string Id,
+        string Status,
+        PageVersionDiffBlockContentDto? Base,
+        PageVersionDiffBlockContentDto? Compare,
+        IReadOnlyList<PageVersionDiffSpanDto>? InlineSegments,
+        string PreviewText);
+
+    public sealed record PageVersionDiffBlockContentDto(
+        string Type,
         string Text,
-        IReadOnlyList<PageVersionDiffSpanDto>? Spans);
+        IReadOnlyList<PageVersionDiffSpanDto>? Segments);
+
+    public sealed record PageVersionDiffStatsDto(
+        int AddedWords,
+        int RemovedWords,
+        int ChangedBlocks,
+        int AddedBlocks,
+        int RemovedBlocks);
 
     public sealed record PageVersionDiffSpanDto(
         string Kind,

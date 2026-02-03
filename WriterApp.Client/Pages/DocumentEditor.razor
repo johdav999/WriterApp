@@ -218,6 +218,83 @@ else
                     }
                 </div>
 
+                @if (_isDiffMode)
+                {
+                    <div class="diff-header-bar" @onkeydown="OnDiffKeyDown" tabindex="0" @ref="_diffHeaderRef">
+                        <div class="diff-header-group">
+                            <label class="diff-header-label">Base</label>
+                            <select value="@_diffBaseVersionId"
+                                    @onchange="OnDiffBaseChanged">
+                                <option value="">Select version</option>
+                                @foreach (PageVersionListItemDto version in _pageVersions)
+                                {
+                                    <option value="@version.Id">@FormatVersionLabel(version)</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="diff-header-group">
+                            <label class="diff-header-label">Compare</label>
+                            <select value="@_diffCompareVersionId"
+                                    @onchange="OnDiffCompareChanged">
+                                <option value="">Current</option>
+                                @foreach (PageVersionListItemDto version in _pageVersions)
+                                {
+                                    <option value="@version.Id">@FormatVersionLabel(version)</option>
+                                }
+                            </select>
+                        </div>
+                        <button type="button"
+                                class="diff-header-button"
+                                title="Swap base and compare"
+                                @onclick="SwapDiffVersionsAsync"
+                                disabled="@(!_diffBaseVersionId.HasValue)">
+                            Swap
+                        </button>
+                        <div class="diff-header-group">
+                            <label class="diff-header-label">View</label>
+                            <select value="@_diffViewMode"
+                                    @onchange="OnDiffViewModeChanged">
+                                <option value="inline">Inline</option>
+                                <option value="side">Side-by-side</option>
+                            </select>
+                        </div>
+                        <div class="diff-header-group">
+                            <label class="diff-header-label">Granularity</label>
+                            <select value="@_diffGranularity"
+                                    @onchange="OnDiffGranularityChanged">
+                                <option value="word">Word</option>
+                                <option value="sentence">Sentence</option>
+                            </select>
+                        </div>
+                        @if (string.Equals(_diffViewMode, "inline", StringComparison.OrdinalIgnoreCase))
+                        {
+                            <label class="diff-toggle">
+                                <input type="checkbox" checked="@_diffShowDeletions" @onchange="OnDiffShowDeletionsChanged" />
+                                Show deletions
+                            </label>
+                        }
+                        else
+                        {
+                            <label class="diff-toggle">
+                                <input type="checkbox" checked="@_diffSyncScroll" @onchange="OnDiffSyncScrollChanged" />
+                                Sync scroll
+                            </label>
+                        }
+                        <button type="button"
+                                class="diff-header-button primary"
+                                disabled="@(!_canCompareVersions)"
+                                @onclick="LoadVersionDiffAsync">
+                            Compare
+                        </button>
+                        <button type="button"
+                                class="diff-header-button"
+                                title="Exit diff mode"
+                                @onclick="CloseDiffMode">
+                            Close diff
+                        </button>
+                    </div>
+                }
+
                 @if (_pendingAiProposal is not null)
                 {
                     <div class="ai-preview">
@@ -315,47 +392,130 @@ else
                 <div class="editor-surface">
                     <div class="editor-viewport">
                         <div class="editor-content">
-                            @* Pages are derived from continuous section content; breaks are visual only. *@
-                            <PageEditor @ref="_pageEditor"
-                                        @key="_activePage.Id"
-                                        Page="_activePage"
-                                        OnPageSaved="OnPageSaved"
-                                        Annotations="_annotations"
-                                        QualityIssues="_qualityIssues"
-                                        AnnotationClicked="OnAnnotationClickedAsync"
-                                        PageBreaks="PageBreaks"
-                                        HeadingNumberingEnabled="@LayoutStateService.State.HeadingNumberingEnabled"
-                                        HeadingNumberingScope="@GetHeadingNumberingScope()"
-                                        HeadingNumberingPrefix="@_headingPrefixCounters"
-                                        HeadingNumberingTraceId="@_headingTraceId"
-                                        SearchHighlightQuery="@SearchQuery"
-                                        FormattingChanged="OnFormattingChanged"
-                                        SelectionChanged="OnSelectionChanged"
-                                        ContextMenuRequested="OnEditorContextMenuRequested"
-                                        SelectionBubbleChanged="OnSelectionBubbleChanged" />
-                            @if (_selectionBubbleVisible)
+                            @if (_isDiffMode)
                             {
-                                <div class="selection-bubble" style="@GetSelectionBubbleStyle()">
-                                    <button type="button"
-                                            class="@GetActiveClass(_formattingState.IsBold)"
-                                            disabled="@(!_formattingState.CanBold)"
-                                            @onclick="OnBoldRequested">Bold</button>
-                                    <button type="button"
-                                            class="@GetActiveClass(_formattingState.IsItalic)"
-                                            disabled="@(!_formattingState.CanItalic)"
-                                            @onclick="OnItalicRequested">Italic</button>
-                                    <button type="button"
-                                            class="@GetActiveClass(_formattingState.IsStrike)"
-                                            disabled="@(!_formattingState.CanStrike)"
-                                            @onclick="OnStrikeRequested">Strike</button>
-                                    <button type="button"
-                                            class="@GetActiveClass(_formattingState.IsCode)"
-                                            disabled="@(!_formattingState.CanCode)"
-                                            @onclick="OnCodeRequested">Code</button>
-                                    <button type="button"
-                                            class="@GetActiveClass(_formattingState.IsLink)"
-                                            @onclick="OnLinkRequested">Link</button>
+                                <div class="diff-canvas">
+                                    @if (_diffLoading)
+                                    {
+                                        <div class="diff-empty">Building diff...</div>
+                                    }
+                                    else if (!string.IsNullOrWhiteSpace(_diffError))
+                                    {
+                                        <div class="diff-empty">@_diffError</div>
+                                    }
+                                    else if (_diffResult is null)
+                                    {
+                                        <div class="diff-empty">Select versions to compare.</div>
+                                    }
+                                    else
+                                    {
+                                        <div class="diff-legend">
+                                            <span class="diff-legend-item added">Added</span>
+                                            <span class="diff-legend-item removed">Removed</span>
+                                            <span class="diff-legend-item changed">Changed</span>
+                                        </div>
+                                        @if (_diffResult.Truncated)
+                                        {
+                                            <div class="diff-note">Diff truncated to first @_diffResult.MaxBlocks blocks.</div>
+                                        }
+                                        @if (string.Equals(_diffViewMode, "side", StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            <div class="diff-side-by-side" @onkeydown="OnDiffKeyDown" tabindex="0" @ref="_diffCanvasRef">
+                                                <div class="diff-pane">
+                                                    <div class="diff-pane-header">
+                                                        <div class="diff-pane-title">Base</div>
+                                                        <div class="diff-pane-sub">@GetDiffPaneSubtitle(_diffBaseVersionId)</div>
+                                                    </div>
+                                                    <div class="diff-pane-body" id="diff-pane-left" @onscroll='() => OnDiffPaneScrolled("diff-pane-left")'>
+                                                        @foreach (PageVersionDiffBlockDto block in _diffResult.Blocks)
+                                                        {
+                                                            <div class="diff-line @GetDiffClass(block.Status)"
+                                                                 id="@GetDiffAnchorId(block.Id)">
+                                                                @RenderDiffSegments(GetBaseSegments(block))
+                                                            </div>
+                                                        }
+                                                    </div>
+                                                </div>
+                                                <div class="diff-pane">
+                                                    <div class="diff-pane-header">
+                                                        <div class="diff-pane-title">Compare</div>
+                                                        <div class="diff-pane-sub">@GetDiffPaneSubtitle(_diffCompareVersionId)</div>
+                                                    </div>
+                                                    <div class="diff-pane-body" id="diff-pane-right" @onscroll='() => OnDiffPaneScrolled("diff-pane-right")'>
+                                                        @foreach (PageVersionDiffBlockDto block in _diffResult.Blocks)
+                                                        {
+                                                            <div class="diff-line @GetDiffClass(block.Status)">
+                                                                @RenderDiffSegments(GetCompareSegments(block))
+                                                            </div>
+                                                        }
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        }
+                                        else
+                                        {
+                                            <div class="diff-inline" @onkeydown="OnDiffKeyDown" tabindex="0" @ref="_diffCanvasRef">
+                                                @foreach (PageVersionDiffBlockDto block in _diffResult.Blocks)
+                                                {
+                                                    if (!_diffShowDeletions && string.Equals(block.Status, "removed", StringComparison.OrdinalIgnoreCase))
+                                                    {
+                                                        continue;
+                                                    }
+                                                    <div class="diff-line @GetDiffClass(block.Status)"
+                                                         id="@GetDiffAnchorId(block.Id)">
+                                                        @RenderDiffSegments(GetInlineSegments(block), hideRemoved: !_diffShowDeletions)
+                                                    </div>
+                                                }
+                                            </div>
+                                        }
+                                    }
                                 </div>
+                            }
+                            else
+                            {
+                                @* Pages are derived from continuous section content; breaks are visual only. *@
+                                <PageEditor @ref="_pageEditor"
+                                            @key="_activePage.Id"
+                                            Page="_activePage"
+                                            OnPageSaved="OnPageSaved"
+                                            Annotations="_annotations"
+                                            QualityIssues="_qualityIssues"
+                                            VersionStatusMessage="@_versionStatusMessage"
+                                            AnnotationClicked="OnAnnotationClickedAsync"
+                                            PageBreaks="PageBreaks"
+                                            HeadingNumberingEnabled="@LayoutStateService.State.HeadingNumberingEnabled"
+                                            HeadingNumberingScope="@GetHeadingNumberingScope()"
+                                            HeadingNumberingPrefix="@_headingPrefixCounters"
+                                            HeadingNumberingTraceId="@_headingTraceId"
+                                            SearchHighlightQuery="@SearchQuery"
+                                            FormattingChanged="OnFormattingChanged"
+                                            SelectionChanged="OnSelectionChanged"
+                                            ContextMenuRequested="OnEditorContextMenuRequested"
+                                            SelectionBubbleChanged="OnSelectionBubbleChanged" />
+                                @if (_selectionBubbleVisible)
+                                {
+                                    <div class="selection-bubble" style="@GetSelectionBubbleStyle()">
+                                        <button type="button"
+                                                class="@GetActiveClass(_formattingState.IsBold)"
+                                                disabled="@(!_formattingState.CanBold)"
+                                                @onclick="OnBoldRequested">Bold</button>
+                                        <button type="button"
+                                                class="@GetActiveClass(_formattingState.IsItalic)"
+                                                disabled="@(!_formattingState.CanItalic)"
+                                                @onclick="OnItalicRequested">Italic</button>
+                                        <button type="button"
+                                                class="@GetActiveClass(_formattingState.IsStrike)"
+                                                disabled="@(!_formattingState.CanStrike)"
+                                                @onclick="OnStrikeRequested">Strike</button>
+                                        <button type="button"
+                                                class="@GetActiveClass(_formattingState.IsCode)"
+                                                disabled="@(!_formattingState.CanCode)"
+                                                @onclick="OnCodeRequested">Code</button>
+                                        <button type="button"
+                                                class="@GetActiveClass(_formattingState.IsLink)"
+                                                @onclick="OnLinkRequested">Link</button>
+                                    </div>
+                                }
                             }
                         </div>
                     </div>
@@ -364,7 +524,13 @@ else
 
             <aside class="context-drawer @(GetContextPanelClass())">
                 <div class="context-drawer-header">
-                    <div class="context-drawer-tabs">
+                    @if (_isDiffMode)
+                    {
+                        <div class="context-drawer-title">Diff</div>
+                    }
+                    else
+                    {
+                        <div class="context-drawer-tabs">
                         <button type="button"
                                 class="context-tab @GetContextTabClass(ContextTab.Notes)"
                                 aria-selected="@(_activeContextTab == ContextTab.Notes)"
@@ -414,10 +580,51 @@ else
                                 @onclick="() => SetContextTabAsync(ContextTab.History)">
                             History
                         </button>
-                    </div>
+                        </div>
+                    }
                 </div>
                 <div class="context-drawer-body">
-                    @if (_activeContextTab == ContextTab.Notes)
+                    @if (_isDiffMode)
+                    {
+                            <div class="drawer-panel diff-panel">
+                                <div class="drawer-panel-title">Changes</div>
+                                <div class="diff-summary">
+                                    <div><strong>+@_diffSummary.AddedWords</strong> words</div>
+                                    <div><strong>-@_diffSummary.RemovedWords</strong> words</div>
+                                    <div><strong>@_diffSummary.ChangedBlocks</strong> changed</div>
+                                    <div><strong>@_diffSummary.AddedBlocks</strong> added</div>
+                                    <div><strong>@_diffSummary.RemovedBlocks</strong> removed</div>
+                                </div>
+                            <div class="diff-nav">
+                                <button type="button" @onclick="GoToPreviousChange" disabled="@(!_diffChangeBlocks.Any())">Prev</button>
+                                <button type="button" @onclick="GoToNextChange" disabled="@(!_diffChangeBlocks.Any())">Next</button>
+                                @if (_diffCompareVersionId.HasValue)
+                                {
+                                    <button type="button" class="danger" @onclick="() => PromptRestoreVersionById(_diffCompareVersionId.Value)">
+                                        Restore compare
+                                    </button>
+                                }
+                            </div>
+                            @if (_diffChangeBlocks.Count == 0)
+                            {
+                                <div class="drawer-empty">No changes detected.</div>
+                            }
+                            else
+                            {
+                                <ul class="diff-change-list">
+                                    @foreach (DiffChangeBlock block in _diffChangeBlocks)
+                                    {
+                                        <li class="diff-change-item @GetDiffChangeClass(block)"
+                                            @onclick="() => JumpToChange(block)">
+                                            <span class="diff-change-kind">@block.KindLabel</span>
+                                            <span class="diff-change-preview">@block.Preview</span>
+                                        </li>
+                                    }
+                                </ul>
+                            }
+                        </div>
+                    }
+                    else if (_activeContextTab == ContextTab.Notes)
                     {
                         <div class="drawer-panel">
                             <div class="drawer-panel-title">Notes</div>
@@ -1012,104 +1219,6 @@ else
                     {
                         <div class="drawer-panel version-history-panel">
                             <div class="drawer-panel-title">History</div>
-                            <div class="version-compare-toolbar">
-                                <div class="version-compare-field">
-                                    <label>Base</label>
-                                    <select value="@_diffBaseVersionId"
-                                            @onchange="OnDiffBaseChanged">
-                                        <option value="">Select version</option>
-                                        @foreach (PageVersionListItemDto version in _pageVersions)
-                                        {
-                                            <option value="@version.Id">@version.CreatedAt.ToLocalTime().ToString("g")</option>
-                                        }
-                                    </select>
-                                </div>
-                                <div class="version-compare-field">
-                                    <label>Compare</label>
-                                    <select value="@_diffCompareVersionId"
-                                            @onchange="OnDiffCompareChanged">
-                                        <option value="">Current</option>
-                                        @foreach (PageVersionListItemDto version in _pageVersions)
-                                        {
-                                            <option value="@version.Id">@version.CreatedAt.ToLocalTime().ToString("g")</option>
-                                        }
-                                    </select>
-                                </div>
-                                <div class="version-compare-field">
-                                    <label>Granularity</label>
-                                    <select value="@_diffGranularity"
-                                            @onchange="OnDiffGranularityChanged">
-                                        <option value="paragraph">Paragraph</option>
-                                        <option value="line">Line</option>
-                                    </select>
-                                </div>
-                                <div class="version-compare-field">
-                                    <label>View</label>
-                                    <select value="@_diffViewMode"
-                                            @onchange="OnDiffViewModeChanged">
-                                        <option value="inline">Inline</option>
-                                        <option value="side">Side-by-side</option>
-                                    </select>
-                                </div>
-                                <button type="button"
-                                        class="version-compare-button"
-                                        disabled="@(!_canCompareVersions)"
-                                        @onclick="LoadVersionDiffAsync">
-                                    Compare
-                                </button>
-                            </div>
-                            @if (_diffLoading)
-                            {
-                                <div class="drawer-empty">Building diff...</div>
-                            }
-                            else if (!string.IsNullOrWhiteSpace(_diffError))
-                            {
-                                <div class="drawer-empty">@_diffError</div>
-                            }
-                            else if (_diffResult is not null)
-                            {
-                                <div class="version-diff">
-                                    @if (_diffResult.Truncated)
-                                    {
-                                        <div class="version-diff-note">Diff truncated to first @_diffResult.MaxLines lines.</div>
-                                    }
-                                    @if (string.Equals(_diffViewMode, "side", StringComparison.OrdinalIgnoreCase))
-                                    {
-                                        <div class="version-diff-side">
-                                            <div class="version-diff-column">
-                                                <div class="version-diff-header">Base</div>
-                                                @foreach (VersionDiffRow row in _diffRows)
-                                                {
-                                                    <div class="version-diff-line @GetDiffClass(row.LeftKind)">
-                                                        @RenderDiffSpans(row.LeftLine)
-                                                    </div>
-                                                }
-                                            </div>
-                                            <div class="version-diff-column">
-                                                <div class="version-diff-header">Compare</div>
-                                                @foreach (VersionDiffRow row in _diffRows)
-                                                {
-                                                    <div class="version-diff-line @GetDiffClass(row.RightKind)">
-                                                        @RenderDiffSpans(row.RightLine)
-                                                    </div>
-                                                }
-                                            </div>
-                                        </div>
-                                    }
-                                    else
-                                    {
-                                        <div class="version-diff-lines">
-                                            @foreach (PageVersionDiffLineDto line in _diffResult.Lines)
-                                            {
-                                                <div class="version-diff-line @GetDiffClass(line.Kind)">
-                                                    <span class="version-diff-prefix">@GetDiffPrefix(line.Kind)</span>
-                                                    @RenderDiffSpans(line)
-                                                </div>
-                                            }
-                                        </div>
-                                    }
-                                </div>
-                            }
                             @if (_versionsLoading)
                             {
                                 <div class="drawer-empty">Loading versions...</div>
