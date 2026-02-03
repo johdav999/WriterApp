@@ -1663,32 +1663,77 @@ else
                 <div class="modal-title">Export preview</div>
             </div>
             <div class="modal-body">
-            <div class="preview-toolbar">
-                <div class="preview-zoom">
-                    <span>Zoom</span>
-                    <button type="button" @onclick="() => SetPreviewZoom(1.0)">100%</button>
-                    <button type="button" @onclick="() => SetPreviewZoom(1.25)">125%</button>
-                    <button type="button" @onclick="() => SetPreviewZoom(1.5)">150%</button>
+                <div class="preview-layout">
+                    <aside class="preview-sidebar @( _previewSidebarOpen ? "is-open" : "is-collapsed")">
+                        <div class="preview-sidebar-header">
+                            <span>Pages</span>
+                            <button type="button" class="link-button" @onclick="TogglePreviewSidebar">
+                                @(_previewSidebarOpen ? "Hide" : "Show")
+                            </button>
+                        </div>
+                        @if (_previewSidebarOpen)
+                        {
+                            <div class="preview-sidebar-search">
+                                <input type="search"
+                                       placeholder="Find in preview"
+                                       @bind="_previewSearchTerm"
+                                       @bind:after="RunPreviewSearchAsync" />
+                                <button type="button" class="link-button" @onclick="ClearPreviewSearch">Clear</button>
+                            </div>
+                            <div class="preview-sidebar-toggle">
+                                <label>
+                                    <input type="checkbox" @bind="_previewShowPageBreaks" @bind:after="TogglePreviewPageBreaksAsync" />
+                                    Show page breaks
+                                </label>
+                            </div>
+                            <div class="preview-page-list">
+                                @for (int pageIndex = 1; pageIndex <= _previewPageCount; pageIndex++)
+                                {
+                                    <button type="button"
+                                            class="preview-page-item @(pageIndex == _previewCurrentPage ? "is-active" : string.Empty)"
+                                            @onclick="() => JumpToPreviewPageAsync(pageIndex)">
+                                        Page @pageIndex
+                                    </button>
+                                }
+                            </div>
+                        }
+                    </aside>
+                    <section class="preview-main">
+                        <div class="preview-toolbar">
+                            <div class="preview-zoom">
+                                <span>Zoom</span>
+                                <button type="button" class="link-button" @onclick="SetFitWidthAsync">Fit width</button>
+                                <button type="button" class="link-button" @onclick="SetFitPageAsync">Fit page</button>
+                                <button type="button" @onclick="() => AdjustPreviewZoom(-0.1)">-</button>
+                                <span class="preview-zoom-value">@PreviewZoomPercent</span>
+                                <button type="button" @onclick="() => AdjustPreviewZoom(0.1)">+</button>
+                                <button type="button" @onclick="() => SetPreviewZoom(1.0)">100%</button>
+                                <button type="button" @onclick="() => SetPreviewZoom(1.25)">125%</button>
+                                <button type="button" @onclick="() => SetPreviewZoom(1.5)">150%</button>
+                            </div>
+                            <div class="preview-toolbar-actions">
+                                <button type="button" @onclick="PrintPreviewAsync">Print</button>
+                            </div>
+                        </div>
+                        @if (_isPreviewLoading)
+                        {
+                            <div class="export-panel-note">Rendering preview...</div>
+                        }
+                        else if (!string.IsNullOrWhiteSpace(_previewError))
+                        {
+                            <div class="modal-error">@_previewError</div>
+                        }
+                        else
+                        {
+                            <div class="preview-frame-wrap">
+                                <iframe id="export-preview-frame"
+                                        class="export-preview-frame"
+                                        srcdoc="@_previewHtml"
+                                        sandbox="allow-same-origin allow-scripts allow-modals"></iframe>
+                            </div>
+                        }
+                    </section>
                 </div>
-                <button type="button" @onclick="PrintPreviewAsync">Print</button>
-            </div>
-            @if (_isPreviewLoading)
-            {
-                <div class="export-panel-note">Rendering preview...</div>
-            }
-            else if (!string.IsNullOrWhiteSpace(_previewError))
-            {
-                <div class="modal-error">@_previewError</div>
-            }
-            else
-            {
-                <div class="preview-frame-wrap">
-                    <iframe id="export-preview-frame"
-                            class="export-preview-frame"
-                            srcdoc="@_previewHtml"
-                            sandbox="allow-same-origin allow-scripts allow-modals"></iframe>
-                </div>
-            }
             </div>
             <div class="modal-footer">
                 <button type="button" @onclick="ClosePreview">Close</button>

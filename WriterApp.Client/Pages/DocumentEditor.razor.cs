@@ -132,6 +132,12 @@ namespace WriterApp.Client.Pages
         private string? _previewError;
         private string _previewHtml = string.Empty;
         private double _previewZoom = 1.0;
+        private bool _previewShowPageBreaks = true;
+        private bool _previewSidebarOpen = true;
+        private bool _previewInitialized;
+        private int _previewPageCount = 1;
+        private int _previewCurrentPage = 1;
+        private string _previewSearchTerm = string.Empty;
         private string _exportScopeType = "document";
         private readonly HashSet<Guid> _exportScopeSectionIds = new();
         private string _exportScopeSearch = string.Empty;
@@ -429,6 +435,12 @@ namespace WriterApp.Client.Pages
             {
                 _shouldFocusContextMenu = false;
                 await _contextMenuRef.FocusAsync();
+            }
+
+            if (_isExportPreviewOpen && !_isPreviewLoading && !_previewInitialized && !string.IsNullOrWhiteSpace(_previewHtml))
+            {
+                _previewInitialized = true;
+                await InitializePreviewFrameAsync();
             }
         }
 
@@ -2878,8 +2890,12 @@ namespace WriterApp.Client.Pages
                     return;
                 }
 
-                _previewHtml = payload.Html;
+                _previewHtml = BuildPreviewHtml(payload.Html);
                 _previewZoom = 1.0;
+                _previewInitialized = false;
+                _previewSearchTerm = string.Empty;
+                _previewPageCount = 1;
+                _previewCurrentPage = 1;
             }
             catch (Exception ex)
             {
@@ -2897,6 +2913,8 @@ namespace WriterApp.Client.Pages
             _isExportPreviewOpen = false;
             _previewHtml = string.Empty;
             _previewError = null;
+            _previewSearchTerm = string.Empty;
+            _previewInitialized = false;
         }
 
         private ExportTemplateDto? GetSelectedTemplate()
@@ -2908,7 +2926,8 @@ namespace WriterApp.Client.Pages
         {
             ExportTemplateDto? template = GetSelectedTemplate();
             int width = template?.PageWidthMm ?? 210;
-            return $"--preview-page-width:{width}mm; --preview-zoom:{_previewZoom.ToString(CultureInfo.InvariantCulture)};";
+            int height = template?.PageHeightMm ?? 297;
+            return $"--preview-page-width:{width}mm; --preview-page-height:{height}mm; --preview-zoom:{_previewZoom.ToString(CultureInfo.InvariantCulture)};";
         }
 
         private async Task PrintPreviewAsync()
@@ -2926,6 +2945,180 @@ namespace WriterApp.Client.Pages
         {
             _previewZoom = zoom;
         }
+
+        private string PreviewZoomPercent => $"{Math.Round(_previewZoom * 100)}%";
+
+        private void AdjustPreviewZoom(double delta)
+        {
+            double next = Math.Clamp(_previewZoom + delta, 0.5, 2.5);
+            _previewZoom = next;
+        }
+
+        private void TogglePreviewSidebar()
+        {
+            _previewSidebarOpen = !_previewSidebarOpen;
+        }
+
+        private async Task InitializePreviewFrameAsync()
+        {
+            await EnsureExportModuleAsync();
+            if (_exportModule is null)
+            {
+                return;
+            }
+
+            ExportTemplateDto? template = GetSelectedTemplate();
+            int width = template?.PageWidthMm ?? 210;
+            int height = template?.PageHeightMm ?? 297;
+
+            PreviewMetrics? metrics = await _exportModule.InvokeAsync<PreviewMetrics?>(
+                "initPreviewFrame",
+                "export-preview-frame",
+                width,
+                height,
+                _previewShowPageBreaks);
+
+            if (metrics is null)
+            {
+                return;
+            }
+
+            _previewPageCount = Math.Max(1, metrics.PageCount);
+            _previewCurrentPage = Math.Clamp(metrics.CurrentPage, 1, _previewPageCount);
+            await RefreshPreviewFitAsync(width, height);
+        }
+
+        private async Task RefreshPreviewFitAsync(int pageWidthMm, int pageHeightMm)
+        {
+            await EnsureExportModuleAsync();
+            if (_exportModule is null)
+            {
+                return;
+            }
+
+            PreviewFit? fit = await _exportModule.InvokeAsync<PreviewFit?>(
+                "getPreviewFit",
+                "export-preview-frame",
+                pageWidthMm,
+                pageHeightMm);
+
+            if (fit is null)
+            {
+                return;
+            }
+
+            _previewFitWidthZoom = fit.FitWidth;
+            _previewFitPageZoom = fit.FitPage;
+        }
+
+        private double _previewFitWidthZoom = 1.0;
+        private double _previewFitPageZoom = 1.0;
+
+        private async Task SetFitWidthAsync()
+        {
+            if (_previewFitWidthZoom <= 0)
+            {
+                return;
+            }
+
+            _previewZoom = _previewFitWidthZoom;
+            await InvokeAsync(StateHasChanged);
+        }
+
+        private async Task SetFitPageAsync()
+        {
+            if (_previewFitPageZoom <= 0)
+            {
+                return;
+            }
+
+            _previewZoom = _previewFitPageZoom;
+            await InvokeAsync(StateHasChanged);
+        }
+
+        private async Task TogglePreviewPageBreaksAsync()
+        {
+            await EnsureExportModuleAsync();
+            if (_exportModule is null)
+            {
+                return;
+            }
+
+            await _exportModule.InvokeVoidAsync(
+                "setPreviewPageBreaks",
+                "export-preview-frame",
+                _previewShowPageBreaks);
+        }
+
+        private async Task JumpToPreviewPageAsync(int page)
+        {
+            await EnsureExportModuleAsync();
+            if (_exportModule is null)
+            {
+                return;
+            }
+
+            await _exportModule.InvokeVoidAsync("scrollPreviewToPage", "export-preview-frame", page);
+            _previewCurrentPage = page;
+        }
+
+        private async Task RunPreviewSearchAsync()
+        {
+            await EnsureExportModuleAsync();
+            if (_exportModule is null)
+            {
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(_previewSearchTerm))
+            {
+                await _exportModule.InvokeVoidAsync("clearPreviewSearch", "export-preview-frame");
+                return;
+            }
+
+            await _exportModule.InvokeVoidAsync("searchPreview", "export-preview-frame", _previewSearchTerm);
+        }
+
+        private async Task ClearPreviewSearch()
+        {
+            _previewSearchTerm = string.Empty;
+            await RunPreviewSearchAsync();
+        }
+
+        private string BuildPreviewHtml(string rawHtml)
+        {
+            const string marker = "__WRITER_PREVIEW__";
+            if (string.IsNullOrWhiteSpace(rawHtml))
+            {
+                return rawHtml;
+            }
+
+            string injected = PreviewBootstrapScript;
+            if (rawHtml.Contains(marker, StringComparison.Ordinal))
+            {
+                return rawHtml;
+            }
+
+            if (rawHtml.Contains("</body>", StringComparison.OrdinalIgnoreCase))
+            {
+                return rawHtml.Replace("</body>", $"{injected}</body>", StringComparison.OrdinalIgnoreCase);
+            }
+
+            return $"<html><head><meta charset=\"utf-8\"></head><body>{rawHtml}{injected}</body></html>";
+        }
+
+        private const string PreviewBootstrapScript = @"
+<style id=""__WRITER_PREVIEW__"">
+    body { margin: 0; padding: 24px; box-sizing: border-box; position: relative; }
+    .preview-pagebreak-overlay { position: absolute; left: 0; right: 0; top: 0; pointer-events: none; }
+    .preview-pagebreak-line { position: absolute; left: 0; right: 0; border-top: 1px dashed rgba(148, 163, 184, 0.7); }
+    mark.preview-search-hit { background: #fde68a; padding: 0 2px; border-radius: 3px; }
+    html, body { scroll-behavior: smooth; }
+</style>
+<script id=""__WRITER_PREVIEW__"">window.__writerPreviewReady=true;</script>";
+
+        private sealed record PreviewMetrics(int PageCount, int CurrentPage);
+        private sealed record PreviewFit(double FitWidth, double FitPage);
 
         private async Task OnExportDialogOpenAsync()
         {
