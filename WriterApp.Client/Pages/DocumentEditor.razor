@@ -321,6 +321,7 @@ else
                                         Page="_activePage"
                                         OnPageSaved="OnPageSaved"
                                         Annotations="_annotations"
+                                        QualityIssues="_qualityIssues"
                                         AnnotationClicked="OnAnnotationClickedAsync"
                                         PageBreaks="PageBreaks"
                                         HeadingNumberingEnabled="@LayoutStateService.State.HeadingNumberingEnabled"
@@ -368,42 +369,49 @@ else
                                 class="context-tab @GetContextTabClass(ContextTab.Notes)"
                                 aria-selected="@(_activeContextTab == ContextTab.Notes)"
                                 title='@GetTooltip("Personal notes for this section.")'
-                                @onclick="() => SetContextTab(ContextTab.Notes)">
+                                @onclick="() => SetContextTabAsync(ContextTab.Notes)">
                             Notes
                         </button>
                         <button type="button"
                                 class="context-tab @GetContextTabClass(ContextTab.Scene)"
                                 aria-selected="@(_activeContextTab == ContextTab.Scene)"
                                 title='@GetTooltip("Structure and plan this scene.")'
-                                @onclick="() => SetContextTab(ContextTab.Scene)">
+                                @onclick="() => SetContextTabAsync(ContextTab.Scene)">
                             Scene
                         </button>
                         <button type="button"
                                 class="context-tab @GetContextTabClass(ContextTab.Outline)"
                                 aria-selected="@(_activeContextTab == ContextTab.Outline)"
                                 title='@GetTooltip("View and edit the document outline.")'
-                                @onclick="() => SetContextTab(ContextTab.Outline)">
+                                @onclick="() => SetContextTabAsync(ContextTab.Outline)">
                             Outline
                         </button>
                         <button type="button"
                                 class="context-tab @GetContextTabClass(ContextTab.Ai)"
                                 aria-selected="@(_activeContextTab == ContextTab.Ai)"
                                 title='@GetTooltip("AI tools for writing and planning.")'
-                                @onclick="() => SetContextTab(ContextTab.Ai)">
+                                @onclick="() => SetContextTabAsync(ContextTab.Ai)">
                             AI
                         </button>
                         <button type="button"
                                 class="context-tab @GetContextTabClass(ContextTab.Annotations)"
                                 aria-selected="@(_activeContextTab == ContextTab.Annotations)"
                                 title='@GetTooltip("Comments, TODOs, and highlights.")'
-                                @onclick="() => SetContextTab(ContextTab.Annotations)">
+                                @onclick="() => SetContextTabAsync(ContextTab.Annotations)">
                             Annotations
+                        </button>
+                        <button type="button"
+                                class="context-tab @GetContextTabClass(ContextTab.Quality)"
+                                aria-selected="@(_activeContextTab == ContextTab.Quality)"
+                                title='@GetTooltip("Writing quality checks and consistency hints.")'
+                                @onclick="() => SetContextTabAsync(ContextTab.Quality)">
+                            Quality
                         </button>
                         <button type="button"
                                 class="context-tab @GetContextTabClass(ContextTab.History)"
                                 aria-selected="@(_activeContextTab == ContextTab.History)"
                                 title='@GetTooltip("Version history for this page.")'
-                                @onclick="() => SetContextTab(ContextTab.History)">
+                                @onclick="() => SetContextTabAsync(ContextTab.History)">
                             History
                         </button>
                     </div>
@@ -920,10 +928,188 @@ else
                             }
                         </div>
                     }
+                    else if (_activeContextTab == ContextTab.Quality)
+                    {
+                        <div class="drawer-panel quality-panel">
+                            <div class="drawer-panel-title">Quality Checks</div>
+                            <div class="quality-toolbar">
+                                <div class="quality-filter">
+                                    <label class="quality-filter-label">Scope</label>
+                                    <select class="quality-filter-select" value="@_qualityScope" @onchange="OnQualityScopeChanged">
+                                        <option value="page">Page</option>
+                                        <option value="selection">Selection</option>
+                                    </select>
+                                </div>
+                                <div class="quality-filter">
+                                    <label class="quality-filter-label">Severity</label>
+                                    <select class="quality-filter-select" value="@_qualityFilterSeverity" @onchange="OnQualitySeverityChanged">
+                                        <option value="all">All</option>
+                                        <option value="warning">Warning</option>
+                                        <option value="info">Info</option>
+                                    </select>
+                                </div>
+                                <div class="quality-filter">
+                                    <label class="quality-filter-label">Type</label>
+                                    <select class="quality-filter-select" value="@_qualityFilterKind" @onchange="OnQualityKindChanged">
+                                        <option value="all">All</option>
+                                        <option value="readability">Readability</option>
+                                        <option value="sentence-length">Sentence length</option>
+                                        <option value="paragraph-length">Paragraph length</option>
+                                        <option value="repeated-word">Repeated words</option>
+                                        <option value="passive-voice">Passive voice</option>
+                                        <option value="name-consistency">Name consistency</option>
+                                        <option value="timeline">Timeline hints</option>
+                                        <option value="glossary">Glossary</option>
+                                    </select>
+                                </div>
+                                <button type="button" class="quality-refresh" @onclick="RunQualityChecksAsync">Run checks</button>
+                            </div>
+                            @if (_qualityFromCache)
+                            {
+                                <div class="quality-cache-note">Showing cached results for this version.</div>
+                            }
+                            @if (_qualityLoading)
+                            {
+                                <div class="drawer-empty">Checking quality...</div>
+                            }
+                            else if (!string.IsNullOrWhiteSpace(_qualityError))
+                            {
+                                <div class="drawer-empty">@_qualityError</div>
+                            }
+                            else if (_qualityIssues.Count == 0)
+                            {
+                                <div class="drawer-empty">No quality issues found.</div>
+                            }
+                            else
+                            {
+                                <ul class="quality-list">
+                                    @foreach (PageQualityIssueDto issue in FilterQualityIssues())
+                                    {
+                                        <li class="quality-item @GetQualityIssueClass(issue)">
+                                            <div class="quality-meta">
+                                                <span class="quality-kind">@issue.Kind</span>
+                                                <span class="quality-severity">@issue.Severity</span>
+                                            </div>
+                                            <div class="quality-message">@issue.Message</div>
+                                            @if (!string.IsNullOrWhiteSpace(issue.Suggestion))
+                                            {
+                                                <div class="quality-suggestion">@issue.Suggestion</div>
+                                            }
+                                            @if (!string.IsNullOrWhiteSpace(issue.AnchorText))
+                                            {
+                                                <div class="quality-anchor">“@issue.AnchorText”</div>
+                                            }
+                                            <div class="quality-actions">
+                                                <button type="button" class="danger" @onclick="() => DismissQualityIssueAsync(issue)">Dismiss</button>
+                                            </div>
+                                        </li>
+                                    }
+                                </ul>
+                            }
+                        </div>
+                    }
                     else if (_activeContextTab == ContextTab.History)
                     {
                         <div class="drawer-panel version-history-panel">
                             <div class="drawer-panel-title">History</div>
+                            <div class="version-compare-toolbar">
+                                <div class="version-compare-field">
+                                    <label>Base</label>
+                                    <select value="@_diffBaseVersionId"
+                                            @onchange="OnDiffBaseChanged">
+                                        <option value="">Select version</option>
+                                        @foreach (PageVersionListItemDto version in _pageVersions)
+                                        {
+                                            <option value="@version.Id">@version.CreatedAt.ToLocalTime().ToString("g")</option>
+                                        }
+                                    </select>
+                                </div>
+                                <div class="version-compare-field">
+                                    <label>Compare</label>
+                                    <select value="@_diffCompareVersionId"
+                                            @onchange="OnDiffCompareChanged">
+                                        <option value="">Current</option>
+                                        @foreach (PageVersionListItemDto version in _pageVersions)
+                                        {
+                                            <option value="@version.Id">@version.CreatedAt.ToLocalTime().ToString("g")</option>
+                                        }
+                                    </select>
+                                </div>
+                                <div class="version-compare-field">
+                                    <label>Granularity</label>
+                                    <select value="@_diffGranularity"
+                                            @onchange="OnDiffGranularityChanged">
+                                        <option value="paragraph">Paragraph</option>
+                                        <option value="line">Line</option>
+                                    </select>
+                                </div>
+                                <div class="version-compare-field">
+                                    <label>View</label>
+                                    <select value="@_diffViewMode"
+                                            @onchange="OnDiffViewModeChanged">
+                                        <option value="inline">Inline</option>
+                                        <option value="side">Side-by-side</option>
+                                    </select>
+                                </div>
+                                <button type="button"
+                                        class="version-compare-button"
+                                        disabled="@(!_canCompareVersions)"
+                                        @onclick="LoadVersionDiffAsync">
+                                    Compare
+                                </button>
+                            </div>
+                            @if (_diffLoading)
+                            {
+                                <div class="drawer-empty">Building diff...</div>
+                            }
+                            else if (!string.IsNullOrWhiteSpace(_diffError))
+                            {
+                                <div class="drawer-empty">@_diffError</div>
+                            }
+                            else if (_diffResult is not null)
+                            {
+                                <div class="version-diff">
+                                    @if (_diffResult.Truncated)
+                                    {
+                                        <div class="version-diff-note">Diff truncated to first @_diffResult.MaxLines lines.</div>
+                                    }
+                                    @if (string.Equals(_diffViewMode, "side", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        <div class="version-diff-side">
+                                            <div class="version-diff-column">
+                                                <div class="version-diff-header">Base</div>
+                                                @foreach (VersionDiffRow row in _diffRows)
+                                                {
+                                                    <div class="version-diff-line @GetDiffClass(row.LeftKind)">
+                                                        @RenderDiffSpans(row.LeftLine)
+                                                    </div>
+                                                }
+                                            </div>
+                                            <div class="version-diff-column">
+                                                <div class="version-diff-header">Compare</div>
+                                                @foreach (VersionDiffRow row in _diffRows)
+                                                {
+                                                    <div class="version-diff-line @GetDiffClass(row.RightKind)">
+                                                        @RenderDiffSpans(row.RightLine)
+                                                    </div>
+                                                }
+                                            </div>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <div class="version-diff-lines">
+                                            @foreach (PageVersionDiffLineDto line in _diffResult.Lines)
+                                            {
+                                                <div class="version-diff-line @GetDiffClass(line.Kind)">
+                                                    <span class="version-diff-prefix">@GetDiffPrefix(line.Kind)</span>
+                                                    @RenderDiffSpans(line)
+                                                </div>
+                                            }
+                                        </div>
+                                    }
+                                </div>
+                            }
                             @if (_versionsLoading)
                             {
                                 <div class="drawer-empty">Loading versions...</div>
@@ -941,7 +1127,6 @@ else
                                 <ul class="version-history-list">
                                     @foreach (PageVersionListItemDto version in _pageVersions)
                                     {
-                                        bool showDiff = _selectedVersionId == version.Id;
                                         <li class="version-history-item">
                                             <div class="version-history-meta">
                                                 <span class="version-history-badge">@GetVersionReasonLabel(version.Reason)</span>
@@ -949,31 +1134,13 @@ else
                                             </div>
                                             <div class="version-history-sub">Words: @version.WordCount</div>
                                             <div class="version-history-actions">
-                                                <button type="button" @onclick="() => ToggleVersionDiffAsync(version)">
-                                                    @(showDiff ? "Hide diff" : "View diff")
+                                                <button type="button" @onclick="() => SelectDiffBaseAsync(version)">
+                                                    Compare
                                                 </button>
                                                 <button type="button" class="danger" @onclick="() => PromptRestoreVersion(version)">
                                                     Restore
                                                 </button>
                                             </div>
-                                            @if (showDiff)
-                                            {
-                                                <div class="version-diff">
-                                                    @if (!string.IsNullOrWhiteSpace(_versionDiffNote))
-                                                    {
-                                                        <div class="version-diff-note">@_versionDiffNote</div>
-                                                    }
-                                                    <div class="version-diff-lines">
-                                                        @foreach (VersionDiffLine line in _versionDiffLines)
-                                                        {
-                                                            <div class="version-diff-line @GetDiffClass(line.Kind)">
-                                                                <span class="version-diff-prefix">@GetDiffPrefix(line.Kind)</span>
-                                                                <span>@line.Text</span>
-                                                            </div>
-                                                        }
-                                                    </div>
-                                                </div>
-                                            }
                                         </li>
                                     }
                                 </ul>

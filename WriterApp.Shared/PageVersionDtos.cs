@@ -25,4 +25,23 @@ namespace WriterApp.Application.Documents
         Guid FromVersionId,
         string FromText,
         string ToText);
+
+    public sealed record PageVersionDiffResultDto(
+        Guid PageId,
+        Guid FromVersionId,
+        Guid? ToVersionId,
+        bool CompareToCurrent,
+        string Granularity,
+        bool Truncated,
+        int MaxLines,
+        IReadOnlyList<PageVersionDiffLineDto> Lines);
+
+    public sealed record PageVersionDiffLineDto(
+        string Kind,
+        string Text,
+        IReadOnlyList<PageVersionDiffSpanDto>? Spans);
+
+    public sealed record PageVersionDiffSpanDto(
+        string Kind,
+        string Text);
 }

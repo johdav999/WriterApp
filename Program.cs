@@ -163,6 +163,8 @@ builder.Services.AddScoped<WriterApp.Application.Documents.IDocumentRepository, 
 builder.Services.AddScoped<WriterApp.Application.Documents.ISectionRepository, WriterApp.Data.Documents.SectionRepository>();
 builder.Services.AddScoped<WriterApp.Application.Documents.IPageRepository, WriterApp.Data.Documents.PageRepository>();
 builder.Services.AddScoped<WriterApp.Application.Documents.IPageVersionService, WriterApp.Application.Documents.PageVersionService>();
+builder.Services.AddScoped<WriterApp.Application.Documents.IPageVersionDiffService, WriterApp.Application.Documents.PageVersionDiffService>();
+builder.Services.AddScoped<WriterApp.Application.Documents.IQualityCheckService, WriterApp.Application.Documents.QualityCheckService>();
 builder.Services.AddSingleton<ISearchIndexBackfillQueue, SearchIndexBackfillQueue>();
 builder.Services.AddHostedService<SearchIndexBackfillHostedService>();
 builder.Services.AddScoped<ISearchIndexBackfillWorker, SearchIndexService>();

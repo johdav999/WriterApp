@@ -169,4 +169,16 @@
       editor.view.dispatch(tr);
     };
   }
+
+  if (!api.setQualityIssues) {
+    api.setQualityIssues = function () {
+      return;
+    };
+  }
+
+  if (!api.clearQualityIssues) {
+    api.clearQualityIssues = function () {
+      return;
+    };
+  }
 })();

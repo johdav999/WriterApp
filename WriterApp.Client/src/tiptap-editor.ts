@@ -197,6 +197,7 @@ const pageGapDecorationsKey = new PluginKey("pageGapDecorations");
 const headingNumberDecorationsKey = new PluginKey("headingNumberDecorations");
 const searchHighlightDecorationsKey = new PluginKey("searchHighlightDecorations");
 const annotationDecorationsKey = new PluginKey("annotationDecorations");
+const qualityDecorationsKey = new PluginKey("qualityDecorations");
 const WA_LAYOUT_META = "wa_layout_tx";
 const WA_HEADING_NUMBERING_REBUILD = "wa_heading_numbering_rebuild";
 
@@ -452,6 +453,50 @@ const AnnotationDecorationsExtension = Extension.create({
     }
 });
 
+const QualityDecorationsExtension = Extension.create({
+    name: "qualityDecorations",
+    addProseMirrorPlugins() {
+        return [
+            new Plugin({
+                key: qualityDecorationsKey,
+                state: {
+                    init: () => ({
+                        decorations: DecorationSet.empty,
+                        items: []
+                    }),
+                    apply: (tr, value) => {
+                        const current = value ?? { decorations: DecorationSet.empty, items: [] };
+                        const meta = tr.getMeta(qualityDecorationsKey);
+                        if (meta) {
+                            return meta;
+                        }
+
+                        if (tr.docChanged && current.items.length > 0) {
+                            const decorations = buildQualityDecorations(tr.doc, current.items);
+                            return { items: current.items, decorations };
+                        }
+
+                        if (tr.docChanged && current.decorations && current.decorations !== DecorationSet.empty) {
+                            return {
+                                items: current.items,
+                                decorations: current.decorations.map(tr.mapping, tr.doc)
+                            };
+                        }
+
+                        return current;
+                    }
+                },
+                props: {
+                    decorations(state) {
+                        const stored = qualityDecorationsKey.getState(state);
+                        return stored?.decorations ?? DecorationSet.empty;
+                    }
+                }
+            })
+        ];
+    }
+});
+
 function createInteropState(dotNetRef) {
     return { enabled: !!dotNetRef };
 }
@@ -537,6 +582,85 @@ function getUniformTextStyleAttr(editor, attrName) {
     }
 
     return { mixed, value: currentValue };
+}
+
+function buildQualityDecorations(doc, items) {
+    if (!doc || !Array.isArray(items) || items.length === 0) {
+        return DecorationSet.empty;
+    }
+
+    const decorations = [];
+    const fullText = doc.textBetween(0, doc.content.size, " ", " ");
+    for (const item of items) {
+        if (!item) {
+            continue;
+        }
+
+        let startOffset = Number.isFinite(item.from) ? item.from : -1;
+        let endOffset = Number.isFinite(item.to) ? item.to : -1;
+        if (startOffset < 0 || endOffset <= startOffset) {
+            if (typeof item.anchorText === "string" && item.anchorText.length > 0) {
+                const index = fullText.indexOf(item.anchorText);
+                if (index >= 0) {
+                    startOffset = index;
+                    endOffset = index + item.anchorText.length;
+                }
+            }
+        }
+
+        if (startOffset < 0 || endOffset <= startOffset) {
+            continue;
+        }
+
+        const from = mapPlainTextOffsetToDocPos(doc, startOffset);
+        const to = mapPlainTextOffsetToDocPos(doc, Math.max(startOffset + 1, endOffset));
+        if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) {
+            continue;
+        }
+
+        const severity = (item.severity || "info").toLowerCase();
+        const kind = (item.kind || "note").toLowerCase();
+        const attrs = {
+            class: `quality-issue quality-issue--${severity} quality-issue--${kind}`,
+            "data-quality-issue-id": item.id || ""
+        };
+        decorations.push(Decoration.inline(from, to, attrs));
+    }
+
+    return DecorationSet.create(doc, decorations);
+}
+
+function mapPlainTextOffsetToDocPos(doc, targetOffset) {
+    let offset = 0;
+    let found = null;
+
+    doc.descendants((node, pos) => {
+        if (found !== null) {
+            return false;
+        }
+
+        if (node.isText && typeof node.text === "string") {
+            const nextOffset = offset + node.text.length;
+            if (targetOffset <= nextOffset) {
+                found = pos + Math.max(0, targetOffset - offset);
+                return false;
+            }
+            offset = nextOffset;
+        }
+
+        if (node.isTextblock) {
+            if (targetOffset <= offset) {
+                found = pos + node.nodeSize - 1;
+                return false;
+            }
+
+            offset += 1;
+        }
+
+        return true;
+    });
+
+    return found ?? doc.content.size;
 }
 
 function getUniformBlockAttr(editor, attrName, types) {
@@ -2122,6 +2246,7 @@ window.tiptapEditor = {
                 IndentExtension,
                 AiDecorationsExtension,
                 AnnotationDecorationsExtension,
+                QualityDecorationsExtension,
                 PageGapDecorationsExtension,
                 HeadingNumberingExtension,
                 SearchHighlightExtension,
@@ -2380,6 +2505,30 @@ window.tiptapEditor = {
         }
 
         const tr = editor.view.state.tr.setMeta(annotationDecorationsKey, {
+            decorations: DecorationSet.empty,
+            items: []
+        });
+        editor.view.dispatch(tr);
+    },
+    setQualityIssues: function (editor, items) {
+        if (!editor || !editor.view) {
+            return;
+        }
+
+        const normalized = Array.isArray(items) ? items : [];
+        const decorations = buildQualityDecorations(editor.state.doc, normalized);
+        const tr = editor.view.state.tr.setMeta(qualityDecorationsKey, {
+            decorations,
+            items: normalized
+        });
+        editor.view.dispatch(tr);
+    },
+    clearQualityIssues: function (editor) {
+        if (!editor || !editor.view) {
+            return;
+        }
+
+        const tr = editor.view.state.tr.setMeta(qualityDecorationsKey, {
             decorations: DecorationSet.empty,
             items: []
         });
