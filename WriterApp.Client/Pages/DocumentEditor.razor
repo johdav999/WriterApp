@@ -320,6 +320,8 @@ else
                                         @key="_activePage.Id"
                                         Page="_activePage"
                                         OnPageSaved="OnPageSaved"
+                                        Annotations="_annotations"
+                                        AnnotationClicked="OnAnnotationClickedAsync"
                                         PageBreaks="PageBreaks"
                                         HeadingNumberingEnabled="@LayoutStateService.State.HeadingNumberingEnabled"
                                         HeadingNumberingScope="@GetHeadingNumberingScope()"
@@ -389,6 +391,13 @@ else
                                 title='@GetTooltip("AI tools for writing and planning.")'
                                 @onclick="() => SetContextTab(ContextTab.Ai)">
                             AI
+                        </button>
+                        <button type="button"
+                                class="context-tab @GetContextTabClass(ContextTab.Annotations)"
+                                aria-selected="@(_activeContextTab == ContextTab.Annotations)"
+                                title='@GetTooltip("Comments, TODOs, and highlights.")'
+                                @onclick="() => SetContextTab(ContextTab.Annotations)">
+                            Annotations
                         </button>
                         <button type="button"
                                 class="context-tab @GetContextTabClass(ContextTab.History)"
@@ -803,6 +812,112 @@ else
                                 }
                             </ul>
                         }
+                        </div>
+                    }
+                    else if (_activeContextTab == ContextTab.Annotations)
+                    {
+                        <div class="drawer-panel annotations-panel">
+                            <div class="drawer-panel-title">Annotations</div>
+                            <div class="annotations-toolbar">
+                                <div class="annotations-filter">
+                                    <label class="annotations-filter-label">Status</label>
+                                    <select class="annotations-filter-select"
+                                            value="@_annotationFilterStatus"
+                                            @onchange="OnAnnotationStatusFilterChanged">
+                                        <option value="open">Open</option>
+                                        <option value="resolved">Resolved</option>
+                                        <option value="all">All</option>
+                                    </select>
+                                </div>
+                                <div class="annotations-filter">
+                                    <label class="annotations-filter-label">Type</label>
+                                    <select class="annotations-filter-select"
+                                            value="@_annotationFilterKind"
+                                            @onchange="OnAnnotationKindFilterChanged">
+                                        <option value="all">All</option>
+                                        <option value="comment">Comment</option>
+                                        <option value="todo">TODO</option>
+                                        <option value="highlight">Highlight</option>
+                                    </select>
+                                </div>
+                                <button type="button" class="annotations-refresh" @onclick="LoadAnnotationsAsync">Refresh</button>
+                            </div>
+                            <div class="annotations-create">
+                                <div class="annotations-selection">@GetAnnotationSelectionLabel()</div>
+                                <textarea class="annotations-input"
+                                          value="@_annotationDraftContent"
+                                          @oninput="OnAnnotationDraftInput"
+                                          placeholder="Add a comment or TODO..."></textarea>
+                                <div class="annotations-create-actions">
+                                    <button type="button"
+                                            class="annotations-action"
+                                            disabled="@(!_canCreateAnnotation)"
+                                            @onclick='@(() => CreateAnnotationAsync("comment"))'>
+                                        Add comment
+                                    </button>
+                                    <button type="button"
+                                            class="annotations-action"
+                                            disabled="@(!_canCreateAnnotation)"
+                                            @onclick='@(() => CreateAnnotationAsync("todo"))'>
+                                        Add TODO
+                                    </button>
+                                    <button type="button"
+                                            class="annotations-action"
+                                            disabled="@(!_canCreateAnnotation)"
+                                            @onclick='@(() => CreateAnnotationAsync("highlight"))'>
+                                        Add highlight
+                                    </button>
+                                </div>
+                                @if (!string.IsNullOrWhiteSpace(_annotationActionError))
+                                {
+                                    <div class="annotations-error">@_annotationActionError</div>
+                                }
+                            </div>
+                            @if (_annotationsLoading)
+                            {
+                                <div class="drawer-empty">Loading annotations...</div>
+                            }
+                            else if (!string.IsNullOrWhiteSpace(_annotationsError))
+                            {
+                                <div class="drawer-empty">@_annotationsError</div>
+                            }
+                            else if (_annotations.Count == 0)
+                            {
+                                <div class="drawer-empty">No annotations yet.</div>
+                            }
+                            else
+                            {
+                                <ul class="annotations-list">
+                                    @foreach (PageAnnotationDto annotation in _annotations)
+                                    {
+                                        <li class="annotation-item @GetAnnotationItemClass(annotation) @GetAnnotationFocusClass(annotation)"
+                                            id="@GetAnnotationElementId(annotation)">
+                                            <div class="annotation-meta">
+                                                <span class="annotation-kind">@GetAnnotationKindLabel(annotation.Kind)</span>
+                                                <span class="annotation-time">@annotation.CreatedAt.ToLocalTime().ToString("g")</span>
+                                                @if (string.Equals(annotation.Status, "resolved", StringComparison.OrdinalIgnoreCase))
+                                                {
+                                                    <span class="annotation-status">Resolved</span>
+                                                }
+                                            </div>
+                                            @if (!string.IsNullOrWhiteSpace(annotation.Content))
+                                            {
+                                                <div class="annotation-content">@annotation.Content</div>
+                                            }
+                                            <div class="annotation-actions">
+                                                @if (string.Equals(annotation.Status, "resolved", StringComparison.OrdinalIgnoreCase))
+                                                {
+                                                    <button type="button" @onclick="() => ReopenAnnotationAsync(annotation)">Reopen</button>
+                                                }
+                                                else
+                                                {
+                                                    <button type="button" class="danger" @onclick="() => ResolveAnnotationAsync(annotation)">Resolve</button>
+                                                }
+                                            </div>
+                                        </li>
+                                    }
+                                </ul>
+                            }
                         </div>
                     }
                     else if (_activeContextTab == ContextTab.History)

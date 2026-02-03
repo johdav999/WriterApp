@@ -23,6 +23,7 @@ namespace WriterApp.Data
         public DbSet<DocumentRecord> Documents => Set<DocumentRecord>();
         public DbSet<SectionRecord> Sections => Set<SectionRecord>();
         public DbSet<PageRecord> Pages => Set<PageRecord>();
+        public DbSet<PageAnnotationRecord> PageAnnotations => Set<PageAnnotationRecord>();
         public DbSet<PageVersionRecord> PageVersions => Set<PageVersionRecord>();
         public DbSet<DocumentOutlineNodeRecord> DocumentOutlineNodes => Set<DocumentOutlineNodeRecord>();
         public DbSet<PageNoteRecord> PageNotes => Set<PageNoteRecord>();
@@ -158,6 +159,35 @@ namespace WriterApp.Data
                 entity.HasOne(page => page.Document)
                     .WithMany()
                     .HasForeignKey(page => page.DocumentId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<PageAnnotationRecord>(entity =>
+            {
+                entity.HasKey(annotation => annotation.Id);
+                entity.Property(annotation => annotation.DocumentId).IsRequired();
+                entity.Property(annotation => annotation.PageId).IsRequired();
+                entity.Property(annotation => annotation.Kind).IsRequired();
+                entity.Property(annotation => annotation.Status).IsRequired();
+                entity.Property(annotation => annotation.AnchorFrom).IsRequired();
+                entity.Property(annotation => annotation.AnchorTo).IsRequired();
+                entity.Property(annotation => annotation.AnchorText).IsRequired();
+                entity.Property(annotation => annotation.Content).IsRequired();
+                entity.Property(annotation => annotation.AuthorUserId).IsRequired();
+                entity.Property(annotation => annotation.CreatedAt).IsRequired();
+                entity.Property(annotation => annotation.ResolvedAt);
+                entity.HasIndex(annotation => annotation.PageId);
+                entity.HasIndex(annotation => annotation.DocumentId);
+                entity.HasIndex(annotation => annotation.Status);
+                entity.HasIndex(annotation => annotation.Kind);
+                entity.HasIndex(annotation => annotation.CreatedAt);
+                entity.HasOne(annotation => annotation.Page)
+                    .WithMany()
+                    .HasForeignKey(annotation => annotation.PageId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                entity.HasOne(annotation => annotation.Document)
+                    .WithMany()
+                    .HasForeignKey(annotation => annotation.DocumentId)
                     .OnDelete(DeleteBehavior.Cascade);
             });
 

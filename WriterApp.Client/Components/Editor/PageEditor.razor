@@ -56,6 +56,7 @@ else
     private string? _lastSearchHighlightQuery;
     private string? _pendingSearchHighlightQuery;
     private bool _searchHighlightActive;
+    private string? _lastAnnotationsFingerprint;
 
     [Parameter]
     public PageDto? Page { get; set; }
@@ -95,6 +96,12 @@ else
 
     [Parameter]
     public string? SearchHighlightQuery { get; set; }
+
+    [Parameter]
+    public IReadOnlyList<PageAnnotationDto>? Annotations { get; set; }
+
+    [Parameter]
+    public EventCallback<Guid> AnnotationClicked { get; set; }
 
     private bool _lastHeadingNumberingEnabled = true;
     private string _lastHeadingNumberingScope = "document";
@@ -164,6 +171,8 @@ else
             _lastSearchHighlightQuery = SearchHighlightQuery;
             await ApplySearchHighlightAsync(SearchHighlightQuery);
         }
+
+        await ApplyAnnotationsAsync();
     }
 
     protected override Task OnAfterRenderAsync(bool firstRender)
@@ -171,6 +180,10 @@ else
         if (firstRender)
         {
             _dotNetRef = DotNetObjectReference.Create(this);
+            if (_editorInstance is not null)
+            {
+                _ = AttachAnnotationClicksAsync();
+            }
         }
 
         if (_pendingSetContent && _editorRef is not null)
@@ -190,6 +203,8 @@ else
         _ = SetHeadingNumberingContextAsync();
         _ = ForceHeadingNumberingRebuildAsync("editorReady");
         _ = ApplySearchHighlightAsync(_pendingSearchHighlightQuery ?? SearchHighlightQuery);
+        _ = ApplyAnnotationsAsync();
+        _ = AttachAnnotationClicksAsync();
         if (_pendingSetContent && _editorRef is not null)
         {
             _ = ApplyContentToEditorAsync("editorReady");
@@ -280,6 +295,63 @@ else
         _searchHighlightActive = false;
         _pendingSearchHighlightQuery = null;
         await JSRuntime.InvokeVoidAsync("tiptapEditor.clearSearchHighlights", _editorInstance);
+    }
+
+    private async Task ApplyAnnotationsAsync()
+    {
+        if (_editorInstance is null)
+        {
+            return;
+        }
+
+        string fingerprint = BuildAnnotationsFingerprint(Annotations);
+        if (string.Equals(fingerprint, _lastAnnotationsFingerprint, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _lastAnnotationsFingerprint = fingerprint;
+
+        if (Annotations is null || Annotations.Count == 0)
+        {
+            await JSRuntime.InvokeVoidAsync("tiptapEditor.clearAnnotations", _editorInstance);
+            return;
+        }
+
+        var payload = Annotations.Select(annotation => new
+        {
+            id = annotation.Id.ToString(),
+            from = annotation.AnchorFrom,
+            to = annotation.AnchorTo,
+            kind = annotation.Kind,
+            status = annotation.Status
+        }).ToList();
+
+        await JSRuntime.InvokeVoidAsync("tiptapEditor.setAnnotations", _editorInstance, payload);
+    }
+
+    private async Task AttachAnnotationClicksAsync()
+    {
+        if (_editorInstance is null || _dotNetRef is null)
+        {
+            return;
+        }
+
+        await JSRuntime.InvokeVoidAsync("tiptapEditor.attachAnnotationClicks", _editorInstance, _dotNetRef);
+    }
+
+    [JSInvokable]
+    public async Task OnAnnotationClicked(string id)
+    {
+        if (!Guid.TryParse(id, out Guid annotationId))
+        {
+            return;
+        }
+
+        if (AnnotationClicked.HasDelegate)
+        {
+            await AnnotationClicked.InvokeAsync(annotationId);
+        }
     }
 
     private void ScheduleAutosave()
@@ -463,6 +535,11 @@ else
         _pageBreakCts?.Cancel();
         _pageBreakCts?.Dispose();
         _pageBreakCts = null;
+
+        if (_editorInstance is not null)
+        {
+            _ = InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync("tiptapEditor.detachAnnotationClicks", _editorInstance));
+        }
 
         _dotNetRef?.Dispose();
         _dotNetRef = null;
@@ -774,6 +851,72 @@ else
         };
     }
 
+    private static string BuildAnnotationsFingerprint(IReadOnlyList<PageAnnotationDto>? annotations)
+    {
+        if (annotations is null || annotations.Count == 0)
+        {
+            return "none";
+        }
+
+        return string.Join("|", annotations
+            .OrderBy(item => item.Id)
+            .Select(item => $"{item.Id}:{item.AnchorFrom}:{item.AnchorTo}:{item.Kind}:{item.Status}"));
+    }
+
+    public async Task<IReadOnlyList<PageAnnotationAnchorUpdateRequest>> GetAnnotationAnchorsAsync()
+    {
+        if (_editorInstance is null)
+        {
+            return Array.Empty<PageAnnotationAnchorUpdateRequest>();
+        }
+
+        List<AnnotationAnchorPayload>? payload = await JSRuntime.InvokeAsync<List<AnnotationAnchorPayload>>(
+            "tiptapEditor.getAnnotations",
+            _editorInstance);
+
+        if (payload is null || payload.Count == 0)
+        {
+            return Array.Empty<PageAnnotationAnchorUpdateRequest>();
+        }
+
+        List<PageAnnotationAnchorUpdateRequest> result = new(payload.Count);
+        foreach (AnnotationAnchorPayload item in payload)
+        {
+            if (!Guid.TryParse(item.Id, out Guid id))
+            {
+                continue;
+            }
+
+            result.Add(new PageAnnotationAnchorUpdateRequest(
+                id,
+                item.From,
+                item.To,
+                item.Text));
+        }
+
+        return result;
+    }
+
+    public async Task<SelectionDocRange?> GetSelectionDocRangeAsync()
+    {
+        if (_editorInstance is null)
+        {
+            return null;
+        }
+
+        return await JSRuntime.InvokeAsync<SelectionDocRange?>("tiptapEditor.getSelectionDocRange", _editorInstance);
+    }
+
+    public async Task<string?> GetSelectionTextAsync()
+    {
+        if (_editorInstance is null)
+        {
+            return null;
+        }
+
+        return await JSRuntime.InvokeAsync<string?>("tiptapEditor.getSelectionText", _editorInstance);
+    }
+
     private async Task InvokeJsSafeAsync(Func<ValueTask> action)
     {
         try
@@ -839,4 +982,14 @@ else
 
         await InvokeAsync(StateHasChanged);
     }
+
+    private sealed record AnnotationAnchorPayload
+    {
+        public string Id { get; init; } = string.Empty;
+        public int From { get; init; }
+        public int To { get; init; }
+        public string? Text { get; init; }
+    }
+
+    public sealed record SelectionDocRange(int From, int To);
 }
