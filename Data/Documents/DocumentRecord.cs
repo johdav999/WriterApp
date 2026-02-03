@@ -19,6 +19,12 @@ namespace WriterApp.Data.Documents
 
         public DateTimeOffset UpdatedAt { get; set; }
 
+        public bool IsArchived { get; set; }
+
+        public DateTimeOffset? ArchivedAt { get; set; }
+
+        public DateTimeOffset? DeletedAt { get; set; }
+
         public List<SectionRecord> Sections { get; set; } = new();
 
         public List<DocumentOutlineNodeRecord> OutlineNodes { get; set; } = new();

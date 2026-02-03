@@ -7,7 +7,10 @@ namespace WriterApp.Application.Documents
         string Title,
         DateTimeOffset CreatedAt,
         DateTimeOffset UpdatedAt,
-        int WordCount);
+        int WordCount,
+        bool IsArchived,
+        DateTimeOffset? ArchivedAt,
+        DateTimeOffset? DeletedAt);
 
     public sealed record DocumentDetailDto(
         Guid Id,
@@ -15,7 +18,10 @@ namespace WriterApp.Application.Documents
         DateTimeOffset CreatedAt,
         DateTimeOffset UpdatedAt,
         string? LanguageCode,
-        Guid? TranslationGroupId);
+        Guid? TranslationGroupId,
+        bool IsArchived,
+        DateTimeOffset? ArchivedAt,
+        DateTimeOffset? DeletedAt);
 
     public sealed record DocumentCreateRequest(
         Guid? Id,

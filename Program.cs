@@ -15,6 +15,7 @@ using System.IO;
 using System.Security;
 using System.Security.Claims;
 using System.Runtime.InteropServices;
+using System.Threading;
 using WriterApp.AI.Abstractions;
 using WriterApp.AI.Actions;
 using WriterApp.AI.Core;
@@ -24,6 +25,7 @@ using WriterApp.Application.Security;
 using WriterApp.Application.Subscriptions;
 using WriterApp.Application.Usage;
 using WriterApp.Application.Commands;
+using WriterApp.Application.Documents;
 using WriterApp.Application.Exporting;
 using WriterApp.Application.State;
 using WriterApp.Application.AI.StoryCoach;
@@ -167,6 +169,7 @@ builder.Services.AddScoped<ISearchIndexBackfillWorker, SearchIndexService>();
 builder.Services.AddScoped<ISearchIndexService, SearchIndexService>();
 
 builder.Services.AddSingleton<StoryCoachContextBuilder>();
+builder.Services.AddSingleton<SynopsisAiContextBuilder>();
 builder.Services.Configure<WriterAiOptions>(builder.Configuration.GetSection("WriterApp:AI"));
 
 builder.Services.AddSingleton<IAiTextService, MockAiTextService>();
@@ -199,6 +202,8 @@ builder.Services.AddSingleton<IAiAction, TranslateSectionAction>();
 builder.Services.AddSingleton<IAiAction, TranslateDocumentAction>();
 builder.Services.AddSingleton<IAiAction, GenerateCoverImageAction>();
 builder.Services.AddSingleton<IAiAction, StoryCoachAction>();
+builder.Services.AddSingleton<IAiAction, SynopsisEvaluateAction>();
+builder.Services.AddSingleton<IAiAction, SynopsisQuestionsAction>();
 builder.Services.AddSingleton<IAiAction, GenerateOutlineAction>();
 builder.Services.AddSingleton<IAiAction, SceneSuggestAction>();
 builder.Services.AddSingleton<IAiAction, SceneRefineAction>();
@@ -223,6 +228,7 @@ builder.Services.AddSingleton<IExportRenderer, SynopsisHtmlExportRenderer>();
 builder.Services.AddScoped<IExportTemplateSeeder, ExportTemplateSeeder>();
 builder.Services.AddScoped<IExportTemplateResolver, ExportTemplateResolver>();
 builder.Services.AddScoped<ExportService>();
+builder.Services.AddScoped<IDocumentLifecycleService, DocumentLifecycleService>();
 
 builder.Services.AddServerSideBlazor()
     .AddHubOptions(options =>
@@ -263,6 +269,21 @@ using (IServiceScope scope = app.Services.CreateScope())
     if (app.Environment.IsDevelopment())
     {
         LogTablePresence(dbContext, logger, "PageVersions");
+    }
+
+    try
+    {
+        IDocumentLifecycleService lifecycle =
+            scope.ServiceProvider.GetRequiredService<IDocumentLifecycleService>();
+        int removed = await lifecycle.CleanupExpiredTrashAsync(TimeSpan.FromDays(30), CancellationToken.None);
+        if (removed > 0)
+        {
+            logger.LogInformation("Startup trash cleanup removed {Count} documents.", removed);
+        }
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning(ex, "Startup trash cleanup failed.");
     }
 
     ApplySqlitePragmas(dbContext, logger);

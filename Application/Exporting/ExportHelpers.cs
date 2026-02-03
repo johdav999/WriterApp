@@ -79,16 +79,16 @@ namespace WriterApp.Application.Exporting
 
             string[] values =
             {
+                document.Synopsis.Logline,
                 document.Synopsis.Premise,
-                document.Synopsis.Protagonist,
-                document.Synopsis.Antagonist,
-                document.Synopsis.CentralConflict,
                 document.Synopsis.Theme,
+                document.Synopsis.ProtagonistArc,
+                document.Synopsis.CentralConflict,
                 document.Synopsis.Stakes,
-                document.Synopsis.Arc,
                 document.Synopsis.Setting,
-                document.Synopsis.Ending,
-                document.Synopsis.Resolution
+                document.Synopsis.EndingIntent,
+                document.Synopsis.OpenQuestions,
+                document.Synopsis.Notes
             };
 
             foreach (string value in values)

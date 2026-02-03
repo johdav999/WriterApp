@@ -28,6 +28,7 @@ namespace WriterApp.Data
         public DbSet<PageNoteRecord> PageNotes => Set<PageNoteRecord>();
         public DbSet<SectionSceneCardRecord> SectionSceneCards => Set<SectionSceneCardRecord>();
         public DbSet<DocumentOutlineRecord> DocumentOutlines => Set<DocumentOutlineRecord>();
+        public DbSet<DocumentSynopsisRecord> DocumentSynopses => Set<DocumentSynopsisRecord>();
         public DbSet<AiActionHistoryEntryRecord> AiActionHistoryEntries => Set<AiActionHistoryEntryRecord>();
         public DbSet<AiActionAppliedEventRecord> AiActionAppliedEvents => Set<AiActionAppliedEventRecord>();
         public DbSet<ExportTemplate> ExportTemplates => Set<ExportTemplate>();
@@ -95,6 +96,11 @@ namespace WriterApp.Data
                 entity.Property(document => document.Title).IsRequired();
                 entity.Property(document => document.CreatedAt).IsRequired();
                 entity.Property(document => document.UpdatedAt).IsRequired();
+                entity.Property(document => document.IsArchived).IsRequired();
+                entity.Property(document => document.ArchivedAt);
+                entity.Property(document => document.DeletedAt);
+                entity.HasIndex(document => document.DeletedAt);
+                entity.HasIndex(document => document.IsArchived);
                 entity.HasMany(document => document.Sections)
                     .WithOne(section => section.Document)
                     .HasForeignKey(section => section.DocumentId)
@@ -205,6 +211,27 @@ namespace WriterApp.Data
                     .WithOne()
                     .HasForeignKey<DocumentOutlineRecord>(outline => outline.DocumentId)
                     .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<DocumentSynopsisRecord>(entity =>
+            {
+                entity.HasKey(synopsis => synopsis.DocumentId);
+                entity.Property(synopsis => synopsis.Logline).IsRequired();
+                entity.Property(synopsis => synopsis.Premise).IsRequired();
+                entity.Property(synopsis => synopsis.Theme).IsRequired();
+                entity.Property(synopsis => synopsis.ProtagonistArc).IsRequired();
+                entity.Property(synopsis => synopsis.CentralConflict).IsRequired();
+                entity.Property(synopsis => synopsis.Stakes).IsRequired();
+                entity.Property(synopsis => synopsis.Setting).IsRequired();
+                entity.Property(synopsis => synopsis.EndingIntent).IsRequired();
+                entity.Property(synopsis => synopsis.OpenQuestions).IsRequired();
+                entity.Property(synopsis => synopsis.Notes).IsRequired();
+                entity.Property(synopsis => synopsis.UpdatedAt).IsRequired();
+                entity.HasOne(synopsis => synopsis.Document)
+                    .WithOne()
+                    .HasForeignKey<DocumentSynopsisRecord>(synopsis => synopsis.DocumentId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                entity.HasIndex(synopsis => synopsis.UpdatedAt);
             });
 
             builder.Entity<AiActionHistoryEntryRecord>(entity =>

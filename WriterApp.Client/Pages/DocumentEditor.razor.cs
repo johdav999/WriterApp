@@ -415,6 +415,12 @@ namespace WriterApp.Client.Pages
                     return;
                 }
 
+                if (document.DeletedAt is not null)
+                {
+                    _loadError = "Document is in Trash; restore to edit.";
+                    return;
+                }
+
                 _documentTitle = document.Title;
                 _documentLanguageCode = document.LanguageCode;
                 _documentTranslationGroupId = document.TranslationGroupId;

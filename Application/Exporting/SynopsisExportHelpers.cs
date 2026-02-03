@@ -18,18 +18,17 @@ namespace WriterApp.Application.Exporting
 
             List<SynopsisEntry> entries = new()
             {
+                new SynopsisEntry("Logline", synopsis.Logline),
                 new SynopsisEntry("Premise", synopsis.Premise),
-                new SynopsisEntry("Protagonist", synopsis.Protagonist),
-                new SynopsisEntry("Antagonist", synopsis.Antagonist),
-                new SynopsisEntry("Central Conflict", synopsis.CentralConflict),
                 new SynopsisEntry("Theme", synopsis.Theme),
-                new SynopsisEntry("Stakes", synopsis.Stakes)
+                new SynopsisEntry("Protagonist Arc", synopsis.ProtagonistArc),
+                new SynopsisEntry("Central Conflict", synopsis.CentralConflict),
+                new SynopsisEntry("Stakes", synopsis.Stakes),
+                new SynopsisEntry("Setting", synopsis.Setting),
+                new SynopsisEntry("Ending Intent", synopsis.EndingIntent),
+                new SynopsisEntry("Open Questions", synopsis.OpenQuestions),
+                new SynopsisEntry("Notes", synopsis.Notes)
             };
-
-            if (!string.IsNullOrWhiteSpace(synopsis.Resolution))
-            {
-                entries.Add(new SynopsisEntry("Resolution", synopsis.Resolution));
-            }
 
             return entries;
         }

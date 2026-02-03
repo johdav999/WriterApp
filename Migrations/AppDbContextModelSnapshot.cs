@@ -170,6 +170,61 @@ namespace BlazorApp.Migrations
                     b.ToTable("DocumentOutlines");
                 });
 
+            modelBuilder.Entity("WriterApp.Data.Documents.DocumentSynopsisRecord", b =>
+                {
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CentralConflict")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("EndingIntent")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Logline")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Notes")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OpenQuestions")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Premise")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ProtagonistArc")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Setting")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Stakes")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Theme")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("DocumentId");
+
+                    b.HasIndex("UpdatedAt");
+
+                    b.ToTable("DocumentSynopses");
+                });
+
             modelBuilder.Entity("WriterApp.Data.Documents.DocumentRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -178,6 +233,15 @@ namespace BlazorApp.Migrations
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("ArchivedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsArchived")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("LanguageCode")
                         .HasColumnType("TEXT");
@@ -197,6 +261,10 @@ namespace BlazorApp.Migrations
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("DeletedAt");
+
+                    b.HasIndex("IsArchived");
 
                     b.ToTable("Documents");
                 });
@@ -803,6 +871,17 @@ namespace BlazorApp.Migrations
                     b.HasOne("WriterApp.Data.Documents.DocumentRecord", "Document")
                         .WithOne()
                         .HasForeignKey("WriterApp.Data.Documents.DocumentOutlineRecord", "DocumentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Document");
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Documents.DocumentSynopsisRecord", b =>
+                {
+                    b.HasOne("WriterApp.Data.Documents.DocumentRecord", "Document")
+                        .WithOne()
+                        .HasForeignKey("WriterApp.Data.Documents.DocumentSynopsisRecord", "DocumentId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
