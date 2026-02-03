@@ -24,12 +24,15 @@ namespace WriterApp.Data
         public DbSet<SectionRecord> Sections => Set<SectionRecord>();
         public DbSet<PageRecord> Pages => Set<PageRecord>();
         public DbSet<PageAnnotationRecord> PageAnnotations => Set<PageAnnotationRecord>();
+        public DbSet<PageQualityIssueRecord> PageQualityIssues => Set<PageQualityIssueRecord>();
+        public DbSet<PageQualityIssueDismissalRecord> PageQualityIssueDismissals => Set<PageQualityIssueDismissalRecord>();
         public DbSet<PageVersionRecord> PageVersions => Set<PageVersionRecord>();
         public DbSet<DocumentOutlineNodeRecord> DocumentOutlineNodes => Set<DocumentOutlineNodeRecord>();
         public DbSet<PageNoteRecord> PageNotes => Set<PageNoteRecord>();
         public DbSet<SectionSceneCardRecord> SectionSceneCards => Set<SectionSceneCardRecord>();
         public DbSet<DocumentOutlineRecord> DocumentOutlines => Set<DocumentOutlineRecord>();
         public DbSet<DocumentSynopsisRecord> DocumentSynopses => Set<DocumentSynopsisRecord>();
+        public DbSet<DocumentGlossaryEntryRecord> DocumentGlossaryEntries => Set<DocumentGlossaryEntryRecord>();
         public DbSet<AiActionHistoryEntryRecord> AiActionHistoryEntries => Set<AiActionHistoryEntryRecord>();
         public DbSet<AiActionAppliedEventRecord> AiActionAppliedEvents => Set<AiActionAppliedEventRecord>();
         public DbSet<ExportTemplate> ExportTemplates => Set<ExportTemplate>();
@@ -191,6 +194,48 @@ namespace WriterApp.Data
                     .OnDelete(DeleteBehavior.Cascade);
             });
 
+            builder.Entity<PageQualityIssueRecord>(entity =>
+            {
+                entity.HasKey(issue => issue.Id);
+                entity.Property(issue => issue.DocumentId).IsRequired();
+                entity.Property(issue => issue.PageId).IsRequired();
+                entity.Property(issue => issue.Scope).IsRequired();
+                entity.Property(issue => issue.IssueKey).IsRequired();
+                entity.Property(issue => issue.RuleId).IsRequired();
+                entity.Property(issue => issue.Kind).IsRequired();
+                entity.Property(issue => issue.Severity).IsRequired();
+                entity.Property(issue => issue.Message).IsRequired();
+                entity.Property(issue => issue.ContentHash).IsRequired();
+                entity.Property(issue => issue.CreatedAt).IsRequired();
+                entity.HasIndex(issue => issue.PageId);
+                entity.HasIndex(issue => issue.DocumentId);
+                entity.HasIndex(issue => issue.Scope);
+                entity.HasIndex(issue => issue.ContentHash);
+                entity.HasIndex(issue => issue.IssueKey);
+                entity.HasOne(issue => issue.Page)
+                    .WithMany()
+                    .HasForeignKey(issue => issue.PageId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                entity.HasOne(issue => issue.Document)
+                    .WithMany()
+                    .HasForeignKey(issue => issue.DocumentId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<PageQualityIssueDismissalRecord>(entity =>
+            {
+                entity.HasKey(dismissal => new { dismissal.UserId, dismissal.PageId, dismissal.IssueKey });
+                entity.Property(dismissal => dismissal.UserId).IsRequired();
+                entity.Property(dismissal => dismissal.PageId).IsRequired();
+                entity.Property(dismissal => dismissal.IssueKey).IsRequired();
+                entity.Property(dismissal => dismissal.DismissedAt).IsRequired();
+                entity.HasIndex(dismissal => dismissal.PageId);
+                entity.HasOne(dismissal => dismissal.Page)
+                    .WithMany()
+                    .HasForeignKey(dismissal => dismissal.PageId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
             builder.Entity<PageVersionRecord>(entity =>
             {
                 entity.HasKey(version => version.Id);
@@ -262,6 +307,22 @@ namespace WriterApp.Data
                     .HasForeignKey<DocumentSynopsisRecord>(synopsis => synopsis.DocumentId)
                     .OnDelete(DeleteBehavior.Cascade);
                 entity.HasIndex(synopsis => synopsis.UpdatedAt);
+            });
+
+            builder.Entity<DocumentGlossaryEntryRecord>(entity =>
+            {
+                entity.HasKey(entry => entry.Id);
+                entity.Property(entry => entry.DocumentId).IsRequired();
+                entity.Property(entry => entry.Term).IsRequired();
+                entity.Property(entry => entry.NormalizedTerm).IsRequired();
+                entity.Property(entry => entry.CreatedAt).IsRequired();
+                entity.Property(entry => entry.UpdatedAt).IsRequired();
+                entity.HasIndex(entry => entry.DocumentId);
+                entity.HasIndex(entry => entry.NormalizedTerm);
+                entity.HasOne(entry => entry.Document)
+                    .WithMany()
+                    .HasForeignKey(entry => entry.DocumentId)
+                    .OnDelete(DeleteBehavior.Cascade);
             });
 
             builder.Entity<AiActionHistoryEntryRecord>(entity =>

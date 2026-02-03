@@ -22,17 +22,20 @@ namespace WriterApp.Controllers
         private readonly IPageRepository _pages;
         private readonly IUserIdResolver _userIdResolver;
         private readonly IPageVersionService _pageVersions;
+        private readonly IPageVersionDiffService _pageVersionDiffs;
         private readonly ISearchIndexService _searchIndex;
 
         public PageVersionsController(
             IPageRepository pages,
             IUserIdResolver userIdResolver,
             IPageVersionService pageVersions,
+            IPageVersionDiffService pageVersionDiffs,
             ISearchIndexService searchIndex)
         {
             _pages = pages ?? throw new ArgumentNullException(nameof(pages));
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
             _pageVersions = pageVersions ?? throw new ArgumentNullException(nameof(pageVersions));
+            _pageVersionDiffs = pageVersionDiffs ?? throw new ArgumentNullException(nameof(pageVersionDiffs));
             _searchIndex = searchIndex ?? throw new ArgumentNullException(nameof(searchIndex));
         }
 
@@ -165,9 +168,12 @@ namespace WriterApp.Controllers
         }
 
         [HttpGet("pages/{pageId:guid}/versions/diff")]
-        public async Task<ActionResult<PageVersionDiffDto>> GetDiff(
+        public async Task<ActionResult<PageVersionDiffResultDto>> GetDiff(
             Guid pageId,
             [FromQuery] Guid fromVersionId,
+            [FromQuery] Guid? toVersionId,
+            [FromQuery] string? granularity,
+            [FromQuery] int? maxLines,
             CancellationToken ct)
         {
             if (fromVersionId == Guid.Empty)
@@ -199,9 +205,39 @@ namespace WriterApp.Controllers
 
             string fromContent = _pageVersions.DecompressContent(version);
             string fromText = PlainTextMapper.ToPlainText(fromContent);
-            string toText = PlainTextMapper.ToPlainText(page.Content ?? string.Empty);
 
-            return Ok(new PageVersionDiffDto(pageId, fromVersionId, fromText, toText));
+            string toText;
+            Guid? resolvedToVersionId = null;
+            bool compareToCurrent = true;
+            if (toVersionId.HasValue && toVersionId.Value != Guid.Empty)
+            {
+                PageVersionRecord? toVersion = await _pageVersions.GetVersionAsync(userId, toVersionId.Value, ct);
+                if (toVersion is null || toVersion.PageId != pageId)
+                {
+                    return NotFound();
+                }
+
+                string toContent = _pageVersions.DecompressContent(toVersion);
+                toText = PlainTextMapper.ToPlainText(toContent);
+                resolvedToVersionId = toVersion.Id;
+                compareToCurrent = false;
+            }
+            else
+            {
+                toText = PlainTextMapper.ToPlainText(page.Content ?? string.Empty);
+            }
+
+            PageVersionDiffResultDto result = _pageVersionDiffs.BuildDiff(
+                pageId,
+                fromVersionId,
+                resolvedToVersionId,
+                compareToCurrent,
+                fromText,
+                toText,
+                granularity ?? "paragraph",
+                maxLines ?? 800);
+
+            return Ok(result);
         }
     }
 }

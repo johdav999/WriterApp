@@ -225,6 +225,41 @@ namespace BlazorApp.Migrations
                     b.ToTable("DocumentSynopses");
                 });
 
+            modelBuilder.Entity("WriterApp.Data.Documents.DocumentGlossaryEntryRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("NormalizedTerm")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Notes")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Term")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DocumentId");
+
+                    b.HasIndex("NormalizedTerm");
+
+                    b.ToTable("DocumentGlossaryEntries");
+                });
+
             modelBuilder.Entity("WriterApp.Data.Documents.DocumentRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -381,6 +416,97 @@ namespace BlazorApp.Migrations
                     b.HasIndex("Status");
 
                     b.ToTable("PageAnnotations");
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Documents.PageQualityIssueRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AnchorText")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ContentHash")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("EndOffset")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("IssueKey")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Message")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("PageId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RuleId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Scope")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Severity")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Suggestion")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("StartOffset")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ContentHash");
+
+                    b.HasIndex("DocumentId");
+
+                    b.HasIndex("IssueKey");
+
+                    b.HasIndex("PageId");
+
+                    b.HasIndex("Scope");
+
+                    b.ToTable("PageQualityIssues");
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Documents.PageQualityIssueDismissalRecord", b =>
+                {
+                    b.Property<string>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("PageId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("IssueKey")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("DismissedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("UserId", "PageId", "IssueKey");
+
+                    b.HasIndex("PageId");
+
+                    b.ToTable("PageQualityIssueDismissals");
                 });
 
             modelBuilder.Entity("WriterApp.Data.Documents.PageVersionRecord", b =>
@@ -947,6 +1073,17 @@ namespace BlazorApp.Migrations
                     b.Navigation("Document");
                 });
 
+            modelBuilder.Entity("WriterApp.Data.Documents.DocumentGlossaryEntryRecord", b =>
+                {
+                    b.HasOne("WriterApp.Data.Documents.DocumentRecord", "Document")
+                        .WithMany()
+                        .HasForeignKey("DocumentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Document");
+                });
+
             modelBuilder.Entity("WriterApp.Data.Documents.PageAnnotationRecord", b =>
                 {
                     b.HasOne("WriterApp.Data.Documents.DocumentRecord", "Document")
@@ -962,6 +1099,36 @@ namespace BlazorApp.Migrations
                         .IsRequired();
 
                     b.Navigation("Document");
+
+                    b.Navigation("Page");
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Documents.PageQualityIssueRecord", b =>
+                {
+                    b.HasOne("WriterApp.Data.Documents.DocumentRecord", "Document")
+                        .WithMany()
+                        .HasForeignKey("DocumentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("WriterApp.Data.Documents.PageRecord", "Page")
+                        .WithMany()
+                        .HasForeignKey("PageId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Document");
+
+                    b.Navigation("Page");
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Documents.PageQualityIssueDismissalRecord", b =>
+                {
+                    b.HasOne("WriterApp.Data.Documents.PageRecord", "Page")
+                        .WithMany()
+                        .HasForeignKey("PageId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
 
                     b.Navigation("Page");
                 });

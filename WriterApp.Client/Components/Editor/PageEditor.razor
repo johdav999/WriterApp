@@ -57,6 +57,7 @@ else
     private string? _pendingSearchHighlightQuery;
     private bool _searchHighlightActive;
     private string? _lastAnnotationsFingerprint;
+    private string? _lastQualityIssuesFingerprint;
 
     [Parameter]
     public PageDto? Page { get; set; }
@@ -102,6 +103,9 @@ else
 
     [Parameter]
     public EventCallback<Guid> AnnotationClicked { get; set; }
+
+    [Parameter]
+    public IReadOnlyList<PageQualityIssueDto>? QualityIssues { get; set; }
 
     private bool _lastHeadingNumberingEnabled = true;
     private string _lastHeadingNumberingScope = "document";
@@ -173,6 +177,7 @@ else
         }
 
         await ApplyAnnotationsAsync();
+        await ApplyQualityIssuesAsync();
     }
 
     protected override Task OnAfterRenderAsync(bool firstRender)
@@ -328,6 +333,40 @@ else
         }).ToList();
 
         await JSRuntime.InvokeVoidAsync("tiptapEditor.setAnnotations", _editorInstance, payload);
+    }
+
+    private async Task ApplyQualityIssuesAsync()
+    {
+        if (_editorInstance is null)
+        {
+            return;
+        }
+
+        string fingerprint = BuildQualityIssuesFingerprint(QualityIssues);
+        if (string.Equals(fingerprint, _lastQualityIssuesFingerprint, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _lastQualityIssuesFingerprint = fingerprint;
+
+        if (QualityIssues is null || QualityIssues.Count == 0)
+        {
+            await JSRuntime.InvokeVoidAsync("tiptapEditor.clearQualityIssues", _editorInstance);
+            return;
+        }
+
+        var payload = QualityIssues.Select(issue => new
+        {
+            id = issue.IssueKey,
+            from = issue.StartOffset,
+            to = issue.EndOffset,
+            kind = issue.Kind,
+            severity = issue.Severity,
+            anchorText = issue.AnchorText
+        }).ToList();
+
+        await JSRuntime.InvokeVoidAsync("tiptapEditor.setQualityIssues", _editorInstance, payload);
     }
 
     private async Task AttachAnnotationClicksAsync()
@@ -861,6 +900,18 @@ else
         return string.Join("|", annotations
             .OrderBy(item => item.Id)
             .Select(item => $"{item.Id}:{item.AnchorFrom}:{item.AnchorTo}:{item.Kind}:{item.Status}"));
+    }
+
+    private static string BuildQualityIssuesFingerprint(IReadOnlyList<PageQualityIssueDto>? issues)
+    {
+        if (issues is null || issues.Count == 0)
+        {
+            return "none";
+        }
+
+        return string.Join("|", issues
+            .OrderBy(item => item.IssueKey)
+            .Select(item => $"{item.IssueKey}:{item.StartOffset}:{item.EndOffset}:{item.Kind}:{item.Severity}"));
     }
 
     public async Task<IReadOnlyList<PageAnnotationAnchorUpdateRequest>> GetAnnotationAnchorsAsync()

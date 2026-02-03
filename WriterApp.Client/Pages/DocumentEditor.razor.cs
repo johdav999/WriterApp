@@ -268,10 +268,14 @@ namespace WriterApp.Client.Pages
         private readonly List<PageVersionListItemDto> _pageVersions = new();
         private bool _versionsLoading;
         private string? _versionsError;
-        private Guid? _selectedVersionId;
-        private PageVersionDetailDto? _selectedVersionDetail;
-        private List<VersionDiffLine> _versionDiffLines = new();
-        private string? _versionDiffNote;
+        private Guid? _diffBaseVersionId;
+        private Guid? _diffCompareVersionId;
+        private PageVersionDiffResultDto? _diffResult;
+        private readonly List<VersionDiffRow> _diffRows = new();
+        private bool _diffLoading;
+        private string? _diffError;
+        private string _diffGranularity = "paragraph";
+        private string _diffViewMode = "inline";
         private bool _isRestoreDialogOpen;
         private PageVersionListItemDto? _pendingRestoreVersion;
         private bool _restoreInFlight;
@@ -287,6 +291,13 @@ namespace WriterApp.Client.Pages
         private string? _annotationActionError;
         private bool _canCreateAnnotation;
         private Guid? _annotationFocusedId;
+        private readonly List<PageQualityIssueDto> _qualityIssues = new();
+        private bool _qualityLoading;
+        private string? _qualityError;
+        private bool _qualityFromCache;
+        private string _qualityScope = "page";
+        private string _qualityFilterSeverity = "all";
+        private string _qualityFilterKind = "all";
         private string _notesDraft = string.Empty;
         private string? _notesStatus;
         private string _sceneNarrativePurpose = string.Empty;
@@ -518,6 +529,7 @@ namespace WriterApp.Client.Pages
                 await LoadAiHistoryAsync();
                 await LoadPageVersionsAsync();
                 await LoadAnnotationsAsync();
+                await LoadQualityIssuesAsync();
                 await LoadTranslationLinksAsync();
             }
             catch (Exception ex)
@@ -1564,12 +1576,16 @@ namespace WriterApp.Client.Pages
                 : "Switch to print layout";
         }
 
-        private void SetContextTab(ContextTab tab)
+        private async Task SetContextTabAsync(ContextTab tab)
         {
             _activeContextTab = tab;
             if (tab == ContextTab.Annotations)
             {
-                _ = LoadAnnotationsAsync();
+                await LoadAnnotationsAsync();
+            }
+            else if (tab == ContextTab.Quality)
+            {
+                await LoadQualityIssuesAsync();
             }
         }
 
@@ -4242,6 +4258,41 @@ namespace WriterApp.Client.Pages
             }
         }
 
+        private async Task LoadQualityIssuesAsync()
+        {
+            if (_activePage is null)
+            {
+                _qualityIssues.Clear();
+                _qualityError = null;
+                return;
+            }
+
+            _qualityLoading = true;
+            _qualityError = null;
+            _qualityFromCache = false;
+
+            try
+            {
+                List<PageQualityIssueDto>? issues =
+                    await Http.GetFromJsonAsync<List<PageQualityIssueDto>>(
+                        $"api/pages/{_activePage.Id}/quality-checks/issues");
+                _qualityIssues.Clear();
+                if (issues is not null)
+                {
+                    _qualityIssues.AddRange(issues);
+                }
+            }
+            catch (Exception ex)
+            {
+                _qualityIssues.Clear();
+                _qualityError = $"Failed to load quality issues: {ex.Message}";
+            }
+            finally
+            {
+                _qualityLoading = false;
+            }
+        }
+
         private async Task OnAnnotationStatusFilterChanged(ChangeEventArgs args)
         {
             _annotationFilterStatus = args.Value?.ToString() ?? "open";
@@ -4252,6 +4303,135 @@ namespace WriterApp.Client.Pages
         {
             _annotationFilterKind = args.Value?.ToString() ?? "all";
             await LoadAnnotationsAsync();
+        }
+
+        private Task OnQualityScopeChanged(ChangeEventArgs args)
+        {
+            _qualityScope = args.Value?.ToString() ?? "page";
+            return Task.CompletedTask;
+        }
+
+        private Task OnQualitySeverityChanged(ChangeEventArgs args)
+        {
+            _qualityFilterSeverity = args.Value?.ToString() ?? "all";
+            return Task.CompletedTask;
+        }
+
+        private Task OnQualityKindChanged(ChangeEventArgs args)
+        {
+            _qualityFilterKind = args.Value?.ToString() ?? "all";
+            return Task.CompletedTask;
+        }
+
+        private IEnumerable<PageQualityIssueDto> FilterQualityIssues()
+        {
+            IEnumerable<PageQualityIssueDto> query = _qualityIssues;
+            if (!string.Equals(_qualityFilterSeverity, "all", StringComparison.OrdinalIgnoreCase))
+            {
+                query = query.Where(issue => string.Equals(issue.Severity, _qualityFilterSeverity, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (!string.Equals(_qualityFilterKind, "all", StringComparison.OrdinalIgnoreCase))
+            {
+                query = query.Where(issue => string.Equals(issue.Kind, _qualityFilterKind, StringComparison.OrdinalIgnoreCase));
+            }
+
+            return query;
+        }
+
+        private static string GetQualityIssueClass(PageQualityIssueDto issue)
+        {
+            string severity = issue.Severity?.ToLowerInvariant() ?? "info";
+            return $"quality-item--{severity}";
+        }
+
+        private async Task RunQualityChecksAsync()
+        {
+            if (_activePage is null)
+            {
+                return;
+            }
+
+            _qualityLoading = true;
+            _qualityError = null;
+            _qualityFromCache = false;
+
+            try
+            {
+                string scope = string.IsNullOrWhiteSpace(_qualityScope) ? "page" : _qualityScope;
+                string? selectionText = null;
+                if (string.Equals(scope, "selection", StringComparison.OrdinalIgnoreCase))
+                {
+                    selectionText = await GetSelectionTextAsync();
+                    if (string.IsNullOrWhiteSpace(selectionText))
+                    {
+                        _qualityError = "Select text in the editor first.";
+                        return;
+                    }
+                }
+
+                QualityCheckRunRequest request = new(
+                    scope,
+                    selectionText,
+                    false);
+
+                using HttpResponseMessage response =
+                    await Http.PostAsJsonAsync($"api/pages/{_activePage.Id}/quality-checks/run", request);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _qualityError = "Quality checks failed.";
+                    return;
+                }
+
+                QualityCheckRunResultDto? result = await response.Content.ReadFromJsonAsync<QualityCheckRunResultDto>();
+                if (result is null)
+                {
+                    _qualityError = "Quality checks failed.";
+                    return;
+                }
+
+                _qualityFromCache = result.FromCache;
+                _qualityIssues.Clear();
+                if (result.Issues.Count > 0)
+                {
+                    _qualityIssues.AddRange(result.Issues);
+                }
+            }
+            catch (Exception ex)
+            {
+                _qualityError = $"Quality checks failed: {ex.Message}";
+            }
+            finally
+            {
+                _qualityLoading = false;
+            }
+        }
+
+        private async Task DismissQualityIssueAsync(PageQualityIssueDto issue)
+        {
+            if (_activePage is null)
+            {
+                return;
+            }
+
+            try
+            {
+                using HttpResponseMessage response =
+                    await Http.PostAsync(
+                        $"api/pages/{_activePage.Id}/quality-checks/issues/{Uri.EscapeDataString(issue.IssueKey)}/dismiss",
+                        null);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _qualityError = "Failed to dismiss issue.";
+                    return;
+                }
+
+                _qualityIssues.RemoveAll(item => item.IssueKey == issue.IssueKey);
+            }
+            catch (Exception ex)
+            {
+                _qualityError = $"Failed to dismiss issue: {ex.Message}";
+            }
         }
 
         private void OnAnnotationDraftInput(ChangeEventArgs args)
@@ -4531,40 +4711,81 @@ namespace WriterApp.Client.Pages
             return "Comment";
         }
 
-        private async Task ToggleVersionDiffAsync(PageVersionListItemDto version)
+        private bool _canCompareVersions => _diffBaseVersionId.HasValue;
+
+        private async Task SelectDiffBaseAsync(PageVersionListItemDto version)
         {
-            if (_selectedVersionId == version.Id)
+            _diffBaseVersionId = version.Id;
+            _diffCompareVersionId = null;
+            await LoadVersionDiffAsync();
+        }
+
+        private async Task LoadVersionDiffAsync()
+        {
+            if (_activePage is null || !_diffBaseVersionId.HasValue)
             {
-                _selectedVersionId = null;
-                _selectedVersionDetail = null;
-                _versionDiffLines = new List<VersionDiffLine>();
-                _versionDiffNote = null;
+                _diffError = "Select a base version to compare.";
                 return;
             }
 
-            _selectedVersionId = version.Id;
-            _versionDiffLines = new List<VersionDiffLine>();
-            _versionDiffNote = null;
+            _diffLoading = true;
+            _diffError = null;
+            _diffResult = null;
+            _diffRows.Clear();
 
             try
             {
-                _selectedVersionDetail =
-                    await Http.GetFromJsonAsync<PageVersionDetailDto>($"api/page-versions/{version.Id}");
-                if (_selectedVersionDetail is null)
+                string url = $"api/pages/{_activePage.Id}/versions/diff?fromVersionId={_diffBaseVersionId.Value}";
+                if (_diffCompareVersionId.HasValue)
                 {
-                    _versionDiffNote = "Version not found.";
+                    url += $"&toVersionId={_diffCompareVersionId.Value}";
+                }
+
+                url += $"&granularity={_diffGranularity}";
+                PageVersionDiffResultDto? result = await Http.GetFromJsonAsync<PageVersionDiffResultDto>(url);
+                if (result is null)
+                {
+                    _diffError = "Diff not available.";
                     return;
                 }
 
-                string fromText = PlainTextMapper.ToPlainText(_selectedVersionDetail.Content);
-                string toText = PlainTextMapper.ToPlainText(_activePage?.Content ?? string.Empty);
-                _versionDiffLines = BuildLineDiff(fromText, toText, out string? note);
-                _versionDiffNote = note;
+                _diffResult = result;
+                _diffRows.AddRange(BuildDiffRows(result));
             }
             catch (Exception ex)
             {
-                _versionDiffNote = $"Diff failed: {ex.Message}";
+                Logger.LogDebug(ex, "Failed to load version diff.");
+                _diffError = "Failed to load diff.";
             }
+            finally
+            {
+                _diffLoading = false;
+            }
+        }
+
+        private void OnDiffBaseChanged(ChangeEventArgs args)
+        {
+            _diffBaseVersionId = TryParseGuid(args.Value);
+        }
+
+        private void OnDiffCompareChanged(ChangeEventArgs args)
+        {
+            _diffCompareVersionId = TryParseGuid(args.Value);
+        }
+
+        private async Task OnDiffGranularityChanged(ChangeEventArgs args)
+        {
+            _diffGranularity = args.Value?.ToString() ?? "paragraph";
+            if (_diffBaseVersionId.HasValue)
+            {
+                await LoadVersionDiffAsync();
+            }
+        }
+
+        private async Task OnDiffViewModeChanged(ChangeEventArgs args)
+        {
+            _diffViewMode = args.Value?.ToString() ?? "inline";
+            await InvokeAsync(StateHasChanged);
         }
 
         private void PromptRestoreVersion(PageVersionListItemDto version)
@@ -4655,107 +4876,115 @@ namespace WriterApp.Client.Pages
             return string.IsNullOrWhiteSpace(reason) ? "Snapshot" : reason;
         }
 
-        private static IReadOnlyList<string> SplitLines(string text, int maxLines, out bool truncated)
+        private static Guid? TryParseGuid(object? value)
         {
-            truncated = false;
-            if (string.IsNullOrEmpty(text))
+            if (value is Guid guid)
             {
-                return Array.Empty<string>();
+                return guid;
             }
 
-            string normalized = text.Replace("\r\n", "\n").Replace("\r", "\n");
-            string[] lines = normalized.Split('\n');
-            if (lines.Length <= maxLines)
+            if (value is string text && Guid.TryParse(text, out Guid parsed))
             {
-                return lines;
+                return parsed;
             }
 
-            truncated = true;
-            return lines.Take(maxLines).ToArray();
+            return null;
         }
 
-        private static List<VersionDiffLine> BuildLineDiff(string fromText, string toText, out string? note)
+        private static string GetDiffClass(string? kind)
         {
-            const int maxLines = 800;
-            bool fromTruncated;
-            bool toTruncated;
-            IReadOnlyList<string> fromLines = SplitLines(fromText, maxLines, out fromTruncated);
-            IReadOnlyList<string> toLines = SplitLines(toText, maxLines, out toTruncated);
-            note = fromTruncated || toTruncated ? "Diff truncated to first 800 lines." : null;
-
-            int n = fromLines.Count;
-            int m = toLines.Count;
-            int[,] lcs = new int[n + 1, m + 1];
-
-            for (int i = n - 1; i >= 0; i--)
+            return kind?.ToLowerInvariant() switch
             {
-                for (int j = m - 1; j >= 0; j--)
-                {
-                    if (string.Equals(fromLines[i], toLines[j], StringComparison.Ordinal))
-                    {
-                        lcs[i, j] = lcs[i + 1, j + 1] + 1;
-                    }
-                    else
-                    {
-                        lcs[i, j] = Math.Max(lcs[i + 1, j], lcs[i, j + 1]);
-                    }
-                }
-            }
-
-            List<VersionDiffLine> diff = new();
-            int x = 0;
-            int y = 0;
-            while (x < n && y < m)
-            {
-                if (string.Equals(fromLines[x], toLines[y], StringComparison.Ordinal))
-                {
-                    diff.Add(new VersionDiffLine(VersionDiffKind.Unchanged, fromLines[x]));
-                    x++;
-                    y++;
-                }
-                else if (lcs[x + 1, y] >= lcs[x, y + 1])
-                {
-                    diff.Add(new VersionDiffLine(VersionDiffKind.Removed, fromLines[x]));
-                    x++;
-                }
-                else
-                {
-                    diff.Add(new VersionDiffLine(VersionDiffKind.Added, toLines[y]));
-                    y++;
-                }
-            }
-
-            while (x < n)
-            {
-                diff.Add(new VersionDiffLine(VersionDiffKind.Removed, fromLines[x++]));
-            }
-
-            while (y < m)
-            {
-                diff.Add(new VersionDiffLine(VersionDiffKind.Added, toLines[y++]));
-            }
-
-            return diff;
-        }
-
-        private static string GetDiffClass(VersionDiffKind kind)
-        {
-            return kind switch
-            {
-                VersionDiffKind.Added => "is-added",
-                VersionDiffKind.Removed => "is-removed",
+                "added" => "is-added",
+                "removed" => "is-removed",
+                "empty" => "is-empty",
                 _ => "is-unchanged"
             };
         }
 
-        private static string GetDiffPrefix(VersionDiffKind kind)
+        private static string GetDiffPrefix(string? kind)
         {
-            return kind switch
+            return kind?.ToLowerInvariant() switch
             {
-                VersionDiffKind.Added => "+",
-                VersionDiffKind.Removed => "-",
+                "added" => "+",
+                "removed" => "-",
                 _ => " "
             };
+        }
+
+        private static string GetDiffSpanClass(string? kind)
+        {
+            return kind?.ToLowerInvariant() switch
+            {
+                "added" => "is-added",
+                "removed" => "is-removed",
+                _ => "is-unchanged"
+            };
+        }
+
+        private RenderFragment RenderDiffSpans(PageVersionDiffLineDto? line) => builder =>
+        {
+            if (line is null)
+            {
+                return;
+            }
+
+            if (line.Spans is null || line.Spans.Count == 0)
+            {
+                builder.AddContent(0, line.Text);
+                return;
+            }
+
+            int seq = 0;
+            foreach (PageVersionDiffSpanDto span in line.Spans)
+            {
+                builder.OpenElement(seq++, "span");
+                builder.AddAttribute(seq++, "class", $"version-diff-span {GetDiffSpanClass(span.Kind)}");
+                builder.AddContent(seq++, span.Text);
+                builder.CloseElement();
+            }
+        };
+
+        private static IReadOnlyList<VersionDiffRow> BuildDiffRows(PageVersionDiffResultDto result)
+        {
+            List<VersionDiffRow> rows = new();
+            IReadOnlyList<PageVersionDiffLineDto> lines = result.Lines;
+            int index = 0;
+
+            while (index < lines.Count)
+            {
+                PageVersionDiffLineDto line = lines[index];
+                string kind = line.Kind?.ToLowerInvariant() ?? "unchanged";
+
+                if (kind == "removed" && index + 1 < lines.Count)
+                {
+                    PageVersionDiffLineDto next = lines[index + 1];
+                    string nextKind = next.Kind?.ToLowerInvariant() ?? "unchanged";
+                    if (nextKind == "added")
+                    {
+                        rows.Add(new VersionDiffRow(line, next));
+                        index += 2;
+                        continue;
+                    }
+                }
+
+                if (kind == "removed")
+                {
+                    rows.Add(new VersionDiffRow(line, null));
+                }
+                else if (kind == "added")
+                {
+                    rows.Add(new VersionDiffRow(null, line));
+                }
+                else
+                {
+                    rows.Add(new VersionDiffRow(line, line));
+                }
+
+                index++;
+            }
+
+            return rows;
         }
 
         private async Task LoadTranslationLinksAsync()
@@ -5219,13 +5448,10 @@ namespace WriterApp.Client.Pages
             }
         }
 
-        private sealed record VersionDiffLine(VersionDiffKind Kind, string Text);
-
-        private enum VersionDiffKind
+        private sealed record VersionDiffRow(PageVersionDiffLineDto? LeftLine, PageVersionDiffLineDto? RightLine)
         {
-            Unchanged,
-            Added,
-            Removed
+            public string LeftKind => LeftLine?.Kind ?? "empty";
+            public string RightKind => RightLine?.Kind ?? "empty";
         }
 
         private enum ContextTab
@@ -5235,6 +5461,7 @@ namespace WriterApp.Client.Pages
             Outline,
             Ai,
             Annotations,
+            Quality,
             History
         }
     }

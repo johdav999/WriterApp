@@ -29,3 +29,26 @@
     font-size: 0.9rem;
     padding: 12px;
 }
+
+.quality-issue {
+    border-bottom: 2px solid rgba(251, 146, 60, 0.75);
+    background: rgba(251, 146, 60, 0.12);
+}
+
+.quality-issue--info {
+    border-bottom-color: rgba(59, 130, 246, 0.75);
+    background: rgba(59, 130, 246, 0.12);
+}
+
+.quality-issue--warning {
+    border-bottom-color: rgba(245, 158, 11, 0.75);
+    background: rgba(245, 158, 11, 0.12);
+}
+
+.quality-issue--repeated-word {
+    border-bottom-style: dotted;
+}
+
+.quality-issue--passive-voice {
+    border-bottom-style: dashed;
+}
