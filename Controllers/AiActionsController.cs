@@ -36,6 +36,12 @@ namespace WriterApp.Controllers
         private const int OutlineMaxSectionChars = 2000;
         private const int OutlineMaxSections = 60;
         private const int SceneMaxSectionChars = 4000;
+        private static readonly HashSet<string> HiddenSynopsisActions = new(StringComparer.Ordinal)
+        {
+            StoryCoachAction.ActionIdValue,
+            SynopsisEvaluateAction.ActionIdValue,
+            SynopsisQuestionsAction.ActionIdValue
+        };
 
         public AiActionsController(
             IAiOrchestrator orchestrator,
@@ -62,6 +68,7 @@ namespace WriterApp.Controllers
         {
             List<AiActionDescriptorDto> actions = _orchestrator.Actions
                 .Where(action => _orchestrator.CanRunAction(action.ActionId))
+                .Where(action => !HiddenSynopsisActions.Contains(action.ActionId))
                 .Select(action => new AiActionDescriptorDto(
                     action.ActionId,
                     action.DisplayName,

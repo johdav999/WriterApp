@@ -30,6 +30,20 @@ else if (!string.IsNullOrWhiteSpace(_error))
 
         try
         {
+            DocumentDetailDto? document =
+                await Http.GetFromJsonAsync<DocumentDetailDto>($"api/documents/{DocumentId}");
+            if (document is null)
+            {
+                _error = "Document not found.";
+                return;
+            }
+
+            if (document.DeletedAt is not null)
+            {
+                _error = "Document is in Trash; restore to edit.";
+                return;
+            }
+
             List<SectionDto>? sections =
                 await Http.GetFromJsonAsync<List<SectionDto>>($"api/documents/{DocumentId}/sections");
             SectionDto? first = sections?

@@ -15,7 +15,7 @@ namespace WriterApp.Tests
             Synopsis synopsis = new()
             {
                 Premise = "A heist in space.",
-                Protagonist = "A disgraced pilot.",
+                ProtagonistArc = "A disgraced pilot.",
                 CentralConflict = "A chase with interstellar police."
             };
 
@@ -25,7 +25,7 @@ namespace WriterApp.Tests
             Assert.Contains("A heist in space.", context.OtherFieldsContext, StringComparison.Ordinal);
             Assert.Contains("A disgraced pilot.", context.OtherFieldsContext, StringComparison.Ordinal);
             Assert.DoesNotContain("Premise:", context.OtherFieldsContext, StringComparison.Ordinal);
-            Assert.DoesNotContain("Protagonist:", context.OtherFieldsContext, StringComparison.Ordinal);
+            Assert.DoesNotContain("Protagonist Arc:", context.OtherFieldsContext, StringComparison.Ordinal);
         }
 
         [Fact]
@@ -45,7 +45,7 @@ namespace WriterApp.Tests
         public void PromptBuilder_IncludesOtherFieldsContext()
         {
             Synopsis synopsis = DocumentFactory.CreateNewDocument().Synopsis;
-            synopsis.Protagonist = "A retired detective.";
+            synopsis.ProtagonistArc = "A retired detective.";
 
             StoryCoachContextBuilder builder = new();
             StoryCoachContext context = builder.Build(synopsis, "central_conflict");

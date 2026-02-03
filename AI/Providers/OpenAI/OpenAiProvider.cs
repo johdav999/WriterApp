@@ -25,6 +25,8 @@ namespace WriterApp.AI.Providers.OpenAI
         private const string ActionTranslateDocument = "translate.document";
         private const string ActionCoverImage = "generate.image.cover";
         private const string ActionStoryCoach = "synopsis.story_coach";
+        private const string ActionSynopsisEvaluate = "synopsis.evaluate";
+        private const string ActionSynopsisQuestions = "synopsis.questions";
         private const string ActionGenerateOutline = "generate.outline";
         private const string ActionSceneSuggest = "scene.suggest";
         private const string ActionSceneRefine = "scene.refine";
@@ -124,6 +126,56 @@ namespace WriterApp.AI.Providers.OpenAI
                 if (string.Equals(request.ActionId, ActionStoryCoach, StringComparison.Ordinal))
                 {
                     (string outputText, int inputTokens, int outputTokens) = await ExecuteStoryCoachAsync(request, apiKey, ct);
+                    AiArtifact artifact = new(
+                        Guid.NewGuid(),
+                        AiModality.Text,
+                        "text/plain",
+                        outputText,
+                        null,
+                        null);
+
+                    AiUsage usage = new(inputTokens, outputTokens, stopwatch.Elapsed);
+                    LogUsage(request, _options.TextModel, outputTokens, stopwatch.Elapsed);
+
+                    return new AiResult(
+                        request.RequestId,
+                        new List<AiArtifact> { artifact },
+                        usage,
+                        new Dictionary<string, object>
+                        {
+                            ["provider"] = ProviderIdValue,
+                            ["model"] = _options.TextModel
+                        });
+                }
+
+                if (string.Equals(request.ActionId, ActionSynopsisEvaluate, StringComparison.Ordinal))
+                {
+                    (string outputText, int inputTokens, int outputTokens) = await ExecuteSynopsisEvaluateAsync(request, apiKey, ct);
+                    AiArtifact artifact = new(
+                        Guid.NewGuid(),
+                        AiModality.Text,
+                        "text/plain",
+                        outputText,
+                        null,
+                        null);
+
+                    AiUsage usage = new(inputTokens, outputTokens, stopwatch.Elapsed);
+                    LogUsage(request, _options.TextModel, outputTokens, stopwatch.Elapsed);
+
+                    return new AiResult(
+                        request.RequestId,
+                        new List<AiArtifact> { artifact },
+                        usage,
+                        new Dictionary<string, object>
+                        {
+                            ["provider"] = ProviderIdValue,
+                            ["model"] = _options.TextModel
+                        });
+                }
+
+                if (string.Equals(request.ActionId, ActionSynopsisQuestions, StringComparison.Ordinal))
+                {
+                    (string outputText, int inputTokens, int outputTokens) = await ExecuteSynopsisQuestionsAsync(request, apiKey, ct);
                     AiArtifact artifact = new(
                         Guid.NewGuid(),
                         AiModality.Text,
@@ -364,6 +416,36 @@ namespace WriterApp.AI.Providers.OpenAI
             return ExtractResponseTextAndUsage(json);
         }
 
+        private async Task<(string OutputText, int InputTokens, int OutputTokens)> ExecuteSynopsisEvaluateAsync(
+            AiRequest request,
+            string apiKey,
+            CancellationToken ct)
+        {
+            HttpRequestMessage requestMessage = BuildSynopsisEvaluateRequest(request, apiKey);
+            HttpClient client = _httpClientFactory.CreateClient(nameof(OpenAiProvider));
+
+            using HttpResponseMessage response = await client.SendAsync(requestMessage, ct);
+            await EnsureSuccessAsync(response, ct);
+
+            string json = await response.Content.ReadAsStringAsync(ct);
+            return ExtractResponseTextAndUsage(json);
+        }
+
+        private async Task<(string OutputText, int InputTokens, int OutputTokens)> ExecuteSynopsisQuestionsAsync(
+            AiRequest request,
+            string apiKey,
+            CancellationToken ct)
+        {
+            HttpRequestMessage requestMessage = BuildSynopsisQuestionsRequest(request, apiKey);
+            HttpClient client = _httpClientFactory.CreateClient(nameof(OpenAiProvider));
+
+            using HttpResponseMessage response = await client.SendAsync(requestMessage, ct);
+            await EnsureSuccessAsync(response, ct);
+
+            string json = await response.Content.ReadAsStringAsync(ct);
+            return ExtractResponseTextAndUsage(json);
+        }
+
         private async Task<(string OutputText, int InputTokens, int OutputTokens)> ExecuteOutlineAsync(
             AiRequest request,
             string apiKey,
@@ -588,6 +670,108 @@ namespace WriterApp.AI.Providers.OpenAI
 
             string systemPrompt = StoryCoachPromptBuilder.BuildSystemPrompt();
             string prompt = StoryCoachPromptBuilder.BuildUserPrompt(otherContext, fieldKey, focusPrompt, existing, notes);
+
+            Dictionary<string, object> payload = new()
+            {
+                ["model"] = _options.TextModel,
+                ["input"] = new object[]
+                {
+                    new Dictionary<string, object>
+                    {
+                        ["role"] = "system",
+                        ["content"] = new object[]
+                        {
+                            new Dictionary<string, object>
+                            {
+                                ["type"] = "input_text",
+                                ["text"] = systemPrompt
+                            }
+                        }
+                    },
+                    new Dictionary<string, object>
+                    {
+                        ["role"] = "user",
+                        ["content"] = new object[]
+                        {
+                            new Dictionary<string, object>
+                            {
+                                ["type"] = "input_text",
+                                ["text"] = prompt
+                            }
+                        }
+                    }
+                },
+                ["max_output_tokens"] = _options.MaxOutputTokens
+            };
+
+            HttpRequestMessage requestMessage = new(HttpMethod.Post, BuildUri(ResponsesEndpoint))
+            {
+                Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
+            };
+
+            ApplyAuthHeaders(requestMessage, apiKey);
+            return requestMessage;
+        }
+
+        private HttpRequestMessage BuildSynopsisEvaluateRequest(AiRequest request, string apiKey)
+        {
+            string synopsisContext = GetInputValue(request, "synopsis_context", string.Empty);
+            string userNotes = GetInputValue(request, "user_notes", string.Empty);
+            string language = string.IsNullOrWhiteSpace(request.Context.LanguageHint) ? "en" : request.Context.LanguageHint;
+
+            string systemPrompt = SynopsisEvaluatePromptBuilder.BuildSystemPrompt(language);
+            string prompt = SynopsisEvaluatePromptBuilder.BuildUserPrompt(synopsisContext, userNotes);
+
+            Dictionary<string, object> payload = new()
+            {
+                ["model"] = _options.TextModel,
+                ["input"] = new object[]
+                {
+                    new Dictionary<string, object>
+                    {
+                        ["role"] = "system",
+                        ["content"] = new object[]
+                        {
+                            new Dictionary<string, object>
+                            {
+                                ["type"] = "input_text",
+                                ["text"] = systemPrompt
+                            }
+                        }
+                    },
+                    new Dictionary<string, object>
+                    {
+                        ["role"] = "user",
+                        ["content"] = new object[]
+                        {
+                            new Dictionary<string, object>
+                            {
+                                ["type"] = "input_text",
+                                ["text"] = prompt
+                            }
+                        }
+                    }
+                },
+                ["max_output_tokens"] = _options.MaxOutputTokens
+            };
+
+            HttpRequestMessage requestMessage = new(HttpMethod.Post, BuildUri(ResponsesEndpoint))
+            {
+                Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
+            };
+
+            ApplyAuthHeaders(requestMessage, apiKey);
+            return requestMessage;
+        }
+
+        private HttpRequestMessage BuildSynopsisQuestionsRequest(AiRequest request, string apiKey)
+        {
+            string synopsisContext = GetInputValue(request, "synopsis_context", string.Empty);
+            string userNotes = GetInputValue(request, "user_notes", string.Empty);
+            string language = string.IsNullOrWhiteSpace(request.Context.LanguageHint) ? "en" : request.Context.LanguageHint;
+
+            string systemPrompt = SynopsisQuestionsPromptBuilder.BuildSystemPrompt(language);
+            string prompt = SynopsisQuestionsPromptBuilder.BuildUserPrompt(synopsisContext, userNotes);
 
             Dictionary<string, object> payload = new()
             {

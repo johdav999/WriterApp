@@ -74,7 +74,7 @@ namespace WriterApp.Application.Exporting
             foreach (Section section in ExportHelpers.GetOrderedSections(document))
             {
                 string sectionTitle = ExportHelpers.GetSectionTitle(section);
-                SectionNumberingInfo? info = numbering.TryGetValue(section.SectionId, out SectionNumberingInfo entry)
+                SectionNumberingInfo? info = numbering.TryGetValue(section.SectionId, out SectionNumberingInfo? entry)
                     ? entry
                     : null;
                 string heading = _numberingService.BuildHeading(section, sectionTitle, info);

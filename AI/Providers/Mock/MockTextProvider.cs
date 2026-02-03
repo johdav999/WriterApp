@@ -104,6 +104,26 @@ namespace WriterApp.AI.Providers.Mock
                 return Task.FromResult(paragraphResult);
             }
 
+            if (string.Equals(request.ActionId, SynopsisEvaluateAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                string text = "Strengths:\n- Clear central conflict.\n- Strong tone.\n\nPotential weaknesses:\n- Stakes could be sharper.\n\nMissing elements:\n- Clarify protagonist arc.\n\nClarity issues:\n- Ending intent is vague.";
+                return Task.FromResult(BuildPlainTextResult(request, text));
+            }
+
+            if (string.Equals(request.ActionId, SynopsisQuestionsAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                string text = string.Join("\n", new[]
+                {
+                    "What choice forces the protagonist to change?",
+                    "What happens if the conflict is avoided?",
+                    "What is the clearest external obstacle?",
+                    "How do the stakes escalate?",
+                    "What does the ending resolve emotionally?",
+                    "What world detail most shapes the conflict?"
+                });
+                return Task.FromResult(BuildPlainTextResult(request, text));
+            }
+
             string instruction = GetInstruction(request);
             string original = request.Context.SelectionText ?? request.Context.OriginalText ?? string.Empty;
             string tone = GetInputValue(request, "tone", "Neutral");
@@ -186,6 +206,34 @@ namespace WriterApp.AI.Providers.Mock
                 yield break;
             }
 
+            if (string.Equals(request.ActionId, SynopsisEvaluateAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                string text = "Strengths:\n- Clear central conflict.\n- Strong tone.\n\nPotential weaknesses:\n- Stakes could be sharper.\n\nMissing elements:\n- Clarify protagonist arc.\n\nClarity issues:\n- Ending intent is vague.";
+                await foreach (AiStreamEvent evt in StreamTextAsync(text, ct))
+                {
+                    yield return evt;
+                }
+                yield break;
+            }
+
+            if (string.Equals(request.ActionId, SynopsisQuestionsAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                string text = string.Join("\n", new[]
+                {
+                    "What choice forces the protagonist to change?",
+                    "What happens if the conflict is avoided?",
+                    "What is the clearest external obstacle?",
+                    "How do the stakes escalate?",
+                    "What does the ending resolve emotionally?",
+                    "What world detail most shapes the conflict?"
+                });
+                await foreach (AiStreamEvent evt in StreamTextAsync(text, ct))
+                {
+                    yield return evt;
+                }
+                yield break;
+            }
+
             string instruction = GetInstruction(request);
             string original = request.Context.SelectionText ?? request.Context.OriginalText ?? string.Empty;
             string tone = GetInputValue(request, "tone", "Neutral");
@@ -196,6 +244,46 @@ namespace WriterApp.AI.Providers.Mock
             yield return new AiStreamEvent.Started();
 
             foreach (string chunk in ChunkText(proposed, MaxChunkSize))
+            {
+                ct.ThrowIfCancellationRequested();
+                yield return new AiStreamEvent.TextDelta(chunk);
+                await Task.Delay(DeltaDelay, ct);
+            }
+
+            yield return new AiStreamEvent.Completed();
+        }
+
+        private AiResult BuildPlainTextResult(AiRequest request, string text)
+        {
+            AiArtifact artifact = new(
+                Guid.NewGuid(),
+                AiModality.Text,
+                "text/plain",
+                text,
+                null,
+                null);
+
+            AiUsage usage = new(0, 0, TimeSpan.Zero);
+            AiResult result = new(
+                request.RequestId,
+                new List<AiArtifact> { artifact },
+                usage,
+                new Dictionary<string, object>
+                {
+                    ["provider"] = ProviderId,
+                    ["model"] = "mock-text"
+                });
+
+            return result;
+        }
+
+        private static async IAsyncEnumerable<AiStreamEvent> StreamTextAsync(
+            string text,
+            [EnumeratorCancellation] CancellationToken ct)
+        {
+            yield return new AiStreamEvent.Started();
+
+            foreach (string chunk in ChunkText(text, MaxChunkSize))
             {
                 ct.ThrowIfCancellationRequested();
                 yield return new AiStreamEvent.TextDelta(chunk);

@@ -25,6 +25,7 @@ namespace WriterApp.Controllers
         private readonly IDocumentRepository _documents;
         private readonly ISectionRepository _sections;
         private readonly IPageRepository _pages;
+        private readonly IDocumentLifecycleService _lifecycle;
         private readonly IUserIdResolver _userIdResolver;
         private readonly ISearchIndexService _searchIndex;
         private readonly AppDbContext _dbContext;
@@ -34,6 +35,7 @@ namespace WriterApp.Controllers
             IDocumentRepository documents,
             ISectionRepository sections,
             IPageRepository pages,
+            IDocumentLifecycleService lifecycle,
             IUserIdResolver userIdResolver,
             ISearchIndexService searchIndex,
             AppDbContext dbContext,
@@ -42,6 +44,7 @@ namespace WriterApp.Controllers
             _documents = documents ?? throw new ArgumentNullException(nameof(documents));
             _sections = sections ?? throw new ArgumentNullException(nameof(sections));
             _pages = pages ?? throw new ArgumentNullException(nameof(pages));
+            _lifecycle = lifecycle ?? throw new ArgumentNullException(nameof(lifecycle));
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
             _searchIndex = searchIndex ?? throw new ArgumentNullException(nameof(searchIndex));
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
@@ -49,16 +52,19 @@ namespace WriterApp.Controllers
         }
 
         [HttpGet]
-        public async Task<ActionResult<IReadOnlyList<DocumentListItemDto>>> ListDocuments(CancellationToken ct)
+        public async Task<ActionResult<IReadOnlyList<DocumentListItemDto>>> ListDocuments(
+            [FromQuery] string? view,
+            CancellationToken ct)
         {
             string traceId = HttpContext.TraceIdentifier;
             string userId = _userIdResolver.ResolveUserId(User);
+            DocumentListView listView = DocumentListViewParser.Parse(view);
             _logger.LogInformation(
                 "ListDocuments start TraceId={TraceId} UserId={UserId}.",
                 traceId,
                 userId);
 
-            IReadOnlyList<DocumentRecord> documents = await _documents.ListAsync(userId, ct);
+            IReadOnlyList<DocumentRecord> documents = await _documents.ListAsync(userId, listView, ct);
 
             Dictionary<Guid, int> wordCounts = new();
             foreach (DocumentRecord document in documents)
@@ -85,7 +91,10 @@ namespace WriterApp.Controllers
                     document.Title,
                     document.CreatedAt,
                     document.UpdatedAt,
-                    wordCounts.TryGetValue(document.Id, out int count) ? count : 0))
+                    wordCounts.TryGetValue(document.Id, out int count) ? count : 0,
+                    document.IsArchived,
+                    document.ArchivedAt,
+                    document.DeletedAt))
                 .ToList();
 
             _logger.LogInformation(
@@ -112,7 +121,10 @@ namespace WriterApp.Controllers
                 document.CreatedAt,
                 document.UpdatedAt,
                 document.LanguageCode,
-                document.TranslationGroupId));
+                document.TranslationGroupId,
+                document.IsArchived,
+                document.ArchivedAt,
+                document.DeletedAt));
         }
 
         [HttpGet("{documentId:guid}/translations")]
@@ -294,6 +306,9 @@ namespace WriterApp.Controllers
                 Title = BuildTranslatedTitle(source.Title, request.TargetLanguage, request.Title),
                 CreatedAt = now,
                 UpdatedAt = now,
+                IsArchived = false,
+                ArchivedAt = null,
+                DeletedAt = null,
                 LanguageCode = request.TargetLanguage,
                 TranslationGroupId = translationGroupId
             };
@@ -376,7 +391,10 @@ namespace WriterApp.Controllers
                     translated.CreatedAt,
                     translated.UpdatedAt,
                     translated.LanguageCode,
-                    translated.TranslationGroupId),
+                    translated.TranslationGroupId,
+                    translated.IsArchived,
+                    translated.ArchivedAt,
+                    translated.DeletedAt),
                 firstSectionId,
                 firstPageId));
         }
@@ -423,7 +441,10 @@ namespace WriterApp.Controllers
                         existing.CreatedAt,
                         existing.UpdatedAt,
                         existing.LanguageCode,
-                        existing.TranslationGroupId),
+                        existing.TranslationGroupId,
+                        existing.IsArchived,
+                        existing.ArchivedAt,
+                        existing.DeletedAt),
                     null,
                     null));
             }
@@ -437,7 +458,10 @@ namespace WriterApp.Controllers
                 OwnerUserId = userId,
                 Title = title,
                 CreatedAt = createdAt,
-                UpdatedAt = updatedAt
+                UpdatedAt = updatedAt,
+                IsArchived = false,
+                ArchivedAt = null,
+                DeletedAt = null
             };
 
             await _documents.CreateAsync(document, ct);
@@ -493,7 +517,10 @@ namespace WriterApp.Controllers
                     document.CreatedAt,
                     document.UpdatedAt,
                     document.LanguageCode,
-                    document.TranslationGroupId),
+                    document.TranslationGroupId,
+                    document.IsArchived,
+                    document.ArchivedAt,
+                    document.DeletedAt),
                 defaultSectionId,
                 defaultPageId));
         }
@@ -525,7 +552,106 @@ namespace WriterApp.Controllers
                 document.CreatedAt,
                 document.UpdatedAt,
                 document.LanguageCode,
-                document.TranslationGroupId));
+                document.TranslationGroupId,
+                document.IsArchived,
+                document.ArchivedAt,
+                document.DeletedAt));
+        }
+
+        [HttpPost("{documentId:guid}/archive")]
+        public async Task<ActionResult<DocumentDetailDto>> ArchiveDocument(Guid documentId, CancellationToken ct)
+        {
+            string userId = _userIdResolver.ResolveUserId(User);
+            DocumentRecord? document = await _lifecycle.ArchiveAsync(documentId, userId, ct);
+            if (document is null)
+            {
+                return NotFound();
+            }
+
+            return Ok(new DocumentDetailDto(
+                document.Id,
+                document.Title,
+                document.CreatedAt,
+                document.UpdatedAt,
+                document.LanguageCode,
+                document.TranslationGroupId,
+                document.IsArchived,
+                document.ArchivedAt,
+                document.DeletedAt));
+        }
+
+        [HttpPost("{documentId:guid}/unarchive")]
+        public async Task<ActionResult<DocumentDetailDto>> UnarchiveDocument(Guid documentId, CancellationToken ct)
+        {
+            string userId = _userIdResolver.ResolveUserId(User);
+            DocumentRecord? document = await _lifecycle.UnarchiveAsync(documentId, userId, ct);
+            if (document is null)
+            {
+                return NotFound();
+            }
+
+            return Ok(new DocumentDetailDto(
+                document.Id,
+                document.Title,
+                document.CreatedAt,
+                document.UpdatedAt,
+                document.LanguageCode,
+                document.TranslationGroupId,
+                document.IsArchived,
+                document.ArchivedAt,
+                document.DeletedAt));
+        }
+
+        [HttpPost("{documentId:guid}/trash")]
+        public async Task<ActionResult<DocumentDetailDto>> MoveToTrash(Guid documentId, CancellationToken ct)
+        {
+            string userId = _userIdResolver.ResolveUserId(User);
+            DocumentRecord? document = await _lifecycle.MoveToTrashAsync(documentId, userId, ct);
+            if (document is null)
+            {
+                return NotFound();
+            }
+
+            return Ok(new DocumentDetailDto(
+                document.Id,
+                document.Title,
+                document.CreatedAt,
+                document.UpdatedAt,
+                document.LanguageCode,
+                document.TranslationGroupId,
+                document.IsArchived,
+                document.ArchivedAt,
+                document.DeletedAt));
+        }
+
+        [HttpPost("{documentId:guid}/restore")]
+        public async Task<ActionResult<DocumentDetailDto>> RestoreFromTrash(Guid documentId, CancellationToken ct)
+        {
+            string userId = _userIdResolver.ResolveUserId(User);
+            DocumentRecord? document = await _lifecycle.RestoreAsync(documentId, userId, ct);
+            if (document is null)
+            {
+                return NotFound();
+            }
+
+            return Ok(new DocumentDetailDto(
+                document.Id,
+                document.Title,
+                document.CreatedAt,
+                document.UpdatedAt,
+                document.LanguageCode,
+                document.TranslationGroupId,
+                document.IsArchived,
+                document.ArchivedAt,
+                document.DeletedAt));
+        }
+
+        [HttpDelete("{documentId:guid}")]
+        [Authorize(Policy = "AdminOnly")]
+        public async Task<IActionResult> PermanentlyDeleteDocument(Guid documentId, CancellationToken ct)
+        {
+            bool removed = await _lifecycle.PermanentlyDeleteAsync(documentId, ct);
+            return removed ? NoContent() : NotFound();
         }
 
         private static int CountWords(string? html)

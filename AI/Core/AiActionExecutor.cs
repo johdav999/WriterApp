@@ -105,6 +105,13 @@ namespace WriterApp.AI.Core
                 proposedText = proposedText.Trim();
                 operations.Add(new ReplaceSynopsisFieldOperation(fieldKey, proposedText));
             }
+            else if (string.Equals(action.ActionId, SynopsisEvaluateAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(action.ActionId, SynopsisQuestionsAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                AiArtifact? textArtifact = result.Artifacts.FirstOrDefault(artifact => artifact.Modality == AiModality.Text);
+                proposedText = textArtifact?.TextContent ?? string.Empty;
+                originalText = null;
+            }
             else if (string.Equals(action.ActionId, GenerateOutlineAction.ActionIdValue, StringComparison.Ordinal))
             {
                 AiArtifact? textArtifact = result.Artifacts.FirstOrDefault(artifact => artifact.Modality == AiModality.Text);
@@ -175,6 +182,12 @@ namespace WriterApp.AI.Core
                 return "Synopsis";
             }
 
+            if (string.Equals(actionId, SynopsisEvaluateAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(actionId, SynopsisQuestionsAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Synopsis";
+            }
+
             if (string.Equals(actionId, GenerateOutlineAction.ActionIdValue, StringComparison.Ordinal))
             {
                 return "Document";
@@ -220,6 +233,16 @@ namespace WriterApp.AI.Core
             if (string.Equals(actionId, StoryCoachAction.ActionIdValue, StringComparison.Ordinal))
             {
                 return "Story Coach suggestion";
+            }
+
+            if (string.Equals(actionId, SynopsisEvaluateAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Synopsis evaluation";
+            }
+
+            if (string.Equals(actionId, SynopsisQuestionsAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Synopsis questions";
             }
 
             if (string.Equals(actionId, GenerateOutlineAction.ActionIdValue, StringComparison.Ordinal))

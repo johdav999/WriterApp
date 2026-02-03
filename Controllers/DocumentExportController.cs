@@ -136,6 +136,10 @@ namespace WriterApp.Controllers
                 return null;
             }
 
+            DocumentSynopsisRecord? synopsisRecord = await _dbContext.DocumentSynopses
+                .AsNoTracking()
+                .FirstOrDefaultAsync(synopsis => synopsis.DocumentId == documentId, ct);
+
             List<SectionRecord> sections = await _dbContext.Sections
                 .AsNoTracking()
                 .Where(section => section.DocumentId == documentId)
@@ -189,6 +193,22 @@ namespace WriterApp.Controllers
                     CreatedUtc = documentRecord.CreatedAt.UtcDateTime,
                     ModifiedUtc = documentRecord.UpdatedAt.UtcDateTime
                 },
+                Synopsis = synopsisRecord is null
+                    ? new Synopsis { ModifiedUtc = DateTime.UtcNow }
+                    : new Synopsis
+                    {
+                        Logline = synopsisRecord.Logline,
+                        Premise = synopsisRecord.Premise,
+                        Theme = synopsisRecord.Theme,
+                        ProtagonistArc = synopsisRecord.ProtagonistArc,
+                        CentralConflict = synopsisRecord.CentralConflict,
+                        Stakes = synopsisRecord.Stakes,
+                        Setting = synopsisRecord.Setting,
+                        EndingIntent = synopsisRecord.EndingIntent,
+                        OpenQuestions = synopsisRecord.OpenQuestions,
+                        Notes = synopsisRecord.Notes,
+                        ModifiedUtc = synopsisRecord.UpdatedAt.UtcDateTime
+                    },
                 Chapters = new List<Chapter> { chapter }
             };
         }

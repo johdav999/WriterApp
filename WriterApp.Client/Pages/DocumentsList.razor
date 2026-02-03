@@ -20,6 +20,24 @@
         </button>
     </header>
 
+    <div class="landing-tabs">
+        <button type="button"
+                class='landing-tab @GetTabClass("active")'
+                @onclick='() => SetViewAsync("active")'>
+            Active
+        </button>
+        <button type="button"
+                class='landing-tab @GetTabClass("archived")'
+                @onclick='() => SetViewAsync("archived")'>
+            Archived
+        </button>
+        <button type="button"
+                class='landing-tab @GetTabClass("trash")'
+                @onclick='() => SetViewAsync("trash")'>
+            Trash
+        </button>
+    </div>
+
     @if (!string.IsNullOrWhiteSpace(_loadErrorMessage))
     {
         <div class="landing-error">@_loadErrorMessage</div>
@@ -46,8 +64,11 @@
     else if (_documents.Count == 0)
     {
         <div class="landing-empty">
-            <p>No documents yet.</p>
-            <button type="button" class="primary" @onclick="CreateDocumentAsync" disabled="@_creating">Create new document</button>
+            <p>@GetEmptyMessage()</p>
+            @if (_activeView == "active")
+            {
+                <button type="button" class="primary" @onclick="CreateDocumentAsync" disabled="@_creating">Create new document</button>
+            }
         </div>
     }
     else
@@ -82,19 +103,46 @@
                             <div class="landing-title">@entry.Title</div>
                         }
                         <div class="landing-time">Last modified @FormatRelativeTime(entry.UpdatedAt)</div>
+                        @if (entry.DeletedAt is not null)
+                        {
+                            <div class="landing-status">Trashed @FormatRelativeTime(entry.DeletedAt.Value)</div>
+                        }
+                        else if (entry.IsArchived && entry.ArchivedAt is not null)
+                        {
+                            <div class="landing-status">Archived @FormatRelativeTime(entry.ArchivedAt.Value)</div>
+                        }
                         @if (entry.WordCount > 0)
                         {
                             <div class="landing-words">@entry.WordCount words</div>
                         }
                     </div>
                     <div class="landing-actions">
-                        <button type="button"
-                                class="secondary"
-                                @onclick="() => StartRename(entry)"
-                                disabled="@(_renamingDocumentId is not null)">
-                            Rename
-                        </button>
-                        <button type="button" class="secondary" @onclick="() => OpenDocumentAsync(entry.Id)">Open</button>
+                        @if (_activeView != "trash")
+                        {
+                            <button type="button"
+                                    class="secondary"
+                                    @onclick="() => StartRename(entry)"
+                                    disabled="@(_renamingDocumentId is not null)">
+                                Rename
+                            </button>
+                            <button type="button" class="secondary" @onclick="() => OpenDocumentAsync(entry.Id)">Open</button>
+                        }
+
+                        @if (_activeView == "active")
+                        {
+                            <button type="button" class="secondary" @onclick="() => ArchiveDocumentAsync(entry.Id)">Archive</button>
+                            <button type="button" class="secondary" @onclick="() => MoveToTrashAsync(entry.Id)">Move to trash</button>
+                        }
+                        else if (_activeView == "archived")
+                        {
+                            <button type="button" class="secondary" @onclick="() => UnarchiveDocumentAsync(entry.Id)">Unarchive</button>
+                            <button type="button" class="secondary" @onclick="() => MoveToTrashAsync(entry.Id)">Move to trash</button>
+                        }
+                        else
+                        {
+                            <button type="button" class="secondary" @onclick="() => RestoreDocumentAsync(entry.Id)">Restore</button>
+                            <button type="button" class="secondary danger" @onclick="() => PromptPermanentDelete(entry)">Delete permanently</button>
+                        }
                     </div>
                 </div>
             }
@@ -102,26 +150,72 @@
     }
 </div>
 
+@if (_permanentDeleteDialogOpen)
+{
+    <div class="modal-backdrop" @onclick="CancelPermanentDelete"></div>
+    <div class="modal" role="dialog" aria-modal="true">
+        <div class="modal-title">Delete permanently?</div>
+        <div class="modal-body">
+            This permanently removes the document and all its content.
+            @if (_pendingPermanentDelete is not null)
+            {
+                <div class="landing-status">Document: @_pendingPermanentDelete.Title</div>
+            }
+        </div>
+        @if (!string.IsNullOrWhiteSpace(_permanentDeleteError))
+        {
+            <div class="modal-error">@_permanentDeleteError</div>
+        }
+        <div class="modal-actions">
+            <button type="button"
+                    class="danger"
+                    @onclick="ConfirmPermanentDeleteAsync"
+                    disabled="@_permanentDeleteInFlight">
+                Delete
+            </button>
+            <button type="button"
+                    @onclick="CancelPermanentDelete"
+                    disabled="@_permanentDeleteInFlight">
+                Cancel
+            </button>
+        </div>
+    </div>
+}
+
 @code {
     private bool _loading = true;
     private bool _unauthorized;
     private bool _creating;
+    private string _activeView = "active";
     private Guid? _editingDocumentId;
     private Guid? _renamingDocumentId;
     private string? _loadErrorMessage;
     private string? _createErrorMessage;
     private string? _renameErrorMessage;
+    private string? _permanentDeleteError;
     private string _titleDraft = string.Empty;
     private string _originalTitle = string.Empty;
     private DateTimeOffset _originalUpdatedAt;
     private List<DocumentListItemDto> _documents = new();
+    private bool _permanentDeleteDialogOpen;
+    private bool _permanentDeleteInFlight;
+    private DocumentListItemDto? _pendingPermanentDelete;
 
     protected override async Task OnInitializedAsync()
     {
         CurrentDocumentStateService.Clear();
+        await LoadDocumentsAsync();
+    }
+
+    private async Task LoadDocumentsAsync()
+    {
+        _loading = true;
+        _loadErrorMessage = null;
+        _unauthorized = false;
+
         try
         {
-            using HttpResponseMessage response = await Http.GetAsync("api/documents");
+            using HttpResponseMessage response = await Http.GetAsync($"api/documents?view={_activeView}");
             if (response.StatusCode == HttpStatusCode.Unauthorized)
             {
                 _unauthorized = true;
@@ -130,10 +224,7 @@
 
             response.EnsureSuccessStatusCode();
             List<DocumentListItemDto>? docs = await response.Content.ReadFromJsonAsync<List<DocumentListItemDto>>();
-            if (docs is not null)
-            {
-                _documents = docs;
-            }
+            _documents = docs ?? new List<DocumentListItemDto>();
         }
         catch (Exception ex)
         {
@@ -143,6 +234,33 @@
         {
             _loading = false;
         }
+    }
+
+    private async Task SetViewAsync(string view)
+    {
+        if (string.Equals(_activeView, view, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        _activeView = view;
+        CancelRename();
+        await LoadDocumentsAsync();
+    }
+
+    private string GetTabClass(string view)
+    {
+        return string.Equals(_activeView, view, StringComparison.OrdinalIgnoreCase) ? "is-active" : string.Empty;
+    }
+
+    private string GetEmptyMessage()
+    {
+        return _activeView switch
+        {
+            "archived" => "No archived documents.",
+            "trash" => "Trash is empty.",
+            _ => "No documents yet."
+        };
     }
 
     private async Task CreateDocumentAsync()
@@ -219,6 +337,92 @@
         catch (Exception ex)
         {
             _loadErrorMessage = $"Open failed: {ex.Message}";
+        }
+    }
+
+    private async Task ArchiveDocumentAsync(Guid documentId)
+    {
+        await PostLifecycleActionAsync($"api/documents/{documentId}/archive");
+    }
+
+    private async Task UnarchiveDocumentAsync(Guid documentId)
+    {
+        await PostLifecycleActionAsync($"api/documents/{documentId}/unarchive");
+    }
+
+    private async Task MoveToTrashAsync(Guid documentId)
+    {
+        await PostLifecycleActionAsync($"api/documents/{documentId}/trash");
+    }
+
+    private async Task RestoreDocumentAsync(Guid documentId)
+    {
+        await PostLifecycleActionAsync($"api/documents/{documentId}/restore");
+    }
+
+    private async Task PostLifecycleActionAsync(string url)
+    {
+        try
+        {
+            using HttpResponseMessage response = await Http.PostAsync(url, null);
+            if (!response.IsSuccessStatusCode)
+            {
+                _loadErrorMessage = $"Action failed: {(int)response.StatusCode}";
+                return;
+            }
+
+            await LoadDocumentsAsync();
+        }
+        catch (Exception ex)
+        {
+            _loadErrorMessage = $"Action failed: {ex.Message}";
+        }
+    }
+
+    private void PromptPermanentDelete(DocumentListItemDto entry)
+    {
+        _pendingPermanentDelete = entry;
+        _permanentDeleteError = null;
+        _permanentDeleteDialogOpen = true;
+    }
+
+    private void CancelPermanentDelete()
+    {
+        _pendingPermanentDelete = null;
+        _permanentDeleteError = null;
+        _permanentDeleteDialogOpen = false;
+    }
+
+    private async Task ConfirmPermanentDeleteAsync()
+    {
+        if (_pendingPermanentDelete is null || _permanentDeleteInFlight)
+        {
+            CancelPermanentDelete();
+            return;
+        }
+
+        _permanentDeleteInFlight = true;
+        _permanentDeleteError = null;
+
+        try
+        {
+            using HttpResponseMessage response = await Http.DeleteAsync($"api/documents/{_pendingPermanentDelete.Id}");
+            if (!response.IsSuccessStatusCode)
+            {
+                _permanentDeleteError = $"Delete failed: {(int)response.StatusCode}";
+                return;
+            }
+
+            CancelPermanentDelete();
+            await LoadDocumentsAsync();
+        }
+        catch (Exception ex)
+        {
+            _permanentDeleteError = $"Delete failed: {ex.Message}";
+        }
+        finally
+        {
+            _permanentDeleteInFlight = false;
         }
     }
 

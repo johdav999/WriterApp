@@ -69,16 +69,16 @@ namespace WriterApp.Application.AI.StoryCoach
         {
             return fieldKey switch
             {
+                "logline" => "What is the tight, one or two sentence summary that captures the hook?",
                 "premise" => "What core idea or hook should this story communicate?",
-                "protagonist" => "Who carries the emotional weight of this story, and what do they want?",
-                "antagonist" => "Who or what opposes the protagonist?",
                 "central_conflict" => "What stands between the protagonist and their goal?",
                 "theme" => "What theme or message runs through the story?",
                 "stakes" => "What will be lost if the protagonist fails?",
-                "arc" => "How does the protagonist change from start to finish?",
+                "protagonist_arc" => "How does the protagonist change from start to finish?",
                 "setting" => "Where and when does the story take place?",
-                "ending" => "What outcome brings the story to a satisfying close?",
-                "resolution" => "What final resolution brings the story to closure?",
+                "ending_intent" => "What outcome brings the story to a satisfying close?",
+                "open_questions" => "What unresolved questions should the synopsis keep alive?",
+                "notes" => "What additional context should be captured for this story?",
                 _ => "Share what you want to develop in this field."
             };
         }
