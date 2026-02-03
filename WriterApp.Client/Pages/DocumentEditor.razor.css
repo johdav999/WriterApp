@@ -450,6 +450,21 @@
     align-items: center;
 }
 
+.export-panel-action-group {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.export-panel-checkbox {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
 .export-panel-note {
     font-size: 0.85rem;
     color: var(--text-muted);

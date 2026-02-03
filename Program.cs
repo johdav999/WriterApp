@@ -229,6 +229,7 @@ builder.Services.AddSingleton<IExportRenderer, SynopsisMarkdownExportRenderer>()
 builder.Services.AddSingleton<IExportRenderer, SynopsisHtmlExportRenderer>();
 builder.Services.AddScoped<IExportTemplateSeeder, ExportTemplateSeeder>();
 builder.Services.AddScoped<IExportTemplateResolver, ExportTemplateResolver>();
+builder.Services.AddScoped<IExportPresetService, ExportPresetService>();
 builder.Services.AddScoped<ExportService>();
 builder.Services.AddScoped<IDocumentLifecycleService, DocumentLifecycleService>();
 
