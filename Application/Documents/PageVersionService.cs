@@ -52,6 +52,10 @@ namespace WriterApp.Application.Documents
                 PageVersionRecord? latest = await GetLatestVersionAsync(page.Id, ct);
                 if (latest is not null && string.Equals(latest.ContentTextHash, hash, StringComparison.Ordinal))
                 {
+                    _logger.LogInformation(
+                        "PageVersion snapshot skipped: duplicate content PageId={PageId} Reason={Reason}",
+                        page.Id,
+                        reason ?? "autosnap");
                     return null;
                 }
             }
@@ -75,6 +79,13 @@ namespace WriterApp.Application.Documents
 
             _dbContext.PageVersions.Add(version);
             await _dbContext.SaveChangesAsync(ct);
+            _logger.LogInformation(
+                "PageVersion saved PageId={PageId} DocumentId={DocumentId} Reason={Reason} SizeBytes={SizeBytes} WordCount={WordCount}",
+                version.PageId,
+                version.DocumentId,
+                version.Reason,
+                version.SizeBytes,
+                version.WordCount);
 
             await CleanupAsync(userId, page.Id, ct);
             return version;
@@ -89,6 +100,10 @@ namespace WriterApp.Application.Documents
         {
             if (!await _entitlementService.HasAsync(userId, "history.enabled"))
             {
+                _logger.LogInformation(
+                    "PageVersion autosnap skipped: history disabled UserId={UserId} PageId={PageId}",
+                    userId,
+                    page.Id);
                 return null;
             }
 
@@ -98,12 +113,20 @@ namespace WriterApp.Application.Documents
                 TimeSpan age = DateTimeOffset.UtcNow - latest.CreatedAt;
                 if (age < minAge)
                 {
+                    _logger.LogInformation(
+                        "PageVersion autosnap skipped: minAge not met PageId={PageId} AgeSeconds={AgeSeconds} MinSeconds={MinSeconds}",
+                        page.Id,
+                        Math.Round(age.TotalSeconds, 2),
+                        Math.Round(minAge.TotalSeconds, 2));
                     return null;
                 }
 
                 string hash = ComputeHash(content ?? string.Empty);
                 if (string.Equals(latest.ContentTextHash, hash, StringComparison.Ordinal))
                 {
+                    _logger.LogInformation(
+                        "PageVersion autosnap skipped: content unchanged PageId={PageId}",
+                        page.Id);
                     return null;
                 }
             }
@@ -189,12 +212,15 @@ namespace WriterApp.Application.Documents
 
             if (maxVersions.HasValue && maxVersions.Value > 0)
             {
-                List<Guid> overflowIds = await _dbContext.PageVersions
+                List<PageVersionRecord> pageVersions = await _dbContext.PageVersions
                     .Where(version => version.PageId == pageId)
+                    .ToListAsync(ct);
+
+                List<Guid> overflowIds = pageVersions
                     .OrderByDescending(version => version.CreatedAt)
                     .Skip(maxVersions.Value)
                     .Select(version => version.Id)
-                    .ToListAsync(ct);
+                    .ToList();
                 if (overflowIds.Count > 0)
                 {
                     List<PageVersionRecord> overflow = await _dbContext.PageVersions
@@ -216,10 +242,13 @@ namespace WriterApp.Application.Documents
 
         private async Task<PageVersionRecord?> GetLatestVersionAsync(Guid pageId, CancellationToken ct)
         {
-            return await _dbContext.PageVersions
+            List<PageVersionRecord> versions = await _dbContext.PageVersions
                 .Where(version => version.PageId == pageId)
+                .ToListAsync(ct);
+
+            return versions
                 .OrderByDescending(version => version.CreatedAt)
-                .FirstOrDefaultAsync(ct);
+                .FirstOrDefault();
         }
 
         private static byte[] Compress(string content)

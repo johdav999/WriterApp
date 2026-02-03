@@ -159,7 +159,7 @@ namespace WriterApp.Controllers
                 userId,
                 page,
                 page.Content ?? string.Empty,
-                TimeSpan.FromMinutes(5),
+                TimeSpan.FromSeconds(30),
                 ct);
 
             PageDto dto = new(
@@ -218,6 +218,12 @@ namespace WriterApp.Controllers
             }
 
             await _searchIndex.UpsertPageAsync(page, ct);
+            await _pageVersions.CreateAutosnapshotIfDueAsync(
+                userId,
+                page,
+                page.Content ?? string.Empty,
+                TimeSpan.FromSeconds(30),
+                ct);
 
             ContentFingerprint afterFp = BuildFingerprint(page.Content ?? string.Empty);
             _logger.LogDebug(

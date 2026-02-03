@@ -7,7 +7,6 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using WriterApp.Application.Documents;
-using WriterApp.Application.State;
 using WriterApp.Application.Search;
 using WriterApp.Application.Security;
 using WriterApp.Data.Documents;
@@ -204,9 +203,8 @@ namespace WriterApp.Controllers
             }
 
             string fromContent = _pageVersions.DecompressContent(version);
-            string fromText = PlainTextMapper.ToPlainText(fromContent);
 
-            string toText;
+            string toContent;
             Guid? resolvedToVersionId = null;
             bool compareToCurrent = true;
             if (toVersionId.HasValue && toVersionId.Value != Guid.Empty)
@@ -217,14 +215,13 @@ namespace WriterApp.Controllers
                     return NotFound();
                 }
 
-                string toContent = _pageVersions.DecompressContent(toVersion);
-                toText = PlainTextMapper.ToPlainText(toContent);
+                toContent = _pageVersions.DecompressContent(toVersion);
                 resolvedToVersionId = toVersion.Id;
                 compareToCurrent = false;
             }
             else
             {
-                toText = PlainTextMapper.ToPlainText(page.Content ?? string.Empty);
+                toContent = page.Content ?? string.Empty;
             }
 
             PageVersionDiffResultDto result = _pageVersionDiffs.BuildDiff(
@@ -232,9 +229,9 @@ namespace WriterApp.Controllers
                 fromVersionId,
                 resolvedToVersionId,
                 compareToCurrent,
-                fromText,
-                toText,
-                granularity ?? "paragraph",
+                fromContent,
+                toContent,
+                granularity ?? "word",
                 maxLines ?? 800);
 
             return Ok(result);

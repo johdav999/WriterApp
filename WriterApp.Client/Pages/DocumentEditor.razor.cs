@@ -271,15 +271,26 @@ namespace WriterApp.Client.Pages
         private Guid? _diffBaseVersionId;
         private Guid? _diffCompareVersionId;
         private PageVersionDiffResultDto? _diffResult;
-        private readonly List<VersionDiffRow> _diffRows = new();
+        private readonly List<DiffChangeBlock> _diffChangeBlocks = new();
+        private DiffSummary _diffSummary = DiffSummary.Empty;
         private bool _diffLoading;
         private string? _diffError;
-        private string _diffGranularity = "paragraph";
+        private string _diffGranularity = "word";
         private string _diffViewMode = "inline";
+        private bool _isDiffMode;
+        private bool _diffShowDeletions;
+        private bool _diffSyncScroll = true;
+        private int _diffChangeIndex = -1;
+        private bool _diffSyncInProgress;
+        private ElementReference _diffHeaderRef;
+        private ElementReference _diffCanvasRef;
         private bool _isRestoreDialogOpen;
         private PageVersionListItemDto? _pendingRestoreVersion;
         private bool _restoreInFlight;
         private string? _restoreError;
+        private string? _versionStatusMessage;
+        private DateTimeOffset? _lastVersionSeenAt;
+        private CancellationTokenSource? _versionStatusCts;
         private readonly List<PageAnnotationDto> _annotations = new();
         private bool _annotationsLoading;
         private string? _annotationsError;
@@ -499,6 +510,7 @@ namespace WriterApp.Client.Pages
                     _loadError = "No pages available.";
                     return;
                 }
+                ResetVersionStatusTracking();
 
                 Logger.LogDebug(
                     "HeadingPrefix PageContentLoaded TraceId={TraceId} DocumentId={DocumentId} SectionId={SectionId} PageId={PageId} Length={Length} Hash={Hash} Source={Source}",
@@ -1236,6 +1248,9 @@ namespace WriterApp.Client.Pages
             _sceneAutosaveCts?.Cancel();
             _sceneAutosaveCts?.Dispose();
             _sceneAutosaveCts = null;
+            _versionStatusCts?.Cancel();
+            _versionStatusCts?.Dispose();
+            _versionStatusCts = null;
 
             if (_exportModule is not null)
             {
@@ -4201,6 +4216,7 @@ namespace WriterApp.Client.Pages
                 if (versions is not null)
                 {
                     _pageVersions.AddRange(versions);
+                    UpdateVersionStatusMessage(versions);
                 }
             }
             catch (Exception ex)
@@ -4212,6 +4228,65 @@ namespace WriterApp.Client.Pages
             {
                 _versionsLoading = false;
             }
+        }
+
+        private void UpdateVersionStatusMessage(IReadOnlyList<PageVersionListItemDto> versions)
+        {
+            if (versions.Count == 0)
+            {
+                return;
+            }
+
+            PageVersionListItemDto latest = versions[0];
+            if (_lastVersionSeenAt is null)
+            {
+                _lastVersionSeenAt = latest.CreatedAt;
+                return;
+            }
+
+            if (latest.CreatedAt <= _lastVersionSeenAt.Value)
+            {
+                return;
+            }
+
+            _lastVersionSeenAt = latest.CreatedAt;
+            string reason = string.IsNullOrWhiteSpace(latest.Reason) ? "snapshot" : latest.Reason.Trim();
+            _versionStatusMessage = $"Version saved ({reason})";
+
+            _versionStatusCts?.Cancel();
+            _versionStatusCts?.Dispose();
+            _versionStatusCts = new CancellationTokenSource();
+            _ = ClearVersionStatusMessageAsync(_versionStatusCts, TimeSpan.FromSeconds(6));
+            _ = InvokeAsync(StateHasChanged);
+        }
+
+        private async Task ClearVersionStatusMessageAsync(CancellationTokenSource cts, TimeSpan delay)
+        {
+            try
+            {
+                await Task.Delay(delay, cts.Token);
+            }
+            catch (TaskCanceledException)
+            {
+                return;
+            }
+
+            if (cts.IsCancellationRequested)
+            {
+                return;
+            }
+
+            _versionStatusMessage = null;
+            await InvokeAsync(StateHasChanged);
+        }
+
+        private void ResetVersionStatusTracking()
+        {
+            _lastVersionSeenAt = null;
+            _versionStatusMessage = null;
+            _versionStatusCts?.Cancel();
+            _versionStatusCts?.Dispose();
+            _versionStatusCts = null;
         }
 
         private async Task LoadAnnotationsAsync()
@@ -4728,10 +4803,13 @@ namespace WriterApp.Client.Pages
                 return;
             }
 
+            _isDiffMode = true;
             _diffLoading = true;
             _diffError = null;
             _diffResult = null;
-            _diffRows.Clear();
+            _diffChangeBlocks.Clear();
+            _diffSummary = DiffSummary.Empty;
+            _diffChangeIndex = -1;
 
             try
             {
@@ -4750,7 +4828,8 @@ namespace WriterApp.Client.Pages
                 }
 
                 _diffResult = result;
-                _diffRows.AddRange(BuildDiffRows(result));
+                RebuildDiffChangeList(result);
+                await FocusDiffHeaderAsync();
             }
             catch (Exception ex)
             {
@@ -4775,7 +4854,7 @@ namespace WriterApp.Client.Pages
 
         private async Task OnDiffGranularityChanged(ChangeEventArgs args)
         {
-            _diffGranularity = args.Value?.ToString() ?? "paragraph";
+            _diffGranularity = args.Value?.ToString() ?? "word";
             if (_diffBaseVersionId.HasValue)
             {
                 await LoadVersionDiffAsync();
@@ -4786,6 +4865,110 @@ namespace WriterApp.Client.Pages
         {
             _diffViewMode = args.Value?.ToString() ?? "inline";
             await InvokeAsync(StateHasChanged);
+        }
+
+        private void OnDiffShowDeletionsChanged(ChangeEventArgs args)
+        {
+            if (args.Value is bool flag)
+            {
+                _diffShowDeletions = flag;
+                return;
+            }
+
+            if (args.Value is string text)
+            {
+                _diffShowDeletions = string.Equals(text, "true", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(text, "on", StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        private void OnDiffSyncScrollChanged(ChangeEventArgs args)
+        {
+            if (args.Value is bool flag)
+            {
+                _diffSyncScroll = flag;
+                return;
+            }
+
+            if (args.Value is string text)
+            {
+                _diffSyncScroll = string.Equals(text, "true", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(text, "on", StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        private void CloseDiffMode()
+        {
+            _isDiffMode = false;
+        }
+
+        private async Task SwapDiffVersionsAsync()
+        {
+            if (!_diffBaseVersionId.HasValue)
+            {
+                return;
+            }
+
+            Guid? temp = _diffCompareVersionId;
+            _diffCompareVersionId = _diffBaseVersionId;
+            _diffBaseVersionId = temp;
+
+            await LoadVersionDiffAsync();
+        }
+
+        private async Task FocusDiffHeaderAsync()
+        {
+            try
+            {
+                await _diffHeaderRef.FocusAsync();
+            }
+            catch (InvalidOperationException)
+            {
+            }
+        }
+
+        private async Task OnDiffPaneScrolled(string sourceId)
+        {
+            if (!_diffSyncScroll || _diffSyncInProgress)
+            {
+                return;
+            }
+
+            _diffSyncInProgress = true;
+            try
+            {
+                string targetId = string.Equals(sourceId, "diff-pane-left", StringComparison.Ordinal)
+                    ? "diff-pane-right"
+                    : "diff-pane-left";
+                await JSRuntime.InvokeVoidAsync("tiptapEditor.syncDiffScroll", sourceId, targetId);
+            }
+            catch (JSException)
+            {
+            }
+            finally
+            {
+                _diffSyncInProgress = false;
+            }
+        }
+
+        private async Task OnDiffKeyDown(KeyboardEventArgs args)
+        {
+            if (args.Key == "Escape")
+            {
+                CloseDiffMode();
+                return;
+            }
+
+            if (args.Key == "F7" && args.ShiftKey)
+            {
+                await GoToPreviousChange();
+                return;
+            }
+
+            if (args.Key == "F7")
+            {
+                await GoToNextChange();
+            }
         }
 
         private void PromptRestoreVersion(PageVersionListItemDto version)
@@ -4897,6 +5080,7 @@ namespace WriterApp.Client.Pages
             {
                 "added" => "is-added",
                 "removed" => "is-removed",
+                "changed" => "is-changed",
                 "empty" => "is-empty",
                 _ => "is-unchanged"
             };
@@ -4922,22 +5106,23 @@ namespace WriterApp.Client.Pages
             };
         }
 
-        private RenderFragment RenderDiffSpans(PageVersionDiffLineDto? line) => builder =>
+        private RenderFragment RenderDiffSegments(
+            IReadOnlyList<PageVersionDiffSpanDto>? segments,
+            bool hideRemoved = false) => builder =>
         {
-            if (line is null)
+            if (segments is null || segments.Count == 0)
             {
-                return;
-            }
-
-            if (line.Spans is null || line.Spans.Count == 0)
-            {
-                builder.AddContent(0, line.Text);
                 return;
             }
 
             int seq = 0;
-            foreach (PageVersionDiffSpanDto span in line.Spans)
+            foreach (PageVersionDiffSpanDto span in segments)
             {
+                if (hideRemoved && string.Equals(span.Kind, "removed", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
                 builder.OpenElement(seq++, "span");
                 builder.AddAttribute(seq++, "class", $"version-diff-span {GetDiffSpanClass(span.Kind)}");
                 builder.AddContent(seq++, span.Text);
@@ -4945,46 +5130,223 @@ namespace WriterApp.Client.Pages
             }
         };
 
-        private static IReadOnlyList<VersionDiffRow> BuildDiffRows(PageVersionDiffResultDto result)
+        private static IReadOnlyList<PageVersionDiffSpanDto> GetInlineSegments(PageVersionDiffBlockDto block)
         {
-            List<VersionDiffRow> rows = new();
-            IReadOnlyList<PageVersionDiffLineDto> lines = result.Lines;
-            int index = 0;
-
-            while (index < lines.Count)
+            if (block.InlineSegments is not null && block.InlineSegments.Count > 0)
             {
-                PageVersionDiffLineDto line = lines[index];
-                string kind = line.Kind?.ToLowerInvariant() ?? "unchanged";
+                return block.InlineSegments;
+            }
 
-                if (kind == "removed" && index + 1 < lines.Count)
+            if (block.Compare is not null && !string.IsNullOrWhiteSpace(block.Compare.Text))
+            {
+                string kind = string.Equals(block.Status, "added", StringComparison.OrdinalIgnoreCase)
+                    ? "added"
+                    : "unchanged";
+                return new[] { new PageVersionDiffSpanDto(kind, block.Compare.Text) };
+            }
+
+            if (block.Base is not null && !string.IsNullOrWhiteSpace(block.Base.Text))
+            {
+                return new[] { new PageVersionDiffSpanDto("removed", block.Base.Text) };
+            }
+
+            return Array.Empty<PageVersionDiffSpanDto>();
+        }
+
+        private static IReadOnlyList<PageVersionDiffSpanDto> GetBaseSegments(PageVersionDiffBlockDto block)
+        {
+            if (block.Base is null)
+            {
+                return Array.Empty<PageVersionDiffSpanDto>();
+            }
+
+            if (block.Base.Segments is not null && block.Base.Segments.Count > 0)
+            {
+                return block.Base.Segments;
+            }
+
+            string kind = string.Equals(block.Status, "removed", StringComparison.OrdinalIgnoreCase)
+                ? "removed"
+                : "unchanged";
+            return new[] { new PageVersionDiffSpanDto(kind, block.Base.Text) };
+        }
+
+        private static IReadOnlyList<PageVersionDiffSpanDto> GetCompareSegments(PageVersionDiffBlockDto block)
+        {
+            if (block.Compare is null)
+            {
+                return Array.Empty<PageVersionDiffSpanDto>();
+            }
+
+            if (block.Compare.Segments is not null && block.Compare.Segments.Count > 0)
+            {
+                return block.Compare.Segments;
+            }
+
+            string kind = string.Equals(block.Status, "added", StringComparison.OrdinalIgnoreCase)
+                ? "added"
+                : "unchanged";
+            return new[] { new PageVersionDiffSpanDto(kind, block.Compare.Text) };
+        }
+
+        private void RebuildDiffChangeList(PageVersionDiffResultDto result)
+        {
+            _diffChangeBlocks.Clear();
+            _diffChangeBlocks.AddRange(BuildDiffChangeBlocks(result.Blocks));
+            _diffSummary = new DiffSummary(
+                result.Stats.AddedWords,
+                result.Stats.RemovedWords,
+                result.Stats.ChangedBlocks,
+                result.Stats.AddedBlocks,
+                result.Stats.RemovedBlocks);
+            _diffChangeIndex = _diffChangeBlocks.Count > 0 ? 0 : -1;
+        }
+
+        private static IReadOnlyList<DiffChangeBlock> BuildDiffChangeBlocks(
+            IReadOnlyList<PageVersionDiffBlockDto> blocks)
+        {
+            List<DiffChangeBlock> changes = new();
+
+            foreach (PageVersionDiffBlockDto block in blocks)
+            {
+                if (string.Equals(block.Status, "unchanged", StringComparison.OrdinalIgnoreCase))
                 {
-                    PageVersionDiffLineDto next = lines[index + 1];
-                    string nextKind = next.Kind?.ToLowerInvariant() ?? "unchanged";
-                    if (nextKind == "added")
+                    continue;
+                }
+
+                changes.Add(new DiffChangeBlock(block.Id, block.Status, BuildPreview(block.PreviewText)));
+            }
+
+            return changes;
+        }
+
+        private static int CountWords(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return 0;
+            }
+
+            int count = 0;
+            bool inWord = false;
+            foreach (char ch in text)
+            {
+                if (char.IsLetterOrDigit(ch))
+                {
+                    if (!inWord)
                     {
-                        rows.Add(new VersionDiffRow(line, next));
-                        index += 2;
-                        continue;
+                        count++;
+                        inWord = true;
                     }
-                }
-
-                if (kind == "removed")
-                {
-                    rows.Add(new VersionDiffRow(line, null));
-                }
-                else if (kind == "added")
-                {
-                    rows.Add(new VersionDiffRow(null, line));
                 }
                 else
                 {
-                    rows.Add(new VersionDiffRow(line, line));
+                    inWord = false;
                 }
-
-                index++;
             }
 
-            return rows;
+            return count;
+        }
+
+        private static string BuildPreview(string text)
+        {
+            string trimmed = string.IsNullOrWhiteSpace(text) ? string.Empty : text.Trim();
+            if (trimmed.Length <= 120)
+            {
+                return trimmed;
+            }
+
+            return trimmed[..117] + "...";
+        }
+
+        private static string GetDiffAnchorId(string blockId)
+        {
+            return $"diff-block-{blockId}";
+        }
+
+        private string GetDiffPaneSubtitle(Guid? versionId)
+        {
+            if (versionId is null)
+            {
+                return "Current draft";
+            }
+
+            PageVersionListItemDto? version = _pageVersions.FirstOrDefault(item => item.Id == versionId.Value);
+            if (version is null)
+            {
+                return "Version";
+            }
+
+            return $"{version.CreatedAt.ToLocalTime():g} · {GetVersionReasonLabel(version.Reason)} · {version.WordCount} words";
+        }
+
+        private static string FormatVersionLabel(PageVersionListItemDto version)
+        {
+            return $"{version.CreatedAt.ToLocalTime():g} · {GetVersionReasonLabel(version.Reason)} · {version.WordCount} words";
+        }
+
+        private async Task GoToNextChange()
+        {
+            if (_diffChangeBlocks.Count == 0)
+            {
+                return;
+            }
+
+            _diffChangeIndex = (_diffChangeIndex + 1) % _diffChangeBlocks.Count;
+            await JumpToChange(_diffChangeBlocks[_diffChangeIndex]);
+        }
+
+        private async Task GoToPreviousChange()
+        {
+            if (_diffChangeBlocks.Count == 0)
+            {
+                return;
+            }
+
+            _diffChangeIndex = (_diffChangeIndex - 1 + _diffChangeBlocks.Count) % _diffChangeBlocks.Count;
+            await JumpToChange(_diffChangeBlocks[_diffChangeIndex]);
+        }
+
+        private async Task JumpToChange(DiffChangeBlock block)
+        {
+            _diffChangeIndex = _diffChangeBlocks.IndexOf(block);
+            if (!_diffShowDeletions && string.Equals(block.Kind, "removed", StringComparison.OrdinalIgnoreCase))
+            {
+                _diffShowDeletions = true;
+                await InvokeAsync(StateHasChanged);
+            }
+            string anchorId = GetDiffAnchorId(block.BlockId);
+            try
+            {
+                await JSRuntime.InvokeVoidAsync("tiptapEditor.scrollToElement", anchorId);
+            }
+            catch (JSException)
+            {
+            }
+        }
+
+        private string GetDiffChangeClass(DiffChangeBlock block)
+        {
+            int index = _diffChangeBlocks.IndexOf(block);
+            string kindClass = block.Kind switch
+            {
+                "added" => "is-added",
+                "removed" => "is-removed",
+                _ => "is-changed"
+            };
+
+            return index == _diffChangeIndex ? $"is-active {kindClass}" : kindClass;
+        }
+
+        private void PromptRestoreVersionById(Guid versionId)
+        {
+            PageVersionListItemDto? version = _pageVersions.FirstOrDefault(item => item.Id == versionId);
+            if (version is null)
+            {
+                return;
+            }
+
+            PromptRestoreVersion(version);
         }
 
         private async Task LoadTranslationLinksAsync()
@@ -5448,10 +5810,24 @@ namespace WriterApp.Client.Pages
             }
         }
 
-        private sealed record VersionDiffRow(PageVersionDiffLineDto? LeftLine, PageVersionDiffLineDto? RightLine)
+        private sealed record DiffChangeBlock(string BlockId, string Kind, string Preview)
         {
-            public string LeftKind => LeftLine?.Kind ?? "empty";
-            public string RightKind => RightLine?.Kind ?? "empty";
+            public string KindLabel => Kind switch
+            {
+                "added" => "Added",
+                "removed" => "Removed",
+                _ => "Changed"
+            };
+        }
+
+        private sealed record DiffSummary(
+            int AddedWords,
+            int RemovedWords,
+            int ChangedBlocks,
+            int AddedBlocks,
+            int RemovedBlocks)
+        {
+            public static DiffSummary Empty => new(0, 0, 0, 0, 0);
         }
 
         private enum ContextTab

@@ -29,6 +29,10 @@ else
         <span title="Total words in this section.">@_wordCount words</span>
         <span title="Estimated page count.">Page @_currentPageIndex / @_pageCount</span>
         <span class="@GetSaveStatusClass()" title="Your work is saved automatically.">@GetSaveStatusLabel()</span>
+        @if (!string.IsNullOrWhiteSpace(VersionStatusMessage))
+        {
+            <span class="version-status" title="A version snapshot was saved.">@VersionStatusMessage</span>
+        }
     </div>
 }
 
@@ -106,6 +110,9 @@ else
 
     [Parameter]
     public IReadOnlyList<PageQualityIssueDto>? QualityIssues { get; set; }
+
+    [Parameter]
+    public string? VersionStatusMessage { get; set; }
 
     private bool _lastHeadingNumberingEnabled = true;
     private string _lastHeadingNumberingScope = "document";
