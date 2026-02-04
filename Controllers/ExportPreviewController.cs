@@ -75,11 +75,26 @@ namespace WriterApp.Controllers
                 ExportTemplate template = await _templateResolver.ResolveAsync(userId, request.TemplateId, ct);
                 ExportTemplate previewTemplate = CloneTemplate(template);
                 previewTemplate.TocEnabled = request.IncludeToc;
+                if (request.TocDepth > 0)
+                {
+                    previewTemplate.TocDepth = request.TocDepth;
+                }
 
                 string bodyHtml = await _exportService.ExportHtmlBodyAsync(
                     document,
                     ExportKind.Document,
-                    new ExportOptions(IncludeTitlePage: true, TemplateId: previewTemplate.Id, Template: previewTemplate),
+                    new ExportOptions(
+                        IncludeTitlePage: request.IncludeTitlePage,
+                        IncludeToc: request.IncludeToc,
+                        TocDepth: request.TocDepth,
+                        ChapterBreakRules: request.ChapterBreakRules,
+                        TitlePageTitle: request.TitlePageTitle,
+                        TitlePageSubtitle: request.TitlePageSubtitle,
+                        TitlePageAuthor: request.TitlePageAuthor,
+                        TitlePageDraftLabel: request.TitlePageDraftLabel,
+                        TitlePageDate: request.TitlePageDate,
+                        TemplateId: previewTemplate.Id,
+                        Template: previewTemplate),
                     userId,
                     previewTemplate.Id,
                     ct);

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -40,8 +41,19 @@ namespace WriterApp.Application.Exporting
                 .Append("  <title>").Append(WebUtility.HtmlEncode(title)).Append("</title>\n")
                 .Append("  <style>\n")
                 .Append("    body { max-width: 700px; margin: 3rem auto; font-family: serif; }\n")
+                .Append("    .export-frontmatter:not(:empty) { break-after: page; page-break-after: always; }\n")
                 .Append("    h1, h2 { margin-top: 2rem; }\n")
                 .Append("    p { line-height: 1.6; }\n")
+                .Append("    .export-title-page { text-align: center; padding: 120px 0 80px; break-after: page; page-break-after: always; }\n")
+                .Append("    .export-title-page h1 { margin-bottom: 0.3em; }\n")
+                .Append("    .export-title-page .title-subtitle { font-size: 1.2em; color: #444; margin-bottom: 1.2em; }\n")
+                .Append("    .export-title-page .title-meta { margin-top: 0.6em; font-size: 0.95em; color: #555; }\n")
+                .Append("    .export-toc { margin: 1.5em 0 2em 0; }\n")
+                .Append("    .export-toc h2 { font-size: 1.2em; margin-bottom: 0.6em; }\n")
+                .Append("    .export-toc ol { list-style: none; padding-left: 0; }\n")
+                .Append("    .export-toc li { margin: 0.25em 0; }\n")
+                .Append("    .export-toc a { color: inherit; text-decoration: none; }\n")
+                .Append(BuildChapterBreakCss(resolved))
                 .Append("  </style>\n")
                 .Append("</head>\n")
                 .Append("<body>\n")
@@ -61,14 +73,16 @@ namespace WriterApp.Application.Exporting
         {
             ExportOptions resolved = options ?? new ExportOptions();
             string title = ExportHelpers.GetDocumentTitle(document);
-            StringBuilder builder = new();
+            StringBuilder frontMatterBuilder = new();
+            StringBuilder bodyBuilder = new();
             IReadOnlyDictionary<Guid, SectionNumberingInfo> numbering = _numberingService.BuildIndex(document);
-
+            List<(string Text, string Id, int Level)> headings = new();
+            string titlePageHtml = string.Empty;
 
             if (resolved.IncludeTitlePage)
             {
-                // Document title maps to a top-level heading.
-                builder.Append("  <h1>").Append(WebUtility.HtmlEncode(title)).Append("</h1>\n");
+                titlePageHtml = BuildTitlePageBlock(resolved, title);
+                frontMatterBuilder.Append(titlePageHtml);
             }
 
             foreach (Section section in ExportHelpers.GetOrderedSections(document))
@@ -78,9 +92,12 @@ namespace WriterApp.Application.Exporting
                     ? entry
                     : null;
                 string heading = _numberingService.BuildHeading(section, sectionTitle, info);
-                builder.Append("  <section>\n");
+                string sectionId = $"section-{section.SectionId}";
+                headings.Add((heading, sectionId, 2));
+                bodyBuilder.Append("  <section>\n");
                 // Section titles map to second-level headings.
-                builder.Append("    <h2>").Append(WebUtility.HtmlEncode(heading)).Append("</h2>\n");
+                bodyBuilder.Append("    <h2 id=\"").Append(sectionId).Append("\" class=\"export-section-title\">")
+                    .Append(WebUtility.HtmlEncode(heading)).Append("</h2>\n");
 
 
                 string sectionHtml = ConvertSectionContentToHtml(section.Content, sectionTitle);
@@ -89,14 +106,29 @@ namespace WriterApp.Application.Exporting
                 if (!string.IsNullOrWhiteSpace(sectionHtml))
                 {
                     string indented = IndentLines(sectionHtml.Trim(), "    ");
-                    builder.Append(indented).Append("\n");
+                    bodyBuilder.Append(indented).Append("\n");
                 }
 
-                builder.Append("  </section>\n");
+                bodyBuilder.Append("  </section>\n");
             }
 
+            if (resolved.IncludeToc && (resolved.TocDepth <= 0 || resolved.TocDepth >= 2))
+            {
+                string tocHtml = BuildSimpleToc(headings);
+                if (!string.IsNullOrWhiteSpace(tocHtml))
+                {
+                    frontMatterBuilder.Append(tocHtml).Append("\n");
+                }
+            }
 
-            string html = builder.ToString();
+            string html = "<div class=\"export-doc\">\n" +
+                          "<div id=\"preview-frontmatter\" class=\"export-frontmatter\">\n" +
+                          frontMatterBuilder +
+                          "\n</div>\n" +
+                          "<div id=\"preview-body\" class=\"export-body\">\n" +
+                          bodyBuilder +
+                          "\n</div>\n" +
+                          "</div>\n";
             ExportHelpers.AssertSynopsisNotIncluded(html, document);
             return html;
         }
@@ -274,5 +306,96 @@ namespace WriterApp.Application.Exporting
 
             return string.Join("\n", lines);
         }
+
+        private static string BuildTitlePageBlock(ExportOptions options, string documentTitle)
+        {
+            string title = string.IsNullOrWhiteSpace(options.TitlePageTitle) ? documentTitle : options.TitlePageTitle!;
+            string subtitle = options.TitlePageSubtitle ?? string.Empty;
+            string author = options.TitlePageAuthor ?? string.Empty;
+            string draft = options.TitlePageDraftLabel ?? string.Empty;
+            string date = options.TitlePageDate ?? string.Empty;
+
+            StringBuilder builder = new();
+            builder.Append("<section class=\"export-title-page\">\n")
+                .Append("  <h1 class=\"export-title\">").Append(WebUtility.HtmlEncode(title)).Append("</h1>\n");
+
+            if (!string.IsNullOrWhiteSpace(subtitle))
+            {
+                builder.Append("  <div class=\"title-subtitle\">")
+                    .Append(WebUtility.HtmlEncode(subtitle))
+                    .Append("</div>\n");
+            }
+
+            if (!string.IsNullOrWhiteSpace(author))
+            {
+                builder.Append("  <div class=\"title-meta\">")
+                    .Append(WebUtility.HtmlEncode(author))
+                    .Append("</div>\n");
+            }
+
+            if (!string.IsNullOrWhiteSpace(draft))
+            {
+                builder.Append("  <div class=\"title-meta\">")
+                    .Append(WebUtility.HtmlEncode(draft))
+                    .Append("</div>\n");
+            }
+
+            if (!string.IsNullOrWhiteSpace(date))
+            {
+                builder.Append("  <div class=\"title-meta\">")
+                    .Append(WebUtility.HtmlEncode(date))
+                    .Append("</div>\n");
+            }
+
+            builder.Append("</section>\n");
+            return builder.ToString();
+        }
+
+        private static string BuildSimpleToc(IEnumerable<(string Text, string Id, int Level)> headings)
+        {
+            List<(string Text, string Id, int Level)> items = headings.ToList();
+            if (items.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            StringBuilder builder = new();
+            builder.Append("<nav class=\"export-toc\">\n")
+                .Append("  <h2>Table of Contents</h2>\n")
+                .Append("  <ol>\n");
+
+            foreach ((string text, string id, int _) in items)
+            {
+                builder.Append("    <li><a href=\"#").Append(id).Append("\">")
+                    .Append(WebUtility.HtmlEncode(text))
+                    .Append("</a></li>\n");
+            }
+
+            builder.Append("  </ol>\n</nav>");
+            return builder.ToString();
+        }
+
+        private static string BuildChapterBreakCss(ExportOptions options)
+        {
+            if (options.ChapterBreakRules is null || options.ChapterBreakRules.Count == 0)
+            {
+                return string.Empty;
+            }
+
+            StringBuilder css = new();
+            if (options.ChapterBreakRules.Any(rule => string.Equals(rule, "h1", StringComparison.OrdinalIgnoreCase)))
+            {
+                css.Append("    h1:not(.export-title), .export-section-title { break-before: page; page-break-before: always; }\n");
+            }
+
+            if (options.ChapterBreakRules.Any(rule => string.Equals(rule, "section", StringComparison.OrdinalIgnoreCase)))
+            {
+                css.Append("    section { break-before: page; page-break-before: always; }\n")
+                    .Append("    section:first-of-type { break-before: auto; page-break-before: auto; }\n");
+            }
+
+            return css.ToString();
+        }
     }
 }
+

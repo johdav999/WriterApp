@@ -80,14 +80,13 @@ namespace WriterApp.Application.Exporting
             string title = ExportHelpers.GetDocumentTitle(document);
             HeadingIdGenerator idGenerator = new();
             List<ExportHeading> headings = new();
-            List<string> blocks = new();
+            List<string> frontMatterBlocks = new();
+            List<string> bodyBlocks = new();
             IReadOnlyDictionary<Guid, SectionNumberingInfo> numbering = _numberingService.BuildIndex(document);
 
             if (options.IncludeTitlePage)
             {
-                string titleId = idGenerator.NextId(title);
-                headings.Add(new ExportHeading(1, title, titleId));
-                blocks.Add($"<h1 id=\"{titleId}\" class=\"export-title\">{WebUtility.HtmlEncode(title)}</h1>");
+                frontMatterBlocks.Add(BuildTitlePageBlock(options, title));
             }
 
             foreach (Section section in ExportHelpers.GetOrderedSections(document))
@@ -102,7 +101,7 @@ namespace WriterApp.Application.Exporting
 
                 StringBuilder sectionBuilder = new();
                 sectionBuilder.Append("<section class=\"export-section\">\n")
-                    .Append("  <h2 id=\"").Append(sectionId).Append("\">")
+                    .Append("  <h2 id=\"").Append(sectionId).Append("\" class=\"export-section-title\">")
                     .Append(WebUtility.HtmlEncode(headingText)).Append("</h2>\n");
 
                 string sectionHtml = ConvertSectionContentToHtml(section.Content, sectionTitle, idGenerator, headings);
@@ -113,29 +112,36 @@ namespace WriterApp.Application.Exporting
                 }
 
                 sectionBuilder.Append("</section>");
-                blocks.Add(sectionBuilder.ToString());
+                bodyBlocks.Add(sectionBuilder.ToString());
             }
 
-            if (template.TocEnabled)
+            bool includeToc = options.IncludeToc;
+            int tocDepth = options.TocDepth > 0 ? options.TocDepth : template.TocDepth;
+            if (includeToc && tocDepth > 0)
             {
-                string tocHtml = BuildToc(headings, template.TocDepth);
+                string tocHtml = BuildToc(headings, tocDepth);
                 if (!string.IsNullOrWhiteSpace(tocHtml))
                 {
                     int insertIndex = options.IncludeTitlePage ? 1 : 0;
-                    blocks.Insert(insertIndex, tocHtml);
+                    frontMatterBlocks.Insert(insertIndex, tocHtml);
                 }
             }
 
             StringBuilder bodyBuilder = new();
             bodyBuilder.Append("<div class=\"export-doc\">\n")
-                .Append(string.Join("\n", blocks))
+                .Append("<div id=\"preview-frontmatter\" class=\"export-frontmatter\">\n")
+                .Append(string.Join("\n", frontMatterBlocks))
+                .Append("\n</div>\n")
+                .Append("<div id=\"preview-body\" class=\"export-body\">\n")
+                .Append(string.Join("\n", bodyBlocks))
+                .Append("\n</div>\n")
                 .Append("\n</div>\n");
 
-            string css = BuildCss(template, title);
+            string css = BuildCss(template, title, options);
             return new RenderedHtml(css, bodyBuilder.ToString());
         }
 
-        private static string BuildCss(ExportTemplate template, string documentTitle)
+        private static string BuildCss(ExportTemplate template, string documentTitle, ExportOptions options)
         {
             string dateValue = DateTimeOffset.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
             TokenContext tokenContext = new(documentTitle, dateValue);
@@ -234,12 +240,17 @@ namespace WriterApp.Application.Exporting
                 .Append(template.BodyFontSizePt.ToString(CultureInfo.InvariantCulture)).Append("pt; line-height: ")
                 .Append(template.LineHeight.ToString(CultureInfo.InvariantCulture)).Append("; color: #111; }\n")
                 .Append("    .export-doc { padding: 0; }\n")
+                .Append("    .export-frontmatter:not(:empty) { break-after: page; page-break-after: always; }\n")
                 .Append("    h1 { font-size: 2em; margin: 0 0 0.6em 0; }\n")
                 .Append("    h2 { font-size: 1.4em; margin: 1.2em 0 0.4em 0; }\n")
                 .Append("    p { margin: 0 0 ")
                 .Append(template.ParagraphSpacingPt.ToString(CultureInfo.InvariantCulture))
                 .Append("pt 0; }\n")
                 .Append("    .export-section { margin-bottom: 1.2em; }\n")
+                .Append("    .export-title-page { text-align: center; padding: 120px 0 80px; break-after: page; page-break-after: always; }\n")
+                .Append("    .export-title-page h1 { margin-bottom: 0.3em; }\n")
+                .Append("    .export-title-page .title-subtitle { font-size: 1.2em; color: #444; margin-bottom: 1.2em; }\n")
+                .Append("    .export-title-page .title-meta { margin-top: 0.6em; font-size: 0.95em; color: #555; }\n")
                 .Append("    .export-toc { margin: 1.5em 0 2em 0; }\n")
                 .Append("    .export-toc h2 { font-size: 1.2em; margin-bottom: 0.6em; }\n")
                 .Append("    .export-toc ol { list-style: none; padding-left: 0; }\n")
@@ -256,9 +267,70 @@ namespace WriterApp.Application.Exporting
                 css.Append("    h2 { string-set: section-title content(text); }\n");
             }
 
+            if (HasChapterBreak(options, "h1"))
+            {
+                css.Append("    .export-doc h1:not(.export-title), .export-section-title { break-before: page; page-break-before: always; }\n");
+            }
+
+            if (HasChapterBreak(options, "section"))
+            {
+                css.Append("    .export-section { break-before: page; page-break-before: always; }\n")
+                    .Append("    .export-section:first-of-type { break-before: auto; page-break-before: auto; }\n");
+            }
+
             css.Append("    /* TotalPages is not available in HTML-only exports. */\n");
 
             return css.ToString();
+        }
+
+        private static string BuildTitlePageBlock(ExportOptions options, string documentTitle)
+        {
+            string title = string.IsNullOrWhiteSpace(options.TitlePageTitle) ? documentTitle : options.TitlePageTitle!;
+            string subtitle = options.TitlePageSubtitle ?? string.Empty;
+            string author = options.TitlePageAuthor ?? string.Empty;
+            string draft = options.TitlePageDraftLabel ?? string.Empty;
+            string date = options.TitlePageDate ?? string.Empty;
+
+            StringBuilder builder = new();
+            builder.Append("<section class=\"export-title-page\">\n")
+                .Append("  <h1 class=\"export-title\">").Append(WebUtility.HtmlEncode(title)).Append("</h1>\n");
+
+            if (!string.IsNullOrWhiteSpace(subtitle))
+            {
+                builder.Append("  <div class=\"title-subtitle\">")
+                    .Append(WebUtility.HtmlEncode(subtitle))
+                    .Append("</div>\n");
+            }
+
+            if (!string.IsNullOrWhiteSpace(author))
+            {
+                builder.Append("  <div class=\"title-meta\">")
+                    .Append(WebUtility.HtmlEncode(author))
+                    .Append("</div>\n");
+            }
+
+            if (!string.IsNullOrWhiteSpace(draft))
+            {
+                builder.Append("  <div class=\"title-meta\">")
+                    .Append(WebUtility.HtmlEncode(draft))
+                    .Append("</div>\n");
+            }
+
+            if (!string.IsNullOrWhiteSpace(date))
+            {
+                builder.Append("  <div class=\"title-meta\">")
+                    .Append(WebUtility.HtmlEncode(date))
+                    .Append("</div>\n");
+            }
+
+            builder.Append("</section>");
+            return builder.ToString();
+        }
+
+        private static bool HasChapterBreak(ExportOptions options, string rule)
+        {
+            return options.ChapterBreakRules is not null
+                && options.ChapterBreakRules.Any(value => string.Equals(value, rule, StringComparison.OrdinalIgnoreCase));
         }
 
         private static void AppendMarginBox(StringBuilder css, string marginBox, string contentExpression)

@@ -27,8 +27,17 @@ namespace WriterApp.Application.Exporting
 
             if (resolved.IncludeTitlePage)
             {
-                // Document title maps to a top-level heading.
-                builder.Append("# ").Append(title).Append("\n\n");
+                string titleValue = string.IsNullOrWhiteSpace(resolved.TitlePageTitle) ? title : resolved.TitlePageTitle!;
+                builder.Append("# ").Append(titleValue).Append("\n\n");
+
+                if (!string.IsNullOrWhiteSpace(resolved.TitlePageSubtitle))
+                {
+                    builder.Append("*").Append(resolved.TitlePageSubtitle).Append("*\n\n");
+                }
+
+                AppendTitleMeta(resolved.TitlePageAuthor);
+                AppendTitleMeta(resolved.TitlePageDraftLabel);
+                AppendTitleMeta(resolved.TitlePageDate);
             }
 
             foreach (Section section in ExportHelpers.GetOrderedSections(document))
@@ -56,6 +65,17 @@ namespace WriterApp.Application.Exporting
 
             ExportResult result = new(content, "text/markdown", fileName);
             return Task.FromResult(result);
+
+            void AppendTitleMeta(string? value)
+            {
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    return;
+                }
+
+                builder.Append(value).Append("\n");
+                builder.Append("\n");
+            }
         }
 
 

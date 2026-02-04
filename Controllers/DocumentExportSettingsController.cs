@@ -144,11 +144,11 @@ namespace WriterApp.Controllers
             try
             {
                 settings = JsonSerializer.Deserialize<ExportPresetSettingsDto>(preset.SettingsJson, JsonOptions)
-                    ?? new ExportPresetSettingsDto("html", null, "document", null, null, false, 0, false, false, null, null, null, false, null, null, null, null, null, null);
+                    ?? new ExportPresetSettingsDto("html", null, "document", null, null, false, 0, true, null, null, null, null, null, false, null, null, null, false, null, null, null, null, null, null);
             }
             catch
             {
-                settings = new ExportPresetSettingsDto("html", null, "document", null, null, false, 0, false, false, null, null, null, false, null, null, null, null, null, null);
+                settings = new ExportPresetSettingsDto("html", null, "document", null, null, false, 0, true, null, null, null, null, null, false, null, null, null, false, null, null, null, null, null, null);
             }
 
             return new ExportPresetDto(
