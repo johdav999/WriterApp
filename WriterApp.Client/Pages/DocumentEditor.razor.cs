@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -135,10 +135,22 @@ namespace WriterApp.Client.Pages
         private bool _previewShowPageBreaks = true;
         private bool _previewSidebarOpen = true;
         private bool _previewInitialized;
+        private bool _previewFrameLoaded;
+        private bool _previewHasFrontMatter;
         private int _previewPageCount = 1;
         private int _previewCurrentPage = 1;
         private string _previewSearchTerm = string.Empty;
+        private DotNetObjectReference<DocumentEditor>? _previewScrollRef;
         private string _exportScopeType = "document";
+        private bool _exportIncludeTitlePage = true;
+        private bool _exportIncludeToc = true;
+        private int _exportTocDepth = 2;
+        private readonly HashSet<string> _exportChapterBreakRules = new(StringComparer.OrdinalIgnoreCase);
+        private string _titlePageTitle = string.Empty;
+        private string _titlePageSubtitle = string.Empty;
+        private string _titlePageAuthor = string.Empty;
+        private string _titlePageDraftLabel = string.Empty;
+        private string _titlePageDate = string.Empty;
         private readonly HashSet<Guid> _exportScopeSectionIds = new();
         private string _exportScopeSearch = string.Empty;
         private string? _exportSelectionText;
@@ -437,7 +449,7 @@ namespace WriterApp.Client.Pages
                 await _contextMenuRef.FocusAsync();
             }
 
-            if (_isExportPreviewOpen && !_isPreviewLoading && !_previewInitialized && !string.IsNullOrWhiteSpace(_previewHtml))
+            if (_isExportPreviewOpen && !_isPreviewLoading && !_previewInitialized && _previewFrameLoaded && !string.IsNullOrWhiteSpace(_previewHtml))
             {
                 _previewInitialized = true;
                 await InitializePreviewFrameAsync();
@@ -2784,7 +2796,16 @@ namespace WriterApp.Client.Pages
                     _exportScopeType,
                     BuildScopeIdsForRequest(),
                     _exportSelectionRange is null ? null : new SelectionRangeDto(_exportSelectionRange.Start, _exportSelectionRange.End),
-                    _exportSelectionText);
+                    _exportSelectionText,
+                    _exportIncludeTitlePage,
+                    _exportIncludeToc,
+                    _exportTocDepth,
+                    _exportChapterBreakRules.Count == 0 ? null : _exportChapterBreakRules.ToList(),
+                    string.IsNullOrWhiteSpace(_titlePageTitle) ? null : _titlePageTitle,
+                    string.IsNullOrWhiteSpace(_titlePageSubtitle) ? null : _titlePageSubtitle,
+                    string.IsNullOrWhiteSpace(_titlePageAuthor) ? null : _titlePageAuthor,
+                    string.IsNullOrWhiteSpace(_titlePageDraftLabel) ? null : _titlePageDraftLabel,
+                    string.IsNullOrWhiteSpace(_titlePageDate) ? null : _titlePageDate);
 
                 using HttpResponseMessage exportResponse = await Http.PostAsJsonAsync(
                     $"api/documents/{DocumentId}/export",
@@ -2828,7 +2849,16 @@ namespace WriterApp.Client.Pages
                     _exportScopeType,
                     BuildScopeIdsForRequest(),
                     _exportSelectionRange is null ? null : new SelectionRangeDto(_exportSelectionRange.Start, _exportSelectionRange.End),
-                    _exportSelectionText);
+                    _exportSelectionText,
+                    _exportIncludeTitlePage,
+                    _exportIncludeToc,
+                    _exportTocDepth,
+                    _exportChapterBreakRules.Count == 0 ? null : _exportChapterBreakRules.ToList(),
+                    string.IsNullOrWhiteSpace(_titlePageTitle) ? null : _titlePageTitle,
+                    string.IsNullOrWhiteSpace(_titlePageSubtitle) ? null : _titlePageSubtitle,
+                    string.IsNullOrWhiteSpace(_titlePageAuthor) ? null : _titlePageAuthor,
+                    string.IsNullOrWhiteSpace(_titlePageDraftLabel) ? null : _titlePageDraftLabel,
+                    string.IsNullOrWhiteSpace(_titlePageDate) ? null : _titlePageDate);
 
                 using HttpResponseMessage response = await Http.PostAsJsonAsync(
                     $"api/documents/{DocumentId}/export/print",
@@ -2858,6 +2888,8 @@ namespace WriterApp.Client.Pages
             _previewError = null;
             _isPreviewLoading = true;
             _isExportPreviewOpen = true;
+            _previewFrameLoaded = false;
+            _previewHasFrontMatter = false;
             try
             {
                 ExportTemplateDto? template = GetSelectedTemplate();
@@ -2870,11 +2902,19 @@ namespace WriterApp.Client.Pages
                 ExportPreviewRequest request = new(
                     DocumentId,
                     _selectedTemplateId,
-                    template?.TocEnabled ?? true,
+                    _exportIncludeToc,
                     _exportScopeType,
                     BuildScopeIdsForRequest(),
                     _exportSelectionRange is null ? null : new SelectionRangeDto(_exportSelectionRange.Start, _exportSelectionRange.End),
-                    _exportSelectionText);
+                    _exportSelectionText,
+                    _exportIncludeTitlePage,
+                    _exportTocDepth,
+                    _exportChapterBreakRules.Count == 0 ? null : _exportChapterBreakRules.ToList(),
+                    string.IsNullOrWhiteSpace(_titlePageTitle) ? null : _titlePageTitle,
+                    string.IsNullOrWhiteSpace(_titlePageSubtitle) ? null : _titlePageSubtitle,
+                    string.IsNullOrWhiteSpace(_titlePageAuthor) ? null : _titlePageAuthor,
+                    string.IsNullOrWhiteSpace(_titlePageDraftLabel) ? null : _titlePageDraftLabel,
+                    string.IsNullOrWhiteSpace(_titlePageDate) ? null : _titlePageDate);
 
                 using HttpResponseMessage response = await Http.PostAsJsonAsync("api/export/preview", request);
                 if (!response.IsSuccessStatusCode)
@@ -2893,6 +2933,8 @@ namespace WriterApp.Client.Pages
                 _previewHtml = BuildPreviewHtml(payload.Html);
                 _previewZoom = 1.0;
                 _previewInitialized = false;
+                _previewFrameLoaded = false;
+                _previewHasFrontMatter = false;
                 _previewSearchTerm = string.Empty;
                 _previewPageCount = 1;
                 _previewCurrentPage = 1;
@@ -2915,6 +2957,42 @@ namespace WriterApp.Client.Pages
             _previewError = null;
             _previewSearchTerm = string.Empty;
             _previewInitialized = false;
+            _previewFrameLoaded = false;
+            _previewHasFrontMatter = false;
+            _previewScrollRef?.Dispose();
+            _previewScrollRef = null;
+        }
+
+        private async Task OnPreviewFrameLoadedAsync()
+        {
+            if (!_isExportPreviewOpen)
+            {
+                return;
+            }
+
+            _previewFrameLoaded = true;
+            _previewInitialized = true;
+            await InitializePreviewFrameAsync();
+
+            await EnsureExportModuleAsync();
+            if (_exportModule is null)
+            {
+                return;
+            }
+
+            _previewScrollRef?.Dispose();
+            _previewScrollRef = DotNetObjectReference.Create(this);
+            await _exportModule.InvokeVoidAsync("registerPreviewScroll", "export-preview-frame", _previewScrollRef);
+        }
+
+        [JSInvokable]
+        public Task OnPreviewScroll(int pageCount, int currentPage, bool hasFrontMatter)
+        {
+            int nextCount = Math.Max(1, pageCount);
+            _previewHasFrontMatter = hasFrontMatter;
+            _previewPageCount = nextCount;
+            _previewCurrentPage = currentPage <= 0 ? 0 : Math.Clamp(currentPage, 1, nextCount);
+            return InvokeAsync(StateHasChanged);
         }
 
         private ExportTemplateDto? GetSelectedTemplate()
@@ -2983,8 +3061,9 @@ namespace WriterApp.Client.Pages
                 return;
             }
 
+            _previewHasFrontMatter = metrics.HasFrontMatter;
             _previewPageCount = Math.Max(1, metrics.PageCount);
-            _previewCurrentPage = Math.Clamp(metrics.CurrentPage, 1, _previewPageCount);
+            _previewCurrentPage = metrics.CurrentPage <= 0 ? 0 : Math.Clamp(metrics.CurrentPage, 1, _previewPageCount);
             await RefreshPreviewFitAsync(width, height);
         }
 
@@ -3062,6 +3141,18 @@ namespace WriterApp.Client.Pages
             _previewCurrentPage = page;
         }
 
+        private async Task JumpToFrontMatterAsync()
+        {
+            await EnsureExportModuleAsync();
+            if (_exportModule is null)
+            {
+                return;
+            }
+
+            await _exportModule.InvokeVoidAsync("scrollPreviewToFrontMatter", "export-preview-frame");
+            _previewCurrentPage = 0;
+        }
+
         private async Task RunPreviewSearchAsync()
         {
             await EnsureExportModuleAsync();
@@ -3117,7 +3208,7 @@ namespace WriterApp.Client.Pages
 </style>
 <script id=""__WRITER_PREVIEW__"">window.__writerPreviewReady=true;</script>";
 
-        private sealed record PreviewMetrics(int PageCount, int CurrentPage);
+        private sealed record PreviewMetrics(int PageCount, int CurrentPage, bool HasFrontMatter);
         private sealed record PreviewFit(double FitWidth, double FitPage);
 
         private async Task OnExportDialogOpenAsync()
@@ -3129,6 +3220,7 @@ namespace WriterApp.Client.Pages
             await EnsureTemplatesLoadedAsync();
             await LoadExportPresetsAsync();
             await LoadProjectExportSettingsAsync();
+            InitializeExportDefaults();
             ApplyDefaultExportPreset();
         }
 
@@ -3138,6 +3230,20 @@ namespace WriterApp.Client.Pages
             _templateActionError = null;
             _presetActionError = null;
             _isPresetSaveOpen = false;
+        }
+
+        private void InitializeExportDefaults()
+        {
+            ExportTemplateDto? template = GetSelectedTemplate();
+            _exportIncludeTitlePage = true;
+            _exportIncludeToc = template?.TocEnabled ?? true;
+            _exportTocDepth = template?.TocDepth ?? 2;
+            _exportChapterBreakRules.Clear();
+            _titlePageTitle = _documentTitle ?? string.Empty;
+            _titlePageSubtitle = string.Empty;
+            _titlePageAuthor = string.Empty;
+            _titlePageDraftLabel = string.Empty;
+            _titlePageDate = string.Empty;
         }
 
         private async Task OpenTemplateManagerAsync()
@@ -3284,6 +3390,22 @@ namespace WriterApp.Client.Pages
             ExportPresetSettingsDto settings = preset.Settings;
             _exportFormatSelection = string.IsNullOrWhiteSpace(settings.Format) ? "html" : settings.Format;
             _exportScopeType = string.IsNullOrWhiteSpace(settings.Scope) ? "document" : settings.Scope;
+            _exportIncludeTitlePage = settings.IncludeTitlePage;
+            _exportIncludeToc = settings.IncludeToc;
+            _exportTocDepth = settings.TocDepth > 0 ? settings.TocDepth : _exportTocDepth;
+            _titlePageTitle = settings.TitlePageTitle ?? _documentTitle ?? string.Empty;
+            _titlePageSubtitle = settings.TitlePageSubtitle ?? string.Empty;
+            _titlePageAuthor = settings.TitlePageAuthor ?? string.Empty;
+            _titlePageDraftLabel = settings.TitlePageDraftLabel ?? string.Empty;
+            _titlePageDate = settings.TitlePageDate ?? string.Empty;
+            _exportChapterBreakRules.Clear();
+            if (settings.ChapterBreakRules is not null)
+            {
+                foreach (string rule in settings.ChapterBreakRules)
+                {
+                    _exportChapterBreakRules.Add(rule);
+                }
+            }
             _exportScopeSectionIds.Clear();
             if (settings.ScopeIds is not null)
             {
@@ -3318,9 +3440,14 @@ namespace WriterApp.Client.Pages
                 _exportScopeType,
                 BuildScopeIdsForPreset(),
                 _exportSelectionRange is null ? null : new SelectionRangeDto(_exportSelectionRange.Start, _exportSelectionRange.End),
-                template?.TocEnabled ?? false,
-                template?.TocDepth ?? 0,
-                false,
+                _exportIncludeToc,
+                _exportTocDepth,
+                _exportIncludeTitlePage,
+                string.IsNullOrWhiteSpace(_titlePageTitle) ? null : _titlePageTitle,
+                string.IsNullOrWhiteSpace(_titlePageSubtitle) ? null : _titlePageSubtitle,
+                string.IsNullOrWhiteSpace(_titlePageAuthor) ? null : _titlePageAuthor,
+                string.IsNullOrWhiteSpace(_titlePageDraftLabel) ? null : _titlePageDraftLabel,
+                string.IsNullOrWhiteSpace(_titlePageDate) ? null : _titlePageDate,
                 template?.HeaderEnabled ?? false,
                 template?.HeaderLeft,
                 template?.HeaderCenter,
@@ -3329,7 +3456,7 @@ namespace WriterApp.Client.Pages
                 template?.FooterLeft,
                 template?.FooterCenter,
                 template?.FooterRight,
-                null,
+                _exportChapterBreakRules.Count == 0 ? null : _exportChapterBreakRules.ToList(),
                 null,
                 null);
         }
@@ -3391,6 +3518,29 @@ namespace WriterApp.Client.Pages
                 {
                     _exportScopeSectionIds.Add(section.Id);
                 }
+            }
+
+            MarkPresetAsCustom();
+        }
+
+        private bool IsChapterBreakRuleEnabled(string rule) => _exportChapterBreakRules.Contains(rule);
+
+        private void ToggleChapterBreakRule(string rule, ChangeEventArgs args)
+        {
+            bool isEnabled = args.Value switch
+            {
+                bool value => value,
+                string text when bool.TryParse(text, out bool parsed) => parsed,
+                _ => false
+            };
+
+            if (isEnabled)
+            {
+                _exportChapterBreakRules.Add(rule);
+            }
+            else
+            {
+                _exportChapterBreakRules.Remove(rule);
             }
 
             MarkPresetAsCustom();
@@ -4520,7 +4670,9 @@ namespace WriterApp.Client.Pages
                 return string.Empty;
             }
 
-            string normalized = text.Replace("\r\n", "\n").Replace("\r", "\n").TrimEnd();
+            string normalized = text.Replace("\r\n", "\n", StringComparison.Ordinal)
+                .Replace("\r", "\n", StringComparison.Ordinal)
+                .TrimEnd();
             string[] paragraphs = Regex.Split(normalized, @"\n\s*\n");
             StringBuilder builder = new();
             foreach (string paragraph in paragraphs)
@@ -5962,12 +6114,12 @@ namespace WriterApp.Client.Pages
                 return "Version";
             }
 
-            return $"{version.CreatedAt.ToLocalTime():g} · {GetVersionReasonLabel(version.Reason)} · {version.WordCount} words";
+            return $"{version.CreatedAt.ToLocalTime():g} � {GetVersionReasonLabel(version.Reason)} � {version.WordCount} words";
         }
 
         private static string FormatVersionLabel(PageVersionListItemDto version)
         {
-            return $"{version.CreatedAt.ToLocalTime():g} · {GetVersionReasonLabel(version.Reason)} · {version.WordCount} words";
+            return $"{version.CreatedAt.ToLocalTime():g} � {GetVersionReasonLabel(version.Reason)} � {version.WordCount} words";
         }
 
         private async Task GoToNextChange()
@@ -6527,3 +6679,4 @@ namespace WriterApp.Client.Pages
         }
     }
 }
+

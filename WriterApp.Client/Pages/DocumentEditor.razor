@@ -1496,6 +1496,71 @@ else
                     </div>
                 </div>
             }
+            <div class="export-panel-row">
+                <label class="export-panel-label">Title page</label>
+                <div class="export-panel-checkbox">
+                    <input type="checkbox" @bind="_exportIncludeTitlePage" @bind:after="MarkPresetAsCustom" />
+                    <span>Include title page</span>
+                </div>
+            </div>
+            @if (_exportIncludeTitlePage)
+            {
+                <div class="export-panel-row">
+                    <label class="export-panel-label" for="title-page-title">Title</label>
+                    <input id="title-page-title" class="export-panel-input" @bind="_titlePageTitle" @bind:after="MarkPresetAsCustom" />
+                </div>
+                <div class="export-panel-row">
+                    <label class="export-panel-label" for="title-page-subtitle">Subtitle</label>
+                    <input id="title-page-subtitle" class="export-panel-input" @bind="_titlePageSubtitle" @bind:after="MarkPresetAsCustom" />
+                </div>
+                <div class="export-panel-row">
+                    <label class="export-panel-label" for="title-page-author">Author</label>
+                    <input id="title-page-author" class="export-panel-input" @bind="_titlePageAuthor" @bind:after="MarkPresetAsCustom" />
+                </div>
+                <div class="export-panel-row">
+                    <label class="export-panel-label" for="title-page-draft">Draft label</label>
+                    <input id="title-page-draft" class="export-panel-input" @bind="_titlePageDraftLabel" @bind:after="MarkPresetAsCustom" />
+                </div>
+                <div class="export-panel-row">
+                    <label class="export-panel-label" for="title-page-date">Date</label>
+                    <input id="title-page-date" class="export-panel-input" @bind="_titlePageDate" @bind:after="MarkPresetAsCustom" />
+                </div>
+            }
+            <div class="export-panel-row">
+                <label class="export-panel-label">Table of contents</label>
+                <div class="export-panel-checkbox">
+                    <input type="checkbox" @bind="_exportIncludeToc" @bind:after="MarkPresetAsCustom" />
+                    <span>Include TOC</span>
+                </div>
+            </div>
+            @if (_exportIncludeToc)
+            {
+                <div class="export-panel-row">
+                    <label class="export-panel-label" for="toc-depth">TOC depth</label>
+                    <select id="toc-depth" class="export-panel-select" @bind="_exportTocDepth" @bind:after="MarkPresetAsCustom">
+                        <option value="1">H1</option>
+                        <option value="2">H1-H2</option>
+                        <option value="3">H1-H3</option>
+                    </select>
+                </div>
+            }
+            <div class="export-panel-row">
+                <label class="export-panel-label">Chapter breaks</label>
+                <div class="export-panel-checkbox-group">
+                    <label>
+                        <input type="checkbox"
+                               checked='@IsChapterBreakRuleEnabled("h1")'
+                               @onchange='@(args => ToggleChapterBreakRule("h1", args))' />
+                        Start each H1 on new page
+                    </label>
+                    <label>
+                        <input type="checkbox"
+                               checked='@IsChapterBreakRuleEnabled("section")'
+                               @onchange='@(args => ToggleChapterBreakRule("section", args))' />
+                        Start each section on new page
+                    </label>
+                </div>
+            </div>
             <div class="export-panel-row export-panel-actions">
                 <button type="button" class="link-button" @onclick="OpenTemplateManagerAsync">Manage templates...</button>
                 <span class="export-panel-hint">Templates apply to HTML/PDF exports.</span>
@@ -1687,6 +1752,14 @@ else
                                 </label>
                             </div>
                             <div class="preview-page-list">
+                                @if (_previewHasFrontMatter)
+                                {
+                                    <button type="button"
+                                            class="preview-page-item @( _previewCurrentPage == 0 ? "is-active" : string.Empty)"
+                                            @onclick="JumpToFrontMatterAsync">
+                                        Front matter
+                                    </button>
+                                }
                                 @for (int pageIndex = 1; pageIndex <= _previewPageCount; pageIndex++)
                                 {
                                     <button type="button"
@@ -1729,6 +1802,7 @@ else
                                 <iframe id="export-preview-frame"
                                         class="export-preview-frame"
                                         srcdoc="@_previewHtml"
+                                        @onload="OnPreviewFrameLoadedAsync"
                                         sandbox="allow-same-origin allow-scripts allow-modals"></iframe>
                             </div>
                         }

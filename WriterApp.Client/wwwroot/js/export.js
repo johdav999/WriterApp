@@ -128,22 +128,61 @@ function highlightSearch(doc, term) {
     });
 }
 
-function renderPageBreaks(doc, pageHeightPx, show) {
+const PAGE_EPSILON_PX = 48;
+const PROGRAMMATIC_SCROLL_MS = 250;
+
+function getPreviewRoot(doc) {
+    return doc?.scrollingElement || doc?.documentElement || doc?.body || null;
+}
+
+function getPreviewBody(doc) {
+    return doc?.getElementById("preview-body") || null;
+}
+
+function computeBodyMetrics(doc, pageHeightPx) {
+    const root = getPreviewRoot(doc);
+    const body = getPreviewBody(doc);
+    const frontMatter = doc?.getElementById("preview-frontmatter") || null;
+    if (!root) {
+        return { bodyOffsetTop: 0, bodyHeight: 0, totalPages: 1, currentPage: 1, hasFrontMatter: false };
+    }
+
+    const bodyOffsetTop = body
+        ? body.getBoundingClientRect().top + root.scrollTop
+        : 0;
+    const bodyHeight = body ? body.scrollHeight : root.scrollHeight;
+    const rawPages = pageHeightPx > 0 ? bodyHeight / pageHeightPx : 1;
+    const remainder = pageHeightPx > 0 ? bodyHeight % pageHeightPx : 0;
+    const totalPages = Math.max(
+        1,
+        remainder > 0 && remainder < PAGE_EPSILON_PX ? Math.floor(rawPages) : Math.ceil(rawPages)
+    );
+    const bodyScrollTop = Math.max(0, root.scrollTop - bodyOffsetTop);
+    const inFrontMatter = root.scrollTop + 4 < bodyOffsetTop;
+    const currentPage = inFrontMatter ? 0 : Math.min(totalPages, Math.max(1, Math.floor(bodyScrollTop / pageHeightPx) + 1));
+    const hasFrontMatter = !!(frontMatter && frontMatter.textContent && frontMatter.textContent.trim().length > 0);
+
+    return { bodyOffsetTop, bodyHeight, totalPages, currentPage, hasFrontMatter };
+}
+
+function renderPageBreaks(doc, pageHeightPx, show, bodyOffsetTop, totalPages) {
     const overlay = ensurePreviewOverlay(doc);
     if (!overlay) {
         return 1;
     }
+    const debugEnabled = typeof window !== "undefined" && window.__DEBUG_PAGINATION__ === true;
     overlay.innerHTML = "";
-    overlay.style.display = show ? "block" : "none";
-    if (!show) {
+    const shouldShow = show || debugEnabled;
+    overlay.style.display = shouldShow ? "block" : "none";
+    if (!shouldShow) {
         return 1;
     }
-    const height = Math.max(doc.body.scrollHeight, doc.documentElement.scrollHeight);
-    const count = Math.max(1, Math.ceil(height / pageHeightPx));
+    const count = Math.max(1, Number(totalPages) || 1);
+    const offset = Number(bodyOffsetTop) || 0;
     for (let i = 1; i < count; i += 1) {
         const line = doc.createElement("div");
         line.className = "preview-pagebreak-line";
-        line.style.top = `${i * pageHeightPx}px`;
+        line.style.top = `${offset + i * pageHeightPx}px`;
         overlay.appendChild(line);
     }
     return count;
@@ -159,8 +198,57 @@ export function initPreviewFrame(frameId, pageWidthMm, pageHeightMm, showBreaks)
         doc.body.dataset.pageWidthMm = String(pageWidthMm || 210);
     }
     const pageHeightPx = mmToPx(pageHeightMm || 297);
-    const pageCount = renderPageBreaks(doc, pageHeightPx, !!showBreaks);
-    return { pageCount, currentPage: 1 };
+    const metrics = computeBodyMetrics(doc, pageHeightPx);
+    renderPageBreaks(doc, pageHeightPx, !!showBreaks, metrics.bodyOffsetTop, metrics.totalPages);
+    return { pageCount: metrics.totalPages, currentPage: metrics.currentPage, hasFrontMatter: metrics.hasFrontMatter };
+}
+
+export function registerPreviewScroll(frameId, dotNetRef) {
+    const doc = getFrameDocument(frameId);
+    if (!doc) {
+        return;
+    }
+    const root = getPreviewRoot(doc);
+    if (!root) {
+        return;
+    }
+    if (doc.__writerPreviewScrollHandler) {
+        root.removeEventListener("scroll", doc.__writerPreviewScrollHandler);
+    }
+    if (doc.body) {
+        doc.body.dataset.previewProgrammatic = "false";
+    }
+    const handler = () => {
+        if (!doc.body) {
+            return;
+        }
+        if (doc.body.dataset.previewProgrammatic === "true") {
+            return;
+        }
+        const pageHeightPx = mmToPx(doc.body.dataset.pageHeightMm || 297);
+        const metrics = computeBodyMetrics(doc, pageHeightPx);
+        dotNetRef.invokeMethodAsync("OnPreviewScroll", metrics.totalPages, metrics.currentPage, metrics.hasFrontMatter);
+    };
+    root.addEventListener("scroll", handler, { passive: true });
+    doc.__writerPreviewScrollHandler = handler;
+    if (doc.body) {
+        doc.body.dataset.previewScrollHandler = "true";
+    }
+}
+
+export function unregisterPreviewScroll(frameId) {
+    const doc = getFrameDocument(frameId);
+    if (!doc) {
+        return;
+    }
+    const root = getPreviewRoot(doc);
+    if (!root) {
+        return;
+    }
+    if (doc.__writerPreviewScrollHandler) {
+        root.removeEventListener("scroll", doc.__writerPreviewScrollHandler);
+        doc.__writerPreviewScrollHandler = null;
+    }
 }
 
 export function setPreviewPageBreaks(frameId, showBreaks) {
@@ -169,7 +257,8 @@ export function setPreviewPageBreaks(frameId, showBreaks) {
         return;
     }
     const pageHeightPx = mmToPx(doc.body?.dataset?.pageHeightMm || 297);
-    renderPageBreaks(doc, pageHeightPx, !!showBreaks);
+    const metrics = computeBodyMetrics(doc, pageHeightPx);
+    renderPageBreaks(doc, pageHeightPx, !!showBreaks, metrics.bodyOffsetTop, metrics.totalPages);
 }
 
 export function getPreviewFit(frameId, pageWidthMm, pageHeightMm) {
@@ -199,7 +288,41 @@ export function scrollPreviewToPage(frameId, pageNumber) {
     }
     const pageHeightPx = mmToPx(doc.body?.dataset?.pageHeightMm || 297);
     const page = Math.max(1, Number(pageNumber) || 1);
-    frame.contentWindow.scrollTo({ top: (page - 1) * pageHeightPx, behavior: "smooth" });
+    const root = getPreviewRoot(doc);
+    if (!root) {
+        return;
+    }
+    const metrics = computeBodyMetrics(doc, pageHeightPx);
+    const targetTop = Math.max(0, metrics.bodyOffsetTop + (page - 1) * pageHeightPx);
+    if (doc.body) {
+        doc.body.dataset.previewProgrammatic = "true";
+    }
+    root.scrollTo({ top: targetTop, behavior: "smooth" });
+    setTimeout(() => {
+        if (doc.body) {
+            doc.body.dataset.previewProgrammatic = "false";
+        }
+    }, PROGRAMMATIC_SCROLL_MS);
+}
+
+export function scrollPreviewToFrontMatter(frameId) {
+    const doc = getFrameDocument(frameId);
+    if (!doc) {
+        return;
+    }
+    const root = getPreviewRoot(doc);
+    if (!root) {
+        return;
+    }
+    if (doc.body) {
+        doc.body.dataset.previewProgrammatic = "true";
+    }
+    root.scrollTo({ top: 0, behavior: "smooth" });
+    setTimeout(() => {
+        if (doc.body) {
+            doc.body.dataset.previewProgrammatic = "false";
+        }
+    }, PROGRAMMATIC_SCROLL_MS);
 }
 
 export function searchPreview(frameId, term) {

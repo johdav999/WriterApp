@@ -130,7 +130,7 @@ namespace WriterApp.Controllers
                     document,
                     ExportKind.Document,
                     exportFormat,
-                    new ExportOptions(),
+                    BuildExportOptions(request),
                     userId,
                     request.TemplateId,
                     ct);
@@ -223,7 +223,7 @@ namespace WriterApp.Controllers
                 string bodyHtml = await _exportService.ExportHtmlBodyAsync(
                     document,
                     ExportKind.Document,
-                    new ExportOptions(),
+                    BuildExportOptions(request),
                     userId,
                     request.TemplateId,
                     ct);
@@ -570,6 +570,21 @@ namespace WriterApp.Controllers
 
             error = null;
             return true;
+        }
+
+        private static ExportOptions BuildExportOptions(ExportDocumentRequest request)
+        {
+            return new ExportOptions(
+                IncludeTitlePage: request.IncludeTitlePage,
+                IncludeToc: request.IncludeToc,
+                TocDepth: request.TocDepth,
+                ChapterBreakRules: request.ChapterBreakRules,
+                TitlePageTitle: request.TitlePageTitle,
+                TitlePageSubtitle: request.TitlePageSubtitle,
+                TitlePageAuthor: request.TitlePageAuthor,
+                TitlePageDraftLabel: request.TitlePageDraftLabel,
+                TitlePageDate: request.TitlePageDate,
+                TemplateId: request.TemplateId);
         }
 
         private static bool TryParseFormat(string value, out ExportFormat format, out string? error)
