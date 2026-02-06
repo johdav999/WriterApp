@@ -25,15 +25,18 @@ else
                    SelectionChanged="SelectionChanged"
                    ContextMenuRequested="ContextMenuRequested"
                    SelectionBubbleChanged="SelectionBubbleChanged" />
-    <div class="editor-status">
-        <span title="Total words in this section.">@_wordCount words</span>
-        <span title="Estimated page count.">Page @_currentPageIndex / @_pageCount</span>
-        <span class="@GetSaveStatusClass()" title="Your work is saved automatically.">@GetSaveStatusLabel()</span>
-        @if (!string.IsNullOrWhiteSpace(VersionStatusMessage))
-        {
-            <span class="version-status" title="A version snapshot was saved.">@VersionStatusMessage</span>
-        }
-    </div>
+    @if (ShowStatusBar)
+    {
+        <div class="editor-status">
+            <span title="Total words in this section.">@_wordCount words</span>
+            <span title="Estimated page count.">Page @_currentPageIndex / @_pageCount</span>
+            <span class="@GetSaveStatusClass()" title="Your work is saved automatically.">@GetSaveStatusLabel()</span>
+            @if (!string.IsNullOrWhiteSpace(VersionStatusMessage))
+            {
+                <span class="version-status" title="A version snapshot was saved.">@VersionStatusMessage</span>
+            }
+        </div>
+    }
 }
 
 @code {
@@ -62,6 +65,7 @@ else
     private bool _searchHighlightActive;
     private string? _lastAnnotationsFingerprint;
     private string? _lastQualityIssuesFingerprint;
+    private EditorStatusSnapshot _lastStatusSnapshot = EditorStatusSnapshot.Empty;
 
     [Parameter]
     public PageDto? Page { get; set; }
@@ -114,6 +118,12 @@ else
     [Parameter]
     public string? VersionStatusMessage { get; set; }
 
+    [Parameter]
+    public bool ShowStatusBar { get; set; } = true;
+
+    [Parameter]
+    public EventCallback<EditorStatusSnapshot> StatusChanged { get; set; }
+
     private bool _lastHeadingNumberingEnabled = true;
     private string _lastHeadingNumberingScope = "document";
     private IReadOnlyList<int>? _lastHeadingNumberingPrefix;
@@ -149,6 +159,7 @@ else
             }
             SchedulePageBreakUpdate();
             _isLoadingPage = false;
+            await NotifyStatusChangedAsync();
         }
 
         if (_lastHeadingNumberingEnabled != HeadingNumberingEnabled)
@@ -185,6 +196,7 @@ else
 
         await ApplyAnnotationsAsync();
         await ApplyQualityIssuesAsync();
+        await NotifyStatusChangedAsync();
     }
 
     protected override Task OnAfterRenderAsync(bool firstRender)
@@ -272,6 +284,7 @@ else
         }
         ScheduleAutosave();
         SchedulePageBreakUpdate();
+        await NotifyStatusChangedAsync();
         await InvokeAsync(StateHasChanged);
     }
 
@@ -456,6 +469,7 @@ else
         }
 
         _saveState = SaveState.Saving;
+        await NotifyStatusChangedAsync();
         await InvokeAsync(StateHasChanged);
 
         try
@@ -513,6 +527,7 @@ else
             _saveState = SaveState.Idle;
             _lastLoadedHash = ComputeShortHash(updated.Content ?? string.Empty);
             await OnPageSaved.InvokeAsync(updated);
+            await NotifyStatusChangedAsync();
             await DebugLogAsync("AUTOSAVE_SUCCESS", new
             {
                 traceId = HeadingNumberingTraceId,
@@ -525,6 +540,7 @@ else
         {
             Logger.LogError(ex, "Page save failed.");
             _saveState = SaveState.Failed;
+            await NotifyStatusChangedAsync();
             await DebugLogAsync("AUTOSAVE_FAIL", new
             {
                 traceId = HeadingNumberingTraceId,
@@ -534,6 +550,7 @@ else
         }
         finally
         {
+            await NotifyStatusChangedAsync();
             await InvokeAsync(StateHasChanged);
         }
     }
@@ -704,6 +721,7 @@ else
             ScheduleAutosave();
         }
 
+        await NotifyStatusChangedAsync();
         await InvokeAsync(StateHasChanged);
     }
 
@@ -1038,7 +1056,31 @@ else
             await PageCountChanged.InvokeAsync(_pageCount);
         }
 
+        await NotifyStatusChangedAsync();
         await InvokeAsync(StateHasChanged);
+    }
+
+    public EditorStatusSnapshot CurrentStatus => new(
+        _wordCount,
+        _currentPageIndex,
+        _pageCount,
+        GetSaveStatusLabel(),
+        GetSaveStatusClass(),
+        VersionStatusMessage);
+
+    private async Task NotifyStatusChangedAsync()
+    {
+        EditorStatusSnapshot snapshot = CurrentStatus;
+        if (Equals(snapshot, _lastStatusSnapshot))
+        {
+            return;
+        }
+
+        _lastStatusSnapshot = snapshot;
+        if (StatusChanged.HasDelegate)
+        {
+            await StatusChanged.InvokeAsync(snapshot);
+        }
     }
 
     private sealed record AnnotationAnchorPayload
@@ -1050,4 +1092,15 @@ else
     }
 
     public sealed record SelectionDocRange(int From, int To);
+
+    public sealed record EditorStatusSnapshot(
+        int WordCount,
+        int CurrentPageIndex,
+        int PageCount,
+        string SaveStatusLabel,
+        string SaveStatusClass,
+        string? VersionStatusMessage)
+    {
+        public static EditorStatusSnapshot Empty { get; } = new(0, 1, 1, "All changes saved", "clean-indicator", null);
+    }
 }

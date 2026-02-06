@@ -822,6 +822,41 @@ namespace BlazorApp.Components.Pages
             await SaveSectionOrderAsync();
         }
 
+        private Task OnSectionDropAfterLast()
+        {
+            if (_isReorderingSections || _draggedSectionId is null || _sections.Count == 0)
+            {
+                return Task.CompletedTask;
+            }
+
+            Guid sourceSectionId = _draggedSectionId.Value;
+            _draggedSectionId = null;
+            int sourceIndex = _sections.FindIndex(section => section.Id == sourceSectionId);
+            if (sourceIndex < 0)
+            {
+                return Task.CompletedTask;
+            }
+
+            SectionDto moved = _sections[sourceIndex];
+            _sections.RemoveAt(sourceIndex);
+            _sections.Add(moved);
+            for (int index = 0; index < _sections.Count; index++)
+            {
+                _sections[index] = _sections[index] with { OrderIndex = index };
+            }
+
+            SectionReorderDiagnostics.LogDebug(
+                Logger,
+                Configuration,
+                "UI drop end DocId={DocumentId} Count={Count} FirstId={FirstId} LastId={LastId}",
+                DocumentId,
+                _sections.Count,
+                _sections.FirstOrDefault()?.Id,
+                _sections.LastOrDefault()?.Id);
+
+            return SaveSectionOrderAsync();
+        }
+
         private async Task SaveSectionOrderAsync()
         {
             if (_isReorderingSections)

@@ -91,9 +91,15 @@ namespace WriterApp.Client.Pages
         private readonly List<SectionTranslationLinkDto> _sectionTranslationLinks = new();
         private bool _layoutStateInitialized;
         private PageEditor? _pageEditor;
+        private PageEditor.EditorStatusSnapshot _editorStatus = PageEditor.EditorStatusSnapshot.Empty;
         private string _headingTraceId = string.Empty;
         private Guid? _draggedSectionId;
         private bool _isReorderingSections;
+        private bool _dndDebugEnabled;
+        private string _dndDebugStatus = "idle";
+        private Guid? _dndDebugLastTargetId;
+        private Guid? _dndDebugLastDraggedId;
+        private DateTimeOffset? _dndDebugLastAt;
         private EditorFormattingState _formattingState = new()
         {
             CanBold = true,
@@ -432,6 +438,45 @@ namespace WriterApp.Client.Pages
             await LoadAiUsageStatusAsync();
             await LoadAiActionsAsync();
             _sectionReorderDiagnosticsEnabled = SectionReorderDiagnostics.IsEnabled(Configuration);
+            _dndDebugEnabled = IsDndDebugEnabled();
+        }
+
+        private bool IsDndDebugEnabled()
+        {
+            try
+            {
+                Uri uri = new(Navigation.Uri);
+                string query = uri.Query;
+                if (!string.IsNullOrWhiteSpace(query))
+                {
+                    string trimmed = query.TrimStart('?');
+                    foreach (string segment in trimmed.Split('&', StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        string[] parts = segment.Split('=', 2);
+                        if (parts.Length == 0)
+                        {
+                            continue;
+                        }
+
+                        string key = Uri.UnescapeDataString(parts[0]);
+                        if (!string.Equals(key, "dndDebug", StringComparison.Ordinal))
+                        {
+                            continue;
+                        }
+
+                        string value = parts.Length > 1 ? Uri.UnescapeDataString(parts[1]) : string.Empty;
+                        if (string.Equals(value, "1", StringComparison.Ordinal))
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+            catch
+            {
+            }
+
+            return false;
         }
         protected override async Task OnAfterRenderAsync(bool firstRender)
         {
@@ -955,10 +1000,34 @@ namespace WriterApp.Client.Pages
         {
             if (_isReorderingSections)
             {
+                if (_dndDebugEnabled)
+                {
+                    _dndDebugStatus = "dragstart ignored: reordering";
+                    _dndDebugLastDraggedId = null;
+                    _dndDebugLastTargetId = null;
+                    _dndDebugLastAt = DateTimeOffset.Now;
+                    Logger.LogInformation(
+                        "[DND] dragstart ignored: reordering DocId={DocumentId} SectionId={SectionId}",
+                        DocumentId,
+                        sectionId);
+                }
                 return;
             }
 
             _draggedSectionId = sectionId;
+            if (_dndDebugEnabled)
+            {
+                _dndDebugStatus = "dragstart";
+                _dndDebugLastDraggedId = sectionId;
+                _dndDebugLastTargetId = null;
+                _dndDebugLastAt = DateTimeOffset.Now;
+                Logger.LogInformation(
+                    "[DND] dragstart DocId={DocumentId} SectionId={SectionId} Reordering={IsReordering} Dragged={DraggedSectionId}",
+                    DocumentId,
+                    sectionId,
+                    _isReorderingSections,
+                    _draggedSectionId);
+            }
             SectionReorderDiagnostics.LogDebug(
                 Logger,
                 Configuration,
@@ -969,8 +1038,32 @@ namespace WriterApp.Client.Pages
 
         private async Task OnSectionDrop(Guid targetSectionId)
         {
+            if (_dndDebugEnabled)
+            {
+                Logger.LogInformation(
+                    "[DND] drop entry DocId={DocumentId} TargetId={TargetSectionId} Reordering={IsReordering} Dragged={DraggedSectionId}",
+                    DocumentId,
+                    targetSectionId,
+                    _isReorderingSections,
+                    _draggedSectionId);
+            }
+
             if (_isReorderingSections || _draggedSectionId is null)
             {
+                if (_dndDebugEnabled)
+                {
+                    _dndDebugStatus = _isReorderingSections
+                        ? "drop ignored: reordering"
+                        : "drop ignored: no dragged id";
+                    _dndDebugLastTargetId = targetSectionId;
+                    _dndDebugLastAt = DateTimeOffset.Now;
+                    Logger.LogInformation(
+                        "[DND] drop ignored DocId={DocumentId} TargetId={TargetSectionId} Reordering={IsReordering} Dragged={DraggedSectionId}",
+                        DocumentId,
+                        targetSectionId,
+                        _isReorderingSections,
+                        _draggedSectionId);
+                }
                 return;
             }
 
@@ -978,6 +1071,17 @@ namespace WriterApp.Client.Pages
             _draggedSectionId = null;
             if (sourceSectionId == targetSectionId)
             {
+                if (_dndDebugEnabled)
+                {
+                    _dndDebugStatus = "drop ignored: same target";
+                    _dndDebugLastTargetId = targetSectionId;
+                    _dndDebugLastDraggedId = sourceSectionId;
+                    _dndDebugLastAt = DateTimeOffset.Now;
+                    Logger.LogInformation(
+                        "[DND] drop ignored: same target DocId={DocumentId} SectionId={SectionId}",
+                        DocumentId,
+                        sourceSectionId);
+                }
                 return;
             }
 
@@ -985,6 +1089,18 @@ namespace WriterApp.Client.Pages
             int targetIndex = _sections.FindIndex(section => section.Id == targetSectionId);
             if (sourceIndex < 0 || targetIndex < 0)
             {
+                if (_dndDebugEnabled)
+                {
+                    _dndDebugStatus = "drop ignored: invalid indices";
+                    _dndDebugLastTargetId = targetSectionId;
+                    _dndDebugLastDraggedId = sourceSectionId;
+                    _dndDebugLastAt = DateTimeOffset.Now;
+                    Logger.LogInformation(
+                        "[DND] drop ignored: invalid indices DocId={DocumentId} SourceIndex={SourceIndex} TargetIndex={TargetIndex}",
+                        DocumentId,
+                        sourceIndex,
+                        targetIndex);
+                }
                 return;
             }
 
@@ -1000,6 +1116,20 @@ namespace WriterApp.Client.Pages
             {
                 _sections[index] = _sections[index] with { OrderIndex = index };
             }
+            if (_dndDebugEnabled)
+            {
+                _dndDebugStatus = "drop: reordered";
+                _dndDebugLastTargetId = targetSectionId;
+                _dndDebugLastDraggedId = sourceSectionId;
+                _dndDebugLastAt = DateTimeOffset.Now;
+                Guid[] head = _sections.Take(3).Select(section => section.Id).ToArray();
+                Logger.LogInformation(
+                    "[DND] drop reorder DocId={DocumentId} SourceIndex={SourceIndex} TargetIndex={TargetIndex} HeadIds={HeadIds}",
+                    DocumentId,
+                    sourceIndex,
+                    targetIndex,
+                    head);
+            }
 
             SectionReorderDiagnostics.LogDebug(
                 Logger,
@@ -1011,6 +1141,80 @@ namespace WriterApp.Client.Pages
                 _sections.LastOrDefault()?.Id);
 
             await SaveSectionOrderAsync();
+        }
+
+        private Task OnSectionDropAfterLast()
+        {
+            if (_isReorderingSections || _draggedSectionId is null || _sections.Count == 0)
+            {
+                if (_dndDebugEnabled)
+                {
+                    _dndDebugStatus = _isReorderingSections
+                        ? "drop-end ignored: reordering"
+                        : _draggedSectionId is null
+                            ? "drop-end ignored: no dragged id"
+                            : "drop-end ignored: empty list";
+                    _dndDebugLastTargetId = null;
+                    _dndDebugLastAt = DateTimeOffset.Now;
+                    Logger.LogInformation(
+                        "[DND] drop-end ignored DocId={DocumentId} Reordering={IsReordering} Dragged={DraggedSectionId} Count={Count}",
+                        DocumentId,
+                        _isReorderingSections,
+                        _draggedSectionId,
+                        _sections.Count);
+                }
+                return Task.CompletedTask;
+            }
+
+            Guid sourceSectionId = _draggedSectionId.Value;
+            _draggedSectionId = null;
+            int sourceIndex = _sections.FindIndex(section => section.Id == sourceSectionId);
+            if (sourceIndex < 0)
+            {
+                if (_dndDebugEnabled)
+                {
+                    _dndDebugStatus = "drop-end ignored: invalid source";
+                    _dndDebugLastAt = DateTimeOffset.Now;
+                    Logger.LogInformation(
+                        "[DND] drop-end ignored: invalid source DocId={DocumentId} SourceIndex={SourceIndex}",
+                        DocumentId,
+                        sourceIndex);
+                }
+                return Task.CompletedTask;
+            }
+
+            SectionDto moved = _sections[sourceIndex];
+            _sections.RemoveAt(sourceIndex);
+            _sections.Add(moved);
+            for (int index = 0; index < _sections.Count; index++)
+            {
+                _sections[index] = _sections[index] with { OrderIndex = index };
+            }
+
+            if (_dndDebugEnabled)
+            {
+                _dndDebugStatus = "drop-end: reordered";
+                _dndDebugLastDraggedId = sourceSectionId;
+                _dndDebugLastTargetId = null;
+                _dndDebugLastAt = DateTimeOffset.Now;
+                Guid[] head = _sections.Take(3).Select(section => section.Id).ToArray();
+                Logger.LogInformation(
+                    "[DND] drop-end reorder DocId={DocumentId} SourceIndex={SourceIndex} HeadIds={HeadIds}",
+                    DocumentId,
+                    sourceIndex,
+                    head);
+            }
+
+            SectionReorderDiagnostics.LogDebug(
+                Logger,
+                Configuration,
+                "UI drop end DocId={DocumentId} Count={Count} FirstId={FirstId} LastId={LastId}",
+                DocumentId,
+                _sections.Count,
+                _sections.FirstOrDefault()?.Id,
+                _sections.LastOrDefault()?.Id);
+
+            return SaveSectionOrderAsync();
         }
 
         private async Task SaveSectionOrderAsync()
@@ -1191,6 +1395,12 @@ namespace WriterApp.Client.Pages
             }
 
             await InvokeAsync(StateHasChanged);
+        }
+
+        private Task OnEditorStatusChanged(PageEditor.EditorStatusSnapshot status)
+        {
+            _editorStatus = status;
+            return InvokeAsync(StateHasChanged);
         }
         private bool IsContextPanelCollapsed()
         {

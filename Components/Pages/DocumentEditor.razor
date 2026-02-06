@@ -50,7 +50,7 @@ else
                             @ondrop="() => OnSectionDrop(item.Id)">
                             <button type="button"
                                     class="section-drag-handle"
-                                    draggable="@(!_isReorderingSections)"
+                                    draggable="@(!_isReorderingSections ? "true" : "false")"
                                     @ondragstart="() => OnSectionDragStart(item.Id)"
                                     @ondragstart:stopPropagation="true"
                                     disabled="@_isReorderingSections"
@@ -112,6 +112,11 @@ else
                             }
                         </li>
                     }
+                    <li class="section-nav-row"
+                        @ondragover:preventDefault="true"
+                        @ondrop="OnSectionDropAfterLast">
+                        <span class="visually-hidden">Drop to move to end</span>&nbsp;
+                    </li>
                 </ul>
             </aside>
 

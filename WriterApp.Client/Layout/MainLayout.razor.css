@@ -1,8 +1,9 @@
 ﻿.app-shell {
-    min-height: 100vh;
+    height: 100vh;
     display: flex;
     flex-direction: column;
     background: #f6f4f1;
+    overflow: hidden;
 }
 
 .app-header {
@@ -127,16 +128,33 @@
     .app-header-center {
         align-items: stretch;
     }
+
+    .app-shell {
+        height: auto;
+        min-height: 100vh;
+        overflow: auto;
+    }
+
+    .app-main,
+    .app-body,
+    .content {
+        height: auto;
+        overflow: visible;
+    }
 }
 
 .app-main {
     flex: 1;
+    min-height: 0;
+    overflow: hidden;
 }
 
 .app-body {
     display: grid;
     grid-template-columns: 180px minmax(0, 1fr);
-    min-height: calc(100vh - 60px);
+    min-height: 0;
+    height: 100%;
+    overflow: hidden;
 }
 
 .app-shell.is-focus-mode .app-body {
@@ -150,6 +168,8 @@
     padding: 16px 12px;
     border-right: 1px solid #e2e2e2;
     background: #f3f2ee;
+    overflow-y: auto;
+    min-height: 0;
 }
 
 .app-shell.is-focus-mode .app-nav {
@@ -196,6 +216,11 @@
 
 .content {
     padding: 0;
+    min-height: 0;
+    height: 100%;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
 }
 
 #blazor-error-ui {
