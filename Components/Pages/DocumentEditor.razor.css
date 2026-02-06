@@ -606,6 +606,12 @@
 
 .editor-main {
     min-width: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    position: relative;
+    flex: 1 1 auto;
+    height: 100%;
 }
 
 .editor-main-header {
@@ -812,6 +818,11 @@
     border-radius: 0;
     border: none;
     background: transparent;
+    min-height: 0;
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
 }
 
 .editor-viewport {
@@ -819,7 +830,21 @@
     display: flex;
     justify-content: center;
     position: relative;
-    overflow: visible;
+    overflow: auto;
+    min-height: 0;
+    flex: 1 1 auto;
+}
+
+::deep .editor-canvas {
+    position: relative;
+    width: 100%;
+    z-index: 0;
+}
+
+::deep .page-lane {
+    position: relative;
+    width: 100%;
+    z-index: 0;
 }
 
 .editor-content {
@@ -829,6 +854,7 @@
     margin-right: auto;
     background: var(--surface);
     position: relative;
+    overflow: visible;
 }
 
 .editor-shell.is-print-layout .editor-viewport {
@@ -845,6 +871,7 @@
 
 .editor-shell.is-print-layout ::deep .pagebreak-overlay {
     z-index: 0;
+    pointer-events: none;
 }
 
 .editor-shell.is-print-layout ::deep .pagebreak-line,
@@ -883,7 +910,13 @@
     left: 0;
     right: 0;
     pointer-events: none;
-    z-index: 8;
+    z-index: 0;
+}
+
+::deep .pagebreak-sheet {
+    position: absolute;
+    z-index: 0;
+    pointer-events: none;
 }
 
 ::deep .pagebreak-line {
@@ -914,6 +947,16 @@
     border-radius: 2px;
 }
 
+::deep .page-lane > div:not(.pagebreak-overlay) {
+    position: relative;
+    z-index: 1;
+}
+
+::deep [id^="section-editor-"] {
+    position: relative;
+    z-index: 2;
+}
+
 .editor-surface .ProseMirror {
     min-height: 320px;
     padding: 16px 20px 24px;
@@ -922,6 +965,8 @@
     font-size: calc(1rem * var(--editor-font-scale, 1));
     line-height: 1.6;
     color: var(--text-strong);
+    position: relative;
+    z-index: 2;
 }
 
 .editor-shell.is-print-layout .editor-surface .ProseMirror {

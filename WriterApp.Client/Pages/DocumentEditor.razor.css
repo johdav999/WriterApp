@@ -11,6 +11,12 @@
     --surface: #ffffff;
     --surface-muted: #f3f4f6;
     padding: 24px;
+    height: 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    flex: 1;
 }
 
 .editor-shell.is-full-width {
@@ -21,7 +27,10 @@
     display: grid;
     grid-template-columns: var(--section-panel-width) minmax(0, 1fr) var(--context-panel-width);
     gap: 24px;
-    align-items: start;
+    align-items: stretch;
+    flex: 1;
+    min-height: 0;
+    height: 100%;
 }
 
 .section-panel {
@@ -30,6 +39,10 @@
     background: var(--panel-bg);
     box-shadow: var(--panel-shadow);
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    height: 100%;
 }
 
 .section-panel-header {
@@ -38,6 +51,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex: 0 0 auto;
 }
 
 .section-panel-header h2 {
@@ -62,10 +76,14 @@
     list-style: none;
     margin: 0;
     padding: 12px 10px 16px;
-    display: grid;
+    display: flex;
+    flex-direction: column;
     gap: 8px;
-    max-height: calc(100vh - 220px);
+    justify-content: flex-start;
+    align-content: flex-start;
     overflow: auto;
+    flex: 1;
+    min-height: 0;
 }
 
 .section-nav-row {
@@ -306,37 +324,38 @@
     color: #b91c1c;
 }
 
-.modal-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(15, 23, 42, 0.4);
-    z-index: 80;
-}
-
 .modal-overlay {
     position: fixed;
     inset: 0;
+    z-index: 80;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(15, 23, 42, 0.35);
-    z-index: 80;
     padding: 24px;
 }
 
+.modal-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.4);
+}
+
 .modal {
-    position: fixed;
-    top: 140px;
-    left: calc(var(--section-panel-width) + 32px);
+    position: relative;
+    top: auto;
+    left: auto;
     transform: none;
-    width: min(320px, 90vw);
+    width: min(420px, calc(100vw - 48px));
+    max-height: min(80vh, 560px);
+    overflow: auto;
     padding: 16px;
     border-radius: 14px;
     border: 1px solid #e5e7eb;
     background: var(--surface);
     box-shadow: 0 20px 40px rgba(15, 23, 42, 0.2);
     z-index: 90;
-    display: grid;
+    display: flex;
+    flex-direction: column;
     gap: 10px;
 }
 
@@ -358,10 +377,7 @@
 
 @media (max-width: 980px) {
     .modal {
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        width: min(360px, 90vw);
+        width: min(420px, calc(100vw - 48px));
     }
 }
 
@@ -380,9 +396,9 @@
 }
 
 .modal-body {
+    padding: 0;
     color: var(--text-muted);
     font-size: 0.9rem;
-    padding: 16px 20px;
     overflow: auto;
 }
 
@@ -392,6 +408,7 @@
 }
 
 .modal-actions {
+    margin-top: 8px;
     display: flex;
     justify-content: flex-end;
     gap: 8px;
@@ -868,6 +885,12 @@
 
 .editor-main {
     min-width: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    position: relative;
+    flex: 1 1 auto;
+    height: 100%;
 }
 
 .editor-main-header {
@@ -924,6 +947,9 @@
     border: 1px solid var(--panel-border);
     background: var(--panel-bg);
     margin-top: 12px;
+    position: sticky;
+    top: 0;
+    z-index: 5;
 }
 
 .editor-toolbar-group {
@@ -1074,6 +1100,11 @@
     border-radius: 0;
     border: none;
     background: transparent;
+    min-height: 0;
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
 }
 
 .editor-viewport {
@@ -1081,17 +1112,21 @@
     display: flex;
     justify-content: center;
     position: relative;
-    overflow: visible;
+    overflow: auto;
+    min-height: 0;
+    flex: 1 1 auto;
 }
 
-.editor-canvas {
+::deep .editor-canvas {
     position: relative;
     width: 100%;
+    z-index: 0;
 }
 
-.page-lane {
+::deep .page-lane {
     position: relative;
     width: 100%;
+    z-index: 0;
 }
 
 .editor-content {
@@ -1101,24 +1136,59 @@
     margin-right: auto;
     background: var(--surface);
     position: relative;
+    overflow: visible;
+}
+
+.editor-status-bar {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.85rem;
+    color: #6b7280;
+    padding: 10px 12px;
+    border-top: 1px solid #e5e7eb;
+    gap: 12px;
+    background: var(--surface);
+    flex: 0 0 auto;
+    width: 100%;
+    align-self: stretch;
+    margin-left: 0;
+    margin-right: 0;
+    box-shadow: 0 -6px 18px rgba(15, 23, 42, 0.08);
+}
+
+.saving-indicator {
+    color: #d97706;
+}
+
+.dirty-indicator {
+    color: #b91c1c;
+}
+
+.clean-indicator {
+    color: #059669;
+}
+
+.version-status {
+    color: #0f766e;
+    font-weight: 600;
 }
 
 .editor-shell.is-print-layout .editor-viewport {
     background: var(--canvas-bg);
 }
 
-.editor-shell.is-print-layout .editor-canvas {
+.editor-shell.is-print-layout ::deep .editor-canvas {
     background: var(--canvas-bg);
     padding: 0;
 }
 
-.editor-shell.is-print-layout .page-lane {
+.editor-shell.is-print-layout ::deep .page-lane {
     width: calc(var(--page-width-px) * var(--editor-font-scale, 1));
     margin-left: auto;
     margin-right: auto;
 }
 
-.editor-shell.is-print-layout .page-lane > div:not(.pagebreak-overlay) {
+.editor-shell.is-print-layout ::deep .page-lane > div:not(.pagebreak-overlay) {
     position: relative;
     z-index: 1;
 }
@@ -1284,7 +1354,13 @@
     left: 0;
     right: 0;
     pointer-events: none;
-    z-index: 8;
+    z-index: 0;
+}
+
+::deep .pagebreak-sheet {
+    position: absolute;
+    z-index: 0;
+    pointer-events: none;
 }
 
 ::deep .pagebreak-line {
@@ -1306,6 +1382,16 @@
     z-index: 6;
 }
 
+::deep .page-lane > div:not(.pagebreak-overlay) {
+    position: relative;
+    z-index: 1;
+}
+
+::deep [id^="section-editor-"] {
+    position: relative;
+    z-index: 2;
+}
+
 ::deep .pagebreak-marker::before {
     content: "";
     width: 2px;
@@ -1324,6 +1410,8 @@
     line-height: 1.6;
     color: var(--text-strong);
     width: 100%;
+    position: relative;
+    z-index: 2;
 }
 
 .editor-shell.is-print-layout .editor-surface .ProseMirror {
@@ -1343,8 +1431,103 @@
     box-shadow: var(--panel-shadow);
     display: flex;
     flex-direction: column;
-    max-height: calc(100vh - 140px);
+    height: 100%;
+    min-height: 0;
+    max-height: none;
     overflow: hidden;
+}
+
+.rp-shell {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+}
+
+.rp-tabs {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--panel-border);
+    background: #efece6;
+}
+
+.rp-header {
+    padding: 12px;
+    border-bottom: 1px solid var(--panel-border);
+    display: grid;
+    gap: 8px;
+    background: var(--panel-bg);
+}
+
+.rp-title {
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+
+.rp-subtitle {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.rp-options {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    display: grid;
+    gap: 6px;
+}
+
+.rp-options summary {
+    cursor: pointer;
+    color: var(--text-strong);
+}
+
+.rp-options label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.rp-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 12px;
+    display: grid;
+    gap: 12px;
+}
+
+.rp-footer {
+    padding: 12px;
+    border-top: 1px solid var(--panel-border);
+    background: var(--panel-bg);
+}
+
+.rp-footer-actions {
+    display: grid;
+    gap: 10px;
+}
+
+.rp-footer-actions > button {
+    justify-self: start;
+}
+
+.rp-status {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.rp-footer .annotations-create {
+    margin: 0;
+}
+
+.rp-footer .annotations-input,
+.rp-footer .notes-input {
+    width: 100%;
+}
+
+.outline-footer {
+    display: grid;
+    gap: 10px;
 }
 
 .context-drawer.is-collapsed {
@@ -1422,6 +1605,8 @@
     display: grid;
     gap: 12px;
     overflow: auto;
+    flex: 1;
+    min-height: 0;
 }
 
 .notes-input {

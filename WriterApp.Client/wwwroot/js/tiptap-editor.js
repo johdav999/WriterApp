@@ -425,9 +425,11 @@ function getPageBreakContext(editor) {
         return null;
     }
 
+    const lane = view.closest(".page-lane");
     const content = view.closest(".editor-content") || view;
-    const overlayHost = content || viewport;
-    return { view, viewport, content, overlayHost };
+    const canvas = view.closest(".editor-canvas") || content || view;
+    const overlayHost = lane || canvas || content || viewport;
+    return { view, viewport, content, overlayHost, lane };
 }
 
 function findScrollContainer(element) {
@@ -469,7 +471,20 @@ function computePageBreaks(editor, options) {
     const gapCount = editor?.__pageGapState?.gapCount ?? 0;
     const rawHeight = ctx.view.scrollHeight || 0;
     const contentHeight = Math.max(0, rawHeight - gapCount * opts.pageGapPx);
-    const count = Math.max(1, Math.ceil(contentHeight / opts.pageHeightPx));
+    const laneHeight = ctx.lane?.scrollHeight || 0;
+    let measuredHeight = laneHeight || rawHeight;
+    let count = Math.max(1, Math.ceil(measuredHeight / opts.pageHeightPx));
+
+    if ((contentHeight > 0 && measuredHeight > contentHeight * 10) || count > 500) {
+        console.warn("[pagination] Suspicious lane height or page count. Recomputing from content height.", {
+            laneHeight: measuredHeight,
+            contentHeight,
+            rawHeight,
+            pageCount: count
+        });
+        measuredHeight = contentHeight;
+        count = Math.max(1, Math.ceil(measuredHeight / opts.pageHeightPx));
+    }
 
     const viewportRect = ctx.viewport.getBoundingClientRect();
     const viewRect = ctx.view.getBoundingClientRect();
@@ -485,7 +500,7 @@ function computePageBreaks(editor, options) {
         breaks.push({ pageIndex, topPx });
     }
 
-    return { count, breaks, leftOffset, width, options: opts, ctx };
+    return { count, breaks, leftOffset, width, options: opts, ctx, contentHeight, laneHeight, rawHeight };
 }
 
 function renderPageBreakOverlay(editor, options) {
@@ -501,7 +516,7 @@ function renderPageBreakOverlay(editor, options) {
     }
 
     overlay.innerHTML = "";
-    overlay.style.height = `${ctx.view.scrollHeight || 0}px`;
+    overlay.style.height = `${info.rawHeight || 0}px`;
     overlay.style.width = `${ctx.content.clientWidth || ctx.content.getBoundingClientRect().width}px`;
 
     const mode = info.options.layoutMode || "simple";
@@ -531,6 +546,63 @@ function renderPageBreakOverlay(editor, options) {
     }
 
     return info.count;
+}
+
+function maybeDebugEditorLayout(editor) {
+    if (typeof window === "undefined" || !window.__wa_editor_debug || editor?.__waDebugLayoutLogged) {
+        return;
+    }
+
+    const ctx = getPageBreakContext(editor);
+    if (!ctx) {
+        return;
+    }
+
+    editor.__waDebugLayoutLogged = true;
+
+    const host = ctx.view.closest("[id^='section-editor-']");
+    const shell = ctx.view.closest(".editor-shell");
+    const main = ctx.view.closest(".editor-main");
+    const surface = ctx.view.closest(".editor-surface");
+    const statusBar = ctx.view.closest(".editor-surface")?.querySelector?.(".editor-status-bar");
+    const overlay = ctx.overlayHost?.querySelector?.(".pagebreak-overlay");
+
+    const targets = [
+        { label: "shell", el: shell, color: "#2563eb" },
+        { label: "main", el: main, color: "#0ea5e9" },
+        { label: "surface", el: surface, color: "#16a34a" },
+        { label: "viewport", el: ctx.viewport, color: "#14b8a6" },
+        { label: "content", el: ctx.content, color: "#8b5cf6" },
+        { label: "canvas", el: ctx.view.closest(".editor-canvas"), color: "#ec4899" },
+        { label: "lane", el: ctx.lane, color: "#f97316" },
+        { label: "overlay", el: overlay, color: "#ef4444" },
+        { label: "section-host", el: host, color: "#f59e0b" },
+        { label: "prosemirror", el: ctx.view, color: "#22c55e" },
+        { label: "status-bar", el: statusBar, color: "#64748b" }
+    ];
+
+    targets.forEach(target => {
+        if (!target.el) {
+            return;
+        }
+        target.el.style.outline = `2px dashed ${target.color}`;
+        target.el.style.outlineOffset = "-2px";
+    });
+
+    const diagnostics = targets
+        .filter(target => target.el)
+        .map(target => {
+            const style = window.getComputedStyle(target.el);
+            return {
+                label: target.label,
+                zIndex: style.zIndex,
+                overflow: `${style.overflowX}/${style.overflowY}`,
+                position: style.position,
+                size: `${target.el.clientWidth}x${target.el.clientHeight}`
+            };
+        });
+
+    console.info("[editor-debug] layout diagnostics", diagnostics);
 }
 
 function buildPageGapDecorations(editor, options) {
@@ -989,6 +1061,7 @@ window.tiptapEditor = {
         }
 
         editor.__interopState = interopState;
+        maybeDebugEditorLayout(editor);
 
         let lastFormattingState = "";
         const pushFormattingState = () => {
@@ -1324,6 +1397,74 @@ window.tiptapEditor = {
 
 if (!window.__writerAppDragInit) {
     window.__writerAppDragInit = true;
+    const isDndDebugEnabled = () => {
+        try {
+            const params = new URLSearchParams(window.location?.search || "");
+            if (params.get("dndDebug") === "1") {
+                return true;
+            }
+        } catch {
+        }
+        try {
+            return window.localStorage?.getItem("writerapp:dndDebug") === "1";
+        } catch {
+        }
+        return false;
+    };
+    const logDndEvent = (event, extra) => {
+        if (!isDndDebugEnabled() || !event) {
+            return;
+        }
+        const target = event.target instanceof Element ? event.target : null;
+        const info = {
+            type: event.type,
+            defaultPrevented: event.defaultPrevented,
+            eventPhase: event.eventPhase,
+            target: target ? `${target.tagName.toLowerCase()}${target.className ? "." + String(target.className).replace(/\s+/g, ".") : ""}` : "none",
+            hasDataTransfer: !!event.dataTransfer,
+            types: event.dataTransfer?.types ? Array.from(event.dataTransfer.types) : [],
+            textPlain: null,
+            effectAllowed: event.dataTransfer?.effectAllowed,
+            dropEffect: event.dataTransfer?.dropEffect,
+            clientX: event.clientX,
+            clientY: event.clientY,
+            handle: target?.closest?.(".section-drag-handle") ? "yes" : "no",
+            row: target?.closest?.(".section-nav-row") ? "yes" : "no",
+            list: target?.closest?.(".section-nav-list") ? "yes" : "no",
+            ...extra
+        };
+        if (event.dataTransfer) {
+            try {
+                info.textPlain = event.dataTransfer.getData("text/plain");
+            } catch {
+                info.textPlain = "error";
+            }
+        }
+        window.__writerAppDndLast = {
+            type: info.type,
+            time: new Date().toISOString(),
+            targetInfo: info.target
+        };
+        console.log("[DND]", info);
+    };
+    const debugListener = (event) => {
+        const target = event.target instanceof Element ? event.target : null;
+        if (event.type === "dragover") {
+            const row = target?.closest?.(".section-nav-row");
+            if (row) {
+                event.preventDefault();
+                if (event.dataTransfer) {
+                    event.dataTransfer.dropEffect = "move";
+                }
+                logDndEvent(event, { prevented: true });
+                return;
+            }
+        }
+        logDndEvent(event);
+    };
+    ["dragstart", "dragenter", "dragover", "dragleave", "drop", "dragend"].forEach(type => {
+        document.addEventListener(type, debugListener, { capture: true });
+    });
     document.addEventListener("dragstart", event => {
         let targetElement = null;
         if (event.target instanceof Element) {
@@ -1332,10 +1473,10 @@ if (!window.__writerAppDragInit) {
             targetElement = event.target.parentElement;
         }
 
-        let draggableRoot = targetElement?.closest?.(".drag-handle");
+        let draggableRoot = targetElement?.closest?.(".section-drag-handle");
         if (!draggableRoot && typeof event.composedPath === "function") {
             const path = event.composedPath();
-            draggableRoot = path.find(entry => entry instanceof Element && entry.classList.contains("drag-handle"));
+            draggableRoot = path.find(entry => entry instanceof Element && entry.classList.contains("section-drag-handle"));
         }
 
         if (!draggableRoot) {

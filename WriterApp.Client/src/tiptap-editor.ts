@@ -2951,6 +2951,76 @@ window.tiptapEditor = {
 
 if (!window.__writerAppDragInit) {
     window.__writerAppDragInit = true;
+    const isDndDebugEnabled = () => {
+        try {
+            const params = new URLSearchParams(window.location?.search || "");
+            if (params.get("dndDebug") === "1") {
+                return true;
+            }
+        } catch {
+        }
+        try {
+            return window.localStorage?.getItem("writerapp:dndDebug") === "1";
+        } catch {
+        }
+        return false;
+    };
+    const logDndEvent = (event: DragEvent, extra?: Record<string, unknown>) => {
+        if (!isDndDebugEnabled() || !event) {
+            return;
+        }
+        const target = event.target instanceof Element ? event.target : null;
+        const info: Record<string, unknown> = {
+            type: event.type,
+            defaultPrevented: event.defaultPrevented,
+            eventPhase: event.eventPhase,
+            target: target
+                ? `${target.tagName.toLowerCase()}${target.className ? "." + String(target.className).replace(/\s+/g, ".") : ""}`
+                : "none",
+            hasDataTransfer: !!event.dataTransfer,
+            types: event.dataTransfer?.types ? Array.from(event.dataTransfer.types) : [],
+            textPlain: null,
+            effectAllowed: event.dataTransfer?.effectAllowed,
+            dropEffect: event.dataTransfer?.dropEffect,
+            clientX: event.clientX,
+            clientY: event.clientY,
+            handle: target?.closest?.(".section-drag-handle") ? "yes" : "no",
+            row: target?.closest?.(".section-nav-row") ? "yes" : "no",
+            list: target?.closest?.(".section-nav-list") ? "yes" : "no",
+            ...extra
+        };
+        if (event.dataTransfer) {
+            try {
+                info.textPlain = event.dataTransfer.getData("text/plain");
+            } catch {
+                info.textPlain = "error";
+            }
+        }
+        (window as any).__writerAppDndLast = {
+            type: info.type,
+            time: new Date().toISOString(),
+            targetInfo: info.target
+        };
+        console.log("[DND]", info);
+    };
+    const debugListener = (event: DragEvent) => {
+        const target = event.target instanceof Element ? event.target : null;
+        if (event.type === "dragover") {
+            const row = target?.closest?.(".section-nav-row");
+            if (row) {
+                event.preventDefault();
+                if (event.dataTransfer) {
+                    event.dataTransfer.dropEffect = "move";
+                }
+                logDndEvent(event, { prevented: true });
+                return;
+            }
+        }
+        logDndEvent(event);
+    };
+    ["dragstart", "dragenter", "dragover", "dragleave", "drop", "dragend"].forEach(type => {
+        document.addEventListener(type, debugListener, { capture: true });
+    });
     document.addEventListener("dragstart", event => {
         let targetElement = null;
         if (event.target instanceof Element) {
@@ -2959,10 +3029,12 @@ if (!window.__writerAppDragInit) {
             targetElement = event.target.parentElement;
         }
 
-        let draggableRoot = targetElement?.closest?.(".drag-handle");
+        let draggableRoot = targetElement?.closest?.(".section-drag-handle") || targetElement?.closest?.(".drag-handle");
         if (!draggableRoot && typeof event.composedPath === "function") {
             const path = event.composedPath();
-            draggableRoot = path.find(entry => entry instanceof Element && entry.classList.contains("drag-handle"));
+            draggableRoot = path.find(entry =>
+                entry instanceof Element
+                && (entry.classList.contains("section-drag-handle") || entry.classList.contains("drag-handle")));
         }
 
         if (!draggableRoot) {

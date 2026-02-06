@@ -181,4 +181,89 @@
       return;
     };
   }
+
+  const getEditorContext = (editor) => {
+    const view = editor?.view?.dom;
+    if (!view) {
+      return null;
+    }
+
+    const viewport = view.closest(".editor-viewport");
+    if (!viewport) {
+      return null;
+    }
+
+    const lane = view.closest(".page-lane");
+    const content = view.closest(".editor-content") || view;
+    const canvas = view.closest(".editor-canvas") || content || view;
+    const overlayHost = lane || canvas || content || viewport;
+    return { view, viewport, content, overlayHost, lane };
+  };
+
+  const maybeDebugEditorLayout = (editor) => {
+    if (typeof window === "undefined" || !window.__wa_editor_debug || editor?.__waDebugLayoutLogged) {
+      return;
+    }
+
+    const ctx = getEditorContext(editor);
+    if (!ctx) {
+      return;
+    }
+
+    editor.__waDebugLayoutLogged = true;
+
+    const host = ctx.view.closest("[id^='section-editor-']");
+    const shell = ctx.view.closest(".editor-shell");
+    const main = ctx.view.closest(".editor-main");
+    const surface = ctx.view.closest(".editor-surface");
+    const statusBar = ctx.view.closest(".editor-surface")?.querySelector?.(".editor-status-bar");
+    const overlay = ctx.overlayHost?.querySelector?.(".pagebreak-overlay");
+
+    const targets = [
+      { label: "shell", el: shell, color: "#2563eb" },
+      { label: "main", el: main, color: "#0ea5e9" },
+      { label: "surface", el: surface, color: "#16a34a" },
+      { label: "viewport", el: ctx.viewport, color: "#14b8a6" },
+      { label: "content", el: ctx.content, color: "#8b5cf6" },
+      { label: "canvas", el: ctx.view.closest(".editor-canvas"), color: "#ec4899" },
+      { label: "lane", el: ctx.lane, color: "#f97316" },
+      { label: "overlay", el: overlay, color: "#ef4444" },
+      { label: "section-host", el: host, color: "#f59e0b" },
+      { label: "prosemirror", el: ctx.view, color: "#22c55e" },
+      { label: "status-bar", el: statusBar, color: "#64748b" }
+    ];
+
+    targets.forEach((target) => {
+      if (!target.el) {
+        return;
+      }
+      target.el.style.outline = `2px dashed ${target.color}`;
+      target.el.style.outlineOffset = "-2px";
+    });
+
+    const diagnostics = targets
+      .filter((target) => target.el)
+      .map((target) => {
+        const style = window.getComputedStyle(target.el);
+        return {
+          label: target.label,
+          zIndex: style.zIndex,
+          overflow: `${style.overflowX}/${style.overflowY}`,
+          position: style.position,
+          size: `${target.el.clientWidth}x${target.el.clientHeight}`
+        };
+      });
+
+    console.info("[editor-debug] layout diagnostics", diagnostics);
+  };
+
+  if (!api.__waDebugWrapped && typeof api.create === "function") {
+    const originalCreate = api.create.bind(api);
+    api.create = function (...args) {
+      const editor = originalCreate(...args);
+      maybeDebugEditorLayout(editor);
+      return editor;
+    };
+    api.__waDebugWrapped = true;
+  }
 })();

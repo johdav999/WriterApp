@@ -1,0 +1,33 @@
+@namespace WriterApp.Client.Components
+
+<div class="rp-shell @Class">
+    @if (Tabs is not null)
+    {
+        <div class="rp-tabs">
+            @Tabs
+        </div>
+    }
+    @if (Header is not null)
+    {
+        <div class="rp-header">
+            @Header
+        </div>
+    }
+    <div class="rp-scroll">
+        @Body
+    </div>
+    @if (Footer is not null)
+    {
+        <div class="rp-footer">
+            @Footer
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public RenderFragment? Tabs { get; set; }
+    [Parameter] public RenderFragment? Header { get; set; }
+    [Parameter] public RenderFragment Body { get; set; } = default!;
+    [Parameter] public RenderFragment? Footer { get; set; }
+    [Parameter] public string? Class { get; set; }
+}
