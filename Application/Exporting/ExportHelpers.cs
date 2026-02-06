@@ -107,12 +107,46 @@ namespace WriterApp.Application.Exporting
 #endif
         }
 
-    
+        public static bool HasChapterBreak(ExportOptions options, string rule)
+        {
+            return options.ChapterBreakRules is not null
+                && options.ChapterBreakRules.Any(value => string.Equals(value, rule, StringComparison.OrdinalIgnoreCase));
+        }
 
-     
+        public static string BuildSectionHtml(SectionContent content, string sectionTitle, bool allowStripHeading = true)
+        {
+            if (content is null || string.IsNullOrWhiteSpace(content.Value))
+            {
+                return string.Empty;
+            }
 
+            string format = content.Format ?? string.Empty;
+            if (string.Equals(format, "markdown", StringComparison.OrdinalIgnoreCase))
+            {
+                // TODO: Map markdown properly (headings, lists, and inline marks).
+                string encoded = WebUtility.HtmlEncode(content.Value);
+                return $"<p>{encoded}</p>";
+            }
 
+            string value = content.Value;
+            if (allowStripHeading)
+            {
+                value = NormalizeSectionHtmlForExport(value, sectionTitle);
+            }
 
+            value = value.Trim();
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return string.Empty;
+            }
+
+            if (!value.Contains('<', StringComparison.Ordinal))
+            {
+                return $"<p>{WebUtility.HtmlEncode(value)}</p>";
+            }
+
+            return value;
+        }
 
         public static string NormalizeSectionHtmlForExport(string html, string sectionTitle)
         {

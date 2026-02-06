@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using WriterApp.Application.Exporting;
 using WriterApp.Application.Security;
@@ -24,17 +25,20 @@ namespace WriterApp.Controllers
         private readonly AppDbContext _dbContext;
         private readonly IUserIdResolver _userIdResolver;
         private readonly ExportService _exportService;
+        private readonly IConfiguration _configuration;
         private readonly ILogger<DocumentExportController> _logger;
 
         public DocumentExportController(
             AppDbContext dbContext,
             IUserIdResolver userIdResolver,
             ExportService exportService,
+            IConfiguration configuration,
             ILogger<DocumentExportController> logger)
         {
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
             _exportService = exportService ?? throw new ArgumentNullException(nameof(exportService));
+            _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -56,6 +60,11 @@ namespace WriterApp.Controllers
                 return BadRequest(new { message = error });
             }
 
+            if (!IsFormatEnabled(exportFormat))
+            {
+                return BadRequest(new { message = "Export format is disabled." });
+            }
+
             string userId = _userIdResolver.ResolveUserId(User);
             Document? document = await BuildExportDocumentAsync(documentId, userId, ct);
             if (document is null)
@@ -74,12 +83,15 @@ namespace WriterApp.Controllers
                     templateId,
                     ct);
 
+                int sectionCount = document.Chapters.SelectMany(chapter => chapter.Sections).Count();
                 _logger.LogInformation(
-                    "Exported document {DocumentId} for user {UserId} ({Kind}/{Format}).",
+                    "Exported document {DocumentId} for user {UserId} ({Kind}/{Format}) sections={SectionCount} bytes={Bytes}.",
                     documentId,
                     userId,
                     exportKind,
-                    exportFormat);
+                    exportFormat,
+                    sectionCount,
+                    result.Content.Length);
 
                 return File(result.Content, result.MimeType, result.FileName);
             }
@@ -103,6 +115,11 @@ namespace WriterApp.Controllers
             if (!TryParseFormat(request.Format, out ExportFormat exportFormat, out string? error))
             {
                 return BadRequest(new { message = error });
+            }
+
+            if (!IsFormatEnabled(exportFormat))
+            {
+                return BadRequest(new { message = "Export format is disabled." });
             }
 
             string scopeType = request.ScopeType?.Trim() ?? "document";
@@ -135,12 +152,15 @@ namespace WriterApp.Controllers
                     request.TemplateId,
                     ct);
 
+                int sectionCount = document.Chapters.SelectMany(chapter => chapter.Sections).Count();
                 _logger.LogInformation(
-                    "Exported document {DocumentId} for user {UserId} ({Scope}/{Format}).",
+                    "Exported document {DocumentId} for user {UserId} ({Scope}/{Format}) sections={SectionCount} bytes={Bytes}.",
                     documentId,
                     userId,
                     scopeType,
-                    exportFormat);
+                    exportFormat,
+                    sectionCount,
+                    result.Content.Length);
 
                 return File(result.Content, result.MimeType, result.FileName);
             }
@@ -597,6 +617,16 @@ namespace WriterApp.Controllers
 
             error = null;
             return true;
+        }
+
+        private bool IsFormatEnabled(ExportFormat format)
+        {
+            return format switch
+            {
+                ExportFormat.Docx => _configuration.GetValue<bool?>("Exports:DocxEnabled") ?? false,
+                ExportFormat.Epub => _configuration.GetValue<bool?>("Exports:EpubEnabled") ?? false,
+                _ => true
+            };
         }
 
         public sealed record ExportPrintPayload(string Html);

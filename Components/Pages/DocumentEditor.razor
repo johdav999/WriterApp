@@ -817,26 +817,28 @@ else
 
 @if (_isDeleteDialogOpen)
 {
-    <div class="modal-backdrop" @onclick="CancelDeleteSection"></div>
-    <div class="modal" role="dialog" aria-modal="true">
-        <div class="modal-title">Delete '@_pendingDeleteSectionTitle'?</div>
-        <div class="modal-body">This removes its pages. Cannot be undone.</div>
-        @if (!string.IsNullOrWhiteSpace(_sectionDeleteError))
-        {
-            <div class="modal-error">@_sectionDeleteError</div>
-        }
-        <div class="modal-actions">
-            <button type="button"
-                    class="danger"
-                    @onclick="ConfirmDeleteSectionAsync"
-                    disabled="@_isDeletingSection">
-                Delete
-            </button>
-            <button type="button"
-                    @onclick="CancelDeleteSection"
-                    disabled="@_isDeletingSection">
-                Cancel
-            </button>
+    <div class="modal-overlay" role="presentation">
+        <div class="modal-backdrop" @onclick="CancelDeleteSection"></div>
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="deleteSectionTitle">
+            <div class="modal-title" id="deleteSectionTitle">Delete '@_pendingDeleteSectionTitle'?</div>
+            <div class="modal-body">This removes its pages. Cannot be undone.</div>
+            @if (!string.IsNullOrWhiteSpace(_sectionDeleteError))
+            {
+                <div class="modal-error">@_sectionDeleteError</div>
+            }
+            <div class="modal-actions">
+                <button type="button"
+                        class="danger"
+                        @onclick="ConfirmDeleteSectionAsync"
+                        disabled="@_isDeletingSection">
+                    Delete
+                </button>
+                <button type="button"
+                        @onclick="CancelDeleteSection"
+                        disabled="@_isDeletingSection">
+                    Cancel
+                </button>
+            </div>
         </div>
     </div>
 }
@@ -855,6 +857,14 @@ else
                 <select id="export-format" class="export-panel-select" @bind="_exportFormatSelection">
                     <option value="html">HTML</option>
                     <option value="markdown">Markdown</option>
+                    @if (_docxExportEnabled)
+                    {
+                        <option value="docx">DOCX</option>
+                    }
+                    @if (_epubExportEnabled)
+                    {
+                        <option value="epub">EPUB</option>
+                    }
                     <option value="pdf">PDF (print)</option>
                 </select>
             </div>
@@ -869,7 +879,7 @@ else
                     <select id="export-template"
                             class="export-panel-select"
                             @bind="SelectedTemplateIdValue"
-                            disabled="@string.Equals(_exportFormatSelection, "markdown", StringComparison.OrdinalIgnoreCase)">
+                            disabled="@(!string.Equals(_exportFormatSelection, "html", StringComparison.OrdinalIgnoreCase))">
                         @foreach (ExportTemplateDto template in _exportTemplates)
                         {
                             <option value="@template.Id">@template.Name @GetPresetTag(template.PresetKey)</option>
