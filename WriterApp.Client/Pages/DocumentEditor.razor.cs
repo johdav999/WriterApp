@@ -121,6 +121,8 @@ namespace WriterApp.Client.Pages
         private bool _isTemplatesLoading;
         private bool _isTemplateSaving;
         private bool _isTemplateDeleting;
+        private bool _docxExportEnabled;
+        private bool _epubExportEnabled;
         private int[] _headingPrefixCounters = new int[7];
         private string? _templateLoadError;
         private string? _templateActionError;
@@ -439,6 +441,8 @@ namespace WriterApp.Client.Pages
             await LoadAiActionsAsync();
             _sectionReorderDiagnosticsEnabled = SectionReorderDiagnostics.IsEnabled(Configuration);
             _dndDebugEnabled = IsDndDebugEnabled();
+            _docxExportEnabled = Configuration.GetValue<bool?>("Exports:DocxEnabled") ?? false;
+            _epubExportEnabled = Configuration.GetValue<bool?>("Exports:EpubEnabled") ?? false;
         }
 
         private bool IsDndDebugEnabled()
@@ -3482,9 +3486,14 @@ namespace WriterApp.Client.Pages
                 return;
             }
 
-            string format = string.Equals(_exportFormatSelection, "markdown", StringComparison.OrdinalIgnoreCase)
-                ? "markdown"
-                : "html";
+            string format = _exportFormatSelection.ToLowerInvariant() switch
+            {
+                "markdown" => "markdown",
+                "html" => "html",
+                "docx" => "docx",
+                "epub" => "epub",
+                _ => "html"
+            };
 
             await OnExportRequested("document", format);
             _isExportDialogOpen = false;
@@ -3638,6 +3647,21 @@ namespace WriterApp.Client.Pages
             else if (_selectedTemplateId is null && _exportTemplates.Count > 0)
             {
                 _selectedTemplateId = _exportTemplates[0].Id;
+            }
+
+            NormalizeExportFormatSelection();
+        }
+
+        private void NormalizeExportFormatSelection()
+        {
+            if (string.Equals(_exportFormatSelection, "docx", StringComparison.OrdinalIgnoreCase) && !_docxExportEnabled)
+            {
+                _exportFormatSelection = "html";
+            }
+
+            if (string.Equals(_exportFormatSelection, "epub", StringComparison.OrdinalIgnoreCase) && !_epubExportEnabled)
+            {
+                _exportFormatSelection = "html";
             }
         }
 

@@ -225,6 +225,8 @@ builder.Services.AddSingleton<CircuitHandler, CircuitLoggingHandler>();
 
 builder.Services.AddSingleton<IExportRenderer, MarkdownExportRenderer>();
 builder.Services.AddSingleton<IExportRenderer, TemplatedHtmlExportRenderer>();
+builder.Services.AddSingleton<IExportRenderer, DocxExportRenderer>();
+builder.Services.AddSingleton<IExportRenderer, EpubExportRenderer>();
 builder.Services.AddSingleton<IExportRenderer, SynopsisMarkdownExportRenderer>();
 builder.Services.AddSingleton<IExportRenderer, SynopsisHtmlExportRenderer>();
 builder.Services.AddScoped<IExportTemplateSeeder, ExportTemplateSeeder>();

@@ -129,6 +129,8 @@ namespace BlazorApp.Components.Pages
         private bool _isTemplatesLoading;
         private bool _isTemplateSaving;
         private bool _isTemplateDeleting;
+        private bool _docxExportEnabled;
+        private bool _epubExportEnabled;
         private string? _templateLoadError;
         private string? _templateActionError;
         private readonly List<ExportTemplateDto> _exportTemplates = new();
@@ -319,6 +321,8 @@ namespace BlazorApp.Components.Pages
             HeaderState.DocumentTitleEdited += OnHeaderDocumentTitleEdited;
             _ = LoadAiUsageStatusAsync();
             _sectionReorderDiagnosticsEnabled = true;
+            _docxExportEnabled = Configuration.GetValue<bool?>("Exports:DocxEnabled") ?? false;
+            _epubExportEnabled = Configuration.GetValue<bool?>("Exports:EpubEnabled") ?? false;
             return Task.CompletedTask;
         }
 
@@ -2785,9 +2789,14 @@ namespace BlazorApp.Components.Pages
                 return;
             }
 
-            ExportFormat format = string.Equals(_exportFormatSelection, "html", StringComparison.OrdinalIgnoreCase)
-                ? ExportFormat.Html
-                : ExportFormat.Markdown;
+            ExportFormat format = _exportFormatSelection.ToLowerInvariant() switch
+            {
+                "html" => ExportFormat.Html,
+                "markdown" => ExportFormat.Markdown,
+                "docx" => ExportFormat.Docx,
+                "epub" => ExportFormat.Epub,
+                _ => ExportFormat.Html
+            };
 
             ExportResult result = await ExportService.ExportAsync(
                 document,

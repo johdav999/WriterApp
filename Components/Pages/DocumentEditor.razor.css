@@ -213,38 +213,46 @@
     color: #b91c1c;
 }
 
-.modal-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(15, 23, 42, 0.4);
-    z-index: 80;
-}
-
 .modal-overlay {
     position: fixed;
     inset: 0;
+    z-index: 9000;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: rgba(15, 23, 42, 0.35);
-    z-index: 80;
     padding: 24px;
+    background: rgba(15, 23, 42, 0.35);
+    pointer-events: auto;
+    isolation: isolate;
+}
+
+.modal-backdrop {
+    position: absolute;
+    inset: 0;
+    z-index: 9000;
+    background: rgba(15, 23, 42, 0.4);
+    pointer-events: auto;
 }
 
 .modal {
-    position: fixed;
-    top: 140px;
-    left: calc(var(--section-panel-width) + 32px);
+    position: relative;
+    top: auto;
+    left: auto;
     transform: none;
-    width: min(320px, 90vw);
+    width: min(420px, calc(100vw - 48px));
+    max-height: min(80vh, 560px);
+    overflow: auto;
     padding: 16px;
     border-radius: 14px;
     border: 1px solid #e5e7eb;
-    background: var(--surface);
+    background: var(--surface, #fff);
     box-shadow: 0 20px 40px rgba(15, 23, 42, 0.2);
-    z-index: 90;
-    display: grid;
+    z-index: 9010;
+    display: flex;
+    flex-direction: column;
     gap: 10px;
+    pointer-events: auto;
+    opacity: 1;
 }
 
 .modal-panel {
@@ -265,10 +273,7 @@
 
 @media (max-width: 980px) {
     .modal {
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        width: min(360px, 90vw);
+        width: min(420px, calc(100vw - 48px));
     }
 }
 
@@ -289,7 +294,7 @@
 .modal-body {
     color: var(--text-muted);
     font-size: 0.9rem;
-    padding: 16px 20px;
+    padding: 0;
     overflow: auto;
 }
 
@@ -299,6 +304,7 @@
 }
 
 .modal-actions {
+    margin-top: 8px;
     display: flex;
     justify-content: flex-end;
     gap: 8px;
