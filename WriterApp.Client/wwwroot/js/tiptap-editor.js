@@ -6,6 +6,10 @@ import TextStyle from "https://esm.sh/@tiptap/extension-text-style@2.1.13?bundle
 import TextAlign from "https://esm.sh/@tiptap/extension-text-align@2.1.13?bundle=false&external=prosemirror-view,prosemirror-state,prosemirror-model";
 import Link from "https://esm.sh/@tiptap/extension-link@2.1.13?bundle=false&external=prosemirror-view,prosemirror-state,prosemirror-model";
 import Image from "https://esm.sh/@tiptap/extension-image@2.1.13?bundle=false&external=prosemirror-view,prosemirror-state,prosemirror-model";
+import Table from "https://esm.sh/@tiptap/extension-table@2.1.13?bundle=false&external=prosemirror-view,prosemirror-state,prosemirror-model";
+import TableRow from "https://esm.sh/@tiptap/extension-table-row@2.1.13?bundle=false&external=prosemirror-view,prosemirror-state,prosemirror-model";
+import TableHeader from "https://esm.sh/@tiptap/extension-table-header@2.1.13?bundle=false&external=prosemirror-view,prosemirror-state,prosemirror-model";
+import TableCell from "https://esm.sh/@tiptap/extension-table-cell@2.1.13?bundle=false&external=prosemirror-view,prosemirror-state,prosemirror-model";
 import {
     toggleBold,
     toggleItalic,
@@ -891,6 +895,18 @@ function buildFormattingState(editor) {
             || editor.can().chain().toggleOrderedList().run());
     const canBlockquote = editor.can().chain().toggleBlockquote().run();
     const canHorizontalRule = editor.can().chain().setHorizontalRule().run();
+    const canInsertTable = editor.can().chain().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
+    const canAddTableRowBefore = editor.can().chain().addRowBefore().run();
+    const canAddTableRowAfter = editor.can().chain().addRowAfter().run();
+    const canDeleteTableRow = editor.can().chain().deleteRow().run();
+    const canAddTableColumnBefore = editor.can().chain().addColumnBefore().run();
+    const canAddTableColumnAfter = editor.can().chain().addColumnAfter().run();
+    const canDeleteTableColumn = editor.can().chain().deleteColumn().run();
+    const canDeleteTable = editor.can().chain().deleteTable().run();
+    const canToggleTableHeaderRow = editor.can().chain().toggleHeaderRow().run();
+    const canToggleTableHeaderColumn = editor.can().chain().toggleHeaderColumn().run();
+    const canMergeTableCells = editor.can().chain().mergeCells().run();
+    const canSplitTableCell = editor.can().chain().splitCell().run();
 
     return {
         isBold: editor.isActive("bold"),
@@ -907,6 +923,20 @@ function buildFormattingState(editor) {
         canBlockquote,
         canHorizontalRule,
         isLink: editor.isActive("link"),
+        isInTable: editor.isActive("table"),
+        isHeaderCell: editor.isActive("tableHeader"),
+        canInsertTable,
+        canAddTableRowBefore,
+        canAddTableRowAfter,
+        canDeleteTableRow,
+        canAddTableColumnBefore,
+        canAddTableColumnAfter,
+        canDeleteTableColumn,
+        canDeleteTable,
+        canToggleTableHeaderRow,
+        canToggleTableHeaderColumn,
+        canMergeTableCells,
+        canSplitTableCell,
         blockType: getBlockType(editor),
         fontFamily: fontFamilyResult.mixed ? null : (fontFamilyResult.value ?? ""),
         fontSize: fontSizeResult.mixed ? null : normalizeFontSize(fontSizeResult.value),
@@ -1077,6 +1107,13 @@ window.tiptapEditor = {
                 TextAlign.configure({ types: ["heading", "paragraph"] }),
                 Link.configure({ openOnClick: false }),
                 EditorImage,
+                Table.configure({
+                    resizable: true,
+                    allowTableNodeSelection: true
+                }),
+                TableRow,
+                TableHeader,
+                TableCell,
                 IndentExtension,
                 AiDecorationsExtension,
                 ShortcutExtension

@@ -414,9 +414,9 @@ namespace WriterApp.Application.Documents
             int y = b.Count;
             List<DiffOp<T>> result = new();
 
-            for (int d = trace.Count - 1; d >= 0; d--)
+            for (int d = trace.Count - 1; d > 0; d--)
             {
-                Dictionary<int, int> v = trace[d];
+                Dictionary<int, int> v = trace[d - 1];
                 int k = x - y;
                 int prevK;
                 if (k == -d || (k != d && Get(v, k - 1) < Get(v, k + 1)))
@@ -438,21 +438,41 @@ namespace WriterApp.Application.Documents
                     y--;
                 }
 
-                if (d == 0)
-                {
-                    break;
-                }
-
                 if (x == prevX)
                 {
-                    result.Add(new DiffOp<T>(DiffOpKind.Insert, b[y - 1]));
-                    y--;
+                    if (y > prevY)
+                    {
+                        result.Add(new DiffOp<T>(DiffOpKind.Insert, b[y - 1]));
+                        y--;
+                    }
                 }
                 else
                 {
-                    result.Add(new DiffOp<T>(DiffOpKind.Delete, a[x - 1]));
-                    x--;
+                    if (x > prevX)
+                    {
+                        result.Add(new DiffOp<T>(DiffOpKind.Delete, a[x - 1]));
+                        x--;
+                    }
                 }
+            }
+
+            while (x > 0 && y > 0)
+            {
+                result.Add(new DiffOp<T>(DiffOpKind.Equal, a[x - 1]));
+                x--;
+                y--;
+            }
+
+            while (x > 0)
+            {
+                result.Add(new DiffOp<T>(DiffOpKind.Delete, a[x - 1]));
+                x--;
+            }
+
+            while (y > 0)
+            {
+                result.Add(new DiffOp<T>(DiffOpKind.Insert, b[y - 1]));
+                y--;
             }
 
             result.Reverse();
