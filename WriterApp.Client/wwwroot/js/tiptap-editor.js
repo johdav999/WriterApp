@@ -691,17 +691,26 @@ function updatePageGapDecorations(editor) {
     editor.view.dispatch(tr);
 }
 
-function getCurrentPageIndex(info) {
+function getCurrentPageIndex(info, scrollContainer, scrollTop) {
     if (!info || !info.ctx) {
         return 1;
     }
 
-    const viewportRect = info.ctx.viewport.getBoundingClientRect();
-    const centerLine = viewportRect.height / 2;
+    const viewportEl = info.ctx.viewport;
+    const viewportHeight = viewportEl.clientHeight || 0;
+    const viewportRect = viewportEl.getBoundingClientRect();
+    let viewportTopInScroll = viewportRect.top + scrollTop;
+
+    if (scrollContainer && scrollContainer !== window && scrollContainer.getBoundingClientRect) {
+        const containerRect = scrollContainer.getBoundingClientRect();
+        viewportTopInScroll = viewportRect.top - containerRect.top + scrollTop;
+    }
+
+    const viewportCenter = viewportTopInScroll + (viewportHeight / 2);
     let current = 1;
 
     for (let index = 0; index < info.breaks.length; index += 1) {
-        if (info.breaks[index].topPx <= centerLine + 1) {
+        if (info.breaks[index].topPx <= viewportCenter + 1) {
             current = info.breaks[index].pageIndex;
         }
     }
@@ -717,11 +726,21 @@ function notifyPageBreakStatus(editor) {
     const info = computePageBreaks(editor, editor.__pageBreakState.options);
     const count = renderPageBreakOverlay(editor, editor.__pageBreakState.options);
     updatePageGapDecorations(editor);
-    const current = getCurrentPageIndex(info);
+    const scrollContainer = editor.__pageBreakState.scrollContainer || window;
+    const scrollTop = scrollContainer === window ? window.scrollY : scrollContainer.scrollTop;
+    const current = getCurrentPageIndex(info, scrollContainer, scrollTop);
 
     if (editor.__pageBreakState.options?.debug && info?.ctx) {
-        const scrollContainer = editor.__pageBreakState.scrollContainer || window;
-        const scrollTop = scrollContainer === window ? window.scrollY : scrollContainer.scrollTop;
+        const viewportEl = info.ctx.viewport;
+        const viewportRect = viewportEl.getBoundingClientRect();
+        let viewportTopInScroll = viewportRect.top + scrollTop;
+
+        if (scrollContainer && scrollContainer !== window && scrollContainer.getBoundingClientRect) {
+            const containerRect = scrollContainer.getBoundingClientRect();
+            viewportTopInScroll = viewportRect.top - containerRect.top + scrollTop;
+        }
+
+        const viewportCenter = viewportTopInScroll + (viewportEl.clientHeight / 2);
         console.debug("[PageLayout]", {
             pageHeightPx: editor.__pageBreakState.options.pageHeightPx,
             pageGapPx: editor.__pageBreakState.options.pageGapPx,
@@ -729,6 +748,11 @@ function notifyPageBreakStatus(editor) {
             pageCount: count,
             currentPage: current,
             scrollTop,
+            viewportTopInScroll,
+            viewportCenter,
+            viewportClientHeight: viewportEl.clientHeight,
+            firstBreakTopPx: info.breaks[0]?.topPx ?? 0,
+            lastBreakTopPx: info.breaks[info.breaks.length - 1]?.topPx ?? 0,
             lastBreakOffset: info.breaks[info.breaks.length - 1]?.topPx ?? 0
         });
     }

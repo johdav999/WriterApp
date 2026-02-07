@@ -324,7 +324,7 @@ namespace WriterApp.AI.Actions
 
     public sealed class TranslateSelectionAction : TranslateActionBase
     {
-        public const string ActionIdValue = "translate.selection";
+        public new const string ActionIdValue = "translate.selection";
 
         public TranslateSelectionAction()
             : base(ActionIdValue, "Translate selection", true, TranslateScope.Selection)
@@ -334,7 +334,7 @@ namespace WriterApp.AI.Actions
 
     public sealed class TranslateSectionAction : TranslateActionBase
     {
-        public const string ActionIdValue = "translate.section";
+        public new const string ActionIdValue = "translate.section";
 
         public TranslateSectionAction()
             : base(ActionIdValue, "Translate section", false, TranslateScope.Section)
@@ -344,7 +344,7 @@ namespace WriterApp.AI.Actions
 
     public sealed class TranslateDocumentAction : TranslateActionBase
     {
-        public const string ActionIdValue = "translate.document";
+        public new const string ActionIdValue = "translate.document";
 
         public TranslateDocumentAction()
             : base(ActionIdValue, "Translate document", false, TranslateScope.Document)
