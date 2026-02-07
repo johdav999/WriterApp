@@ -965,6 +965,33 @@
     border-right: none;
 }
 
+.editor-image-upload-input {
+    display: none;
+}
+
+.editor-toolbar-upload-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 10px;
+    background: #fff;
+    color: var(--text-strong);
+    font-size: 0.82rem;
+    cursor: pointer;
+}
+
+.editor-toolbar-upload-button:hover {
+    background: #f8fafc;
+}
+
+.editor-image-error {
+    margin-top: 8px;
+    color: #b91c1c;
+    font-size: 0.82rem;
+}
+
 .editor-toolbar-overflow {
     position: relative;
 }
@@ -1422,6 +1449,64 @@
 
 .editor-shell.is-print-layout .editor-surface .ProseMirror > :first-child {
     margin-top: 0;
+}
+
+.editor-surface ::deep .tiptap-content img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 0.8rem auto;
+    border-radius: 6px;
+}
+
+.editor-surface ::deep .tiptap-content img.ProseMirror-selectednode {
+    outline: 2px solid rgba(37, 99, 235, 0.65);
+    outline-offset: 2px;
+}
+
+.editor-surface ::deep .tableWrapper {
+    width: 100%;
+    overflow-x: auto;
+    margin: 0.75rem 0;
+}
+
+.editor-surface ::deep .tiptap-content table {
+    border-collapse: collapse;
+    table-layout: fixed;
+    min-width: 420px;
+    width: 100%;
+    background: #fff;
+}
+
+.editor-surface ::deep .tiptap-content th,
+.editor-surface ::deep .tiptap-content td {
+    border: 1px solid #d1d5db;
+    padding: 0.5rem 0.625rem;
+    vertical-align: top;
+}
+
+.editor-surface ::deep .tiptap-content th {
+    background: #f8fafc;
+    font-weight: 600;
+}
+
+.editor-surface ::deep .tiptap-content td p,
+.editor-surface ::deep .tiptap-content th p {
+    margin: 0.35rem 0;
+}
+
+.editor-surface ::deep .tiptap-content td p:first-child,
+.editor-surface ::deep .tiptap-content th p:first-child {
+    margin-top: 0;
+}
+
+.editor-surface ::deep .tiptap-content td p:last-child,
+.editor-surface ::deep .tiptap-content th p:last-child {
+    margin-bottom: 0;
+}
+
+.editor-surface ::deep .tiptap-content .selectedCell:after {
+    background: rgba(59, 130, 246, 0.12);
 }
 
 .context-drawer {

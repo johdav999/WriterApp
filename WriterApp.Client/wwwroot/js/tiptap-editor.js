@@ -5,6 +5,7 @@ import StarterKit from "https://esm.sh/@tiptap/starter-kit@2.1.13?bundle=false&e
 import TextStyle from "https://esm.sh/@tiptap/extension-text-style@2.1.13?bundle=false&external=prosemirror-view,prosemirror-state,prosemirror-model";
 import TextAlign from "https://esm.sh/@tiptap/extension-text-align@2.1.13?bundle=false&external=prosemirror-view,prosemirror-state,prosemirror-model";
 import Link from "https://esm.sh/@tiptap/extension-link@2.1.13?bundle=false&external=prosemirror-view,prosemirror-state,prosemirror-model";
+import Image from "https://esm.sh/@tiptap/extension-image@2.1.13?bundle=false&external=prosemirror-view,prosemirror-state,prosemirror-model";
 import {
     toggleBold,
     toggleItalic,
@@ -49,6 +50,40 @@ const TextStyleWithFontSize = TextStyle.extend({
             }
         };
     }
+});
+
+const EditorImage = Image.extend({
+    addAttributes() {
+        return {
+            src: { default: null },
+            alt: { default: null },
+            title: { default: null },
+            width: {
+                default: null,
+                parseHTML: element => element.getAttribute("width") || null,
+                renderHTML: attributes => {
+                    if (!attributes.width) {
+                        return {};
+                    }
+
+                    return { width: String(attributes.width) };
+                }
+            },
+            assetUrl: {
+                default: null,
+                parseHTML: element => element.getAttribute("data-asset-url") || null,
+                renderHTML: attributes => attributes.assetUrl ? { "data-asset-url": String(attributes.assetUrl) } : {}
+            },
+            assetId: {
+                default: null,
+                parseHTML: element => element.getAttribute("data-asset-id") || null,
+                renderHTML: attributes => attributes.assetId ? { "data-asset-id": String(attributes.assetId) } : {}
+            }
+        };
+    }
+}).configure({
+    inline: false,
+    allowBase64: true
 });
 
 const indentUnitEm = 2;
@@ -1041,6 +1076,7 @@ window.tiptapEditor = {
                 TextStyleWithFontSize,
                 TextAlign.configure({ types: ["heading", "paragraph"] }),
                 Link.configure({ openOnClick: false }),
+                EditorImage,
                 IndentExtension,
                 AiDecorationsExtension,
                 ShortcutExtension

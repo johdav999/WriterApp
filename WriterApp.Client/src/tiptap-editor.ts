@@ -12,6 +12,11 @@ import StarterKit from "@tiptap/starter-kit";
 import TextStyle from "@tiptap/extension-text-style";
 import TextAlign from "@tiptap/extension-text-align";
 import Link from "@tiptap/extension-link";
+import Image from "@tiptap/extension-image";
+import Table from "@tiptap/extension-table";
+import TableRow from "@tiptap/extension-table-row";
+import TableHeader from "@tiptap/extension-table-header";
+import TableCell from "@tiptap/extension-table-cell";
 import {
     toggleBold,
     toggleItalic,
@@ -60,6 +65,40 @@ const TextStyleWithFontSize = TextStyle.extend({
             }
         };
     }
+});
+
+const EditorImage = Image.extend({
+    addAttributes() {
+        return {
+            src: { default: null },
+            alt: { default: null },
+            title: { default: null },
+            width: {
+                default: null,
+                parseHTML: element => element.getAttribute("width") || null,
+                renderHTML: attributes => {
+                    if (!attributes.width) {
+                        return {};
+                    }
+
+                    return { width: String(attributes.width) };
+                }
+            },
+            assetUrl: {
+                default: null,
+                parseHTML: element => element.getAttribute("data-asset-url") || null,
+                renderHTML: attributes => attributes.assetUrl ? { "data-asset-url": String(attributes.assetUrl) } : {}
+            },
+            assetId: {
+                default: null,
+                parseHTML: element => element.getAttribute("data-asset-id") || null,
+                renderHTML: attributes => attributes.assetId ? { "data-asset-id": String(attributes.assetId) } : {}
+            }
+        };
+    }
+}).configure({
+    inline: false,
+    allowBase64: true
 });
 
 const indentUnitEm = 2;
@@ -2075,6 +2114,20 @@ function buildFormattingState(editor) {
             || editor.can().chain().toggleOrderedList().run());
     const canBlockquote = editor.can().chain().toggleBlockquote().run();
     const canHorizontalRule = editor.can().chain().setHorizontalRule().run();
+    const canInsertTable = editor.can().chain().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
+    const canAddTableRowBefore = editor.can().chain().addRowBefore().run();
+    const canAddTableRowAfter = editor.can().chain().addRowAfter().run();
+    const canDeleteTableRow = editor.can().chain().deleteRow().run();
+    const canAddTableColumnBefore = editor.can().chain().addColumnBefore().run();
+    const canAddTableColumnAfter = editor.can().chain().addColumnAfter().run();
+    const canDeleteTableColumn = editor.can().chain().deleteColumn().run();
+    const canDeleteTable = editor.can().chain().deleteTable().run();
+    const canToggleTableHeaderRow = editor.can().chain().toggleHeaderRow().run();
+    const canToggleTableHeaderColumn = editor.can().chain().toggleHeaderColumn().run();
+    const canMergeTableCells = editor.can().chain().mergeCells().run();
+    const canSplitTableCell = editor.can().chain().splitCell().run();
+    const canInsertImage = editor.can().chain().setImage({ src: "data:image/gif;base64,R0lGODlhAQABAAAAACw=" }).run();
+    const canRemoveImage = editor.isActive("image");
 
     return {
         isBold: editor.isActive("bold"),
@@ -2091,6 +2144,23 @@ function buildFormattingState(editor) {
         canBlockquote,
         canHorizontalRule,
         isLink: editor.isActive("link"),
+        isInTable: editor.isActive("table"),
+        isHeaderCell: editor.isActive("tableHeader"),
+        canInsertTable,
+        canAddTableRowBefore,
+        canAddTableRowAfter,
+        canDeleteTableRow,
+        canAddTableColumnBefore,
+        canAddTableColumnAfter,
+        canDeleteTableColumn,
+        canDeleteTable,
+        canToggleTableHeaderRow,
+        canToggleTableHeaderColumn,
+        canMergeTableCells,
+        canSplitTableCell,
+        isImageSelected: editor.isActive("image"),
+        canInsertImage,
+        canRemoveImage,
         blockType: getBlockType(editor),
         fontFamily: fontFamilyResult.mixed ? null : (fontFamilyResult.value ?? ""),
         fontSize: fontSizeResult.mixed ? null : normalizeFontSize(fontSizeResult.value),
@@ -2166,6 +2236,47 @@ function buildAiDecorations(editor, ranges) {
     });
 
     return DecorationSet.create(editor.state.doc, decorations);
+}
+
+function normalizeTableHtml(html) {
+    if (!html || html.indexOf("<table") < 0 || typeof DOMParser === "undefined") {
+        return html;
+    }
+
+    const parser = new DOMParser();
+    const parsed = parser.parseFromString(`<body>${html}</body>`, "text/html");
+    const tables = parsed.body.querySelectorAll("table");
+    if (!tables.length) {
+        return html;
+    }
+
+    tables.forEach(table => {
+        const directRows = Array.from(table.children).filter(child => child.tagName === "TR");
+        if (directRows.length > 0) {
+            let tbody = table.querySelector(":scope > tbody");
+            if (!tbody) {
+                tbody = parsed.createElement("tbody");
+                table.appendChild(tbody);
+            }
+
+            directRows.forEach(row => tbody.appendChild(row));
+        }
+
+        const thead = table.querySelector(":scope > thead");
+        const tbody = table.querySelector(":scope > tbody");
+        if (!thead && tbody) {
+            const firstRow = tbody.querySelector(":scope > tr");
+            const firstRowCells = firstRow ? Array.from(firstRow.children) : [];
+            const hasHeaderCells = firstRowCells.length > 0 && firstRowCells.every(cell => cell.tagName === "TH");
+            if (firstRow && hasHeaderCells) {
+                const newHead = parsed.createElement("thead");
+                newHead.appendChild(firstRow);
+                table.insertBefore(newHead, tbody);
+            }
+        }
+    });
+
+    return parsed.body.innerHTML;
 }
 
 function hasExtension(editor, name) {
@@ -2267,6 +2378,14 @@ window.tiptapEditor = {
                 TextStyleWithFontSize,
                 TextAlign.configure({ types: ["heading", "paragraph"] }),
                 Link.configure({ openOnClick: false }),
+                EditorImage,
+                Table.configure({
+                    resizable: true,
+                    allowTableNodeSelection: true
+                }),
+                TableRow,
+                TableHeader,
+                TableCell,
                 IndentExtension,
                 AiDecorationsExtension,
                 AnnotationDecorationsExtension,
@@ -2306,7 +2425,7 @@ window.tiptapEditor = {
                 if (editor.__waLastWasLayoutTx) {
                     return;
                 }
-                safeInvoke(dotNetRef, interopState, "OnEditorContentChanged", editor.getHTML());
+                safeInvoke(dotNetRef, interopState, "OnEditorContentChanged", normalizeTableHtml(editor.getHTML()));
                 schedulePageBreakUpdate(editor);
             }
         });
@@ -2741,7 +2860,7 @@ window.tiptapEditor = {
             return "";
         }
 
-        return editor.getHTML ? editor.getHTML() : "";
+        return editor.getHTML ? normalizeTableHtml(editor.getHTML()) : "";
     },
 
     setPageBreaksEnabled: function (editor, enabled, options) {

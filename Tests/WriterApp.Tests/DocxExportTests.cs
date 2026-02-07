@@ -263,6 +263,52 @@ namespace WriterApp.Tests
         }
 
         [Fact]
+        public void DocxExport_TableHeaderAndRichCellContentArePreserved()
+        {
+            string html = """
+                          <table>
+                            <thead>
+                              <tr>
+                                <th>Chapter</th>
+                                <th>Notes</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <tr>
+                                <td>
+                                  <p>Line one.</p>
+                                  <p>Line two with <strong>bold</strong> and <em>italic</em>.</p>
+                                  <ul><li>Point A</li><li>Point B</li></ul>
+                                </td>
+                                <td>Cell 2</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                          """;
+
+            WriterDocument document = BuildDocument(html);
+            ExportService service = BuildExportService();
+            ExportResult result = service.ExportAsync(
+                document,
+                ExportKind.Document,
+                ExportFormat.Docx,
+                new ExportOptions(IncludeTitlePage: false),
+                "user",
+                null,
+                CancellationToken.None).GetAwaiter().GetResult();
+
+            using MemoryStream stream = new(result.Content);
+            using WordprocessingDocument wordDoc = WordprocessingDocument.Open(stream, false);
+            Table? table = wordDoc.MainDocumentPart?.Document?.Body?.Elements<Table>().FirstOrDefault();
+            Assert.NotNull(table);
+            Assert.Equal(2, table!.Elements<TableRow>().Count());
+            Assert.Equal(4, table.Descendants<TableCell>().Count());
+            Assert.Contains("Chapter", table.InnerText, StringComparison.Ordinal);
+            Assert.Contains("Line one.", table.InnerText, StringComparison.Ordinal);
+            Assert.Contains("Point A", table.InnerText, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public void DocxExport_BlockquoteAddsIndent()
         {
             WriterDocument document = BuildDocument("<blockquote>Quote</blockquote>");
@@ -330,6 +376,31 @@ namespace WriterApp.Tests
             using MemoryStream stream = new(result.Content);
             using WordprocessingDocument wordDoc = WordprocessingDocument.Open(stream, false);
             Assert.NotEmpty(wordDoc.MainDocumentPart!.ImageParts);
+            Assert.NotEmpty(wordDoc.MainDocumentPart!.Document!.Body!.Descendants<Drawing>());
+        }
+
+        [Fact]
+        public void DocxExport_DataUriImageKeepsParagraphOrder()
+        {
+            string pngBase64 =
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO0nJ9sAAAAASUVORK5CYII=";
+            string html = $"<p>Before image</p><p><img src=\"data:image/png;base64,{pngBase64}\" alt=\"Sample\" width=\"320\" /></p><p>After image</p>";
+            WriterDocument document = BuildDocument(html);
+            ExportService service = BuildExportService();
+            ExportResult result = service.ExportAsync(
+                document,
+                ExportKind.Document,
+                ExportFormat.Docx,
+                new ExportOptions(IncludeTitlePage: false),
+                "user",
+                null,
+                CancellationToken.None).GetAwaiter().GetResult();
+
+            using MemoryStream stream = new(result.Content);
+            using WordprocessingDocument wordDoc = WordprocessingDocument.Open(stream, false);
+            var paragraphs = wordDoc.MainDocumentPart!.Document!.Body!.Elements<Paragraph>().ToList();
+            Assert.True(paragraphs.Any(p => p.InnerText.Contains("Before image", StringComparison.Ordinal)));
+            Assert.True(paragraphs.Any(p => p.InnerText.Contains("After image", StringComparison.Ordinal)));
             Assert.NotEmpty(wordDoc.MainDocumentPart!.Document!.Body!.Descendants<Drawing>());
         }
 
