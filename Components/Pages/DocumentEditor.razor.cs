@@ -24,9 +24,11 @@ using WriterApp.Application.State;
 using WriterApp.Application.Usage;
 using WriterApp.Application.Security;
 using WriterApp.Application.Exporting;
+using WriterApp.Application.Continuity;
 using WriterApp.Application.Diagnostics;
 using WriterApp.AI.Abstractions;
 using WriterApp.AI.Actions;
+using WriterApp.Controllers;
 using WriterApp.Domain.Documents;
 
 namespace BlazorApp.Components.Pages
@@ -59,6 +61,9 @@ namespace BlazorApp.Components.Pages
 
         [Inject]
         public IAiOrchestrator AiOrchestrator { get; set; } = default!;
+
+        [Inject]
+        public IAiProposalApplier AiProposalApplier { get; set; } = default!;
 
         [Inject]
         public IAiUsageStatusService AiUsageStatusService { get; set; } = default!;
@@ -131,6 +136,12 @@ namespace BlazorApp.Components.Pages
         private bool _isTemplateDeleting;
         private bool _docxExportEnabled;
         private bool _epubExportEnabled;
+        private bool _aiCommandCentricApplyEnabled;
+        private bool _reviseToolsEnabled;
+        private bool _continuityCoachEnabled;
+        private bool _continuityCoachFixesEnabled;
+        private bool _promptLibraryEnabled;
+        private string _selectedReviseTool = "tighten";
         private string? _templateLoadError;
         private string? _templateActionError;
         private readonly List<ExportTemplateDto> _exportTemplates = new();
@@ -226,7 +237,77 @@ namespace BlazorApp.Components.Pages
                 "Propose next paragraph",
                 false,
                 new Dictionary<string, object?>(),
-                "Generate a 10-12 sentence continuation based on current section + scene beats.")
+                "Generate a 10-12 sentence continuation based on current section + scene beats."),
+            new AiActionOption(
+                TightenSelectionAction.ActionIdValue,
+                "Tighten selection",
+                "Tighten selection",
+                true,
+                new Dictionary<string, object?>(),
+                "Trim excess words while preserving meaning.",
+                false),
+            new AiActionOption(
+                TightenSectionAction.ActionIdValue,
+                "Tighten section",
+                "Tighten section",
+                false,
+                new Dictionary<string, object?>(),
+                "Trim excess words while preserving meaning.",
+                false),
+            new AiActionOption(
+                ExpandSelectionAction.ActionIdValue,
+                "Expand selection",
+                "Expand selection",
+                true,
+                new Dictionary<string, object?>(),
+                "Add detail while preserving intent.",
+                false),
+            new AiActionOption(
+                ExpandSectionAction.ActionIdValue,
+                "Expand section",
+                "Expand section",
+                false,
+                new Dictionary<string, object?>(),
+                "Add detail while preserving intent.",
+                false),
+            new AiActionOption(
+                ChangeToneSelectionAction.ActionIdValue,
+                "Change tone (selection)",
+                "Change tone",
+                true,
+                new Dictionary<string, object?>
+                {
+                    ["tone"] = "Formal"
+                },
+                "Shift tone while preserving facts and structure.",
+                false),
+            new AiActionOption(
+                ChangeToneSectionAction.ActionIdValue,
+                "Change tone (section)",
+                "Change tone",
+                false,
+                new Dictionary<string, object?>
+                {
+                    ["tone"] = "Formal"
+                },
+                "Shift tone while preserving facts and structure.",
+                false),
+            new AiActionOption(
+                ShowDontTellSelectionAction.ActionIdValue,
+                "Show, don't tell (selection)",
+                "Show, don't tell",
+                true,
+                new Dictionary<string, object?>(),
+                "Rewrite abstractions into concrete, sensory prose.",
+                false),
+            new AiActionOption(
+                ShowDontTellSectionAction.ActionIdValue,
+                "Show, don't tell (section)",
+                "Show, don't tell",
+                false,
+                new Dictionary<string, object?>(),
+                "Rewrite abstractions into concrete, sensory prose.",
+                false)
         };
         private readonly List<AiHistoryEntry> _aiHistoryEntries = new();
         private Guid? _expandedAiHistoryId;
@@ -276,6 +357,24 @@ namespace BlazorApp.Components.Pages
         private bool _aiUndoRedoInFlight;
         private bool _canAiUndo;
         private bool _canAiRedo;
+        private readonly List<PromptPresetDto> _promptPresets = new();
+        private readonly List<Guid> _pinnedPromptPresetIds = new();
+        private string? _promptStatus;
+        private Guid? _promptEditingId;
+        private string _promptNameDraft = string.Empty;
+        private string _promptCategoryDraft = string.Empty;
+        private string _promptKindDraft = "builtin";
+        private string _promptBuiltinActionIdDraft = TightenSelectionAction.ActionIdValue;
+        private string _promptTemplateDraft = string.Empty;
+        private string _promptParametersDraft = "{}";
+        private string _promptRunScope = "selection";
+        private CharacterBible? _characterBible;
+        private PlaceBible? _placeBible;
+        private ContinuityReport? _continuityReport;
+        private string _continuitySeverityFilter = "all";
+        private string? _continuityStatus;
+        private bool _continuityBusy;
+        private PendingContinuityHighlight? _pendingContinuityHighlight;
         private string? _lastReorderStatus;
         private int _lastReorderCount;
         private string? _lastReorderCorrelationId;
@@ -294,9 +393,28 @@ namespace BlazorApp.Components.Pages
                 ? _outlineNodes.FirstOrDefault(node => node.Id == _selectedOutlineNodeId.Value)
                 : null;
         private IEnumerable<AiActionOption> SelectionAiActions =>
-            _aiActions.Where(action => action.RequiresSelection);
+            _aiActions.Where(action => action.RequiresSelection && action.IncludeInLists);
         private IEnumerable<AiActionOption> SectionAiActions =>
-            _aiActions.Where(action => !action.RequiresSelection);
+            _aiActions.Where(action => !action.RequiresSelection && action.IncludeInLists);
+        private IReadOnlyList<PromptPresetDto> PinnedPromptPresets =>
+            _pinnedPromptPresetIds
+                .Select(id => _promptPresets.FirstOrDefault(preset => preset.Id == id))
+                .Where(preset => preset is not null)
+                .Cast<PromptPresetDto>()
+                .ToList();
+        private bool CanShowContinuityCoach =>
+            _continuityCoachEnabled
+            && CanShowAiMenu;
+        private bool CanShowContinuityCoachFixes =>
+            _continuityCoachFixesEnabled
+            && CanShowContinuityCoach;
+        private bool CanShowPromptLibrary =>
+            _promptLibraryEnabled
+            && CanShowAiMenu;
+        private IEnumerable<ContinuityIssue> FilteredContinuityIssues =>
+            (_continuityReport?.Issues ?? Array.Empty<ContinuityIssue>())
+            .Where(issue => string.Equals(_continuitySeverityFilter, "all", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(issue.Severity, _continuitySeverityFilter, StringComparison.OrdinalIgnoreCase));
 
         private PageEditor.PageBreakOptions PageBreaks
         {
@@ -323,6 +441,27 @@ namespace BlazorApp.Components.Pages
             _sectionReorderDiagnosticsEnabled = true;
             _docxExportEnabled = Configuration.GetValue<bool?>("Exports:DocxEnabled") ?? false;
             _epubExportEnabled = Configuration.GetValue<bool?>("Exports:EpubEnabled") ?? false;
+            bool defaultCommandCentric = IsDevelopmentEnvironment();
+            _aiCommandCentricApplyEnabled =
+                Configuration.GetValue<bool?>("AI:CommandCentricApplyEnabled")
+                ?? Configuration.GetValue<bool?>("WriterApp:AI:CommandCentricApplyEnabled")
+                ?? defaultCommandCentric;
+            _reviseToolsEnabled =
+                Configuration.GetValue<bool?>("AI:ReviseToolsEnabled")
+                ?? Configuration.GetValue<bool?>("WriterApp:AI:ReviseToolsEnabled")
+                ?? false;
+            _continuityCoachEnabled =
+                Configuration.GetValue<bool?>("AI:ContinuityCoachEnabled")
+                ?? Configuration.GetValue<bool?>("WriterApp:AI:ContinuityCoachEnabled")
+                ?? false;
+            _continuityCoachFixesEnabled =
+                Configuration.GetValue<bool?>("AI:ContinuityCoachFixesEnabled")
+                ?? Configuration.GetValue<bool?>("WriterApp:AI:ContinuityCoachFixesEnabled")
+                ?? false;
+            _promptLibraryEnabled =
+                Configuration.GetValue<bool?>("AI:PromptLibraryEnabled")
+                ?? Configuration.GetValue<bool?>("WriterApp:AI:PromptLibraryEnabled")
+                ?? false;
             return Task.CompletedTask;
         }
 
@@ -341,6 +480,8 @@ namespace BlazorApp.Components.Pages
                 _shouldFocusContextMenu = false;
                 await _contextMenuRef.FocusAsync();
             }
+
+            await ApplyPendingContinuityHighlightIfReadyAsync();
         }
 
         protected override async Task OnParametersSetAsync()
@@ -427,6 +568,8 @@ namespace BlazorApp.Components.Pages
                 _outlineStatus = null;
                 await LoadOutlineNodesAsync();
                 await LoadAiHistoryAsync();
+                await LoadContinuityStateAsync();
+                await LoadPromptPresetsAsync();
             }
             catch (Exception ex)
             {
@@ -1442,6 +1585,13 @@ namespace BlazorApp.Components.Pages
                     return;
                 }
             }
+            else
+            {
+                bool isAppendAction = string.Equals(action.ActionKey, ProposeNextParagraphAction.ActionIdValue, StringComparison.Ordinal);
+                selectionRange = isAppendAction
+                    ? new TextRange(plainText.Length, 0)
+                    : new TextRange(0, plainText.Length);
+            }
             Document aiDocument = BuildAiDocument(html);
             Dictionary<string, object?> inputs = new(action.Inputs);
 
@@ -1488,6 +1638,7 @@ namespace BlazorApp.Components.Pages
             if (string.Equals(action.ActionKey, ProposeNextParagraphAction.ActionIdValue, StringComparison.Ordinal))
             {
                 proposedText = NormalizeSingleParagraph(proposedText);
+                proposal = EnsureCommandCentricTextOperations(proposal, proposedText, plainText.Length);
             }
 
             _pendingAiProposal = new PendingAiProposal(
@@ -1620,6 +1771,424 @@ namespace BlazorApp.Components.Pages
             return _activeContextTab == tab ? "is-active" : string.Empty;
         }
 
+        private async Task OnBuildCharacterBibleAsync()
+        {
+            await ExecuteContinuityActionAsync(
+                ExtractCharacterBibleAction.ActionIdValue,
+                "Character bible refreshed.",
+                null);
+        }
+
+        private async Task OnBuildPlaceBibleAsync()
+        {
+            await ExecuteContinuityActionAsync(
+                ExtractPlaceBibleAction.ActionIdValue,
+                "Place bible refreshed.",
+                null);
+        }
+
+        private async Task OnCheckContinuityAsync()
+        {
+            string characterBibleJson = _characterBible is null ? string.Empty : ContinuityJson.ToJson(_characterBible);
+            string placeBibleJson = _placeBible is null ? string.Empty : ContinuityJson.ToJson(_placeBible);
+            Dictionary<string, object?> options = new()
+            {
+                ["character_bible_json"] = characterBibleJson,
+                ["place_bible_json"] = placeBibleJson
+            };
+
+            await ExecuteContinuityActionAsync(
+                ContinuityCheckAction.ActionIdValue,
+                "Continuity check complete.",
+                options);
+        }
+
+        private async Task ExecuteContinuityActionAsync(
+            string actionId,
+            string successMessage,
+            Dictionary<string, object?>? options)
+        {
+            if (!CanShowContinuityCoach || _continuityBusy || _activeSection is null)
+            {
+                return;
+            }
+
+            if (!AiOrchestrator.CanRunAction(actionId))
+            {
+                _continuityStatus = "Action is not available with the current AI provider.";
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            _continuityBusy = true;
+            _continuityStatus = null;
+            try
+            {
+                string html = await GetCurrentEditorHtmlAsync();
+                string plainText = PlainTextMapper.ToPlainText(html);
+                Document aiDocument = BuildAiDocument(html);
+                TextRange scope = new(0, plainText.Length);
+                AiActionInput input = new(
+                    aiDocument,
+                    _activeSection.Id,
+                    scope,
+                    plainText,
+                    string.Empty,
+                    options);
+
+                AiExecutionResult result = await AiOrchestrator.ExecuteActionAsync(actionId, input, CancellationToken.None);
+                if (!result.Succeeded || result.Proposal is null || string.IsNullOrWhiteSpace(result.Proposal.ProposedText))
+                {
+                    _continuityStatus = result.ErrorMessage ?? "Continuity action returned no output.";
+                    return;
+                }
+
+                string json = result.Proposal.ProposedText;
+                if (string.Equals(actionId, ExtractCharacterBibleAction.ActionIdValue, StringComparison.Ordinal))
+                {
+                    if (!ContinuityJson.TryParseCharacterBible(json, out CharacterBible? parsed) || parsed is null)
+                    {
+                        _continuityStatus = "Character bible parsing failed.";
+                        return;
+                    }
+
+                    _characterBible = parsed;
+                }
+                else if (string.Equals(actionId, ExtractPlaceBibleAction.ActionIdValue, StringComparison.Ordinal))
+                {
+                    if (!ContinuityJson.TryParsePlaceBible(json, out PlaceBible? parsed) || parsed is null)
+                    {
+                        _continuityStatus = "Place bible parsing failed.";
+                        return;
+                    }
+
+                    _placeBible = parsed;
+                }
+                else if (string.Equals(actionId, ContinuityCheckAction.ActionIdValue, StringComparison.Ordinal))
+                {
+                    if (!ContinuityJson.TryParseContinuityReport(json, out ContinuityReport? parsed) || parsed is null)
+                    {
+                        _continuityStatus = "Continuity report parsing failed.";
+                        return;
+                    }
+
+                    _continuityReport = NormalizeContinuityReport(parsed, plainText.Length);
+                }
+
+                await PersistContinuityHistoryEntryAsync(result.Proposal, json);
+                _continuityStatus = successMessage;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Continuity action failed.");
+                _continuityStatus = "Continuity action failed.";
+            }
+            finally
+            {
+                _continuityBusy = false;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+
+        private async Task PersistContinuityHistoryEntryAsync(AiProposal proposal, string proposedJson)
+        {
+            try
+            {
+                string userId = await ResolveCurrentUserIdAsync();
+                var request = new
+                {
+                    DocumentId,
+                    SectionId = _activeSection?.Id ?? SectionId,
+                    PageId = _activePage?.Id ?? PageId,
+                    Parameters = new Dictionary<string, object?>()
+                };
+
+                var response = new
+                {
+                    ProposalId = proposal.ProposalId,
+                    OriginalText = proposal.OriginalText,
+                    ProposedText = proposedJson,
+                    ChangesSummary = proposal.UserSummary ?? proposal.SummaryLabel ?? proposal.ActionId,
+                    CreatedUtc = new DateTimeOffset(proposal.CreatedUtc),
+                    ActionId = proposal.ActionId
+                };
+
+                await AiActionHistoryStore.AddAsync(new AiActionHistoryEntry(
+                    proposal.ProposalId,
+                    proposal.ActionId,
+                    userId,
+                    DocumentId,
+                    _activeSection?.Id ?? SectionId,
+                    DateTimeOffset.UtcNow,
+                    proposal.UserSummary ?? proposal.SummaryLabel ?? proposal.ActionId,
+                    proposal.OriginalText,
+                    proposedJson,
+                    _activePage?.Id ?? PageId,
+                    proposal.ProviderId,
+                    null,
+                    JsonSerializer.Serialize(request, JsonOptions),
+                    JsonSerializer.Serialize(response, JsonOptions)), CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogDebug(ex, "Continuity history persistence failed.");
+            }
+        }
+
+        private async Task LoadContinuityStateAsync()
+        {
+            if (!_continuityCoachEnabled)
+            {
+                _characterBible = null;
+                _placeBible = null;
+                _continuityReport = null;
+                return;
+            }
+
+            try
+            {
+                string userId = await ResolveCurrentUserIdAsync();
+                IReadOnlyList<AiActionHistoryEntry> entries = await AiActionHistoryStore.ListAsync(userId, DocumentId, CancellationToken.None);
+
+                string? characterJson = entries
+                    .Where(entry => string.Equals(entry.ActionKey, ExtractCharacterBibleAction.ActionIdValue, StringComparison.Ordinal))
+                    .OrderByDescending(entry => entry.CreatedUtc)
+                    .Select(TryResolveContinuityJson)
+                    .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+
+                string? placeJson = entries
+                    .Where(entry => string.Equals(entry.ActionKey, ExtractPlaceBibleAction.ActionIdValue, StringComparison.Ordinal))
+                    .OrderByDescending(entry => entry.CreatedUtc)
+                    .Select(TryResolveContinuityJson)
+                    .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+
+                string? reportJson = entries
+                    .Where(entry => string.Equals(entry.ActionKey, ContinuityCheckAction.ActionIdValue, StringComparison.Ordinal))
+                    .OrderByDescending(entry => entry.CreatedUtc)
+                    .Select(TryResolveContinuityJson)
+                    .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+
+                _characterBible = ContinuityJson.TryParseCharacterBible(characterJson, out CharacterBible? characterBible)
+                    ? characterBible
+                    : null;
+                _placeBible = ContinuityJson.TryParsePlaceBible(placeJson, out PlaceBible? placeBible)
+                    ? placeBible
+                    : null;
+
+                if (ContinuityJson.TryParseContinuityReport(reportJson, out ContinuityReport? continuityReport) && continuityReport is not null)
+                {
+                    string activePlainText = _activePage is null ? string.Empty : PlainTextMapper.ToPlainText(_activePage.Content ?? string.Empty);
+                    _continuityReport = NormalizeContinuityReport(continuityReport, activePlainText.Length);
+                }
+                else
+                {
+                    _continuityReport = null;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogDebug(ex, "Continuity state load failed.");
+            }
+        }
+
+        private static string? TryResolveContinuityJson(AiActionHistoryEntry entry)
+        {
+            if (!string.IsNullOrWhiteSpace(entry.ProposedText))
+            {
+                return entry.ProposedText;
+            }
+
+            if (string.IsNullOrWhiteSpace(entry.ResultJson))
+            {
+                return null;
+            }
+
+            try
+            {
+                using JsonDocument doc = JsonDocument.Parse(entry.ResultJson);
+                if (doc.RootElement.TryGetProperty("ProposedText", out JsonElement proposed))
+                {
+                    return proposed.GetString();
+                }
+            }
+            catch (JsonException)
+            {
+            }
+
+            return null;
+        }
+
+        private static ContinuityReport NormalizeContinuityReport(ContinuityReport report, int plainTextLength)
+        {
+            List<ContinuityIssue> normalized = new();
+            foreach (ContinuityIssue issue in report.Issues ?? Array.Empty<ContinuityIssue>())
+            {
+                ContinuityAnchor anchor = ContinuityJson.NormalizeAnchor(issue.Anchor, plainTextLength);
+                normalized.Add(issue with { Anchor = anchor });
+            }
+
+            return report with { Issues = normalized };
+        }
+
+        private async Task OnContinuitySeverityChanged(ChangeEventArgs args)
+        {
+            _continuitySeverityFilter = args.Value?.ToString() ?? "all";
+            await InvokeAsync(StateHasChanged);
+        }
+
+        private async Task OnJumpToContinuityIssueAsync(ContinuityIssue issue)
+        {
+            if (_activeSection is null)
+            {
+                return;
+            }
+
+            Guid targetSectionId = issue.Evidence.SectionId ?? _activeSection.Id;
+            int start = Math.Max(0, issue.Anchor.PlainTextStart);
+            int length = Math.Max(0, issue.Anchor.PlainTextLength);
+            _pendingContinuityHighlight = new PendingContinuityHighlight(targetSectionId, start, length);
+
+            if (targetSectionId != _activeSection.Id)
+            {
+                OnSectionSelected(targetSectionId);
+                return;
+            }
+
+            await ApplyPendingContinuityHighlightIfReadyAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+
+        private async Task OnApplyContinuityFixAsync(ContinuityIssue issue)
+        {
+            if (!CanShowContinuityCoachFixes || _continuityBusy || _activeSection is null || _pageEditor is null)
+            {
+                return;
+            }
+
+            if (!AiOrchestrator.CanRunAction(ApplyContinuityFixAction.ActionIdValue))
+            {
+                _continuityStatus = "Apply fix action is not available with the current AI provider.";
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            string fixText = issue.SuggestedFix?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(fixText))
+            {
+                _continuityStatus = "No suggested fix text was provided.";
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            Guid targetSectionId = issue.Evidence.SectionId ?? _activeSection.Id;
+            if (targetSectionId != _activeSection.Id)
+            {
+                _continuityStatus = "Open the target section and apply again.";
+                OnSectionSelected(targetSectionId);
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            _continuityBusy = true;
+            _continuityStatus = null;
+            try
+            {
+                string html = await GetCurrentEditorHtmlAsync();
+                string plainText = PlainTextMapper.ToPlainText(html);
+                ContinuityAnchor normalized = ContinuityJson.NormalizeAnchor(issue.Anchor, plainText.Length);
+                TextRange range = new(normalized.PlainTextStart, normalized.PlainTextLength);
+                string selectedText = range.Length > 0 && range.Start + range.Length <= plainText.Length
+                    ? plainText.Substring(range.Start, range.Length)
+                    : string.Empty;
+
+                Document aiDocument = BuildAiDocument(html);
+                Dictionary<string, object?> options = new()
+                {
+                    ["section_id"] = targetSectionId,
+                    ["anchor_start"] = range.Start,
+                    ["anchor_length"] = range.Length,
+                    ["suggested_fix"] = fixText
+                };
+
+                AiActionInput input = new(
+                    aiDocument,
+                    targetSectionId,
+                    range,
+                    selectedText,
+                    "Apply continuity fix",
+                    options);
+
+                AiExecutionResult result = await AiOrchestrator.ExecuteActionAsync(
+                    ApplyContinuityFixAction.ActionIdValue,
+                    input,
+                    CancellationToken.None);
+
+                if (!result.Succeeded || result.Proposal is null)
+                {
+                    _continuityStatus = result.ErrorMessage ?? "Continuity fix could not be applied.";
+                    return;
+                }
+
+                DocumentState state = new(aiDocument);
+                CommandProcessor processor = new(state);
+                AiProposalApplier.Apply(processor, result.Proposal);
+
+                string updatedHtml = TryGetSectionContent(state.Document, targetSectionId) ?? html;
+                await _pageEditor.SetContentAsync(updatedHtml, markDirty: true);
+                await _pageEditor.SaveNowAsync();
+                _continuityStatus = "Continuity fix applied.";
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Continuity fix apply failed.");
+                _continuityStatus = "Continuity fix apply failed.";
+            }
+            finally
+            {
+                _continuityBusy = false;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+
+        private async Task ApplyPendingContinuityHighlightIfReadyAsync()
+        {
+            if (_pendingContinuityHighlight is null || _pageEditor is null || _activeSection is null)
+            {
+                return;
+            }
+
+            if (_pendingContinuityHighlight.SectionId != _activeSection.Id)
+            {
+                return;
+            }
+
+            await _pageEditor.HighlightAnalysisRangeAsync(
+                _pendingContinuityHighlight.Start,
+                _pendingContinuityHighlight.Length);
+            _pendingContinuityHighlight = null;
+        }
+
+        private async Task OnClearContinuityHighlightsAsync()
+        {
+            _pendingContinuityHighlight = null;
+            if (_pageEditor is not null)
+            {
+                await _pageEditor.ClearAnalysisHighlightsAsync();
+            }
+
+            await InvokeAsync(StateHasChanged);
+        }
+
+        private async Task<string> GetCurrentEditorHtmlAsync()
+        {
+            if (_pageEditor is null)
+            {
+                return _activePage?.Content ?? string.Empty;
+            }
+
+            return await _pageEditor.GetContentAsync();
+        }
+
         private async Task OnNotesSave()
         {
             if (_activePage is null)
@@ -1647,6 +2216,299 @@ namespace BlazorApp.Components.Pages
         {
             _notesDraft = args.Value?.ToString() ?? string.Empty;
             _notesStatus = null;
+        }
+
+        private async Task LoadPromptPresetsAsync()
+        {
+            if (!_promptLibraryEnabled)
+            {
+                _promptPresets.Clear();
+                return;
+            }
+
+            try
+            {
+                List<PromptPresetDto>? presets = await Http.GetFromJsonAsync<List<PromptPresetDto>>(
+                    $"api/ai/presets?projectId={DocumentId}");
+                _promptPresets.Clear();
+                if (presets is not null)
+                {
+                    _promptPresets.AddRange(presets);
+                }
+
+                _pinnedPromptPresetIds.RemoveAll(id => _promptPresets.All(preset => preset.Id != id));
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Prompt presets load failed.");
+                _promptStatus = "Failed to load presets.";
+            }
+        }
+
+        private void BeginCreatePromptPreset()
+        {
+            _promptEditingId = null;
+            _promptNameDraft = string.Empty;
+            _promptCategoryDraft = string.Empty;
+            _promptKindDraft = "builtin";
+            _promptBuiltinActionIdDraft = TightenSelectionAction.ActionIdValue;
+            _promptTemplateDraft = string.Empty;
+            _promptParametersDraft = "{}";
+            _promptStatus = null;
+        }
+
+        private void BeginEditPromptPreset(PromptPresetDto preset)
+        {
+            _promptEditingId = preset.Id;
+            _promptNameDraft = preset.Name;
+            _promptCategoryDraft = preset.Category ?? string.Empty;
+            _promptKindDraft = preset.Kind;
+            _promptBuiltinActionIdDraft = preset.BuiltinActionId ?? TightenSelectionAction.ActionIdValue;
+            _promptTemplateDraft = preset.TemplateText ?? string.Empty;
+            _promptParametersDraft = JsonSerializer.Serialize(preset.Parameters ?? new Dictionary<string, object?>(), JsonOptions);
+            _promptStatus = null;
+        }
+
+        private async Task SavePromptPresetAsync()
+        {
+            if (!CanShowPromptLibrary)
+            {
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(_promptNameDraft))
+            {
+                _promptStatus = "Preset name is required.";
+                return;
+            }
+
+            if (!TryParsePromptParameters(_promptParametersDraft, out Dictionary<string, object?> parameters, out string? parseError))
+            {
+                _promptStatus = parseError;
+                return;
+            }
+
+            UpsertPromptPresetRequest request = new(
+                DocumentId,
+                _promptNameDraft.Trim(),
+                string.IsNullOrWhiteSpace(_promptCategoryDraft) ? null : _promptCategoryDraft.Trim(),
+                _promptKindDraft,
+                _promptKindDraft == "builtin" ? _promptBuiltinActionIdDraft : null,
+                _promptKindDraft == "custom" ? _promptTemplateDraft : null,
+                parameters);
+
+            try
+            {
+                HttpResponseMessage response;
+                if (_promptEditingId.HasValue)
+                {
+                    response = await Http.PutAsJsonAsync($"api/ai/presets/{_promptEditingId.Value}", request);
+                }
+                else
+                {
+                    response = await Http.PostAsJsonAsync("api/ai/presets", request);
+                }
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    _promptStatus = $"Save failed ({response.StatusCode}).";
+                    return;
+                }
+
+                _promptStatus = "Preset saved.";
+                await LoadPromptPresetsAsync();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Prompt preset save failed.");
+                _promptStatus = "Preset save failed.";
+            }
+        }
+
+        private async Task DeletePromptPresetAsync(Guid presetId)
+        {
+            try
+            {
+                using HttpResponseMessage response = await Http.DeleteAsync($"api/ai/presets/{presetId}");
+                if (!response.IsSuccessStatusCode)
+                {
+                    _promptStatus = $"Delete failed ({response.StatusCode}).";
+                    return;
+                }
+
+                _pinnedPromptPresetIds.RemoveAll(id => id == presetId);
+                if (_promptEditingId == presetId)
+                {
+                    BeginCreatePromptPreset();
+                }
+
+                _promptStatus = "Preset deleted.";
+                await LoadPromptPresetsAsync();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Prompt preset delete failed.");
+                _promptStatus = "Preset delete failed.";
+            }
+        }
+
+        private void TogglePinPromptPreset(Guid presetId)
+        {
+            int existingIndex = _pinnedPromptPresetIds.FindIndex(id => id == presetId);
+            if (existingIndex >= 0)
+            {
+                _pinnedPromptPresetIds.RemoveAt(existingIndex);
+                return;
+            }
+
+            if (_pinnedPromptPresetIds.Count >= 3)
+            {
+                _promptStatus = "You can pin up to 3 presets.";
+                return;
+            }
+
+            _pinnedPromptPresetIds.Add(presetId);
+        }
+
+        private bool IsPromptPresetPinned(Guid presetId)
+        {
+            return _pinnedPromptPresetIds.Contains(presetId);
+        }
+
+        private async Task RunPromptPresetAsync(PromptPresetDto preset)
+        {
+            if (!CanShowPromptLibrary)
+            {
+                return;
+            }
+
+            string scope = _promptRunScope;
+            if (scope == "selection" && _currentSelectionRange is null)
+            {
+                _promptStatus = "Select text to run this on selection scope.";
+                return;
+            }
+
+            string actionId = ResolvePresetActionId(preset, scope);
+            IAiAction? action = AiOrchestrator.GetAction(actionId);
+            if (action is null || !AiOrchestrator.CanRunAction(actionId))
+            {
+                _promptStatus = $"Action '{actionId}' is not available.";
+                return;
+            }
+
+            Dictionary<string, object?> inputs = NormalizePromptParameters(preset.Parameters);
+            if (string.Equals(preset.Kind, "custom", StringComparison.OrdinalIgnoreCase))
+            {
+                inputs["template"] = preset.TemplateText ?? string.Empty;
+                inputs["scope"] = scope;
+            }
+
+            bool requiresSelection = action.RequiresSelection || string.Equals(scope, "selection", StringComparison.Ordinal);
+            AiActionOption option = new(
+                actionId,
+                preset.Name,
+                preset.Name,
+                requiresSelection,
+                inputs,
+                preset.Category,
+                false);
+
+            await OnAiActionSelected(option);
+            _promptStatus = "Preset executed. Review preview and apply.";
+        }
+
+        private string ResolvePresetActionId(PromptPresetDto preset, string scope)
+        {
+            if (string.Equals(preset.Kind, "custom", StringComparison.OrdinalIgnoreCase))
+            {
+                return CustomTransformAction.ActionIdValue;
+            }
+
+            string actionId = preset.BuiltinActionId ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(actionId))
+            {
+                return string.Empty;
+            }
+
+            if (scope == "selection" && actionId.EndsWith(".section", StringComparison.Ordinal))
+            {
+                string selectionActionId = actionId.Substring(0, actionId.Length - ".section".Length) + ".selection";
+                if (AiOrchestrator.CanRunAction(selectionActionId))
+                {
+                    return selectionActionId;
+                }
+            }
+
+            if (scope == "section" && actionId.EndsWith(".selection", StringComparison.Ordinal))
+            {
+                string sectionActionId = actionId.Substring(0, actionId.Length - ".selection".Length) + ".section";
+                if (AiOrchestrator.CanRunAction(sectionActionId))
+                {
+                    return sectionActionId;
+                }
+            }
+
+            return actionId;
+        }
+
+        private static bool TryParsePromptParameters(
+            string json,
+            out Dictionary<string, object?> parameters,
+            out string? error)
+        {
+            parameters = new Dictionary<string, object?>();
+            error = null;
+
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return true;
+            }
+
+            try
+            {
+                Dictionary<string, object?>? parsed = JsonSerializer.Deserialize<Dictionary<string, object?>>(json, JsonOptions);
+                parameters = parsed ?? new Dictionary<string, object?>();
+                return true;
+            }
+            catch (JsonException)
+            {
+                error = "Parameters must be valid JSON object.";
+                return false;
+            }
+        }
+
+        private static Dictionary<string, object?> NormalizePromptParameters(Dictionary<string, object?> parameters)
+        {
+            Dictionary<string, object?> normalized = new();
+            foreach ((string key, object? value) in parameters)
+            {
+                if (value is JsonElement element)
+                {
+                    normalized[key] = ConvertJsonElement(element);
+                }
+                else
+                {
+                    normalized[key] = value;
+                }
+            }
+
+            return normalized;
+        }
+
+        private static object? ConvertJsonElement(JsonElement element)
+        {
+            return element.ValueKind switch
+            {
+                JsonValueKind.String => element.GetString(),
+                JsonValueKind.Number => element.TryGetInt64(out long longValue)
+                    ? longValue
+                    : (element.TryGetDouble(out double doubleValue) ? doubleValue : element.GetRawText()),
+                JsonValueKind.True => true,
+                JsonValueKind.False => false,
+                JsonValueKind.Null => null,
+                _ => element.GetRawText()
+            };
         }
 
         private void OnSceneNarrativePurposeInput(ChangeEventArgs args)
@@ -3409,9 +4271,103 @@ namespace BlazorApp.Components.Pages
             return normalized.Trim();
         }
 
+        private bool CanShowReviseTools =>
+            _reviseToolsEnabled
+            && CanShowAiMenu
+            && (_currentSelectionRange is not null || _activeSection is not null);
+
+        private void OnReviseToolChanged(ChangeEventArgs args)
+        {
+            _selectedReviseTool = args.Value?.ToString() ?? "tighten";
+        }
+
+        private async Task OnReviseRequested()
+        {
+            AiActionOption? action = ResolveReviseAction(_selectedReviseTool, _currentSelectionRange is not null);
+            if (action is null)
+            {
+                return;
+            }
+
+            await OnAiActionSelected(action);
+        }
+
+        private AiActionOption? ResolveReviseAction(string tool, bool hasSelection)
+        {
+            string actionId = tool switch
+            {
+                "tighten" => hasSelection ? TightenSelectionAction.ActionIdValue : TightenSectionAction.ActionIdValue,
+                "expand" => hasSelection ? ExpandSelectionAction.ActionIdValue : ExpandSectionAction.ActionIdValue,
+                "change_tone" => hasSelection ? ChangeToneSelectionAction.ActionIdValue : ChangeToneSectionAction.ActionIdValue,
+                "show_dont_tell" => hasSelection ? ShowDontTellSelectionAction.ActionIdValue : ShowDontTellSectionAction.ActionIdValue,
+                _ => hasSelection ? TightenSelectionAction.ActionIdValue : TightenSectionAction.ActionIdValue
+            };
+
+            AiActionOption? option = _aiActions.FirstOrDefault(entry => string.Equals(entry.ActionKey, actionId, StringComparison.Ordinal));
+            if (option is null || !AiOrchestrator.CanRunAction(option.ActionKey))
+            {
+                return null;
+            }
+
+            if (string.Equals(tool, "change_tone", StringComparison.Ordinal))
+            {
+                Dictionary<string, object?> inputs = new(option.Inputs)
+                {
+                    ["tone"] = "Formal"
+                };
+                option = option with { Inputs = inputs };
+            }
+
+            return option;
+        }
+
         private static string BuildActionLabel(AiActionOption action)
         {
             return action.Label;
+        }
+
+        private static string? TryGetSectionContent(Document document, Guid sectionId)
+        {
+            foreach (Chapter chapter in document.Chapters)
+            {
+                Section? section = chapter.Sections.FirstOrDefault(item => item.SectionId == sectionId);
+                if (section is not null)
+                {
+                    return section.Content.Value;
+                }
+            }
+
+            return null;
+        }
+
+        private static AiProposal EnsureCommandCentricTextOperations(AiProposal proposal, string proposedText, int plainTextLength)
+        {
+            if (proposal.Operations.Count > 0)
+            {
+                return proposal;
+            }
+
+            if (string.IsNullOrWhiteSpace(proposedText))
+            {
+                return proposal;
+            }
+
+            if (!string.Equals(proposal.ActionId, ProposeNextParagraphAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return proposal;
+            }
+
+            string appendText = Environment.NewLine + Environment.NewLine + proposedText;
+            List<ProposedOperation> operations = new(proposal.Operations)
+            {
+                new ReplaceTextRangeOperation(proposal.SectionId, new TextRange(Math.Max(0, plainTextLength), 0), appendText)
+            };
+
+            return proposal with
+            {
+                Operations = operations,
+                ProposedText = proposedText
+            };
         }
 
         private void ShowAiMessage(string message)
@@ -3443,21 +4399,41 @@ namespace BlazorApp.Components.Pages
             }
 
             string? beforeContent = _pageEditor is null ? null : await _pageEditor.GetContentAsync();
-            bool appendParagraph = string.Equals(
-                pending.Proposal?.ActionId,
-                ProposeNextParagraphAction.ActionIdValue,
-                StringComparison.Ordinal);
-            string proposedText = appendParagraph
-                ? NormalizeSingleParagraph(pending.ProposedText)
-                : pending.ProposedText;
+            string proposedText = pending.ProposedText;
 
-            if (appendParagraph)
+            if (_aiCommandCentricApplyEnabled && pending.Proposal is not null && _activeSection is not null && _pageEditor is not null)
             {
-                await InvokePageCommandAsync("appendParagraph", proposedText);
+                string html = beforeContent ?? string.Empty;
+                string plainText = PlainTextMapper.ToPlainText(html);
+                AiProposal proposalToApply = EnsureCommandCentricTextOperations(pending.Proposal, proposedText, plainText.Length);
+
+                Document stateDocument = BuildAiDocument(html);
+                DocumentState state = new(stateDocument);
+                CommandProcessor processor = new(state);
+                AiProposalApplier.Apply(processor, proposalToApply);
+
+                string updatedHtml = TryGetSectionContent(state.Document, _activeSection.Id) ?? html;
+                await _pageEditor.SetContentAsync(updatedHtml, markDirty: true);
+                await _pageEditor.SaveNowAsync();
             }
             else
             {
-                await InvokePageCommandAsync("replaceSelection", proposedText);
+                bool appendParagraph = string.Equals(
+                    pending.Proposal?.ActionId,
+                    ProposeNextParagraphAction.ActionIdValue,
+                    StringComparison.Ordinal);
+                string fallbackText = appendParagraph
+                    ? NormalizeSingleParagraph(proposedText)
+                    : proposedText;
+
+                if (appendParagraph)
+                {
+                    await InvokePageCommandAsync("appendParagraph", fallbackText);
+                }
+                else
+                {
+                    await InvokePageCommandAsync("replaceSelection", fallbackText);
+                }
             }
             string? afterContent = _pageEditor is null ? null : await _pageEditor.GetContentAsync();
             Guid historyId = pending.Proposal?.ProposalId ?? Guid.NewGuid();
@@ -3529,6 +4505,41 @@ namespace BlazorApp.Components.Pages
         private static string FormatHistoryText(string? text)
         {
             return string.IsNullOrWhiteSpace(text) ? "No content captured." : text;
+        }
+
+        private static string BuildPendingLineDiff(string? before, string? after)
+        {
+            string left = before ?? string.Empty;
+            string right = after ?? string.Empty;
+            string[] leftLines = left.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+            string[] rightLines = right.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+            int max = Math.Max(leftLines.Length, rightLines.Length);
+            List<string> lines = new(max);
+
+            for (int i = 0; i < max; i++)
+            {
+                string l = i < leftLines.Length ? leftLines[i] : string.Empty;
+                string r = i < rightLines.Length ? rightLines[i] : string.Empty;
+
+                if (string.Equals(l, r, StringComparison.Ordinal))
+                {
+                    lines.Add($"  {r}");
+                }
+                else
+                {
+                    if (!string.IsNullOrEmpty(l))
+                    {
+                        lines.Add($"- {l}");
+                    }
+
+                    if (!string.IsNullOrEmpty(r))
+                    {
+                        lines.Add($"+ {r}");
+                    }
+                }
+            }
+
+            return string.Join(Environment.NewLine, lines);
         }
 
         private string GetPendingSummary()
@@ -3914,7 +4925,8 @@ namespace BlazorApp.Components.Pages
             string Instruction,
             bool RequiresSelection,
             Dictionary<string, object?> Inputs,
-            string? Description = null);
+            string? Description = null,
+            bool IncludeInLists = true);
 
         private sealed record AiHistoryEntry(
             Guid Id,
@@ -3939,6 +4951,11 @@ namespace BlazorApp.Components.Pages
             string? ImageDataUrl,
             string? ErrorMessage,
             DateTime Timestamp);
+
+        private sealed record PendingContinuityHighlight(
+            Guid SectionId,
+            int Start,
+            int Length);
 
         private sealed class ExportTemplateEditorModel
         {
@@ -4030,7 +5047,9 @@ namespace BlazorApp.Components.Pages
             Notes,
             Scene,
             Outline,
-            Ai
+            Ai,
+            Continuity,
+            PromptLibrary
         }
     }
 }

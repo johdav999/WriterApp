@@ -63,6 +63,7 @@ else
     private string? _lastSearchHighlightQuery;
     private string? _pendingSearchHighlightQuery;
     private bool _searchHighlightActive;
+    private IReadOnlyList<AiDecorationRange>? _pendingAiDecorations;
     private string? _lastAnnotationsFingerprint;
     private string? _lastQualityIssuesFingerprint;
     private EditorStatusSnapshot _lastStatusSnapshot = EditorStatusSnapshot.Empty;
@@ -227,6 +228,7 @@ else
         _ = SetHeadingNumberingContextAsync();
         _ = ForceHeadingNumberingRebuildAsync("editorReady");
         _ = ApplySearchHighlightAsync(_pendingSearchHighlightQuery ?? SearchHighlightQuery);
+        _ = ApplyAiDecorationsAsync();
         _ = ApplyAnnotationsAsync();
         _ = AttachAnnotationClicksAsync();
         if (_pendingSetContent && _editorRef is not null)
@@ -320,6 +322,16 @@ else
         _searchHighlightActive = false;
         _pendingSearchHighlightQuery = null;
         await JSRuntime.InvokeVoidAsync("tiptapEditor.clearSearchHighlights", _editorInstance);
+    }
+
+    private async Task ApplyAiDecorationsAsync()
+    {
+        if (_editorInstance is null || _pendingAiDecorations is null)
+        {
+            return;
+        }
+
+        await JSRuntime.InvokeVoidAsync("tiptapEditor.setAiDecorations", _editorInstance, _pendingAiDecorations);
     }
 
     private async Task ApplyAnnotationsAsync()
@@ -993,6 +1005,22 @@ else
         return await JSRuntime.InvokeAsync<string?>("tiptapEditor.getSelectionText", _editorInstance);
     }
 
+    public async Task SetAiDecorationsAsync(IReadOnlyList<AiDecorationRange>? ranges)
+    {
+        _pendingAiDecorations = ranges ?? Array.Empty<AiDecorationRange>();
+        if (_editorInstance is null)
+        {
+            return;
+        }
+
+        await InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync("tiptapEditor.setAiDecorations", _editorInstance, _pendingAiDecorations));
+    }
+
+    public Task ClearAiDecorationsAsync()
+    {
+        return SetAiDecorationsAsync(Array.Empty<AiDecorationRange>());
+    }
+
     private async Task InvokeJsSafeAsync(Func<ValueTask> action)
     {
         try
@@ -1092,6 +1120,8 @@ else
     }
 
     public sealed record SelectionDocRange(int From, int To);
+
+    public sealed record AiDecorationRange(int Start, int End, string? ClassName = null, bool IsActive = false);
 
     public sealed record EditorStatusSnapshot(
         int WordCount,

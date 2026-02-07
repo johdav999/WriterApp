@@ -15,6 +15,7 @@
 @using Microsoft.EntityFrameworkCore
 @using Microsoft.Extensions.Logging
 @using Microsoft.Extensions.Options
+@using Microsoft.Extensions.Configuration
 @using Microsoft.JSInterop
 @using WriterApp.AI.Abstractions
 @using WriterApp.AI.Actions
@@ -43,6 +44,7 @@
 @inject IAiUsageStatusService AiUsageStatusService
 @inject IUserIdResolver UserIdResolver
 @inject IOptions<WriterAiOptions> AiOptionsAccessor
+@inject IConfiguration Configuration
 
 <PageTitle>Synopsis</PageTitle>
 
@@ -142,6 +144,49 @@
             {
                 <div class="coach-message">@_coachError</div>
             }
+
+            @if (IsOutlineGeneratorEnabled)
+            {
+                <div class="outline-generator">
+                    <h3>Outline generator</h3>
+                    <div class="outline-controls">
+                        <label>Mode</label>
+                        <select @bind="_outlineMode">
+                            <option value="chapters">Chapters</option>
+                            <option value="scenes">Scenes</option>
+                        </select>
+                        <label>Count</label>
+                        <input type="number" min="3" max="40" @bind="_outlineDesiredCount" />
+                    </div>
+                    <button type="button" class="coach-button" disabled="@_isOutlineBusy" @onclick="OnGenerateOutlineFromSynopsis">
+                        @(_isOutlineBusy ? "Generating..." : "Generate outline")
+                    </button>
+                    @if (!string.IsNullOrWhiteSpace(_outlineError))
+                    {
+                        <div class="coach-message">@_outlineError</div>
+                    }
+
+                    @if (_outlineDraftPreview is not null && _outlineDraftPreview.Items.Count > 0)
+                    {
+                        <div class="outline-preview">
+                            @foreach (OutlineItemDraft item in _outlineDraftPreview.Items)
+                            {
+                                <div class="outline-item">
+                                    <div class="outline-item-title">@item.Index. @item.Title</div>
+                                    @if (!string.IsNullOrWhiteSpace(item.Summary))
+                                    {
+                                        <div class="outline-item-summary">@item.Summary</div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                        <div class="synopsis-proposal-actions">
+                            <button type="button" @onclick="OnApplyOutlineDraft">Apply draft</button>
+                            <button type="button" class="secondary" @onclick="OnCreateSectionsFromOutline">Create sections</button>
+                        </div>
+                    }
+                </div>
+            }
         }
 
         @if (_showPlansPanel)
@@ -196,6 +241,12 @@
     private string? _coachError;
     private bool _isCoachBusy;
     private PendingSynopsisProposal? _pendingProposal;
+    private bool _isOutlineBusy;
+    private string? _outlineError;
+    private string _outlineMode = "chapters";
+    private int _outlineDesiredCount = 12;
+    private AiProposal? _pendingOutlineProposal;
+    private OutlineDraft? _outlineDraftPreview;
     private readonly List<Plan> _planCatalog = new();
     private bool _showPlansPanel;
     private bool _isPlansLoading;
@@ -448,6 +499,90 @@
         await LoadAiUsageStatusAsync();
     }
 
+    private async Task OnGenerateOutlineFromSynopsis()
+    {
+        if (!IsAiUiEnabled || !IsAiEntitled || IsAiQuotaExceeded || !IsOutlineGeneratorEnabled)
+        {
+            return;
+        }
+
+        _isOutlineBusy = true;
+        _outlineError = null;
+
+        try
+        {
+            AiActionInput input = new(
+                _state.Document,
+                _provenanceSectionId,
+                new TextRange(0, 0),
+                string.Empty,
+                "Generate synopsis outline",
+                new Dictionary<string, object?>
+                {
+                    ["mode"] = _outlineMode,
+                    ["desired_count"] = _outlineDesiredCount
+                });
+
+            AiExecutionResult result = await AiOrchestrator.ExecuteActionAsync(
+                GenerateOutlineFromSynopsisAction.ActionIdValue,
+                input,
+                CancellationToken.None);
+
+            if (!result.Succeeded || result.Proposal is null)
+            {
+                _outlineError = result.ErrorMessage ?? "Outline generation failed.";
+                return;
+            }
+
+            if (!OutlineDraftParser.TryParse(result.Proposal.ProposedText, out OutlineDraft? draft) || draft is null)
+            {
+                _outlineError = "Outline response was invalid.";
+                return;
+            }
+
+            _pendingOutlineProposal = result.Proposal;
+            _outlineDraftPreview = draft;
+            await LoadAiUsageStatusAsync();
+        }
+        catch (Exception ex)
+        {
+            _outlineError = ex.Message;
+        }
+        finally
+        {
+            _isOutlineBusy = false;
+        }
+    }
+
+    private async Task OnApplyOutlineDraft()
+    {
+        if (_pendingOutlineProposal is null)
+        {
+            return;
+        }
+
+        AiProposalApplier.Apply(_commandProcessor, _pendingOutlineProposal);
+        await SaveDocumentAsync();
+    }
+
+    private async Task OnCreateSectionsFromOutline()
+    {
+        if (_outlineDraftPreview is null || _outlineDraftPreview.Items.Count == 0)
+        {
+            string stored = GetSynopsisValue("outline_draft");
+            if (!OutlineDraftParser.TryParse(stored, out OutlineDraft? parsed) || parsed is null || parsed.Items.Count == 0)
+            {
+                _outlineError = "No outline draft found. Generate and apply a draft first.";
+                return;
+            }
+
+            _outlineDraftPreview = parsed;
+        }
+
+        _commandProcessor.Execute(new CreateSectionsFromOutlineCommand(_provenanceSectionId, _outlineDraftPreview.Items));
+        await SaveDocumentAsync();
+    }
+
     private void OnDiscardPendingProposal()
     {
         _pendingProposal = null;
@@ -500,6 +635,12 @@
     private bool IsAiQuotaExceeded => _aiUsageStatus is not null && _aiUsageStatus.QuotaRemaining <= 0;
 
     private bool IsAiUiEnabled => _aiUsageStatus?.UiEnabled == true;
+
+    private bool IsOutlineGeneratorEnabled =>
+        (Configuration.GetValue<bool?>("AI:OutlineGeneratorEnabled")
+            ?? Configuration.GetValue<bool?>("WriterApp:AI:OutlineGeneratorEnabled")
+            ?? false)
+        && AiOrchestrator.CanRunAction(GenerateOutlineFromSynopsisAction.ActionIdValue);
 
     private bool HasActiveAiProvenance(string fieldKey)
     {
@@ -875,6 +1016,57 @@
         margin-top: 10px;
         font-size: 0.85rem;
         color: #6b7280;
+    }
+
+    .outline-generator {
+        margin-top: 14px;
+        padding-top: 12px;
+        border-top: 1px solid #e5e7eb;
+    }
+
+    .outline-generator h3 {
+        margin: 0 0 8px;
+        font-size: 0.95rem;
+    }
+
+    .outline-controls {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 6px 8px;
+        align-items: center;
+    }
+
+    .outline-controls input,
+    .outline-controls select {
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        padding: 6px;
+        background: #fff;
+    }
+
+    .outline-preview {
+        margin-top: 10px;
+        display: grid;
+        gap: 8px;
+        max-height: 260px;
+        overflow: auto;
+    }
+
+    .outline-item {
+        background: #fff;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 8px;
+    }
+
+    .outline-item-title {
+        font-weight: 600;
+        margin-bottom: 4px;
+    }
+
+    .outline-item-summary {
+        font-size: 0.85rem;
+        color: #4b5563;
     }
 
     .coach-plans {

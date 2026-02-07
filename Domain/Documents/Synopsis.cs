@@ -14,6 +14,7 @@ namespace WriterApp.Domain.Documents
         public string EndingIntent { get; set; } = string.Empty;
         public string OpenQuestions { get; set; } = string.Empty;
         public string Notes { get; set; } = string.Empty;
+        public string OutlineDraft { get; set; } = string.Empty;
         public DateTime ModifiedUtc { get; set; }
     }
 }

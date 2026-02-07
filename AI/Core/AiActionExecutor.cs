@@ -8,6 +8,7 @@ using WriterApp.AI.Abstractions;
 using WriterApp.AI.Actions;
 using WriterApp.Application.AI.StoryCoach;
 using WriterApp.Application.Commands;
+using WriterApp.Application.Synopsis;
 
 namespace WriterApp.AI.Core
 {
@@ -32,6 +33,11 @@ namespace WriterApp.AI.Core
             }
 
             AiRequest request = action.BuildRequest(input);
+            if (string.Equals(action.ActionId, ApplyContinuityFixAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return BuildApplyContinuityFixOutcome(action, input, request);
+            }
+
             AiProviderSelection selection = _router.Route(request);
             AiResult result = await selection.Provider.ExecuteAsync(request, ct);
             return BuildOutcome(action, input, request, result, selection.SelectedProviderId);
@@ -70,6 +76,37 @@ namespace WriterApp.AI.Core
                 AiArtifact? textArtifact = result.Artifacts.FirstOrDefault(artifact => artifact.Modality == AiModality.Text);
                 proposedText = textArtifact?.TextContent ?? string.Empty;
                 originalText = request.Context.OriginalText ?? input.SelectedText;
+            }
+            else if (string.Equals(action.ActionId, CustomTransformAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                AiArtifact? textArtifact = result.Artifacts.FirstOrDefault(artifact => artifact.Modality == AiModality.Text);
+                proposedText = textArtifact?.TextContent ?? string.Empty;
+                originalText = request.Context.SelectionText ?? request.Context.OriginalText ?? input.SelectedText;
+
+                if (input.SelectionRange.Length > 0 && !string.IsNullOrWhiteSpace(input.SelectedText))
+                {
+                    operations.Add(new ReplaceTextRangeOperation(input.ActiveSectionId, input.SelectionRange, proposedText));
+                }
+                else
+                {
+                    TextRange sectionRange = new(0, (originalText ?? string.Empty).Length);
+                    operations.Add(new ReplaceTextRangeOperation(input.ActiveSectionId, sectionRange, proposedText));
+                }
+            }
+            else if (IsReviseSelectionAction(action.ActionId))
+            {
+                AiArtifact? textArtifact = result.Artifacts.FirstOrDefault(artifact => artifact.Modality == AiModality.Text);
+                proposedText = textArtifact?.TextContent ?? string.Empty;
+                originalText = request.Context.SelectionText ?? request.Context.OriginalText ?? input.SelectedText;
+                operations.Add(new ReplaceTextRangeOperation(input.ActiveSectionId, input.SelectionRange, proposedText));
+            }
+            else if (IsReviseSectionAction(action.ActionId))
+            {
+                AiArtifact? textArtifact = result.Artifacts.FirstOrDefault(artifact => artifact.Modality == AiModality.Text);
+                proposedText = textArtifact?.TextContent ?? string.Empty;
+                originalText = request.Context.OriginalText ?? string.Empty;
+                TextRange sectionRange = new(0, (originalText ?? string.Empty).Length);
+                operations.Add(new ReplaceTextRangeOperation(input.ActiveSectionId, sectionRange, proposedText));
             }
             else if (string.Equals(action.ActionId, StoryCoachAction.ActionIdValue, StringComparison.Ordinal))
             {
@@ -117,6 +154,32 @@ namespace WriterApp.AI.Core
                 AiArtifact? textArtifact = result.Artifacts.FirstOrDefault(artifact => artifact.Modality == AiModality.Text);
                 proposedText = textArtifact?.TextContent ?? string.Empty;
             }
+            else if (string.Equals(action.ActionId, GenerateOutlineFromSynopsisAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                AiArtifact? textArtifact = result.Artifacts.FirstOrDefault(artifact => artifact.Modality == AiModality.Text);
+                string rawJson = textArtifact?.TextContent ?? string.Empty;
+                if (!OutlineDraftParser.TryParse(rawJson, out OutlineDraft? outline))
+                {
+                    _logger.LogWarning("Synopsis outline output rejected: invalid JSON contract.");
+                    return AiExecutionOutcome.Rejected(
+                        result,
+                        providerId,
+                        "ai.outline_parse_failed",
+                        "Outline response was not valid JSON.");
+                }
+
+                string canonicalJson = OutlineDraftParser.ToCanonicalJson(outline!);
+                originalText = input.Document.Synopsis?.OutlineDraft ?? string.Empty;
+                proposedText = canonicalJson;
+                operations.Add(new ReplaceSynopsisFieldOperation("outline_draft", canonicalJson));
+            }
+            else if (string.Equals(action.ActionId, ExtractCharacterBibleAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(action.ActionId, ExtractPlaceBibleAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(action.ActionId, ContinuityCheckAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                AiArtifact? textArtifact = result.Artifacts.FirstOrDefault(artifact => artifact.Modality == AiModality.Text);
+                proposedText = textArtifact?.TextContent ?? string.Empty;
+            }
             else if (string.Equals(action.ActionId, ProposeNextParagraphAction.ActionIdValue, StringComparison.Ordinal))
             {
                 AiArtifact? textArtifact = result.Artifacts.FirstOrDefault(artifact => artifact.Modality == AiModality.Text);
@@ -140,6 +203,10 @@ namespace WriterApp.AI.Core
                 }
             }
 
+            string? proposalReason = IsReviseAction(action.ActionId)
+                ? BuildReviseReason(action.ActionId)
+                : input.Instruction;
+
             AiProposal proposal = new(
                 Guid.NewGuid(),
                 input.ActiveSectionId,
@@ -148,7 +215,7 @@ namespace WriterApp.AI.Core
                 providerId,
                 request.RequestId,
                 DateTime.UtcNow,
-                input.Instruction,
+                proposalReason,
                 operations,
                 artifactIds,
                 BuildUserSummary(action.ActionId, input.Instruction, input.Options),
@@ -177,6 +244,21 @@ namespace WriterApp.AI.Core
                 return "Section";
             }
 
+            if (string.Equals(actionId, CustomTransformAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Section";
+            }
+
+            if (IsReviseSectionAction(actionId))
+            {
+                return "Section";
+            }
+
+            if (IsReviseSelectionAction(actionId))
+            {
+                return "Selection";
+            }
+
             if (string.Equals(actionId, StoryCoachAction.ActionIdValue, StringComparison.Ordinal))
             {
                 return "Synopsis";
@@ -191,6 +273,27 @@ namespace WriterApp.AI.Core
             if (string.Equals(actionId, GenerateOutlineAction.ActionIdValue, StringComparison.Ordinal))
             {
                 return "Document";
+            }
+
+            if (string.Equals(actionId, GenerateOutlineFromSynopsisAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Synopsis";
+            }
+
+            if (string.Equals(actionId, ExtractCharacterBibleAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(actionId, ExtractPlaceBibleAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Document";
+            }
+
+            if (string.Equals(actionId, ContinuityCheckAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Section";
+            }
+
+            if (string.Equals(actionId, ApplyContinuityFixAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Section";
             }
 
             if (string.Equals(actionId, SceneSuggestAction.ActionIdValue, StringComparison.Ordinal)
@@ -230,6 +333,11 @@ namespace WriterApp.AI.Core
                 return "Translate document";
             }
 
+            if (string.Equals(actionId, CustomTransformAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Run custom prompt";
+            }
+
             if (string.Equals(actionId, StoryCoachAction.ActionIdValue, StringComparison.Ordinal))
             {
                 return "Story Coach suggestion";
@@ -248,6 +356,31 @@ namespace WriterApp.AI.Core
             if (string.Equals(actionId, GenerateOutlineAction.ActionIdValue, StringComparison.Ordinal))
             {
                 return "Generate outline";
+            }
+
+            if (string.Equals(actionId, GenerateOutlineFromSynopsisAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Generate synopsis outline";
+            }
+
+            if (string.Equals(actionId, ExtractCharacterBibleAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Build character bible";
+            }
+
+            if (string.Equals(actionId, ExtractPlaceBibleAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Build place bible";
+            }
+
+            if (string.Equals(actionId, ContinuityCheckAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Check continuity";
+            }
+
+            if (string.Equals(actionId, ApplyContinuityFixAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Apply continuity fix";
             }
 
             if (string.Equals(actionId, SceneSuggestAction.ActionIdValue, StringComparison.Ordinal))
@@ -270,13 +403,25 @@ namespace WriterApp.AI.Core
                 return "Propose next paragraph";
             }
 
+            if (IsReviseAction(actionId))
+            {
+                string tone = GetOption(options, "tone");
+                string reviseLabel = BuildReviseReason(actionId).Replace('_', ' ');
+                if (string.Equals(reviseLabel, "change tone", StringComparison.Ordinal) && !string.IsNullOrWhiteSpace(tone))
+                {
+                    return $"Change tone to {tone}";
+                }
+
+                return $"{char.ToUpperInvariant(reviseLabel[0])}{reviseLabel.Substring(1)}";
+            }
+
             if (!string.Equals(actionId, RewriteSelectionAction.ActionIdValue, StringComparison.Ordinal))
             {
                 return "Apply AI change";
             }
 
             string normalized = instruction?.Trim().ToLowerInvariant() ?? string.Empty;
-            string tone = GetOption(options, "tone");
+            string toneOption = GetOption(options, "tone");
             string length = GetOption(options, "length");
 
             if (normalized.Contains("shorten", StringComparison.Ordinal))
@@ -299,9 +444,9 @@ namespace WriterApp.AI.Core
                 return "Shorten selected text";
             }
 
-            if (!string.IsNullOrWhiteSpace(tone) && !string.Equals(tone, "Neutral", StringComparison.OrdinalIgnoreCase))
+            if (!string.IsNullOrWhiteSpace(toneOption) && !string.Equals(toneOption, "Neutral", StringComparison.OrdinalIgnoreCase))
             {
-                return $"Rewrite selected text in a more {tone} tone";
+                return $"Rewrite selected text in a more {toneOption} tone";
             }
 
             if (normalized.Contains("rewrite", StringComparison.Ordinal))
@@ -335,6 +480,123 @@ namespace WriterApp.AI.Core
             }
 
             return value.ToString() ?? string.Empty;
+        }
+
+        private static bool IsReviseSelectionAction(string actionId)
+        {
+            return string.Equals(actionId, TightenSelectionAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(actionId, ExpandSelectionAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(actionId, ChangeToneSelectionAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(actionId, ShowDontTellSelectionAction.ActionIdValue, StringComparison.Ordinal);
+        }
+
+        private static bool IsReviseSectionAction(string actionId)
+        {
+            return string.Equals(actionId, TightenSectionAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(actionId, ExpandSectionAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(actionId, ChangeToneSectionAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(actionId, ShowDontTellSectionAction.ActionIdValue, StringComparison.Ordinal);
+        }
+
+        private static bool IsReviseAction(string actionId) => IsReviseSelectionAction(actionId) || IsReviseSectionAction(actionId);
+
+        private static string BuildReviseReason(string actionId)
+        {
+            int separator = actionId.IndexOf('.');
+            if (separator <= 0)
+            {
+                return actionId;
+            }
+
+            return actionId.Substring(0, separator);
+        }
+
+        private static AiExecutionOutcome BuildApplyContinuityFixOutcome(IAiAction action, AiActionInput input, AiRequest request)
+        {
+            string suggestedFix = GetOption(input.Options, "suggested_fix");
+            if (string.IsNullOrWhiteSpace(suggestedFix))
+            {
+                AiResult rejectedResult = new(
+                    request.RequestId,
+                    new List<AiArtifact>(),
+                    new AiUsage(0, 0, TimeSpan.Zero),
+                    new Dictionary<string, object>
+                    {
+                        ["provider"] = "local"
+                    });
+                return AiExecutionOutcome.Rejected(
+                    rejectedResult,
+                    "local",
+                    "ai.continuity_fix_missing_text",
+                    "Continuity fix requires suggested text.");
+            }
+
+            int start = Math.Max(0, ParseIntOption(input.Options, "anchor_start", input.SelectionRange.Start));
+            int length = Math.Max(0, ParseIntOption(input.Options, "anchor_length", input.SelectionRange.Length));
+            Guid sectionId = ParseGuidOption(input.Options, "section_id", input.ActiveSectionId);
+            TextRange targetRange = new(start, length);
+            List<ProposedOperation> operations = new()
+            {
+                new ReplaceTextRangeOperation(sectionId, targetRange, suggestedFix)
+            };
+
+            AiProposal proposal = new(
+                Guid.NewGuid(),
+                sectionId,
+                "Apply continuity fix",
+                action.ActionId,
+                "local",
+                request.RequestId,
+                DateTime.UtcNow,
+                "continuity_fix",
+                operations,
+                new List<Guid>(),
+                "Apply continuity fix",
+                "Section",
+                input.Instruction,
+                input.SelectedText,
+                suggestedFix);
+
+            AiResult result = new(
+                request.RequestId,
+                new List<AiArtifact>(),
+                new AiUsage(0, 0, TimeSpan.Zero),
+                new Dictionary<string, object>
+                {
+                    ["provider"] = "local"
+                });
+
+            return AiExecutionOutcome.Success(proposal, result, "local");
+        }
+
+        private static int ParseIntOption(Dictionary<string, object?>? options, string key, int fallback)
+        {
+            if (options is null || !options.TryGetValue(key, out object? value) || value is null)
+            {
+                return fallback;
+            }
+
+            if (value is int intValue)
+            {
+                return intValue;
+            }
+
+            return int.TryParse(value.ToString(), out int parsed) ? parsed : fallback;
+        }
+
+        private static Guid ParseGuidOption(Dictionary<string, object?>? options, string key, Guid fallback)
+        {
+            if (options is null || !options.TryGetValue(key, out object? value) || value is null)
+            {
+                return fallback;
+            }
+
+            if (value is Guid guidValue)
+            {
+                return guidValue;
+            }
+
+            return Guid.TryParse(value.ToString(), out Guid parsed) ? parsed : fallback;
         }
     }
 }

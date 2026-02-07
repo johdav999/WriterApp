@@ -64,6 +64,9 @@ namespace WriterApp.Application.Synopsis
                 case "notes":
                     value = synopsis.Notes;
                     return true;
+                case "outline_draft":
+                    value = synopsis.OutlineDraft;
+                    return true;
                 default:
                     value = string.Empty;
                     return false;
@@ -108,6 +111,9 @@ namespace WriterApp.Application.Synopsis
                     return true;
                 case "notes":
                     synopsis.Notes = value;
+                    return true;
+                case "outline_draft":
+                    synopsis.OutlineDraft = value;
                     return true;
                 default:
                     return false;

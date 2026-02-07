@@ -28,10 +28,23 @@ namespace WriterApp.AI.Providers.OpenAI
         private const string ActionSynopsisEvaluate = "synopsis.evaluate";
         private const string ActionSynopsisQuestions = "synopsis.questions";
         private const string ActionGenerateOutline = "generate.outline";
+        private const string ActionGenerateSynopsisOutline = "synopsis.generate_outline";
+        private const string ActionExtractCharacterBible = "continuity.extract_character_bible";
+        private const string ActionExtractPlaceBible = "continuity.extract_place_bible";
+        private const string ActionContinuityCheckSection = "continuity.check_section";
         private const string ActionSceneSuggest = "scene.suggest";
         private const string ActionSceneRefine = "scene.refine";
         private const string ActionSceneFindOpenQuestions = "scene.find-open-questions";
         private const string ActionProposeNextParagraph = "propose.next-paragraph";
+        private const string ActionTightenSelection = "tighten.selection";
+        private const string ActionTightenSection = "tighten.section";
+        private const string ActionExpandSelection = "expand.selection";
+        private const string ActionExpandSection = "expand.section";
+        private const string ActionChangeToneSelection = "change_tone.selection";
+        private const string ActionChangeToneSection = "change_tone.section";
+        private const string ActionShowDontTellSelection = "show_dont_tell.selection";
+        private const string ActionShowDontTellSection = "show_dont_tell.section";
+        private const string ActionCustomTransform = "custom_transform";
         private const int ImageTokenCost = 1000;
 
         private readonly IHttpClientFactory _httpClientFactory;
@@ -85,7 +98,16 @@ namespace WriterApp.AI.Providers.OpenAI
                 if (string.Equals(request.ActionId, ActionRewrite, StringComparison.Ordinal)
                     || string.Equals(request.ActionId, ActionTranslateSelection, StringComparison.Ordinal)
                     || string.Equals(request.ActionId, ActionTranslateSection, StringComparison.Ordinal)
-                    || string.Equals(request.ActionId, ActionTranslateDocument, StringComparison.Ordinal))
+                    || string.Equals(request.ActionId, ActionTranslateDocument, StringComparison.Ordinal)
+                    || string.Equals(request.ActionId, ActionTightenSelection, StringComparison.Ordinal)
+                    || string.Equals(request.ActionId, ActionTightenSection, StringComparison.Ordinal)
+                    || string.Equals(request.ActionId, ActionExpandSelection, StringComparison.Ordinal)
+                    || string.Equals(request.ActionId, ActionExpandSection, StringComparison.Ordinal)
+                    || string.Equals(request.ActionId, ActionChangeToneSelection, StringComparison.Ordinal)
+                    || string.Equals(request.ActionId, ActionChangeToneSection, StringComparison.Ordinal)
+                    || string.Equals(request.ActionId, ActionShowDontTellSelection, StringComparison.Ordinal)
+                    || string.Equals(request.ActionId, ActionShowDontTellSection, StringComparison.Ordinal)
+                    || string.Equals(request.ActionId, ActionCustomTransform, StringComparison.Ordinal))
                 {
                     (string outputText, int inputTokens, int outputTokens) = await ExecuteTextAsync(request, apiKey, ct);
                     AiArtifact artifact = new(
@@ -223,6 +245,106 @@ namespace WriterApp.AI.Providers.OpenAI
                         });
                 }
 
+                if (string.Equals(request.ActionId, ActionGenerateSynopsisOutline, StringComparison.Ordinal))
+                {
+                    (string outputText, int inputTokens, int outputTokens) = await ExecuteSynopsisOutlineAsync(request, apiKey, ct);
+                    AiArtifact artifact = new(
+                        Guid.NewGuid(),
+                        AiModality.Text,
+                        "application/json",
+                        outputText,
+                        null,
+                        null);
+
+                    AiUsage usage = new(inputTokens, outputTokens, stopwatch.Elapsed);
+                    LogUsage(request, _options.TextModel, outputTokens, stopwatch.Elapsed);
+
+                    return new AiResult(
+                        request.RequestId,
+                        new List<AiArtifact> { artifact },
+                        usage,
+                        new Dictionary<string, object>
+                        {
+                            ["provider"] = ProviderIdValue,
+                            ["model"] = _options.TextModel
+                        });
+                }
+
+                if (string.Equals(request.ActionId, ActionExtractCharacterBible, StringComparison.Ordinal))
+                {
+                    (string outputText, int inputTokens, int outputTokens) = await ExecuteCharacterBibleAsync(request, apiKey, ct);
+                    AiArtifact artifact = new(
+                        Guid.NewGuid(),
+                        AiModality.Text,
+                        "application/json",
+                        outputText,
+                        null,
+                        null);
+
+                    AiUsage usage = new(inputTokens, outputTokens, stopwatch.Elapsed);
+                    LogUsage(request, _options.TextModel, outputTokens, stopwatch.Elapsed);
+
+                    return new AiResult(
+                        request.RequestId,
+                        new List<AiArtifact> { artifact },
+                        usage,
+                        new Dictionary<string, object>
+                        {
+                            ["provider"] = ProviderIdValue,
+                            ["model"] = _options.TextModel
+                        });
+                }
+
+                if (string.Equals(request.ActionId, ActionExtractPlaceBible, StringComparison.Ordinal))
+                {
+                    (string outputText, int inputTokens, int outputTokens) = await ExecutePlaceBibleAsync(request, apiKey, ct);
+                    AiArtifact artifact = new(
+                        Guid.NewGuid(),
+                        AiModality.Text,
+                        "application/json",
+                        outputText,
+                        null,
+                        null);
+
+                    AiUsage usage = new(inputTokens, outputTokens, stopwatch.Elapsed);
+                    LogUsage(request, _options.TextModel, outputTokens, stopwatch.Elapsed);
+
+                    return new AiResult(
+                        request.RequestId,
+                        new List<AiArtifact> { artifact },
+                        usage,
+                        new Dictionary<string, object>
+                        {
+                            ["provider"] = ProviderIdValue,
+                            ["model"] = _options.TextModel
+                        });
+                }
+
+                if (string.Equals(request.ActionId, ActionContinuityCheckSection, StringComparison.Ordinal))
+                {
+                    (string outputText, int inputTokens, int outputTokens) = await ExecuteContinuityCheckAsync(request, apiKey, ct);
+                    AiArtifact artifact = new(
+                        Guid.NewGuid(),
+                        AiModality.Text,
+                        "application/json",
+                        outputText,
+                        null,
+                        null);
+
+                    AiUsage usage = new(inputTokens, outputTokens, stopwatch.Elapsed);
+                    LogUsage(request, _options.TextModel, outputTokens, stopwatch.Elapsed);
+
+                    return new AiResult(
+                        request.RequestId,
+                        new List<AiArtifact> { artifact },
+                        usage,
+                        new Dictionary<string, object>
+                        {
+                            ["provider"] = ProviderIdValue,
+                            ["model"] = _options.TextModel
+                        });
+                }
+
                 if (string.Equals(request.ActionId, ActionSceneSuggest, StringComparison.Ordinal)
                     || string.Equals(request.ActionId, ActionSceneRefine, StringComparison.Ordinal)
                     || string.Equals(request.ActionId, ActionSceneFindOpenQuestions, StringComparison.Ordinal))
@@ -310,7 +432,15 @@ namespace WriterApp.AI.Providers.OpenAI
                 throw new ArgumentNullException(nameof(request));
             }
 
-            if (!string.Equals(request.ActionId, ActionRewrite, StringComparison.Ordinal))
+            if (!string.Equals(request.ActionId, ActionRewrite, StringComparison.Ordinal)
+                && !string.Equals(request.ActionId, ActionTightenSelection, StringComparison.Ordinal)
+                && !string.Equals(request.ActionId, ActionTightenSection, StringComparison.Ordinal)
+                && !string.Equals(request.ActionId, ActionExpandSelection, StringComparison.Ordinal)
+                && !string.Equals(request.ActionId, ActionExpandSection, StringComparison.Ordinal)
+                && !string.Equals(request.ActionId, ActionChangeToneSelection, StringComparison.Ordinal)
+                && !string.Equals(request.ActionId, ActionChangeToneSection, StringComparison.Ordinal)
+                && !string.Equals(request.ActionId, ActionShowDontTellSelection, StringComparison.Ordinal)
+                && !string.Equals(request.ActionId, ActionShowDontTellSection, StringComparison.Ordinal))
             {
                 yield return new AiStreamEvent.Started();
                 yield return new AiStreamEvent.Failed($"OpenAI streaming is not available for action '{request.ActionId}'.");
@@ -452,6 +582,66 @@ namespace WriterApp.AI.Providers.OpenAI
             CancellationToken ct)
         {
             HttpRequestMessage requestMessage = BuildOutlineRequest(request, apiKey);
+            HttpClient client = _httpClientFactory.CreateClient(nameof(OpenAiProvider));
+
+            using HttpResponseMessage response = await client.SendAsync(requestMessage, ct);
+            await EnsureSuccessAsync(response, ct);
+
+            string json = await response.Content.ReadAsStringAsync(ct);
+            return ExtractResponseTextAndUsage(json);
+        }
+
+        private async Task<(string OutputText, int InputTokens, int OutputTokens)> ExecuteSynopsisOutlineAsync(
+            AiRequest request,
+            string apiKey,
+            CancellationToken ct)
+        {
+            HttpRequestMessage requestMessage = BuildSynopsisOutlineRequest(request, apiKey);
+            HttpClient client = _httpClientFactory.CreateClient(nameof(OpenAiProvider));
+
+            using HttpResponseMessage response = await client.SendAsync(requestMessage, ct);
+            await EnsureSuccessAsync(response, ct);
+
+            string json = await response.Content.ReadAsStringAsync(ct);
+            return ExtractResponseTextAndUsage(json);
+        }
+
+        private async Task<(string OutputText, int InputTokens, int OutputTokens)> ExecuteCharacterBibleAsync(
+            AiRequest request,
+            string apiKey,
+            CancellationToken ct)
+        {
+            HttpRequestMessage requestMessage = BuildCharacterBibleRequest(request, apiKey);
+            HttpClient client = _httpClientFactory.CreateClient(nameof(OpenAiProvider));
+
+            using HttpResponseMessage response = await client.SendAsync(requestMessage, ct);
+            await EnsureSuccessAsync(response, ct);
+
+            string json = await response.Content.ReadAsStringAsync(ct);
+            return ExtractResponseTextAndUsage(json);
+        }
+
+        private async Task<(string OutputText, int InputTokens, int OutputTokens)> ExecutePlaceBibleAsync(
+            AiRequest request,
+            string apiKey,
+            CancellationToken ct)
+        {
+            HttpRequestMessage requestMessage = BuildPlaceBibleRequest(request, apiKey);
+            HttpClient client = _httpClientFactory.CreateClient(nameof(OpenAiProvider));
+
+            using HttpResponseMessage response = await client.SendAsync(requestMessage, ct);
+            await EnsureSuccessAsync(response, ct);
+
+            string json = await response.Content.ReadAsStringAsync(ct);
+            return ExtractResponseTextAndUsage(json);
+        }
+
+        private async Task<(string OutputText, int InputTokens, int OutputTokens)> ExecuteContinuityCheckAsync(
+            AiRequest request,
+            string apiKey,
+            CancellationToken ct)
+        {
+            HttpRequestMessage requestMessage = BuildContinuityCheckRequest(request, apiKey);
             HttpClient client = _httpClientFactory.CreateClient(nameof(OpenAiProvider));
 
             using HttpResponseMessage response = await client.SendAsync(requestMessage, ct);
@@ -702,6 +892,178 @@ namespace WriterApp.AI.Providers.OpenAI
                     }
                 },
                 ["max_output_tokens"] = _options.MaxOutputTokens
+            };
+
+            HttpRequestMessage requestMessage = new(HttpMethod.Post, BuildUri(ResponsesEndpoint))
+            {
+                Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
+            };
+
+            ApplyAuthHeaders(requestMessage, apiKey);
+            return requestMessage;
+        }
+
+        private HttpRequestMessage BuildSynopsisOutlineRequest(AiRequest request, string apiKey)
+        {
+            string instruction = GetInputValue(request, "instruction", "Generate a structured outline.");
+            string documentTitle = GetInputValue(request, "document_title", string.Empty);
+            string synopsisContext = GetInputValue(request, "synopsis_context", string.Empty);
+            string mode = GetInputValue(request, "mode", "chapters");
+            string desiredCount = GetInputValue(request, "desired_count", "12");
+
+            string systemPrompt =
+                "You are a story architect. Return strict JSON only with no markdown fences and no commentary.";
+
+            StringBuilder userPrompt = new();
+            userPrompt.AppendLine("Produce an outline draft from the synopsis context.");
+            userPrompt.AppendLine("Schema:");
+            userPrompt.AppendLine("{\"schemaVersion\":\"1.0\",\"mode\":\"chapters|scenes\",\"items\":[{\"index\":1,\"title\":\"string\",\"summary\":\"string\",\"pov\":\"string\",\"setting\":\"string\",\"beats\":[\"string\"],\"storyRole\":\"string\",\"notes\":\"string\"}]}");
+            userPrompt.AppendLine("Rules:");
+            userPrompt.AppendLine("- JSON only.");
+            userPrompt.AppendLine("- Keep chronology coherent.");
+            userPrompt.AppendLine("- Keep names, facts, POV and language consistent with synopsis.");
+            userPrompt.AppendLine("- Preserve story intent and stakes.");
+            userPrompt.AppendLine($"- Mode: {mode}");
+            userPrompt.AppendLine($"- Desired item count: {desiredCount}");
+            if (!string.IsNullOrWhiteSpace(documentTitle))
+            {
+                userPrompt.AppendLine($"Document title: {documentTitle}");
+            }
+
+            userPrompt.AppendLine("Synopsis:");
+            userPrompt.AppendLine(string.IsNullOrWhiteSpace(synopsisContext) ? "(empty synopsis)" : synopsisContext);
+
+            Dictionary<string, object> payload = new()
+            {
+                ["model"] = _options.TextModel,
+                ["input"] = new object[]
+                {
+                    new Dictionary<string, object>
+                    {
+                        ["role"] = "system",
+                        ["content"] = new object[]
+                        {
+                            new Dictionary<string, object>
+                            {
+                                ["type"] = "input_text",
+                                ["text"] = systemPrompt
+                            }
+                        }
+                    },
+                    new Dictionary<string, object>
+                    {
+                        ["role"] = "user",
+                        ["content"] = new object[]
+                        {
+                            new Dictionary<string, object>
+                            {
+                                ["type"] = "input_text",
+                                ["text"] = $"{instruction}\n\n{userPrompt}"
+                            }
+                        }
+                    }
+                },
+                ["max_output_tokens"] = _options.MaxOutputTokens,
+                ["text"] = new Dictionary<string, object>
+                {
+                    ["format"] = new Dictionary<string, object>
+                    {
+                        ["type"] = "json_object"
+                    }
+                }
+            };
+
+            HttpRequestMessage requestMessage = new(HttpMethod.Post, BuildUri(ResponsesEndpoint))
+            {
+                Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
+            };
+
+            ApplyAuthHeaders(requestMessage, apiKey);
+            return requestMessage;
+        }
+
+        private HttpRequestMessage BuildCharacterBibleRequest(AiRequest request, string apiKey)
+        {
+            string context = GetInputValue(request, "context", string.Empty);
+            string instruction = GetInputValue(request, "instruction", "Extract character bible.");
+            string systemPrompt = "You are a continuity analyst. Return strict JSON only.";
+            string userPrompt =
+                $"{instruction}\n\nReturn JSON schema: {{\"schemaVersion\":\"1.0\",\"characters\":[{{\"name\":\"...\",\"facts\":[{{\"fact\":\"...\",\"evidence\":{{\"sectionId\":\"<guid>\",\"quote\":\"...\"}}}}],\"traits\":[\"...\"]}}]}}\n\nContext:\n{context}";
+
+            return BuildStrictJsonRequest(systemPrompt, userPrompt, apiKey);
+        }
+
+        private HttpRequestMessage BuildPlaceBibleRequest(AiRequest request, string apiKey)
+        {
+            string context = GetInputValue(request, "context", string.Empty);
+            string instruction = GetInputValue(request, "instruction", "Extract place bible.");
+            string systemPrompt = "You are a continuity analyst. Return strict JSON only.";
+            string userPrompt =
+                $"{instruction}\n\nReturn JSON schema: {{\"schemaVersion\":\"1.0\",\"places\":[{{\"name\":\"...\",\"facts\":[{{\"fact\":\"...\",\"evidence\":{{\"sectionId\":\"<guid>\",\"quote\":\"...\"}}}}]}}]}}\n\nContext:\n{context}";
+
+            return BuildStrictJsonRequest(systemPrompt, userPrompt, apiKey);
+        }
+
+        private HttpRequestMessage BuildContinuityCheckRequest(AiRequest request, string apiKey)
+        {
+            string sectionText = GetInputValue(request, "section_text", string.Empty);
+            string characterBible = GetInputValue(request, "character_bible_json", "{}");
+            string placeBible = GetInputValue(request, "place_bible_json", "{}");
+            string instruction = GetInputValue(request, "instruction", "Check continuity issues.");
+            string sectionId = request.Context.SectionId.ToString();
+
+            string systemPrompt = "You are a manuscript continuity coach. Return strict JSON only.";
+            string userPrompt =
+                $"{instruction}\n\nReturn JSON schema: {{\"schemaVersion\":\"1.0\",\"issues\":[{{\"severity\":\"low|medium|high|critical\",\"type\":\"character|place|timeline\",\"message\":\"...\",\"evidence\":{{\"sectionId\":\"{sectionId}\",\"quote\":\"...\"}},\"suggestedFix\":\"...\",\"anchor\":{{\"plainTextStart\":0,\"plainTextLength\":10}}}}]}}\n\nRules:\n- Return strict JSON only.\n- Include only the top 25 highest-impact issues.\n- Keep message/suggestedFix concise (1-2 sentences).\n- Do not include explanations outside JSON.\n\nCharacter bible:\n{characterBible}\n\nPlace bible:\n{placeBible}\n\nSection text:\n{sectionText}";
+
+            int continuityMaxOutputTokens = Math.Max(_options.MaxOutputTokens, 1800);
+            return BuildStrictJsonRequest(systemPrompt, userPrompt, apiKey, continuityMaxOutputTokens);
+        }
+
+        private HttpRequestMessage BuildStrictJsonRequest(
+            string systemPrompt,
+            string userPrompt,
+            string apiKey,
+            int? maxOutputTokens = null)
+        {
+            Dictionary<string, object> payload = new()
+            {
+                ["model"] = _options.TextModel,
+                ["input"] = new object[]
+                {
+                    new Dictionary<string, object>
+                    {
+                        ["role"] = "system",
+                        ["content"] = new object[]
+                        {
+                            new Dictionary<string, object>
+                            {
+                                ["type"] = "input_text",
+                                ["text"] = systemPrompt
+                            }
+                        }
+                    },
+                    new Dictionary<string, object>
+                    {
+                        ["role"] = "user",
+                        ["content"] = new object[]
+                        {
+                            new Dictionary<string, object>
+                            {
+                                ["type"] = "input_text",
+                                ["text"] = userPrompt
+                            }
+                        }
+                    }
+                },
+                ["max_output_tokens"] = maxOutputTokens ?? _options.MaxOutputTokens,
+                ["text"] = new Dictionary<string, object>
+                {
+                    ["format"] = new Dictionary<string, object>
+                    {
+                        ["type"] = "json_object"
+                    }
+                }
             };
 
             HttpRequestMessage requestMessage = new(HttpMethod.Post, BuildUri(ResponsesEndpoint))
