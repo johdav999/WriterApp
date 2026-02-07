@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Net.Http;
 using WriterApp.Application.Exporting;
 using WriterApp.Application.Security;
 using WriterApp.Controllers;
@@ -122,7 +123,10 @@ namespace WriterApp.Tests
         {
             IExportRenderer[] renderers =
             {
-                new DocxExportRenderer(),
+                new DocxExportRenderer(
+                    NullLogger<DocxExportRenderer>.Instance,
+                    BuildConfig(("Exports:DocxFetchRemoteImages", "false")),
+                    new StubHttpClientFactory()),
                 new EpubExportRenderer()
             };
             return new ExportService(renderers, new StubExportTemplateResolver());
@@ -130,7 +134,7 @@ namespace WriterApp.Tests
 
         private static IConfiguration BuildConfig(params (string Key, string Value)[] pairs)
         {
-            Dictionary<string, string?> values = pairs.ToDictionary(pair => pair.Key, pair => pair.Value);
+            Dictionary<string, string?> values = pairs.ToDictionary(pair => pair.Key, pair => (string?)pair.Value);
             return new ConfigurationBuilder().AddInMemoryCollection(values).Build();
         }
 
@@ -168,6 +172,11 @@ namespace WriterApp.Tests
             {
                 throw new InvalidOperationException("Templates are not used for DOCX/EPUB exports.");
             }
+        }
+
+        private sealed class StubHttpClientFactory : IHttpClientFactory
+        {
+            public HttpClient CreateClient(string name) => new();
         }
     }
 }
