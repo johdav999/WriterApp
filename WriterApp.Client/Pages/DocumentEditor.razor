@@ -245,6 +245,29 @@ else
                 <div class="editor-actions">
                     <button type="button" title='@GetTooltip("Undo last change.")' @onclick="OnUndoRequested">Undo</button>
                     <button type="button" title='@GetTooltip("Redo last change.")' @onclick="OnRedoRequested">Redo</button>
+                    @if (CanShowReviseTools)
+                    {
+                        <div class="revise-tools">
+                            <select value="@_selectedReviseTool" @onchange="OnReviseToolChanged">
+                                <option value="tighten">Tighten</option>
+                                <option value="expand">Expand</option>
+                                <option value="change_tone">Change tone</option>
+                                <option value="show_dont_tell">Show, don't tell</option>
+                            </select>
+                            <button type="button" disabled="@IsAiQuotaExceeded" @onclick="OnReviseRequested">Revise</button>
+                        </div>
+                    }
+                    @if (CanShowPromptLibrary && PinnedPromptPresets.Count > 0)
+                    {
+                        <div class="revise-tools">
+                            @foreach (PromptPresetDto preset in PinnedPromptPresets)
+                            {
+                                <button type="button" disabled="@IsAiQuotaExceeded" @onclick="() => RunPromptPresetAsync(preset)">
+                                    @preset.Name
+                                </button>
+                            }
+                        </div>
+                    }
                     <div class="document-menu">
                         <button type="button" title='@GetTooltip("Document-level actions.")' @onclick="ToggleDocumentMenu">Document</button>
                         @if (_isDocumentMenuOpen)
@@ -618,6 +641,26 @@ else
                                         @onclick="() => SetContextTabAsync(ContextTab.Ai)">
                                     AI
                                 </button>
+                                @if (CanShowContinuityCoach)
+                                {
+                                    <button type="button"
+                                            class="context-tab @GetContextTabClass(ContextTab.Continuity)"
+                                            aria-selected="@(_activeContextTab == ContextTab.Continuity)"
+                                            title='@GetTooltip("Character/place continuity checks.")'
+                                            @onclick="() => SetContextTabAsync(ContextTab.Continuity)">
+                                        Continuity
+                                    </button>
+                                }
+                                @if (CanShowPromptLibrary)
+                                {
+                                    <button type="button"
+                                            class="context-tab @GetContextTabClass(ContextTab.PromptLibrary)"
+                                            aria-selected="@(_activeContextTab == ContextTab.PromptLibrary)"
+                                            title='@GetTooltip("Reusable AI prompts and presets.")'
+                                            @onclick="() => SetContextTabAsync(ContextTab.PromptLibrary)">
+                                        Prompt Library
+                                    </button>
+                                }
                                 <button type="button"
                                         class="context-tab @GetContextTabClass(ContextTab.Annotations)"
                                         aria-selected="@(_activeContextTab == ContextTab.Annotations)"
@@ -671,6 +714,16 @@ else
                         {
                             <div class="rp-title">AI tools</div>
                             <div class="rp-subtitle">Run a command on the page or selection.</div>
+                        }
+                        else if (_activeContextTab == ContextTab.Continuity)
+                        {
+                            <div class="rp-title">Continuity coach</div>
+                            <div class="rp-subtitle">Check character/place/timeline consistency.</div>
+                        }
+                        else if (_activeContextTab == ContextTab.PromptLibrary)
+                        {
+                            <div class="rp-title">Prompt library</div>
+                            <div class="rp-subtitle">Reusable prompts for selection or section edits.</div>
                         }
                         else if (_activeContextTab == ContextTab.Annotations)
                         {
@@ -1082,6 +1135,167 @@ else
                                         </li>
                                     }
                                 </ul>
+                                }
+                            </div>
+                        }
+                        else if (_activeContextTab == ContextTab.Continuity)
+                        {
+                            <div class="drawer-panel ai-panel">
+                                @if (!CanShowContinuityCoach)
+                                {
+                                    <div class="drawer-empty">Continuity Coach is disabled.</div>
+                                }
+                                else
+                                {
+                                    <div class="ai-actions-list">
+                                        <button type="button"
+                                                disabled="@(_continuityBusy || !CanRunExtractCharacterBible)"
+                                                @onclick="OnBuildCharacterBibleAsync">
+                                            Build character bible
+                                        </button>
+                                        <button type="button"
+                                                disabled="@(_continuityBusy || !CanRunExtractPlaceBible)"
+                                                @onclick="OnBuildPlaceBibleAsync">
+                                            Build place bible
+                                        </button>
+                                        <button type="button"
+                                                disabled="@(_continuityBusy || !CanRunContinuityCheck)"
+                                                @onclick="OnCheckContinuityAsync">
+                                            Check current section
+                                        </button>
+                                        <button type="button"
+                                                disabled="@_continuityBusy"
+                                                @onclick="OnClearContinuityHighlightsAsync">
+                                            Clear highlight
+                                        </button>
+                                    </div>
+                                    @if (!string.IsNullOrWhiteSpace(_continuityStatus))
+                                    {
+                                        <div class="drawer-empty">@_continuityStatus</div>
+                                    }
+                                    <div class="ai-history-toolbar">
+                                        <label for="continuity-severity">Severity</label>
+                                        <select id="continuity-severity"
+                                                value="@_continuitySeverityFilter"
+                                                @onchange="OnContinuitySeverityChanged">
+                                            <option value="all">All</option>
+                                            <option value="critical">Critical</option>
+                                            <option value="high">High</option>
+                                            <option value="medium">Medium</option>
+                                            <option value="low">Low</option>
+                                        </select>
+                                    </div>
+                                    @if (!FilteredContinuityIssues.Any())
+                                    {
+                                        <div class="drawer-empty">No issues in current report.</div>
+                                    }
+                                    else
+                                    {
+                                        <ul class="ai-history-list">
+                                            @foreach (ContinuityIssue issue in FilteredContinuityIssues)
+                                            {
+                                                <li class="ai-history-item">
+                                                    <div class="ai-history-meta">
+                                                        <span class="ai-history-badge">@issue.Severity.ToUpperInvariant()</span>
+                                                        <span class="ai-history-summary">@issue.Type: @issue.Message</span>
+                                                    </div>
+                                                    <div class="ai-history-sub">
+                                                        <span>@issue.Evidence.Quote</span>
+                                                    </div>
+                                                    <div class="ai-history-actions">
+                                                        <button type="button" @onclick="() => OnJumpToContinuityIssueAsync(issue)">Jump</button>
+                                                        @if (CanShowContinuityCoachFixes)
+                                                        {
+                                                            <button type="button"
+                                                                    disabled="@(_continuityBusy || string.IsNullOrWhiteSpace(issue.SuggestedFix))"
+                                                                    @onclick="() => OnApplyContinuityFixAsync(issue)">
+                                                                Apply suggested fix
+                                                            </button>
+                                                        }
+                                                    </div>
+                                                </li>
+                                            }
+                                        </ul>
+                                    }
+                                }
+                            </div>
+                        }
+                        else if (_activeContextTab == ContextTab.PromptLibrary)
+                        {
+                            <div class="drawer-panel ai-panel">
+                                @if (!CanShowPromptLibrary)
+                                {
+                                    <div class="drawer-empty">Prompt Library is disabled.</div>
+                                }
+                                else
+                                {
+                                    <div class="ai-history-toolbar">
+                                        <label for="prompt-run-scope">Run scope</label>
+                                        <select id="prompt-run-scope" @bind="_promptRunScope">
+                                            <option value="selection">Selection</option>
+                                            <option value="section">Section</option>
+                                        </select>
+                                    </div>
+                                    <div class="ai-actions-list">
+                                        <button type="button" @onclick="BeginCreatePromptPreset">New preset</button>
+                                        <button type="button" @onclick="SavePromptPresetAsync">Save preset</button>
+                                    </div>
+                                    <div class="template-grid">
+                                        <label class="export-panel-label" for="prompt-name">Name</label>
+                                        <input id="prompt-name" class="export-panel-input" @bind="_promptNameDraft" />
+                                        <label class="export-panel-label" for="prompt-category">Category</label>
+                                        <input id="prompt-category" class="export-panel-input" @bind="_promptCategoryDraft" />
+                                        <label class="export-panel-label" for="prompt-kind">Kind</label>
+                                        <select id="prompt-kind" class="export-panel-select" @bind="_promptKindDraft">
+                                            <option value="builtin">Builtin action</option>
+                                            <option value="custom">Custom template</option>
+                                        </select>
+                                        @if (_promptKindDraft == "builtin")
+                                        {
+                                            <label class="export-panel-label" for="prompt-action-id">Action Id</label>
+                                            <input id="prompt-action-id" class="export-panel-input" @bind="_promptBuiltinActionIdDraft" />
+                                        }
+                                        else
+                                        {
+                                            <label class="export-panel-label" for="prompt-template">Template</label>
+                                            <textarea id="prompt-template" class="notes-input scene-card-input" @bind="_promptTemplateDraft"></textarea>
+                                        }
+                                        <label class="export-panel-label" for="prompt-params">Parameters (JSON)</label>
+                                        <textarea id="prompt-params" class="notes-input scene-card-input" @bind="_promptParametersDraft"></textarea>
+                                    </div>
+                                    @if (!string.IsNullOrWhiteSpace(_promptStatus))
+                                    {
+                                        <div class="drawer-empty">@_promptStatus</div>
+                                    }
+                                    @if (_promptPresets.Count == 0)
+                                    {
+                                        <div class="drawer-empty">No presets yet.</div>
+                                    }
+                                    else
+                                    {
+                                        <ul class="ai-history-list">
+                                            @foreach (PromptPresetDto preset in _promptPresets)
+                                            {
+                                                <li class="ai-history-item">
+                                                    <div class="ai-history-meta">
+                                                        <span class="ai-history-badge">P</span>
+                                                        <span class="ai-history-summary">@preset.Name</span>
+                                                    </div>
+                                                    <div class="ai-history-sub">
+                                                        <span>@(preset.Category ?? preset.Kind)</span>
+                                                    </div>
+                                                    <div class="ai-history-actions">
+                                                        <button type="button" @onclick="() => RunPromptPresetAsync(preset)">Run</button>
+                                                        <button type="button" @onclick="() => BeginEditPromptPreset(preset)">Edit</button>
+                                                        <button type="button" @onclick="() => TogglePinPromptPreset(preset.Id)">
+                                                            @(IsPromptPresetPinned(preset.Id) ? "Unpin" : "Pin")
+                                                        </button>
+                                                        <button type="button" class="danger" @onclick="() => DeletePromptPresetAsync(preset.Id)">Delete</button>
+                                                    </div>
+                                                </li>
+                                            }
+                                        </ul>
+                                    }
                                 }
                             </div>
                         }

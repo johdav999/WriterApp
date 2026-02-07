@@ -2231,7 +2231,10 @@ function buildAiDecorations(editor, ranges) {
             return;
         }
 
-        const className = range.isActive ? "ai-edit-range is-active" : "ai-edit-range";
+        const baseClass = typeof range.className === "string" && range.className.trim().length > 0
+            ? range.className.trim()
+            : "ai-edit-range";
+        const className = range.isActive ? `${baseClass} is-active` : baseClass;
         decorations.push(Decoration.inline(from, to, { class: className }));
     });
 

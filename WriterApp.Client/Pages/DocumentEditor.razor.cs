@@ -290,8 +290,96 @@ namespace WriterApp.Client.Pages
                 "Propose next paragraph",
                 false,
                 new Dictionary<string, object?>(),
-                "Generate a 10-12 sentence continuation based on current section + scene beats.")
+                "Generate a 10-12 sentence continuation based on current section + scene beats."),
+            new AiActionOption(
+                "tighten.selection",
+                "Tighten selection",
+                "Tighten selection",
+                true,
+                new Dictionary<string, object?>(),
+                "Trim excess words while preserving meaning.",
+                false),
+            new AiActionOption(
+                "tighten.section",
+                "Tighten section",
+                "Tighten section",
+                false,
+                new Dictionary<string, object?>(),
+                "Trim excess words while preserving meaning.",
+                false),
+            new AiActionOption(
+                "expand.selection",
+                "Expand selection",
+                "Expand selection",
+                true,
+                new Dictionary<string, object?>(),
+                "Add detail while preserving intent.",
+                false),
+            new AiActionOption(
+                "expand.section",
+                "Expand section",
+                "Expand section",
+                false,
+                new Dictionary<string, object?>(),
+                "Add detail while preserving intent.",
+                false),
+            new AiActionOption(
+                "change_tone.selection",
+                "Change tone (selection)",
+                "Change tone",
+                true,
+                new Dictionary<string, object?>
+                {
+                    ["tone"] = "Formal"
+                },
+                "Shift tone while preserving facts and structure.",
+                false),
+            new AiActionOption(
+                "change_tone.section",
+                "Change tone (section)",
+                "Change tone",
+                false,
+                new Dictionary<string, object?>
+                {
+                    ["tone"] = "Formal"
+                },
+                "Shift tone while preserving facts and structure.",
+                false),
+            new AiActionOption(
+                "show_dont_tell.selection",
+                "Show, don't tell (selection)",
+                "Show, don't tell",
+                true,
+                new Dictionary<string, object?>(),
+                "Rewrite abstractions into concrete, sensory prose.",
+                false),
+            new AiActionOption(
+                "show_dont_tell.section",
+                "Show, don't tell (section)",
+                "Show, don't tell",
+                false,
+                new Dictionary<string, object?>(),
+                "Rewrite abstractions into concrete, sensory prose.",
+                false)
         };
+        private string _selectedReviseTool = "tighten";
+        private readonly List<PromptPresetDto> _promptPresets = new();
+        private readonly List<Guid> _pinnedPromptPresetIds = new();
+        private string? _promptStatus;
+        private Guid? _promptEditingId;
+        private string _promptNameDraft = string.Empty;
+        private string _promptCategoryDraft = string.Empty;
+        private string _promptKindDraft = "builtin";
+        private string _promptBuiltinActionIdDraft = "tighten.selection";
+        private string _promptTemplateDraft = string.Empty;
+        private string _promptParametersDraft = "{}";
+        private string _promptRunScope = "selection";
+        private ContinuityReport? _continuityReport;
+        private string _continuitySeverityFilter = "all";
+        private string? _continuityStatus;
+        private bool _continuityBusy;
+        private string? _selectedContinuityIssueKey;
+        private bool _pendingContinuityHighlights;
         private readonly HashSet<string> _availableActionKeys = new(StringComparer.OrdinalIgnoreCase);
         private readonly List<AiHistoryEntry> _aiHistoryEntries = new();
         private Guid? _expandedAiHistoryId;
@@ -433,9 +521,39 @@ namespace WriterApp.Client.Pages
             }
         }
         private IEnumerable<AiActionOption> SelectionAiActions =>
-            _aiActions.Where(action => action.RequiresSelection);
+            _aiActions.Where(action => action.RequiresSelection && action.IncludeInLists);
         private IEnumerable<AiActionOption> SectionAiActions =>
-            _aiActions.Where(action => !action.RequiresSelection);
+            _aiActions.Where(action => !action.RequiresSelection && action.IncludeInLists);
+        private bool CanShowReviseTools =>
+            HasAction("tighten.selection")
+            || HasAction("tighten.section")
+            || HasAction("expand.selection")
+            || HasAction("expand.section")
+            || HasAction("change_tone.selection")
+            || HasAction("change_tone.section")
+            || HasAction("show_dont_tell.selection")
+            || HasAction("show_dont_tell.section");
+        private bool CanShowContinuityCoach =>
+            HasAction("continuity.extract_character_bible")
+            || HasAction("continuity.extract_place_bible")
+            || HasAction("continuity.check_section");
+        private bool CanShowContinuityCoachFixes =>
+            HasAction("continuity.apply_fix");
+        private bool CanRunExtractCharacterBible => HasAction("continuity.extract_character_bible");
+        private bool CanRunExtractPlaceBible => HasAction("continuity.extract_place_bible");
+        private bool CanRunContinuityCheck => HasAction("continuity.check_section");
+        private bool CanShowPromptLibrary =>
+            HasAction("custom_transform");
+        private IReadOnlyList<PromptPresetDto> PinnedPromptPresets =>
+            _pinnedPromptPresetIds
+                .Select(id => _promptPresets.FirstOrDefault(preset => preset.Id == id))
+                .Where(preset => preset is not null)
+                .Cast<PromptPresetDto>()
+                .ToList();
+        private IEnumerable<ContinuityIssue> FilteredContinuityIssues =>
+            (_continuityReport?.Issues ?? Array.Empty<ContinuityIssue>())
+            .Where(issue => string.Equals(_continuitySeverityFilter, "all", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(issue.Severity, _continuitySeverityFilter, StringComparison.OrdinalIgnoreCase));
         private bool IsTranslationProposal => IsTranslationActionKey(_pendingAiProposal?.ActionKey);
         private bool ShowTranslationSwitcher => GetTranslationLinks().Any(item => !item.IsActive);
 
@@ -507,6 +625,12 @@ namespace WriterApp.Client.Pages
                 _previewInitialized = true;
                 await InitializePreviewFrameAsync();
             }
+
+            if (_pendingContinuityHighlights && _pageEditor is not null)
+            {
+                _pendingContinuityHighlights = false;
+                await ApplyContinuityHighlightsAsync();
+            }
         }
 
         protected override async Task OnParametersSetAsync()
@@ -521,6 +645,9 @@ namespace WriterApp.Client.Pages
             _loadError = null;
             ResetSectionRename();
             CancelDeleteSection();
+            _continuityReport = null;
+            _selectedContinuityIssueKey = null;
+            await ClearContinuityHighlightsAsync();
 
             try
             {
@@ -2014,6 +2141,10 @@ namespace WriterApp.Client.Pages
             {
                 await LoadQualityIssuesAsync();
             }
+            else if (tab == ContextTab.PromptLibrary)
+            {
+                await LoadPromptPresetsAsync();
+            }
         }
 
         private string GetContextTabClass(ContextTab tab)
@@ -2048,6 +2179,515 @@ namespace WriterApp.Client.Pages
         {
             _notesDraft = args.Value?.ToString() ?? string.Empty;
             _notesStatus = null;
+        }
+
+        private bool HasAction(string actionKey)
+        {
+            return _availableActionKeys.Contains(actionKey);
+        }
+
+        private void OnReviseToolChanged(ChangeEventArgs args)
+        {
+            _selectedReviseTool = args.Value?.ToString() ?? "tighten";
+        }
+
+        private async Task OnReviseRequested()
+        {
+            bool hasSelection = _currentSelectionRange is not null;
+            AiActionOption? action = ResolveReviseAction(_selectedReviseTool, hasSelection);
+            if (action is null)
+            {
+                return;
+            }
+
+            await OnAiActionSelected(action);
+        }
+
+        private AiActionOption? ResolveReviseAction(string tool, bool hasSelection)
+        {
+            string actionKey = tool switch
+            {
+                "tighten" => hasSelection ? "tighten.selection" : "tighten.section",
+                "expand" => hasSelection ? "expand.selection" : "expand.section",
+                "change_tone" => hasSelection ? "change_tone.selection" : "change_tone.section",
+                "show_dont_tell" => hasSelection ? "show_dont_tell.selection" : "show_dont_tell.section",
+                _ => hasSelection ? "tighten.selection" : "tighten.section"
+            };
+
+            AiActionOption? action = _aiActionPresets.FirstOrDefault(entry => string.Equals(entry.ActionKey, actionKey, StringComparison.OrdinalIgnoreCase));
+            if (action is null || !HasAction(action.ActionKey))
+            {
+                return null;
+            }
+
+            return action;
+        }
+
+        private async Task OnBuildCharacterBibleAsync()
+        {
+            await ExecuteContinuityActionAsync("continuity.extract_character_bible", "Character bible refreshed.", null);
+        }
+
+        private async Task OnBuildPlaceBibleAsync()
+        {
+            await ExecuteContinuityActionAsync("continuity.extract_place_bible", "Place bible refreshed.", null);
+        }
+
+        private async Task OnCheckContinuityAsync()
+        {
+            await ExecuteContinuityActionAsync("continuity.check_section", "Continuity check complete.", null);
+        }
+
+        private async Task ExecuteContinuityActionAsync(string actionKey, string successMessage, Dictionary<string, object?>? options)
+        {
+            if (_activeSection is null || _continuityBusy || !HasAction(actionKey))
+            {
+                return;
+            }
+
+            _continuityBusy = true;
+            _continuityStatus = null;
+            try
+            {
+                string html = _pageEditor?.GetContent() ?? string.Empty;
+                string plain = PlainTextMapper.ToPlainText(html);
+                AiActionExecuteRequestDto request = new(
+                    DocumentId,
+                    _activeSection.Id,
+                    _activePage?.Id,
+                    0,
+                    plain.Length,
+                    plain,
+                    plain,
+                    GetOutlineTextForAi(),
+                    options ?? new Dictionary<string, object?>());
+
+                using HttpResponseMessage result = await Http.PostAsJsonAsync($"api/ai/actions/{actionKey}/execute", request);
+                if (!result.IsSuccessStatusCode)
+                {
+                    _continuityStatus = "Continuity action failed.";
+                    return;
+                }
+
+                AiActionExecuteResponseDto? response = await result.Content.ReadFromJsonAsync<AiActionExecuteResponseDto>();
+                if (response is null || string.IsNullOrWhiteSpace(response.ProposedText))
+                {
+                    _continuityStatus = "Continuity action returned no output.";
+                    return;
+                }
+
+                if (string.Equals(actionKey, "continuity.check_section", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!TryParseContinuityReport(response.ProposedText, out ContinuityReport? report) || report is null)
+                    {
+                        _continuityStatus = "Continuity report parsing failed.";
+                        return;
+                    }
+
+                    _continuityReport = NormalizeContinuityReport(report, plain.Length);
+                    _selectedContinuityIssueKey = FilteredContinuityIssues.Select(GetContinuityIssueKey).FirstOrDefault();
+                    _pendingContinuityHighlights = true;
+                    await ApplyContinuityHighlightsAsync();
+                }
+
+                _continuityStatus = successMessage;
+                await LoadAiHistoryAsync();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Continuity action failed.");
+                _continuityStatus = "Continuity action failed.";
+            }
+            finally
+            {
+                _continuityBusy = false;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+
+        private async Task OnContinuitySeverityChanged(ChangeEventArgs args)
+        {
+            _continuitySeverityFilter = args.Value?.ToString() ?? "all";
+            _selectedContinuityIssueKey = FilteredContinuityIssues.Select(GetContinuityIssueKey).FirstOrDefault();
+            _pendingContinuityHighlights = true;
+            await ApplyContinuityHighlightsAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+
+        private async Task OnJumpToContinuityIssueAsync(ContinuityIssue issue)
+        {
+            if (_pageEditor is null)
+            {
+                return;
+            }
+
+            _selectedContinuityIssueKey = GetContinuityIssueKey(issue);
+            _pendingContinuityHighlights = true;
+            await ApplyContinuityHighlightsAsync();
+            await InvokePageCommandAsync("scrollToPosition", Math.Max(0, issue.Anchor.PlainTextStart));
+            await InvokeAsync(StateHasChanged);
+        }
+
+        private async Task OnApplyContinuityFixAsync(ContinuityIssue issue)
+        {
+            if (!CanShowContinuityCoachFixes || _continuityBusy || _activeSection is null)
+            {
+                return;
+            }
+
+            string fixText = issue.SuggestedFix?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(fixText))
+            {
+                _continuityStatus = "No suggested fix text was provided.";
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            int start = Math.Max(0, issue.Anchor.PlainTextStart);
+            int length = Math.Max(0, issue.Anchor.PlainTextLength);
+            Dictionary<string, object?> options = new()
+            {
+                ["section_id"] = _activeSection.Id,
+                ["anchor_start"] = start,
+                ["anchor_length"] = length,
+                ["suggested_fix"] = fixText
+            };
+
+            await ExecuteContinuityActionAsync("continuity.apply_fix", "Continuity fix prepared. Apply from AI preview.", options);
+        }
+
+        private async Task OnClearContinuityHighlightsAsync()
+        {
+            _selectedContinuityIssueKey = null;
+            _pendingContinuityHighlights = false;
+            await ClearContinuityHighlightsAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+
+        private async Task ApplyContinuityHighlightsAsync()
+        {
+            if (_pageEditor is null)
+            {
+                _pendingContinuityHighlights = true;
+                return;
+            }
+
+            List<PageEditor.AiDecorationRange> ranges = FilteredContinuityIssues
+                .Select(issue =>
+                {
+                    int start = Math.Max(0, issue.Anchor.PlainTextStart);
+                    int end = start + Math.Max(1, issue.Anchor.PlainTextLength);
+                    return new PageEditor.AiDecorationRange(
+                        start,
+                        end,
+                        GetContinuityIssueCssClass(issue),
+                        string.Equals(_selectedContinuityIssueKey, GetContinuityIssueKey(issue), StringComparison.Ordinal));
+                })
+                .ToList();
+
+            await _pageEditor.SetAiDecorationsAsync(ranges);
+        }
+
+        private async Task ClearContinuityHighlightsAsync()
+        {
+            if (_pageEditor is null)
+            {
+                return;
+            }
+
+            await _pageEditor.ClearAiDecorationsAsync();
+        }
+
+        private async Task LoadPromptPresetsAsync()
+        {
+            if (!CanShowPromptLibrary)
+            {
+                _promptPresets.Clear();
+                return;
+            }
+
+            try
+            {
+                List<PromptPresetDto>? presets = await Http.GetFromJsonAsync<List<PromptPresetDto>>(
+                    $"api/ai/presets?projectId={DocumentId}");
+                _promptPresets.Clear();
+                if (presets is not null)
+                {
+                    _promptPresets.AddRange(presets);
+                }
+
+                _pinnedPromptPresetIds.RemoveAll(id => _promptPresets.All(preset => preset.Id != id));
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Prompt presets load failed.");
+                _promptStatus = "Failed to load presets.";
+            }
+        }
+
+        private void BeginCreatePromptPreset()
+        {
+            _promptEditingId = null;
+            _promptNameDraft = string.Empty;
+            _promptCategoryDraft = string.Empty;
+            _promptKindDraft = "builtin";
+            _promptBuiltinActionIdDraft = "tighten.selection";
+            _promptTemplateDraft = string.Empty;
+            _promptParametersDraft = "{}";
+            _promptStatus = null;
+        }
+
+        private void BeginEditPromptPreset(PromptPresetDto preset)
+        {
+            _promptEditingId = preset.Id;
+            _promptNameDraft = preset.Name;
+            _promptCategoryDraft = preset.Category ?? string.Empty;
+            _promptKindDraft = preset.Kind;
+            _promptBuiltinActionIdDraft = preset.BuiltinActionId ?? "tighten.selection";
+            _promptTemplateDraft = preset.TemplateText ?? string.Empty;
+            _promptParametersDraft = JsonSerializer.Serialize(preset.Parameters ?? new Dictionary<string, object?>(), JsonOptions);
+            _promptStatus = null;
+        }
+
+        private async Task SavePromptPresetAsync()
+        {
+            if (!CanShowPromptLibrary)
+            {
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(_promptNameDraft))
+            {
+                _promptStatus = "Preset name is required.";
+                return;
+            }
+
+            if (!TryParsePromptParameters(_promptParametersDraft, out Dictionary<string, object?> parameters, out string? parseError))
+            {
+                _promptStatus = parseError;
+                return;
+            }
+
+            UpsertPromptPresetRequest request = new(
+                DocumentId,
+                _promptNameDraft.Trim(),
+                string.IsNullOrWhiteSpace(_promptCategoryDraft) ? null : _promptCategoryDraft.Trim(),
+                _promptKindDraft,
+                _promptKindDraft == "builtin" ? _promptBuiltinActionIdDraft : null,
+                _promptKindDraft == "custom" ? _promptTemplateDraft : null,
+                parameters);
+
+            try
+            {
+                HttpResponseMessage response;
+                if (_promptEditingId.HasValue)
+                {
+                    response = await Http.PutAsJsonAsync($"api/ai/presets/{_promptEditingId.Value}", request);
+                }
+                else
+                {
+                    response = await Http.PostAsJsonAsync("api/ai/presets", request);
+                }
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    _promptStatus = $"Save failed ({response.StatusCode}).";
+                    return;
+                }
+
+                _promptStatus = "Preset saved.";
+                await LoadPromptPresetsAsync();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Prompt preset save failed.");
+                _promptStatus = "Preset save failed.";
+            }
+        }
+
+        private async Task DeletePromptPresetAsync(Guid presetId)
+        {
+            try
+            {
+                using HttpResponseMessage response = await Http.DeleteAsync($"api/ai/presets/{presetId}");
+                if (!response.IsSuccessStatusCode)
+                {
+                    _promptStatus = $"Delete failed ({response.StatusCode}).";
+                    return;
+                }
+
+                _pinnedPromptPresetIds.RemoveAll(id => id == presetId);
+                if (_promptEditingId == presetId)
+                {
+                    BeginCreatePromptPreset();
+                }
+
+                _promptStatus = "Preset deleted.";
+                await LoadPromptPresetsAsync();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Prompt preset delete failed.");
+                _promptStatus = "Preset delete failed.";
+            }
+        }
+
+        private void TogglePinPromptPreset(Guid presetId)
+        {
+            int existingIndex = _pinnedPromptPresetIds.FindIndex(id => id == presetId);
+            if (existingIndex >= 0)
+            {
+                _pinnedPromptPresetIds.RemoveAt(existingIndex);
+                return;
+            }
+
+            if (_pinnedPromptPresetIds.Count >= 3)
+            {
+                _promptStatus = "You can pin up to 3 presets.";
+                return;
+            }
+
+            _pinnedPromptPresetIds.Add(presetId);
+        }
+
+        private bool IsPromptPresetPinned(Guid presetId)
+        {
+            return _pinnedPromptPresetIds.Contains(presetId);
+        }
+
+        private async Task RunPromptPresetAsync(PromptPresetDto preset)
+        {
+            if (!CanShowPromptLibrary)
+            {
+                return;
+            }
+
+            string scope = _promptRunScope;
+            if (scope == "selection" && _currentSelectionRange is null)
+            {
+                _promptStatus = "Select text to run this on selection scope.";
+                return;
+            }
+
+            string actionKey = ResolvePresetActionKey(preset, scope);
+            if (string.IsNullOrWhiteSpace(actionKey) || !HasAction(actionKey))
+            {
+                _promptStatus = $"Action '{actionKey}' is not available.";
+                return;
+            }
+
+            Dictionary<string, object?> parameters = NormalizePromptParameters(preset.Parameters);
+            if (string.Equals(preset.Kind, "custom", StringComparison.OrdinalIgnoreCase))
+            {
+                parameters["template"] = preset.TemplateText ?? string.Empty;
+                parameters["scope"] = scope;
+            }
+
+            bool requiresSelection = scope == "selection";
+            AiActionOption option = new(
+                actionKey,
+                preset.Name,
+                preset.Name,
+                requiresSelection,
+                parameters,
+                preset.Category,
+                false);
+
+            await OnAiActionSelected(option);
+            _promptStatus = "Preset executed. Review preview and apply.";
+        }
+
+        private string ResolvePresetActionKey(PromptPresetDto preset, string scope)
+        {
+            if (string.Equals(preset.Kind, "custom", StringComparison.OrdinalIgnoreCase))
+            {
+                return "custom_transform";
+            }
+
+            string actionKey = preset.BuiltinActionId ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(actionKey))
+            {
+                return string.Empty;
+            }
+
+            if (scope == "selection" && actionKey.EndsWith(".section", StringComparison.Ordinal))
+            {
+                string selectionActionKey = actionKey.Substring(0, actionKey.Length - ".section".Length) + ".selection";
+                if (HasAction(selectionActionKey))
+                {
+                    return selectionActionKey;
+                }
+            }
+
+            if (scope == "section" && actionKey.EndsWith(".selection", StringComparison.Ordinal))
+            {
+                string sectionActionKey = actionKey.Substring(0, actionKey.Length - ".selection".Length) + ".section";
+                if (HasAction(sectionActionKey))
+                {
+                    return sectionActionKey;
+                }
+            }
+
+            return actionKey;
+        }
+
+        private static bool TryParsePromptParameters(
+            string json,
+            out Dictionary<string, object?> parameters,
+            out string? error)
+        {
+            parameters = new Dictionary<string, object?>();
+            error = null;
+
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return true;
+            }
+
+            try
+            {
+                Dictionary<string, object?>? parsed = JsonSerializer.Deserialize<Dictionary<string, object?>>(json, JsonOptions);
+                parameters = parsed ?? new Dictionary<string, object?>();
+                return true;
+            }
+            catch (JsonException)
+            {
+                error = "Parameters must be valid JSON object.";
+                return false;
+            }
+        }
+
+        private static Dictionary<string, object?> NormalizePromptParameters(Dictionary<string, object?> parameters)
+        {
+            Dictionary<string, object?> normalized = new();
+            foreach ((string key, object? value) in parameters)
+            {
+                if (value is JsonElement element)
+                {
+                    normalized[key] = ConvertJsonElement(element);
+                }
+                else
+                {
+                    normalized[key] = value;
+                }
+            }
+
+            return normalized;
+        }
+
+        private static object? ConvertJsonElement(JsonElement element)
+        {
+            return element.ValueKind switch
+            {
+                JsonValueKind.String => element.GetString(),
+                JsonValueKind.Number => element.TryGetInt64(out long longValue)
+                    ? longValue
+                    : (element.TryGetDouble(out double doubleValue) ? doubleValue : element.GetRawText()),
+                JsonValueKind.True => true,
+                JsonValueKind.False => false,
+                JsonValueKind.Null => null,
+                _ => element.GetRawText()
+            };
         }
 
         private void OnSceneNarrativePurposeInput(ChangeEventArgs args)
@@ -5209,12 +5849,193 @@ namespace WriterApp.Client.Pages
                 return "Translate document";
             }
 
+            if (string.Equals(actionKey, "tighten.selection", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Tighten selection";
+            }
+
+            if (string.Equals(actionKey, "tighten.section", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Tighten section";
+            }
+
+            if (string.Equals(actionKey, "expand.selection", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Expand selection";
+            }
+
+            if (string.Equals(actionKey, "expand.section", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Expand section";
+            }
+
+            if (string.Equals(actionKey, "change_tone.selection", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Change tone (selection)";
+            }
+
+            if (string.Equals(actionKey, "change_tone.section", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Change tone (section)";
+            }
+
+            if (string.Equals(actionKey, "show_dont_tell.selection", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Show, don't tell (selection)";
+            }
+
+            if (string.Equals(actionKey, "show_dont_tell.section", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Show, don't tell (section)";
+            }
+
+            if (string.Equals(actionKey, "continuity.extract_character_bible", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Build character bible";
+            }
+
+            if (string.Equals(actionKey, "continuity.extract_place_bible", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Build place bible";
+            }
+
+            if (string.Equals(actionKey, "continuity.check_section", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Check continuity";
+            }
+
+            if (string.Equals(actionKey, "continuity.apply_fix", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Apply continuity fix";
+            }
+
+            if (string.Equals(actionKey, "custom_transform", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Run custom prompt";
+            }
+
             return "AI";
         }
 
         private static string FormatHistoryText(string? text)
         {
             return string.IsNullOrWhiteSpace(text) ? "No content captured." : text;
+        }
+
+        private static bool TryParseContinuityReport(string? json, out ContinuityReport? report)
+        {
+            report = null;
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return false;
+            }
+
+            foreach (string candidate in EnumerateContinuityJsonCandidates(json))
+            {
+                try
+                {
+                    ContinuityReport? parsed = JsonSerializer.Deserialize<ContinuityReport>(candidate, JsonOptions);
+                    if (parsed is null || parsed.Issues is null)
+                    {
+                        continue;
+                    }
+
+                    report = parsed;
+                    return true;
+                }
+                catch (JsonException)
+                {
+                }
+            }
+
+            return false;
+        }
+
+        private static IEnumerable<string> EnumerateContinuityJsonCandidates(string raw)
+        {
+            string trimmed = raw.Trim();
+            if (!string.IsNullOrWhiteSpace(trimmed))
+            {
+                yield return trimmed;
+            }
+
+            string withoutFence = trimmed;
+            if (withoutFence.StartsWith("```", StringComparison.Ordinal))
+            {
+                int firstNewline = withoutFence.IndexOf('\n');
+                if (firstNewline >= 0 && firstNewline < withoutFence.Length - 1)
+                {
+                    withoutFence = withoutFence[(firstNewline + 1)..];
+                }
+
+                if (withoutFence.EndsWith("```", StringComparison.Ordinal))
+                {
+                    withoutFence = withoutFence[..^3];
+                }
+
+                withoutFence = withoutFence.Trim();
+                if (!string.IsNullOrWhiteSpace(withoutFence))
+                {
+                    yield return withoutFence;
+                }
+            }
+
+            int firstBrace = trimmed.IndexOf('{');
+            int lastBrace = trimmed.LastIndexOf('}');
+            if (firstBrace >= 0 && lastBrace > firstBrace)
+            {
+                string objectSlice = trimmed.Substring(firstBrace, lastBrace - firstBrace + 1).Trim();
+                if (!string.IsNullOrWhiteSpace(objectSlice))
+                {
+                    yield return objectSlice;
+                }
+            }
+        }
+
+        private static ContinuityReport NormalizeContinuityReport(ContinuityReport report, int plainTextLength)
+        {
+            List<ContinuityIssue> normalized = new();
+            foreach (ContinuityIssue issue in report.Issues ?? Array.Empty<ContinuityIssue>())
+            {
+                int start = Math.Clamp(issue.Anchor.PlainTextStart, 0, Math.Max(0, plainTextLength));
+                int maxLen = Math.Max(0, plainTextLength - start);
+                int length = Math.Clamp(issue.Anchor.PlainTextLength, 0, maxLen);
+                normalized.Add(issue with
+                {
+                    Anchor = new ContinuityAnchor(start, length)
+                });
+            }
+
+            return report with { Issues = normalized };
+        }
+
+        private static string GetContinuityIssueKey(ContinuityIssue issue)
+        {
+            return $"{issue.Type}|{issue.Anchor.PlainTextStart}|{issue.Anchor.PlainTextLength}|{issue.Message}";
+        }
+
+        private static string GetContinuityIssueCssClass(ContinuityIssue issue)
+        {
+            string type = issue.Type?.Trim() ?? string.Empty;
+            if (type.Contains("character", StringComparison.OrdinalIgnoreCase))
+            {
+                return "continuity-issue continuity-character";
+            }
+
+            if (type.Contains("place", StringComparison.OrdinalIgnoreCase)
+                || type.Contains("location", StringComparison.OrdinalIgnoreCase))
+            {
+                return "continuity-issue continuity-place";
+            }
+
+            if (type.Contains("timeline", StringComparison.OrdinalIgnoreCase)
+                || type.Contains("time", StringComparison.OrdinalIgnoreCase)
+                || type.Contains("date", StringComparison.OrdinalIgnoreCase))
+            {
+                return "continuity-issue continuity-timeline";
+            }
+
+            return "continuity-issue";
         }
 
         private string GetPendingSummary()
@@ -6948,7 +7769,8 @@ namespace WriterApp.Client.Pages
             string Instruction,
             bool RequiresSelection,
             Dictionary<string, object?> Parameters,
-            string? Description = null);
+            string? Description = null,
+            bool IncludeInLists = true);
 
         private sealed record AiHistoryEntry(
             Guid Id,
@@ -6996,6 +7818,41 @@ namespace WriterApp.Client.Pages
         private sealed record ExportPrintPayload(string Html);
 
         private sealed record TextRange(int Start, int Length);
+
+        private sealed record ContinuityAnchor(int PlainTextStart, int PlainTextLength);
+
+        private sealed record ContinuityEvidence(string? SectionId, string Quote);
+
+        private sealed record ContinuityIssue(
+            string Severity,
+            string Type,
+            string Message,
+            ContinuityEvidence Evidence,
+            string SuggestedFix,
+            ContinuityAnchor Anchor);
+
+        private sealed record ContinuityReport(string SchemaVersion, IReadOnlyList<ContinuityIssue> Issues);
+
+        private sealed record PromptPresetDto(
+            Guid Id,
+            Guid? ProjectId,
+            string Name,
+            string? Category,
+            string Kind,
+            string? BuiltinActionId,
+            string? TemplateText,
+            Dictionary<string, object?> Parameters,
+            DateTimeOffset CreatedUtc,
+            DateTimeOffset UpdatedUtc);
+
+        private sealed record UpsertPromptPresetRequest(
+            Guid? ProjectId,
+            string Name,
+            string? Category,
+            string Kind,
+            string? BuiltinActionId,
+            string? TemplateText,
+            Dictionary<string, object?>? Parameters);
 
         private sealed class ExportTemplateEditorModel
         {
@@ -7108,6 +7965,8 @@ namespace WriterApp.Client.Pages
             Scene,
             Outline,
             Ai,
+            Continuity,
+            PromptLibrary,
             Annotations,
             Quality,
             History

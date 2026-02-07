@@ -232,7 +232,7 @@ export function scrollToPosition(editor: any, position: number) {
   }
 
   editor.chain().focus().setTextSelection(pos).run();
-  if (editor.view) {
-    editor.view.scrollIntoView();
+  if (editor.view?.state?.tr && editor.view?.dispatch) {
+    editor.view.dispatch(editor.view.state.tr.scrollIntoView());
   }
 }

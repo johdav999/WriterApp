@@ -211,6 +211,55 @@ builder.Services.AddSingleton<IAiAction, SceneSuggestAction>();
 builder.Services.AddSingleton<IAiAction, SceneRefineAction>();
 builder.Services.AddSingleton<IAiAction, SceneFindOpenQuestionsAction>();
 builder.Services.AddSingleton<IAiAction, ProposeNextParagraphAction>();
+bool reviseToolsEnabled =
+    builder.Configuration.GetValue<bool?>("AI:ReviseToolsEnabled")
+    ?? builder.Configuration.GetValue<bool?>("WriterApp:AI:ReviseToolsEnabled")
+    ?? false;
+if (reviseToolsEnabled)
+{
+    builder.Services.AddSingleton<IAiAction, TightenSelectionAction>();
+    builder.Services.AddSingleton<IAiAction, TightenSectionAction>();
+    builder.Services.AddSingleton<IAiAction, ExpandSelectionAction>();
+    builder.Services.AddSingleton<IAiAction, ExpandSectionAction>();
+    builder.Services.AddSingleton<IAiAction, ChangeToneSelectionAction>();
+    builder.Services.AddSingleton<IAiAction, ChangeToneSectionAction>();
+    builder.Services.AddSingleton<IAiAction, ShowDontTellSelectionAction>();
+    builder.Services.AddSingleton<IAiAction, ShowDontTellSectionAction>();
+}
+bool outlineGeneratorEnabled =
+    builder.Configuration.GetValue<bool?>("AI:OutlineGeneratorEnabled")
+    ?? builder.Configuration.GetValue<bool?>("WriterApp:AI:OutlineGeneratorEnabled")
+    ?? false;
+if (outlineGeneratorEnabled)
+{
+    builder.Services.AddSingleton<IAiAction, GenerateOutlineFromSynopsisAction>();
+}
+bool continuityCoachEnabled =
+    builder.Configuration.GetValue<bool?>("AI:ContinuityCoachEnabled")
+    ?? builder.Configuration.GetValue<bool?>("WriterApp:AI:ContinuityCoachEnabled")
+    ?? false;
+if (continuityCoachEnabled)
+{
+    builder.Services.AddSingleton<IAiAction, ExtractCharacterBibleAction>();
+    builder.Services.AddSingleton<IAiAction, ExtractPlaceBibleAction>();
+    builder.Services.AddSingleton<IAiAction, ContinuityCheckAction>();
+}
+bool continuityCoachFixesEnabled =
+    builder.Configuration.GetValue<bool?>("AI:ContinuityCoachFixesEnabled")
+    ?? builder.Configuration.GetValue<bool?>("WriterApp:AI:ContinuityCoachFixesEnabled")
+    ?? false;
+if (continuityCoachFixesEnabled)
+{
+    builder.Services.AddSingleton<IAiAction, ApplyContinuityFixAction>();
+}
+bool promptLibraryEnabled =
+    builder.Configuration.GetValue<bool?>("AI:PromptLibraryEnabled")
+    ?? builder.Configuration.GetValue<bool?>("WriterApp:AI:PromptLibraryEnabled")
+    ?? false;
+if (promptLibraryEnabled)
+{
+    builder.Services.AddSingleton<IAiAction, CustomTransformAction>();
+}
 builder.Services.AddSingleton<IAiActionExecutor, AiActionExecutor>();
 builder.Services.AddSingleton<IAiProposalApplier, DefaultProposalApplier>();
 builder.Services.AddScoped<IAiOrchestrator, AiOrchestrator>();

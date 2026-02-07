@@ -54,6 +54,90 @@ namespace WriterApp.AI.Providers.Mock
                 return Task.FromResult(outlineResult);
             }
 
+            if (string.Equals(request.ActionId, GenerateOutlineFromSynopsisAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                string json = BuildMockSynopsisOutlineJson(request);
+                AiArtifact synopsisOutlineArtifact = new(
+                    Guid.NewGuid(),
+                    AiModality.Text,
+                    "application/json",
+                    json,
+                    null,
+                    null);
+                return Task.FromResult(new AiResult(
+                    request.RequestId,
+                    new List<AiArtifact> { synopsisOutlineArtifact },
+                    new AiUsage(0, 0, TimeSpan.Zero),
+                    new Dictionary<string, object>
+                    {
+                        ["provider"] = ProviderId,
+                        ["model"] = "mock-text"
+                    }));
+            }
+
+            if (string.Equals(request.ActionId, ExtractCharacterBibleAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                string json = BuildMockCharacterBibleJson(request);
+                AiArtifact characterBibleArtifact = new(
+                    Guid.NewGuid(),
+                    AiModality.Text,
+                    "application/json",
+                    json,
+                    null,
+                    null);
+                return Task.FromResult(new AiResult(
+                    request.RequestId,
+                    new List<AiArtifact> { characterBibleArtifact },
+                    new AiUsage(0, 0, TimeSpan.Zero),
+                    new Dictionary<string, object>
+                    {
+                        ["provider"] = ProviderId,
+                        ["model"] = "mock-text"
+                    }));
+            }
+
+            if (string.Equals(request.ActionId, ExtractPlaceBibleAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                string json = BuildMockPlaceBibleJson(request);
+                AiArtifact placeBibleArtifact = new(
+                    Guid.NewGuid(),
+                    AiModality.Text,
+                    "application/json",
+                    json,
+                    null,
+                    null);
+                return Task.FromResult(new AiResult(
+                    request.RequestId,
+                    new List<AiArtifact> { placeBibleArtifact },
+                    new AiUsage(0, 0, TimeSpan.Zero),
+                    new Dictionary<string, object>
+                    {
+                        ["provider"] = ProviderId,
+                        ["model"] = "mock-text"
+                    }));
+            }
+
+            if (string.Equals(request.ActionId, ContinuityCheckAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                string json = BuildMockContinuityReportJson(request);
+                AiArtifact continuityReportArtifact = new(
+                    Guid.NewGuid(),
+                    AiModality.Text,
+                    "application/json",
+                    json,
+                    null,
+                    null);
+                return Task.FromResult(new AiResult(
+                    request.RequestId,
+                    new List<AiArtifact> { continuityReportArtifact },
+                    new AiUsage(0, 0, TimeSpan.Zero),
+                    new Dictionary<string, object>
+                    {
+                        ["provider"] = ProviderId,
+                        ["model"] = "mock-text"
+                    }));
+            }
+
             if (string.Equals(request.ActionId, SceneSuggestAction.ActionIdValue, StringComparison.Ordinal)
                 || string.Equals(request.ActionId, SceneRefineAction.ActionIdValue, StringComparison.Ordinal)
                 || string.Equals(request.ActionId, SceneFindOpenQuestionsAction.ActionIdValue, StringComparison.Ordinal))
@@ -172,6 +256,66 @@ namespace WriterApp.AI.Providers.Mock
                     yield return new AiStreamEvent.TextDelta(chunk);
                     await Task.Delay(DeltaDelay, ct);
                 }
+                yield return new AiStreamEvent.Completed();
+                yield break;
+            }
+
+            if (string.Equals(request.ActionId, GenerateOutlineFromSynopsisAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                string json = BuildMockSynopsisOutlineJson(request);
+                yield return new AiStreamEvent.Started();
+                foreach (string chunk in ChunkText(json, MaxChunkSize))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    yield return new AiStreamEvent.TextDelta(chunk);
+                    await Task.Delay(DeltaDelay, ct);
+                }
+
+                yield return new AiStreamEvent.Completed();
+                yield break;
+            }
+
+            if (string.Equals(request.ActionId, ExtractCharacterBibleAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                string json = BuildMockCharacterBibleJson(request);
+                yield return new AiStreamEvent.Started();
+                foreach (string chunk in ChunkText(json, MaxChunkSize))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    yield return new AiStreamEvent.TextDelta(chunk);
+                    await Task.Delay(DeltaDelay, ct);
+                }
+
+                yield return new AiStreamEvent.Completed();
+                yield break;
+            }
+
+            if (string.Equals(request.ActionId, ExtractPlaceBibleAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                string json = BuildMockPlaceBibleJson(request);
+                yield return new AiStreamEvent.Started();
+                foreach (string chunk in ChunkText(json, MaxChunkSize))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    yield return new AiStreamEvent.TextDelta(chunk);
+                    await Task.Delay(DeltaDelay, ct);
+                }
+
+                yield return new AiStreamEvent.Completed();
+                yield break;
+            }
+
+            if (string.Equals(request.ActionId, ContinuityCheckAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                string json = BuildMockContinuityReportJson(request);
+                yield return new AiStreamEvent.Started();
+                foreach (string chunk in ChunkText(json, MaxChunkSize))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    yield return new AiStreamEvent.TextDelta(chunk);
+                    await Task.Delay(DeltaDelay, ct);
+                }
+
                 yield return new AiStreamEvent.Completed();
                 yield break;
             }
@@ -303,6 +447,41 @@ namespace WriterApp.AI.Providers.Mock
             return value?.ToString() ?? string.Empty;
         }
 
+        private static string BuildMockSynopsisOutlineJson(AiRequest request)
+        {
+            string mode = GetInputValue(request, "mode", "chapters");
+            return JsonSerializer.Serialize(new
+            {
+                schemaVersion = "1.0",
+                mode,
+                items = new[]
+                {
+                    new
+                    {
+                        index = 1,
+                        title = "Opening disturbance",
+                        summary = "Introduce the world and trigger incident.",
+                        pov = "Protagonist",
+                        setting = "Village square",
+                        beats = new[] { "Normal life", "Unsettling omen", "Decision to act" },
+                        storyRole = "Setup",
+                        notes = "Keep tone grounded."
+                    },
+                    new
+                    {
+                        index = 2,
+                        title = "Crossing the threshold",
+                        summary = "The protagonist commits to the journey.",
+                        pov = "Protagonist",
+                        setting = "Road beyond the village",
+                        beats = new[] { "First setback", "New ally", "Point of no return" },
+                        storyRole = "Rising action",
+                        notes = "Escalate stakes."
+                    }
+                }
+            });
+        }
+
         private static string BuildProposalText(string instruction, string original, string tone, string length, bool preserveTerms)
         {
             string trimmed = original ?? string.Empty;
@@ -400,6 +579,76 @@ namespace WriterApp.AI.Providers.Mock
             };
 
             return JsonSerializer.Serialize(card, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        }
+
+        private static string BuildMockCharacterBibleJson(AiRequest request)
+        {
+            string sectionId = request.Context.SectionId.ToString();
+            return JsonSerializer.Serialize(new
+            {
+                schemaVersion = "1.0",
+                characters = new[]
+                {
+                    new
+                    {
+                        name = "Mira",
+                        facts = new[]
+                        {
+                            new
+                            {
+                                fact = "Mira fears deep water.",
+                                evidence = new { sectionId, quote = "Mira avoided the riverbank." }
+                            }
+                        },
+                        traits = new[] { "cautious", "loyal" }
+                    }
+                }
+            });
+        }
+
+        private static string BuildMockPlaceBibleJson(AiRequest request)
+        {
+            string sectionId = request.Context.SectionId.ToString();
+            return JsonSerializer.Serialize(new
+            {
+                schemaVersion = "1.0",
+                places = new[]
+                {
+                    new
+                    {
+                        name = "Ashmere",
+                        facts = new[]
+                        {
+                            new
+                            {
+                                fact = "Ashmere sits beside a singing well.",
+                                evidence = new { sectionId, quote = "The well at the center of the square began to sing." }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        private static string BuildMockContinuityReportJson(AiRequest request)
+        {
+            string sectionId = request.Context.SectionId.ToString();
+            return JsonSerializer.Serialize(new
+            {
+                schemaVersion = "1.0",
+                issues = new[]
+                {
+                    new
+                    {
+                        severity = "medium",
+                        type = "character",
+                        message = "Mira is described as confident near deep water, which conflicts with prior fear.",
+                        evidence = new { sectionId, quote = "Mira stepped onto the flooded dock without hesitation." },
+                        suggestedFix = "Reframe the action to show hesitation or explain the change.",
+                        anchor = new { plainTextStart = 0, plainTextLength = 64 }
+                    }
+                }
+            });
         }
 
         private static string BuildMockNextParagraph(AiRequest request)

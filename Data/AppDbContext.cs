@@ -35,6 +35,7 @@ namespace WriterApp.Data
         public DbSet<DocumentGlossaryEntryRecord> DocumentGlossaryEntries => Set<DocumentGlossaryEntryRecord>();
         public DbSet<AiActionHistoryEntryRecord> AiActionHistoryEntries => Set<AiActionHistoryEntryRecord>();
         public DbSet<AiActionAppliedEventRecord> AiActionAppliedEvents => Set<AiActionAppliedEventRecord>();
+        public DbSet<PromptPresetRecord> PromptPresets => Set<PromptPresetRecord>();
         public DbSet<ExportTemplate> ExportTemplates => Set<ExportTemplate>();
         public DbSet<ExportPreset> ExportPresets => Set<ExportPreset>();
         public DbSet<ProjectExportSettings> ProjectExportSettings => Set<ProjectExportSettings>();
@@ -356,6 +357,21 @@ namespace WriterApp.Data
                     .WithMany()
                     .HasForeignKey(applied => applied.HistoryEntryId)
                     .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<PromptPresetRecord>(entity =>
+            {
+                entity.HasKey(preset => preset.Id);
+                entity.Property(preset => preset.OwnerUserId).IsRequired();
+                entity.Property(preset => preset.Name).IsRequired();
+                entity.Property(preset => preset.Kind).IsRequired();
+                entity.Property(preset => preset.ParametersJson).IsRequired();
+                entity.Property(preset => preset.CreatedUtc).IsRequired();
+                entity.Property(preset => preset.UpdatedUtc).IsRequired();
+                entity.HasIndex(preset => preset.OwnerUserId);
+                entity.HasIndex(preset => new { preset.OwnerUserId, preset.ProjectId });
+                entity.HasIndex(preset => new { preset.OwnerUserId, preset.Kind });
+                entity.HasIndex(preset => preset.UpdatedUtc);
             });
 
             builder.Entity<ExportTemplate>(entity =>
