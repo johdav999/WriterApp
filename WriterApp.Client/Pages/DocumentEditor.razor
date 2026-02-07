@@ -186,6 +186,23 @@ else
                         <button type="button" disabled="@(!_formattingState.CanBlockquote)" title='@GetTooltip("Format text as a quotation.")' @onclick="OnBlockquoteRequested">Blockquote</button>
                         <button type="button" class="@GetActiveClass(_formattingState.IsLink)" title='@GetTooltip("Insert or edit a link.")' @onclick="OnLinkRequested">Link</button>
                     </div>
+                    <div class="editor-toolbar-group" aria-label="Table">
+                        <button type="button" disabled="@(!_formattingState.CanInsertTable)" title='@GetTooltip("Insert a 3x3 table.")' @onclick="OnInsertTableRequested">Table</button>
+                        <button type="button" disabled="@(!_formattingState.CanAddTableRowAfter)" title='@GetTooltip("Add row below.")' @onclick="OnAddTableRowAfterRequested">+Row</button>
+                        <button type="button" disabled="@(!_formattingState.CanAddTableColumnAfter)" title='@GetTooltip("Add column to the right.")' @onclick="OnAddTableColumnAfterRequested">+Col</button>
+                        <button type="button" class="@GetActiveClass(_formattingState.IsHeaderCell)" disabled="@(!_formattingState.CanToggleTableHeaderRow)" title='@GetTooltip("Toggle header row.")' @onclick="OnToggleTableHeaderRowRequested">Header</button>
+                        <button type="button" disabled="@(!_formattingState.CanDeleteTable)" title='@GetTooltip("Delete current table.")' @onclick="OnDeleteTableRequested">Del table</button>
+                    </div>
+                    <div class="editor-toolbar-group" aria-label="Image">
+                        <label for="editor-image-upload" class="editor-toolbar-upload-button">Image</label>
+                        <InputFile @key="_imageUploadInputKey"
+                                   id="editor-image-upload"
+                                   class="editor-image-upload-input"
+                                   accept="image/png,image/jpeg,image/gif,image/webp"
+                                   OnChange="OnImageFileSelected" />
+                        <button type="button" disabled="@(!_formattingState.CanInsertImage)" title='@GetTooltip("Insert image from URL.")' @onclick="OnInsertImageFromUrlRequested">Image URL</button>
+                        <button type="button" disabled="@(!_formattingState.CanRemoveImage)" title='@GetTooltip("Remove selected image.")' @onclick="OnRemoveImageRequested">Remove image</button>
+                    </div>
                     <div class="editor-toolbar-group" aria-label="Zoom">
                         <button type="button" title='@GetTooltip("Decrease text size.")' @onclick="OnZoomOutRequested">A-</button>
                         <span class="editor-zoom-label">@GetZoomLabel()</span>
@@ -208,10 +225,23 @@ else
                                 <button type="button" class='@GetActiveClass(_formattingState.TextAlign == "right")' @onclick='@(() => OnAlignRequested("right"))'>Align right</button>
                                 <button type="button" @onclick="OnIndentDecreaseRequested">Indent -</button>
                                 <button type="button" @onclick="OnIndentIncreaseRequested">Indent +</button>
+                                <button type="button" disabled="@(!_formattingState.CanAddTableRowBefore)" @onclick="OnAddTableRowBeforeRequested">Row above</button>
+                                <button type="button" disabled="@(!_formattingState.CanAddTableRowAfter)" @onclick="OnAddTableRowAfterRequested">Row below</button>
+                                <button type="button" disabled="@(!_formattingState.CanDeleteTableRow)" @onclick="OnDeleteTableRowRequested">Delete row</button>
+                                <button type="button" disabled="@(!_formattingState.CanAddTableColumnBefore)" @onclick="OnAddTableColumnBeforeRequested">Col left</button>
+                                <button type="button" disabled="@(!_formattingState.CanAddTableColumnAfter)" @onclick="OnAddTableColumnAfterRequested">Col right</button>
+                                <button type="button" disabled="@(!_formattingState.CanDeleteTableColumn)" @onclick="OnDeleteTableColumnRequested">Delete col</button>
+                                <button type="button" disabled="@(!_formattingState.CanToggleTableHeaderColumn)" @onclick="OnToggleTableHeaderColumnRequested">Header col</button>
+                                <button type="button" disabled="@(!_formattingState.CanMergeTableCells)" @onclick="OnMergeTableCellsRequested">Merge cells</button>
+                                <button type="button" disabled="@(!_formattingState.CanSplitTableCell)" @onclick="OnSplitTableCellRequested">Split cell</button>
                             </div>
                         }
                     </div>
                 </div>
+                @if (!string.IsNullOrWhiteSpace(_imageUploadError))
+                {
+                    <div class="editor-image-error">@_imageUploadError</div>
+                }
                 <div class="editor-actions">
                     <button type="button" title='@GetTooltip("Undo last change.")' @onclick="OnUndoRequested">Undo</button>
                     <button type="button" title='@GetTooltip("Redo last change.")' @onclick="OnRedoRequested">Redo</button>
@@ -1932,6 +1962,19 @@ else
             <div class="editor-context-menu-label">Lists</div>
             <button type="button" disabled="@(!_formattingState.CanToggleList)" @onclick="() => OnContextMenuCommand(OnBulletListRequested)">Bullet list</button>
             <button type="button" disabled="@(!_formattingState.CanToggleList)" @onclick="() => OnContextMenuCommand(OnOrderedListRequested)">Ordered list</button>
+        </div>
+        <div class="editor-context-menu-group">
+            <div class="editor-context-menu-label">Table</div>
+            <button type="button" disabled="@(!_formattingState.CanInsertTable)" @onclick="() => OnContextMenuCommand(OnInsertTableRequested)">Insert 3x3</button>
+            <button type="button" disabled="@(!_formattingState.CanAddTableRowAfter)" @onclick="() => OnContextMenuCommand(OnAddTableRowAfterRequested)">Add row</button>
+            <button type="button" disabled="@(!_formattingState.CanAddTableColumnAfter)" @onclick="() => OnContextMenuCommand(OnAddTableColumnAfterRequested)">Add col</button>
+            <button type="button" disabled="@(!_formattingState.CanToggleTableHeaderRow)" @onclick="() => OnContextMenuCommand(OnToggleTableHeaderRowRequested)">Toggle header row</button>
+            <button type="button" disabled="@(!_formattingState.CanDeleteTable)" @onclick="() => OnContextMenuCommand(OnDeleteTableRequested)">Delete table</button>
+        </div>
+        <div class="editor-context-menu-group">
+            <div class="editor-context-menu-label">Image</div>
+            <button type="button" disabled="@(!_formattingState.CanInsertImage)" @onclick="() => OnContextMenuCommand(OnInsertImageFromUrlRequested)">Insert from URL</button>
+            <button type="button" disabled="@(!_formattingState.CanRemoveImage)" @onclick="() => OnContextMenuCommand(OnRemoveImageRequested)">Remove image</button>
         </div>
         <div class="editor-context-menu-group">
             <div class="editor-context-menu-label">Other</div>

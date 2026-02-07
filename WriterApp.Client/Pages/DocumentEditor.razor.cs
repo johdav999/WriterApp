@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -12,6 +13,7 @@ using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components.Forms;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -115,6 +117,8 @@ namespace WriterApp.Client.Pages
         private ElementReference _contextMenuRef;
         private bool _isToolbarOverflowOpen;
         private bool _isDocumentMenuOpen;
+        private string _imageUploadInputKey = Guid.NewGuid().ToString("N");
+        private string? _imageUploadError;
         private bool _isExportDialogOpen;
         private bool _isTemplateManagerOpen;
         private bool _isTemplateEditorOpen;
@@ -1688,6 +1692,163 @@ namespace WriterApp.Client.Pages
         private Task OnBlockquoteRequested()
         {
             return InvokePageCommandAsync("toggleBlockquote");
+        }
+
+        private Task OnInsertTableRequested()
+        {
+            return InvokePageCommandAsync("insertTable", 3, 3, true);
+        }
+
+        private Task OnAddTableRowBeforeRequested()
+        {
+            return InvokePageCommandAsync("addTableRowBefore");
+        }
+
+        private Task OnAddTableRowAfterRequested()
+        {
+            return InvokePageCommandAsync("addTableRowAfter");
+        }
+
+        private Task OnDeleteTableRowRequested()
+        {
+            return InvokePageCommandAsync("deleteTableRow");
+        }
+
+        private Task OnAddTableColumnBeforeRequested()
+        {
+            return InvokePageCommandAsync("addTableColumnBefore");
+        }
+
+        private Task OnAddTableColumnAfterRequested()
+        {
+            return InvokePageCommandAsync("addTableColumnAfter");
+        }
+
+        private Task OnDeleteTableColumnRequested()
+        {
+            return InvokePageCommandAsync("deleteTableColumn");
+        }
+
+        private Task OnDeleteTableRequested()
+        {
+            return InvokePageCommandAsync("deleteTable");
+        }
+
+        private Task OnToggleTableHeaderRowRequested()
+        {
+            return InvokePageCommandAsync("toggleTableHeaderRow");
+        }
+
+        private Task OnToggleTableHeaderColumnRequested()
+        {
+            return InvokePageCommandAsync("toggleTableHeaderColumn");
+        }
+
+        private Task OnMergeTableCellsRequested()
+        {
+            return InvokePageCommandAsync("mergeTableCells");
+        }
+
+        private Task OnSplitTableCellRequested()
+        {
+            return InvokePageCommandAsync("splitTableCell");
+        }
+
+        private async Task OnImageFileSelected(InputFileChangeEventArgs args)
+        {
+            _imageUploadError = null;
+            try
+            {
+                IBrowserFile? file = args.File;
+                if (file is null)
+                {
+                    return;
+                }
+
+                long maxBytes = Math.Clamp(Configuration.GetValue<long?>("Images:MaxUploadBytes") ?? (5 * 1024 * 1024), 256 * 1024, 10 * 1024 * 1024);
+                if (file.Size <= 0 || file.Size > maxBytes)
+                {
+                    _imageUploadError = $"Image must be between 1 byte and {maxBytes} bytes.";
+                    return;
+                }
+
+                if (!IsSupportedImageMimeType(file.ContentType))
+                {
+                    _imageUploadError = "Unsupported image type. Use PNG, JPEG, GIF, or WEBP.";
+                    return;
+                }
+
+                await using Stream readStream = file.OpenReadStream(maxBytes);
+                using StreamContent streamContent = new(readStream);
+                streamContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(file.ContentType);
+
+                using MultipartFormDataContent form = new();
+                form.Add(streamContent, "file", file.Name);
+
+                using HttpResponseMessage response = await Http.PostAsync(
+                    $"api/documents/{DocumentId:D}/assets/images",
+                    form);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    string message = await response.Content.ReadAsStringAsync();
+                    _imageUploadError = string.IsNullOrWhiteSpace(message)
+                        ? "Image upload failed."
+                        : $"Image upload failed: {message}";
+                    return;
+                }
+
+                ImageUploadResponse? payload = await response.Content.ReadFromJsonAsync<ImageUploadResponse>();
+                if (payload is null || string.IsNullOrWhiteSpace(payload.DataUri))
+                {
+                    _imageUploadError = "Image upload response was invalid.";
+                    return;
+                }
+
+                string altText = Path.GetFileNameWithoutExtension(file.Name);
+                await InvokePageCommandAsync(
+                    "replaceSelectedImage",
+                    payload.DataUri,
+                    altText,
+                    string.Empty,
+                    null,
+                    payload.Url,
+                    payload.ImageId.ToString("D", CultureInfo.InvariantCulture));
+            }
+            catch (Exception ex)
+            {
+                _imageUploadError = "Image upload failed.";
+                Logger.LogWarning(ex, "Image upload failed for document {DocumentId}.", DocumentId);
+            }
+            finally
+            {
+                _imageUploadInputKey = Guid.NewGuid().ToString("N");
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+
+        private async Task OnInsertImageFromUrlRequested()
+        {
+            string? input = await JSRuntime.InvokeAsync<string?>("prompt", "Image URL", string.Empty);
+            if (string.IsNullOrWhiteSpace(input))
+            {
+                return;
+            }
+
+            if (!TryNormalizeImageUrl(input, out string? normalized))
+            {
+                _imageUploadError = "Image URL must be https://, http://, or data:image/*";
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            _imageUploadError = null;
+            await InvokePageCommandAsync("replaceSelectedImage", normalized, string.Empty, string.Empty, null, null, null);
+        }
+
+        private Task OnRemoveImageRequested()
+        {
+            return InvokePageCommandAsync("removeSelectedImage");
         }
 
         private async Task OnLinkRequested()
@@ -6748,6 +6909,39 @@ namespace WriterApp.Client.Pages
             return normalized.Trim();
         }
 
+        private static bool IsSupportedImageMimeType(string? mimeType)
+        {
+            return string.Equals(mimeType, "image/png", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(mimeType, "image/jpeg", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(mimeType, "image/gif", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(mimeType, "image/webp", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool TryNormalizeImageUrl(string input, out string? normalized)
+        {
+            normalized = null;
+            string value = input.Trim();
+            if (value.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase))
+            {
+                normalized = value;
+                return true;
+            }
+
+            if (!Uri.TryCreate(value, UriKind.Absolute, out Uri? uri))
+            {
+                return false;
+            }
+
+            if (!string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            normalized = uri.ToString();
+            return true;
+        }
+
         private sealed record AiActionOption(
             string ActionKey,
             string Label,
@@ -6791,6 +6985,13 @@ namespace WriterApp.Client.Pages
             string PlainText,
             TextRange SelectionRange,
             string SelectionText);
+
+        private sealed record ImageUploadResponse(
+            Guid ImageId,
+            string Url,
+            string ContentType,
+            int SizeBytes,
+            string DataUri);
 
         private sealed record ExportPrintPayload(string Html);
 

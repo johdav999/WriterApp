@@ -86,6 +86,185 @@ export function toggleOrderedList(editor) {
     editor.chain().focus().toggleOrderedList().run();
 }
 
+export function insertTable(editor, rows = 3, cols = 3, withHeaderRow = true) {
+    if (!editor) {
+        return;
+    }
+
+    const rowCount = Number(rows);
+    const colCount = Number(cols);
+    editor.chain().focus().insertTable({
+        rows: Number.isFinite(rowCount) && rowCount > 0 ? rowCount : 3,
+        cols: Number.isFinite(colCount) && colCount > 0 ? colCount : 3,
+        withHeaderRow: withHeaderRow !== false
+    }).run();
+}
+
+export function addTableRowBefore(editor) {
+    if (!editor) {
+        return;
+    }
+
+    editor.chain().focus().addRowBefore().run();
+}
+
+export function addTableRowAfter(editor) {
+    if (!editor) {
+        return;
+    }
+
+    editor.chain().focus().addRowAfter().run();
+}
+
+export function deleteTableRow(editor) {
+    if (!editor) {
+        return;
+    }
+
+    editor.chain().focus().deleteRow().run();
+}
+
+export function addTableColumnBefore(editor) {
+    if (!editor) {
+        return;
+    }
+
+    editor.chain().focus().addColumnBefore().run();
+}
+
+export function addTableColumnAfter(editor) {
+    if (!editor) {
+        return;
+    }
+
+    editor.chain().focus().addColumnAfter().run();
+}
+
+export function deleteTableColumn(editor) {
+    if (!editor) {
+        return;
+    }
+
+    editor.chain().focus().deleteColumn().run();
+}
+
+export function deleteTable(editor) {
+    if (!editor) {
+        return;
+    }
+
+    editor.chain().focus().deleteTable().run();
+}
+
+export function toggleTableHeaderRow(editor) {
+    if (!editor) {
+        return;
+    }
+
+    editor.chain().focus().toggleHeaderRow().run();
+}
+
+export function toggleTableHeaderColumn(editor) {
+    if (!editor) {
+        return;
+    }
+
+    editor.chain().focus().toggleHeaderColumn().run();
+}
+
+export function mergeTableCells(editor) {
+    if (!editor) {
+        return;
+    }
+
+    editor.chain().focus().mergeCells().run();
+}
+
+export function splitTableCell(editor) {
+    if (!editor) {
+        return;
+    }
+
+    editor.chain().focus().splitCell().run();
+}
+
+export function insertImageFromUrl(editor, url, alt = "", title = "", width = null, assetUrl = null, assetId = null) {
+    if (!editor) {
+        return;
+    }
+
+    const src = typeof url === "string" ? url.trim() : "";
+    if (!src) {
+        return;
+    }
+
+    const attrs = { src };
+    if (typeof alt === "string" && alt.trim().length > 0) {
+        attrs.alt = alt.trim();
+    }
+    if (typeof title === "string" && title.trim().length > 0) {
+        attrs.title = title.trim();
+    }
+    if (width !== null && width !== undefined && `${width}`.trim().length > 0) {
+        attrs.width = `${width}`.trim();
+    }
+    if (typeof assetUrl === "string" && assetUrl.trim().length > 0) {
+        attrs.assetUrl = assetUrl.trim();
+    }
+    if (typeof assetId === "string" && assetId.trim().length > 0) {
+        attrs.assetId = assetId.trim();
+    }
+
+    editor.chain().focus().setImage(attrs).run();
+}
+
+export function replaceSelectedImage(editor, url, alt = "", title = "", width = null, assetUrl = null, assetId = null) {
+    if (!editor) {
+        return;
+    }
+
+    const src = typeof url === "string" ? url.trim() : "";
+    if (!src) {
+        return;
+    }
+
+    const attrs = { src };
+    if (typeof alt === "string" && alt.trim().length > 0) {
+        attrs.alt = alt.trim();
+    }
+    if (typeof title === "string" && title.trim().length > 0) {
+        attrs.title = title.trim();
+    }
+    if (width !== null && width !== undefined && `${width}`.trim().length > 0) {
+        attrs.width = `${width}`.trim();
+    }
+    if (typeof assetUrl === "string" && assetUrl.trim().length > 0) {
+        attrs.assetUrl = assetUrl.trim();
+    }
+    if (typeof assetId === "string" && assetId.trim().length > 0) {
+        attrs.assetId = assetId.trim();
+    }
+
+    if (editor.isActive("image")) {
+        editor.chain().focus().updateAttributes("image", attrs).run();
+        return;
+    }
+
+    editor.chain().focus().setImage(attrs).run();
+}
+
+export function removeSelectedImage(editor) {
+    if (!editor) {
+        return;
+    }
+
+    if (!editor.isActive("image")) {
+        return;
+    }
+
+    editor.chain().focus().deleteSelection().run();
+}
+
 export function setTextAlign(editor, alignment) {
     if (!editor) {
         return;
