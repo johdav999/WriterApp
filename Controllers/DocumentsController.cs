@@ -94,7 +94,9 @@ namespace WriterApp.Controllers
                     wordCounts.TryGetValue(document.Id, out int count) ? count : 0,
                     document.IsArchived,
                     document.ArchivedAt,
-                    document.DeletedAt))
+                    document.DeletedAt,
+                    document.ProjectId,
+                    NormalizeDocumentKind(document.DocumentKind)))
                 .ToList();
 
             _logger.LogInformation(
@@ -124,7 +126,9 @@ namespace WriterApp.Controllers
                 document.TranslationGroupId,
                 document.IsArchived,
                 document.ArchivedAt,
-                document.DeletedAt));
+                document.DeletedAt,
+                document.ProjectId,
+                NormalizeDocumentKind(document.DocumentKind)));
         }
 
         [HttpGet("{documentId:guid}/translations")]
@@ -299,13 +303,20 @@ namespace WriterApp.Controllers
             }
 
             DateTimeOffset now = DateTimeOffset.UtcNow;
+            DocumentKind translatedKind = source.DocumentKind == DocumentKind.Manuscript
+                ? DocumentKind.Other
+                : source.DocumentKind;
             DocumentRecord translated = new()
             {
                 Id = Guid.NewGuid(),
+                ProjectId = source.ProjectId,
                 OwnerUserId = userId,
                 Title = BuildTranslatedTitle(source.Title, request.TargetLanguage, request.Title),
+                DocumentKind = translatedKind,
                 CreatedAt = now,
                 UpdatedAt = now,
+                CreatedAtUnixSeconds = now.ToUnixTimeSeconds(),
+                UpdatedAtUnixSeconds = now.ToUnixTimeSeconds(),
                 IsArchived = false,
                 ArchivedAt = null,
                 DeletedAt = null,
@@ -394,7 +405,9 @@ namespace WriterApp.Controllers
                     translated.TranslationGroupId,
                     translated.IsArchived,
                     translated.ArchivedAt,
-                    translated.DeletedAt),
+                    translated.DeletedAt,
+                    translated.ProjectId,
+                    NormalizeDocumentKind(translated.DocumentKind)),
                 firstSectionId,
                 firstPageId));
         }
@@ -444,25 +457,79 @@ namespace WriterApp.Controllers
                         existing.TranslationGroupId,
                         existing.IsArchived,
                         existing.ArchivedAt,
-                        existing.DeletedAt),
+                        existing.DeletedAt,
+                        existing.ProjectId,
+                        NormalizeDocumentKind(existing.DocumentKind)),
                     null,
                     null));
             }
 
             DateTimeOffset createdAt = request.CreatedAt ?? DateTimeOffset.UtcNow;
             DateTimeOffset updatedAt = request.UpdatedAt ?? createdAt;
+            DocumentKind documentKind = ParseDocumentKind(request.Kind);
+
+            Guid projectId;
+            ProjectRecord? project = null;
+            if (request.ProjectId.HasValue)
+            {
+                project = await _dbContext.Projects
+                    .FirstOrDefaultAsync(item => item.Id == request.ProjectId.Value && item.OwnerUserId == userId, ct);
+                if (project is null)
+                {
+                    return BadRequest(new { message = "Project not found." });
+                }
+
+                projectId = project.Id;
+            }
+            else
+            {
+                project = new ProjectRecord
+                {
+                    Id = Guid.NewGuid(),
+                    OwnerUserId = userId,
+                    Title = $"{title} Project",
+                    Subtitle = null,
+                    AuthorName = null,
+                    Language = null,
+                    Genre = null,
+                    DefaultExportSettingsJson = null,
+                    CreatedUtc = createdAt,
+                    UpdatedUtc = updatedAt
+                };
+                _dbContext.Projects.Add(project);
+                projectId = project.Id;
+            }
+
+            if (documentKind == DocumentKind.Manuscript)
+            {
+                bool hasManuscript = await _dbContext.Documents
+                    .AnyAsync(item => item.ProjectId == projectId && item.DocumentKind == DocumentKind.Manuscript, ct);
+                if (hasManuscript)
+                {
+                    return Conflict(new { message = "Project already has a manuscript document." });
+                }
+            }
 
             DocumentRecord document = new()
             {
                 Id = documentId,
+                ProjectId = projectId,
                 OwnerUserId = userId,
                 Title = title,
+                DocumentKind = documentKind,
                 CreatedAt = createdAt,
                 UpdatedAt = updatedAt,
+                CreatedAtUnixSeconds = createdAt.ToUnixTimeSeconds(),
+                UpdatedAtUnixSeconds = updatedAt.ToUnixTimeSeconds(),
                 IsArchived = false,
                 ArchivedAt = null,
                 DeletedAt = null
             };
+
+            if (project is not null)
+            {
+                project.UpdatedUtc = updatedAt;
+            }
 
             await _documents.CreateAsync(document, ct);
             await _searchIndex.UpsertDocumentAsync(document, ct);
@@ -520,7 +587,9 @@ namespace WriterApp.Controllers
                     document.TranslationGroupId,
                     document.IsArchived,
                     document.ArchivedAt,
-                    document.DeletedAt),
+                    document.DeletedAt,
+                    document.ProjectId,
+                    NormalizeDocumentKind(document.DocumentKind)),
                 defaultSectionId,
                 defaultPageId));
         }
@@ -555,7 +624,9 @@ namespace WriterApp.Controllers
                 document.TranslationGroupId,
                 document.IsArchived,
                 document.ArchivedAt,
-                document.DeletedAt));
+                document.DeletedAt,
+                document.ProjectId,
+                NormalizeDocumentKind(document.DocumentKind)));
         }
 
         [HttpPost("{documentId:guid}/archive")]
@@ -577,7 +648,9 @@ namespace WriterApp.Controllers
                 document.TranslationGroupId,
                 document.IsArchived,
                 document.ArchivedAt,
-                document.DeletedAt));
+                document.DeletedAt,
+                document.ProjectId,
+                NormalizeDocumentKind(document.DocumentKind)));
         }
 
         [HttpPost("{documentId:guid}/unarchive")]
@@ -599,7 +672,9 @@ namespace WriterApp.Controllers
                 document.TranslationGroupId,
                 document.IsArchived,
                 document.ArchivedAt,
-                document.DeletedAt));
+                document.DeletedAt,
+                document.ProjectId,
+                NormalizeDocumentKind(document.DocumentKind)));
         }
 
         [HttpPost("{documentId:guid}/trash")]
@@ -621,7 +696,9 @@ namespace WriterApp.Controllers
                 document.TranslationGroupId,
                 document.IsArchived,
                 document.ArchivedAt,
-                document.DeletedAt));
+                document.DeletedAt,
+                document.ProjectId,
+                NormalizeDocumentKind(document.DocumentKind)));
         }
 
         [HttpPost("{documentId:guid}/restore")]
@@ -643,7 +720,9 @@ namespace WriterApp.Controllers
                 document.TranslationGroupId,
                 document.IsArchived,
                 document.ArchivedAt,
-                document.DeletedAt));
+                document.DeletedAt,
+                document.ProjectId,
+                NormalizeDocumentKind(document.DocumentKind)));
         }
 
         [HttpDelete("{documentId:guid}")]
@@ -676,6 +755,36 @@ namespace WriterApp.Controllers
             string normalized = string.IsNullOrWhiteSpace(originalTitle) ? "Untitled" : originalTitle.Trim();
             string lang = string.IsNullOrWhiteSpace(languageCode) ? string.Empty : languageCode.Trim().ToUpperInvariant();
             return string.IsNullOrWhiteSpace(lang) ? normalized : $"{normalized} ({lang})";
+        }
+
+        private static DocumentKind ParseDocumentKind(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return DocumentKind.Manuscript;
+            }
+
+            return value.Trim().ToLowerInvariant() switch
+            {
+                "manuscript" => DocumentKind.Manuscript,
+                "synopsis" => DocumentKind.Synopsis,
+                "notes" => DocumentKind.Notes,
+                "outline" => DocumentKind.Outline,
+                "other" => DocumentKind.Other,
+                _ => DocumentKind.Other
+            };
+        }
+
+        private static string NormalizeDocumentKind(DocumentKind kind)
+        {
+            return kind switch
+            {
+                DocumentKind.Manuscript => "manuscript",
+                DocumentKind.Synopsis => "synopsis",
+                DocumentKind.Notes => "notes",
+                DocumentKind.Outline => "outline",
+                _ => "other"
+            };
         }
     }
 }

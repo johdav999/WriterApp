@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -70,6 +71,156 @@ namespace WriterApp.Controllers
             List<ProjectDto> result = projects
                 .Select(project => ToDto(project, totals.TryGetValue(project.Id, out int total) ? total : 0))
                 .ToList();
+
+            return Ok(result);
+        }
+
+        [HttpGet("list-items")]
+        public async Task<ActionResult<IReadOnlyList<ProjectListItemDto>>> ListProjectItems(CancellationToken ct)
+        {
+            if (!IsEnabled())
+            {
+                return NotFound();
+            }
+
+            await EnsureProjectsSchemaAsync(ct);
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            List<ProjectRecord> projects = await _dbContext.Projects
+                .AsNoTracking()
+                .Where(project => project.OwnerUserId == userId)
+                .ToListAsync(ct);
+            projects = projects
+                .OrderByDescending(project => project.UpdatedUtc)
+                .ToList();
+
+            if (projects.Count == 0)
+            {
+                return Ok(Array.Empty<ProjectListItemDto>());
+            }
+
+            HashSet<Guid> projectIds = projects.Select(project => project.Id).ToHashSet();
+            List<DocumentRecord> documents = await _dbContext.Documents
+                .AsNoTracking()
+                .Where(document => projectIds.Contains(document.ProjectId) && document.OwnerUserId == userId)
+                .ToListAsync(ct);
+            Dictionary<Guid, List<DocumentRecord>> docsByProject = documents
+                .GroupBy(document => document.ProjectId)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group
+                        .OrderByDescending(document => document.UpdatedAtUnixSeconds)
+                        .ToList());
+
+            Dictionary<Guid, int> totals = await _dbContext.ProjectNodes
+                .AsNoTracking()
+                .Where(node => projectIds.Contains(node.ProjectId) && node.ParentId == null)
+                .GroupBy(node => node.ProjectId)
+                .Select(group => new { group.Key, Total = group.Sum(node => node.WordCountCache) })
+                .ToDictionaryAsync(item => item.Key, item => item.Total, ct);
+
+            Dictionary<Guid, ProjectGoalRecord> goalsByProject = new();
+            Dictionary<Guid, List<ProjectProgressDailyRecord>> progressByProject = new();
+            bool includeProgress = IsGoalsEnabled();
+            if (includeProgress)
+            {
+                List<ProjectGoalRecord> goalRows = await _dbContext.ProjectGoals
+                    .AsNoTracking()
+                    .Where(item => projectIds.Contains(item.ProjectId))
+                    .ToListAsync(ct);
+                goalsByProject = goalRows.ToDictionary(item => item.ProjectId, item => item);
+
+                List<ProjectProgressDailyRecord> progressRows = await _dbContext.ProjectProgressDaily
+                    .AsNoTracking()
+                    .Where(item => projectIds.Contains(item.ProjectId))
+                    .ToListAsync(ct);
+                progressByProject = progressRows
+                    .GroupBy(item => item.ProjectId)
+                    .ToDictionary(group => group.Key, group => group.ToList());
+            }
+
+            List<ProjectListItemDto> result = new(projects.Count);
+            foreach (ProjectRecord project in projects)
+            {
+                docsByProject.TryGetValue(project.Id, out List<DocumentRecord>? projectDocs);
+                projectDocs ??= new List<DocumentRecord>();
+
+                DocumentRecord? primary = projectDocs
+                    .Where(item => item.DeletedAt is null && item.DocumentKind == DocumentKind.Manuscript)
+                    .OrderByDescending(item => item.UpdatedAtUnixSeconds)
+                    .FirstOrDefault()
+                    ?? projectDocs
+                        .Where(item => item.DeletedAt is null)
+                        .OrderByDescending(item => item.UpdatedAtUnixSeconds)
+                        .FirstOrDefault();
+
+                DateTimeOffset lastEdited = primary?.UpdatedAt ?? project.UpdatedUtc;
+                int totalWords = totals.TryGetValue(project.Id, out int total) ? total : 0;
+
+                int? todayWords = null;
+                int? thisWeekWords = null;
+                int? streak = null;
+                if (includeProgress)
+                {
+                    ProjectGoalRecord? goal = goalsByProject.TryGetValue(project.Id, out ProjectGoalRecord? goalRecord)
+                        ? goalRecord
+                        : null;
+                    string timezone = string.IsNullOrWhiteSpace(goal?.Timezone) ? "UTC" : goal!.Timezone;
+                    TimeZoneInfo timeZone = ResolveTimeZone(timezone);
+                    DateOnly today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, timeZone).DateTime);
+                    DateOnly weekStart = today.AddDays(-6);
+                    string weekStartText = weekStart.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                    string todayText = today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+                    List<ProjectProgressDailyRecord> rows = progressByProject.TryGetValue(project.Id, out List<ProjectProgressDailyRecord>? projectRows)
+                        ? projectRows
+                        : new List<ProjectProgressDailyRecord>();
+
+                    Dictionary<string, int> lookup = rows
+                        .Where(item => string.CompareOrdinal(item.Date, todayText) <= 0)
+                        .ToDictionary(item => item.Date, item => item.WordsDelta);
+
+                    todayWords = lookup.TryGetValue(todayText, out int value) ? value : 0;
+                    thisWeekWords = rows
+                        .Where(item => string.CompareOrdinal(item.Date, weekStartText) >= 0 && string.CompareOrdinal(item.Date, todayText) <= 0)
+                        .Sum(item => item.WordsDelta);
+
+                    int dailyTarget = Math.Max(0, goal?.DailyTargetWords ?? 0);
+                    if (dailyTarget <= 0)
+                    {
+                        streak = 0;
+                    }
+                    else
+                    {
+                        int days = 0;
+                        DateOnly cursor = today;
+                        while (true)
+                        {
+                            string key = cursor.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                            if (!lookup.TryGetValue(key, out int words) || words < dailyTarget)
+                            {
+                                break;
+                            }
+
+                            days++;
+                            cursor = cursor.AddDays(-1);
+                        }
+
+                        streak = days;
+                    }
+                }
+
+                result.Add(new ProjectListItemDto(
+                    project.Id,
+                    project.Title,
+                    primary?.Id,
+                    primary?.Title,
+                    lastEdited,
+                    totalWords,
+                    todayWords,
+                    thisWeekWords,
+                    streak));
+            }
 
             return Ok(result);
         }
@@ -224,10 +375,272 @@ namespace WriterApp.Controllers
             };
 
             _dbContext.Projects.Add(project);
+            _dbContext.Documents.Add(new DocumentRecord
+            {
+                Id = Guid.NewGuid(),
+                ProjectId = project.Id,
+                OwnerUserId = userId,
+                Title = string.IsNullOrWhiteSpace(request.Title) ? "Manuscript" : request.Title.Trim(),
+                DocumentKind = DocumentKind.Manuscript,
+                CreatedAt = now,
+                UpdatedAt = now,
+                CreatedAtUnixSeconds = now.ToUnixTimeSeconds(),
+                UpdatedAtUnixSeconds = now.ToUnixTimeSeconds(),
+                IsArchived = false,
+                ArchivedAt = null,
+                DeletedAt = null,
+                LanguageCode = project.Language,
+                TranslationGroupId = null
+            });
             await _dbContext.SaveChangesAsync(ct);
 
             ProjectDto dto = ToDto(project, 0);
             return Ok(dto);
+        }
+
+        [HttpPatch("{projectId:guid}")]
+        public async Task<ActionResult<ProjectDto>> UpdateProject(
+            Guid projectId,
+            [FromBody] ProjectUpdateRequest request,
+            CancellationToken ct)
+        {
+            if (!IsEnabled())
+            {
+                return NotFound();
+            }
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            ProjectRecord? project = await _dbContext.Projects
+                .FirstOrDefaultAsync(item => item.Id == projectId && item.OwnerUserId == userId, ct);
+            if (project is null)
+            {
+                return NotFound();
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.Title))
+            {
+                project.Title = request.Title.Trim();
+            }
+
+            project.Subtitle = Normalize(request.Subtitle);
+            project.AuthorName = Normalize(request.AuthorName);
+            project.Language = Normalize(request.Language);
+            project.Genre = Normalize(request.Genre);
+            project.DefaultExportSettingsJson = Normalize(request.DefaultExportSettingsJson);
+            project.UpdatedUtc = DateTimeOffset.UtcNow;
+            await _dbContext.SaveChangesAsync(ct);
+
+            int total = await _dbContext.ProjectNodes
+                .AsNoTracking()
+                .Where(node => node.ProjectId == projectId && node.ParentId == null)
+                .SumAsync(node => (int?)node.WordCountCache, ct) ?? 0;
+
+            return Ok(ToDto(project, total));
+        }
+
+        [HttpDelete("{projectId:guid}")]
+        public async Task<IActionResult> DeleteProject(Guid projectId, CancellationToken ct)
+        {
+            if (!IsEnabled())
+            {
+                return NotFound();
+            }
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            ProjectRecord? project = await _dbContext.Projects
+                .FirstOrDefaultAsync(item => item.Id == projectId && item.OwnerUserId == userId, ct);
+            if (project is null)
+            {
+                return NotFound();
+            }
+
+            List<DocumentRecord> documents = await _dbContext.Documents
+                .Where(item => item.ProjectId == projectId && item.OwnerUserId == userId)
+                .ToListAsync(ct);
+            _dbContext.Documents.RemoveRange(documents);
+            _dbContext.Projects.Remove(project);
+            await _dbContext.SaveChangesAsync(ct);
+            return NoContent();
+        }
+
+        [HttpGet("with-documents")]
+        public async Task<ActionResult<IReadOnlyList<ProjectWithDocumentsDto>>> ListProjectsWithDocuments(CancellationToken ct)
+        {
+            if (!IsEnabled())
+            {
+                return NotFound();
+            }
+
+            await EnsureProjectsSchemaAsync(ct);
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            List<ProjectRecord> projects = await _dbContext.Projects
+                .AsNoTracking()
+                .Where(project => project.OwnerUserId == userId)
+                .ToListAsync(ct);
+            projects = projects.OrderByDescending(project => project.UpdatedUtc).ToList();
+
+            HashSet<Guid> projectIds = projects.Select(project => project.Id).ToHashSet();
+            List<DocumentRecord> documents = await _dbContext.Documents
+                .AsNoTracking()
+                .Where(document => projectIds.Contains(document.ProjectId) && document.OwnerUserId == userId)
+                .ToListAsync(ct);
+
+            Dictionary<Guid, List<ProjectDocumentDto>> docsByProject = documents
+                .GroupBy(document => document.ProjectId)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group
+                        .OrderByDescending(document => document.UpdatedAtUnixSeconds)
+                        .Select(ToProjectDocumentDto)
+                        .ToList());
+
+            Dictionary<Guid, int> totals = await _dbContext.ProjectNodes
+                .AsNoTracking()
+                .Where(node => projectIds.Contains(node.ProjectId) && node.ParentId == null)
+                .GroupBy(node => node.ProjectId)
+                .Select(group => new { group.Key, Total = group.Sum(node => node.WordCountCache) })
+                .ToDictionaryAsync(item => item.Key, item => item.Total, ct);
+
+            List<ProjectWithDocumentsDto> result = projects
+                .Select(project => new ProjectWithDocumentsDto(
+                    ToDto(project, totals.TryGetValue(project.Id, out int total) ? total : 0),
+                    docsByProject.TryGetValue(project.Id, out List<ProjectDocumentDto>? docs)
+                        ? docs
+                        : new List<ProjectDocumentDto>()))
+                .ToList();
+
+            return Ok(result);
+        }
+
+        [HttpGet("{projectId:guid}/documents")]
+        public async Task<ActionResult<IReadOnlyList<ProjectDocumentDto>>> ListProjectDocuments(Guid projectId, CancellationToken ct)
+        {
+            if (!IsEnabled())
+            {
+                return NotFound();
+            }
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            bool projectExists = await _dbContext.Projects
+                .AsNoTracking()
+                .AnyAsync(project => project.Id == projectId && project.OwnerUserId == userId, ct);
+            if (!projectExists)
+            {
+                return NotFound();
+            }
+
+            List<DocumentRecord> result = await _dbContext.Documents
+                .AsNoTracking()
+                .Where(document => document.ProjectId == projectId && document.OwnerUserId == userId)
+                .OrderByDescending(document => document.UpdatedAtUnixSeconds)
+                .ToListAsync(ct);
+            List<ProjectDocumentDto> dto = result.Select(ToProjectDocumentDto).ToList();
+
+            return Ok(dto);
+        }
+
+        [HttpPost("{projectId:guid}/documents")]
+        public async Task<ActionResult<DocumentCreateResponse>> CreateProjectDocument(
+            Guid projectId,
+            [FromBody] ProjectDocumentCreateRequest request,
+            CancellationToken ct)
+        {
+            if (!IsEnabled())
+            {
+                return NotFound();
+            }
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            ProjectRecord? project = await _dbContext.Projects
+                .FirstOrDefaultAsync(item => item.Id == projectId && item.OwnerUserId == userId, ct);
+            if (project is null)
+            {
+                return NotFound();
+            }
+
+            DocumentKind kind = ParseDocumentKind(request.Kind);
+            if (kind == DocumentKind.Manuscript)
+            {
+                bool hasManuscript = await _dbContext.Documents
+                    .AnyAsync(item => item.ProjectId == projectId && item.DocumentKind == DocumentKind.Manuscript, ct);
+                if (hasManuscript)
+                {
+                    return Conflict(new { message = "Project already has a manuscript document." });
+                }
+            }
+
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            DocumentRecord document = new()
+            {
+                Id = request.Id ?? Guid.NewGuid(),
+                ProjectId = projectId,
+                OwnerUserId = userId,
+                Title = string.IsNullOrWhiteSpace(request.Title) ? "Untitled" : request.Title.Trim(),
+                DocumentKind = kind,
+                CreatedAt = now,
+                UpdatedAt = now,
+                CreatedAtUnixSeconds = now.ToUnixTimeSeconds(),
+                UpdatedAtUnixSeconds = now.ToUnixTimeSeconds(),
+                IsArchived = false,
+                ArchivedAt = null,
+                DeletedAt = null,
+                LanguageCode = project.Language,
+                TranslationGroupId = null
+            };
+
+            _dbContext.Documents.Add(document);
+
+            Guid? defaultSectionId = null;
+            Guid? defaultPageId = null;
+            if (request.CreateDefaultStructure)
+            {
+                SectionRecord section = new()
+                {
+                    Id = Guid.NewGuid(),
+                    DocumentId = document.Id,
+                    Title = "Draft",
+                    NarrativePurpose = null,
+                    OrderIndex = 0,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                };
+                _dbContext.Sections.Add(section);
+                defaultSectionId = section.Id;
+
+                PageRecord page = new()
+                {
+                    Id = Guid.NewGuid(),
+                    DocumentId = document.Id,
+                    SectionId = section.Id,
+                    Title = "Page 1",
+                    Content = string.Empty,
+                    OrderIndex = 0,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                };
+                _dbContext.Pages.Add(page);
+                defaultPageId = page.Id;
+            }
+
+            project.UpdatedUtc = now;
+            await _dbContext.SaveChangesAsync(ct);
+
+            return Ok(new DocumentCreateResponse(
+                new DocumentDetailDto(
+                    document.Id,
+                    document.Title,
+                    document.CreatedAt,
+                    document.UpdatedAt,
+                    document.LanguageCode,
+                    document.TranslationGroupId,
+                    document.IsArchived,
+                    document.ArchivedAt,
+                    document.DeletedAt,
+                    document.ProjectId,
+                    NormalizeDocumentKind(document.DocumentKind)),
+                defaultSectionId,
+                defaultPageId));
         }
 
         [HttpPost("from-document/{documentId:guid}")]
@@ -245,6 +658,24 @@ namespace WriterApp.Controllers
             if (document is null)
             {
                 return NotFound();
+            }
+
+            if (document.ProjectId != Guid.Empty)
+            {
+                ProjectRecord? existingProject = await _dbContext.Projects
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(item => item.Id == document.ProjectId && item.OwnerUserId == userId, ct);
+                if (existingProject is not null)
+                {
+                    List<ProjectNodeRecord> existingNodes = await _dbContext.ProjectNodes
+                        .AsNoTracking()
+                        .Where(node => node.ProjectId == existingProject.Id)
+                        .OrderBy(node => node.ParentId)
+                        .ThenBy(node => node.OrderIndex)
+                        .ToListAsync(ct);
+                    int existingTotal = existingNodes.Where(node => node.ParentId == null).Sum(node => node.WordCountCache);
+                    return Ok(new ProjectTreeDto(ToDto(existingProject, existingTotal), existingNodes.Select(ToDto).ToList()));
+                }
             }
 
             List<SectionRecord> sections = await _dbContext.Sections
@@ -842,9 +1273,74 @@ namespace WriterApp.Controllers
                 node.UpdatedUtc);
         }
 
+        private static ProjectDocumentDto ToProjectDocumentDto(DocumentRecord document)
+        {
+            return new ProjectDocumentDto(
+                document.Id,
+                document.ProjectId,
+                document.Title,
+                NormalizeDocumentKind(document.DocumentKind),
+                document.CreatedAt,
+                document.UpdatedAt,
+                document.IsArchived,
+                document.ArchivedAt,
+                document.DeletedAt);
+        }
+
+        private static DocumentKind ParseDocumentKind(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return DocumentKind.Manuscript;
+            }
+
+            return value.Trim().ToLowerInvariant() switch
+            {
+                "manuscript" => DocumentKind.Manuscript,
+                "synopsis" => DocumentKind.Synopsis,
+                "notes" => DocumentKind.Notes,
+                "outline" => DocumentKind.Outline,
+                "other" => DocumentKind.Other,
+                _ => DocumentKind.Other
+            };
+        }
+
+        private static string NormalizeDocumentKind(DocumentKind kind)
+        {
+            return kind switch
+            {
+                DocumentKind.Manuscript => "manuscript",
+                DocumentKind.Synopsis => "synopsis",
+                DocumentKind.Notes => "notes",
+                DocumentKind.Outline => "outline",
+                _ => "other"
+            };
+        }
+
         private static string? Normalize(string? value)
         {
             return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        }
+
+        private static TimeZoneInfo ResolveTimeZone(string timezone)
+        {
+            if (string.IsNullOrWhiteSpace(timezone))
+            {
+                return TimeZoneInfo.Utc;
+            }
+
+            try
+            {
+                return TimeZoneInfo.FindSystemTimeZoneById(timezone);
+            }
+            catch (TimeZoneNotFoundException)
+            {
+                return TimeZoneInfo.Utc;
+            }
+            catch (InvalidTimeZoneException)
+            {
+                return TimeZoneInfo.Utc;
+            }
         }
     }
 }

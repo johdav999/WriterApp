@@ -1,3 +1,6 @@
+using System;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using WriterApp.Data.AI;
 using WriterApp.Data.Continuity;
@@ -49,6 +52,30 @@ namespace WriterApp.Data
         public DbSet<ExportTemplate> ExportTemplates => Set<ExportTemplate>();
         public DbSet<ExportPreset> ExportPresets => Set<ExportPreset>();
         public DbSet<ProjectExportSettings> ProjectExportSettings => Set<ProjectExportSettings>();
+
+        public override int SaveChanges()
+        {
+            SyncDocumentUnixTimestamps();
+            return base.SaveChanges();
+        }
+
+        public override int SaveChanges(bool acceptAllChangesOnSuccess)
+        {
+            SyncDocumentUnixTimestamps();
+            return base.SaveChanges(acceptAllChangesOnSuccess);
+        }
+
+        public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+        {
+            SyncDocumentUnixTimestamps();
+            return base.SaveChangesAsync(cancellationToken);
+        }
+
+        public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+        {
+            SyncDocumentUnixTimestamps();
+            return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        }
 
         protected override void OnModelCreating(ModelBuilder builder)
         {
@@ -109,15 +136,29 @@ namespace WriterApp.Data
             builder.Entity<DocumentRecord>(entity =>
             {
                 entity.HasKey(document => document.Id);
+                entity.Property(document => document.ProjectId).IsRequired();
                 entity.Property(document => document.OwnerUserId).IsRequired();
                 entity.Property(document => document.Title).IsRequired();
+                entity.Property(document => document.DocumentKind).IsRequired();
                 entity.Property(document => document.CreatedAt).IsRequired();
                 entity.Property(document => document.UpdatedAt).IsRequired();
+                entity.Property(document => document.CreatedAtUnixSeconds).IsRequired();
+                entity.Property(document => document.UpdatedAtUnixSeconds).IsRequired();
                 entity.Property(document => document.IsArchived).IsRequired();
                 entity.Property(document => document.ArchivedAt);
                 entity.Property(document => document.DeletedAt);
+                entity.HasIndex(document => document.ProjectId);
+                entity.HasIndex(document => new { document.ProjectId, document.UpdatedAtUnixSeconds });
+                entity.HasIndex(document => document.DocumentKind);
+                entity.HasIndex(document => new { document.ProjectId, document.DocumentKind })
+                    .IsUnique()
+                    .HasFilter($"\"DocumentKind\" = {(int)DocumentKind.Manuscript}");
                 entity.HasIndex(document => document.DeletedAt);
                 entity.HasIndex(document => document.IsArchived);
+                entity.HasOne(document => document.Project)
+                    .WithMany(project => project.Documents)
+                    .HasForeignKey(document => document.ProjectId)
+                    .OnDelete(DeleteBehavior.Cascade);
                 entity.HasMany(document => document.Sections)
                     .WithOne(section => section.Document)
                     .HasForeignKey(section => section.DocumentId)
@@ -137,6 +178,10 @@ namespace WriterApp.Data
                 entity.Property(project => project.UpdatedUtc).IsRequired();
                 entity.HasIndex(project => project.OwnerUserId);
                 entity.HasIndex(project => project.UpdatedUtc);
+                entity.HasMany(project => project.Documents)
+                    .WithOne(document => document.Project)
+                    .HasForeignKey(document => document.ProjectId)
+                    .OnDelete(DeleteBehavior.Cascade);
                 entity.HasMany(project => project.Nodes)
                     .WithOne(node => node.Project)
                     .HasForeignKey(node => node.ProjectId)
@@ -574,6 +619,32 @@ namespace WriterApp.Data
             });
 
             SeedSubscriptionData(builder);
+        }
+
+        private void SyncDocumentUnixTimestamps()
+        {
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            foreach (Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry<DocumentRecord> entry in ChangeTracker.Entries<DocumentRecord>())
+            {
+                if (entry.State == EntityState.Added)
+                {
+                    if (entry.Entity.CreatedAt == default)
+                    {
+                        entry.Entity.CreatedAt = now;
+                    }
+
+                    if (entry.Entity.UpdatedAt == default)
+                    {
+                        entry.Entity.UpdatedAt = entry.Entity.CreatedAt;
+                    }
+                }
+
+                if (entry.State == EntityState.Added || entry.State == EntityState.Modified)
+                {
+                    entry.Entity.CreatedAtUnixSeconds = entry.Entity.CreatedAt.ToUnixTimeSeconds();
+                    entry.Entity.UpdatedAtUnixSeconds = entry.Entity.UpdatedAt.ToUnixTimeSeconds();
+                }
+            }
         }
 
         private static void SeedSubscriptionData(ModelBuilder builder)

@@ -25,6 +25,8 @@ namespace WriterApp.Data.Documents
 
         public DateTimeOffset UpdatedUtc { get; set; }
 
+        public List<DocumentRecord> Documents { get; set; } = new();
+
         public List<ProjectNodeRecord> Nodes { get; set; } = new();
 
         public ProjectGoalRecord? Goal { get; set; }

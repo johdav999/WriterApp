@@ -22,6 +22,14 @@ namespace WriterApp.Application.Documents
         string? Genre,
         string? DefaultExportSettingsJson);
 
+    public sealed record ProjectUpdateRequest(
+        string? Title,
+        string? Subtitle,
+        string? AuthorName,
+        string? Language,
+        string? Genre,
+        string? DefaultExportSettingsJson);
+
     public sealed record ProjectNodeDto(
         Guid Id,
         Guid ProjectId,
@@ -37,6 +45,38 @@ namespace WriterApp.Application.Documents
     public sealed record ProjectTreeDto(
         ProjectDto Project,
         IReadOnlyList<ProjectNodeDto> Nodes);
+
+    public sealed record ProjectDocumentDto(
+        Guid Id,
+        Guid ProjectId,
+        string Title,
+        string Kind,
+        DateTimeOffset CreatedAt,
+        DateTimeOffset UpdatedAt,
+        bool IsArchived,
+        DateTimeOffset? ArchivedAt,
+        DateTimeOffset? DeletedAt);
+
+    public sealed record ProjectWithDocumentsDto(
+        ProjectDto Project,
+        IReadOnlyList<ProjectDocumentDto> Documents);
+
+    public sealed record ProjectListItemDto(
+        Guid ProjectId,
+        string Title,
+        Guid? PrimaryDocumentId,
+        string? PrimaryDocumentTitle,
+        DateTimeOffset LastEditedUtc,
+        int TotalWords,
+        int? TodayWords,
+        int? ThisWeekWords,
+        int? StreakCount);
+
+    public sealed record ProjectDocumentCreateRequest(
+        Guid? Id,
+        string? Title,
+        string? Kind,
+        bool CreateDefaultStructure = true);
 
     public sealed record ProjectNodeCreateRequest(
         Guid? ParentId,

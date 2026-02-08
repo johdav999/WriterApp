@@ -1,6 +1,8 @@
 @page "/projects"
+@page "/projects/{ProjectId:guid}"
 @using System.Net
 @using System.Net.Http.Json
+@using Microsoft.AspNetCore.Components
 @using WriterApp.Application.Documents
 @inject HttpClient Http
 @inject NavigationManager Navigation
@@ -259,6 +261,9 @@ else
     private ProjectNodeDto? _selectedNode =>
         _selectedNodeId.HasValue ? _nodes.FirstOrDefault(node => node.Id == _selectedNodeId.Value) : null;
 
+    [Parameter]
+    public Guid? ProjectId { get; set; }
+
     protected override async Task OnInitializedAsync()
     {
         _projectsEnabled = Configuration.GetValue<bool?>("Workflow:ProjectsEnabled")
@@ -275,6 +280,20 @@ else
         }
 
         await LoadProjectsAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!_projectsEnabled || !_selectedProjectId.HasValue || !ProjectId.HasValue || ProjectId.Value == _selectedProjectId.Value)
+        {
+            return;
+        }
+
+        if (_projects.Any(project => project.Id == ProjectId.Value))
+        {
+            _selectedProjectId = ProjectId.Value;
+            await LoadTreeAsync(ProjectId.Value);
+        }
     }
 
     private async Task LoadProjectsAsync()
@@ -297,6 +316,11 @@ else
 
             if (_projects.Count > 0)
             {
+                if (ProjectId.HasValue && _projects.Any(project => project.Id == ProjectId.Value))
+                {
+                    _selectedProjectId = ProjectId.Value;
+                }
+
                 _selectedProjectId ??= _projects[0].Id;
                 await LoadTreeAsync(_selectedProjectId.Value);
             }
@@ -745,6 +769,7 @@ else
 
         _selectedProjectId = projectId;
         await LoadTreeAsync(projectId);
+        Navigation.NavigateTo($"projects/{projectId}", replace: true);
     }
 
     private async Task CreateProjectAsync()
@@ -766,6 +791,7 @@ else
             await LoadProjectsAsync();
             _selectedProjectId = created.Id;
             await LoadTreeAsync(created.Id);
+            Navigation.NavigateTo($"projects/{created.Id}", replace: true);
         }
         catch (Exception ex)
         {
@@ -801,6 +827,7 @@ else
             await LoadProjectsAsync();
             _selectedProjectId = tree.Project.Id;
             await LoadTreeAsync(tree.Project.Id);
+            Navigation.NavigateTo($"projects/{tree.Project.Id}", replace: true);
         }
         catch (Exception ex)
         {
