@@ -12,6 +12,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using System.Net.Http;
 using WriterApp.Application.Exporting;
 using WriterApp.Application.Security;
+using WriterApp.Application.Documents;
 using WriterApp.Controllers;
 using WriterApp.Data;
 using WriterApp.Data.Documents;
@@ -85,8 +86,10 @@ namespace WriterApp.Tests
             DocumentRecord document = new()
             {
                 Id = documentId,
+                ProjectId = Guid.NewGuid(),
                 OwnerUserId = "user-1",
                 Title = "Export Doc",
+                DocumentKind = DocumentKind.Other,
                 CreatedAt = now,
                 UpdatedAt = now
             };
@@ -146,6 +149,7 @@ namespace WriterApp.Tests
             DocumentExportController controller = new(
                 context,
                 new StubUserIdResolver(),
+                new StubProjectSceneLinkingService(),
                 exportService,
                 configuration,
                 NullLogger<DocumentExportController>.Instance);
@@ -172,6 +176,21 @@ namespace WriterApp.Tests
             {
                 throw new InvalidOperationException("Templates are not used for DOCX/EPUB exports.");
             }
+        }
+
+        private sealed class StubProjectSceneLinkingService : IProjectSceneLinkingService
+        {
+            public Task<DocumentRecord?> GetOrCreateManuscriptDocumentAsync(Guid projectId, string ownerUserId, CancellationToken ct)
+                => Task.FromResult<DocumentRecord?>(null);
+
+            public Task<SceneLinkResult?> EnsureSceneLinkedSectionAsync(Guid projectId, Guid sceneNodeId, string ownerUserId, CancellationToken ct)
+                => Task.FromResult<SceneLinkResult?>(null);
+
+            public Task<SceneLinkResult?> EnsureSceneLinkedSectionAsync(ProjectRecord project, ProjectNodeRecord sceneNode, string ownerUserId, CancellationToken ct)
+                => Task.FromResult<SceneLinkResult?>(null);
+
+            public Task<IReadOnlyList<ManuscriptSceneSectionItem>> GetManuscriptSceneSectionsAsync(Guid projectId, string ownerUserId, CancellationToken ct)
+                => Task.FromResult<IReadOnlyList<ManuscriptSceneSectionItem>>(Array.Empty<ManuscriptSceneSectionItem>());
         }
 
         private sealed class StubHttpClientFactory : IHttpClientFactory

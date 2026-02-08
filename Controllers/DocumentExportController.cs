@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using WriterApp.Application.Documents;
 using WriterApp.Application.Exporting;
 using WriterApp.Application.Security;
 using WriterApp.Data;
@@ -24,6 +25,7 @@ namespace WriterApp.Controllers
     {
         private readonly AppDbContext _dbContext;
         private readonly IUserIdResolver _userIdResolver;
+        private readonly IProjectSceneLinkingService _projectSceneLinkingService;
         private readonly ExportService _exportService;
         private readonly IConfiguration _configuration;
         private readonly ILogger<DocumentExportController> _logger;
@@ -31,12 +33,14 @@ namespace WriterApp.Controllers
         public DocumentExportController(
             AppDbContext dbContext,
             IUserIdResolver userIdResolver,
+            IProjectSceneLinkingService projectSceneLinkingService,
             ExportService exportService,
             IConfiguration configuration,
             ILogger<DocumentExportController> logger)
         {
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
+            _projectSceneLinkingService = projectSceneLinkingService ?? throw new ArgumentNullException(nameof(projectSceneLinkingService));
             _exportService = exportService ?? throw new ArgumentNullException(nameof(exportService));
             _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -271,11 +275,12 @@ namespace WriterApp.Controllers
                 .AsNoTracking()
                 .FirstOrDefaultAsync(synopsis => synopsis.DocumentId == documentId, ct);
 
-            List<SectionRecord> sections = await _dbContext.Sections
-                .AsNoTracking()
-                .Where(section => section.DocumentId == documentId)
-                .OrderBy(section => section.OrderIndex)
-                .ToListAsync(ct);
+            List<SectionRecord> sections = await ResolveSectionsAsync(
+                documentRecord,
+                userId,
+                scope: "document",
+                scopeIds: null,
+                ct);
 
             List<PageRecord> pages = await _dbContext.Pages
                 .AsNoTracking()
@@ -364,7 +369,7 @@ namespace WriterApp.Controllers
                 .AsNoTracking()
                 .FirstOrDefaultAsync(synopsis => synopsis.DocumentId == documentId, ct);
 
-            List<SectionRecord> sections = await ResolveSectionsAsync(documentId, scope, scopeIds, ct);
+            List<SectionRecord> sections = await ResolveSectionsAsync(documentRecord, userId, scope, scopeIds, ct);
             if (sections.Count == 0)
             {
                 return null;
@@ -407,14 +412,35 @@ namespace WriterApp.Controllers
         }
 
         private async Task<List<SectionRecord>> ResolveSectionsAsync(
-            Guid documentId,
+            DocumentRecord documentRecord,
+            string userId,
             string scope,
             IReadOnlyList<Guid>? scopeIds,
             CancellationToken ct)
         {
+            if (ShouldUseOutlineOrder(documentRecord, scope))
+            {
+                IReadOnlyList<ManuscriptSceneSectionItem> sceneSections =
+                    await _projectSceneLinkingService.GetManuscriptSceneSectionsAsync(documentRecord.ProjectId, userId, ct);
+                return sceneSections
+                    .Select((item, index) => new SectionRecord
+                    {
+                        Id = item.Section.Id,
+                        DocumentId = item.DocumentId,
+                        Title = item.SceneNode.Title,
+                        NarrativePurpose = item.Section.NarrativePurpose,
+                        OrderIndex = index,
+                        CreatedAt = item.Section.CreatedAt,
+                        UpdatedAt = item.Section.UpdatedAt,
+                        LanguageCode = item.Section.LanguageCode,
+                        TranslationGroupId = item.Section.TranslationGroupId
+                    })
+                    .ToList();
+            }
+
             IQueryable<SectionRecord> sectionQuery = _dbContext.Sections
                 .AsNoTracking()
-                .Where(section => section.DocumentId == documentId)
+                .Where(section => section.DocumentId == documentRecord.Id)
                 .OrderBy(section => section.OrderIndex);
 
             if (string.Equals(scope, "section", StringComparison.OrdinalIgnoreCase))
@@ -441,7 +467,7 @@ namespace WriterApp.Controllers
 
                 Guid? sectionId = await _dbContext.Pages
                     .AsNoTracking()
-                    .Where(page => page.Id == pageId && page.DocumentId == documentId)
+                    .Where(page => page.Id == pageId && page.DocumentId == documentRecord.Id)
                     .Select(page => (Guid?)page.SectionId)
                     .FirstOrDefaultAsync(ct);
 
@@ -454,6 +480,17 @@ namespace WriterApp.Controllers
             }
 
             return await sectionQuery.ToListAsync(ct);
+        }
+
+        private static bool ShouldUseOutlineOrder(DocumentRecord documentRecord, string scope)
+        {
+            if (documentRecord.DocumentKind != DocumentKind.Manuscript)
+            {
+                return false;
+            }
+
+            string normalized = scope.Trim().ToLowerInvariant();
+            return normalized is "document" or "manuscript";
         }
 
         private async Task<Chapter> BuildChapterAsync(

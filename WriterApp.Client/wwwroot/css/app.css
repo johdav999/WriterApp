@@ -1,5 +1,7 @@
+@import url("design-tokens.css");
+
 html, body {
-    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    font-family: var(--font-sans);
     height: 100%;
     overflow: hidden;
 }
@@ -15,17 +17,17 @@ h1:focus {
 }
 
 a, .btn-link {
-    color: #0071c1;
+    color: var(--color-primary);
 }
 
 .btn-primary {
     color: #fff;
-    background-color: #1b6ec2;
-    border-color: #1861ac;
+    background-color: var(--color-primary);
+    border-color: var(--color-primary);
 }
 
 .btn:focus, .btn:active:focus, .btn-link.nav-link:focus, .form-control:focus, .form-check-input:focus {
-  box-shadow: 0 0 0 0.1rem white, 0 0 0 0.25rem #258cfb;
+  box-shadow: var(--focus-ring);
 }
 
 .content {
@@ -130,13 +132,13 @@ code {
 
 .outline-node-title {
     border: 1px solid transparent;
-    border-radius: 10px;
-    background: var(--surface, #fff);
+    border-radius: var(--radius-sm);
+    background: var(--surface, var(--color-surface-1));
     text-align: left;
-    font-size: 0.95rem;
-    color: var(--text-strong, #111827);
+    font-size: var(--font-size-helper);
+    color: var(--text-strong, var(--color-text));
     cursor: pointer;
-    padding: 6px 10px;
+    padding: var(--space-2) var(--space-3);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -144,26 +146,26 @@ code {
 }
 
 .outline-node-title:hover {
-    border-color: #c9d7f6;
+    border-color: var(--color-border-strong);
     transform: translateY(-1px);
 }
 
 .outline-node--active .outline-node-title {
-    border-color: #9fbaf5;
-    background: var(--accent-soft, #eef2ff);
-    box-shadow: 0 6px 14px rgba(47, 111, 235, 0.12);
+    border-color: #cfd9f5;
+    background: var(--accent-soft, var(--color-primary-soft));
+    box-shadow: var(--shadow-sm);
 }
 
 .btn-icon,
 .outline-icon-button {
-    border: 1px solid #d1d5db;
-    border-radius: 10px;
-    background: var(--surface, #fff);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--surface, var(--color-surface-1));
     width: 28px;
     height: 28px;
     padding: 0;
     font-size: 0.75rem;
-    color: #6b7280;
+    color: var(--color-text-subtle);
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -172,14 +174,14 @@ code {
 
 .btn-icon:hover,
 .outline-icon-button:hover {
-    border-color: #c9d7f6;
-    color: #1f2937;
+    border-color: var(--color-border-strong);
+    color: var(--color-text);
 }
 
 .outline-badge--outlineonly {
-    color: #6b7280;
-    border-color: #e5e7eb;
-    background: #f8fafc;
+    color: var(--color-text-subtle);
+    border-color: var(--color-border);
+    background: var(--color-surface-2);
 }
 
 .outline-badge-button {
@@ -192,14 +194,220 @@ code {
 .outline-link-popover {
     margin-top: 6px;
     padding: 8px;
-    border-radius: 10px;
-    border: 1px solid #e2e8f0;
-    background: #fff;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-1);
     display: grid;
     gap: 8px;
 }
 
 .outline-link-error {
-    font-size: 0.78rem;
-    color: #b91c1c;
+    font-size: var(--font-size-caption);
+    color: var(--color-danger);
+}
+
+/* Project navigator tree rows (RenderTreeBuilder nodes don't get scoped CSS) */
+.tree-node {
+    margin: 0;
+    position: relative;
+}
+
+.tree-row {
+    --depth-step: 18px;
+    display: grid;
+    grid-template-columns: 24px 28px auto minmax(0, 1fr) auto auto;
+    gap: var(--space-2);
+    align-items: center;
+    min-height: 36px;
+    padding: 0 var(--space-2);
+    padding-inline-start: calc(var(--space-1) + (var(--depth, 0) * var(--depth-step)));
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    position: relative;
+    white-space: nowrap;
+}
+
+.tree-row::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 4px;
+    bottom: 4px;
+    width: 3px;
+    border-radius: 99px;
+    background: transparent;
+}
+
+.tree-row:hover {
+    background: var(--color-surface-2);
+}
+
+.tree-row.is-selected {
+    background: var(--color-primary-soft);
+    border-color: #cfd9f5;
+}
+
+.tree-row.is-selected::before {
+    background: var(--color-primary);
+}
+
+.tree-row:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+}
+
+.tree-disclosure {
+    border: none;
+    background: transparent;
+    min-height: 28px;
+    width: 24px;
+    padding: 0;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transform: rotate(0deg);
+    transition: transform 0.15s ease;
+}
+
+.tree-disclosure.is-expanded {
+    transform: rotate(90deg);
+}
+
+.tree-disclosure.is-empty {
+    opacity: 0;
+    cursor: default;
+}
+
+.tree-drag {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-2);
+    min-height: 28px;
+    padding: 0 var(--space-2);
+    color: var(--color-text-subtle);
+    cursor: grab;
+}
+
+.tree-select {
+    min-width: 0;
+    display: block;
+    color: var(--color-text);
+}
+
+.tree-select-title {
+    font-weight: 600;
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.tree-rename {
+    width: 100%;
+    min-width: 0;
+}
+
+.tree-rename-input {
+    width: 100%;
+    min-height: 30px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-1);
+    color: var(--color-text);
+    padding: 0 var(--space-2);
+}
+
+.tree-node-badge {
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: var(--font-size-caption);
+    color: var(--color-text-subtle);
+    background: var(--color-surface-2);
+    white-space: nowrap;
+}
+
+.tree-node-badge.is-part {
+    border-color: #bcd6ff;
+    color: #204a86;
+    background: #eff5ff;
+}
+
+.tree-node-badge.is-chapter {
+    border-color: #cddfc5;
+    color: #2a5a2b;
+    background: #f2f8ef;
+}
+
+.tree-node-badge.is-scene {
+    border-color: #e2d0b6;
+    color: #6d4f24;
+    background: #fbf5ec;
+}
+
+.tree-meta {
+    font-size: var(--font-size-caption);
+    color: var(--color-text-muted);
+    font-variant-numeric: tabular-nums;
+    justify-self: end;
+}
+
+.tree-row-actions {
+    position: relative;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s ease;
+}
+
+.tree-row:hover .tree-row-actions,
+.tree-row:focus-within .tree-row-actions,
+.tree-row.is-selected .tree-row-actions {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.tree-row-menu-toggle {
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-1);
+    color: var(--color-text-muted);
+    cursor: pointer;
+    line-height: 1;
+    padding: 0;
+}
+
+.tree-row-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    min-width: 9rem;
+    display: grid;
+    gap: 2px;
+    padding: 4px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-1);
+    box-shadow: var(--shadow-md);
+    z-index: 3;
+}
+
+.tree-row-menu button {
+    min-height: 30px;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    text-align: left;
+    padding: 0 var(--space-2);
+    color: var(--color-text);
+    cursor: pointer;
+}
+
+.tree-row-menu button:hover,
+.tree-row-menu button:focus-visible {
+    background: var(--color-surface-2);
+    outline: none;
 }

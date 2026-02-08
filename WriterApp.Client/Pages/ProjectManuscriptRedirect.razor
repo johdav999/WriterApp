@@ -1,0 +1,147 @@
+@page "/projects/{ProjectId:guid}/manuscript"
+@using System.Net
+@using System.Net.Http.Json
+@using WriterApp.Application.Documents
+@inject HttpClient Http
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+
+<PageTitle>Open Manuscript</PageTitle>
+
+@if (_loading)
+{
+    <div class="landing-loading">Opening manuscript...</div>
+}
+else if (!string.IsNullOrWhiteSpace(_error))
+{
+    <div class="landing-empty">
+        @_error
+        <div>
+            <button type="button" class="secondary" @onclick="BackToProject">Back to project</button>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+
+    private bool _loading = true;
+    private string? _error;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true;
+        _error = null;
+
+        try
+        {
+            await SaveResumeTargetAsync(ProjectId);
+            using HttpResponseMessage response = await Http.GetAsync($"api/projects/{ProjectId}/tree");
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                _error = "Project not found.";
+                return;
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _error = $"Load project failed: {(int)response.StatusCode}.";
+                return;
+            }
+
+            ProjectTreeDto? tree = await response.Content.ReadFromJsonAsync<ProjectTreeDto>();
+            if (tree is null || tree.Nodes.Count == 0)
+            {
+                _error = "Project has no outline nodes yet.";
+                return;
+            }
+
+            ProjectNodeDto? firstScene = FindFirstScene(tree.Nodes);
+            if (firstScene is null)
+            {
+                _error = "Project has no scene nodes yet.";
+                return;
+            }
+
+            Navigation.NavigateTo($"projects/{ProjectId}/scenes/{firstScene.Id}/edit", replace: true);
+        }
+        catch (Exception ex)
+        {
+            _error = $"Open manuscript failed: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void BackToProject()
+    {
+        Navigation.NavigateTo($"projects/{ProjectId}");
+    }
+
+    private async Task SaveResumeTargetAsync(Guid projectId)
+    {
+        try
+        {
+            string key = $"writerapp.project.resume.{projectId:D}";
+            string value = $"projects/{projectId}/manuscript";
+            await JS.InvokeVoidAsync("localStorage.setItem", key, value);
+        }
+        catch
+        {
+            // ignore localStorage failures
+        }
+    }
+
+    private static ProjectNodeDto? FindFirstScene(IReadOnlyList<ProjectNodeDto> nodes)
+    {
+        Dictionary<Guid?, List<ProjectNodeDto>> byParent = nodes
+            .GroupBy(node => node.ParentId)
+            .ToDictionary(
+                group => group.Key,
+                group => group.OrderBy(node => node.OrderIndex).ToList());
+
+        List<ProjectNodeDto> roots = byParent.TryGetValue(null, out List<ProjectNodeDto>? rootNodes)
+            ? rootNodes
+            : new List<ProjectNodeDto>();
+
+        foreach (ProjectNodeDto root in roots)
+        {
+            ProjectNodeDto? scene = FindFirstSceneDepthFirst(root, byParent);
+            if (scene is not null)
+            {
+                return scene;
+            }
+        }
+
+        return nodes
+            .Where(node => string.Equals(node.NodeType, "scene", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(node => node.OrderIndex)
+            .FirstOrDefault();
+    }
+
+    private static ProjectNodeDto? FindFirstSceneDepthFirst(ProjectNodeDto node, IReadOnlyDictionary<Guid?, List<ProjectNodeDto>> byParent)
+    {
+        if (string.Equals(node.NodeType, "scene", StringComparison.OrdinalIgnoreCase))
+        {
+            return node;
+        }
+
+        if (!byParent.TryGetValue(node.Id, out List<ProjectNodeDto>? children))
+        {
+            return null;
+        }
+
+        foreach (ProjectNodeDto child in children)
+        {
+            ProjectNodeDto? scene = FindFirstSceneDepthFirst(child, byParent);
+            if (scene is not null)
+            {
+                return scene;
+            }
+        }
+
+        return null;
+    }
+}
