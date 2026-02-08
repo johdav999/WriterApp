@@ -33,6 +33,7 @@ using WriterApp.Application.Synopsis;
 using WriterApp.Application.Diagnostics;
 using WriterApp.Application.Diagnostics.Circuits;
 using WriterApp.Application.Search;
+using WriterApp.Application.Continuity;
 using WriterApp.Data;
 using WriterApp.Data.Subscriptions;
 using Microsoft.Data.Sqlite;
@@ -159,6 +160,9 @@ builder.Services.AddScoped<IUsageMeter, UsageMeter>();
 builder.Services.AddSingleton<IClock, WriterApp.Application.Usage.SystemClock>();
 builder.Services.AddScoped<IAiUsageStatusService, AiUsageStatusService>();
 builder.Services.AddScoped<IAiUsagePolicy, AiUsagePolicy>();
+builder.Services.AddScoped<IBibleStore, EfCoreBibleStore>();
+builder.Services.AddSingleton<BiblePatchApplier>();
+builder.Services.AddScoped<BibleRefreshService>();
 builder.Services.AddScoped<WriterApp.Application.Documents.IDocumentRepository, WriterApp.Data.Documents.DocumentRepository>();
 builder.Services.AddScoped<WriterApp.Application.Documents.ISectionRepository, WriterApp.Data.Documents.SectionRepository>();
 builder.Services.AddScoped<WriterApp.Application.Documents.IPageRepository, WriterApp.Data.Documents.PageRepository>();
@@ -242,6 +246,10 @@ if (continuityCoachEnabled)
 {
     builder.Services.AddSingleton<IAiAction, ExtractCharacterBibleAction>();
     builder.Services.AddSingleton<IAiAction, ExtractPlaceBibleAction>();
+    builder.Services.AddSingleton<IAiAction, ExtractTimelineBibleAction>();
+    builder.Services.AddSingleton<IAiAction, RefreshCharacterBibleAction>();
+    builder.Services.AddSingleton<IAiAction, RefreshPlaceBibleAction>();
+    builder.Services.AddSingleton<IAiAction, RefreshTimelineBibleAction>();
     builder.Services.AddSingleton<IAiAction, ContinuityCheckAction>();
 }
 bool continuityCoachFixesEnabled =

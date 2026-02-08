@@ -31,6 +31,8 @@ namespace WriterApp.Client.Pages
 {
     public partial class DocumentEditor : ComponentBase, IDisposable
     {
+        private const string SynopsisOutlineActionKey = "synopsis.generate_outline";
+
         [Parameter]
         public Guid DocumentId { get; set; }
 
@@ -380,6 +382,9 @@ namespace WriterApp.Client.Pages
         private bool _continuityBusy;
         private string? _selectedContinuityIssueKey;
         private bool _pendingContinuityHighlights;
+        private BibleSnapshotDto? _characterBibleSnapshot;
+        private BibleSnapshotDto? _placeBibleSnapshot;
+        private BibleSnapshotDto? _timelineBibleSnapshot;
         private readonly HashSet<string> _availableActionKeys = new(StringComparer.OrdinalIgnoreCase);
         private readonly List<AiHistoryEntry> _aiHistoryEntries = new();
         private Guid? _expandedAiHistoryId;
@@ -536,11 +541,13 @@ namespace WriterApp.Client.Pages
         private bool CanShowContinuityCoach =>
             HasAction("continuity.extract_character_bible")
             || HasAction("continuity.extract_place_bible")
+            || HasAction("continuity.extract_timeline_bible")
             || HasAction("continuity.check_section");
         private bool CanShowContinuityCoachFixes =>
             HasAction("continuity.apply_fix");
         private bool CanRunExtractCharacterBible => HasAction("continuity.extract_character_bible");
         private bool CanRunExtractPlaceBible => HasAction("continuity.extract_place_bible");
+        private bool CanRunExtractTimelineBible => HasAction("continuity.extract_timeline_bible");
         private bool CanRunContinuityCheck => HasAction("continuity.check_section");
         private bool CanShowPromptLibrary =>
             HasAction("custom_transform");
@@ -756,6 +763,7 @@ namespace WriterApp.Client.Pages
                 _outlineStatus = null;
                 await LoadOutlineNodesAsync();
                 await LoadAiHistoryAsync();
+                await LoadBibleSnapshotsAsync();
                 await LoadPageVersionsAsync();
                 await LoadAnnotationsAsync();
                 await LoadQualityIssuesAsync();
@@ -2145,6 +2153,10 @@ namespace WriterApp.Client.Pages
             {
                 await LoadPromptPresetsAsync();
             }
+            else if (tab == ContextTab.Continuity)
+            {
+                await LoadBibleSnapshotsAsync();
+            }
         }
 
         private string GetContextTabClass(ContextTab tab)
@@ -2223,19 +2235,65 @@ namespace WriterApp.Client.Pages
             return action;
         }
 
-        private async Task OnBuildCharacterBibleAsync()
-        {
-            await ExecuteContinuityActionAsync("continuity.extract_character_bible", "Character bible refreshed.", null);
-        }
+        private async Task OnRefreshCharacterBibleAsync() => await RefreshBibleAsync("character", fullRebuild: false);
 
-        private async Task OnBuildPlaceBibleAsync()
-        {
-            await ExecuteContinuityActionAsync("continuity.extract_place_bible", "Place bible refreshed.", null);
-        }
+        private async Task OnRefreshPlaceBibleAsync() => await RefreshBibleAsync("place", fullRebuild: false);
+
+        private async Task OnRefreshTimelineBibleAsync() => await RefreshBibleAsync("timeline", fullRebuild: false);
+
+        private async Task OnFullRebuildCharacterBibleAsync() => await RefreshBibleAsync("character", fullRebuild: true);
+
+        private async Task OnFullRebuildPlaceBibleAsync() => await RefreshBibleAsync("place", fullRebuild: true);
+
+        private async Task OnFullRebuildTimelineBibleAsync() => await RefreshBibleAsync("timeline", fullRebuild: true);
 
         private async Task OnCheckContinuityAsync()
         {
             await ExecuteContinuityActionAsync("continuity.check_section", "Continuity check complete.", null);
+        }
+
+        private async Task RefreshBibleAsync(string bibleType, bool fullRebuild)
+        {
+            if (_activeSection is null || _continuityBusy)
+            {
+                return;
+            }
+
+            _continuityBusy = true;
+            _continuityStatus = null;
+            try
+            {
+                RefreshBibleRequest request = new(fullRebuild, _activeSection.Id);
+                using HttpResponseMessage response = await Http.PostAsJsonAsync(
+                    $"api/documents/{DocumentId}/bibles/{bibleType}/refresh",
+                    request);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _continuityStatus = $"Bible refresh failed ({response.StatusCode}).";
+                    return;
+                }
+
+                BibleSnapshotDto? snapshot = await response.Content.ReadFromJsonAsync<BibleSnapshotDto>();
+                if (snapshot is not null)
+                {
+                    SetBibleSnapshot(snapshot);
+                }
+
+                _continuityStatus = fullRebuild
+                    ? $"{bibleType} bible rebuilt."
+                    : $"{bibleType} bible refreshed incrementally.";
+                await LoadAiHistoryAsync();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Bible refresh failed for type {BibleType}.", bibleType);
+                _continuityStatus = $"{bibleType} bible refresh failed.";
+            }
+            finally
+            {
+                _continuityBusy = false;
+                await InvokeAsync(StateHasChanged);
+            }
         }
 
         private async Task ExecuteContinuityActionAsync(string actionKey, string successMessage, Dictionary<string, object?>? options)
@@ -2251,6 +2309,16 @@ namespace WriterApp.Client.Pages
             {
                 string html = _pageEditor?.GetContent() ?? string.Empty;
                 string plain = PlainTextMapper.ToPlainText(html);
+                Dictionary<string, object?> resolvedOptions = options is null
+                    ? new Dictionary<string, object?>()
+                    : new Dictionary<string, object?>(options);
+                if (string.Equals(actionKey, "continuity.check_section", StringComparison.OrdinalIgnoreCase))
+                {
+                    resolvedOptions["character_bible_json"] = _characterBibleSnapshot?.ContentJson ?? "{}";
+                    resolvedOptions["place_bible_json"] = _placeBibleSnapshot?.ContentJson ?? "{}";
+                    resolvedOptions["timeline_bible_json"] = _timelineBibleSnapshot?.ContentJson ?? "{}";
+                }
+
                 AiActionExecuteRequestDto request = new(
                     DocumentId,
                     _activeSection.Id,
@@ -2260,7 +2328,7 @@ namespace WriterApp.Client.Pages
                     plain,
                     plain,
                     GetOutlineTextForAi(),
-                    options ?? new Dictionary<string, object?>());
+                    resolvedOptions);
 
                 using HttpResponseMessage result = await Http.PostAsJsonAsync($"api/ai/actions/{actionKey}/execute", request);
                 if (!result.IsSuccessStatusCode)
@@ -2396,6 +2464,49 @@ namespace WriterApp.Client.Pages
             }
 
             await _pageEditor.ClearAiDecorationsAsync();
+        }
+
+        private async Task LoadBibleSnapshotsAsync()
+        {
+            try
+            {
+                _characterBibleSnapshot = await Http.GetFromJsonAsync<BibleSnapshotDto>(
+                    $"api/documents/{DocumentId}/bibles/character");
+                _placeBibleSnapshot = await Http.GetFromJsonAsync<BibleSnapshotDto>(
+                    $"api/documents/{DocumentId}/bibles/place");
+                _timelineBibleSnapshot = await Http.GetFromJsonAsync<BibleSnapshotDto>(
+                    $"api/documents/{DocumentId}/bibles/timeline");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Bible snapshot load failed.");
+            }
+        }
+
+        private void SetBibleSnapshot(BibleSnapshotDto snapshot)
+        {
+            if (string.Equals(snapshot.BibleType, "character", StringComparison.OrdinalIgnoreCase))
+            {
+                _characterBibleSnapshot = snapshot;
+            }
+            else if (string.Equals(snapshot.BibleType, "place", StringComparison.OrdinalIgnoreCase))
+            {
+                _placeBibleSnapshot = snapshot;
+            }
+            else if (string.Equals(snapshot.BibleType, "timeline", StringComparison.OrdinalIgnoreCase))
+            {
+                _timelineBibleSnapshot = snapshot;
+            }
+        }
+
+        private static string GetBibleStatusLabel(BibleSnapshotDto? snapshot)
+        {
+            if (snapshot is null || snapshot.LastRefreshUtc is null)
+            {
+                return "Not built yet";
+            }
+
+            return $"Last refresh {snapshot.LastRefreshUtc.Value.ToLocalTime():g}, changed sections pending {snapshot.ChangedSectionsSinceLastRefresh}";
         }
 
         private async Task LoadPromptPresetsAsync()
@@ -3648,6 +3759,71 @@ namespace WriterApp.Client.Pages
             }
         }
 
+        private async Task GenerateOutlineFromSynopsisAsync()
+        {
+            if (_outlineGenerateInFlight || !HasAction(SynopsisOutlineActionKey))
+            {
+                return;
+            }
+
+            _outlineGenerateInFlight = true;
+            _outlineGenerateError = null;
+            try
+            {
+                AiActionExecuteRequestDto payload = new(
+                    DocumentId,
+                    _activeSection?.Id ?? SectionId,
+                    _activePage?.Id,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    new Dictionary<string, object?>
+                    {
+                        ["mode"] = "chapters",
+                        ["desired_count"] = 12
+                    });
+
+                using HttpResponseMessage response =
+                    await Http.PostAsJsonAsync($"api/ai/actions/{SynopsisOutlineActionKey}/execute", payload);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _outlineGenerateError = "Synopsis outline generation failed.";
+                    return;
+                }
+
+                AiActionExecuteResponseDto? result =
+                    await response.Content.ReadFromJsonAsync<AiActionExecuteResponseDto>();
+
+                IReadOnlyList<DocumentOutlineNodeDto>? nodes = result?.OutlineNodes;
+                if ((nodes is null || nodes.Count == 0)
+                    && TryBuildOutlineNodesFromDraftJson(result?.ProposedText, out List<DocumentOutlineNodeDto>? parsedNodes))
+                {
+                    nodes = parsedNodes;
+                }
+
+                if (nodes is null || nodes.Count == 0)
+                {
+                    _outlineGenerateError = "Synopsis outline generation returned no nodes.";
+                    return;
+                }
+
+                _outlineProposalNodes = nodes;
+                _outlineProposalPreview = result?.PreviewText ?? result?.ProposedText ?? string.Empty;
+                _outlineProposalTruncated = result?.WasTruncated == true;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Synopsis outline generation failed.");
+                _outlineGenerateError = "Synopsis outline generation failed.";
+            }
+            finally
+            {
+                _outlineGenerateInFlight = false;
+            }
+        }
+
         private async Task ApplyOutlineProposalAsync()
         {
             if (_outlineProposalNodes is null || _outlineProposalNodes.Count == 0)
@@ -3763,6 +3939,72 @@ namespace WriterApp.Client.Pages
 
             Walk(Guid.Empty, 0);
             return string.Join(Environment.NewLine, lines);
+        }
+
+        private bool TryBuildOutlineNodesFromDraftJson(string? json, out List<DocumentOutlineNodeDto> nodes)
+        {
+            nodes = new List<DocumentOutlineNodeDto>();
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return false;
+            }
+
+            try
+            {
+                using JsonDocument doc = JsonDocument.Parse(json);
+                if (!doc.RootElement.TryGetProperty("items", out JsonElement items)
+                    || items.ValueKind != JsonValueKind.Array)
+                {
+                    return false;
+                }
+
+                int index = 0;
+                foreach (JsonElement item in items.EnumerateArray())
+                {
+                    string title = item.TryGetProperty("title", out JsonElement titleElement)
+                        ? titleElement.GetString() ?? string.Empty
+                        : string.Empty;
+                    string summary = item.TryGetProperty("summary", out JsonElement summaryElement)
+                        ? summaryElement.GetString() ?? string.Empty
+                        : string.Empty;
+
+                    List<string> beats = new();
+                    if (item.TryGetProperty("beats", out JsonElement beatsElement)
+                        && beatsElement.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (JsonElement beat in beatsElement.EnumerateArray())
+                        {
+                            string text = beat.GetString() ?? string.Empty;
+                            if (!string.IsNullOrWhiteSpace(text))
+                            {
+                                beats.Add($"- {text.Trim()}");
+                            }
+                        }
+                    }
+
+                    string notes = summary.Trim();
+                    if (beats.Count > 0)
+                    {
+                        string beatText = string.Join('\n', beats);
+                        notes = string.IsNullOrWhiteSpace(notes) ? beatText : $"{notes}\n{beatText}";
+                    }
+
+                    nodes.Add(new DocumentOutlineNodeDto(
+                        Guid.NewGuid(),
+                        DocumentId,
+                        null,
+                        index++,
+                        string.IsNullOrWhiteSpace(title) ? $"Item {index}" : title.Trim(),
+                        string.IsNullOrWhiteSpace(notes) ? null : notes,
+                        null));
+                }
+
+                return nodes.Count > 0;
+            }
+            catch (JsonException)
+            {
+                return false;
+            }
         }
         private async Task OnExportRequested(string kind, string format)
         {
@@ -5899,6 +6141,26 @@ namespace WriterApp.Client.Pages
                 return "Build place bible";
             }
 
+            if (string.Equals(actionKey, "continuity.extract_timeline_bible", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Build timeline bible";
+            }
+
+            if (string.Equals(actionKey, "continuity.refresh_character_bible", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Refresh character bible";
+            }
+
+            if (string.Equals(actionKey, "continuity.refresh_place_bible", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Refresh place bible";
+            }
+
+            if (string.Equals(actionKey, "continuity.refresh_timeline_bible", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Refresh timeline bible";
+            }
+
             if (string.Equals(actionKey, "continuity.check_section", StringComparison.OrdinalIgnoreCase))
             {
                 return "Check continuity";
@@ -7814,6 +8076,21 @@ namespace WriterApp.Client.Pages
             string ContentType,
             int SizeBytes,
             string DataUri);
+
+        private sealed record RefreshBibleRequest(bool FullRebuild, Guid? ActiveSectionId);
+
+        private sealed record BibleSnapshotDto(
+            string BibleType,
+            int SchemaVersion,
+            string ContentJson,
+            DateTimeOffset? LastRefreshUtc,
+            int ChangedSectionsSinceLastRefresh,
+            int ChangedSections,
+            int NewSections,
+            int DeletedSections,
+            int NewEntries,
+            int UpdatedEntries,
+            int Flags);
 
         private sealed record ExportPrintPayload(string Html);
 

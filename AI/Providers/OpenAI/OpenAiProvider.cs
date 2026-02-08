@@ -31,6 +31,10 @@ namespace WriterApp.AI.Providers.OpenAI
         private const string ActionGenerateSynopsisOutline = "synopsis.generate_outline";
         private const string ActionExtractCharacterBible = "continuity.extract_character_bible";
         private const string ActionExtractPlaceBible = "continuity.extract_place_bible";
+        private const string ActionExtractTimelineBible = "continuity.extract_timeline_bible";
+        private const string ActionRefreshCharacterBible = "continuity.refresh_character_bible";
+        private const string ActionRefreshPlaceBible = "continuity.refresh_place_bible";
+        private const string ActionRefreshTimelineBible = "continuity.refresh_timeline_bible";
         private const string ActionContinuityCheckSection = "continuity.check_section";
         private const string ActionSceneSuggest = "scene.suggest";
         private const string ActionSceneRefine = "scene.refine";
@@ -345,6 +349,56 @@ namespace WriterApp.AI.Providers.OpenAI
                         });
                 }
 
+                if (string.Equals(request.ActionId, ActionExtractTimelineBible, StringComparison.Ordinal))
+                {
+                    (string outputText, int inputTokens, int outputTokens) = await ExecuteTimelineBibleAsync(request, apiKey, ct);
+                    AiArtifact artifact = new(
+                        Guid.NewGuid(),
+                        AiModality.Text,
+                        "application/json",
+                        outputText,
+                        null,
+                        null);
+
+                    AiUsage usage = new(inputTokens, outputTokens, stopwatch.Elapsed);
+                    LogUsage(request, _options.TextModel, outputTokens, stopwatch.Elapsed);
+                    return new AiResult(
+                        request.RequestId,
+                        new List<AiArtifact> { artifact },
+                        usage,
+                        new Dictionary<string, object>
+                        {
+                            ["provider"] = ProviderIdValue,
+                            ["model"] = _options.TextModel
+                        });
+                }
+
+                if (string.Equals(request.ActionId, ActionRefreshCharacterBible, StringComparison.Ordinal)
+                    || string.Equals(request.ActionId, ActionRefreshPlaceBible, StringComparison.Ordinal)
+                    || string.Equals(request.ActionId, ActionRefreshTimelineBible, StringComparison.Ordinal))
+                {
+                    (string outputText, int inputTokens, int outputTokens) = await ExecuteBibleRefreshAsync(request, apiKey, ct);
+                    AiArtifact artifact = new(
+                        Guid.NewGuid(),
+                        AiModality.Text,
+                        "application/json",
+                        outputText,
+                        null,
+                        null);
+
+                    AiUsage usage = new(inputTokens, outputTokens, stopwatch.Elapsed);
+                    LogUsage(request, _options.TextModel, outputTokens, stopwatch.Elapsed);
+                    return new AiResult(
+                        request.RequestId,
+                        new List<AiArtifact> { artifact },
+                        usage,
+                        new Dictionary<string, object>
+                        {
+                            ["provider"] = ProviderIdValue,
+                            ["model"] = _options.TextModel
+                        });
+                }
+
                 if (string.Equals(request.ActionId, ActionSceneSuggest, StringComparison.Ordinal)
                     || string.Equals(request.ActionId, ActionSceneRefine, StringComparison.Ordinal)
                     || string.Equals(request.ActionId, ActionSceneFindOpenQuestions, StringComparison.Ordinal))
@@ -642,6 +696,36 @@ namespace WriterApp.AI.Providers.OpenAI
             CancellationToken ct)
         {
             HttpRequestMessage requestMessage = BuildContinuityCheckRequest(request, apiKey);
+            HttpClient client = _httpClientFactory.CreateClient(nameof(OpenAiProvider));
+
+            using HttpResponseMessage response = await client.SendAsync(requestMessage, ct);
+            await EnsureSuccessAsync(response, ct);
+
+            string json = await response.Content.ReadAsStringAsync(ct);
+            return ExtractResponseTextAndUsage(json);
+        }
+
+        private async Task<(string OutputText, int InputTokens, int OutputTokens)> ExecuteTimelineBibleAsync(
+            AiRequest request,
+            string apiKey,
+            CancellationToken ct)
+        {
+            HttpRequestMessage requestMessage = BuildTimelineBibleRequest(request, apiKey);
+            HttpClient client = _httpClientFactory.CreateClient(nameof(OpenAiProvider));
+
+            using HttpResponseMessage response = await client.SendAsync(requestMessage, ct);
+            await EnsureSuccessAsync(response, ct);
+
+            string json = await response.Content.ReadAsStringAsync(ct);
+            return ExtractResponseTextAndUsage(json);
+        }
+
+        private async Task<(string OutputText, int InputTokens, int OutputTokens)> ExecuteBibleRefreshAsync(
+            AiRequest request,
+            string apiKey,
+            CancellationToken ct)
+        {
+            HttpRequestMessage requestMessage = BuildBibleRefreshRequest(request, apiKey);
             HttpClient client = _httpClientFactory.CreateClient(nameof(OpenAiProvider));
 
             using HttpResponseMessage response = await client.SendAsync(requestMessage, ct);
@@ -1009,15 +1093,45 @@ namespace WriterApp.AI.Providers.OpenAI
             string sectionText = GetInputValue(request, "section_text", string.Empty);
             string characterBible = GetInputValue(request, "character_bible_json", "{}");
             string placeBible = GetInputValue(request, "place_bible_json", "{}");
+            string timelineBible = GetInputValue(request, "timeline_bible_json", "{}");
             string instruction = GetInputValue(request, "instruction", "Check continuity issues.");
             string sectionId = request.Context.SectionId.ToString();
 
             string systemPrompt = "You are a manuscript continuity coach. Return strict JSON only.";
             string userPrompt =
-                $"{instruction}\n\nReturn JSON schema: {{\"schemaVersion\":\"1.0\",\"issues\":[{{\"severity\":\"low|medium|high|critical\",\"type\":\"character|place|timeline\",\"message\":\"...\",\"evidence\":{{\"sectionId\":\"{sectionId}\",\"quote\":\"...\"}},\"suggestedFix\":\"...\",\"anchor\":{{\"plainTextStart\":0,\"plainTextLength\":10}}}}]}}\n\nRules:\n- Return strict JSON only.\n- Include only the top 25 highest-impact issues.\n- Keep message/suggestedFix concise (1-2 sentences).\n- Do not include explanations outside JSON.\n\nCharacter bible:\n{characterBible}\n\nPlace bible:\n{placeBible}\n\nSection text:\n{sectionText}";
+                $"{instruction}\n\nReturn JSON schema: {{\"schemaVersion\":\"1.0\",\"issues\":[{{\"severity\":\"low|medium|high|critical\",\"type\":\"character|place|timeline\",\"message\":\"...\",\"evidence\":{{\"sectionId\":\"{sectionId}\",\"quote\":\"...\"}},\"suggestedFix\":\"...\",\"anchor\":{{\"plainTextStart\":0,\"plainTextLength\":10}}}}]}}\n\nRules:\n- Return strict JSON only.\n- Include only the top 25 highest-impact issues.\n- Keep message/suggestedFix concise (1-2 sentences).\n- Do not include explanations outside JSON.\n\nCharacter bible:\n{characterBible}\n\nPlace bible:\n{placeBible}\n\nTimeline bible:\n{timelineBible}\n\nSection text:\n{sectionText}";
 
             int continuityMaxOutputTokens = Math.Max(_options.MaxOutputTokens, 1800);
             return BuildStrictJsonRequest(systemPrompt, userPrompt, apiKey, continuityMaxOutputTokens);
+        }
+
+        private HttpRequestMessage BuildTimelineBibleRequest(AiRequest request, string apiKey)
+        {
+            string context = GetInputValue(request, "context", string.Empty);
+            string instruction = GetInputValue(request, "instruction", "Extract timeline bible.");
+            string systemPrompt = "You are a continuity analyst. Return strict JSON only.";
+            string userPrompt =
+                $"{instruction}\n\nReturn JSON schema: {{\"schemaVersion\":\"1.0\",\"events\":[{{\"id\":\"evt_...\",\"title\":\"...\",\"timeRef\":\"...\",\"order\":1,\"locationId\":\"\",\"participants\":[\"chr_...\"],\"summary\":\"...\",\"evidence\":[{{\"sectionId\":\"<guid>\",\"quote\":\"...\"}}],\"constraints\":[\"...\"],\"lastUpdatedUtc\":\"...\"}}]}}\n\nContext:\n{context}";
+
+            return BuildStrictJsonRequest(systemPrompt, userPrompt, apiKey);
+        }
+
+        private HttpRequestMessage BuildBibleRefreshRequest(AiRequest request, string apiKey)
+        {
+            string existingBibleJson = GetInputValue(request, "existing_bible_json", "{}");
+            string deltaSectionsJson = GetInputValue(request, "delta_sections_json", "[]");
+            string instruction = GetInputValue(request, "instruction", "Update bible incrementally.");
+            string outputContract = GetInputValue(
+                request,
+                "output_contract",
+                "Return strict JSON patch: {\"bibleType\":\"Character|Place|Timeline\",\"schemaVersion\":1,\"ops\":[],\"stats\":{}}");
+
+            string systemPrompt = "You are a continuity analyst. Return strict JSON patch only.";
+            string userPrompt =
+                $"{instruction}\n\n{outputContract}\n\nRules:\n- Output valid JSON only.\n- Use ops list with deterministic updates.\n- Preserve existing IDs.\n- Add flagReview when evidence is conflicting or missing.\n\nExisting bible JSON:\n{existingBibleJson}\n\nChanged/new section deltas:\n{deltaSectionsJson}";
+
+            int maxTokens = Math.Max(_options.MaxOutputTokens, 1800);
+            return BuildStrictJsonRequest(systemPrompt, userPrompt, apiKey, maxTokens);
         }
 
         private HttpRequestMessage BuildStrictJsonRequest(

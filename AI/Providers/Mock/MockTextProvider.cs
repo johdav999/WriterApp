@@ -117,6 +117,50 @@ namespace WriterApp.AI.Providers.Mock
                     }));
             }
 
+            if (string.Equals(request.ActionId, ExtractTimelineBibleAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                string json = BuildMockTimelineBibleJson();
+                AiArtifact timelineBibleArtifact = new(
+                    Guid.NewGuid(),
+                    AiModality.Text,
+                    "application/json",
+                    json,
+                    null,
+                    null);
+                return Task.FromResult(new AiResult(
+                    request.RequestId,
+                    new List<AiArtifact> { timelineBibleArtifact },
+                    new AiUsage(0, 0, TimeSpan.Zero),
+                    new Dictionary<string, object>
+                    {
+                        ["provider"] = ProviderId,
+                        ["model"] = "mock-text"
+                    }));
+            }
+
+            if (string.Equals(request.ActionId, RefreshCharacterBibleAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(request.ActionId, RefreshPlaceBibleAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(request.ActionId, RefreshTimelineBibleAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                string json = BuildMockBibleRefreshPatchJson(request);
+                AiArtifact patchArtifact = new(
+                    Guid.NewGuid(),
+                    AiModality.Text,
+                    "application/json",
+                    json,
+                    null,
+                    null);
+                return Task.FromResult(new AiResult(
+                    request.RequestId,
+                    new List<AiArtifact> { patchArtifact },
+                    new AiUsage(0, 0, TimeSpan.Zero),
+                    new Dictionary<string, object>
+                    {
+                        ["provider"] = ProviderId,
+                        ["model"] = "mock-text"
+                    }));
+            }
+
             if (string.Equals(request.ActionId, ContinuityCheckAction.ActionIdValue, StringComparison.Ordinal))
             {
                 string json = BuildMockContinuityReportJson(request);
@@ -293,6 +337,38 @@ namespace WriterApp.AI.Providers.Mock
             if (string.Equals(request.ActionId, ExtractPlaceBibleAction.ActionIdValue, StringComparison.Ordinal))
             {
                 string json = BuildMockPlaceBibleJson(request);
+                yield return new AiStreamEvent.Started();
+                foreach (string chunk in ChunkText(json, MaxChunkSize))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    yield return new AiStreamEvent.TextDelta(chunk);
+                    await Task.Delay(DeltaDelay, ct);
+                }
+
+                yield return new AiStreamEvent.Completed();
+                yield break;
+            }
+
+            if (string.Equals(request.ActionId, ExtractTimelineBibleAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                string json = BuildMockTimelineBibleJson();
+                yield return new AiStreamEvent.Started();
+                foreach (string chunk in ChunkText(json, MaxChunkSize))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    yield return new AiStreamEvent.TextDelta(chunk);
+                    await Task.Delay(DeltaDelay, ct);
+                }
+
+                yield return new AiStreamEvent.Completed();
+                yield break;
+            }
+
+            if (string.Equals(request.ActionId, RefreshCharacterBibleAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(request.ActionId, RefreshPlaceBibleAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(request.ActionId, RefreshTimelineBibleAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                string json = BuildMockBibleRefreshPatchJson(request);
                 yield return new AiStreamEvent.Started();
                 foreach (string chunk in ChunkText(json, MaxChunkSize))
                 {
@@ -649,6 +725,26 @@ namespace WriterApp.AI.Providers.Mock
                     }
                 }
             });
+        }
+
+        private static string BuildMockTimelineBibleJson()
+        {
+            return "{\"schemaVersion\":\"1.0\",\"events\":[{\"id\":\"evt_mock_arrival\",\"title\":\"Arrival in Ashmere\",\"timeRef\":\"Day 1\",\"order\":1,\"locationId\":\"plc_mock_ashmere\",\"participants\":[\"chr_mock_mira\"],\"summary\":\"Mira arrives and meets Captain Rook.\",\"evidence\":[{\"sectionId\":null,\"quote\":\"arrived 19:10\"}],\"constraints\":[\"Before harbor departure\"],\"lastUpdatedUtc\":\"2026-02-07T00:00:00Z\"}]}";
+        }
+
+        private static string BuildMockBibleRefreshPatchJson(AiRequest request)
+        {
+            if (string.Equals(request.ActionId, RefreshCharacterBibleAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "{\"bibleType\":\"Character\",\"schemaVersion\":1,\"ops\":[{\"op\":\"upsertCharacter\",\"id\":\"chr_mock_mira\",\"data\":{\"id\":\"chr_mock_mira\",\"name\":\"Mira Voss\",\"facts\":[{\"fact\":\"Wears a silver ring\",\"evidence\":{\"sectionId\":null,\"quote\":\"silver ring\"}}],\"traits\":[\"observant\"],\"lastUpdatedUtc\":\"2026-02-07T00:00:00Z\"}}],\"stats\":{\"updatedEntries\":0,\"newEntries\":1,\"flags\":0}}";
+            }
+
+            if (string.Equals(request.ActionId, RefreshPlaceBibleAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "{\"bibleType\":\"Place\",\"schemaVersion\":1,\"ops\":[{\"op\":\"upsertPlace\",\"id\":\"plc_mock_ashmere\",\"data\":{\"id\":\"plc_mock_ashmere\",\"name\":\"Ashmere\",\"facts\":[{\"fact\":\"Coastal town with a harbor\",\"evidence\":{\"sectionId\":null,\"quote\":\"harbor\"}}],\"lastUpdatedUtc\":\"2026-02-07T00:00:00Z\"}}],\"stats\":{\"updatedEntries\":0,\"newEntries\":1,\"flags\":0}}";
+            }
+
+            return "{\"bibleType\":\"Timeline\",\"schemaVersion\":1,\"ops\":[{\"op\":\"upsertTimelineEvent\",\"id\":\"evt_mock_arrival\",\"data\":{\"id\":\"evt_mock_arrival\",\"title\":\"Arrival in Ashmere\",\"timeRef\":\"Day 1\",\"order\":1,\"locationId\":\"plc_mock_ashmere\",\"participants\":[\"chr_mock_mira\"],\"summary\":\"Mira arrives and meets Captain Rook.\",\"evidence\":[{\"sectionId\":null,\"quote\":\"arrived 19:10\"}],\"constraints\":[\"Before harbor departure\"],\"lastUpdatedUtc\":\"2026-02-07T00:00:00Z\"}}],\"stats\":{\"updatedEntries\":0,\"newEntries\":1,\"flags\":0}}";
         }
 
         private static string BuildMockNextParagraph(AiRequest request)
