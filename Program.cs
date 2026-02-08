@@ -170,6 +170,9 @@ builder.Services.AddScoped<WriterApp.Application.Documents.IPageRepository, Writ
 builder.Services.AddScoped<WriterApp.Application.Documents.IPageVersionService, WriterApp.Application.Documents.PageVersionService>();
 builder.Services.AddScoped<WriterApp.Application.Documents.IPageVersionDiffService, WriterApp.Application.Documents.PageVersionDiffService>();
 builder.Services.AddScoped<WriterApp.Application.Documents.IQualityCheckService, WriterApp.Application.Documents.QualityCheckService>();
+builder.Services.AddScoped<WriterApp.Application.Documents.IProjectWordCountService, WriterApp.Application.Documents.ProjectWordCountService>();
+builder.Services.AddScoped<WriterApp.Application.Documents.IProjectGoalsService, WriterApp.Application.Documents.ProjectGoalsService>();
+builder.Services.AddSingleton<WriterApp.Application.Commands.IStructureCommandProcessor, WriterApp.Application.Commands.StructureCommandProcessor>();
 builder.Services.AddSingleton<ISearchIndexBackfillQueue, SearchIndexBackfillQueue>();
 builder.Services.AddHostedService<SearchIndexBackfillHostedService>();
 builder.Services.AddScoped<ISearchIndexBackfillWorker, SearchIndexService>();

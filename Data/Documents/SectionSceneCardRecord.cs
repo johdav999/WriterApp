@@ -16,6 +16,18 @@ namespace WriterApp.Data.Documents
 
         public string? OpenQuestions { get; set; }
 
+        public string? PovCharacterId { get; set; }
+
+        public string? PlaceId { get; set; }
+
+        public string? TimelineEventId { get; set; }
+
+        public string? TimeRef { get; set; }
+
+        public string? TagsJson { get; set; }
+
+        public string? ReferencesJson { get; set; }
+
         public DateTimeOffset UpdatedUtc { get; set; }
     }
 }

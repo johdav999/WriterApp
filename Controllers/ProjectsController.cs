@@ -1,0 +1,850 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using WriterApp.Application.Documents;
+using WriterApp.Application.Security;
+using WriterApp.Data;
+using WriterApp.Data.Documents;
+
+namespace WriterApp.Controllers
+{
+    [ApiController]
+    [Route("api/projects")]
+    [Authorize]
+    public sealed class ProjectsController : ControllerBase
+    {
+        private readonly AppDbContext _dbContext;
+        private readonly IUserIdResolver _userIdResolver;
+        private readonly IProjectWordCountService _wordCounts;
+        private readonly IProjectGoalsService _goals;
+        private readonly IConfiguration _configuration;
+
+        public ProjectsController(
+            AppDbContext dbContext,
+            IUserIdResolver userIdResolver,
+            IProjectWordCountService wordCounts,
+            IProjectGoalsService goals,
+            IConfiguration configuration)
+        {
+            _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
+            _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
+            _wordCounts = wordCounts ?? throw new ArgumentNullException(nameof(wordCounts));
+            _goals = goals ?? throw new ArgumentNullException(nameof(goals));
+            _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+        }
+
+        [HttpGet]
+        public async Task<ActionResult<IReadOnlyList<ProjectDto>>> ListProjects(CancellationToken ct)
+        {
+            if (!IsEnabled())
+            {
+                return NotFound();
+            }
+
+            await EnsureProjectsSchemaAsync(ct);
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            List<ProjectRecord> projects = await _dbContext.Projects
+                .AsNoTracking()
+                .Where(project => project.OwnerUserId == userId)
+                .ToListAsync(ct);
+            projects = projects
+                .OrderByDescending(project => project.UpdatedUtc)
+                .ToList();
+
+            HashSet<Guid> projectIds = projects.Select(project => project.Id).ToHashSet();
+            Dictionary<Guid, int> totals = await _dbContext.ProjectNodes
+                .AsNoTracking()
+                .Where(node => projectIds.Contains(node.ProjectId) && node.ParentId == null)
+                .GroupBy(node => node.ProjectId)
+                .Select(group => new { group.Key, Total = group.Sum(node => node.WordCountCache) })
+                .ToDictionaryAsync(item => item.Key, item => item.Total, ct);
+
+            List<ProjectDto> result = projects
+                .Select(project => ToDto(project, totals.TryGetValue(project.Id, out int total) ? total : 0))
+                .ToList();
+
+            return Ok(result);
+        }
+
+        private async Task EnsureProjectsSchemaAsync(CancellationToken ct)
+        {
+            string provider = _dbContext.Database.ProviderName ?? string.Empty;
+            if (!provider.Contains("Sqlite", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            string[] statements =
+            {
+                "PRAGMA foreign_keys = ON;",
+                """
+                CREATE TABLE IF NOT EXISTS Projects (
+                    Id TEXT NOT NULL CONSTRAINT PK_Projects PRIMARY KEY,
+                    OwnerUserId TEXT NOT NULL,
+                    Title TEXT NOT NULL,
+                    Subtitle TEXT NULL,
+                    AuthorName TEXT NULL,
+                    Language TEXT NULL,
+                    Genre TEXT NULL,
+                    DefaultExportSettingsJson TEXT NULL,
+                    CreatedUtc TEXT NOT NULL,
+                    UpdatedUtc TEXT NOT NULL
+                );
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS ProjectNodes (
+                    Id TEXT NOT NULL CONSTRAINT PK_ProjectNodes PRIMARY KEY,
+                    ProjectId TEXT NOT NULL,
+                    ParentId TEXT NULL,
+                    NodeType INTEGER NOT NULL,
+                    Title TEXT NOT NULL,
+                    OrderIndex INTEGER NOT NULL,
+                    LinkedSectionId TEXT NULL,
+                    MetadataJson TEXT NULL,
+                    WordCountCache INTEGER NOT NULL,
+                    UpdatedUtc TEXT NOT NULL,
+                    CONSTRAINT FK_ProjectNodes_Projects_ProjectId FOREIGN KEY (ProjectId) REFERENCES Projects (Id) ON DELETE CASCADE,
+                    CONSTRAINT FK_ProjectNodes_ProjectNodes_ParentId FOREIGN KEY (ParentId) REFERENCES ProjectNodes (Id) ON DELETE CASCADE,
+                    CONSTRAINT FK_ProjectNodes_Sections_LinkedSectionId FOREIGN KEY (LinkedSectionId) REFERENCES Sections (Id) ON DELETE SET NULL
+                );
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS ProjectGoals (
+                    ProjectId TEXT NOT NULL CONSTRAINT PK_ProjectGoals PRIMARY KEY,
+                    DailyTargetWords INTEGER NOT NULL,
+                    WeeklyTargetWords INTEGER NOT NULL,
+                    Timezone TEXT NOT NULL,
+                    UpdatedUtc TEXT NOT NULL,
+                    CONSTRAINT FK_ProjectGoals_Projects_ProjectId FOREIGN KEY (ProjectId) REFERENCES Projects (Id) ON DELETE CASCADE
+                );
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS ProjectProgressDaily (
+                    ProjectId TEXT NOT NULL,
+                    Date TEXT NOT NULL,
+                    WordsDelta INTEGER NOT NULL,
+                    UpdatedUtc TEXT NOT NULL,
+                    CONSTRAINT PK_ProjectProgressDaily PRIMARY KEY (ProjectId, Date),
+                    CONSTRAINT FK_ProjectProgressDaily_Projects_ProjectId FOREIGN KEY (ProjectId) REFERENCES Projects (Id) ON DELETE CASCADE
+                );
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS ProjectProgressEvents (
+                    Id TEXT NOT NULL CONSTRAINT PK_ProjectProgressEvents PRIMARY KEY,
+                    ProjectId TEXT NOT NULL,
+                    EventKey TEXT NOT NULL,
+                    Date TEXT NOT NULL,
+                    WordsDelta INTEGER NOT NULL,
+                    CreatedUtc TEXT NOT NULL,
+                    CONSTRAINT FK_ProjectProgressEvents_Projects_ProjectId FOREIGN KEY (ProjectId) REFERENCES Projects (Id) ON DELETE CASCADE
+                );
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS ProjectMilestones (
+                    Id TEXT NOT NULL CONSTRAINT PK_ProjectMilestones PRIMARY KEY,
+                    ProjectId TEXT NOT NULL,
+                    Title TEXT NOT NULL,
+                    TargetWords INTEGER NULL,
+                    TargetNodeId TEXT NULL,
+                    Status INTEGER NOT NULL,
+                    CompletedUtc TEXT NULL,
+                    UpdatedUtc TEXT NOT NULL,
+                    CONSTRAINT FK_ProjectMilestones_Projects_ProjectId FOREIGN KEY (ProjectId) REFERENCES Projects (Id) ON DELETE CASCADE
+                );
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS WritingSessions (
+                    Id TEXT NOT NULL CONSTRAINT PK_WritingSessions PRIMARY KEY,
+                    ProjectId TEXT NOT NULL,
+                    StartedUtc TEXT NOT NULL,
+                    EndedUtc TEXT NULL,
+                    DurationSeconds INTEGER NOT NULL,
+                    WordsDelta INTEGER NOT NULL,
+                    StartWordCount INTEGER NOT NULL,
+                    Notes TEXT NULL,
+                    CONSTRAINT FK_WritingSessions_Projects_ProjectId FOREIGN KEY (ProjectId) REFERENCES Projects (Id) ON DELETE CASCADE
+                );
+                """,
+                "CREATE INDEX IF NOT EXISTS IX_Projects_OwnerUserId ON Projects (OwnerUserId);",
+                "CREATE INDEX IF NOT EXISTS IX_Projects_UpdatedUtc ON Projects (UpdatedUtc);",
+                "CREATE INDEX IF NOT EXISTS IX_ProjectNodes_LinkedSectionId ON ProjectNodes (LinkedSectionId);",
+                "CREATE INDEX IF NOT EXISTS IX_ProjectNodes_ParentId ON ProjectNodes (ParentId);",
+                "CREATE INDEX IF NOT EXISTS IX_ProjectNodes_ProjectId_ParentId_OrderIndex ON ProjectNodes (ProjectId, ParentId, OrderIndex);",
+                "CREATE UNIQUE INDEX IF NOT EXISTS IX_ProjectProgressEvents_ProjectId_EventKey_UQ ON ProjectProgressEvents (ProjectId, EventKey);",
+                "CREATE INDEX IF NOT EXISTS IX_ProjectMilestones_ProjectId ON ProjectMilestones (ProjectId);",
+                "CREATE INDEX IF NOT EXISTS IX_ProjectMilestones_Status ON ProjectMilestones (Status);",
+                "CREATE INDEX IF NOT EXISTS IX_WritingSessions_ProjectId_StartedUtc ON WritingSessions (ProjectId, StartedUtc);"
+            };
+
+            foreach (string sql in statements)
+            {
+                try
+                {
+                    await _dbContext.Database.ExecuteSqlRawAsync(sql, ct);
+                }
+                catch (SqliteException ex) when (ex.SqliteErrorCode == 1 && ex.Message.Contains("already exists", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Ignore concurrent create attempts.
+                }
+            }
+        }
+
+        [HttpPost]
+        public async Task<ActionResult<ProjectDto>> CreateProject(
+            [FromBody] ProjectCreateRequest request,
+            CancellationToken ct)
+        {
+            if (!IsEnabled())
+            {
+                return NotFound();
+            }
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            ProjectRecord project = new()
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = userId,
+                Title = string.IsNullOrWhiteSpace(request.Title) ? "Untitled project" : request.Title.Trim(),
+                Subtitle = Normalize(request.Subtitle),
+                AuthorName = Normalize(request.AuthorName),
+                Language = Normalize(request.Language),
+                Genre = Normalize(request.Genre),
+                DefaultExportSettingsJson = Normalize(request.DefaultExportSettingsJson),
+                CreatedUtc = now,
+                UpdatedUtc = now
+            };
+
+            _dbContext.Projects.Add(project);
+            await _dbContext.SaveChangesAsync(ct);
+
+            ProjectDto dto = ToDto(project, 0);
+            return Ok(dto);
+        }
+
+        [HttpPost("from-document/{documentId:guid}")]
+        public async Task<ActionResult<ProjectTreeDto>> CreateFromDocument(Guid documentId, CancellationToken ct)
+        {
+            if (!IsEnabled())
+            {
+                return NotFound();
+            }
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            DocumentRecord? document = await _dbContext.Documents
+                .AsNoTracking()
+                .FirstOrDefaultAsync(item => item.Id == documentId && item.OwnerUserId == userId, ct);
+            if (document is null)
+            {
+                return NotFound();
+            }
+
+            List<SectionRecord> sections = await _dbContext.Sections
+                .AsNoTracking()
+                .Where(section => section.DocumentId == documentId)
+                .OrderBy(section => section.OrderIndex)
+                .ToListAsync(ct);
+
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            ProjectRecord project = new()
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = userId,
+                Title = $"{document.Title} Project",
+                Subtitle = null,
+                AuthorName = null,
+                Language = document.LanguageCode,
+                Genre = null,
+                DefaultExportSettingsJson = null,
+                CreatedUtc = now,
+                UpdatedUtc = now
+            };
+            _dbContext.Projects.Add(project);
+
+            List<ProjectNodeRecord> nodes = new();
+            for (int i = 0; i < sections.Count; i++)
+            {
+                SectionRecord section = sections[i];
+                ProjectNodeRecord chapter = new()
+                {
+                    Id = Guid.NewGuid(),
+                    ProjectId = project.Id,
+                    ParentId = null,
+                    NodeType = ProjectNodeType.Chapter,
+                    Title = section.Title,
+                    OrderIndex = i,
+                    LinkedSectionId = null,
+                    MetadataJson = null,
+                    WordCountCache = 0,
+                    UpdatedUtc = now
+                };
+
+                ProjectNodeRecord scene = new()
+                {
+                    Id = Guid.NewGuid(),
+                    ProjectId = project.Id,
+                    ParentId = chapter.Id,
+                    NodeType = ProjectNodeType.Scene,
+                    Title = section.Title,
+                    OrderIndex = 0,
+                    LinkedSectionId = section.Id,
+                    MetadataJson = null,
+                    WordCountCache = 0,
+                    UpdatedUtc = now
+                };
+
+                nodes.Add(chapter);
+                nodes.Add(scene);
+            }
+
+            if (nodes.Count > 0)
+            {
+                _dbContext.ProjectNodes.AddRange(nodes);
+            }
+
+            await _dbContext.SaveChangesAsync(ct);
+            await _wordCounts.RefreshProjectAsync(project.Id, ct);
+
+            List<ProjectNodeRecord> refreshedNodes = await _dbContext.ProjectNodes
+                .AsNoTracking()
+                .Where(node => node.ProjectId == project.Id)
+                .OrderBy(node => node.ParentId)
+                .ThenBy(node => node.OrderIndex)
+                .ToListAsync(ct);
+
+            int total = refreshedNodes.Where(node => node.ParentId == null).Sum(node => node.WordCountCache);
+            return Ok(new ProjectTreeDto(ToDto(project, total), refreshedNodes.Select(ToDto).ToList()));
+        }
+
+        [HttpGet("{projectId:guid}/tree")]
+        public async Task<ActionResult<ProjectTreeDto>> GetTree(Guid projectId, CancellationToken ct)
+        {
+            if (!IsEnabled())
+            {
+                return NotFound();
+            }
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            ProjectRecord? project = await _dbContext.Projects
+                .AsNoTracking()
+                .FirstOrDefaultAsync(item => item.Id == projectId && item.OwnerUserId == userId, ct);
+            if (project is null)
+            {
+                return NotFound();
+            }
+
+            List<ProjectNodeRecord> nodes = await _dbContext.ProjectNodes
+                .AsNoTracking()
+                .Where(node => node.ProjectId == projectId)
+                .OrderBy(node => node.ParentId)
+                .ThenBy(node => node.OrderIndex)
+                .ToListAsync(ct);
+
+            int total = nodes.Where(node => node.ParentId == null).Sum(node => node.WordCountCache);
+            return Ok(new ProjectTreeDto(ToDto(project, total), nodes.Select(ToDto).ToList()));
+        }
+
+        [HttpPost("{projectId:guid}/nodes")]
+        public async Task<ActionResult<ProjectNodeDto>> CreateNode(
+            Guid projectId,
+            [FromBody] ProjectNodeCreateRequest request,
+            CancellationToken ct)
+        {
+            if (!IsEnabled())
+            {
+                return NotFound();
+            }
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            ProjectRecord? project = await _dbContext.Projects
+                .FirstOrDefaultAsync(item => item.Id == projectId && item.OwnerUserId == userId, ct);
+            if (project is null)
+            {
+                return NotFound();
+            }
+
+            Guid? parentId = request.ParentId;
+            if (parentId.HasValue)
+            {
+                bool parentExists = await _dbContext.ProjectNodes.AnyAsync(
+                    node => node.Id == parentId.Value && node.ProjectId == projectId,
+                    ct);
+                if (!parentExists)
+                {
+                    return BadRequest(new { message = "Parent node not found in this project." });
+                }
+            }
+
+            ProjectNodeType nodeType = ParseNodeType(request.NodeType);
+            Guid? linkedSectionId = request.LinkedSectionId;
+            if (linkedSectionId.HasValue)
+            {
+                bool owned = await IsOwnedSectionAsync(userId, linkedSectionId.Value, ct);
+                if (!owned)
+                {
+                    return BadRequest(new { message = "Linked section does not belong to the user." });
+                }
+            }
+
+            List<ProjectNodeRecord> siblings = await _dbContext.ProjectNodes
+                .Where(node => node.ProjectId == projectId && node.ParentId == parentId)
+                .OrderBy(node => node.OrderIndex)
+                .ToListAsync(ct);
+            int insertAt = request.OrderIndex.GetValueOrDefault(siblings.Count);
+            insertAt = Math.Max(0, Math.Min(insertAt, siblings.Count));
+
+            for (int i = 0; i < siblings.Count; i++)
+            {
+                if (siblings[i].OrderIndex >= insertAt)
+                {
+                    siblings[i].OrderIndex += 1;
+                    siblings[i].UpdatedUtc = DateTimeOffset.UtcNow;
+                }
+            }
+
+            ProjectNodeRecord node = new()
+            {
+                Id = Guid.NewGuid(),
+                ProjectId = projectId,
+                ParentId = parentId,
+                NodeType = nodeType,
+                Title = string.IsNullOrWhiteSpace(request.Title) ? "Untitled" : request.Title.Trim(),
+                OrderIndex = insertAt,
+                LinkedSectionId = linkedSectionId,
+                MetadataJson = Normalize(request.MetadataJson),
+                WordCountCache = 0,
+                UpdatedUtc = DateTimeOffset.UtcNow
+            };
+
+            _dbContext.ProjectNodes.Add(node);
+            project.UpdatedUtc = DateTimeOffset.UtcNow;
+            await _dbContext.SaveChangesAsync(ct);
+            await _wordCounts.RefreshProjectAsync(projectId, ct);
+
+            return Ok(ToDto(node));
+        }
+
+        [HttpPatch("{projectId:guid}/nodes/{nodeId:guid}")]
+        public async Task<ActionResult<ProjectNodeDto>> PatchNode(
+            Guid projectId,
+            Guid nodeId,
+            [FromBody] ProjectNodePatchRequest request,
+            CancellationToken ct)
+        {
+            if (!IsEnabled())
+            {
+                return NotFound();
+            }
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            ProjectRecord? project = await _dbContext.Projects
+                .FirstOrDefaultAsync(item => item.Id == projectId && item.OwnerUserId == userId, ct);
+            if (project is null)
+            {
+                return NotFound();
+            }
+
+            ProjectNodeRecord? node = await _dbContext.ProjectNodes
+                .FirstOrDefaultAsync(item => item.ProjectId == projectId && item.Id == nodeId, ct);
+            if (node is null)
+            {
+                return NotFound();
+            }
+
+            Guid? originalParentId = node.ParentId;
+            if (!string.IsNullOrWhiteSpace(request.Title))
+            {
+                node.Title = request.Title.Trim();
+            }
+
+            node.ParentId = request.ParentId;
+
+            if (!string.IsNullOrWhiteSpace(request.NodeType))
+            {
+                node.NodeType = ParseNodeType(request.NodeType);
+            }
+
+            if (request.LinkedSectionId.HasValue)
+            {
+                bool owned = await IsOwnedSectionAsync(userId, request.LinkedSectionId.Value, ct);
+                if (!owned)
+                {
+                    return BadRequest(new { message = "Linked section does not belong to the user." });
+                }
+            }
+
+            node.LinkedSectionId = request.LinkedSectionId;
+            node.MetadataJson = request.MetadataJson;
+            node.UpdatedUtc = DateTimeOffset.UtcNow;
+
+            if (originalParentId != node.ParentId)
+            {
+                List<ProjectNodeRecord> oldSiblings = await _dbContext.ProjectNodes
+                    .Where(item => item.ProjectId == projectId && item.ParentId == originalParentId && item.Id != node.Id)
+                    .OrderBy(item => item.OrderIndex)
+                    .ToListAsync(ct);
+                for (int i = 0; i < oldSiblings.Count; i++)
+                {
+                    oldSiblings[i].OrderIndex = i;
+                    oldSiblings[i].UpdatedUtc = DateTimeOffset.UtcNow;
+                }
+
+                List<ProjectNodeRecord> newSiblings = await _dbContext.ProjectNodes
+                    .Where(item => item.ProjectId == projectId && item.ParentId == node.ParentId && item.Id != node.Id)
+                    .OrderBy(item => item.OrderIndex)
+                    .ToListAsync(ct);
+                node.OrderIndex = newSiblings.Count;
+            }
+
+            project.UpdatedUtc = DateTimeOffset.UtcNow;
+            await _dbContext.SaveChangesAsync(ct);
+            await _wordCounts.RefreshProjectAsync(projectId, ct);
+
+            return Ok(ToDto(node));
+        }
+
+        [HttpPost("{projectId:guid}/nodes/{nodeId:guid}/reorder")]
+        public async Task<ActionResult<IReadOnlyList<ProjectNodeDto>>> ReorderChildren(
+            Guid projectId,
+            Guid nodeId,
+            [FromBody] ProjectNodeReorderRequest request,
+            CancellationToken ct)
+        {
+            if (!IsEnabled())
+            {
+                return NotFound();
+            }
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            ProjectRecord? project = await _dbContext.Projects
+                .FirstOrDefaultAsync(item => item.Id == projectId && item.OwnerUserId == userId, ct);
+            if (project is null)
+            {
+                return NotFound();
+            }
+
+            Guid? parentId = nodeId == Guid.Empty ? null : nodeId;
+            if (parentId.HasValue)
+            {
+                bool parentExists = await _dbContext.ProjectNodes.AnyAsync(
+                    item => item.ProjectId == projectId && item.Id == parentId.Value,
+                    ct);
+                if (!parentExists)
+                {
+                    return NotFound();
+                }
+            }
+
+            List<ProjectNodeRecord> children = await _dbContext.ProjectNodes
+                .Where(item => item.ProjectId == projectId && item.ParentId == parentId)
+                .OrderBy(item => item.OrderIndex)
+                .ToListAsync(ct);
+
+            List<Guid> orderedIds = request.OrderedChildIds?.ToList() ?? new List<Guid>();
+            if (orderedIds.Count != children.Count)
+            {
+                return BadRequest(new { message = "Ordered child ids must match child count." });
+            }
+
+            HashSet<Guid> existing = children.Select(item => item.Id).ToHashSet();
+            if (!orderedIds.All(id => existing.Contains(id)))
+            {
+                return BadRequest(new { message = "Ordered ids must match existing children." });
+            }
+
+            Dictionary<Guid, int> orderLookup = orderedIds
+                .Select((id, index) => new { id, index })
+                .ToDictionary(item => item.id, item => item.index);
+
+            foreach (ProjectNodeRecord child in children)
+            {
+                int next = orderLookup[child.Id];
+                if (child.OrderIndex != next)
+                {
+                    child.OrderIndex = next;
+                    child.UpdatedUtc = DateTimeOffset.UtcNow;
+                }
+            }
+
+            project.UpdatedUtc = DateTimeOffset.UtcNow;
+            await _dbContext.SaveChangesAsync(ct);
+            await _wordCounts.RefreshProjectAsync(projectId, ct);
+
+            List<ProjectNodeDto> result = children
+                .OrderBy(child => child.OrderIndex)
+                .Select(ToDto)
+                .ToList();
+
+            return Ok(result);
+        }
+
+        [HttpGet("{projectId:guid}/stats")]
+        public async Task<ActionResult<ProjectStatsDto>> GetStats(Guid projectId, CancellationToken ct)
+        {
+            if (!IsEnabled())
+            {
+                return NotFound();
+            }
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            await _wordCounts.RefreshProjectAsync(projectId, ct);
+            ProjectStatsDto? stats = await _wordCounts.GetProjectStatsAsync(userId, projectId, ct);
+            if (stats is null)
+            {
+                return NotFound();
+            }
+
+            return Ok(stats);
+        }
+
+        [HttpGet("{projectId:guid}/goals")]
+        public async Task<ActionResult<ProjectGoalDto>> GetGoals(Guid projectId, CancellationToken ct)
+        {
+            if (!IsEnabled() || !IsGoalsEnabled())
+            {
+                return NotFound();
+            }
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            ProjectProgressDashboardDto? dashboard = await _goals.GetDashboardAsync(userId, projectId, ct);
+            if (dashboard is null)
+            {
+                return NotFound();
+            }
+
+            return Ok(dashboard.Goal);
+        }
+
+        [HttpPut("{projectId:guid}/goals")]
+        public async Task<ActionResult<ProjectGoalDto>> UpdateGoals(
+            Guid projectId,
+            [FromBody] ProjectGoalUpdateRequest request,
+            CancellationToken ct)
+        {
+            if (!IsEnabled() || !IsGoalsEnabled())
+            {
+                return NotFound();
+            }
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            ProjectGoalDto? goal = await _goals.UpsertGoalAsync(userId, projectId, request, ct);
+            if (goal is null)
+            {
+                return NotFound();
+            }
+
+            return Ok(goal);
+        }
+
+        [HttpGet("{projectId:guid}/progress")]
+        public async Task<ActionResult<ProjectProgressDashboardDto>> GetProgress(Guid projectId, CancellationToken ct)
+        {
+            if (!IsEnabled() || !IsGoalsEnabled())
+            {
+                return NotFound();
+            }
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            ProjectProgressDashboardDto? dashboard = await _goals.GetDashboardAsync(userId, projectId, ct);
+            if (dashboard is null)
+            {
+                return NotFound();
+            }
+
+            return Ok(dashboard);
+        }
+
+        [HttpPost("{projectId:guid}/milestones")]
+        public async Task<ActionResult<ProjectMilestoneDto>> CreateMilestone(
+            Guid projectId,
+            [FromBody] ProjectMilestoneCreateRequest request,
+            CancellationToken ct)
+        {
+            if (!IsEnabled() || !IsGoalsEnabled())
+            {
+                return NotFound();
+            }
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            ProjectMilestoneDto? result = await _goals.CreateMilestoneAsync(userId, projectId, request, ct);
+            if (result is null)
+            {
+                return NotFound();
+            }
+
+            return Ok(result);
+        }
+
+        [HttpPatch("{projectId:guid}/milestones/{milestoneId:guid}")]
+        public async Task<ActionResult<ProjectMilestoneDto>> UpdateMilestone(
+            Guid projectId,
+            Guid milestoneId,
+            [FromBody] ProjectMilestoneUpdateRequest request,
+            CancellationToken ct)
+        {
+            if (!IsEnabled() || !IsGoalsEnabled())
+            {
+                return NotFound();
+            }
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            ProjectMilestoneDto? result = await _goals.UpdateMilestoneAsync(userId, projectId, milestoneId, request, ct);
+            if (result is null)
+            {
+                return NotFound();
+            }
+
+            return Ok(result);
+        }
+
+        [HttpDelete("{projectId:guid}/milestones/{milestoneId:guid}")]
+        public async Task<IActionResult> DeleteMilestone(Guid projectId, Guid milestoneId, CancellationToken ct)
+        {
+            if (!IsEnabled() || !IsGoalsEnabled())
+            {
+                return NotFound();
+            }
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            bool removed = await _goals.DeleteMilestoneAsync(userId, projectId, milestoneId, ct);
+            return removed ? NoContent() : NotFound();
+        }
+
+        [HttpPost("{projectId:guid}/sessions/start")]
+        public async Task<ActionResult<WritingSessionDto>> StartSession(Guid projectId, CancellationToken ct)
+        {
+            if (!IsEnabled() || !IsGoalsEnabled())
+            {
+                return NotFound();
+            }
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            WritingSessionDto? session = await _goals.StartSessionAsync(userId, projectId, ct);
+            if (session is null)
+            {
+                return NotFound();
+            }
+
+            return Ok(session);
+        }
+
+        [HttpPost("{projectId:guid}/sessions/{sessionId:guid}/stop")]
+        public async Task<ActionResult<WritingSessionDto>> StopSession(
+            Guid projectId,
+            Guid sessionId,
+            [FromBody] WritingSessionStopRequest? request,
+            CancellationToken ct)
+        {
+            if (!IsEnabled() || !IsGoalsEnabled())
+            {
+                return NotFound();
+            }
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            WritingSessionDto? session = await _goals.StopSessionAsync(userId, projectId, sessionId, request?.Notes, ct);
+            if (session is null)
+            {
+                return NotFound();
+            }
+
+            return Ok(session);
+        }
+
+        private bool IsEnabled()
+        {
+            return _configuration.GetValue<bool?>("Workflow:ProjectsEnabled")
+                ?? _configuration.GetValue<bool?>("WriterApp:Workflow:ProjectsEnabled")
+                ?? false;
+        }
+
+        private bool IsGoalsEnabled()
+        {
+            return _configuration.GetValue<bool?>("Workflow:GoalsEnabled")
+                ?? _configuration.GetValue<bool?>("WriterApp:Workflow:GoalsEnabled")
+                ?? false;
+        }
+
+        private async Task<bool> IsOwnedSectionAsync(string userId, Guid sectionId, CancellationToken ct)
+        {
+            return await _dbContext.Sections
+                .Where(section => section.Id == sectionId)
+                .Join(
+                    _dbContext.Documents,
+                    section => section.DocumentId,
+                    document => document.Id,
+                    (section, document) => new { section, document })
+                .AnyAsync(row => row.document.OwnerUserId == userId, ct);
+        }
+
+        private static ProjectNodeType ParseNodeType(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return ProjectNodeType.Scene;
+            }
+
+            return value.Trim().ToLowerInvariant() switch
+            {
+                "part" => ProjectNodeType.Part,
+                "chapter" => ProjectNodeType.Chapter,
+                "frontmatteritem" => ProjectNodeType.FrontMatterItem,
+                "front_matter_item" => ProjectNodeType.FrontMatterItem,
+                "front-matter-item" => ProjectNodeType.FrontMatterItem,
+                _ => ProjectNodeType.Scene
+            };
+        }
+
+        private static string NormalizeNodeType(ProjectNodeType nodeType)
+        {
+            return nodeType switch
+            {
+                ProjectNodeType.Part => "part",
+                ProjectNodeType.Chapter => "chapter",
+                ProjectNodeType.FrontMatterItem => "frontMatterItem",
+                _ => "scene"
+            };
+        }
+
+        private static ProjectDto ToDto(ProjectRecord project, int totalWords)
+        {
+            return new ProjectDto(
+                project.Id,
+                project.Title,
+                project.Subtitle,
+                project.AuthorName,
+                project.Language,
+                project.Genre,
+                project.CreatedUtc,
+                project.UpdatedUtc,
+                totalWords);
+        }
+
+        private static ProjectNodeDto ToDto(ProjectNodeRecord node)
+        {
+            return new ProjectNodeDto(
+                node.Id,
+                node.ProjectId,
+                node.ParentId,
+                NormalizeNodeType(node.NodeType),
+                node.Title,
+                node.OrderIndex,
+                node.LinkedSectionId,
+                node.MetadataJson,
+                node.WordCountCache,
+                node.UpdatedUtc);
+        }
+
+        private static string? Normalize(string? value)
+        {
+            return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        }
+    }
+}

@@ -1,0 +1,270 @@
+.projects-page {
+    display: grid;
+    gap: 16px;
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 20px 12px 40px;
+}
+
+.projects-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.projects-header h1 {
+    margin: 0;
+}
+
+.projects-subtitle {
+    margin: 4px 0 0;
+    color: #666;
+}
+
+.projects-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.projects-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.projects-total {
+    color: #555;
+    font-weight: 600;
+}
+
+.projects-tabs {
+    display: flex;
+    gap: 8px;
+}
+
+.tab-button {
+    border: 1px solid #d6dbe4;
+    background: #f4f6f8;
+    color: #24314f;
+    border-radius: 8px;
+    padding: 8px 12px;
+    cursor: pointer;
+}
+
+.tab-button.is-active {
+    background: #1f2a44;
+    border-color: #1f2a44;
+    color: #fff;
+}
+
+.projects-error {
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid #f2b3b3;
+    background: #fff3f3;
+    color: #8a2a2a;
+}
+
+.projects-loading,
+.projects-empty,
+.projects-disabled {
+    padding: 16px;
+    border-radius: 10px;
+    background: #f8f8f8;
+    color: #555;
+}
+
+.projects-workspace {
+    display: grid;
+    grid-template-columns: 360px minmax(0, 1fr);
+    gap: 12px;
+}
+
+.projects-progress {
+    display: grid;
+    gap: 12px;
+}
+
+.progress-card {
+    border: 1px solid #e1e1e1;
+    border-radius: 12px;
+    background: #fff;
+    padding: 12px;
+}
+
+.progress-card h3 {
+    margin: 0 0 10px;
+}
+
+.progress-targets {
+    display: grid;
+    grid-template-columns: 140px minmax(0, 220px);
+    gap: 8px 12px;
+    align-items: center;
+}
+
+.progress-targets input {
+    padding: 8px;
+    border: 1px solid #cfd3da;
+    border-radius: 8px;
+}
+
+.progress-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px 12px;
+}
+
+.milestone-create {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.milestone-create input {
+    padding: 8px;
+    border: 1px solid #cfd3da;
+    border-radius: 8px;
+}
+
+.milestone-list,
+.session-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 8px;
+}
+
+.milestone-list li,
+.session-list li {
+    border: 1px solid #e9edf3;
+    border-radius: 8px;
+    padding: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    align-items: center;
+}
+
+.session-live {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 8px;
+}
+
+.projects-tree,
+.projects-main {
+    border: 1px solid #e1e1e1;
+    border-radius: 12px;
+    background: #fff;
+    padding: 12px;
+}
+
+.tree-actions {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+}
+
+.tree-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.tree-node {
+    margin: 0;
+}
+
+.tree-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    gap: 8px;
+    align-items: center;
+    border-radius: 8px;
+    padding: 4px 6px;
+}
+
+.tree-row.is-selected {
+    background: #eef4ff;
+}
+
+.tree-drag {
+    border: none;
+    background: transparent;
+    cursor: grab;
+    color: #777;
+}
+
+.tree-select {
+    border: none;
+    background: transparent;
+    text-align: left;
+    padding: 0;
+    cursor: pointer;
+    color: #222;
+}
+
+.tree-node-type,
+.tree-node-words {
+    color: #777;
+    font-size: 0.8rem;
+}
+
+.node-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.node-title-input {
+    flex: 1;
+    min-width: 240px;
+    padding: 8px 10px;
+    border: 1px solid #cfd3da;
+    border-radius: 8px;
+}
+
+.node-kind,
+.node-words {
+    color: #666;
+    font-size: 0.9rem;
+}
+
+.node-actions {
+    margin-top: 12px;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+button.primary,
+button.secondary {
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+button.primary {
+    border: 1px solid #1f2a44;
+    background: #1f2a44;
+    color: #fff;
+}
+
+button.secondary {
+    border: 1px solid #d6dbe4;
+    background: #f4f6f8;
+}
+
+@media (max-width: 880px) {
+    .projects-workspace {
+        grid-template-columns: 1fr;
+    }
+}

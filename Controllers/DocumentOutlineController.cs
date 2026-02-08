@@ -3,9 +3,13 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Data.Sqlite;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using System.Text.Json;
+using WriterApp.Application.Commands;
 using WriterApp.Application.Documents;
 using WriterApp.Application.Search;
 using WriterApp.Application.Security;
@@ -23,22 +27,30 @@ namespace WriterApp.Controllers
         private readonly IUserIdResolver _userIdResolver;
         private readonly AppDbContext _dbContext;
         private readonly ISearchIndexService _searchIndex;
+        private readonly IStructureCommandProcessor _structureCommands;
+        private readonly IConfiguration _configuration;
 
         public DocumentOutlineController(
             IDocumentRepository documents,
             IUserIdResolver userIdResolver,
             AppDbContext dbContext,
-            ISearchIndexService searchIndex)
+            ISearchIndexService searchIndex,
+            IStructureCommandProcessor structureCommands,
+            IConfiguration configuration)
         {
             _documents = documents ?? throw new ArgumentNullException(nameof(documents));
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _searchIndex = searchIndex ?? throw new ArgumentNullException(nameof(searchIndex));
+            _structureCommands = structureCommands ?? throw new ArgumentNullException(nameof(structureCommands));
+            _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         }
 
         [HttpGet]
         public async Task<ActionResult<DocumentOutlineDto>> GetOutline(Guid documentId, CancellationToken ct)
         {
+            await EnsureOutlineNodeSchemaAsync(ct);
+
             string userId = _userIdResolver.ResolveUserId(User);
             DocumentRecord? document = await _documents.GetAsync(documentId, userId, ct);
             if (document is null)
@@ -64,6 +76,8 @@ namespace WriterApp.Controllers
             [FromBody] DocumentOutlineDto request,
             CancellationToken ct)
         {
+            await EnsureOutlineNodeSchemaAsync(ct);
+
             string userId = _userIdResolver.ResolveUserId(User);
             DocumentRecord? document = await _documents.GetAsync(documentId, userId, ct);
             if (document is null)
@@ -105,6 +119,8 @@ namespace WriterApp.Controllers
             Guid documentId,
             CancellationToken ct)
         {
+            await EnsureOutlineNodeSchemaAsync(ct);
+
             string userId = _userIdResolver.ResolveUserId(User);
             DocumentRecord? document = await _documents.GetAsync(documentId, userId, ct);
             if (document is null)
@@ -124,7 +140,8 @@ namespace WriterApp.Controllers
                     node.Order,
                     node.Title,
                     node.Notes,
-                    node.LinkedSectionId))
+                    node.LinkedSectionId,
+                    node.MetadataJson))
                 .ToListAsync(ct);
 
             return Ok(nodes);
@@ -136,6 +153,8 @@ namespace WriterApp.Controllers
             [FromBody] List<DocumentOutlineNodeDto> nodes,
             CancellationToken ct)
         {
+            await EnsureOutlineNodeSchemaAsync(ct);
+
             string userId = _userIdResolver.ResolveUserId(User);
             DocumentRecord? document = await _documents.GetAsync(documentId, userId, ct);
             if (document is null)
@@ -197,7 +216,8 @@ namespace WriterApp.Controllers
                     Order = node.Order,
                     Title = node.Title.Trim(),
                     Notes = string.IsNullOrWhiteSpace(node.Notes) ? null : node.Notes.Trim(),
-                    LinkedSectionId = node.LinkedSectionId
+                    LinkedSectionId = node.LinkedSectionId,
+                    MetadataJson = string.IsNullOrWhiteSpace(node.MetadataJson) ? null : node.MetadataJson
                 })
                 .ToList();
 
@@ -237,7 +257,8 @@ namespace WriterApp.Controllers
                     node.Order,
                     node.Title,
                     node.Notes,
-                    node.LinkedSectionId))
+                    node.LinkedSectionId,
+                    node.MetadataJson))
                 .ToList();
 
             return Ok(result);
@@ -250,6 +271,8 @@ namespace WriterApp.Controllers
             [FromBody] DocumentOutlineLinkRequest request,
             CancellationToken ct)
         {
+            await EnsureOutlineNodeSchemaAsync(ct);
+
             string userId = _userIdResolver.ResolveUserId(User);
             DocumentRecord? document = await _documents.GetAsync(documentId, userId, ct);
             if (document is null)
@@ -292,7 +315,168 @@ namespace WriterApp.Controllers
                 node.Order,
                 node.Title,
                 node.Notes,
-                node.LinkedSectionId));
+                node.LinkedSectionId,
+                node.MetadataJson));
+        }
+
+        [HttpPut("nodes/{nodeId:guid}/metadata")]
+        public async Task<ActionResult<DocumentOutlineNodeDto>> UpdateNodeMetadata(
+            Guid documentId,
+            Guid nodeId,
+            [FromBody] DocumentOutlineMetadataUpdateRequest request,
+            CancellationToken ct)
+        {
+            await EnsureOutlineNodeSchemaAsync(ct);
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            DocumentRecord? document = await _documents.GetAsync(documentId, userId, ct);
+            if (document is null)
+            {
+                return NotFound();
+            }
+
+            DocumentOutlineNodeRecord? node = await _dbContext.DocumentOutlineNodes
+                .FirstOrDefaultAsync(entry => entry.Id == nodeId && entry.DocumentId == documentId, ct);
+            if (node is null)
+            {
+                return NotFound();
+            }
+
+            string? metadataJson = string.IsNullOrWhiteSpace(request.MetadataJson)
+                ? null
+                : request.MetadataJson.Trim();
+            if (IsUndoEnabled())
+            {
+                await _structureCommands.ExecuteAsync(
+                    new UpdateOutlineNodeMetadataCommand(
+                        userId,
+                        documentId,
+                        nodeId,
+                        node.MetadataJson,
+                        metadataJson),
+                    ct);
+            }
+            else
+            {
+                node.MetadataJson = metadataJson;
+                await _dbContext.SaveChangesAsync(ct);
+            }
+
+            DocumentOutlineNodeRecord? refreshedNode = await _dbContext.DocumentOutlineNodes
+                .AsNoTracking()
+                .FirstOrDefaultAsync(entry => entry.Id == nodeId && entry.DocumentId == documentId, ct);
+            if (refreshedNode is null)
+            {
+                return NotFound();
+            }
+
+            return Ok(new DocumentOutlineNodeDto(
+                refreshedNode.Id,
+                refreshedNode.DocumentId,
+                refreshedNode.ParentId,
+                refreshedNode.Order,
+                refreshedNode.Title,
+                refreshedNode.Notes,
+                refreshedNode.LinkedSectionId,
+                refreshedNode.MetadataJson));
+        }
+
+        [HttpPost("undo")]
+        public async Task<ActionResult<IReadOnlyList<DocumentOutlineNodeDto>>> UndoStructureChanges(
+            Guid documentId,
+            CancellationToken ct)
+        {
+            await EnsureOutlineNodeSchemaAsync(ct);
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            DocumentRecord? document = await _documents.GetAsync(documentId, userId, ct);
+            if (document is null)
+            {
+                return NotFound();
+            }
+
+            if (!IsUndoEnabled())
+            {
+                return BadRequest(new { message = "Outline undo is disabled." });
+            }
+
+            bool undone = await _structureCommands.UndoAsync(userId, documentId, ct);
+            if (!undone)
+            {
+                return NoContent();
+            }
+
+            List<DocumentOutlineNodeRecord> nodes = await _dbContext.DocumentOutlineNodes
+                .Where(entry => entry.DocumentId == documentId)
+                .ToListAsync(ct);
+            DocumentOutlineRecord? outline = await _dbContext.DocumentOutlines
+                .FindAsync(new object?[] { documentId }, ct);
+            await _searchIndex.ReplaceOutlineAsync(document, outline?.Outline ?? string.Empty, nodes, ct);
+
+            List<DocumentOutlineNodeDto> nodeDtos = nodes
+                .OrderBy(node => node.ParentId)
+                .ThenBy(node => node.Order)
+                .Select(node => new DocumentOutlineNodeDto(
+                    node.Id,
+                    node.DocumentId,
+                    node.ParentId,
+                    node.Order,
+                    node.Title,
+                    node.Notes,
+                    node.LinkedSectionId,
+                    node.MetadataJson))
+                .ToList();
+
+            return Ok(nodeDtos);
+        }
+
+        [HttpPost("redo")]
+        public async Task<ActionResult<IReadOnlyList<DocumentOutlineNodeDto>>> RedoStructureChanges(
+            Guid documentId,
+            CancellationToken ct)
+        {
+            await EnsureOutlineNodeSchemaAsync(ct);
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            DocumentRecord? document = await _documents.GetAsync(documentId, userId, ct);
+            if (document is null)
+            {
+                return NotFound();
+            }
+
+            if (!IsUndoEnabled())
+            {
+                return BadRequest(new { message = "Outline undo is disabled." });
+            }
+
+            bool redone = await _structureCommands.RedoAsync(userId, documentId, ct);
+            if (!redone)
+            {
+                return NoContent();
+            }
+
+            List<DocumentOutlineNodeRecord> nodes = await _dbContext.DocumentOutlineNodes
+                .Where(entry => entry.DocumentId == documentId)
+                .ToListAsync(ct);
+            DocumentOutlineRecord? outline = await _dbContext.DocumentOutlines
+                .FindAsync(new object?[] { documentId }, ct);
+            await _searchIndex.ReplaceOutlineAsync(document, outline?.Outline ?? string.Empty, nodes, ct);
+
+            List<DocumentOutlineNodeDto> nodeDtos = nodes
+                .OrderBy(node => node.ParentId)
+                .ThenBy(node => node.Order)
+                .Select(node => new DocumentOutlineNodeDto(
+                    node.Id,
+                    node.DocumentId,
+                    node.ParentId,
+                    node.Order,
+                    node.Title,
+                    node.Notes,
+                    node.LinkedSectionId,
+                    node.MetadataJson))
+                .ToList();
+
+            return Ok(nodeDtos);
         }
 
         [HttpPost("apply-to-sections")]
@@ -301,6 +485,8 @@ namespace WriterApp.Controllers
             [FromBody] OutlineApplyOptionsDto? options,
             CancellationToken ct)
         {
+            await EnsureOutlineNodeSchemaAsync(ct);
+
             string userId = _userIdResolver.ResolveUserId(User);
             DocumentRecord? document = await _documents.GetAsync(documentId, userId, ct);
             if (document is null)
@@ -309,6 +495,10 @@ namespace WriterApp.Controllers
             }
 
             OutlineApplyOptionsDto settings = options ?? new OutlineApplyOptionsDto();
+            bool applyMetadataToSceneCard =
+                (_configuration.GetValue<bool?>("Workflow:OutlineBoardEnabled")
+                 ?? _configuration.GetValue<bool?>("WriterApp:Workflow:OutlineBoardEnabled")
+                 ?? false);
             List<DocumentOutlineNodeRecord> allNodes = await _dbContext.DocumentOutlineNodes
                 .Where(node => node.DocumentId == documentId)
                 .OrderBy(node => node.ParentId)
@@ -402,6 +592,13 @@ namespace WriterApp.Controllers
                     {
                         node.LinkedSectionId = section.Id;
                     }
+
+                    if (applyMetadataToSceneCard
+                        && section.Id != Guid.Empty
+                        && !string.IsNullOrWhiteSpace(node.MetadataJson))
+                    {
+                        ApplyMetadataToSceneCard(section.Id, node.MetadataJson);
+                    }
                 }
             }
 
@@ -461,10 +658,129 @@ namespace WriterApp.Controllers
                     node.Order,
                     node.Title,
                     node.Notes,
-                    node.LinkedSectionId))
+                    node.LinkedSectionId,
+                    node.MetadataJson))
                 .ToListAsync(ct);
 
             return Ok(new OutlineApplyResultDto(sectionDtos, nodeDtos));
+        }
+
+        private void ApplyMetadataToSceneCard(Guid sectionId, string metadataJson)
+        {
+            if (string.IsNullOrWhiteSpace(metadataJson))
+            {
+                return;
+            }
+
+            string? purpose = null;
+            string? emotionalBeat = null;
+            string? openQuestions = null;
+            string? povCharacterId = null;
+            string? placeId = null;
+            string? timeRef = null;
+            string? tagsJson = null;
+            string? keyEvents = null;
+
+            try
+            {
+                using JsonDocument doc = JsonDocument.Parse(metadataJson);
+                JsonElement root = doc.RootElement;
+                purpose = GetMetadataValue(root, "purpose");
+                emotionalBeat = GetMetadataValue(root, "emotionalBeat");
+                openQuestions = JoinMetadataArray(root, "openQuestions");
+                keyEvents = JoinMetadataArray(root, "keyEvents");
+                povCharacterId = GetMetadataValue(root, "povCharacterId");
+                placeId = GetMetadataValue(root, "placeId");
+                timeRef = GetMetadataValue(root, "timeRef");
+                if (root.TryGetProperty("tags", out JsonElement tags) && tags.ValueKind == JsonValueKind.Array)
+                {
+                    tagsJson = tags.GetRawText();
+                }
+            }
+            catch (JsonException)
+            {
+                return;
+            }
+
+            SectionSceneCardRecord? card = _dbContext.SectionSceneCards
+                .FirstOrDefault(item => item.SectionId == sectionId);
+            if (card is null)
+            {
+                card = new SectionSceneCardRecord
+                {
+                    SectionId = sectionId,
+                    UpdatedUtc = DateTimeOffset.UtcNow
+                };
+                _dbContext.SectionSceneCards.Add(card);
+            }
+
+            if (!string.IsNullOrWhiteSpace(purpose))
+            {
+                card.NarrativePurpose = purpose;
+            }
+
+            if (!string.IsNullOrWhiteSpace(emotionalBeat))
+            {
+                card.EmotionalBeat = emotionalBeat;
+            }
+
+            if (!string.IsNullOrWhiteSpace(keyEvents))
+            {
+                card.KeyEvents = keyEvents;
+            }
+
+            if (!string.IsNullOrWhiteSpace(openQuestions))
+            {
+                card.OpenQuestions = openQuestions;
+            }
+
+            card.PovCharacterId = string.IsNullOrWhiteSpace(povCharacterId) ? card.PovCharacterId : povCharacterId;
+            card.PlaceId = string.IsNullOrWhiteSpace(placeId) ? card.PlaceId : placeId;
+            card.TimeRef = string.IsNullOrWhiteSpace(timeRef) ? card.TimeRef : timeRef;
+            if (!string.IsNullOrWhiteSpace(tagsJson))
+            {
+                card.TagsJson = tagsJson;
+            }
+
+            card.UpdatedUtc = DateTimeOffset.UtcNow;
+        }
+
+        private static string? GetMetadataValue(JsonElement root, string propertyName)
+        {
+            if (!root.TryGetProperty(propertyName, out JsonElement value))
+            {
+                return null;
+            }
+
+            return value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+        }
+
+        private static string? JoinMetadataArray(JsonElement root, string propertyName)
+        {
+            if (!root.TryGetProperty(propertyName, out JsonElement value) || value.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+
+            List<string> items = new();
+            foreach (JsonElement entry in value.EnumerateArray())
+            {
+                if (entry.ValueKind == JsonValueKind.String)
+                {
+                    string? text = entry.GetString();
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        items.Add(text.Trim());
+                    }
+                }
+            }
+
+            if (items.Count == 0)
+            {
+                return null;
+            }
+
+            return string.Join(Environment.NewLine, items);
         }
 
         private async Task<string> BuildOutlineFromNodesAsync(Guid documentId, CancellationToken ct)
@@ -524,6 +840,13 @@ namespace WriterApp.Controllers
             return string.IsNullOrWhiteSpace(title) ? string.Empty : title.Trim().ToLowerInvariant();
         }
 
+        private bool IsUndoEnabled()
+        {
+            return _configuration.GetValue<bool?>("Workflow:OutlineUndoEnabled")
+                ?? _configuration.GetValue<bool?>("WriterApp:Workflow:OutlineUndoEnabled")
+                ?? false;
+        }
+
         private static List<DocumentOutlineNodeRecord> GetNodesByDepth(
             List<DocumentOutlineNodeRecord> nodes,
             int maxDepth)
@@ -575,6 +898,56 @@ namespace WriterApp.Controllers
 
             Walk(null, 1);
             return result;
+        }
+
+        private async Task EnsureOutlineNodeSchemaAsync(CancellationToken ct)
+        {
+            string provider = _dbContext.Database.ProviderName ?? string.Empty;
+            if (!provider.Contains("Sqlite", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            await _dbContext.Database.OpenConnectionAsync(ct);
+            try
+            {
+                using var command = _dbContext.Database.GetDbConnection().CreateCommand();
+                command.CommandText = "PRAGMA table_info('DocumentOutlineNodes');";
+                bool hasMetadataJson = false;
+                using (var reader = await command.ExecuteReaderAsync(ct))
+                {
+                    while (await reader.ReadAsync(ct))
+                    {
+                        if (reader.FieldCount > 1 && !reader.IsDBNull(1))
+                        {
+                            string column = reader.GetString(1);
+                            if (string.Equals(column, "MetadataJson", StringComparison.OrdinalIgnoreCase))
+                            {
+                                hasMetadataJson = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (!hasMetadataJson)
+                {
+                    using var alter = _dbContext.Database.GetDbConnection().CreateCommand();
+                    alter.CommandText = "ALTER TABLE DocumentOutlineNodes ADD COLUMN MetadataJson TEXT NULL;";
+                    try
+                    {
+                        await alter.ExecuteNonQueryAsync(ct);
+                    }
+                    catch (SqliteException ex) when (ex.SqliteErrorCode == 1 && ex.Message.Contains("duplicate column name", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Ignore concurrent add attempts.
+                    }
+                }
+            }
+            finally
+            {
+                await _dbContext.Database.CloseConnectionAsync();
+            }
         }
     }
 }

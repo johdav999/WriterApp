@@ -31,6 +31,14 @@ namespace WriterApp.Data
         public DbSet<DocumentOutlineNodeRecord> DocumentOutlineNodes => Set<DocumentOutlineNodeRecord>();
         public DbSet<PageNoteRecord> PageNotes => Set<PageNoteRecord>();
         public DbSet<SectionSceneCardRecord> SectionSceneCards => Set<SectionSceneCardRecord>();
+        public DbSet<OutlineTemplateRecord> OutlineTemplates => Set<OutlineTemplateRecord>();
+        public DbSet<ProjectRecord> Projects => Set<ProjectRecord>();
+        public DbSet<ProjectNodeRecord> ProjectNodes => Set<ProjectNodeRecord>();
+        public DbSet<ProjectGoalRecord> ProjectGoals => Set<ProjectGoalRecord>();
+        public DbSet<ProjectProgressDailyRecord> ProjectProgressDaily => Set<ProjectProgressDailyRecord>();
+        public DbSet<ProjectProgressEventRecord> ProjectProgressEvents => Set<ProjectProgressEventRecord>();
+        public DbSet<ProjectMilestoneRecord> ProjectMilestones => Set<ProjectMilestoneRecord>();
+        public DbSet<WritingSessionRecord> WritingSessions => Set<WritingSessionRecord>();
         public DbSet<DocumentOutlineRecord> DocumentOutlines => Set<DocumentOutlineRecord>();
         public DbSet<DocumentSynopsisRecord> DocumentSynopses => Set<DocumentSynopsisRecord>();
         public DbSet<DocumentGlossaryEntryRecord> DocumentGlossaryEntries => Set<DocumentGlossaryEntryRecord>();
@@ -120,6 +128,120 @@ namespace WriterApp.Data
                     .OnDelete(DeleteBehavior.Cascade);
             });
 
+            builder.Entity<ProjectRecord>(entity =>
+            {
+                entity.HasKey(project => project.Id);
+                entity.Property(project => project.OwnerUserId).IsRequired();
+                entity.Property(project => project.Title).IsRequired();
+                entity.Property(project => project.CreatedUtc).IsRequired();
+                entity.Property(project => project.UpdatedUtc).IsRequired();
+                entity.HasIndex(project => project.OwnerUserId);
+                entity.HasIndex(project => project.UpdatedUtc);
+                entity.HasMany(project => project.Nodes)
+                    .WithOne(node => node.Project)
+                    .HasForeignKey(node => node.ProjectId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<ProjectNodeRecord>(entity =>
+            {
+                entity.HasKey(node => node.Id);
+                entity.Property(node => node.ProjectId).IsRequired();
+                entity.Property(node => node.NodeType).IsRequired();
+                entity.Property(node => node.Title).IsRequired();
+                entity.Property(node => node.OrderIndex).IsRequired();
+                entity.Property(node => node.WordCountCache).IsRequired();
+                entity.Property(node => node.UpdatedUtc).IsRequired();
+                entity.HasIndex(node => new { node.ProjectId, node.ParentId, node.OrderIndex });
+                entity.HasIndex(node => node.LinkedSectionId);
+                entity.HasOne(node => node.Parent)
+                    .WithMany(node => node.Children)
+                    .HasForeignKey(node => node.ParentId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                entity.HasOne(node => node.LinkedSection)
+                    .WithMany()
+                    .HasForeignKey(node => node.LinkedSectionId)
+                    .OnDelete(DeleteBehavior.SetNull);
+            });
+
+            builder.Entity<ProjectGoalRecord>(entity =>
+            {
+                entity.HasKey(goal => goal.ProjectId);
+                entity.Property(goal => goal.DailyTargetWords).IsRequired();
+                entity.Property(goal => goal.WeeklyTargetWords).IsRequired();
+                entity.Property(goal => goal.Timezone).IsRequired();
+                entity.Property(goal => goal.UpdatedUtc).IsRequired();
+                entity.HasOne(goal => goal.Project)
+                    .WithOne(project => project.Goal)
+                    .HasForeignKey<ProjectGoalRecord>(goal => goal.ProjectId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<ProjectProgressDailyRecord>(entity =>
+            {
+                entity.HasKey(day => new { day.ProjectId, day.Date });
+                entity.Property(day => day.Date).HasMaxLength(10).IsRequired();
+                entity.Property(day => day.WordsDelta).IsRequired();
+                entity.Property(day => day.UpdatedUtc).IsRequired();
+                entity.HasOne(day => day.Project)
+                    .WithMany(project => project.ProgressDays)
+                    .HasForeignKey(day => day.ProjectId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<ProjectProgressEventRecord>(entity =>
+            {
+                entity.HasKey(item => item.Id);
+                entity.Property(item => item.EventKey).IsRequired();
+                entity.Property(item => item.Date).HasMaxLength(10).IsRequired();
+                entity.Property(item => item.WordsDelta).IsRequired();
+                entity.Property(item => item.CreatedUtc).IsRequired();
+                entity.HasIndex(item => new { item.ProjectId, item.EventKey }).IsUnique();
+                entity.HasIndex(item => item.ProjectId);
+                entity.HasOne(item => item.Project)
+                    .WithMany()
+                    .HasForeignKey(item => item.ProjectId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<ProjectMilestoneRecord>(entity =>
+            {
+                entity.HasKey(milestone => milestone.Id);
+                entity.Property(milestone => milestone.Title).IsRequired();
+                entity.Property(milestone => milestone.Status).IsRequired();
+                entity.Property(milestone => milestone.UpdatedUtc).IsRequired();
+                entity.HasIndex(milestone => milestone.ProjectId);
+                entity.HasIndex(milestone => milestone.Status);
+                entity.HasOne(milestone => milestone.Project)
+                    .WithMany(project => project.Milestones)
+                    .HasForeignKey(milestone => milestone.ProjectId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<WritingSessionRecord>(entity =>
+            {
+                entity.HasKey(session => session.Id);
+                entity.Property(session => session.StartedUtc)
+                    .HasConversion(
+                        value => value,
+                        value => DateTime.SpecifyKind(value, DateTimeKind.Utc))
+                    .IsRequired();
+                entity.Property(session => session.EndedUtc)
+                    .HasConversion(
+                        value => value,
+                        value => value.HasValue
+                            ? DateTime.SpecifyKind(value.Value, DateTimeKind.Utc)
+                            : (DateTime?)null);
+                entity.Property(session => session.DurationSeconds).IsRequired();
+                entity.Property(session => session.WordsDelta).IsRequired();
+                entity.Property(session => session.StartWordCount).IsRequired();
+                entity.HasIndex(session => new { session.ProjectId, session.StartedUtc });
+                entity.HasOne(session => session.Project)
+                    .WithMany(project => project.Sessions)
+                    .HasForeignKey(session => session.ProjectId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
             builder.Entity<DocumentOutlineNodeRecord>(entity =>
             {
                 entity.HasKey(node => node.Id);
@@ -127,6 +249,7 @@ namespace WriterApp.Data
                 entity.Property(node => node.Title).IsRequired();
                 entity.Property(node => node.Order).IsRequired();
                 entity.HasIndex(node => new { node.DocumentId, node.ParentId, node.Order });
+                entity.Property(node => node.MetadataJson);
                 entity.HasOne(node => node.Parent)
                     .WithMany(node => node.Children)
                     .HasForeignKey(node => node.ParentId)
@@ -276,10 +399,23 @@ namespace WriterApp.Data
             {
                 entity.HasKey(card => card.SectionId);
                 entity.Property(card => card.UpdatedUtc).IsRequired();
+                entity.Property(card => card.TimeRef).HasMaxLength(120);
                 entity.HasOne(card => card.Section)
                     .WithOne(section => section.SceneCard)
                     .HasForeignKey<SectionSceneCardRecord>(card => card.SectionId)
                     .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<OutlineTemplateRecord>(entity =>
+            {
+                entity.HasKey(template => template.Id);
+                entity.Property(template => template.OwnerUserId).IsRequired();
+                entity.Property(template => template.Name).IsRequired();
+                entity.Property(template => template.TemplateJson).IsRequired();
+                entity.Property(template => template.CreatedUtc).IsRequired();
+                entity.Property(template => template.UpdatedUtc).IsRequired();
+                entity.HasIndex(template => template.OwnerUserId);
+                entity.HasIndex(template => template.UpdatedUtc);
             });
 
             builder.Entity<DocumentOutlineRecord>(entity =>
