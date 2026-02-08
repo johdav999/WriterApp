@@ -96,6 +96,12 @@ namespace WriterApp.Application.Documents
     public sealed record ProjectNodeReorderRequest(
         IReadOnlyList<Guid> OrderedChildIds);
 
+    public sealed record ProjectSceneOpenTargetDto(
+        Guid ProjectId,
+        Guid NodeId,
+        Guid DocumentId,
+        Guid SectionId);
+
     public sealed record ProjectStatsDto(
         Guid ProjectId,
         int TotalWordCount,

@@ -25,6 +25,7 @@ using WriterApp.Client.Diagnostics;
 using WriterApp.Client.State;
 using WriterApp.Application.Usage;
 using WriterApp.Client.Components.Editor;
+using WriterApp.Client.Services;
 using SelectionDocRange = WriterApp.Client.Components.Editor.PageEditor.SelectionDocRange;
 
 namespace WriterApp.Client.Pages
@@ -32,6 +33,7 @@ namespace WriterApp.Client.Pages
     public partial class DocumentEditor : ComponentBase, IDisposable
     {
         private const string SynopsisOutlineActionKey = "synopsis.generate_outline";
+        private const string ContextPanelStateStoragePrefix = "writerapp.editor.contextpanel.v1";
 
         [Parameter]
         public Guid DocumentId { get; set; }
@@ -65,6 +67,9 @@ namespace WriterApp.Client.Pages
 
         [Inject]
         public IConfiguration Configuration { get; set; } = default!;
+
+        [Inject]
+        public CoachRecommendationService CoachRecommendationService { get; set; } = default!;
 
         private readonly List<SectionDto> _sections = new();
         private readonly Dictionary<Guid, List<PageDto>> _pagesBySection = new();
@@ -410,7 +415,8 @@ namespace WriterApp.Client.Pages
         private string _translationAlignmentMode = "paragraph";
         private string _translationApplyMode = "replace";
         private TranslateContext? _pendingTranslateContext;
-        private ContextTab _activeContextTab = ContextTab.Notes;
+        private ContextTab _activeContextTab = ContextTab.Ai;
+        private PanelCategory _activePanelCategory = PanelCategory.Coach;
         private readonly List<PageVersionListItemDto> _pageVersions = new();
         private bool _versionsLoading;
         private string? _versionsError;
@@ -792,6 +798,7 @@ namespace WriterApp.Client.Pages
                 });
 
                 await LastOpenedDocumentStateService.SaveAsync(DocumentId, _activeSection.Id);
+                await RestoreContextPanelStateAsync();
 
                 await LoadHeadingPrefixCountersAsync();
                 _notesDraft = await LoadPageNotesAsync(_activePage.Id);
@@ -2292,9 +2299,24 @@ namespace WriterApp.Client.Pages
                 : "Switch to print layout";
         }
 
-        private async Task SetContextTabAsync(ContextTab tab)
+        private async Task SetContextTabAsync(
+            ContextTab tab,
+            bool persistSelection = true,
+            bool loadTabData = true)
         {
             _activeContextTab = tab;
+            _activePanelCategory = GetCategoryForTab(tab);
+
+            if (!loadTabData)
+            {
+                if (persistSelection)
+                {
+                    await PersistContextPanelStateAsync();
+                }
+
+                return;
+            }
+
             if (tab == ContextTab.Annotations)
             {
                 await LoadAnnotationsAsync();
@@ -2315,11 +2337,391 @@ namespace WriterApp.Client.Pages
             {
                 await LoadOutlineTemplatesAsync();
             }
+
+            if (persistSelection)
+            {
+                await PersistContextPanelStateAsync();
+            }
         }
 
         private string GetContextTabClass(ContextTab tab)
         {
             return _activeContextTab == tab ? "is-active" : string.Empty;
+        }
+
+        private bool ShowSceneCoachCard => !_isDiffMode && _activePanelCategory == PanelCategory.Coach;
+
+        private CoachCardRecommendation BuildSceneCoachRecommendation()
+        {
+            int missingFields = 0;
+            if (string.IsNullOrWhiteSpace(_sceneNarrativePurpose))
+            {
+                missingFields++;
+            }
+
+            if (string.IsNullOrWhiteSpace(_sceneEmotionalBeat))
+            {
+                missingFields++;
+            }
+
+            if (string.IsNullOrWhiteSpace(_sceneKeyEvents))
+            {
+                missingFields++;
+            }
+
+            if (string.IsNullOrWhiteSpace(_sceneOpenQuestions))
+            {
+                missingFields++;
+            }
+
+            bool hasSelection = _currentSelectionRange is not null
+                && _currentSelectionRange.End > _currentSelectionRange.Start;
+            bool hasContinuityReport = _continuityReport is not null;
+            bool hasContinuityIssues = (_continuityReport?.Issues.Count ?? 0) > 0;
+            bool hasOutlineNodes = _outlineNodes.Count > 0;
+
+            SceneCoachInput input = new(
+                hasSelection,
+                missingFields,
+                _qualityIssues.Count > 0,
+                hasContinuityReport,
+                hasContinuityIssues,
+                hasOutlineNodes,
+                _editorStatus.WordCount);
+
+            return CoachRecommendationService.BuildSceneRecommendation(input);
+        }
+
+        private async Task OnSceneCoachPrimaryActionAsync()
+        {
+            CoachCardRecommendation recommendation = BuildSceneCoachRecommendation();
+            switch (recommendation.PrimaryAction)
+            {
+                case CoachPrimaryAction.SuggestSceneCardFromText:
+                    await RunSceneAiAsync("scene.suggest", "Suggest scene card fields based on the section text.");
+                    break;
+
+                case CoachPrimaryAction.RunQualityCheck:
+                    await RunQualityChecksAsync();
+                    break;
+
+                case CoachPrimaryAction.RunContinuityCheck:
+                    await OnCheckContinuityAsync();
+                    break;
+
+                case CoachPrimaryAction.OpenOutline:
+                    await SetContextTabAsync(ContextTab.Outline);
+                    break;
+
+                case CoachPrimaryAction.OpenNextScene:
+                    await OpenNextSectionFromCoachAsync();
+                    break;
+            }
+        }
+
+        private async Task OpenNextSectionFromCoachAsync()
+        {
+            if (_activeSection is null)
+            {
+                return;
+            }
+
+            int index = _sections.FindIndex(section => section.Id == _activeSection.Id);
+            if (index < 0 || index >= _sections.Count - 1)
+            {
+                return;
+            }
+
+            await OnSectionSelected(_sections[index + 1].Id);
+        }
+
+        private string GetPanelCategoryClass(PanelCategory category)
+        {
+            return _activePanelCategory == category ? "is-active" : string.Empty;
+        }
+
+        private static string GetPanelCategoryLabel(PanelCategory category)
+        {
+            return category switch
+            {
+                PanelCategory.NotesTasks => "Notes & Tasks",
+                _ => category.ToString()
+            };
+        }
+
+        private async Task SetPanelCategoryAsync(PanelCategory category)
+        {
+            _activePanelCategory = category;
+            ContextTab preferred = ResolvePreferredTabForCategory(category);
+            await SetContextTabAsync(preferred);
+        }
+
+        private IReadOnlyList<PanelCategory> GetAvailablePanelCategories()
+        {
+            List<PanelCategory> categories = new()
+            {
+                PanelCategory.Coach,
+                PanelCategory.Story,
+                PanelCategory.NotesTasks,
+                PanelCategory.History
+            };
+
+            if (CanShowPromptLibrary)
+            {
+                categories.Add(PanelCategory.Advanced);
+            }
+
+            return categories;
+        }
+
+        private IReadOnlyList<ContextTab> GetTabsForActiveCategory()
+        {
+            return GetTabsForCategory(_activePanelCategory);
+        }
+
+        private IReadOnlyList<ContextTab> GetTabsForCategory(PanelCategory category)
+        {
+            List<ContextTab> tabs = new();
+
+            switch (category)
+            {
+                case PanelCategory.Coach:
+                    tabs.Add(ContextTab.Ai);
+                    if (CanShowContinuityCoach)
+                    {
+                        tabs.Add(ContextTab.Continuity);
+                    }
+
+                    tabs.Add(ContextTab.Quality);
+                    break;
+
+                case PanelCategory.Story:
+                    tabs.Add(ContextTab.Scene);
+                    tabs.Add(ContextTab.Outline);
+                    break;
+
+                case PanelCategory.NotesTasks:
+                    tabs.Add(ContextTab.Notes);
+                    tabs.Add(ContextTab.Annotations);
+                    break;
+
+                case PanelCategory.History:
+                    tabs.Add(ContextTab.History);
+                    break;
+
+                case PanelCategory.Advanced:
+                    if (CanShowPromptLibrary)
+                    {
+                        tabs.Add(ContextTab.PromptLibrary);
+                    }
+
+                    break;
+            }
+
+            return tabs;
+        }
+
+        private static string GetContextTabLabel(ContextTab tab)
+        {
+            return tab switch
+            {
+                ContextTab.Ai => "Writing tools",
+                ContextTab.Continuity => "Consistency",
+                ContextTab.Quality => "Style & quality",
+                ContextTab.Scene => "Scene card",
+                ContextTab.PromptLibrary => "Prompt Library",
+                _ => tab.ToString()
+            };
+        }
+
+        private static string GetSecondaryTabsHeading(PanelCategory category)
+        {
+            return category switch
+            {
+                PanelCategory.Coach => "Coach tools",
+                PanelCategory.Story => "Story tools",
+                PanelCategory.NotesTasks => "Notes & tasks",
+                PanelCategory.History => "History tools",
+                PanelCategory.Advanced => "Advanced tools",
+                _ => "Tools"
+            };
+        }
+
+        private static string? GetSecondaryTabHelperText(ContextTab tab)
+        {
+            return tab switch
+            {
+                ContextTab.Ai => "Rewrite, shorten, translate, propose next paragraph.",
+                ContextTab.Continuity => "Check characters, places, and timeline consistency.",
+                ContextTab.Quality => "Find repetition, clarity issues, pacing, and other quality checks.",
+                ContextTab.Scene => "Capture scene intent, beats, and metadata before drafting.",
+                ContextTab.Outline => "Shape chapter and scene structure from the outline.",
+                ContextTab.Annotations => "Track notes, comments, TODOs, and highlights.",
+                ContextTab.Notes => "Keep personal notes for this section.",
+                ContextTab.History => "Review versions and compare content changes.",
+                ContextTab.PromptLibrary => "Run reusable prompt presets for edits and planning.",
+                _ => null
+            };
+        }
+
+        private string GetContextPanelStorageKey()
+        {
+            return $"{ContextPanelStateStoragePrefix}.{DocumentId:D}.{SectionId:D}";
+        }
+
+        private async Task RestoreContextPanelStateAsync()
+        {
+            ContextTab defaultTab = ResolvePreferredTabForCategory(PanelCategory.Coach);
+            ContextPanelStateStorage? stored = await TryLoadContextPanelStateAsync();
+
+            if (stored is null
+                || !Enum.TryParse(stored.Tab, ignoreCase: true, out ContextTab storedTab)
+                || !IsContextTabAvailable(storedTab))
+            {
+                await SetContextTabAsync(defaultTab, persistSelection: false, loadTabData: false);
+                return;
+            }
+
+            await SetContextTabAsync(storedTab, persistSelection: false, loadTabData: false);
+        }
+
+        private async Task<ContextPanelStateStorage?> TryLoadContextPanelStateAsync()
+        {
+            string? json = null;
+            try
+            {
+                json = await JSRuntime.InvokeAsync<string>("localStorage.getItem", GetContextPanelStorageKey());
+            }
+            catch (InvalidOperationException)
+            {
+                return null;
+            }
+            catch (JSException)
+            {
+                return null;
+            }
+
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return null;
+            }
+
+            try
+            {
+                return JsonSerializer.Deserialize<ContextPanelStateStorage>(json);
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
+
+        private async Task PersistContextPanelStateAsync()
+        {
+            ContextPanelStateStorage payload = new(
+                _activePanelCategory.ToString(),
+                _activeContextTab.ToString());
+            string json = JsonSerializer.Serialize(payload);
+
+            try
+            {
+                await JSRuntime.InvokeVoidAsync("localStorage.setItem", GetContextPanelStorageKey(), json);
+            }
+            catch (JSException)
+            {
+            }
+        }
+
+        private bool IsContextTabAvailable(ContextTab tab)
+        {
+            return tab switch
+            {
+                ContextTab.Continuity => CanShowContinuityCoach,
+                ContextTab.PromptLibrary => CanShowPromptLibrary,
+                _ => true
+            };
+        }
+
+        private PanelCategory GetCategoryForTab(ContextTab tab)
+        {
+            return tab switch
+            {
+                ContextTab.Scene => PanelCategory.Story,
+                ContextTab.Outline => PanelCategory.Story,
+                ContextTab.Notes => PanelCategory.NotesTasks,
+                ContextTab.Annotations => PanelCategory.NotesTasks,
+                ContextTab.History => PanelCategory.History,
+                ContextTab.PromptLibrary => PanelCategory.Advanced,
+                _ => PanelCategory.Coach
+            };
+        }
+
+        private ContextTab ResolvePreferredTabForCategory(PanelCategory category)
+        {
+            IReadOnlyList<ContextTab> tabs = GetTabsForCategory(category);
+            if (tabs.Count == 0)
+            {
+                return ContextTab.Ai;
+            }
+
+            if (tabs.Contains(_activeContextTab))
+            {
+                return _activeContextTab;
+            }
+
+            return tabs[0];
+        }
+
+        private async Task OnPrimaryTabsKeyDown(KeyboardEventArgs args, PanelCategory current)
+        {
+            List<PanelCategory> categories = GetAvailablePanelCategories().ToList();
+            int currentIndex = categories.IndexOf(current);
+            if (currentIndex < 0)
+            {
+                return;
+            }
+
+            PanelCategory? target = args.Key switch
+            {
+                "ArrowRight" => categories[(currentIndex + 1) % categories.Count],
+                "ArrowLeft" => categories[(currentIndex - 1 + categories.Count) % categories.Count],
+                "Home" => categories[0],
+                "End" => categories[^1],
+                "Enter" => current,
+                " " => current,
+                _ => null
+            };
+
+            if (target.HasValue)
+            {
+                await SetPanelCategoryAsync(target.Value);
+            }
+        }
+
+        private async Task OnSecondaryTabsKeyDown(KeyboardEventArgs args, ContextTab current)
+        {
+            List<ContextTab> tabs = GetTabsForActiveCategory().ToList();
+            int currentIndex = tabs.IndexOf(current);
+            if (currentIndex < 0 || tabs.Count == 0)
+            {
+                return;
+            }
+
+            ContextTab? target = args.Key switch
+            {
+                "ArrowRight" => tabs[(currentIndex + 1) % tabs.Count],
+                "ArrowLeft" => tabs[(currentIndex - 1 + tabs.Count) % tabs.Count],
+                "Home" => tabs[0],
+                "End" => tabs[^1],
+                "Enter" => current,
+                " " => current,
+                _ => null
+            };
+
+            if (target.HasValue)
+            {
+                await SetContextTabAsync(target.Value);
+            }
         }
 
         private async Task OnNotesSave()
@@ -7752,8 +8154,7 @@ namespace WriterApp.Client.Pages
             _annotationFocusedId = annotationId;
             _annotationFilterStatus = "all";
             _annotationFilterKind = "all";
-            _activeContextTab = ContextTab.Annotations;
-            await LoadAnnotationsAsync();
+            await SetContextTabAsync(ContextTab.Annotations);
         }
 
         private static string GetAnnotationElementId(PageAnnotationDto annotation)
@@ -8812,6 +9213,8 @@ namespace WriterApp.Client.Pages
 
         private sealed record ContinuityReport(string SchemaVersion, IReadOnlyList<ContinuityIssue> Issues);
 
+        private sealed record ContextPanelStateStorage(string Category, string Tab);
+
         private sealed record PromptPresetDto(
             Guid Id,
             Guid? ProjectId,
@@ -8961,6 +9364,15 @@ namespace WriterApp.Client.Pages
             Annotations,
             Quality,
             History
+        }
+
+        private enum PanelCategory
+        {
+            Coach,
+            Story,
+            NotesTasks,
+            History,
+            Advanced
         }
     }
 }

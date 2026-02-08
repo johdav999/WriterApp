@@ -45,6 +45,16 @@
                 Documents
             </button>
         </div>
+        <div class="landing-view-hint" aria-live="polite">
+            @if (_view == "projects")
+            {
+                <span>Projects: manuscript structure (Parts, Chapters, Scenes).</span>
+            }
+            else
+            {
+                <span>Documents: freeform drafts and notes.</span>
+            }
+        </div>
     }
 
     @if (!string.IsNullOrWhiteSpace(_projectErrorMessage))
@@ -86,66 +96,101 @@
                         <div class="continue-label">Continue writing</div>
                         <div class="continue-title">@_continueProject.Title</div>
                         <div class="landing-time">Last edited @FormatRelativeTime(_continueProject.LastEditedUtc)</div>
+                        <div class="project-action-help">Resume opens your last writing context.</div>
                     </div>
                     <div class="continue-actions">
                         <button type="button"
                                 class="primary"
-                                @onclick="() => OpenManuscriptAsync(_continueProject.ProjectId, _continueProject.PrimaryDocumentId)">
+                                title="Resume your last writing context for this project."
+                                @onclick="() => ResumeProjectAsync(_continueProject.ProjectId)">
                             Resume
-                        </button>
-                        <button type="button" class="secondary" @onclick="() => OpenProject(_continueProject.ProjectId)">
-                            Project
                         </button>
                     </div>
                 </section>
+            }
+            @if (_openProjectMenuId.HasValue)
+            {
+                <button type="button"
+                        class="project-overflow-backdrop"
+                        aria-hidden="true"
+                        tabindex="-1"
+                        @onclick="CloseProjectMenu">
+                </button>
             }
 
             <div class="landing-list">
                 @foreach (ProjectListItemDto item in _projectItems)
                 {
-                    <article class="landing-card project-card"
-                             role="button"
-                             tabindex="0"
-                             @onclick="() => OpenProject(item.ProjectId)"
-                             @onkeydown="(args) => OnProjectKeyDown(args, item.ProjectId)">
+                    bool menuOpen = _openProjectMenuId == item.ProjectId;
+                    <article class="landing-card project-card">
                         <div class="landing-meta">
                             <div class="landing-title">@item.Title</div>
                             <div class="landing-time">Last edited @FormatRelativeTime(item.LastEditedUtc)</div>
                             <div class="project-metrics">@item.TotalWords words</div>
+                            <div class="project-action-help">Resume: last writing context. Open manuscript: manuscript editor. Open project: workspace.</div>
                             @if (item.TodayWords.HasValue && item.ThisWeekWords.HasValue && item.StreakCount.HasValue)
                             {
                                 <div class="project-progress-snippet">
-                                    Today @item.TodayWords.Value • Week @item.ThisWeekWords.Value • Streak @item.StreakCount.Value
+                                    <span class="metric-item">Today @item.TodayWords.Value</span>
+                                    <span class="metric-separator" aria-hidden="true">|</span>
+                                    <span class="metric-item">Week @item.ThisWeekWords.Value</span>
+                                    <span class="metric-separator" aria-hidden="true">|</span>
+                                    <span class="metric-item">Streak @item.StreakCount.Value</span>
                                 </div>
                             }
                         </div>
                         <div class="landing-actions">
                             <button type="button"
-                                    class="secondary"
-                                    @onclick:stopPropagation="true"
-                                    @onclick="() => OpenProject(item.ProjectId)">
-                                Open project
+                                    class="primary"
+                                    title="Resume your last writing context for this project."
+                                    @onclick="() => ResumeProjectAsync(item.ProjectId)">
+                                Resume
                             </button>
-                            <button type="button"
-                                    class="secondary"
-                                    @onclick:stopPropagation="true"
-                                    @onclick="() => OpenManuscriptAsync(item.ProjectId, item.PrimaryDocumentId)">
-                                Open manuscript
-                            </button>
-                            <button type="button"
-                                    class="secondary"
-                                    aria-label="Rename project"
-                                    @onclick:stopPropagation="true"
-                                    @onclick="() => PromptRenameProject(item)">
-                                Rename
-                            </button>
-                            <button type="button"
-                                    class="secondary danger"
-                                    aria-label="Delete project"
-                                    @onclick:stopPropagation="true"
-                                    @onclick="() => DeleteProjectAsync(item.ProjectId)">
-                                Delete
-                            </button>
+                            <div class="project-overflow">
+                                <button type="button"
+                                        class="secondary project-overflow-toggle"
+                                        aria-label="Project actions"
+                                        aria-haspopup="menu"
+                                        aria-expanded="@menuOpen"
+                                        @onkeydown="OnProjectMenuKeyDown"
+                                        @onclick="() => ToggleProjectMenu(item.ProjectId)">
+                                    ...
+                                </button>
+                                @if (menuOpen)
+                                {
+                                    <div class="project-overflow-menu"
+                                         role="menu"
+                                         tabindex="-1"
+                                         @onclick:stopPropagation="true"
+                                         @onkeydown="OnProjectMenuKeyDown">
+                                        <button type="button"
+                                                role="menuitem"
+                                                @onclick:stopPropagation="true"
+                                                @onclick="() => OpenProject(item.ProjectId)">
+                                            Open project
+                                        </button>
+                                        <button type="button"
+                                                role="menuitem"
+                                                @onclick:stopPropagation="true"
+                                                @onclick="() => OpenManuscriptAsync(item.ProjectId, item.PrimaryDocumentId)">
+                                            Open manuscript
+                                        </button>
+                                        <button type="button"
+                                                role="menuitem"
+                                                @onclick:stopPropagation="true"
+                                                @onclick="() => RenameProjectFromMenu(item)">
+                                            Rename
+                                        </button>
+                                        <button type="button"
+                                                class="danger"
+                                                role="menuitem"
+                                                @onclick:stopPropagation="true"
+                                                @onclick="() => DeleteProjectFromMenu(item.ProjectId)">
+                                            Delete
+                                        </button>
+                                    </div>
+                                }
+                            </div>
                         </div>
                     </article>
                 }
@@ -171,6 +216,10 @@
                 Trash
             </button>
         </div>
+        @if (_projectsEnabled)
+        {
+            <div class="landing-status">Manuscripts are managed from Projects.</div>
+        }
 
         @if (_loading)
         {
@@ -324,6 +373,7 @@
     private List<DocumentListItemDto> _documents = new();
     private readonly List<ProjectListItemDto> _projectItems = new();
     private ProjectListItemDto? _continueProject;
+    private Guid? _openProjectMenuId;
     private bool _permanentDeleteDialogOpen;
     private bool _permanentDeleteInFlight;
     private DocumentListItemDto? _pendingPermanentDelete;
@@ -443,31 +493,74 @@
 
     private void OpenProject(Guid projectId)
     {
+        CloseProjectMenu();
         Navigation.NavigateTo($"projects/{projectId}");
     }
 
-    private async Task OpenManuscriptAsync(Guid projectId, Guid? primaryDocumentId)
+    private async Task ResumeProjectAsync(Guid projectId)
     {
-        Guid? targetDocumentId = primaryDocumentId;
-        if (!targetDocumentId.HasValue)
+        CloseProjectMenu();
+        string fallback = $"projects/{projectId}/manuscript";
+        string target = fallback;
+
+        try
         {
-            targetDocumentId = await ResolveProjectDocumentAsync(projectId);
+            string? savedTarget = await JS.InvokeAsync<string?>("localStorage.getItem", GetProjectResumeStorageKey(projectId));
+            if (!string.IsNullOrWhiteSpace(savedTarget))
+            {
+                target = savedTarget;
+            }
+        }
+        catch
+        {
+            target = fallback;
         }
 
-        if (!targetDocumentId.HasValue)
+        Navigation.NavigateTo(target);
+    }
+
+    private void ToggleProjectMenu(Guid projectId)
+    {
+        _openProjectMenuId = _openProjectMenuId == projectId ? null : projectId;
+    }
+
+    private void CloseProjectMenu()
+    {
+        _openProjectMenuId = null;
+    }
+
+    private async Task RenameProjectFromMenu(ProjectListItemDto item)
+    {
+        CloseProjectMenu();
+        await PromptRenameProject(item);
+    }
+
+    private async Task DeleteProjectFromMenu(Guid projectId)
+    {
+        CloseProjectMenu();
+        await DeleteProjectAsync(projectId);
+    }
+
+    private Task OpenManuscriptAsync(Guid projectId, Guid? primaryDocumentId)
+    {
+        CloseProjectMenu();
+        _ = primaryDocumentId;
+        return OpenManuscriptInternalAsync(projectId);
+    }
+
+    private async Task OpenManuscriptInternalAsync(Guid projectId)
+    {
+        string target = $"projects/{projectId}/manuscript";
+        try
         {
-            _projectErrorMessage = "No manuscript document found in this project.";
-            return;
+            await JS.InvokeVoidAsync("localStorage.setItem", GetProjectResumeStorageKey(projectId), target);
+        }
+        catch
+        {
+            // ignore localStorage failures
         }
 
-        Guid? sectionId = await GetFirstSectionIdAsync(targetDocumentId.Value);
-        if (sectionId is null)
-        {
-            _projectErrorMessage = "No sections found for this manuscript.";
-            return;
-        }
-
-        Navigation.NavigateTo($"documents/{targetDocumentId.Value}/sections/{sectionId.Value}");
+        Navigation.NavigateTo(target);
     }
 
     private async Task PromptRenameProject(ProjectListItemDto item)
@@ -524,7 +617,9 @@
 
             response.EnsureSuccessStatusCode();
             List<DocumentListItemDto>? docs = await response.Content.ReadFromJsonAsync<List<DocumentListItemDto>>();
-            _documents = docs ?? new List<DocumentListItemDto>();
+            _documents = (docs ?? new List<DocumentListItemDto>())
+                .Where(item => !_projectsEnabled || !IsManuscriptKind(item.Kind))
+                .ToList();
         }
         catch (Exception ex)
         {
@@ -559,7 +654,7 @@
         {
             "archived" => "No archived documents.",
             "trash" => "Trash is empty.",
-            _ => "No documents yet."
+            _ => _projectsEnabled ? "No non-manuscript documents yet." : "No documents yet."
         };
     }
 
@@ -580,7 +675,9 @@
                 Title: null,
                 CreatedAt: null,
                 UpdatedAt: null,
-                CreateDefaultStructure: true);
+                CreateDefaultStructure: true,
+                ProjectId: null,
+                Kind: _projectsEnabled ? "other" : null);
 
             using HttpResponseMessage response = await Http.PostAsJsonAsync("api/documents", request);
             if (response.StatusCode == HttpStatusCode.Unauthorized)
@@ -872,33 +969,24 @@
         }
     }
 
-    private async Task<Guid?> ResolveProjectDocumentAsync(Guid projectId)
+    private void OnProjectMenuKeyDown(KeyboardEventArgs args)
     {
-        try
+        if (args.Key == "Escape")
         {
-            List<ProjectDocumentDto>? documents = await Http.GetFromJsonAsync<List<ProjectDocumentDto>>($"api/projects/{projectId}/documents");
-            if (documents is null || documents.Count == 0)
-            {
-                return null;
-            }
-
-            ProjectDocumentDto? preferred = documents
-                .Where(item => item.DeletedAt is null && string.Equals(item.Kind, "manuscript", StringComparison.OrdinalIgnoreCase))
-                .OrderByDescending(item => item.UpdatedAt)
-                .FirstOrDefault()
-                ?? documents
-                    .Where(item => item.DeletedAt is null)
-                    .OrderByDescending(item => item.UpdatedAt)
-                    .FirstOrDefault()
-                ?? documents
-                    .OrderByDescending(item => item.UpdatedAt)
-                    .FirstOrDefault();
-
-            return preferred?.Id;
-        }
-        catch
-        {
-            return null;
+            CloseProjectMenu();
         }
     }
+
+    private static string GetProjectResumeStorageKey(Guid projectId)
+    {
+        return $"writerapp.project.resume.{projectId:D}";
+    }
+
+    private static bool IsManuscriptKind(string? kind)
+    {
+        return string.Equals(kind, "manuscript", StringComparison.OrdinalIgnoreCase);
+    }
 }
+
+
+

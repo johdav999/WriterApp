@@ -4,10 +4,13 @@
 @using System.Net.Http.Json
 @using Microsoft.AspNetCore.Components
 @using WriterApp.Application.Documents
+@using WriterApp.Client.Services
 @inject HttpClient Http
 @inject NavigationManager Navigation
 @inject IConfiguration Configuration
+@inject IJSRuntime JS
 @inject WriterApp.Client.State.CurrentDocumentStateService CurrentDocumentStateService
+@inject WriterApp.Client.Services.CoachRecommendationService CoachRecommendationService
 @implements IAsyncDisposable
 
 <PageTitle>Projects</PageTitle>
@@ -60,6 +63,27 @@ else
         </div>
         @if (_activeProject is not null)
         {
+            <div class="project-entry-points">
+                <button type="button"
+                        class="primary"
+                        title="Resume your last writing context for this project."
+                        @onclick="ResumeActiveProjectAsync">
+                    Resume
+                </button>
+                <button type="button"
+                        class="secondary"
+                        title="Open manuscript editor flow."
+                        @onclick="OpenActiveManuscriptAsync">
+                    Open manuscript
+                </button>
+                <button type="button"
+                        class="secondary"
+                        title="You are currently in the project workspace."
+                        disabled>
+                    Open project
+                </button>
+                <span class="entry-help">Resume = last writing context. Open manuscript = manuscript editor. Open project = workspace.</span>
+            </div>
             <div class="projects-tabs" role="tablist" aria-label="Project workspace tabs">
                 <button type="button"
                         class="@GetTabClass("structure")"
@@ -96,6 +120,77 @@ else
                     }
                     else
                     {
+                        <CoachCard Recommendation="BuildProjectCoachRecommendation()" OnPrimaryAction="OnProjectCoachPrimaryActionAsync" />
+
+                        ProgressCoachModel coach = BuildProgressCoach();
+                        <section class="progress-card progress-overview">
+                            <h3>Project overview</h3>
+                            <div class="progress-grid">
+                                <div><strong>Total words:</strong> @_progress.TotalWordCount</div>
+                                <div><strong>Last edited:</strong> @FormatRelativeTime(_activeProject.UpdatedUtc)</div>
+                                <div><strong>Streak:</strong> @_progress.StreakCount day(s)</div>
+                                <div><strong>Today:</strong> @_progress.TodayWords / @_progress.Goal.DailyTargetWords</div>
+                            </div>
+                            <div class="coach-primary">
+                                @if (coach.PrimaryCtaSceneNodeId.HasValue)
+                                {
+                                    <button type="button"
+                                            class="primary"
+                                            @onclick="() => OpenSceneFromProgressAsync(coach.PrimaryCtaSceneNodeId.Value)">
+                                        @coach.PrimaryCtaLabel
+                                    </button>
+                                }
+                                else
+                                {
+                                    <button type="button"
+                                            class="primary"
+                                            @onclick="OpenActiveManuscriptAsync">
+                                        @coach.PrimaryCtaLabel
+                                    </button>
+                                }
+                                <span class="entry-help">@coach.PrimaryCtaHint</span>
+                            </div>
+                        </section>
+
+                        <section class="progress-card">
+                            <h3>Structural progress</h3>
+                            <div class="progress-grid">
+                                <div><strong>Parts:</strong> @coach.PartsCount</div>
+                                <div><strong>Chapters:</strong> @coach.ChaptersCount</div>
+                                <div><strong>Scenes:</strong> @coach.ScenesCount</div>
+                                <div><strong>Drafted scenes:</strong> @coach.DraftedScenesCount / @coach.ScenesCount</div>
+                                <div><strong>Planned scenes:</strong> @coach.PlannedScenesCount</div>
+                                <div><strong>Needs draft:</strong> @coach.NeedsDraftScenesCount</div>
+                            </div>
+                        </section>
+
+                        <section class="progress-card">
+                            <h3>Coach suggestions</h3>
+                            @if (coach.Suggestions.Count == 0)
+                            {
+                                <div class="projects-empty">Nice shape. No immediate structural issues found.</div>
+                            }
+                            else
+                            {
+                                <ul class="coach-suggestion-list">
+                                    @foreach (CoachSuggestion suggestion in coach.Suggestions)
+                                    {
+                                        <li>
+                                            <span>@suggestion.Message</span>
+                                            @if (suggestion.SceneNodeId.HasValue)
+                                            {
+                                                <button type="button"
+                                                        class="secondary"
+                                                        @onclick="() => OpenSceneFromProgressAsync(suggestion.SceneNodeId.Value)">
+                                                    Review scene
+                                                </button>
+                                            }
+                                        </li>
+                                    }
+                                </ul>
+                            }
+                        </section>
+
                         <section class="progress-card">
                             <h3>Targets</h3>
                             <div class="progress-targets">
@@ -106,16 +201,6 @@ else
                                 <label>Timezone</label>
                                 <input @bind="_timezoneDraft" />
                                 <button type="button" class="primary" @onclick="SaveGoalsAsync">Save targets</button>
-                            </div>
-                        </section>
-
-                        <section class="progress-card">
-                            <h3>Progress</h3>
-                            <div class="progress-grid">
-                                <div><strong>Today:</strong> @_progress.TodayWords / @_progress.Goal.DailyTargetWords</div>
-                                <div><strong>This week:</strong> @_progress.ThisWeekWords / @_progress.Goal.WeeklyTargetWords</div>
-                                <div><strong>Streak:</strong> @_progress.StreakCount day(s)</div>
-                                <div><strong>Total words:</strong> @_progress.TotalWordCount</div>
                             </div>
                         </section>
 
@@ -177,11 +262,24 @@ else
             else
             {
                 <div class="projects-workspace">
-                    <aside class="projects-tree">
+                    <aside class="projects-tree" aria-label="Navigator">
+                        <div class="panel-header">
+                            <h2>Navigator</h2>
+                            <p>Parts, chapters, and scenes in manuscript order.</p>
+                        </div>
                         <div class="tree-actions">
-                            <button type="button" class="secondary" @onclick="AddPartAsync">Add part</button>
-                            <button type="button" class="secondary" @onclick="AddChapterAsync">Add chapter</button>
-                            <button type="button" class="secondary" @onclick="AddSceneAsync" disabled="@(_selectedNode is null)">Add scene</button>
+                            <label for="add-node-type">Add...</label>
+                            <select id="add-node-type" @bind="_addNodeType">
+                                <option value="part">Part</option>
+                                <option value="chapter">Chapter</option>
+                                <option value="scene">Scene</option>
+                            </select>
+                            <button type="button"
+                                    class="secondary"
+                                    @onclick="AddSelectedNodeTypeAsync"
+                                    disabled="@(!CanAddSelectedNodeType())">
+                                Add
+                            </button>
                         </div>
                         <ul class="tree-list">
                             @foreach (ProjectNodeDto root in GetChildren(null))
@@ -191,20 +289,50 @@ else
                         </ul>
                     </aside>
 
-                    <section class="projects-main">
+                    <section class="projects-main" aria-label="Inspector">
+                        <div class="panel-header">
+                            <h2>Inspector</h2>
+                            <p>Details for the selected node.</p>
+                        </div>
+                        <CoachCard Recommendation="BuildProjectCoachRecommendation()" OnPrimaryAction="OnProjectCoachPrimaryActionAsync" />
                         @if (_selectedNode is null)
                         {
                             <div class="projects-empty">Select a node to edit details.</div>
                         }
                         else
                         {
-                            <div class="node-header">
-                                <input class="node-title-input"
-                                       value="@_renameDraft"
-                                       @oninput="OnRenameInput"
-                                       @onblur="SaveRenameAsync" />
-                                <span class="node-kind">@_selectedNode.NodeType</span>
-                                <span class="node-words">@_selectedNode.WordCountCache words</span>
+                            <div class="inspector-grid">
+                                <div class="inspector-field">
+                                    <label for="node-title-input">Name</label>
+                                    <div class="inspector-name-row">
+                                        <input id="node-title-input"
+                                               class="node-title-input"
+                                               value="@_renameDraft"
+                                               @oninput="OnRenameInput"
+                                               @onblur="SaveRenameAsync" />
+                                        <button type="button" class="secondary" @onclick="SaveRenameAsync">Save</button>
+                                    </div>
+                                    <div class="inspector-help">Autosaves on blur. Use Save to commit immediately.</div>
+                                </div>
+                                <div class="inspector-field">
+                                    <label>Type</label>
+                                    <div class="inspector-readonly">
+                                        <span class='tree-node-badge @GetNodeBadgeClass(_selectedNode.NodeType)'>@GetNodeTypeLabel(_selectedNode.NodeType)</span>
+                                    </div>
+                                </div>
+                                <div class="inspector-field">
+                                    <label>Word count</label>
+                                    <div class="inspector-readonly">@FormatWordCount(_selectedNode.WordCountCache) words</div>
+                                </div>
+                                @if (IsScene(_selectedNode))
+                                {
+                                    <div class="inspector-field">
+                                        <label>Linked section</label>
+                                        <div class="inspector-readonly">
+                                            @(_selectedNode.LinkedSectionId.HasValue ? _selectedNode.LinkedSectionId.Value.ToString() : "Not linked yet")
+                                        </div>
+                                    </div>
+                                }
                             </div>
 
                             <div class="node-actions">
@@ -212,9 +340,9 @@ else
                                 {
                                     <button type="button" class="secondary" @onclick="() => AddSceneUnderAsync(_selectedNode.Id)">Add scene under chapter</button>
                                 }
-                                @if (IsScene(_selectedNode) && _selectedNode.LinkedSectionId.HasValue)
+                                @if (IsScene(_selectedNode))
                                 {
-                                    <button type="button" class="primary" @onclick="OpenSceneInEditor">
+                                    <button type="button" class="primary" @onclick="OpenSceneInEditorAsync">
                                         Open scene in editor
                                     </button>
                                 }
@@ -222,7 +350,7 @@ else
 
                             @if (IsScene(_selectedNode) && !_selectedNode.LinkedSectionId.HasValue)
                             {
-                                <div class="projects-empty">This scene is not linked to a section yet.</div>
+                                <div class="projects-empty">This scene will create and link a section the first time you open it.</div>
                             }
                         }
                     </section>
@@ -246,6 +374,8 @@ else
     private ProjectProgressDashboardDto? _progress;
     private Guid? _selectedProjectId;
     private Guid? _selectedNodeId;
+    private Guid? _renamingNodeId;
+    private Guid? _openNodeMenuId;
     private string _renameDraft = string.Empty;
     private Guid? _dragNodeId;
     private int _dailyTargetDraft;
@@ -254,6 +384,8 @@ else
     private string _milestoneTitleDraft = string.Empty;
     private int? _milestoneTargetWordsDraft;
     private string _sessionNotesDraft = string.Empty;
+    private string _addNodeType = "part";
+    private readonly HashSet<Guid> _collapsedNodeIds = new();
     private CancellationTokenSource? _sessionTickerCts;
     private int _sessionElapsedSeconds;
     private int _sessionLiveDelta;
@@ -639,10 +771,20 @@ else
         return $"{(int)span.TotalHours:00}:{span.Minutes:00}:{span.Seconds:00}";
     }
 
+    private static string FormatWordCount(int value)
+    {
+        return Math.Max(0, value).ToString("N0");
+    }
+
     private RenderFragment RenderNode(ProjectNodeDto node, int depth) => builder =>
     {
         int seq = 0;
         bool isSelected = _selectedNodeId == node.Id;
+        bool isRenaming = _renamingNodeId == node.Id;
+        bool isMenuOpen = _openNodeMenuId == node.Id;
+        List<ProjectNodeDto> children = GetChildren(node.Id).ToList();
+        bool hasChildren = children.Count > 0;
+        bool isCollapsed = hasChildren && _collapsedNodeIds.Contains(node.Id);
 
         builder.OpenElement(seq++, "li");
         builder.AddAttribute(seq++, "class", "tree-node");
@@ -651,37 +793,138 @@ else
 
         builder.OpenElement(seq++, "div");
         builder.AddAttribute(seq++, "class", isSelected ? "tree-row is-selected" : "tree-row");
-        builder.AddAttribute(seq++, "style", $"padding-left: {depth * 16}px");
+        builder.AddAttribute(seq++, "style", $"--depth:{depth}");
+        builder.AddAttribute(seq++, "tabindex", "0");
+        builder.AddAttribute(seq++, "role", "treeitem");
+        builder.AddAttribute(seq++, "aria-selected", isSelected ? "true" : "false");
+        builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => OnNodeSelected(node.Id)));
+        builder.AddAttribute(seq++, "onkeydown", EventCallback.Factory.Create<KeyboardEventArgs>(this, (args) => OnNodeRowKeyDown(args, node.Id)));
+
+        builder.OpenElement(seq++, "button");
+        builder.AddAttribute(seq++, "type", "button");
+        builder.AddAttribute(seq++, "class", hasChildren
+            ? (isCollapsed ? "tree-disclosure" : "tree-disclosure is-expanded")
+            : "tree-disclosure is-empty");
+        builder.AddAttribute(seq++, "disabled", !hasChildren);
+        builder.AddAttribute(seq++, "aria-label", hasChildren ? "Toggle branch" : "No children");
+        builder.AddEventStopPropagationAttribute(seq++, "onclick", true);
+        if (hasChildren)
+        {
+            builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => ToggleCollapsed(node.Id)));
+        }
+
+        builder.AddContent(seq++, "▸");
+        builder.CloseElement();
 
         builder.OpenElement(seq++, "button");
         builder.AddAttribute(seq++, "type", "button");
         builder.AddAttribute(seq++, "class", "tree-drag");
         builder.AddAttribute(seq++, "draggable", true);
+        builder.AddAttribute(seq++, "aria-label", "Drag to reorder");
+        builder.AddEventStopPropagationAttribute(seq++, "onclick", true);
         builder.AddAttribute(seq++, "ondragstart", EventCallback.Factory.Create<DragEventArgs>(this, () => OnNodeDragStart(node.Id)));
-        builder.AddContent(seq++, "⋮⋮");
+        builder.AddContent(seq++, "::");
         builder.CloseElement();
+
+        builder.OpenElement(seq++, "span");
+        builder.AddAttribute(seq++, "class", $"tree-node-badge {GetNodeBadgeClass(node.NodeType)}");
+        builder.AddContent(seq++, GetNodeTypeLabel(node.NodeType));
+        builder.CloseElement();
+
+        if (isRenaming)
+        {
+            builder.OpenElement(seq++, "div");
+            builder.AddAttribute(seq++, "class", "tree-rename");
+            builder.OpenElement(seq++, "input");
+            builder.AddAttribute(seq++, "class", "tree-rename-input");
+            builder.AddAttribute(seq++, "value", _renameDraft);
+            builder.AddAttribute(seq++, "autofocus", "autofocus");
+            builder.AddAttribute(seq++, "oninput", EventCallback.Factory.Create<ChangeEventArgs>(this, OnRenameInput));
+            builder.AddAttribute(seq++, "onkeydown", EventCallback.Factory.Create<KeyboardEventArgs>(this, (args) => OnTreeRenameKeyDown(args, node.Id)));
+            builder.AddAttribute(seq++, "onblur", EventCallback.Factory.Create<FocusEventArgs>(this, async (_) => await SaveRenameForNodeAsync(node.Id)));
+            builder.AddEventStopPropagationAttribute(seq++, "onclick", true);
+            builder.CloseElement();
+            builder.CloseElement();
+        }
+        else
+        {
+            builder.OpenElement(seq++, "div");
+            builder.AddAttribute(seq++, "class", "tree-select");
+            builder.OpenElement(seq++, "span");
+            builder.AddAttribute(seq++, "class", "tree-select-title");
+            builder.AddContent(seq++, GetDisplayNodeTitle(node.Title, node.NodeType));
+            builder.CloseElement();
+            builder.CloseElement();
+        }
+
+        builder.OpenElement(seq++, "span");
+        builder.AddAttribute(seq++, "class", "tree-meta");
+        builder.AddContent(seq++, $"{FormatWordCount(node.WordCountCache)} words");
+        builder.CloseElement();
+
+        builder.OpenElement(seq++, "div");
+        builder.AddAttribute(seq++, "class", "tree-row-actions");
 
         builder.OpenElement(seq++, "button");
         builder.AddAttribute(seq++, "type", "button");
-        builder.AddAttribute(seq++, "class", "tree-select");
-        builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => OnNodeSelected(node.Id)));
-        builder.AddContent(seq++, node.Title);
+        builder.AddAttribute(seq++, "class", "tree-row-menu-toggle");
+        builder.AddAttribute(seq++, "aria-label", "Node actions");
+        builder.AddAttribute(seq++, "aria-haspopup", "menu");
+        builder.AddAttribute(seq++, "aria-expanded", isMenuOpen ? "true" : "false");
+        builder.AddEventStopPropagationAttribute(seq++, "onclick", true);
+        builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => ToggleNodeMenu(node.Id)));
+        builder.AddContent(seq++, "⋯");
         builder.CloseElement();
 
-        builder.OpenElement(seq++, "span");
-        builder.AddAttribute(seq++, "class", "tree-node-type");
-        builder.AddContent(seq++, node.NodeType);
+        if (isMenuOpen)
+        {
+            builder.OpenElement(seq++, "div");
+            builder.AddAttribute(seq++, "class", "tree-row-menu");
+            builder.AddAttribute(seq++, "role", "menu");
+            builder.AddEventStopPropagationAttribute(seq++, "onclick", true);
+
+            builder.OpenElement(seq++, "button");
+            builder.AddAttribute(seq++, "type", "button");
+            builder.AddAttribute(seq++, "role", "menuitem");
+            builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => StartInlineRename(node.Id)));
+            builder.AddContent(seq++, "Rename");
+            builder.CloseElement();
+
+            if (IsPart(node))
+            {
+                builder.OpenElement(seq++, "button");
+                builder.AddAttribute(seq++, "type", "button");
+                builder.AddAttribute(seq++, "role", "menuitem");
+                builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => AddNodeUnderNodeAsync(node.Id, "chapter", "New Chapter")));
+                builder.AddContent(seq++, "Add chapter");
+                builder.CloseElement();
+            }
+            else if (IsChapter(node))
+            {
+                builder.OpenElement(seq++, "button");
+                builder.AddAttribute(seq++, "type", "button");
+                builder.AddAttribute(seq++, "role", "menuitem");
+                builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => AddSceneUnderAsync(node.Id)));
+                builder.AddContent(seq++, "Add scene");
+                builder.CloseElement();
+            }
+            else if (IsScene(node))
+            {
+                builder.OpenElement(seq++, "button");
+                builder.AddAttribute(seq++, "type", "button");
+                builder.AddAttribute(seq++, "role", "menuitem");
+                builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, async () => await OpenSpecificSceneInEditorAsync(node.Id)));
+                builder.AddContent(seq++, "Open scene");
+                builder.CloseElement();
+            }
+
+            builder.CloseElement();
+        }
+
+        builder.CloseElement();
         builder.CloseElement();
 
-        builder.OpenElement(seq++, "span");
-        builder.AddAttribute(seq++, "class", "tree-node-words");
-        builder.AddContent(seq++, $"{node.WordCountCache}");
-        builder.CloseElement();
-
-        builder.CloseElement();
-
-        List<ProjectNodeDto> children = GetChildren(node.Id).ToList();
-        if (children.Count > 0)
+        if (hasChildren && !isCollapsed)
         {
             builder.OpenElement(seq++, "ul");
             builder.AddAttribute(seq++, "class", "tree-list");
@@ -699,8 +942,19 @@ else
     private void OnNodeSelected(Guid nodeId)
     {
         _selectedNodeId = nodeId;
+        _renamingNodeId = null;
+        _openNodeMenuId = null;
         ProjectNodeDto? node = _selectedNode;
         _renameDraft = node?.Title ?? string.Empty;
+    }
+
+    private void OnNodeRowKeyDown(KeyboardEventArgs args, Guid nodeId)
+    {
+        if (string.Equals(args.Key, "Enter", StringComparison.Ordinal)
+            || string.Equals(args.Key, " ", StringComparison.Ordinal))
+        {
+            OnNodeSelected(nodeId);
+        }
     }
 
     private void OnRenameInput(ChangeEventArgs args)
@@ -708,27 +962,53 @@ else
         _renameDraft = args.Value?.ToString() ?? string.Empty;
     }
 
+    private void StartInlineRename(Guid nodeId)
+    {
+        _openNodeMenuId = null;
+        _selectedNodeId = nodeId;
+        _renamingNodeId = nodeId;
+        ProjectNodeDto? node = _nodes.FirstOrDefault(item => item.Id == nodeId);
+        _renameDraft = node?.Title ?? string.Empty;
+    }
+
     private async Task SaveRenameAsync()
     {
-        if (_activeProject is null || _selectedNode is null)
+        if (_selectedNode is null)
+        {
+            return;
+        }
+
+        await SaveRenameForNodeAsync(_selectedNode.Id);
+    }
+
+    private async Task SaveRenameForNodeAsync(Guid nodeId)
+    {
+        if (_activeProject is null)
+        {
+            return;
+        }
+
+        ProjectNodeDto? node = _nodes.FirstOrDefault(item => item.Id == nodeId);
+        if (node is null)
         {
             return;
         }
 
         string next = _renameDraft.Trim();
-        if (string.IsNullOrWhiteSpace(next) || string.Equals(next, _selectedNode.Title, StringComparison.Ordinal))
+        if (string.IsNullOrWhiteSpace(next) || string.Equals(next, node.Title, StringComparison.Ordinal))
         {
+            _renamingNodeId = null;
             return;
         }
 
         ProjectNodePatchRequest payload = new(
             next,
-            _selectedNode.ParentId,
-            _selectedNode.LinkedSectionId,
-            _selectedNode.MetadataJson,
-            _selectedNode.NodeType);
+            node.ParentId,
+            node.LinkedSectionId,
+            node.MetadataJson,
+            node.NodeType);
         using HttpResponseMessage response = await Http.PatchAsJsonAsync(
-            $"api/projects/{_activeProject.Id}/nodes/{_selectedNode.Id}",
+            $"api/projects/{_activeProject.Id}/nodes/{node.Id}",
             payload);
         if (!response.IsSuccessStatusCode)
         {
@@ -736,7 +1016,38 @@ else
             return;
         }
 
+        _renamingNodeId = null;
         await RefreshProjectAsync(_activeProject.Id);
+    }
+
+    private async Task OnTreeRenameKeyDown(KeyboardEventArgs args, Guid nodeId)
+    {
+        if (string.Equals(args.Key, "Enter", StringComparison.Ordinal))
+        {
+            await SaveRenameForNodeAsync(nodeId);
+        }
+        else if (string.Equals(args.Key, "Escape", StringComparison.Ordinal))
+        {
+            CancelInlineRename(nodeId);
+        }
+    }
+
+    private void CancelInlineRename(Guid nodeId)
+    {
+        _renamingNodeId = null;
+        ProjectNodeDto? node = _nodes.FirstOrDefault(item => item.Id == nodeId);
+        _renameDraft = node?.Title ?? string.Empty;
+    }
+
+    private void ToggleNodeMenu(Guid nodeId)
+    {
+        _openNodeMenuId = _openNodeMenuId == nodeId ? null : nodeId;
+    }
+
+    private async Task AddNodeUnderNodeAsync(Guid parentId, string nodeType, string title)
+    {
+        _openNodeMenuId = null;
+        await AddNodeInternalAsync(parentId, nodeType, title);
     }
 
     private async Task RefreshProjectAsync(Guid projectId)
@@ -841,13 +1152,13 @@ else
 
     private async Task AddPartAsync()
     {
-        await AddNodeInternalAsync(null, "part", "New part");
+        await AddNodeInternalAsync(null, "part", "New Part");
     }
 
     private async Task AddChapterAsync()
     {
         Guid? parent = _selectedNode is not null && IsPart(_selectedNode) ? _selectedNode.Id : null;
-        await AddNodeInternalAsync(parent, "chapter", "New chapter");
+        await AddNodeInternalAsync(parent, "chapter", "New Chapter");
     }
 
     private async Task AddSceneAsync()
@@ -867,12 +1178,38 @@ else
             parent = _selectedNode.ParentId;
         }
 
-        await AddNodeInternalAsync(parent, "scene", "New scene");
+        await AddNodeInternalAsync(parent, "scene", "New Scene");
     }
 
     private async Task AddSceneUnderAsync(Guid chapterId)
     {
-        await AddNodeInternalAsync(chapterId, "scene", "New scene");
+        await AddNodeInternalAsync(chapterId, "scene", "New Scene");
+    }
+
+    private async Task AddSelectedNodeTypeAsync()
+    {
+        switch (_addNodeType)
+        {
+            case "chapter":
+                await AddChapterAsync();
+                break;
+            case "scene":
+                await AddSceneAsync();
+                break;
+            default:
+                await AddPartAsync();
+                break;
+        }
+    }
+
+    private bool CanAddSelectedNodeType()
+    {
+        if (string.Equals(_addNodeType, "scene", StringComparison.OrdinalIgnoreCase))
+        {
+            return _selectedNode is not null;
+        }
+
+        return true;
     }
 
     private async Task AddNodeInternalAsync(Guid? parentId, string nodeType, string title)
@@ -890,7 +1227,30 @@ else
             return;
         }
 
+        ProjectNodeDto? created = await response.Content.ReadFromJsonAsync<ProjectNodeDto>();
+        if (parentId.HasValue)
+        {
+            _collapsedNodeIds.Remove(parentId.Value);
+        }
+
         await RefreshProjectAsync(_activeProject.Id);
+        Guid? createdId = created?.Id;
+        if (!createdId.HasValue)
+        {
+            createdId = _nodes
+                .Where(node => node.ParentId == parentId && string.Equals(node.NodeType, nodeType, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(node => node.OrderIndex)
+                .Select(node => (Guid?)node.Id)
+                .FirstOrDefault();
+        }
+
+        if (createdId.HasValue)
+        {
+            _selectedNodeId = createdId.Value;
+            ProjectNodeDto? selected = _nodes.FirstOrDefault(node => node.Id == createdId.Value);
+            _renameDraft = selected?.Title ?? title;
+            _renamingNodeId = createdId.Value;
+        }
     }
 
     private void OnNodeDragStart(Guid nodeId)
@@ -977,14 +1337,103 @@ else
         }
     }
 
-    private void OpenSceneInEditor()
+    private async Task OpenSceneFromProgressAsync(Guid sceneNodeId)
     {
-        if (_selectedNode?.LinkedSectionId is not Guid sectionId || CurrentDocumentStateService.DocumentId is not Guid documentId)
+        if (_activeProject is null)
         {
             return;
         }
 
-        Navigation.NavigateTo($"documents/{documentId}/sections/{sectionId}");
+        _selectedNodeId = sceneNodeId;
+        await OpenSceneInEditorAsync();
+    }
+
+    private async Task OpenSpecificSceneInEditorAsync(Guid sceneNodeId)
+    {
+        if (_activeProject is null)
+        {
+            return;
+        }
+
+        _selectedNodeId = sceneNodeId;
+        _openNodeMenuId = null;
+        await OpenSceneInEditorAsync();
+    }
+
+    private async Task OpenSceneInEditorAsync()
+    {
+        if (_activeProject is null || _selectedNode is null)
+        {
+            return;
+        }
+        string target = $"projects/{_activeProject.Id}/scenes/{_selectedNode.Id}/edit";
+        await SaveResumeTargetAsync(_activeProject.Id, target);
+        Navigation.NavigateTo(target);
+        await Task.CompletedTask;
+    }
+
+    private async Task ResumeActiveProjectAsync()
+    {
+        if (_activeProject is null)
+        {
+            return;
+        }
+
+        await ResumeProjectAsync(_activeProject.Id);
+    }
+
+    private async Task OpenActiveManuscriptAsync()
+    {
+        if (_activeProject is null)
+        {
+            return;
+        }
+
+        await OpenManuscriptAsync(_activeProject.Id);
+    }
+
+    private async Task ResumeProjectAsync(Guid projectId)
+    {
+        string fallback = $"projects/{projectId}/manuscript";
+        string target = fallback;
+        try
+        {
+            string? savedTarget = await JS.InvokeAsync<string?>("localStorage.getItem", GetProjectResumeStorageKey(projectId));
+            if (!string.IsNullOrWhiteSpace(savedTarget))
+            {
+                target = savedTarget;
+            }
+        }
+        catch
+        {
+            target = fallback;
+        }
+
+        Navigation.NavigateTo(target);
+    }
+
+    private async Task OpenManuscriptAsync(Guid projectId)
+    {
+        string target = $"projects/{projectId}/manuscript";
+        await SaveResumeTargetAsync(projectId, target);
+        Navigation.NavigateTo(target);
+    }
+
+    private async Task SaveResumeTargetAsync(Guid projectId, string target)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("localStorage.setItem", GetProjectResumeStorageKey(projectId), target);
+        }
+        catch
+        {
+            // ignore localStorage failures
+        }
+    }
+
+    private static string GetProjectResumeStorageKey(Guid projectId)
+    {
+        return $"writerapp.project.resume.{projectId:D}";
     }
 
     public ValueTask DisposeAsync()
@@ -1009,4 +1458,345 @@ else
     {
         return string.Equals(node.NodeType, "scene", StringComparison.OrdinalIgnoreCase);
     }
+
+    private CoachCardRecommendation BuildProjectCoachRecommendation()
+    {
+        List<ProjectNodeDto> parts = _nodes.Where(IsPart).ToList();
+        List<ProjectNodeDto> chapters = _nodes.Where(IsChapter).ToList();
+        List<ProjectNodeDto> scenes = _nodes.Where(IsScene).OrderBy(node => node.OrderIndex).ToList();
+        List<ProjectNodeDto> placeholderNodes = _nodes
+            .Where(node => CoachRecommendationService.IsPlaceholderTitle(node.Title))
+            .OrderBy(node => node.OrderIndex)
+            .ToList();
+        List<ProjectNodeDto> unlinkedScenes = scenes
+            .Where(node => !node.LinkedSectionId.HasValue)
+            .OrderBy(node => node.OrderIndex)
+            .ToList();
+        List<ProjectNodeDto> draftedScenes = scenes
+            .Where(node => node.WordCountCache > 0)
+            .OrderBy(node => node.OrderIndex)
+            .ToList();
+        Guid? nextSceneNodeId = scenes
+            .Where(node => node.WordCountCache <= 0)
+            .Select(node => (Guid?)node.Id)
+            .FirstOrDefault()
+            ?? scenes.Select(node => (Guid?)node.Id).FirstOrDefault();
+
+        ProjectCoachInput input = new(
+            parts.Count,
+            chapters.Count,
+            scenes.Count,
+            draftedScenes.Count,
+            placeholderNodes.Count,
+            unlinkedScenes.Count,
+            _goalsEnabled,
+            string.Equals(_activeTab, "progress", StringComparison.Ordinal),
+            placeholderNodes.Select(node => (Guid?)node.Id).FirstOrDefault(),
+            nextSceneNodeId);
+
+        return CoachRecommendationService.BuildProjectRecommendation(input);
+    }
+
+    private async Task OnProjectCoachPrimaryActionAsync()
+    {
+        CoachCardRecommendation recommendation = BuildProjectCoachRecommendation();
+        switch (recommendation.PrimaryAction)
+        {
+            case CoachPrimaryAction.AddFirstScene:
+                await CreateFirstSceneScaffoldAsync();
+                break;
+
+            case CoachPrimaryAction.RenamePlaceholderNode:
+                await FocusNodeForRenameAsync(recommendation.TargetNodeId);
+                break;
+
+            case CoachPrimaryAction.ReviewProgress:
+                await SelectTab("progress");
+                break;
+
+            case CoachPrimaryAction.OpenNextScene:
+                if (recommendation.NextSceneNodeId.HasValue)
+                {
+                    await OpenSceneFromProgressAsync(recommendation.NextSceneNodeId.Value);
+                }
+                else
+                {
+                    await OpenActiveManuscriptAsync();
+                }
+
+                break;
+        }
+    }
+
+    private async Task FocusNodeForRenameAsync(Guid? nodeId)
+    {
+        if (!nodeId.HasValue)
+        {
+            return;
+        }
+
+        _selectedNodeId = nodeId.Value;
+        if (_selectedNode is not null)
+        {
+            _renameDraft = _selectedNode.Title;
+        }
+
+        await SelectTab("structure");
+        StateHasChanged();
+    }
+
+    private async Task CreateFirstSceneScaffoldAsync()
+    {
+        if (_activeProject is null)
+        {
+            return;
+        }
+
+        ProjectNodeDto? part = _nodes.Where(IsPart).OrderBy(node => node.OrderIndex).FirstOrDefault();
+        if (part is null)
+        {
+            await AddNodeInternalAsync(null, "part", "Part 1");
+            await RefreshProjectAsync(_activeProject.Id);
+            part = _nodes.Where(IsPart).OrderBy(node => node.OrderIndex).FirstOrDefault();
+        }
+
+        ProjectNodeDto? chapter = _nodes
+            .Where(node => IsChapter(node) && node.ParentId == part?.Id)
+            .OrderBy(node => node.OrderIndex)
+            .FirstOrDefault();
+        if (chapter is null)
+        {
+            await AddNodeInternalAsync(part?.Id, "chapter", "Chapter 1");
+            await RefreshProjectAsync(_activeProject.Id);
+            chapter = _nodes
+                .Where(node => IsChapter(node) && node.ParentId == part?.Id)
+                .OrderBy(node => node.OrderIndex)
+                .FirstOrDefault();
+        }
+
+        if (chapter is not null)
+        {
+            await AddNodeInternalAsync(chapter.Id, "scene", "Scene 1");
+            await RefreshProjectAsync(_activeProject.Id);
+            _selectedNodeId = _nodes
+                .Where(node => IsScene(node) && node.ParentId == chapter.Id)
+                .OrderByDescending(node => node.OrderIndex)
+                .Select(node => (Guid?)node.Id)
+                .FirstOrDefault();
+
+            if (_selectedNode is not null)
+            {
+                _renameDraft = _selectedNode.Title;
+            }
+        }
+    }
+
+    private ProgressCoachModel BuildProgressCoach()
+    {
+        List<ProjectNodeDto> parts = _nodes.Where(IsPart).ToList();
+        List<ProjectNodeDto> chapters = _nodes.Where(IsChapter).ToList();
+        List<ProjectNodeDto> scenes = _nodes.Where(IsScene).OrderBy(node => node.OrderIndex).ToList();
+        List<CoachSuggestion> suggestions = new();
+
+        if (parts.Count == 0)
+        {
+            suggestions.Add(new CoachSuggestion("Add at least one part to frame your manuscript.", null));
+        }
+
+        if (chapters.Count == 0)
+        {
+            suggestions.Add(new CoachSuggestion("Add chapters so scenes have clear buckets.", null));
+        }
+
+        if (scenes.Count == 0)
+        {
+            suggestions.Add(new CoachSuggestion("Add your first scene to start drafting.", null));
+        }
+
+        List<ProjectNodeDto> untitledScenes = scenes
+            .Where(node => string.IsNullOrWhiteSpace(node.Title) || node.Title.Trim().Equals("New scene", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (untitledScenes.Count > 0)
+        {
+            suggestions.Add(new CoachSuggestion($"{untitledScenes.Count} scene(s) still have placeholder titles.", untitledScenes[0].Id));
+        }
+
+        List<ProjectNodeDto> unlinkedScenes = scenes.Where(node => !node.LinkedSectionId.HasValue).ToList();
+        if (unlinkedScenes.Count > 0)
+        {
+            suggestions.Add(new CoachSuggestion($"{unlinkedScenes.Count} scene(s) are not linked to section text yet.", unlinkedScenes[0].Id));
+        }
+
+        List<Guid> chaptersWithoutScenes = chapters
+            .Where(chapter => _nodes.All(node => node.ParentId != chapter.Id || !IsScene(node)))
+            .Select(chapter => chapter.Id)
+            .ToList();
+        if (chaptersWithoutScenes.Count > 0)
+        {
+            suggestions.Add(new CoachSuggestion($"{chaptersWithoutScenes.Count} chapter(s) have no scenes yet.", null));
+        }
+
+        List<ProjectNodeDto> zeroWordScenes = scenes.Where(node => node.WordCountCache <= 0).ToList();
+        List<ProjectNodeDto> draftedScenes = scenes.Where(node => node.WordCountCache > 0).ToList();
+        List<ProjectNodeDto> plannedScenes = scenes.Where(node => node.WordCountCache <= 0 && !string.IsNullOrWhiteSpace(node.Title)).ToList();
+
+        List<int> draftedWordCounts = draftedScenes.Select(node => node.WordCountCache).OrderBy(value => value).ToList();
+        if (draftedWordCounts.Count >= 4)
+        {
+            int median = draftedWordCounts[draftedWordCounts.Count / 2];
+            int max = draftedWordCounts[^1];
+            if (median > 0 && max >= median * 3)
+            {
+                ProjectNodeDto? maxScene = draftedScenes.OrderByDescending(node => node.WordCountCache).FirstOrDefault();
+                suggestions.Add(new CoachSuggestion("Scene length variance is high; review pacing across long and short scenes.", maxScene?.Id));
+            }
+        }
+
+        Guid? reviewSceneId = untitledScenes.FirstOrDefault()?.Id
+            ?? zeroWordScenes.FirstOrDefault()?.Id
+            ?? unlinkedScenes.FirstOrDefault()?.Id;
+        Guid? continueSceneId = zeroWordScenes.FirstOrDefault()?.Id
+            ?? scenes.FirstOrDefault()?.Id;
+
+        string ctaLabel = reviewSceneId.HasValue ? "Review scenes needing work" : "Continue in next scene";
+        string ctaHint = reviewSceneId.HasValue
+            ? "Jump to the highest-priority scene issue."
+            : "Jump into drafting in manuscript order.";
+        Guid? ctaSceneId = reviewSceneId ?? continueSceneId;
+
+        return new ProgressCoachModel(
+            parts.Count,
+            chapters.Count,
+            scenes.Count,
+            draftedScenes.Count,
+            plannedScenes.Count,
+            zeroWordScenes.Count,
+            ctaLabel,
+            ctaHint,
+            ctaSceneId,
+            suggestions);
+    }
+
+    private static string FormatRelativeTime(DateTimeOffset timestampUtc)
+    {
+        DateTime utc = timestampUtc.UtcDateTime;
+        TimeSpan delta = DateTime.UtcNow - utc;
+        if (delta < TimeSpan.Zero)
+        {
+            delta = TimeSpan.Zero;
+        }
+
+        if (delta < TimeSpan.FromMinutes(1))
+        {
+            return "just now";
+        }
+
+        if (delta < TimeSpan.FromHours(1))
+        {
+            int minutes = Math.Max(1, (int)delta.TotalMinutes);
+            return minutes == 1 ? "1 min ago" : $"{minutes} min ago";
+        }
+
+        if (delta < TimeSpan.FromDays(1))
+        {
+            int hours = Math.Max(1, (int)delta.TotalHours);
+            return hours == 1 ? "1 hr ago" : $"{hours} hr ago";
+        }
+
+        int days = Math.Max(1, (int)delta.TotalDays);
+        if (days < 7)
+        {
+            return days == 1 ? "1 day ago" : $"{days} days ago";
+        }
+
+        return utc.ToString("yyyy-MM-dd");
+    }
+
+    private static string GetNodeTypeLabel(string nodeType)
+    {
+        if (string.Equals(nodeType, "part", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Part";
+        }
+
+        if (string.Equals(nodeType, "chapter", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Chapter";
+        }
+
+        if (string.Equals(nodeType, "scene", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Scene";
+        }
+
+        return nodeType;
+    }
+
+    private static string GetDisplayNodeTitle(string? title, string nodeType)
+    {
+        string trimmed = title?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return $"New {GetNodeTypeLabel(nodeType)}";
+        }
+
+        string lower = trimmed.ToLowerInvariant();
+        if (lower.StartsWith("part") || lower.StartsWith("chapter") || lower.StartsWith("scene"))
+        {
+            bool suffixLooksAuto = lower.SkipWhile(c => !char.IsDigit(c)).Any(char.IsDigit)
+                || lower.EndsWith("0", StringComparison.Ordinal)
+                || string.Equals(lower, "new part", StringComparison.Ordinal)
+                || string.Equals(lower, "new chapter", StringComparison.Ordinal)
+                || string.Equals(lower, "new scene", StringComparison.Ordinal);
+            if (suffixLooksAuto && lower.Count(char.IsLetter) <= 7)
+            {
+                return $"New {GetNodeTypeLabel(nodeType)}";
+            }
+        }
+
+        return trimmed;
+    }
+
+    private static string GetNodeBadgeClass(string nodeType)
+    {
+        if (string.Equals(nodeType, "part", StringComparison.OrdinalIgnoreCase))
+        {
+            return "is-part";
+        }
+
+        if (string.Equals(nodeType, "chapter", StringComparison.OrdinalIgnoreCase))
+        {
+            return "is-chapter";
+        }
+
+        if (string.Equals(nodeType, "scene", StringComparison.OrdinalIgnoreCase))
+        {
+            return "is-scene";
+        }
+
+        return string.Empty;
+    }
+
+    private void ToggleCollapsed(Guid nodeId)
+    {
+        if (!_collapsedNodeIds.Add(nodeId))
+        {
+            _collapsedNodeIds.Remove(nodeId);
+        }
+    }
+
+    private sealed record CoachSuggestion(string Message, Guid? SceneNodeId);
+
+    private sealed record ProgressCoachModel(
+        int PartsCount,
+        int ChaptersCount,
+        int ScenesCount,
+        int DraftedScenesCount,
+        int PlannedScenesCount,
+        int NeedsDraftScenesCount,
+        string PrimaryCtaLabel,
+        string PrimaryCtaHint,
+        Guid? PrimaryCtaSceneNodeId,
+        List<CoachSuggestion> Suggestions);
 }
+

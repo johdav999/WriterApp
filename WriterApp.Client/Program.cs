@@ -17,5 +17,6 @@ builder.Services.AddScoped(sp =>
 builder.Services.AddScoped<WriterApp.Client.State.LayoutStateService>();
 builder.Services.AddScoped<WriterApp.Client.State.CurrentDocumentStateService>();
 builder.Services.AddSingleton<WriterApp.Client.State.LastOpenedDocumentStateService>();
+builder.Services.AddScoped<WriterApp.Client.Services.CoachRecommendationService>();
 
 await builder.Build().RunAsync();

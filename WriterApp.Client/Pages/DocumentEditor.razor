@@ -618,75 +618,41 @@ else
                         @if (!_isDiffMode)
                         {
                             <div class="context-drawer-tabs">
-                                <button type="button"
-                                        class="context-tab @GetContextTabClass(ContextTab.Notes)"
-                                        aria-selected="@(_activeContextTab == ContextTab.Notes)"
-                                        title='@GetTooltip("Personal notes for this section.")'
-                                        @onclick="() => SetContextTabAsync(ContextTab.Notes)">
-                                    Notes
-                                </button>
-                                <button type="button"
-                                        class="context-tab @GetContextTabClass(ContextTab.Scene)"
-                                        aria-selected="@(_activeContextTab == ContextTab.Scene)"
-                                        title='@GetTooltip("Structure and plan this scene.")'
-                                        @onclick="() => SetContextTabAsync(ContextTab.Scene)">
-                                    Scene
-                                </button>
-                                <button type="button"
-                                        class="context-tab @GetContextTabClass(ContextTab.Outline)"
-                                        aria-selected="@(_activeContextTab == ContextTab.Outline)"
-                                        title='@GetTooltip("View and edit the document outline.")'
-                                        @onclick="() => SetContextTabAsync(ContextTab.Outline)">
-                                    Outline
-                                </button>
-                                <button type="button"
-                                        class="context-tab @GetContextTabClass(ContextTab.Ai)"
-                                        aria-selected="@(_activeContextTab == ContextTab.Ai)"
-                                        title='@GetTooltip("AI tools for writing and planning.")'
-                                        @onclick="() => SetContextTabAsync(ContextTab.Ai)">
-                                    AI
-                                </button>
-                                @if (CanShowContinuityCoach)
-                                {
-                                    <button type="button"
-                                            class="context-tab @GetContextTabClass(ContextTab.Continuity)"
-                                            aria-selected="@(_activeContextTab == ContextTab.Continuity)"
-                                            title='@GetTooltip("Character/place continuity checks.")'
-                                            @onclick="() => SetContextTabAsync(ContextTab.Continuity)">
-                                        Continuity
-                                    </button>
-                                }
-                                @if (CanShowPromptLibrary)
-                                {
-                                    <button type="button"
-                                            class="context-tab @GetContextTabClass(ContextTab.PromptLibrary)"
-                                            aria-selected="@(_activeContextTab == ContextTab.PromptLibrary)"
-                                            title='@GetTooltip("Reusable AI prompts and presets.")'
-                                            @onclick="() => SetContextTabAsync(ContextTab.PromptLibrary)">
-                                        Prompt Library
-                                    </button>
-                                }
-                                <button type="button"
-                                        class="context-tab @GetContextTabClass(ContextTab.Annotations)"
-                                        aria-selected="@(_activeContextTab == ContextTab.Annotations)"
-                                        title='@GetTooltip("Comments, TODOs, and highlights.")'
-                                        @onclick="() => SetContextTabAsync(ContextTab.Annotations)">
-                                    Annotations
-                                </button>
-                                <button type="button"
-                                        class="context-tab @GetContextTabClass(ContextTab.Quality)"
-                                        aria-selected="@(_activeContextTab == ContextTab.Quality)"
-                                        title='@GetTooltip("Writing quality checks and consistency hints.")'
-                                        @onclick="() => SetContextTabAsync(ContextTab.Quality)">
-                                    Quality
-                                </button>
-                                <button type="button"
-                                        class="context-tab @GetContextTabClass(ContextTab.History)"
-                                        aria-selected="@(_activeContextTab == ContextTab.History)"
-                                        title='@GetTooltip("Version history for this page.")'
-                                        @onclick="() => SetContextTabAsync(ContextTab.History)">
-                                    History
-                                </button>
+                                <div class="context-category-tabs tabs-primary" role="tablist" aria-label="Right panel categories">
+                                    @foreach (var category in GetAvailablePanelCategories())
+                                    {
+                                        <button type="button"
+                                                class="context-tab context-tab-category context-tab-primary @GetPanelCategoryClass(category)"
+                                                role="tab"
+                                                tabindex="@(_activePanelCategory == category ? 0 : -1)"
+                                                aria-selected="@(_activePanelCategory == category)"
+                                                @onkeydown="(args) => OnPrimaryTabsKeyDown(args, category)"
+                                                @onclick="() => SetPanelCategoryAsync(category)">
+                                            @GetPanelCategoryLabel(category)
+                                        </button>
+                                    }
+                                </div>
+                                <div class="context-subtabs-shell">
+                                    <div class="context-subtabs-label">@GetSecondaryTabsHeading(_activePanelCategory)</div>
+                                    <div class="context-subtabs tabs-secondary" role="tablist" aria-label="Right panel subviews">
+                                        @foreach (var tab in GetTabsForActiveCategory())
+                                        {
+                                            <button type="button"
+                                                    class="context-tab context-tab-subview context-tab-secondary @GetContextTabClass(tab)"
+                                                    role="tab"
+                                                    tabindex="@(_activeContextTab == tab ? 0 : -1)"
+                                                    aria-selected="@(_activeContextTab == tab)"
+                                                    @onkeydown="(args) => OnSecondaryTabsKeyDown(args, tab)"
+                                                    @onclick="() => SetContextTabAsync(tab)">
+                                                @GetContextTabLabel(tab)
+                                            </button>
+                                        }
+                                    </div>
+                                    @if (!string.IsNullOrWhiteSpace(GetSecondaryTabHelperText(_activeContextTab)))
+                                    {
+                                        <div class="context-subtabs-helper">@GetSecondaryTabHelperText(_activeContextTab)</div>
+                                    }
+                                </div>
                             </div>
                         }
                     </Tabs>
@@ -695,115 +661,127 @@ else
                         {
                             <div class="rp-title">Diff</div>
                         }
-                        else if (_activeContextTab == ContextTab.Notes)
+                        else
                         {
-                            <div class="rp-title">Notes</div>
+                            <div class="rp-context-label">@GetPanelCategoryLabel(_activePanelCategory)</div>
                         }
-                        else if (_activeContextTab == ContextTab.Scene)
+                        @if (!_isDiffMode)
                         {
-                            <div class="rp-title">Scene card</div>
-                        }
-                        else if (_activeContextTab == ContextTab.Outline)
-                        {
-                            <div class="rp-title">Outline</div>
-                            <div class="rp-subtitle">Organize chapters, scenes, and beats.</div>
-                            <details class="rp-options">
-                                <summary>Apply options</summary>
-                                <label><input type="checkbox" @bind="_outlineApplyCreateMissing" /> Create missing sections</label>
-                                <label><input type="checkbox" @bind="_outlineApplyReorder" /> Reorder sections</label>
-                                <label><input type="checkbox" @bind="_outlineApplyRename" /> Rename sections to match outline</label>
-                                <label><input type="checkbox" @bind="_outlineApplyLinkNodes" /> Link nodes to sections</label>
-                            </details>
-                        }
-                        else if (_activeContextTab == ContextTab.Ai)
-                        {
-                            <div class="rp-title">AI tools</div>
-                            <div class="rp-subtitle">Run a command on the page or selection.</div>
-                        }
-                        else if (_activeContextTab == ContextTab.Continuity)
-                        {
-                            <div class="rp-title">Continuity coach</div>
-                            <div class="rp-subtitle">Check character/place/timeline consistency.</div>
-                        }
-                        else if (_activeContextTab == ContextTab.PromptLibrary)
-                        {
-                            <div class="rp-title">Prompt library</div>
-                            <div class="rp-subtitle">Reusable prompts for selection or section edits.</div>
-                        }
-                        else if (_activeContextTab == ContextTab.Annotations)
-                        {
-                            <div class="rp-title">Annotations</div>
-                            <div class="annotations-toolbar">
-                                <div class="annotations-filter">
-                                    <label class="annotations-filter-label">Status</label>
-                                    <select class="annotations-filter-select"
-                                            value="@_annotationFilterStatus"
-                                            @onchange="OnAnnotationStatusFilterChanged">
-                                        <option value="open">Open</option>
-                                        <option value="resolved">Resolved</option>
-                                        <option value="all">All</option>
-                                    </select>
-                                </div>
-                                <div class="annotations-filter">
-                                    <label class="annotations-filter-label">Type</label>
-                                    <select class="annotations-filter-select"
-                                            value="@_annotationFilterKind"
-                                            @onchange="OnAnnotationKindFilterChanged">
-                                        <option value="all">All</option>
-                                        <option value="comment">Comment</option>
-                                        <option value="todo">TODO</option>
-                                        <option value="highlight">Highlight</option>
-                                    </select>
-                                </div>
-                                <button type="button" class="annotations-refresh" @onclick="LoadAnnotationsAsync">Refresh</button>
-                            </div>
-                        }
-                        else if (_activeContextTab == ContextTab.Quality)
-                        {
-                            <div class="rp-title">Quality checks</div>
-                            <div class="quality-toolbar">
-                                <div class="quality-filter">
-                                    <label class="quality-filter-label">Scope</label>
-                                    <select class="quality-filter-select" value="@_qualityScope" @onchange="OnQualityScopeChanged">
-                                        <option value="page">Page</option>
-                                        <option value="selection">Selection</option>
-                                    </select>
-                                </div>
-                                <div class="quality-filter">
-                                    <label class="quality-filter-label">Severity</label>
-                                    <select class="quality-filter-select" value="@_qualityFilterSeverity" @onchange="OnQualitySeverityChanged">
-                                        <option value="all">All</option>
-                                        <option value="warning">Warning</option>
-                                        <option value="info">Info</option>
-                                    </select>
-                                </div>
-                                <div class="quality-filter">
-                                    <label class="quality-filter-label">Type</label>
-                                    <select class="quality-filter-select" value="@_qualityFilterKind" @onchange="OnQualityKindChanged">
-                                        <option value="all">All</option>
-                                        <option value="readability">Readability</option>
-                                        <option value="sentence-length">Sentence length</option>
-                                        <option value="paragraph-length">Paragraph length</option>
-                                        <option value="repeated-word">Repeated words</option>
-                                        <option value="passive-voice">Passive voice</option>
-                                        <option value="name-consistency">Name consistency</option>
-                                        <option value="timeline">Timeline hints</option>
-                                        <option value="glossary">Glossary</option>
-                                    </select>
-                                </div>
-                                <button type="button" class="quality-refresh" @onclick="RunQualityChecksAsync">Run checks</button>
-                            </div>
-                            @if (_qualityFromCache)
+                            @if (_activeContextTab == ContextTab.Notes)
                             {
-                                <div class="quality-cache-note">Showing cached results for this version.</div>
+                                <div class="rp-title">Notes</div>
                             }
-                        }
-                        else if (_activeContextTab == ContextTab.History)
-                        {
-                            <div class="rp-title">History</div>
+                            else if (_activeContextTab == ContextTab.Scene)
+                            {
+                                <div class="rp-title">Scene card</div>
+                            }
+                            else if (_activeContextTab == ContextTab.Outline)
+                            {
+                                <div class="rp-title">Outline</div>
+                                <div class="rp-subtitle">Organize chapters, scenes, and beats.</div>
+                                <details class="rp-options">
+                                    <summary>Apply options</summary>
+                                    <label><input type="checkbox" @bind="_outlineApplyCreateMissing" /> Create missing sections</label>
+                                    <label><input type="checkbox" @bind="_outlineApplyReorder" /> Reorder sections</label>
+                                    <label><input type="checkbox" @bind="_outlineApplyRename" /> Rename sections to match outline</label>
+                                    <label><input type="checkbox" @bind="_outlineApplyLinkNodes" /> Link nodes to sections</label>
+                                </details>
+                            }
+                            else if (_activeContextTab == ContextTab.Ai)
+                            {
+                                <div class="rp-title">AI tools</div>
+                                <div class="rp-subtitle">Run a command on the page or selection.</div>
+                            }
+                            else if (_activeContextTab == ContextTab.Continuity)
+                            {
+                                <div class="rp-title">Continuity coach</div>
+                                <div class="rp-subtitle">Check character/place/timeline consistency.</div>
+                            }
+                            else if (_activeContextTab == ContextTab.PromptLibrary)
+                            {
+                                <div class="rp-title">Prompt library</div>
+                                <div class="rp-subtitle">Reusable prompts for selection or section edits.</div>
+                            }
+                            else if (_activeContextTab == ContextTab.Annotations)
+                            {
+                                <div class="rp-title">Annotations</div>
+                                <div class="annotations-toolbar">
+                                    <div class="annotations-filter">
+                                        <label class="annotations-filter-label">Status</label>
+                                        <select class="annotations-filter-select"
+                                                value="@_annotationFilterStatus"
+                                                @onchange="OnAnnotationStatusFilterChanged">
+                                            <option value="open">Open</option>
+                                            <option value="resolved">Resolved</option>
+                                            <option value="all">All</option>
+                                        </select>
+                                    </div>
+                                    <div class="annotations-filter">
+                                        <label class="annotations-filter-label">Type</label>
+                                        <select class="annotations-filter-select"
+                                                value="@_annotationFilterKind"
+                                                @onchange="OnAnnotationKindFilterChanged">
+                                            <option value="all">All</option>
+                                            <option value="comment">Comment</option>
+                                            <option value="todo">TODO</option>
+                                            <option value="highlight">Highlight</option>
+                                        </select>
+                                    </div>
+                                    <button type="button" class="annotations-refresh" @onclick="LoadAnnotationsAsync">Refresh</button>
+                                </div>
+                            }
+                            else if (_activeContextTab == ContextTab.Quality)
+                            {
+                                <div class="rp-title">Quality checks</div>
+                                <div class="quality-toolbar">
+                                    <div class="quality-filter">
+                                        <label class="quality-filter-label">Scope</label>
+                                        <select class="quality-filter-select" value="@_qualityScope" @onchange="OnQualityScopeChanged">
+                                            <option value="page">Page</option>
+                                            <option value="selection">Selection</option>
+                                        </select>
+                                    </div>
+                                    <div class="quality-filter">
+                                        <label class="quality-filter-label">Severity</label>
+                                        <select class="quality-filter-select" value="@_qualityFilterSeverity" @onchange="OnQualitySeverityChanged">
+                                            <option value="all">All</option>
+                                            <option value="warning">Warning</option>
+                                            <option value="info">Info</option>
+                                        </select>
+                                    </div>
+                                    <div class="quality-filter">
+                                        <label class="quality-filter-label">Type</label>
+                                        <select class="quality-filter-select" value="@_qualityFilterKind" @onchange="OnQualityKindChanged">
+                                            <option value="all">All</option>
+                                            <option value="readability">Readability</option>
+                                            <option value="sentence-length">Sentence length</option>
+                                            <option value="paragraph-length">Paragraph length</option>
+                                            <option value="repeated-word">Repeated words</option>
+                                            <option value="passive-voice">Passive voice</option>
+                                            <option value="name-consistency">Name consistency</option>
+                                            <option value="timeline">Timeline hints</option>
+                                            <option value="glossary">Glossary</option>
+                                        </select>
+                                    </div>
+                                    <button type="button" class="quality-refresh" @onclick="RunQualityChecksAsync">Run checks</button>
+                                </div>
+                                @if (_qualityFromCache)
+                                {
+                                    <div class="quality-cache-note">Showing cached results for this version.</div>
+                                }
+                            }
+                            else if (_activeContextTab == ContextTab.History)
+                            {
+                                <div class="rp-title">History</div>
+                            }
                         }
                     </Header>
                     <Body>
+                        @if (ShowSceneCoachCard)
+                        {
+                            var coach = BuildSceneCoachRecommendation();
+                            <CoachCard Recommendation="coach" OnPrimaryAction="OnSceneCoachPrimaryActionAsync" />
+                        }
                         @if (_isDiffMode)
                         {
                             <div class="drawer-panel diff-panel">

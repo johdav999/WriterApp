@@ -25,6 +25,7 @@ namespace WriterApp.Controllers
         private readonly IUserIdResolver _userIdResolver;
         private readonly IProjectWordCountService _wordCounts;
         private readonly IProjectGoalsService _goals;
+        private readonly IProjectSceneLinkingService _sceneLinking;
         private readonly IConfiguration _configuration;
 
         public ProjectsController(
@@ -32,12 +33,14 @@ namespace WriterApp.Controllers
             IUserIdResolver userIdResolver,
             IProjectWordCountService wordCounts,
             IProjectGoalsService goals,
+            IProjectSceneLinkingService sceneLinking,
             IConfiguration configuration)
         {
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
             _wordCounts = wordCounts ?? throw new ArgumentNullException(nameof(wordCounts));
             _goals = goals ?? throw new ArgumentNullException(nameof(goals));
+            _sceneLinking = sceneLinking ?? throw new ArgumentNullException(nameof(sceneLinking));
             _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         }
 
@@ -816,7 +819,11 @@ namespace WriterApp.Controllers
 
             ProjectNodeType nodeType = ParseNodeType(request.NodeType);
             Guid? linkedSectionId = request.LinkedSectionId;
-            if (linkedSectionId.HasValue)
+            if (nodeType != ProjectNodeType.Scene)
+            {
+                linkedSectionId = null;
+            }
+            else if (linkedSectionId.HasValue)
             {
                 bool owned = await IsOwnedSectionAsync(userId, linkedSectionId.Value, ct);
                 if (!owned)
@@ -856,6 +863,10 @@ namespace WriterApp.Controllers
             };
 
             _dbContext.ProjectNodes.Add(node);
+            if (node.NodeType == ProjectNodeType.Scene)
+            {
+                await _sceneLinking.EnsureSceneLinkedSectionAsync(project, node, userId, ct);
+            }
             project.UpdatedUtc = DateTimeOffset.UtcNow;
             await _dbContext.SaveChangesAsync(ct);
             await _wordCounts.RefreshProjectAsync(projectId, ct);
@@ -903,7 +914,11 @@ namespace WriterApp.Controllers
                 node.NodeType = ParseNodeType(request.NodeType);
             }
 
-            if (request.LinkedSectionId.HasValue)
+            if (node.NodeType != ProjectNodeType.Scene)
+            {
+                node.LinkedSectionId = null;
+            }
+            else if (request.LinkedSectionId.HasValue)
             {
                 bool owned = await IsOwnedSectionAsync(userId, request.LinkedSectionId.Value, ct);
                 if (!owned)
@@ -912,7 +927,10 @@ namespace WriterApp.Controllers
                 }
             }
 
-            node.LinkedSectionId = request.LinkedSectionId;
+            if (node.NodeType == ProjectNodeType.Scene && request.LinkedSectionId.HasValue)
+            {
+                node.LinkedSectionId = request.LinkedSectionId;
+            }
             node.MetadataJson = request.MetadataJson;
             node.UpdatedUtc = DateTimeOffset.UtcNow;
 
@@ -933,6 +951,11 @@ namespace WriterApp.Controllers
                     .OrderBy(item => item.OrderIndex)
                     .ToListAsync(ct);
                 node.OrderIndex = newSiblings.Count;
+            }
+
+            if (node.NodeType == ProjectNodeType.Scene)
+            {
+                await _sceneLinking.EnsureSceneLinkedSectionAsync(project, node, userId, ct);
             }
 
             project.UpdatedUtc = DateTimeOffset.UtcNow;
@@ -1015,6 +1038,48 @@ namespace WriterApp.Controllers
                 .ToList();
 
             return Ok(result);
+        }
+
+        [HttpPost("{projectId:guid}/nodes/{nodeId:guid}/open-scene")]
+        public async Task<ActionResult<ProjectSceneOpenTargetDto>> OpenScene(
+            Guid projectId,
+            Guid nodeId,
+            CancellationToken ct)
+        {
+            if (!IsEnabled())
+            {
+                return NotFound();
+            }
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            ProjectRecord? project = await _dbContext.Projects
+                .FirstOrDefaultAsync(item => item.Id == projectId && item.OwnerUserId == userId, ct);
+            if (project is null)
+            {
+                return NotFound();
+            }
+
+            ProjectNodeRecord? node = await _dbContext.ProjectNodes
+                .FirstOrDefaultAsync(item => item.ProjectId == projectId && item.Id == nodeId, ct);
+            if (node is null)
+            {
+                return NotFound();
+            }
+
+            if (node.NodeType != ProjectNodeType.Scene)
+            {
+                return BadRequest(new { message = "Only scene nodes can be opened in the editor." });
+            }
+
+            SceneLinkResult? link = await _sceneLinking.EnsureSceneLinkedSectionAsync(project, node, userId, ct);
+            if (link is null)
+            {
+                return NotFound();
+            }
+
+            await _dbContext.SaveChangesAsync(ct);
+
+            return Ok(new ProjectSceneOpenTargetDto(projectId, nodeId, link.DocumentId, link.SectionId));
         }
 
         [HttpGet("{projectId:guid}/stats")]
