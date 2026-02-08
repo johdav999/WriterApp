@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -39,8 +40,275 @@ namespace WriterApp.AI.Core
             }
 
             AiProviderSelection selection = _router.Route(request);
-            AiResult result = await selection.Provider.ExecuteAsync(request, ct);
+            AiResult result = string.Equals(action.ActionId, ContinuityCheckAction.ActionIdValue, StringComparison.Ordinal)
+                ? await ExecuteContinuityCheckWithChunkCoverageAsync(request, selection.Provider, ct)
+                : await selection.Provider.ExecuteAsync(request, ct);
             return BuildOutcome(action, input, request, result, selection.SelectedProviderId);
+        }
+
+        private async Task<AiResult> ExecuteContinuityCheckWithChunkCoverageAsync(
+            AiRequest request,
+            IAiProvider provider,
+            CancellationToken ct)
+        {
+            const int chunkSize = 3200;
+            const int overlap = 400;
+            const int splitThreshold = 4500;
+            const int maxMergedIssues = 60;
+
+            string fullText = GetInputValue(request, "section_text");
+            if (string.IsNullOrWhiteSpace(fullText) || fullText.Length <= splitThreshold)
+            {
+                return await provider.ExecuteAsync(request, ct);
+            }
+
+            List<ContinuityChunk> chunks = BuildContinuityChunks(fullText, chunkSize, overlap);
+            if (chunks.Count <= 1)
+            {
+                return await provider.ExecuteAsync(request, ct);
+            }
+
+            int totalInputTokens = 0;
+            int totalOutputTokens = 0;
+            TimeSpan totalLatency = TimeSpan.Zero;
+            string schemaVersion = "1.0";
+            AiResult? firstResult = null;
+            AiArtifact? firstTextArtifact = null;
+            Dictionary<string, ContinuityIssue> mergedIssues = new(StringComparer.Ordinal);
+
+            foreach (ContinuityChunk chunk in chunks)
+            {
+                Dictionary<string, object> chunkInputs = new(request.Inputs)
+                {
+                    ["section_text"] = chunk.Text
+                };
+
+                AiRequest chunkRequest = request with
+                {
+                    RequestId = Guid.NewGuid(),
+                    Context = request.Context with
+                    {
+                        Range = new TextRange(0, chunk.Text.Length),
+                        OriginalText = chunk.Text,
+                        SelectionText = chunk.Text,
+                        SelectionStart = 0,
+                        SelectionLength = chunk.Text.Length
+                    },
+                    Inputs = chunkInputs
+                };
+
+                AiResult chunkResult = await provider.ExecuteAsync(chunkRequest, ct);
+                firstResult ??= chunkResult;
+                firstTextArtifact ??= chunkResult.Artifacts.FirstOrDefault(artifact => artifact.Modality == AiModality.Text);
+
+                totalInputTokens += chunkResult.Usage.InputTokens;
+                totalOutputTokens += chunkResult.Usage.OutputTokens;
+                totalLatency += chunkResult.Usage.Latency;
+
+                AiArtifact? textArtifact = chunkResult.Artifacts.FirstOrDefault(artifact => artifact.Modality == AiModality.Text);
+                if (textArtifact is null || string.IsNullOrWhiteSpace(textArtifact.TextContent))
+                {
+                    continue;
+                }
+
+                if (!TryParseContinuityReport(textArtifact.TextContent, out ContinuityReport? report) || report is null)
+                {
+                    continue;
+                }
+
+                if (!string.IsNullOrWhiteSpace(report.SchemaVersion))
+                {
+                    schemaVersion = report.SchemaVersion;
+                }
+
+                foreach (ContinuityIssue issue in report.Issues ?? new List<ContinuityIssue>())
+                {
+                    int adjustedStart = Math.Max(0, issue.Anchor.PlainTextStart) + chunk.Start;
+                    ContinuityIssue adjustedIssue = issue with
+                    {
+                        Anchor = issue.Anchor with
+                        {
+                            PlainTextStart = adjustedStart
+                        }
+                    };
+
+                    string key = BuildContinuityIssueMergeKey(adjustedIssue);
+                    if (!mergedIssues.TryGetValue(key, out ContinuityIssue? existing))
+                    {
+                        mergedIssues[key] = adjustedIssue;
+                        continue;
+                    }
+
+                    // Keep the higher-severity duplicate when chunk overlap returns the same issue.
+                    if (GetContinuitySeverityRank(adjustedIssue.Severity) > GetContinuitySeverityRank(existing.Severity))
+                    {
+                        mergedIssues[key] = adjustedIssue;
+                    }
+                }
+            }
+
+            if (firstResult is null || firstTextArtifact is null || mergedIssues.Count == 0)
+            {
+                return await provider.ExecuteAsync(request, ct);
+            }
+
+            List<ContinuityIssue> sortedIssues = mergedIssues.Values
+                .OrderByDescending(issue => GetContinuitySeverityRank(issue.Severity))
+                .ThenBy(issue => issue.Anchor.PlainTextStart)
+                .Take(maxMergedIssues)
+                .ToList();
+
+            string mergedJson = JsonSerializer.Serialize(new ContinuityReport(schemaVersion, sortedIssues));
+            AiArtifact mergedArtifact = new(
+                Guid.NewGuid(),
+                AiModality.Text,
+                firstTextArtifact.MimeType ?? "application/json",
+                mergedJson,
+                null,
+                firstTextArtifact.Metadata);
+
+            Dictionary<string, object> mergedMeta = new(firstResult.ProviderMeta)
+            {
+                ["continuity_chunk_count"] = chunks.Count,
+                ["continuity_chunked"] = true
+            };
+
+            _logger.LogInformation(
+                "[Continuity] Chunked section check ran {ChunkCount} chunks and produced {IssueCount} merged issues.",
+                chunks.Count,
+                sortedIssues.Count);
+
+            return new AiResult(
+                request.RequestId,
+                new List<AiArtifact> { mergedArtifact },
+                new AiUsage(totalInputTokens, totalOutputTokens, totalLatency),
+                mergedMeta);
+        }
+
+        private static List<ContinuityChunk> BuildContinuityChunks(string text, int chunkSize, int overlap)
+        {
+            List<ContinuityChunk> chunks = new();
+            if (string.IsNullOrEmpty(text))
+            {
+                return chunks;
+            }
+
+            int safeChunk = Math.Max(512, chunkSize);
+            int safeOverlap = Math.Clamp(overlap, 0, safeChunk / 2);
+            int step = safeChunk - safeOverlap;
+            int start = 0;
+
+            while (start < text.Length)
+            {
+                int length = Math.Min(safeChunk, text.Length - start);
+                chunks.Add(new ContinuityChunk(start, text.Substring(start, length)));
+                if (start + length >= text.Length)
+                {
+                    break;
+                }
+
+                start += step;
+            }
+
+            return chunks;
+        }
+
+        private static bool TryParseContinuityReport(string raw, out ContinuityReport? report)
+        {
+            report = null;
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return false;
+            }
+
+            foreach (string candidate in EnumerateContinuityJsonCandidates(raw))
+            {
+                try
+                {
+                    ContinuityReport? parsed = JsonSerializer.Deserialize<ContinuityReport>(candidate);
+                    if (parsed?.Issues is null)
+                    {
+                        continue;
+                    }
+
+                    report = parsed;
+                    return true;
+                }
+                catch (JsonException)
+                {
+                    // Ignore invalid fragments and continue trying other candidates.
+                }
+            }
+
+            return false;
+        }
+
+        private static IEnumerable<string> EnumerateContinuityJsonCandidates(string raw)
+        {
+            string trimmed = raw.Trim();
+            if (!string.IsNullOrWhiteSpace(trimmed))
+            {
+                yield return trimmed;
+            }
+
+            if (trimmed.StartsWith("```", StringComparison.Ordinal))
+            {
+                int firstNewline = trimmed.IndexOf('\n');
+                string fenced = firstNewline >= 0 && firstNewline < trimmed.Length - 1
+                    ? trimmed[(firstNewline + 1)..]
+                    : trimmed;
+
+                if (fenced.EndsWith("```", StringComparison.Ordinal))
+                {
+                    fenced = fenced[..^3];
+                }
+
+                fenced = fenced.Trim();
+                if (!string.IsNullOrWhiteSpace(fenced))
+                {
+                    yield return fenced;
+                }
+            }
+
+            int firstBrace = trimmed.IndexOf('{');
+            int lastBrace = trimmed.LastIndexOf('}');
+            if (firstBrace >= 0 && lastBrace > firstBrace)
+            {
+                string objectSlice = trimmed.Substring(firstBrace, lastBrace - firstBrace + 1).Trim();
+                if (!string.IsNullOrWhiteSpace(objectSlice))
+                {
+                    yield return objectSlice;
+                }
+            }
+        }
+
+        private static string BuildContinuityIssueMergeKey(ContinuityIssue issue)
+        {
+            string type = issue.Type?.Trim() ?? string.Empty;
+            string message = issue.Message?.Trim() ?? string.Empty;
+            string quote = issue.Evidence?.Quote?.Trim() ?? string.Empty;
+            int bucket = Math.Max(0, issue.Anchor.PlainTextStart / 40);
+            return $"{type}|{message}|{quote}|{bucket}";
+        }
+
+        private static int GetContinuitySeverityRank(string? severity)
+        {
+            if (string.Equals(severity, "critical", StringComparison.OrdinalIgnoreCase))
+            {
+                return 4;
+            }
+
+            if (string.Equals(severity, "high", StringComparison.OrdinalIgnoreCase))
+            {
+                return 3;
+            }
+
+            if (string.Equals(severity, "medium", StringComparison.OrdinalIgnoreCase))
+            {
+                return 2;
+            }
+
+            return 1;
         }
 
         private AiExecutionOutcome BuildOutcome(
@@ -626,5 +894,21 @@ namespace WriterApp.AI.Core
 
             return Guid.TryParse(value.ToString(), out Guid parsed) ? parsed : fallback;
         }
+
+        private sealed record ContinuityChunk(int Start, string Text);
+
+        private sealed record ContinuityReport(string SchemaVersion, List<ContinuityIssue> Issues);
+
+        private sealed record ContinuityIssue(
+            string Severity,
+            string Type,
+            string Message,
+            ContinuityEvidence Evidence,
+            string SuggestedFix,
+            ContinuityAnchor Anchor);
+
+        private sealed record ContinuityEvidence(string SectionId, string Quote);
+
+        private sealed record ContinuityAnchor(int PlainTextStart, int PlainTextLength);
     }
 }

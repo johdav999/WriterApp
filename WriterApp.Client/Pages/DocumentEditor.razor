@@ -54,6 +54,10 @@ else
                         {
                             <span class="ai-preview-status error">@_sectionError</span>
                         }
+                        @if (!string.IsNullOrWhiteSpace(_importSummary))
+                        {
+                            <span class="ai-preview-status">@_importSummary</span>
+                        }
                         <button type="button"
                                 class="panel-toggle"
                                 aria-label="Add section"
@@ -122,6 +126,7 @@ else
                                         <div class="section-menu-panel">
                                             <button type="button" @onclick="() => BeginSectionRename(item.Id)">Rename</button>
                                             <button type="button" @onclick="() => DuplicateSectionAsync(item.Id)">Duplicate</button>
+                                            <button type="button" @onclick="() => PromptImportSection(item.Id)">Import</button>
                                             <button type="button"
                                                     class="danger"
                                                     @onclick="() => PromptDeleteSection(item.Id)">
@@ -1003,7 +1008,7 @@ else
                         }
                         else if (_activeContextTab == ContextTab.Ai)
                         {
-                            <div class="drawer-panel ai-panel">
+                            <div class="drawer-panel ai-panel continuity-panel">
                                 @if (!IsAiAvailable)
                                 {
                                     <div class="drawer-empty">@GetAiBlockedMessage()</div>
@@ -1214,38 +1219,40 @@ else
                                             <option value="low">Low</option>
                                         </select>
                                     </div>
-                                    @if (!FilteredContinuityIssues.Any())
-                                    {
-                                        <div class="drawer-empty">No issues in current report.</div>
-                                    }
-                                    else
-                                    {
-                                        <ul class="ai-history-list">
-                                            @foreach (ContinuityIssue issue in FilteredContinuityIssues)
-                                            {
-                                                <li class="ai-history-item">
-                                                    <div class="ai-history-meta">
-                                                        <span class="ai-history-badge">@issue.Severity.ToUpperInvariant()</span>
-                                                        <span class="ai-history-summary">@issue.Type: @issue.Message</span>
-                                                    </div>
-                                                    <div class="ai-history-sub">
-                                                        <span>@issue.Evidence.Quote</span>
-                                                    </div>
-                                                    <div class="ai-history-actions">
-                                                        <button type="button" @onclick="() => OnJumpToContinuityIssueAsync(issue)">Jump</button>
-                                                        @if (CanShowContinuityCoachFixes)
-                                                        {
-                                                            <button type="button"
-                                                                    disabled="@(_continuityBusy || string.IsNullOrWhiteSpace(issue.SuggestedFix))"
-                                                                    @onclick="() => OnApplyContinuityFixAsync(issue)">
-                                                                Apply suggested fix
-                                                            </button>
-                                                        }
-                                                    </div>
-                                                </li>
-                                            }
-                                        </ul>
-                                    }
+                                    <div class="continuity-results">
+                                        @if (!FilteredContinuityIssues.Any())
+                                        {
+                                            <div class="drawer-empty">No issues in current report.</div>
+                                        }
+                                        else
+                                        {
+                                            <ul class="ai-history-list">
+                                                @foreach (ContinuityIssue issue in FilteredContinuityIssues)
+                                                {
+                                                    <li class="ai-history-item">
+                                                        <div class="ai-history-meta">
+                                                            <span class="ai-history-badge">@issue.Severity.ToUpperInvariant()</span>
+                                                            <span class="ai-history-summary">@issue.Type: @issue.Message</span>
+                                                        </div>
+                                                        <div class="ai-history-sub">
+                                                            <span>@issue.Evidence.Quote</span>
+                                                        </div>
+                                                        <div class="ai-history-actions">
+                                                            <button type="button" @onclick="() => OnJumpToContinuityIssueAsync(issue)">Jump</button>
+                                                            @if (CanShowContinuityCoachFixes)
+                                                            {
+                                                                <button type="button"
+                                                                        disabled="@(_continuityBusy || string.IsNullOrWhiteSpace(issue.SuggestedFix))"
+                                                                        @onclick="() => OnApplyContinuityFixAsync(issue)">
+                                                                    Apply suggested fix
+                                                                </button>
+                                                            }
+                                                        </div>
+                                                    </li>
+                                                }
+                                            </ul>
+                                        }
+                                    </div>
                                 }
                             </div>
                         }
@@ -1653,6 +1660,66 @@ else
                 <button type="button"
                         @onclick="CancelDeleteSection"
                         disabled="@_isDeletingSection">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_isImportDialogOpen)
+{
+    <div class="modal-overlay" role="presentation" @onclick="CancelImportSection">
+        <div class="modal-backdrop"></div>
+        <div class="modal import-dialog"
+             role="dialog"
+             aria-modal="true"
+             aria-labelledby="importSectionTitle"
+             @onclick:stopPropagation="true">
+            <div class="modal-title" id="importSectionTitle">Import into section</div>
+            <div class="modal-body">
+                <div class="import-form">
+                    <label for="import-target-section">Target section</label>
+                    <select id="import-target-section" @bind="_importTargetSectionId">
+                        @foreach (SectionDto targetSection in _sections)
+                        {
+                            <option value="@targetSection.Id">@targetSection.Title</option>
+                        }
+                    </select>
+
+                    <label for="import-mode">Mode</label>
+                    <select id="import-mode" @bind="_importMode">
+                        <option value="replace">Replace content</option>
+                        <option value="append">Append at end</option>
+                    </select>
+
+                    <label for="import-file">File (.txt, .rtf, .docx)</label>
+                    <InputFile id="import-file"
+                               accept=".txt,.rtf,.docx"
+                               OnChange="OnImportFileSelected" />
+                    @if (!string.IsNullOrWhiteSpace(_importFileName))
+                    {
+                        <div class="import-file-name">@_importFileName</div>
+                    }
+
+                    <label><input type="checkbox" @bind="_importNormalizeWhitespace" /> Normalize whitespace</label>
+                    <label><input type="checkbox" @bind="_importPreserveTxtLineBreaks" /> Preserve TXT line breaks</label>
+                </div>
+            </div>
+            @if (!string.IsNullOrWhiteSpace(_importError))
+            {
+                <div class="modal-error">@_importError</div>
+            }
+            <div class="modal-actions">
+                <button type="button"
+                        class="danger"
+                        @onclick="ConfirmImportSectionAsync"
+                        disabled="@_isImporting">
+                    @(_isImporting ? "Importing..." : "Import")
+                </button>
+                <button type="button"
+                        @onclick="CancelImportSection"
+                        disabled="@_isImporting">
                     Cancel
                 </button>
             </div>

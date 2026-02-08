@@ -340,14 +340,14 @@ namespace WriterApp.Controllers
             foreach (DocumentOutlineNodeRecord node in applyNodes)
             {
                 SectionRecord? section = null;
-                if (node.LinkedSectionId.HasValue && sectionsById.TryGetValue(node.LinkedSectionId.Value, out SectionRecord linked))
+                if (node.LinkedSectionId.HasValue && sectionsById.TryGetValue(node.LinkedSectionId.Value, out SectionRecord? linked))
                 {
                     section = linked;
                 }
                 else if (settings.MatchByTitle)
                 {
                     string normalized = NormalizeTitle(node.Title);
-                    if (!string.IsNullOrWhiteSpace(normalized) && sectionsByTitle.TryGetValue(normalized, out SectionRecord byTitle))
+                    if (!string.IsNullOrWhiteSpace(normalized) && sectionsByTitle.TryGetValue(normalized, out SectionRecord? byTitle))
                     {
                         section = byTitle;
                     }
@@ -557,9 +557,13 @@ namespace WriterApp.Controllers
                 {
                     children = roots;
                 }
-                else if (!byParent.TryGetValue(parentId.Value, out children))
+                else if (!byParent.TryGetValue(parentId.Value, out List<DocumentOutlineNodeRecord>? childrenByParent))
                 {
                     return;
+                }
+                else
+                {
+                    children = childrenByParent;
                 }
 
                 foreach (DocumentOutlineNodeRecord child in children)

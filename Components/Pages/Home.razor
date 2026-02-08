@@ -1632,7 +1632,6 @@
     private Guid? _aiRollbackGroupId;
     private bool _isAiHistoryRollback;
     private Guid? _aiHistoryDetailsId;
-    private bool _isReordering;
     private PendingAiProposal? _pendingAiProposal;
     private CancellationTokenSource? _aiStreamCts;
     private bool _isAiStreaming;
@@ -1643,9 +1642,6 @@
     private bool _pendingDocumentLoad;
     private AiUsageStatusDto? _aiUsageStatus;
     private readonly List<Plan> _planCatalog = new();
-    private bool _showPlansPanel;
-    private bool _isPlansLoading;
-    private string? _plansError;
     private CancellationTokenSource? _aiUsageRefreshCts;
     private bool _aiUsageRefreshInProgress;
     private Task? _aiUsageRefreshTask;
@@ -2469,7 +2465,7 @@
         for (int i = 0; i < chapter.Sections.Count; i++)
         {
             Section section = chapter.Sections[i];
-            if (updates.TryGetValue(section.SectionId, out Section updated))
+            if (updates.TryGetValue(section.SectionId, out Section? updated))
             {
                 chapter.Sections[i] = updated;
             }
@@ -2486,7 +2482,7 @@
 
     private string GetSectionOrderLabel(Section section)
     {
-        if (_sectionNumbering.TryGetValue(section.SectionId, out SectionNumberingInfo info) && info.IsNumbered)
+        if (_sectionNumbering.TryGetValue(section.SectionId, out SectionNumberingInfo? info) && info.IsNumbered)
         {
             return section.Kind == SectionKind.Chapter
                 ? $"Chapter {info.Number}"
@@ -2516,7 +2512,7 @@
     private string GetActiveSectionNumberLabel()
     {
         Section activeSection = FindSection(_state.Document, _activeSectionId);
-        if (_sectionNumbering.TryGetValue(activeSection.SectionId, out SectionNumberingInfo info) && info.IsNumbered)
+        if (_sectionNumbering.TryGetValue(activeSection.SectionId, out SectionNumberingInfo? info) && info.IsNumbered)
         {
             return activeSection.Kind == SectionKind.Chapter
                 ? $"Chapter {info.Number}"
@@ -3362,15 +3358,11 @@
 
     private async Task OnViewPlansAsync()
     {
-        _showPlansPanel = true;
-        _plansError = null;
-
         if (_planCatalog.Count > 0)
         {
             return;
         }
 
-        _isPlansLoading = true;
         try
         {
             List<Plan> plans = await DbContext.Plans
@@ -3385,17 +3377,11 @@
         catch (Exception ex)
         {
             Logger.LogError(ex, "Plan catalog load failed.");
-            _plansError = "Plans could not be loaded.";
-        }
-        finally
-        {
-            _isPlansLoading = false;
         }
     }
 
     private void ClosePlansPanel()
     {
-        _showPlansPanel = false;
     }
 
     private static string GetEntitlementValue(Plan plan, string key)
@@ -3681,7 +3667,7 @@
     private string BuildPreviewSectionHtml(Section section)
     {
         string title = GetSectionTitle(section);
-        SectionNumberingInfo? info = _sectionNumbering.TryGetValue(section.SectionId, out SectionNumberingInfo entry)
+        SectionNumberingInfo? info = _sectionNumbering.TryGetValue(section.SectionId, out SectionNumberingInfo? entry)
             ? entry
             : null;
         string heading = _numberingService.BuildHeading(section, title, info);
@@ -3856,6 +3842,11 @@
         }
 
         if (!TryGetSection(_state.Document, entry.AffectedSectionId, out Section? section))
+        {
+            return false;
+        }
+
+        if (section is null)
         {
             return false;
         }

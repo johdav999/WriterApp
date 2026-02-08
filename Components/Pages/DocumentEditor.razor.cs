@@ -2835,6 +2835,7 @@ namespace BlazorApp.Components.Pages
                 .OrderBy(node => node.Order);
         }
 
+#pragma warning disable ASP0006
         private RenderFragment RenderOutlineNode(DocumentOutlineNodeDto node, int depth) => builder =>
         {
             int seq = 0;
@@ -3024,6 +3025,7 @@ namespace BlazorApp.Components.Pages
 
             builder.CloseElement();
         };
+#pragma warning restore ASP0006
 
         private string GetLinkedSectionValue(DocumentOutlineNodeDto node)
         {
