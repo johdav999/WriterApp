@@ -327,11 +327,13 @@
 .modal-overlay {
     position: fixed;
     inset: 0;
-    z-index: 80;
+    z-index: var(--z-modal, 10000);
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 24px;
+    pointer-events: auto;
+    isolation: isolate;
 }
 
 .modal-backdrop {
@@ -357,6 +359,16 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
+}
+
+.modal-overlay .modal-backdrop {
+    z-index: 0;
+    pointer-events: auto;
+}
+
+.modal-overlay .modal {
+    z-index: 1;
+    pointer-events: auto;
 }
 
 .modal-panel {
@@ -2376,6 +2388,19 @@
     gap: 8px;
 }
 
+.continuity-panel {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.continuity-results {
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: 4px;
+}
+
 .ai-history-item {
     padding: 8px;
     border-radius: 12px;
@@ -3367,4 +3392,30 @@
     padding: 4px 8px;
     background: #fff;
     font-size: 0.8rem;
+}
+
+.import-dialog {
+    width: min(520px, calc(100vw - 48px));
+}
+
+.import-form {
+    display: grid;
+    gap: 10px;
+}
+
+.import-form label {
+    font-size: 0.85rem;
+    color: var(--text-strong);
+}
+
+.import-form select {
+    border: 1px solid #d1d5db;
+    border-radius: 10px;
+    padding: 6px 8px;
+    background: #fff;
+}
+
+.import-file-name {
+    font-size: 0.8rem;
+    color: var(--text-muted);
 }

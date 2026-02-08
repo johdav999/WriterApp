@@ -268,7 +268,7 @@ namespace WriterApp.Controllers
 
             foreach (PageAnnotationRecord record in records)
             {
-                if (!byId.TryGetValue(record.Id, out PageAnnotationAnchorUpdateRequest update))
+                if (!byId.TryGetValue(record.Id, out PageAnnotationAnchorUpdateRequest? update))
                 {
                     continue;
                 }

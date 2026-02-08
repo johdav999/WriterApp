@@ -167,7 +167,7 @@ namespace WriterApp.Controllers
                 page.DocumentId,
                 page.SectionId,
                 page.Title,
-                page.Content,
+                page.Content ?? string.Empty,
                 page.OrderIndex,
                 page.CreatedAt,
                 page.UpdatedAt);
@@ -239,7 +239,7 @@ namespace WriterApp.Controllers
                 page.DocumentId,
                 page.SectionId,
                 page.Title,
-                page.Content,
+                page.Content ?? string.Empty,
                 page.OrderIndex,
                 page.CreatedAt,
                 page.UpdatedAt);

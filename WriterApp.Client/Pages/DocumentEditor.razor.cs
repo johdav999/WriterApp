@@ -85,6 +85,16 @@ namespace WriterApp.Client.Pages
         private string _pendingDeleteSectionTitle = string.Empty;
         private string? _sectionDeleteError;
         private bool _isDeletingSection;
+        private bool _isImportDialogOpen;
+        private Guid _importTargetSectionId;
+        private string _importMode = "replace";
+        private bool _importNormalizeWhitespace = true;
+        private bool _importPreserveTxtLineBreaks;
+        private IBrowserFile? _importFile;
+        private string? _importFileName;
+        private bool _isImporting;
+        private string? _importError;
+        private string? _importSummary;
         private Guid _loadedDocumentId;
         private string _documentTitle = string.Empty;
         private string? _documentLanguageCode;
@@ -1024,6 +1034,123 @@ namespace WriterApp.Client.Pages
             {
                 Logger.LogWarning(ex, "Duplicate section failed.");
                 _sectionError = "Duplicate failed.";
+            }
+        }
+
+        private void PromptImportSection(Guid sectionId)
+        {
+            SectionDto? section = _sections.FirstOrDefault(item => item.Id == sectionId);
+            if (section is null)
+            {
+                return;
+            }
+
+            _sectionMenuOpenId = null;
+            _isImportDialogOpen = true;
+            _importTargetSectionId = section.Id;
+            _importMode = "replace";
+            _importNormalizeWhitespace = true;
+            _importPreserveTxtLineBreaks = false;
+            _importFile = null;
+            _importFileName = null;
+            _importError = null;
+        }
+
+        private void CancelImportSection()
+        {
+            _isImportDialogOpen = false;
+            _isImporting = false;
+            _importFile = null;
+            _importFileName = null;
+            _importError = null;
+        }
+
+        private void OnImportFileSelected(InputFileChangeEventArgs args)
+        {
+            _importError = null;
+            _importFile = args.File;
+            _importFileName = _importFile?.Name;
+        }
+
+        private async Task ConfirmImportSectionAsync()
+        {
+            if (_importFile is null)
+            {
+                _importError = "Select a file to import.";
+                return;
+            }
+
+            _isImporting = true;
+            _importError = null;
+            try
+            {
+                using MultipartFormDataContent form = new();
+                using Stream fileStream = _importFile.OpenReadStream(10 * 1024 * 1024);
+                using StreamContent fileContent = new(fileStream);
+                fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(_importFile.ContentType);
+                form.Add(fileContent, "file", _importFile.Name);
+                form.Add(new StringContent(_importTargetSectionId.ToString()), "targetSectionId");
+                form.Add(new StringContent(_importMode), "mode");
+                form.Add(new StringContent(_importNormalizeWhitespace.ToString()), "normalizeWhitespace");
+                form.Add(new StringContent(_importPreserveTxtLineBreaks.ToString()), "preserveTxtLineBreaks");
+
+                using HttpResponseMessage response = await Http.PostAsync(
+                    $"api/documents/{DocumentId}/sections/{_importTargetSectionId}/import",
+                    form);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _importError = await TryReadMessageAsync(response) ?? $"Import failed ({response.StatusCode}).";
+                    return;
+                }
+
+                SectionImportResponseDto? result = await response.Content.ReadFromJsonAsync<SectionImportResponseDto>();
+                if (result is null)
+                {
+                    _importError = "Import failed.";
+                    return;
+                }
+
+                _importSummary =
+                    $"Imported {result.Format.ToUpperInvariant()}: {result.Stats.Paragraphs} paragraphs, {result.Stats.Headings} headings, {result.Stats.Lists} lists, {result.Stats.Characters} chars.";
+                if (result.Warnings.Count > 0)
+                {
+                    _importSummary += " Warnings: " + string.Join(" ", result.Warnings);
+                }
+
+                if (_activeSection?.Id == result.TargetSectionId && _activePage is not null)
+                {
+                    _activePage = _activePage with { Content = result.Html, UpdatedAt = DateTimeOffset.UtcNow };
+                    if (_pagesBySection.TryGetValue(result.TargetSectionId, out List<PageDto>? pages) && pages.Count > 0)
+                    {
+                        pages[0] = pages[0] with { Content = result.Html, UpdatedAt = DateTimeOffset.UtcNow };
+                        for (int i = 1; i < pages.Count; i++)
+                        {
+                            pages[i] = pages[i] with { Content = string.Empty, UpdatedAt = DateTimeOffset.UtcNow };
+                        }
+                    }
+
+                    if (_pageEditor is not null)
+                    {
+                        await _pageEditor.SetContentAsync(result.Html, markDirty: false);
+                        await _pageEditor.RefreshPageBreaksAsync();
+                    }
+                }
+                else
+                {
+                    await LoadDocumentAsync();
+                }
+
+                CancelImportSection();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Import section failed.");
+                _importError = "Import failed.";
+            }
+            finally
+            {
+                _isImporting = false;
+                await InvokeAsync(StateHasChanged);
             }
         }
 
@@ -8091,6 +8218,19 @@ namespace WriterApp.Client.Pages
             int NewEntries,
             int UpdatedEntries,
             int Flags);
+
+        private sealed record SectionImportStatsDto(
+            int Paragraphs,
+            int Headings,
+            int Lists,
+            int Characters);
+
+        private sealed record SectionImportResponseDto(
+            string Html,
+            SectionImportStatsDto Stats,
+            List<string> Warnings,
+            string Format,
+            Guid TargetSectionId);
 
         private sealed record ExportPrintPayload(string Html);
 

@@ -131,7 +131,7 @@ namespace WriterApp.Application.Documents
                 }
             }
 
-            return await CreateSnapshotAsync(userId, page, content, "autosnap", allowDuplicate: false, ct);
+            return await CreateSnapshotAsync(userId, page, content ?? string.Empty, "autosnap", allowDuplicate: false, ct);
         }
 
         public async Task<IReadOnlyList<PageVersionRecord>> ListVersionsAsync(

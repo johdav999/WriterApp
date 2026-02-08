@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
@@ -14,6 +15,10 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
+using System.IO.Compression;
+using WriterApp.Application.Importing;
+using WriterApp.Application.Commands;
+using WriterApp.Application.State;
 using WriterApp.Application.Diagnostics;
 
 namespace WriterApp.Controllers
@@ -31,6 +36,8 @@ namespace WriterApp.Controllers
         private readonly AppDbContext _dbContext;
         private readonly ILogger<SectionsController> _logger;
         private readonly IConfiguration _configuration;
+        private readonly IPageVersionService _pageVersionService;
+        private readonly ISectionImportService _sectionImportService;
 
         public SectionsController(
             IDocumentRepository documents,
@@ -40,7 +47,9 @@ namespace WriterApp.Controllers
             ISearchIndexService searchIndex,
             AppDbContext dbContext,
             ILogger<SectionsController> logger,
-            IConfiguration configuration)
+            IConfiguration configuration,
+            IPageVersionService pageVersionService,
+            ISectionImportService sectionImportService)
         {
             _documents = documents ?? throw new ArgumentNullException(nameof(documents));
             _sections = sections ?? throw new ArgumentNullException(nameof(sections));
@@ -50,6 +59,8 @@ namespace WriterApp.Controllers
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+            _pageVersionService = pageVersionService ?? throw new ArgumentNullException(nameof(pageVersionService));
+            _sectionImportService = sectionImportService ?? throw new ArgumentNullException(nameof(sectionImportService));
         }
 
         [HttpGet]
@@ -476,6 +487,144 @@ namespace WriterApp.Controllers
             return Ok(dto);
         }
 
+        [HttpPost("{sectionId:guid}/import")]
+        [RequestSizeLimit(10 * 1024 * 1024)]
+        public async Task<ActionResult<SectionImportResponseDto>> ImportSectionContent(
+            Guid documentId,
+            Guid sectionId,
+            [FromForm] SectionImportFormRequest request,
+            CancellationToken ct)
+        {
+            const int maxFileSizeBytes = 10 * 1024 * 1024;
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            if (!await _documents.ExistsAsync(documentId, userId, ct))
+            {
+                return NotFound();
+            }
+
+            Guid targetSectionId = request.TargetSectionId == Guid.Empty ? sectionId : request.TargetSectionId;
+            SectionRecord? targetSection = await _sections.GetAsync(targetSectionId, userId, ct);
+            if (targetSection is null || targetSection.DocumentId != documentId)
+            {
+                return NotFound(new { message = "Target section was not found." });
+            }
+
+            if (request.File is null || request.File.Length <= 0)
+            {
+                return BadRequest(new { message = "A file is required." });
+            }
+
+            if (request.File.Length > maxFileSizeBytes)
+            {
+                return StatusCode(413, new { message = "File exceeds the 10 MB size limit." });
+            }
+
+            string extension = Path.GetExtension(request.File.FileName ?? string.Empty).ToLowerInvariant();
+            if (extension is not ".txt" and not ".rtf" and not ".docx")
+            {
+                return BadRequest(new { message = "Unsupported file type. Use TXT, RTF, or DOCX." });
+            }
+
+            await using Stream inputStream = request.File.OpenReadStream();
+            byte[] bytes = await ReadAllBytesAsync(inputStream, (int)request.File.Length, ct);
+
+            if (!ValidateSignature(extension, bytes))
+            {
+                return BadRequest(new { message = "File signature does not match extension." });
+            }
+
+            SectionImportOptions options = new(
+                request.NormalizeWhitespace,
+                request.PreserveTxtLineBreaks);
+            SectionImportResult converted = await _sectionImportService.ConvertAsync(
+                request.File.FileName ?? $"upload{extension}",
+                bytes,
+                options,
+                ct);
+
+            List<PageRecord> pages = await _dbContext.Pages
+                .Where(page => page.SectionId == targetSectionId)
+                .OrderBy(page => page.OrderIndex)
+                .ToListAsync(ct);
+            if (pages.Count == 0)
+            {
+                return NotFound(new { message = "Target section has no pages." });
+            }
+
+            string existingHtml = string.Join("\n\n", pages.Select(page => page.Content ?? string.Empty));
+            string importedHtml = converted.Html;
+
+            WriterApp.Domain.Documents.Document tempDocument = BuildTempDocument(targetSectionId, existingHtml);
+            DocumentState tempState = new(tempDocument);
+            CommandProcessor processor = new(tempState);
+            if (string.Equals(request.Mode, "append", StringComparison.OrdinalIgnoreCase))
+            {
+                processor.Execute(new ImportAppendSectionCommand(targetSectionId, importedHtml));
+            }
+            else
+            {
+                processor.Execute(new ImportReplaceSectionCommand(targetSectionId, importedHtml));
+            }
+
+            string finalHtml = tempDocument.Chapters[0].Sections[0].Content.Value ?? string.Empty;
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            PageRecord primaryPage = pages[0];
+
+            await _pageVersionService.CreateSnapshotAsync(
+                userId,
+                primaryPage,
+                existingHtml,
+                "pre-import",
+                allowDuplicate: true,
+                ct);
+
+            primaryPage.Content = finalHtml;
+            primaryPage.UpdatedAt = now;
+            for (int i = 1; i < pages.Count; i++)
+            {
+                pages[i].Content = string.Empty;
+                pages[i].UpdatedAt = now;
+            }
+
+            DocumentRecord? document = await _dbContext.Documents.FirstOrDefaultAsync(item => item.Id == documentId, ct);
+            if (document is not null)
+            {
+                document.UpdatedAt = now;
+            }
+
+            await _dbContext.SaveChangesAsync(ct);
+            await _searchIndex.UpsertPageAsync(primaryPage, ct);
+            await _pageVersionService.CreateSnapshotAsync(
+                userId,
+                primaryPage,
+                finalHtml,
+                "import",
+                allowDuplicate: true,
+                ct);
+
+            _logger.LogInformation(
+                "[IMPORT] Imported format={Format} bytes={Bytes} user={UserId} doc={DocumentId} section={SectionId} mode={Mode} resultChars={Chars}",
+                converted.Format,
+                bytes.Length,
+                userId,
+                documentId,
+                targetSectionId,
+                request.Mode,
+                converted.Stats.Characters);
+
+            return Ok(new SectionImportResponseDto(
+                converted.Html,
+                new SectionImportStatsDto(
+                    converted.Stats.Paragraphs,
+                    converted.Stats.Headings,
+                    converted.Stats.Lists,
+                    converted.Stats.Characters),
+                converted.Warnings.ToList(),
+                converted.Format,
+                targetSectionId));
+        }
+
         [HttpDelete("{sectionId:guid}")]
         public async Task<IActionResult> DeleteSection(Guid documentId, Guid sectionId, CancellationToken ct)
         {
@@ -724,5 +873,99 @@ namespace WriterApp.Controllers
 
             return candidate;
         }
+
+        private static async Task<byte[]> ReadAllBytesAsync(Stream stream, int expectedSize, CancellationToken ct)
+        {
+            using MemoryStream buffer = expectedSize > 0 ? new MemoryStream(expectedSize) : new MemoryStream();
+            await stream.CopyToAsync(buffer, ct);
+            return buffer.ToArray();
+        }
+
+        private static bool ValidateSignature(string extension, byte[] bytes)
+        {
+            if (extension == ".txt")
+            {
+                return true;
+            }
+
+            if (extension == ".rtf")
+            {
+                string prefix = Encoding.ASCII.GetString(bytes.AsSpan(0, Math.Min(bytes.Length, 8)));
+                return prefix.StartsWith(@"{\rtf", StringComparison.OrdinalIgnoreCase);
+            }
+
+            if (extension == ".docx")
+            {
+                if (bytes.Length < 4 || bytes[0] != 0x50 || bytes[1] != 0x4B)
+                {
+                    return false;
+                }
+
+                try
+                {
+                    using MemoryStream ms = new(bytes, writable: false);
+                    using ZipArchive zip = new(ms, ZipArchiveMode.Read, leaveOpen: true);
+                    return zip.Entries.Any(entry =>
+                        string.Equals(entry.FullName, "word/document.xml", StringComparison.OrdinalIgnoreCase));
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+
+            return false;
+        }
+
+        private static WriterApp.Domain.Documents.Document BuildTempDocument(Guid sectionId, string existingHtml)
+        {
+            return new WriterApp.Domain.Documents.Document
+            {
+                DocumentId = Guid.NewGuid(),
+                Metadata = new Domain.Documents.DocumentMetadata(),
+                Chapters = new List<Domain.Documents.Chapter>
+                {
+                    new()
+                    {
+                        Order = 0,
+                        Title = "Import",
+                        Sections = new List<Domain.Documents.Section>
+                        {
+                            new()
+                            {
+                                SectionId = sectionId,
+                                Order = 0,
+                                Title = "Import",
+                                Content = new Domain.Documents.SectionContent
+                                {
+                                    Format = "html",
+                                    Value = existingHtml ?? string.Empty
+                                }
+                            }
+                        }
+                    }
+                }
+            };
+        }
     }
+
+    public sealed record SectionImportFormRequest(
+        IFormFile? File,
+        Guid TargetSectionId,
+        string Mode,
+        bool NormalizeWhitespace = true,
+        bool PreserveTxtLineBreaks = false);
+
+    public sealed record SectionImportStatsDto(
+        int Paragraphs,
+        int Headings,
+        int Lists,
+        int Characters);
+
+    public sealed record SectionImportResponseDto(
+        string Html,
+        SectionImportStatsDto Stats,
+        List<string> Warnings,
+        string Format,
+        Guid TargetSectionId);
 }
