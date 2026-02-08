@@ -7,12 +7,14 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using WriterApp.AI.Abstractions;
 using WriterApp.AI.Actions;
 using WriterApp.Application.AI;
 using WriterApp.Application.Commands;
 using WriterApp.Application.Documents;
 using WriterApp.Application.Security;
+using WriterApp.Application.Synopsis;
 using WriterApp.Application.State;
 using WriterApp.Data;
 using WriterApp.Data.Documents;
@@ -300,7 +302,8 @@ namespace WriterApp.Controllers
                 return BadRequest(new { message = "document has no sections." });
             }
 
-            if (string.Equals(actionKey, GenerateOutlineAction.ActionIdValue, StringComparison.Ordinal))
+            if (string.Equals(actionKey, GenerateOutlineAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(actionKey, GenerateOutlineFromSynopsisAction.ActionIdValue, StringComparison.Ordinal))
             {
                 resolvedSectionId ??= sectionRecords.First().Id;
             }
@@ -325,6 +328,9 @@ namespace WriterApp.Controllers
             }
 
             bool outlineTruncated = false;
+            DocumentSynopsisRecord? synopsisRecord = await _dbContext.DocumentSynopses
+                .AsNoTracking()
+                .FirstOrDefaultAsync(item => item.DocumentId == documentId, ct);
             Document aiDocument;
             if (string.Equals(actionKey, GenerateOutlineAction.ActionIdValue, StringComparison.Ordinal))
             {
@@ -336,7 +342,7 @@ namespace WriterApp.Controllers
             }
             else
             {
-                aiDocument = await BuildAiDocumentAsync(documentRecord, sectionRecords, userId, ct);
+                aiDocument = await BuildAiDocumentAsync(documentRecord, sectionRecords, userId, synopsisRecord, ct);
             }
             TextRange selectionRange = BuildSelectionRange(request);
             string selectedText = request.OriginalText ?? string.Empty;
@@ -411,6 +417,14 @@ namespace WriterApp.Controllers
 
                 wasTruncated = outlineTruncated;
             }
+            else if (string.Equals(actionKey, GenerateOutlineFromSynopsisAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                if (OutlineDraftParser.TryParse(proposal.ProposedText, out OutlineDraft? outline) && outline is not null)
+                {
+                    outlineNodes = BuildNodesFromOutlineDraft(documentId, outline);
+                    previewText = BuildOutlinePreview(outlineNodes);
+                }
+            }
             else if (IsSceneCardAction(actionKey))
             {
                 if (TryParseSceneCardProposal(proposal.ProposedText, out SectionSceneCardProposalDto? parsed, out string? explanation))
@@ -458,7 +472,8 @@ namespace WriterApp.Controllers
         private static IReadOnlyList<string> BuildRequiredInputs(IAiAction action)
         {
             List<string> inputs = new() { "documentId" };
-            if (!string.Equals(action.ActionId, GenerateOutlineAction.ActionIdValue, StringComparison.Ordinal))
+            if (!string.Equals(action.ActionId, GenerateOutlineAction.ActionIdValue, StringComparison.Ordinal)
+                && !string.Equals(action.ActionId, GenerateOutlineFromSynopsisAction.ActionIdValue, StringComparison.Ordinal))
             {
                 inputs.Add("sectionId");
             }
@@ -489,6 +504,7 @@ namespace WriterApp.Controllers
             DocumentRecord record,
             IReadOnlyList<SectionRecord> sections,
             string ownerUserId,
+            DocumentSynopsisRecord? synopsisRecord,
             CancellationToken ct)
         {
             List<Section> domainSections = new();
@@ -530,7 +546,8 @@ namespace WriterApp.Controllers
                     CreatedUtc = record.CreatedAt.UtcDateTime,
                     ModifiedUtc = record.UpdatedAt.UtcDateTime
                 },
-                Chapters = new List<Chapter> { chapter }
+                Chapters = new List<Chapter> { chapter },
+                Synopsis = MapSynopsis(synopsisRecord)
             };
         }
 
@@ -595,6 +612,55 @@ namespace WriterApp.Controllers
             };
 
             return (doc, truncated);
+        }
+
+        private static Synopsis MapSynopsis(DocumentSynopsisRecord? record)
+        {
+            if (record is null)
+            {
+                return new Synopsis { ModifiedUtc = DateTime.UtcNow };
+            }
+
+            return new Synopsis
+            {
+                Logline = record.Logline ?? string.Empty,
+                Premise = record.Premise ?? string.Empty,
+                Theme = record.Theme ?? string.Empty,
+                ProtagonistArc = record.ProtagonistArc ?? string.Empty,
+                CentralConflict = record.CentralConflict ?? string.Empty,
+                Stakes = record.Stakes ?? string.Empty,
+                Setting = record.Setting ?? string.Empty,
+                EndingIntent = record.EndingIntent ?? string.Empty,
+                OpenQuestions = record.OpenQuestions ?? string.Empty,
+                Notes = record.Notes ?? string.Empty,
+                ModifiedUtc = record.UpdatedAt.UtcDateTime
+            };
+        }
+
+        private static List<DocumentOutlineNodeDto> BuildNodesFromOutlineDraft(Guid documentId, OutlineDraft outline)
+        {
+            List<DocumentOutlineNodeDto> nodes = new();
+            for (int i = 0; i < outline.Items.Count; i++)
+            {
+                OutlineItemDraft item = outline.Items[i];
+                string notes = item.Summary;
+                if (item.Beats.Count > 0)
+                {
+                    string beats = string.Join('\n', item.Beats.Select(beat => $"- {beat}"));
+                    notes = string.IsNullOrWhiteSpace(notes) ? beats : $"{notes}\n{beats}";
+                }
+
+                nodes.Add(new DocumentOutlineNodeDto(
+                    Guid.NewGuid(),
+                    documentId,
+                    null,
+                    i,
+                    string.IsNullOrWhiteSpace(item.Title) ? $"Item {i + 1}" : item.Title.Trim(),
+                    string.IsNullOrWhiteSpace(notes) ? null : notes,
+                    null));
+            }
+
+            return nodes;
         }
 
         private static bool TryParseOutlineNodes(string? json, out List<DocumentOutlineNodeDto> nodes)

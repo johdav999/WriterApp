@@ -175,6 +175,10 @@ namespace WriterApp.AI.Core
             }
             else if (string.Equals(action.ActionId, ExtractCharacterBibleAction.ActionIdValue, StringComparison.Ordinal)
                 || string.Equals(action.ActionId, ExtractPlaceBibleAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(action.ActionId, ExtractTimelineBibleAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(action.ActionId, RefreshCharacterBibleAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(action.ActionId, RefreshPlaceBibleAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(action.ActionId, RefreshTimelineBibleAction.ActionIdValue, StringComparison.Ordinal)
                 || string.Equals(action.ActionId, ContinuityCheckAction.ActionIdValue, StringComparison.Ordinal))
             {
                 AiArtifact? textArtifact = result.Artifacts.FirstOrDefault(artifact => artifact.Modality == AiModality.Text);
@@ -281,7 +285,11 @@ namespace WriterApp.AI.Core
             }
 
             if (string.Equals(actionId, ExtractCharacterBibleAction.ActionIdValue, StringComparison.Ordinal)
-                || string.Equals(actionId, ExtractPlaceBibleAction.ActionIdValue, StringComparison.Ordinal))
+                || string.Equals(actionId, ExtractPlaceBibleAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(actionId, ExtractTimelineBibleAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(actionId, RefreshCharacterBibleAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(actionId, RefreshPlaceBibleAction.ActionIdValue, StringComparison.Ordinal)
+                || string.Equals(actionId, RefreshTimelineBibleAction.ActionIdValue, StringComparison.Ordinal))
             {
                 return "Document";
             }
@@ -371,6 +379,26 @@ namespace WriterApp.AI.Core
             if (string.Equals(actionId, ExtractPlaceBibleAction.ActionIdValue, StringComparison.Ordinal))
             {
                 return "Build place bible";
+            }
+
+            if (string.Equals(actionId, ExtractTimelineBibleAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Build timeline bible";
+            }
+
+            if (string.Equals(actionId, RefreshCharacterBibleAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Refresh character bible";
+            }
+
+            if (string.Equals(actionId, RefreshPlaceBibleAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Refresh place bible";
+            }
+
+            if (string.Equals(actionId, RefreshTimelineBibleAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Refresh timeline bible";
             }
 
             if (string.Equals(actionId, ContinuityCheckAction.ActionIdValue, StringComparison.Ordinal))

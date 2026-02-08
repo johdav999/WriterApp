@@ -31,6 +31,16 @@ namespace WriterApp.AI.Actions
 
         public abstract AiRequest BuildRequest(AiActionInput input);
 
+        protected static string GetOption(Dictionary<string, object?>? options, string key)
+        {
+            if (options is null || !options.TryGetValue(key, out object? value) || value is null)
+            {
+                return string.Empty;
+            }
+
+            return value.ToString() ?? string.Empty;
+        }
+
         protected static string BuildSectionContext(Document document, int maxSectionChars = 2200, int maxSections = 40)
         {
             IEnumerable<Section> sections = document.Chapters
@@ -157,6 +167,217 @@ namespace WriterApp.AI.Actions
         }
     }
 
+    public sealed class ExtractTimelineBibleAction : ContinuityActionBase
+    {
+        public const string ActionIdValue = "continuity.extract_timeline_bible";
+
+        public ExtractTimelineBibleAction()
+            : base(ActionIdValue, "Extract timeline bible")
+        {
+        }
+
+        public override AiRequest BuildRequest(AiActionInput input)
+        {
+            if (input is null)
+            {
+                throw new ArgumentNullException(nameof(input));
+            }
+
+            string context = BuildSectionContext(input.Document);
+            Dictionary<string, object> inputs = new()
+            {
+                ["instruction"] = "Extract a timeline bible from manuscript context.",
+                ["context"] = context,
+                ["output_contract"] = "Return strict JSON only: {\"schemaVersion\":\"1.0\",\"events\":[{\"id\":\"evt_...\",\"title\":\"...\",\"timeRef\":\"...\",\"order\":1,\"locationId\":\"\",\"participants\":[\"chr_...\"],\"summary\":\"...\",\"evidence\":[{\"sectionId\":\"<guid>\",\"quote\":\"...\"}],\"constraints\":[\"...\"],\"lastUpdatedUtc\":\"...\"}]}"
+            };
+
+            return new AiRequest(
+                Guid.NewGuid(),
+                ActionId,
+                Modalities,
+                new AiRequestContext(
+                    input.Document.DocumentId,
+                    input.ActiveSectionId,
+                    new TextRange(0, 0),
+                    context,
+                    input.Document.Metadata.Title,
+                    null,
+                    null,
+                    input.Document.Metadata.Language,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null),
+                inputs,
+                new Dictionary<string, object>(),
+                new Dictionary<string, object>());
+        }
+    }
+
+    public sealed class RefreshCharacterBibleAction : ContinuityActionBase
+    {
+        public const string ActionIdValue = "continuity.refresh_character_bible";
+
+        public RefreshCharacterBibleAction()
+            : base(ActionIdValue, "Refresh character bible")
+        {
+        }
+
+        public override AiRequest BuildRequest(AiActionInput input)
+        {
+            if (input is null)
+            {
+                throw new ArgumentNullException(nameof(input));
+            }
+
+            string existingJson = GetOption(input.Options, "existing_bible_json");
+            string deltaJson = GetOption(input.Options, "delta_sections_json");
+            string fullRebuild = GetOption(input.Options, "full_rebuild");
+
+            Dictionary<string, object> inputs = new()
+            {
+                ["instruction"] = "Update character bible incrementally from changed sections.",
+                ["existing_bible_json"] = existingJson,
+                ["delta_sections_json"] = deltaJson,
+                ["full_rebuild"] = fullRebuild,
+                ["output_contract"] = "Return strict JSON patch only: {\"bibleType\":\"Character\",\"schemaVersion\":1,\"ops\":[{\"op\":\"upsertCharacter\",\"id\":\"chr_...\",\"data\":{...}},{\"op\":\"mergeCharacterFacts\",\"id\":\"chr_...\",\"addFacts\":[...]},{\"op\":\"flagReview\",\"target\":{\"type\":\"character\",\"id\":\"chr_...\"},\"reason\":\"...\"}],\"stats\":{\"updatedEntries\":0,\"newEntries\":0,\"flags\":0}}"
+            };
+
+            return new AiRequest(
+                Guid.NewGuid(),
+                ActionId,
+                Modalities,
+                new AiRequestContext(
+                    input.Document.DocumentId,
+                    input.ActiveSectionId,
+                    new TextRange(0, 0),
+                    deltaJson,
+                    input.Document.Metadata.Title,
+                    null,
+                    null,
+                    input.Document.Metadata.Language,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null),
+                inputs,
+                new Dictionary<string, object>(),
+                new Dictionary<string, object>());
+        }
+    }
+
+    public sealed class RefreshPlaceBibleAction : ContinuityActionBase
+    {
+        public const string ActionIdValue = "continuity.refresh_place_bible";
+
+        public RefreshPlaceBibleAction()
+            : base(ActionIdValue, "Refresh place bible")
+        {
+        }
+
+        public override AiRequest BuildRequest(AiActionInput input)
+        {
+            if (input is null)
+            {
+                throw new ArgumentNullException(nameof(input));
+            }
+
+            string existingJson = GetOption(input.Options, "existing_bible_json");
+            string deltaJson = GetOption(input.Options, "delta_sections_json");
+            string fullRebuild = GetOption(input.Options, "full_rebuild");
+
+            Dictionary<string, object> inputs = new()
+            {
+                ["instruction"] = "Update place bible incrementally from changed sections.",
+                ["existing_bible_json"] = existingJson,
+                ["delta_sections_json"] = deltaJson,
+                ["full_rebuild"] = fullRebuild,
+                ["output_contract"] = "Return strict JSON patch only: {\"bibleType\":\"Place\",\"schemaVersion\":1,\"ops\":[{\"op\":\"upsertPlace\",\"id\":\"plc_...\",\"data\":{...}},{\"op\":\"mergePlaceFacts\",\"id\":\"plc_...\",\"addFacts\":[...]},{\"op\":\"flagReview\",\"target\":{\"type\":\"place\",\"id\":\"plc_...\"},\"reason\":\"...\"}],\"stats\":{\"updatedEntries\":0,\"newEntries\":0,\"flags\":0}}"
+            };
+
+            return new AiRequest(
+                Guid.NewGuid(),
+                ActionId,
+                Modalities,
+                new AiRequestContext(
+                    input.Document.DocumentId,
+                    input.ActiveSectionId,
+                    new TextRange(0, 0),
+                    deltaJson,
+                    input.Document.Metadata.Title,
+                    null,
+                    null,
+                    input.Document.Metadata.Language,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null),
+                inputs,
+                new Dictionary<string, object>(),
+                new Dictionary<string, object>());
+        }
+    }
+
+    public sealed class RefreshTimelineBibleAction : ContinuityActionBase
+    {
+        public const string ActionIdValue = "continuity.refresh_timeline_bible";
+
+        public RefreshTimelineBibleAction()
+            : base(ActionIdValue, "Refresh timeline bible")
+        {
+        }
+
+        public override AiRequest BuildRequest(AiActionInput input)
+        {
+            if (input is null)
+            {
+                throw new ArgumentNullException(nameof(input));
+            }
+
+            string existingJson = GetOption(input.Options, "existing_bible_json");
+            string deltaJson = GetOption(input.Options, "delta_sections_json");
+            string fullRebuild = GetOption(input.Options, "full_rebuild");
+
+            Dictionary<string, object> inputs = new()
+            {
+                ["instruction"] = "Update timeline bible incrementally from changed sections.",
+                ["existing_bible_json"] = existingJson,
+                ["delta_sections_json"] = deltaJson,
+                ["full_rebuild"] = fullRebuild,
+                ["output_contract"] = "Return strict JSON patch only: {\"bibleType\":\"Timeline\",\"schemaVersion\":1,\"ops\":[{\"op\":\"upsertTimelineEvent\",\"id\":\"evt_...\",\"data\":{...}},{\"op\":\"flagReview\",\"target\":{\"type\":\"timeline\",\"id\":\"evt_...\"},\"reason\":\"...\"}],\"stats\":{\"updatedEntries\":0,\"newEntries\":0,\"flags\":0}}"
+            };
+
+            return new AiRequest(
+                Guid.NewGuid(),
+                ActionId,
+                Modalities,
+                new AiRequestContext(
+                    input.Document.DocumentId,
+                    input.ActiveSectionId,
+                    new TextRange(0, 0),
+                    deltaJson,
+                    input.Document.Metadata.Title,
+                    null,
+                    null,
+                    input.Document.Metadata.Language,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null),
+                inputs,
+                new Dictionary<string, object>(),
+                new Dictionary<string, object>());
+        }
+    }
+
     public sealed class ContinuityCheckAction : ContinuityActionBase
     {
         public const string ActionIdValue = "continuity.check_section";
@@ -176,6 +397,7 @@ namespace WriterApp.AI.Actions
             string sectionText = ResolveSectionText(input.Document, input.ActiveSectionId);
             string characterBibleJson = GetOption(input.Options, "character_bible_json");
             string placeBibleJson = GetOption(input.Options, "place_bible_json");
+            string timelineBibleJson = GetOption(input.Options, "timeline_bible_json");
 
             Dictionary<string, object> inputs = new()
             {
@@ -183,6 +405,7 @@ namespace WriterApp.AI.Actions
                 ["section_text"] = sectionText,
                 ["character_bible_json"] = characterBibleJson,
                 ["place_bible_json"] = placeBibleJson,
+                ["timeline_bible_json"] = timelineBibleJson,
                 ["output_contract"] = "Return strict JSON only: {\"schemaVersion\":\"1.0\",\"issues\":[{\"severity\":\"low|medium|high|critical\",\"type\":\"character|place|timeline\",\"message\":\"...\",\"evidence\":{\"sectionId\":\"<guid>\",\"quote\":\"...\"},\"suggestedFix\":\"...\",\"anchor\":{\"plainTextStart\":0,\"plainTextLength\":10}}]}"
             };
 
@@ -228,15 +451,6 @@ namespace WriterApp.AI.Actions
             return string.Empty;
         }
 
-        private static string GetOption(Dictionary<string, object?>? options, string key)
-        {
-            if (options is null || !options.TryGetValue(key, out object? value) || value is null)
-            {
-                return string.Empty;
-            }
-
-            return value.ToString() ?? string.Empty;
-        }
     }
 
     public sealed class ApplyContinuityFixAction : ContinuityActionBase
@@ -291,14 +505,5 @@ namespace WriterApp.AI.Actions
                 new Dictionary<string, object>());
         }
 
-        private static string GetOption(Dictionary<string, object?>? options, string key)
-        {
-            if (options is null || !options.TryGetValue(key, out object? value) || value is null)
-            {
-                return string.Empty;
-            }
-
-            return value.ToString() ?? string.Empty;
-        }
     }
 }

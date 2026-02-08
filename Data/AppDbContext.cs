@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using WriterApp.Data.AI;
+using WriterApp.Data.Continuity;
 using WriterApp.Data.Documents;
 using WriterApp.Data.Exporting;
 using WriterApp.Data.Subscriptions;
@@ -36,6 +37,7 @@ namespace WriterApp.Data
         public DbSet<AiActionHistoryEntryRecord> AiActionHistoryEntries => Set<AiActionHistoryEntryRecord>();
         public DbSet<AiActionAppliedEventRecord> AiActionAppliedEvents => Set<AiActionAppliedEventRecord>();
         public DbSet<PromptPresetRecord> PromptPresets => Set<PromptPresetRecord>();
+        public DbSet<BibleSnapshotRecord> BibleSnapshots => Set<BibleSnapshotRecord>();
         public DbSet<ExportTemplate> ExportTemplates => Set<ExportTemplate>();
         public DbSet<ExportPreset> ExportPresets => Set<ExportPreset>();
         public DbSet<ProjectExportSettings> ProjectExportSettings => Set<ProjectExportSettings>();
@@ -372,6 +374,26 @@ namespace WriterApp.Data
                 entity.HasIndex(preset => new { preset.OwnerUserId, preset.ProjectId });
                 entity.HasIndex(preset => new { preset.OwnerUserId, preset.Kind });
                 entity.HasIndex(preset => preset.UpdatedUtc);
+            });
+
+            builder.Entity<BibleSnapshotRecord>(entity =>
+            {
+                entity.HasKey(snapshot => snapshot.Id);
+                entity.Property(snapshot => snapshot.DocumentId).IsRequired();
+                entity.Property(snapshot => snapshot.BibleType).IsRequired();
+                entity.Property(snapshot => snapshot.SchemaVersion).IsRequired();
+                entity.Property(snapshot => snapshot.ContentJson).IsRequired();
+                entity.Property(snapshot => snapshot.CreatedUtc).IsRequired();
+                entity.Property(snapshot => snapshot.UpdatedUtc).IsRequired();
+                entity.Property(snapshot => snapshot.LastRefreshSourceHash).IsRequired();
+                entity.Property(snapshot => snapshot.LastRefreshStatsJson).IsRequired();
+                entity.Property(snapshot => snapshot.LastRefreshCursorJson).IsRequired();
+                entity.HasIndex(snapshot => new { snapshot.DocumentId, snapshot.BibleType }).IsUnique();
+                entity.HasIndex(snapshot => snapshot.LastRefreshUtc);
+                entity.HasOne<DocumentRecord>()
+                    .WithMany()
+                    .HasForeignKey(snapshot => snapshot.DocumentId)
+                    .OnDelete(DeleteBehavior.Cascade);
             });
 
             builder.Entity<ExportTemplate>(entity =>
