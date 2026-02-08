@@ -6,6 +6,7 @@
 @inject LastOpenedDocumentStateService LastOpenedDocumentStateService
 @inject HttpClient Http
 @inject NavigationManager Navigation
+@inject IConfiguration Configuration
 
 <div class="top-row ps-3 navbar navbar-dark">
     <div class="container-fluid">
@@ -55,11 +56,20 @@
                 <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Documents
             </a>
         </div>
+        @if (_projectsEnabled)
+        {
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="projects" Match="NavLinkMatch.Prefix" title="Plan structure in Projects view.">
+                    <span class="bi bi-diagram-nav-menu" aria-hidden="true"></span> Projects
+                </NavLink>
+            </div>
+        }
     </nav>
 </div>
 
 @code {
     private bool collapseNavMenu = true;
+    private bool _projectsEnabled;
 
     private string? NavMenuCssClass => collapseNavMenu ? "collapse" : null;
 
@@ -70,6 +80,7 @@
 
     protected override void OnInitialized()
     {
+        _projectsEnabled = true;
         CurrentDocumentStateService.Changed += HandleDocumentStateChange;
     }
 

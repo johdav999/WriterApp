@@ -1,0 +1,985 @@
+@page "/projects"
+@using System.Net
+@using System.Net.Http.Json
+@using WriterApp.Application.Documents
+@inject HttpClient Http
+@inject NavigationManager Navigation
+@inject IConfiguration Configuration
+@inject WriterApp.Client.State.CurrentDocumentStateService CurrentDocumentStateService
+@implements IAsyncDisposable
+
+<PageTitle>Projects</PageTitle>
+
+@if (!_projectsEnabled)
+{
+    <div class="projects-disabled">
+        Projects workflow is disabled by configuration.
+    </div>
+}
+else
+{
+    <div class="projects-page">
+        <header class="projects-header">
+            <div>
+                <h1>Projects</h1>
+                <p class="projects-subtitle">Manuscript-level structure with Parts, Chapters, and Scenes.</p>
+            </div>
+            <div class="projects-actions">
+                <button type="button" class="primary" @onclick="CreateProjectAsync" disabled="@_creatingProject">
+                    @(_creatingProject ? "Creating..." : "New project")
+                </button>
+                <button type="button"
+                        class="secondary"
+                        @onclick="CreateFromDocumentAsync"
+                        disabled="@(_creatingFromDocument || !CurrentDocumentStateService.DocumentId.HasValue)">
+                    @(_creatingFromDocument ? "Creating..." : "From current document")
+                </button>
+            </div>
+        </header>
+
+        @if (!string.IsNullOrWhiteSpace(_error))
+        {
+            <div class="projects-error">@_error</div>
+        }
+
+        <div class="projects-toolbar">
+            <label for="project-switcher">Project</label>
+            <select id="project-switcher" @onchange="OnProjectSelectionChanged" value="@(_selectedProjectId?.ToString() ?? string.Empty)">
+                <option value="">Select a project</option>
+                @foreach (ProjectDto project in _projects)
+                {
+                    <option value="@project.Id">@project.Title</option>
+                }
+            </select>
+            @if (_activeProject is not null)
+            {
+                <span class="projects-total">@_activeProject.TotalWordCount words</span>
+            }
+        </div>
+        @if (_activeProject is not null)
+        {
+            <div class="projects-tabs" role="tablist" aria-label="Project workspace tabs">
+                <button type="button"
+                        class="@GetTabClass("structure")"
+                        @onclick='() => SelectTab("structure")'>
+                    Structure
+                </button>
+                @if (_goalsEnabled)
+                {
+                    <button type="button"
+                            class="@GetTabClass("progress")"
+                            @onclick='() => SelectTab("progress")'>
+                        Progress
+                    </button>
+                }
+            </div>
+        }
+
+        @if (_loading)
+        {
+            <div class="projects-loading">Loading projects...</div>
+        }
+        else if (_activeProject is null)
+        {
+            <div class="projects-empty">Create a project to begin structuring your manuscript.</div>
+        }
+        else
+        {
+            @if (_activeTab == "progress" && _goalsEnabled)
+            {
+                <div class="projects-progress">
+                    @if (_progress is null)
+                    {
+                        <div class="projects-loading">Loading progress...</div>
+                    }
+                    else
+                    {
+                        <section class="progress-card">
+                            <h3>Targets</h3>
+                            <div class="progress-targets">
+                                <label>Daily target</label>
+                                <input type="number" min="0" @bind="_dailyTargetDraft" />
+                                <label>Weekly target</label>
+                                <input type="number" min="0" @bind="_weeklyTargetDraft" />
+                                <label>Timezone</label>
+                                <input @bind="_timezoneDraft" />
+                                <button type="button" class="primary" @onclick="SaveGoalsAsync">Save targets</button>
+                            </div>
+                        </section>
+
+                        <section class="progress-card">
+                            <h3>Progress</h3>
+                            <div class="progress-grid">
+                                <div><strong>Today:</strong> @_progress.TodayWords / @_progress.Goal.DailyTargetWords</div>
+                                <div><strong>This week:</strong> @_progress.ThisWeekWords / @_progress.Goal.WeeklyTargetWords</div>
+                                <div><strong>Streak:</strong> @_progress.StreakCount day(s)</div>
+                                <div><strong>Total words:</strong> @_progress.TotalWordCount</div>
+                            </div>
+                        </section>
+
+                        <section class="progress-card">
+                            <h3>Milestones</h3>
+                            <div class="milestone-create">
+                                <input placeholder="Title" @bind="_milestoneTitleDraft" />
+                                <input type="number" min="0" placeholder="Target words" @bind="_milestoneTargetWordsDraft" />
+                                <button type="button" class="secondary" @onclick="CreateMilestoneAsync">Add milestone</button>
+                            </div>
+                            <ul class="milestone-list">
+                                @foreach (ProjectMilestoneDto milestone in _progress.Milestones)
+                                {
+                                    <li>
+                                        <span>@milestone.Title</span>
+                                        <span>@(milestone.TargetWords?.ToString() ?? "-") words</span>
+                                        <span>@milestone.Status</span>
+                                        @if (string.Equals(milestone.Status, "pending", StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            <button type="button" class="secondary" @onclick="() => CompleteMilestoneAsync(milestone.Id)">Complete</button>
+                                        }
+                                        <button type="button" class="secondary" @onclick="() => DeleteMilestoneAsync(milestone.Id)">Delete</button>
+                                    </li>
+                                }
+                            </ul>
+                        </section>
+
+                        <section class="progress-card">
+                            <h3>Writing session</h3>
+                            @if (_progress.ActiveSession is null)
+                            {
+                                <button type="button" class="primary" @onclick="StartSessionAsync">Start session</button>
+                            }
+                            else
+                            {
+                                <div class="session-live">
+                                    <div><strong>Duration:</strong> @FormatDuration(_sessionElapsedSeconds)</div>
+                                    <div><strong>Words:</strong> @_sessionLiveDelta</div>
+                                </div>
+                                <input placeholder="Session notes (optional)" @bind="_sessionNotesDraft" />
+                                <button type="button" class="primary" @onclick="StopSessionAsync">Stop session</button>
+                            }
+
+                            <ul class="session-list">
+                                @foreach (WritingSessionDto session in _progress.RecentSessions)
+                                {
+                                    <li>
+                                        <span>@session.StartedUtc.LocalDateTime:g</span>
+                                        <span>@FormatDuration(session.DurationSeconds)</span>
+                                        <span>@session.WordsDelta words</span>
+                                        <span>@(session.IsActive ? "active" : "done")</span>
+                                    </li>
+                                }
+                            </ul>
+                        </section>
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="projects-workspace">
+                    <aside class="projects-tree">
+                        <div class="tree-actions">
+                            <button type="button" class="secondary" @onclick="AddPartAsync">Add part</button>
+                            <button type="button" class="secondary" @onclick="AddChapterAsync">Add chapter</button>
+                            <button type="button" class="secondary" @onclick="AddSceneAsync" disabled="@(_selectedNode is null)">Add scene</button>
+                        </div>
+                        <ul class="tree-list">
+                            @foreach (ProjectNodeDto root in GetChildren(null))
+                            {
+                                @RenderNode(root, 0)
+                            }
+                        </ul>
+                    </aside>
+
+                    <section class="projects-main">
+                        @if (_selectedNode is null)
+                        {
+                            <div class="projects-empty">Select a node to edit details.</div>
+                        }
+                        else
+                        {
+                            <div class="node-header">
+                                <input class="node-title-input"
+                                       value="@_renameDraft"
+                                       @oninput="OnRenameInput"
+                                       @onblur="SaveRenameAsync" />
+                                <span class="node-kind">@_selectedNode.NodeType</span>
+                                <span class="node-words">@_selectedNode.WordCountCache words</span>
+                            </div>
+
+                            <div class="node-actions">
+                                @if (IsChapter(_selectedNode))
+                                {
+                                    <button type="button" class="secondary" @onclick="() => AddSceneUnderAsync(_selectedNode.Id)">Add scene under chapter</button>
+                                }
+                                @if (IsScene(_selectedNode) && _selectedNode.LinkedSectionId.HasValue)
+                                {
+                                    <button type="button" class="primary" @onclick="OpenSceneInEditor">
+                                        Open scene in editor
+                                    </button>
+                                }
+                            </div>
+
+                            @if (IsScene(_selectedNode) && !_selectedNode.LinkedSectionId.HasValue)
+                            {
+                                <div class="projects-empty">This scene is not linked to a section yet.</div>
+                            }
+                        }
+                    </section>
+                </div>
+            }
+        }
+    </div>
+}
+
+@code {
+    private bool _projectsEnabled;
+    private bool _loading = true;
+    private bool _creatingProject;
+    private bool _creatingFromDocument;
+    private bool _goalsEnabled;
+    private string _activeTab = "structure";
+    private string? _error;
+    private readonly List<ProjectDto> _projects = new();
+    private readonly List<ProjectNodeDto> _nodes = new();
+    private ProjectDto? _activeProject;
+    private ProjectProgressDashboardDto? _progress;
+    private Guid? _selectedProjectId;
+    private Guid? _selectedNodeId;
+    private string _renameDraft = string.Empty;
+    private Guid? _dragNodeId;
+    private int _dailyTargetDraft;
+    private int _weeklyTargetDraft;
+    private string _timezoneDraft = "UTC";
+    private string _milestoneTitleDraft = string.Empty;
+    private int? _milestoneTargetWordsDraft;
+    private string _sessionNotesDraft = string.Empty;
+    private CancellationTokenSource? _sessionTickerCts;
+    private int _sessionElapsedSeconds;
+    private int _sessionLiveDelta;
+
+    private ProjectNodeDto? _selectedNode =>
+        _selectedNodeId.HasValue ? _nodes.FirstOrDefault(node => node.Id == _selectedNodeId.Value) : null;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _projectsEnabled = Configuration.GetValue<bool?>("Workflow:ProjectsEnabled")
+            ?? Configuration.GetValue<bool?>("WriterApp:Workflow:ProjectsEnabled")
+            ?? false;
+        _goalsEnabled = Configuration.GetValue<bool?>("Workflow:GoalsEnabled")
+            ?? Configuration.GetValue<bool?>("WriterApp:Workflow:GoalsEnabled")
+            ?? false;
+
+        if (!_projectsEnabled)
+        {
+            _loading = false;
+            return;
+        }
+
+        await LoadProjectsAsync();
+    }
+
+    private async Task LoadProjectsAsync()
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            using HttpResponseMessage response = await Http.GetAsync("api/projects");
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                _projectsEnabled = false;
+                return;
+            }
+
+            response.EnsureSuccessStatusCode();
+            List<ProjectDto>? projects = await response.Content.ReadFromJsonAsync<List<ProjectDto>>();
+            _projects.Clear();
+            _projects.AddRange((projects ?? new List<ProjectDto>()).OrderByDescending(project => project.UpdatedUtc));
+
+            if (_projects.Count > 0)
+            {
+                _selectedProjectId ??= _projects[0].Id;
+                await LoadTreeAsync(_selectedProjectId.Value);
+            }
+            else
+            {
+                _activeProject = null;
+                _nodes.Clear();
+                _selectedNodeId = null;
+                _progress = null;
+                RestartSessionTicker();
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task LoadTreeAsync(Guid projectId)
+    {
+        _error = null;
+        using HttpResponseMessage response = await Http.GetAsync($"api/projects/{projectId}/tree");
+        if (!response.IsSuccessStatusCode)
+        {
+            _error = "Failed to load project tree.";
+            return;
+        }
+
+        ProjectTreeDto? tree = await response.Content.ReadFromJsonAsync<ProjectTreeDto>();
+        if (tree is null)
+        {
+            _error = "Failed to load project tree.";
+            return;
+        }
+
+        _activeProject = tree.Project;
+        _nodes.Clear();
+        _nodes.AddRange(tree.Nodes.OrderBy(node => node.ParentId).ThenBy(node => node.OrderIndex));
+        if (_selectedNodeId.HasValue && _nodes.All(node => node.Id != _selectedNodeId.Value))
+        {
+            _selectedNodeId = null;
+        }
+
+        if (!_selectedNodeId.HasValue && _nodes.Count > 0)
+        {
+            _selectedNodeId = _nodes[0].Id;
+        }
+
+        if (_selectedNode is not null)
+        {
+            _renameDraft = _selectedNode.Title;
+        }
+
+        if (_goalsEnabled)
+        {
+            await LoadProgressAsync(projectId);
+        }
+    }
+
+    private IEnumerable<ProjectNodeDto> GetChildren(Guid? parentId)
+    {
+        return _nodes
+            .Where(node => node.ParentId == parentId)
+            .OrderBy(node => node.OrderIndex);
+    }
+
+    private string GetTabClass(string tab)
+    {
+        return string.Equals(_activeTab, tab, StringComparison.Ordinal) ? "tab-button is-active" : "tab-button";
+    }
+
+    private async Task SelectTab(string tab)
+    {
+        _activeTab = tab;
+        if (_activeTab == "progress" && _goalsEnabled && _activeProject is not null)
+        {
+            await LoadProgressAsync(_activeProject.Id);
+        }
+    }
+
+    private async Task LoadProgressAsync(Guid projectId)
+    {
+        _error = null;
+        using HttpResponseMessage response = await Http.GetAsync($"api/projects/{projectId}/progress");
+        if (!response.IsSuccessStatusCode)
+        {
+            _progress = null;
+            return;
+        }
+
+        _progress = await response.Content.ReadFromJsonAsync<ProjectProgressDashboardDto>();
+        if (_progress is null)
+        {
+            return;
+        }
+
+        _dailyTargetDraft = _progress.Goal.DailyTargetWords;
+        _weeklyTargetDraft = _progress.Goal.WeeklyTargetWords;
+        _timezoneDraft = string.IsNullOrWhiteSpace(_progress.Goal.Timezone) ? "UTC" : _progress.Goal.Timezone;
+        UpdateSessionTelemetry();
+        RestartSessionTicker();
+    }
+
+    private async Task SaveGoalsAsync()
+    {
+        if (_activeProject is null)
+        {
+            return;
+        }
+
+        ProjectGoalUpdateRequest request = new(
+            Math.Max(0, _dailyTargetDraft),
+            Math.Max(0, _weeklyTargetDraft),
+            _timezoneDraft);
+
+        using HttpResponseMessage response = await Http.PutAsJsonAsync(
+            $"api/projects/{_activeProject.Id}/goals",
+            request);
+        if (!response.IsSuccessStatusCode)
+        {
+            _error = "Saving goals failed.";
+            return;
+        }
+
+        await LoadProgressAsync(_activeProject.Id);
+    }
+
+    private async Task CreateMilestoneAsync()
+    {
+        if (_activeProject is null || string.IsNullOrWhiteSpace(_milestoneTitleDraft))
+        {
+            return;
+        }
+
+        ProjectMilestoneCreateRequest request = new(
+            _milestoneTitleDraft.Trim(),
+            _milestoneTargetWordsDraft,
+            null);
+        using HttpResponseMessage response = await Http.PostAsJsonAsync(
+            $"api/projects/{_activeProject.Id}/milestones",
+            request);
+        if (!response.IsSuccessStatusCode)
+        {
+            _error = "Creating milestone failed.";
+            return;
+        }
+
+        _milestoneTitleDraft = string.Empty;
+        _milestoneTargetWordsDraft = null;
+        await LoadProgressAsync(_activeProject.Id);
+    }
+
+    private async Task CompleteMilestoneAsync(Guid milestoneId)
+    {
+        if (_activeProject is null)
+        {
+            return;
+        }
+
+        ProjectMilestoneUpdateRequest request = new(null, null, null, "completed");
+        using HttpResponseMessage response = await Http.PatchAsJsonAsync(
+            $"api/projects/{_activeProject.Id}/milestones/{milestoneId}",
+            request);
+        if (!response.IsSuccessStatusCode)
+        {
+            _error = "Updating milestone failed.";
+            return;
+        }
+
+        await LoadProgressAsync(_activeProject.Id);
+    }
+
+    private async Task DeleteMilestoneAsync(Guid milestoneId)
+    {
+        if (_activeProject is null)
+        {
+            return;
+        }
+
+        using HttpResponseMessage response = await Http.DeleteAsync($"api/projects/{_activeProject.Id}/milestones/{milestoneId}");
+        if (!response.IsSuccessStatusCode)
+        {
+            _error = "Deleting milestone failed.";
+            return;
+        }
+
+        await LoadProgressAsync(_activeProject.Id);
+    }
+
+    private async Task StartSessionAsync()
+    {
+        if (_activeProject is null)
+        {
+            return;
+        }
+
+        using HttpResponseMessage response = await Http.PostAsync($"api/projects/{_activeProject.Id}/sessions/start", null);
+        if (!response.IsSuccessStatusCode)
+        {
+            _error = "Starting session failed.";
+            return;
+        }
+
+        _sessionNotesDraft = string.Empty;
+        await LoadProgressAsync(_activeProject.Id);
+    }
+
+    private async Task StopSessionAsync()
+    {
+        if (_activeProject is null || _progress?.ActiveSession is null)
+        {
+            return;
+        }
+
+        WritingSessionStopRequest request = new(_sessionNotesDraft);
+        using HttpResponseMessage response = await Http.PostAsJsonAsync(
+            $"api/projects/{_activeProject.Id}/sessions/{_progress.ActiveSession.Id}/stop",
+            request);
+        if (!response.IsSuccessStatusCode)
+        {
+            _error = "Stopping session failed.";
+            return;
+        }
+
+        _sessionNotesDraft = string.Empty;
+        await LoadProgressAsync(_activeProject.Id);
+    }
+
+    private void RestartSessionTicker()
+    {
+        _sessionTickerCts?.Cancel();
+        _sessionTickerCts?.Dispose();
+        _sessionTickerCts = null;
+
+        if (_progress?.ActiveSession is null)
+        {
+            _sessionElapsedSeconds = 0;
+            _sessionLiveDelta = 0;
+            return;
+        }
+
+        _sessionTickerCts = new CancellationTokenSource();
+        CancellationToken token = _sessionTickerCts.Token;
+        _ = Task.Run(async () =>
+        {
+            int tick = 0;
+            while (!token.IsCancellationRequested)
+            {
+                await InvokeAsync(async () =>
+                {
+                    tick++;
+                    if (tick % 15 == 0)
+                    {
+                        await RefreshLiveProgressAsync();
+                    }
+
+                    UpdateSessionTelemetry();
+                    StateHasChanged();
+                });
+
+                try
+                {
+                    await Task.Delay(1000, token);
+                }
+                catch (TaskCanceledException)
+                {
+                    break;
+                }
+            }
+        }, token);
+    }
+
+    private async Task RefreshLiveProgressAsync()
+    {
+        if (_activeProject is null || _progress?.ActiveSession is null)
+        {
+            return;
+        }
+
+        using HttpResponseMessage response = await Http.GetAsync($"api/projects/{_activeProject.Id}/progress");
+        if (!response.IsSuccessStatusCode)
+        {
+            return;
+        }
+
+        ProjectProgressDashboardDto? latest = await response.Content.ReadFromJsonAsync<ProjectProgressDashboardDto>();
+        if (latest is null)
+        {
+            return;
+        }
+
+        _progress = latest;
+    }
+
+    private void UpdateSessionTelemetry()
+    {
+        if (_progress?.ActiveSession is null)
+        {
+            _sessionElapsedSeconds = 0;
+            _sessionLiveDelta = 0;
+            return;
+        }
+
+        _sessionElapsedSeconds = Math.Max(0, (int)(DateTimeOffset.UtcNow - _progress.ActiveSession.StartedUtc).TotalSeconds);
+        _sessionLiveDelta = _progress.ActiveSession.WordsDelta;
+    }
+
+    private static string FormatDuration(int totalSeconds)
+    {
+        int safe = Math.Max(0, totalSeconds);
+        TimeSpan span = TimeSpan.FromSeconds(safe);
+        return $"{(int)span.TotalHours:00}:{span.Minutes:00}:{span.Seconds:00}";
+    }
+
+    private RenderFragment RenderNode(ProjectNodeDto node, int depth) => builder =>
+    {
+        int seq = 0;
+        bool isSelected = _selectedNodeId == node.Id;
+
+        builder.OpenElement(seq++, "li");
+        builder.AddAttribute(seq++, "class", "tree-node");
+        builder.AddAttribute(seq++, "ondragover", EventCallback.Factory.Create<DragEventArgs>(this, OnNodeDragOver));
+        builder.AddAttribute(seq++, "ondrop", EventCallback.Factory.Create<DragEventArgs>(this, () => OnNodeDropAsync(node.Id)));
+
+        builder.OpenElement(seq++, "div");
+        builder.AddAttribute(seq++, "class", isSelected ? "tree-row is-selected" : "tree-row");
+        builder.AddAttribute(seq++, "style", $"padding-left: {depth * 16}px");
+
+        builder.OpenElement(seq++, "button");
+        builder.AddAttribute(seq++, "type", "button");
+        builder.AddAttribute(seq++, "class", "tree-drag");
+        builder.AddAttribute(seq++, "draggable", true);
+        builder.AddAttribute(seq++, "ondragstart", EventCallback.Factory.Create<DragEventArgs>(this, () => OnNodeDragStart(node.Id)));
+        builder.AddContent(seq++, "⋮⋮");
+        builder.CloseElement();
+
+        builder.OpenElement(seq++, "button");
+        builder.AddAttribute(seq++, "type", "button");
+        builder.AddAttribute(seq++, "class", "tree-select");
+        builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => OnNodeSelected(node.Id)));
+        builder.AddContent(seq++, node.Title);
+        builder.CloseElement();
+
+        builder.OpenElement(seq++, "span");
+        builder.AddAttribute(seq++, "class", "tree-node-type");
+        builder.AddContent(seq++, node.NodeType);
+        builder.CloseElement();
+
+        builder.OpenElement(seq++, "span");
+        builder.AddAttribute(seq++, "class", "tree-node-words");
+        builder.AddContent(seq++, $"{node.WordCountCache}");
+        builder.CloseElement();
+
+        builder.CloseElement();
+
+        List<ProjectNodeDto> children = GetChildren(node.Id).ToList();
+        if (children.Count > 0)
+        {
+            builder.OpenElement(seq++, "ul");
+            builder.AddAttribute(seq++, "class", "tree-list");
+            foreach (ProjectNodeDto child in children)
+            {
+                builder.AddContent(seq++, RenderNode(child, depth + 1));
+            }
+
+            builder.CloseElement();
+        }
+
+        builder.CloseElement();
+    };
+
+    private void OnNodeSelected(Guid nodeId)
+    {
+        _selectedNodeId = nodeId;
+        ProjectNodeDto? node = _selectedNode;
+        _renameDraft = node?.Title ?? string.Empty;
+    }
+
+    private void OnRenameInput(ChangeEventArgs args)
+    {
+        _renameDraft = args.Value?.ToString() ?? string.Empty;
+    }
+
+    private async Task SaveRenameAsync()
+    {
+        if (_activeProject is null || _selectedNode is null)
+        {
+            return;
+        }
+
+        string next = _renameDraft.Trim();
+        if (string.IsNullOrWhiteSpace(next) || string.Equals(next, _selectedNode.Title, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        ProjectNodePatchRequest payload = new(
+            next,
+            _selectedNode.ParentId,
+            _selectedNode.LinkedSectionId,
+            _selectedNode.MetadataJson,
+            _selectedNode.NodeType);
+        using HttpResponseMessage response = await Http.PatchAsJsonAsync(
+            $"api/projects/{_activeProject.Id}/nodes/{_selectedNode.Id}",
+            payload);
+        if (!response.IsSuccessStatusCode)
+        {
+            _error = "Rename failed.";
+            return;
+        }
+
+        await RefreshProjectAsync(_activeProject.Id);
+    }
+
+    private async Task RefreshProjectAsync(Guid projectId)
+    {
+        await LoadTreeAsync(projectId);
+
+        using HttpResponseMessage projectsResponse = await Http.GetAsync("api/projects");
+        if (projectsResponse.IsSuccessStatusCode)
+        {
+            List<ProjectDto>? projects = await projectsResponse.Content.ReadFromJsonAsync<List<ProjectDto>>();
+            _projects.Clear();
+            _projects.AddRange((projects ?? new List<ProjectDto>()).OrderByDescending(project => project.UpdatedUtc));
+            _activeProject = _projects.FirstOrDefault(project => project.Id == projectId) ?? _activeProject;
+        }
+    }
+
+    private async Task OnProjectSelectionChanged(ChangeEventArgs args)
+    {
+        string raw = args.Value?.ToString() ?? string.Empty;
+        if (!Guid.TryParse(raw, out Guid projectId))
+        {
+            _selectedProjectId = null;
+            _activeProject = null;
+            _nodes.Clear();
+            _selectedNodeId = null;
+            _progress = null;
+            RestartSessionTicker();
+            return;
+        }
+
+        _selectedProjectId = projectId;
+        await LoadTreeAsync(projectId);
+    }
+
+    private async Task CreateProjectAsync()
+    {
+        _creatingProject = true;
+        _error = null;
+        try
+        {
+            ProjectCreateRequest request = new("Untitled project", null, null, null, null, null);
+            using HttpResponseMessage response = await Http.PostAsJsonAsync("api/projects", request);
+            response.EnsureSuccessStatusCode();
+            ProjectDto? created = await response.Content.ReadFromJsonAsync<ProjectDto>();
+            if (created is null)
+            {
+                _error = "Create project failed.";
+                return;
+            }
+
+            await LoadProjectsAsync();
+            _selectedProjectId = created.Id;
+            await LoadTreeAsync(created.Id);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _creatingProject = false;
+        }
+    }
+
+    private async Task CreateFromDocumentAsync()
+    {
+        Guid? documentId = CurrentDocumentStateService.DocumentId;
+        if (!documentId.HasValue)
+        {
+            return;
+        }
+
+        _creatingFromDocument = true;
+        _error = null;
+        try
+        {
+            using HttpResponseMessage response = await Http.PostAsync($"api/projects/from-document/{documentId.Value}", null);
+            response.EnsureSuccessStatusCode();
+            ProjectTreeDto? tree = await response.Content.ReadFromJsonAsync<ProjectTreeDto>();
+            if (tree is null)
+            {
+                _error = "Create from document failed.";
+                return;
+            }
+
+            await LoadProjectsAsync();
+            _selectedProjectId = tree.Project.Id;
+            await LoadTreeAsync(tree.Project.Id);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _creatingFromDocument = false;
+        }
+    }
+
+    private async Task AddPartAsync()
+    {
+        await AddNodeInternalAsync(null, "part", "New part");
+    }
+
+    private async Task AddChapterAsync()
+    {
+        Guid? parent = _selectedNode is not null && IsPart(_selectedNode) ? _selectedNode.Id : null;
+        await AddNodeInternalAsync(parent, "chapter", "New chapter");
+    }
+
+    private async Task AddSceneAsync()
+    {
+        if (_selectedNode is null)
+        {
+            return;
+        }
+
+        Guid? parent = null;
+        if (IsChapter(_selectedNode))
+        {
+            parent = _selectedNode.Id;
+        }
+        else if (IsScene(_selectedNode))
+        {
+            parent = _selectedNode.ParentId;
+        }
+
+        await AddNodeInternalAsync(parent, "scene", "New scene");
+    }
+
+    private async Task AddSceneUnderAsync(Guid chapterId)
+    {
+        await AddNodeInternalAsync(chapterId, "scene", "New scene");
+    }
+
+    private async Task AddNodeInternalAsync(Guid? parentId, string nodeType, string title)
+    {
+        if (_activeProject is null)
+        {
+            return;
+        }
+
+        ProjectNodeCreateRequest request = new(parentId, nodeType, title, null, null, null);
+        using HttpResponseMessage response = await Http.PostAsJsonAsync($"api/projects/{_activeProject.Id}/nodes", request);
+        if (!response.IsSuccessStatusCode)
+        {
+            _error = "Add node failed.";
+            return;
+        }
+
+        await RefreshProjectAsync(_activeProject.Id);
+    }
+
+    private void OnNodeDragStart(Guid nodeId)
+    {
+        _dragNodeId = nodeId;
+    }
+
+    private Task OnNodeDragOver(DragEventArgs args)
+    {
+        return Task.CompletedTask;
+    }
+
+    private async Task OnNodeDropAsync(Guid targetNodeId)
+    {
+        if (_activeProject is null || !_dragNodeId.HasValue || _dragNodeId == targetNodeId)
+        {
+            return;
+        }
+
+        ProjectNodeDto? dragged = _nodes.FirstOrDefault(node => node.Id == _dragNodeId.Value);
+        ProjectNodeDto? target = _nodes.FirstOrDefault(node => node.Id == targetNodeId);
+        if (dragged is null || target is null)
+        {
+            _dragNodeId = null;
+            return;
+        }
+
+        if (dragged.ParentId == target.ParentId)
+        {
+            Guid? parentId = target.ParentId;
+            List<ProjectNodeDto> siblings = GetChildren(parentId).ToList();
+            int from = siblings.FindIndex(node => node.Id == dragged.Id);
+            int to = siblings.FindIndex(node => node.Id == target.Id);
+            if (from >= 0 && to >= 0 && from != to)
+            {
+                ProjectNodeDto moved = siblings[from];
+                siblings.RemoveAt(from);
+                siblings.Insert(to, moved);
+                await SaveSiblingOrderAsync(parentId, siblings.Select(node => node.Id).ToList());
+            }
+        }
+        else if (IsScene(dragged) && IsChapter(target))
+        {
+            ProjectNodePatchRequest patch = new(
+                dragged.Title,
+                target.Id,
+                dragged.LinkedSectionId,
+                dragged.MetadataJson,
+                dragged.NodeType);
+            using HttpResponseMessage patchResponse = await Http.PatchAsJsonAsync(
+                $"api/projects/{_activeProject.Id}/nodes/{dragged.Id}",
+                patch);
+            if (!patchResponse.IsSuccessStatusCode)
+            {
+                _error = "Move node failed.";
+                _dragNodeId = null;
+                return;
+            }
+
+            List<Guid> newOrder = GetChildren(target.Id).Select(node => node.Id).ToList();
+            newOrder.Add(dragged.Id);
+            await SaveSiblingOrderAsync(target.Id, newOrder);
+        }
+
+        _dragNodeId = null;
+        await RefreshProjectAsync(_activeProject.Id);
+    }
+
+    private async Task SaveSiblingOrderAsync(Guid? parentId, List<Guid> order)
+    {
+        if (_activeProject is null)
+        {
+            return;
+        }
+
+        Guid parentRoute = parentId ?? Guid.Empty;
+        ProjectNodeReorderRequest request = new(order);
+        using HttpResponseMessage response = await Http.PostAsJsonAsync(
+            $"api/projects/{_activeProject.Id}/nodes/{parentRoute}/reorder",
+            request);
+        if (!response.IsSuccessStatusCode)
+        {
+            _error = "Reorder failed.";
+        }
+    }
+
+    private void OpenSceneInEditor()
+    {
+        if (_selectedNode?.LinkedSectionId is not Guid sectionId || CurrentDocumentStateService.DocumentId is not Guid documentId)
+        {
+            return;
+        }
+
+        Navigation.NavigateTo($"documents/{documentId}/sections/{sectionId}");
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        _sessionTickerCts?.Cancel();
+        _sessionTickerCts?.Dispose();
+        _sessionTickerCts = null;
+        return ValueTask.CompletedTask;
+    }
+
+    private static bool IsPart(ProjectNodeDto node)
+    {
+        return string.Equals(node.NodeType, "part", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsChapter(ProjectNodeDto node)
+    {
+        return string.Equals(node.NodeType, "chapter", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsScene(ProjectNodeDto node)
+    {
+        return string.Equals(node.NodeType, "scene", StringComparison.OrdinalIgnoreCase);
+    }
+}

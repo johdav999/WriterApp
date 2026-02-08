@@ -365,6 +365,12 @@ namespace WriterApp.Controllers
                 options["emotional_beat"] = sceneCard?.EmotionalBeat ?? string.Empty;
                 options["key_events"] = sceneCard?.KeyEvents ?? string.Empty;
                 options["open_questions"] = sceneCard?.OpenQuestions ?? string.Empty;
+                options["pov_character_id"] = sceneCard?.PovCharacterId ?? string.Empty;
+                options["place_id"] = sceneCard?.PlaceId ?? string.Empty;
+                options["timeline_event_id"] = sceneCard?.TimelineEventId ?? string.Empty;
+                options["time_ref"] = sceneCard?.TimeRef ?? string.Empty;
+                options["tags_json"] = sceneCard?.TagsJson ?? "[]";
+                options["references_json"] = sceneCard?.ReferencesJson ?? "[]";
                 if (IsSceneCardAction(actionKey))
                 {
                     options["max_section_chars"] = SceneMaxSectionChars;
@@ -657,7 +663,18 @@ namespace WriterApp.Controllers
                     i,
                     string.IsNullOrWhiteSpace(item.Title) ? $"Item {i + 1}" : item.Title.Trim(),
                     string.IsNullOrWhiteSpace(notes) ? null : notes,
-                    null));
+                    null,
+                    JsonSerializer.Serialize(new
+                    {
+                        purpose = item.StoryRole,
+                        emotionalBeat = item.Summary,
+                        keyEvents = item.Beats,
+                        openQuestions = Array.Empty<string>(),
+                        povCharacterId = string.IsNullOrWhiteSpace(item.Pov) ? null : item.Pov,
+                        placeId = string.IsNullOrWhiteSpace(item.Setting) ? null : item.Setting,
+                        timeRef = string.Empty,
+                        tags = Array.Empty<string>()
+                    })));
             }
 
             return nodes;
@@ -747,13 +764,25 @@ namespace WriterApp.Controllers
                 string? emotionalBeat = GetNullableString(root, "emotionalBeat");
                 string? keyEvents = GetNullableString(root, "keyEvents");
                 string? openQuestions = GetNullableString(root, "openQuestions");
+                string? povCharacterId = GetNullableString(root, "povCharacterId");
+                string? placeId = GetNullableString(root, "placeId");
+                string? timelineEventId = GetNullableString(root, "timelineEventId");
+                string? timeRef = GetNullableString(root, "timeRef");
+                List<string> tags = GetStringArray(root, "tags");
+                List<SceneCardReferenceDto> references = GetReferenceArray(root, "references");
                 explanation = GetNullableString(root, "explanation");
 
                 proposal = new SectionSceneCardProposalDto(
                     narrativePurpose ?? string.Empty,
                     emotionalBeat ?? string.Empty,
                     keyEvents ?? string.Empty,
-                    openQuestions ?? string.Empty);
+                    openQuestions ?? string.Empty,
+                    povCharacterId,
+                    placeId,
+                    timelineEventId,
+                    timeRef,
+                    tags,
+                    references);
 
                 return true;
             }
@@ -784,6 +813,61 @@ namespace WriterApp.Controllers
                 JsonValueKind.Null => null,
                 _ => value.GetRawText()
             };
+        }
+
+        private static List<string> GetStringArray(JsonElement element, string propertyName)
+        {
+            List<string> values = new();
+            if (element.ValueKind != JsonValueKind.Object
+                || !element.TryGetProperty(propertyName, out JsonElement value)
+                || value.ValueKind != JsonValueKind.Array)
+            {
+                return values;
+            }
+
+            foreach (JsonElement item in value.EnumerateArray())
+            {
+                if (item.ValueKind == JsonValueKind.String)
+                {
+                    string? text = item.GetString();
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        values.Add(text.Trim());
+                    }
+                }
+            }
+
+            return values;
+        }
+
+        private static List<SceneCardReferenceDto> GetReferenceArray(JsonElement element, string propertyName)
+        {
+            List<SceneCardReferenceDto> values = new();
+            if (element.ValueKind != JsonValueKind.Object
+                || !element.TryGetProperty(propertyName, out JsonElement value)
+                || value.ValueKind != JsonValueKind.Array)
+            {
+                return values;
+            }
+
+            foreach (JsonElement item in value.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                string? kind = GetNullableString(item, "kind");
+                string? targetId = GetNullableString(item, "targetId");
+                if (string.IsNullOrWhiteSpace(kind) || string.IsNullOrWhiteSpace(targetId))
+                {
+                    continue;
+                }
+
+                values.Add(new SceneCardReferenceDto(kind.Trim(), targetId.Trim(), GetNullableString(item, "note")));
+            }
+
+            return values;
         }
 
         private static bool TryExtractJsonPayload(string input, out string payload)

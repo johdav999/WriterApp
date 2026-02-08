@@ -25,6 +25,8 @@ namespace WriterApp.Controllers
         private readonly IUserIdResolver _userIdResolver;
         private readonly ISearchIndexService _searchIndex;
         private readonly IPageVersionService _pageVersions;
+        private readonly IProjectWordCountService _projectWordCounts;
+        private readonly IProjectGoalsService _projectGoals;
         private readonly AppDbContext _dbContext;
         private readonly ILogger<PagesController> _logger;
 
@@ -35,6 +37,8 @@ namespace WriterApp.Controllers
             IUserIdResolver userIdResolver,
             ISearchIndexService searchIndex,
             IPageVersionService pageVersions,
+            IProjectWordCountService projectWordCounts,
+            IProjectGoalsService projectGoals,
             AppDbContext dbContext,
             ILogger<PagesController> logger)
         {
@@ -44,6 +48,8 @@ namespace WriterApp.Controllers
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
             _searchIndex = searchIndex ?? throw new ArgumentNullException(nameof(searchIndex));
             _pageVersions = pageVersions ?? throw new ArgumentNullException(nameof(pageVersions));
+            _projectWordCounts = projectWordCounts ?? throw new ArgumentNullException(nameof(projectWordCounts));
+            _projectGoals = projectGoals ?? throw new ArgumentNullException(nameof(projectGoals));
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
@@ -161,6 +167,12 @@ namespace WriterApp.Controllers
                 page.Content ?? string.Empty,
                 TimeSpan.FromSeconds(30),
                 ct);
+            await _projectWordCounts.RefreshForSectionAsync(sectionId, ct);
+            await _projectGoals.TrackPageDeltaAsync(
+                null,
+                page,
+                $"page:create:{page.Id}:{page.CreatedAt.UtcTicks}",
+                ct);
 
             PageDto dto = new(
                 page.Id,
@@ -224,6 +236,12 @@ namespace WriterApp.Controllers
                 page.Content ?? string.Empty,
                 TimeSpan.FromSeconds(30),
                 ct);
+            await _projectWordCounts.RefreshForSectionAsync(page.SectionId, ct);
+            await _projectGoals.TrackPageDeltaAsync(
+                before,
+                page,
+                $"page:update:{page.Id}:{page.UpdatedAt.UtcTicks}",
+                ct);
 
             ContentFingerprint afterFp = BuildFingerprint(page.Content ?? string.Empty);
             _logger.LogDebug(
@@ -284,11 +302,21 @@ namespace WriterApp.Controllers
         public async Task<IActionResult> DeletePage(Guid pageId, CancellationToken ct)
         {
             string userId = _userIdResolver.ResolveUserId(User);
+            PageRecord? existing = await _pages.GetAsync(pageId, userId, ct);
             bool removed = await _pages.DeleteAsync(pageId, userId, ct);
             if (removed)
             {
                 await _searchIndex.DeleteByEntityAsync(SearchEntityTypes.Page, pageId, ct);
                 await _searchIndex.DeleteByEntityAsync(SearchEntityTypes.Note, pageId, ct);
+                if (existing is not null)
+                {
+                    await _projectWordCounts.RefreshForSectionAsync(existing.SectionId, ct);
+                    await _projectGoals.TrackPageDeltaAsync(
+                        existing,
+                        null,
+                        $"page:delete:{existing.Id}:{existing.UpdatedAt.UtcTicks}",
+                        ct);
+                }
             }
             return removed ? NoContent() : NotFound();
         }
@@ -317,6 +345,7 @@ namespace WriterApp.Controllers
                 return BadRequest(new { message = "Target section must belong to the same document." });
             }
 
+            Guid sourceSectionId = existing.SectionId;
             PageRecord? moved = await _pages.MoveAsync(pageId, userId, request.TargetSectionId, request.TargetOrderIndex, ct);
             if (moved is null)
             {
@@ -324,6 +353,11 @@ namespace WriterApp.Controllers
             }
 
             await _searchIndex.UpsertPageAsync(moved, ct);
+            await _projectWordCounts.RefreshForSectionAsync(sourceSectionId, ct);
+            if (sourceSectionId != moved.SectionId)
+            {
+                await _projectWordCounts.RefreshForSectionAsync(moved.SectionId, ct);
+            }
 
             PageDto dto = new(
                 moved.Id,

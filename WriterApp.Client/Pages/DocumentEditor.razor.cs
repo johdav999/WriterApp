@@ -461,6 +461,12 @@ namespace WriterApp.Client.Pages
         private string _sceneEmotionalBeat = string.Empty;
         private string _sceneKeyEvents = string.Empty;
         private string _sceneOpenQuestions = string.Empty;
+        private string _scenePovCharacterId = string.Empty;
+        private string _scenePlaceId = string.Empty;
+        private string _sceneTimelineEventId = string.Empty;
+        private string _sceneTimeRef = string.Empty;
+        private string _sceneTagsText = string.Empty;
+        private string _sceneReferencesJson = string.Empty;
         private string? _sceneStatus;
         private bool _sceneSaveInFlight;
         private CancellationTokenSource? _sceneAutosaveCts;
@@ -499,6 +505,18 @@ namespace WriterApp.Client.Pages
         private bool _outlineApplyReorder = true;
         private bool _outlineApplyRename;
         private bool _outlineApplyLinkNodes = true;
+        private bool _outlineBoardEnabled;
+        private bool _outlineTemplatesEnabled;
+        private bool _outlineUndoEnabled;
+        private string _outlineViewMode = "tree";
+        private string _outlineBoardTagFilter = string.Empty;
+        private string _outlineBoardPovFilter = string.Empty;
+        private string _outlineBoardPlaceFilter = string.Empty;
+        private string _outlineBoardTimeFilter = string.Empty;
+        private string _outlineTemplateName = string.Empty;
+        private Guid? _selectedOutlineTemplateId;
+        private readonly List<OutlineTemplateDto> _outlineTemplates = new();
+        private string? _outlineTemplateStatus;
         private PendingAiProposal? _pendingAiProposal;
         private bool _pendingDetailsExpanded;
         private bool _aiUndoRedoInFlight;
@@ -582,6 +600,15 @@ namespace WriterApp.Client.Pages
             _dndDebugEnabled = IsDndDebugEnabled();
             _docxExportEnabled = Configuration.GetValue<bool?>("Exports:DocxEnabled") ?? false;
             _epubExportEnabled = Configuration.GetValue<bool?>("Exports:EpubEnabled") ?? false;
+            _outlineBoardEnabled = Configuration.GetValue<bool?>("Workflow:OutlineBoardEnabled")
+                ?? Configuration.GetValue<bool?>("WriterApp:Workflow:OutlineBoardEnabled")
+                ?? false;
+            _outlineTemplatesEnabled = Configuration.GetValue<bool?>("Workflow:OutlineTemplatesEnabled")
+                ?? Configuration.GetValue<bool?>("WriterApp:Workflow:OutlineTemplatesEnabled")
+                ?? false;
+            _outlineUndoEnabled = Configuration.GetValue<bool?>("Workflow:OutlineUndoEnabled")
+                ?? Configuration.GetValue<bool?>("WriterApp:Workflow:OutlineUndoEnabled")
+                ?? false;
         }
 
         private bool IsDndDebugEnabled()
@@ -2284,6 +2311,10 @@ namespace WriterApp.Client.Pages
             {
                 await LoadBibleSnapshotsAsync();
             }
+            else if (tab == ContextTab.Outline && _outlineTemplatesEnabled)
+            {
+                await LoadOutlineTemplatesAsync();
+            }
         }
 
         private string GetContextTabClass(ContextTab tab)
@@ -2952,6 +2983,42 @@ namespace WriterApp.Client.Pages
             OnSceneCardInputChanged();
         }
 
+        private void OnScenePovInput(ChangeEventArgs args)
+        {
+            _scenePovCharacterId = args.Value?.ToString() ?? string.Empty;
+            OnSceneCardInputChanged();
+        }
+
+        private void OnScenePlaceInput(ChangeEventArgs args)
+        {
+            _scenePlaceId = args.Value?.ToString() ?? string.Empty;
+            OnSceneCardInputChanged();
+        }
+
+        private void OnSceneTimelineEventInput(ChangeEventArgs args)
+        {
+            _sceneTimelineEventId = args.Value?.ToString() ?? string.Empty;
+            OnSceneCardInputChanged();
+        }
+
+        private void OnSceneTimeRefInput(ChangeEventArgs args)
+        {
+            _sceneTimeRef = args.Value?.ToString() ?? string.Empty;
+            OnSceneCardInputChanged();
+        }
+
+        private void OnSceneTagsInput(ChangeEventArgs args)
+        {
+            _sceneTagsText = args.Value?.ToString() ?? string.Empty;
+            OnSceneCardInputChanged();
+        }
+
+        private void OnSceneReferencesJsonInput(ChangeEventArgs args)
+        {
+            _sceneReferencesJson = args.Value?.ToString() ?? string.Empty;
+            OnSceneCardInputChanged();
+        }
+
         private void OnSceneCardInputChanged()
         {
             _sceneStatus = null;
@@ -2988,6 +3055,12 @@ namespace WriterApp.Client.Pages
                 _sceneEmotionalBeat = card?.EmotionalBeat ?? string.Empty;
                 _sceneKeyEvents = card?.KeyEvents ?? string.Empty;
                 _sceneOpenQuestions = card?.OpenQuestions ?? string.Empty;
+                _scenePovCharacterId = card?.PovCharacterId ?? string.Empty;
+                _scenePlaceId = card?.PlaceId ?? string.Empty;
+                _sceneTimelineEventId = card?.TimelineEventId ?? string.Empty;
+                _sceneTimeRef = card?.TimeRef ?? string.Empty;
+                _sceneTagsText = string.Join(", ", card?.Tags ?? Array.Empty<string>());
+                _sceneReferencesJson = SerializeSceneReferences(card?.References);
             }
             catch (Exception ex)
             {
@@ -3039,7 +3112,13 @@ namespace WriterApp.Client.Pages
                     _sceneNarrativePurpose,
                     _sceneEmotionalBeat,
                     _sceneKeyEvents,
-                    _sceneOpenQuestions);
+                    _sceneOpenQuestions,
+                    NormalizeOptional(_scenePovCharacterId),
+                    NormalizeOptional(_scenePlaceId),
+                    NormalizeOptional(_sceneTimelineEventId),
+                    NormalizeOptional(_sceneTimeRef),
+                    ParseTags(_sceneTagsText),
+                    ParseSceneReferences(_sceneReferencesJson));
 
                 using HttpResponseMessage response =
                     await Http.PutAsJsonAsync($"api/sections/{sectionId}/scene-card", payload);
@@ -3057,6 +3136,12 @@ namespace WriterApp.Client.Pages
                     _sceneEmotionalBeat = updated.EmotionalBeat ?? string.Empty;
                     _sceneKeyEvents = updated.KeyEvents ?? string.Empty;
                     _sceneOpenQuestions = updated.OpenQuestions ?? string.Empty;
+                    _scenePovCharacterId = updated.PovCharacterId ?? string.Empty;
+                    _scenePlaceId = updated.PlaceId ?? string.Empty;
+                    _sceneTimelineEventId = updated.TimelineEventId ?? string.Empty;
+                    _sceneTimeRef = updated.TimeRef ?? string.Empty;
+                    _sceneTagsText = string.Join(", ", updated.Tags ?? Array.Empty<string>());
+                    _sceneReferencesJson = SerializeSceneReferences(updated.References);
                 }
 
                 _sceneStatus = isAutosave ? "Scene card saved." : "Scene card saved.";
@@ -3141,6 +3226,12 @@ namespace WriterApp.Client.Pages
             _sceneEmotionalBeat = _sceneAiProposal.EmotionalBeat ?? string.Empty;
             _sceneKeyEvents = _sceneAiProposal.KeyEvents ?? string.Empty;
             _sceneOpenQuestions = _sceneAiProposal.OpenQuestions ?? string.Empty;
+            _scenePovCharacterId = _sceneAiProposal.PovCharacterId ?? string.Empty;
+            _scenePlaceId = _sceneAiProposal.PlaceId ?? string.Empty;
+            _sceneTimelineEventId = _sceneAiProposal.TimelineEventId ?? string.Empty;
+            _sceneTimeRef = _sceneAiProposal.TimeRef ?? string.Empty;
+            _sceneTagsText = string.Join(", ", _sceneAiProposal.Tags ?? Array.Empty<string>());
+            _sceneReferencesJson = SerializeSceneReferences(_sceneAiProposal.References);
 
             await SaveSceneCardAsync(_activeSection.Id, isAutosave: false);
 
@@ -3166,8 +3257,62 @@ namespace WriterApp.Client.Pages
                 _sceneNarrativePurpose,
                 _sceneEmotionalBeat,
                 _sceneKeyEvents,
-                _sceneOpenQuestions);
+                _sceneOpenQuestions,
+                NormalizeOptional(_scenePovCharacterId),
+                NormalizeOptional(_scenePlaceId),
+                NormalizeOptional(_sceneTimelineEventId),
+                NormalizeOptional(_sceneTimeRef),
+                ParseTags(_sceneTagsText),
+                ParseSceneReferences(_sceneReferencesJson));
             return JsonSerializer.Serialize(snapshot, JsonOptions);
+        }
+
+        private static string? NormalizeOptional(string? value)
+        {
+            return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        }
+
+        private static IReadOnlyList<string> ParseTags(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return Array.Empty<string>();
+            }
+
+            return text
+                .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(tag => tag.Trim())
+                .Where(tag => !string.IsNullOrWhiteSpace(tag))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+
+        private static IReadOnlyList<SceneCardReferenceDto> ParseSceneReferences(string json)
+        {
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return Array.Empty<SceneCardReferenceDto>();
+            }
+
+            try
+            {
+                return JsonSerializer.Deserialize<List<SceneCardReferenceDto>>(json, JsonOptions)
+                    ?? new List<SceneCardReferenceDto>();
+            }
+            catch (JsonException)
+            {
+                return Array.Empty<SceneCardReferenceDto>();
+            }
+        }
+
+        private static string SerializeSceneReferences(IReadOnlyList<SceneCardReferenceDto>? references)
+        {
+            if (references is null || references.Count == 0)
+            {
+                return "[]";
+            }
+
+            return JsonSerializer.Serialize(references, JsonOptions);
         }
 
         private async Task RecordAiSceneCardAppliedAsync(Guid proposalId, string before, string after)
@@ -3227,6 +3372,300 @@ namespace WriterApp.Client.Pages
             return _outlineNodes
                 .Where(node => node.ParentId == parentId)
                 .OrderBy(node => node.Order);
+        }
+
+        private IEnumerable<DocumentOutlineNodeDto> GetOutlineBoardNodes()
+        {
+            IEnumerable<DocumentOutlineNodeDto> scoped = _activeOutlineNodeId.HasValue
+                ? GetOutlineChildren(_activeOutlineNodeId.Value)
+                : GetOutlineChildren(null);
+
+            IEnumerable<DocumentOutlineNodeDto> cards = scoped
+                .Where(node => node.LinkedSectionId.HasValue || node.ParentId.HasValue);
+
+            if (!string.IsNullOrWhiteSpace(_outlineBoardTagFilter))
+            {
+                string tagNeedle = _outlineBoardTagFilter.Trim();
+                cards = cards.Where(node => GetNodeMetadata(node).Tags.Any(tag =>
+                    tag.Contains(tagNeedle, StringComparison.OrdinalIgnoreCase)));
+            }
+
+            if (!string.IsNullOrWhiteSpace(_outlineBoardPovFilter))
+            {
+                string povNeedle = _outlineBoardPovFilter.Trim();
+                cards = cards.Where(node =>
+                    (GetNodeMetadata(node).PovCharacterId ?? string.Empty).Contains(povNeedle, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (!string.IsNullOrWhiteSpace(_outlineBoardPlaceFilter))
+            {
+                string placeNeedle = _outlineBoardPlaceFilter.Trim();
+                cards = cards.Where(node =>
+                    (GetNodeMetadata(node).PlaceId ?? string.Empty).Contains(placeNeedle, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (!string.IsNullOrWhiteSpace(_outlineBoardTimeFilter))
+            {
+                string timeNeedle = _outlineBoardTimeFilter.Trim();
+                cards = cards.Where(node =>
+                    (GetNodeMetadata(node).TimeRef ?? string.Empty).Contains(timeNeedle, StringComparison.OrdinalIgnoreCase));
+            }
+
+            return cards;
+        }
+
+        private OutlineNodeMetadataModel GetNodeMetadata(DocumentOutlineNodeDto node)
+        {
+            if (string.IsNullOrWhiteSpace(node.MetadataJson))
+            {
+                return new OutlineNodeMetadataModel();
+            }
+
+            try
+            {
+                return JsonSerializer.Deserialize<OutlineNodeMetadataModel>(node.MetadataJson, JsonOptions)
+                    ?? new OutlineNodeMetadataModel();
+            }
+            catch (JsonException)
+            {
+                return new OutlineNodeMetadataModel();
+            }
+        }
+
+        private async Task SaveOutlineNodeMetadataAsync(Guid nodeId, OutlineNodeMetadataModel model)
+        {
+            string metadataJson = JsonSerializer.Serialize(model, JsonOptions);
+            using HttpResponseMessage response = await Http.PutAsJsonAsync(
+                $"api/documents/{DocumentId}/outline/nodes/{nodeId}/metadata",
+                new DocumentOutlineMetadataUpdateRequest(metadataJson));
+            if (!response.IsSuccessStatusCode)
+            {
+                _outlineStatus = "Failed to save node metadata.";
+                return;
+            }
+
+            DocumentOutlineNodeDto? updated = await response.Content.ReadFromJsonAsync<DocumentOutlineNodeDto>();
+            if (updated is not null)
+            {
+                UpdateNode(updated);
+                _outlineStatus = "Node metadata saved.";
+            }
+        }
+
+        private async Task OnBoardPurposeInput(Guid nodeId, ChangeEventArgs args)
+        {
+            DocumentOutlineNodeDto? node = _outlineNodes.FirstOrDefault(item => item.Id == nodeId);
+            if (node is null)
+            {
+                return;
+            }
+
+            OutlineNodeMetadataModel metadata = GetNodeMetadata(node);
+            metadata.Purpose = args.Value?.ToString();
+            await SaveOutlineNodeMetadataAsync(nodeId, metadata);
+        }
+
+        private async Task OnBoardEmotionalBeatInput(Guid nodeId, ChangeEventArgs args)
+        {
+            DocumentOutlineNodeDto? node = _outlineNodes.FirstOrDefault(item => item.Id == nodeId);
+            if (node is null)
+            {
+                return;
+            }
+
+            OutlineNodeMetadataModel metadata = GetNodeMetadata(node);
+            metadata.EmotionalBeat = args.Value?.ToString();
+            await SaveOutlineNodeMetadataAsync(nodeId, metadata);
+        }
+
+        private async Task OnBoardTagsInput(Guid nodeId, ChangeEventArgs args)
+        {
+            DocumentOutlineNodeDto? node = _outlineNodes.FirstOrDefault(item => item.Id == nodeId);
+            if (node is null)
+            {
+                return;
+            }
+
+            OutlineNodeMetadataModel metadata = GetNodeMetadata(node);
+            metadata.Tags = ParseTags(args.Value?.ToString() ?? string.Empty).ToList();
+            await SaveOutlineNodeMetadataAsync(nodeId, metadata);
+        }
+
+        private async Task OnBoardPovInput(Guid nodeId, ChangeEventArgs args)
+        {
+            DocumentOutlineNodeDto? node = _outlineNodes.FirstOrDefault(item => item.Id == nodeId);
+            if (node is null)
+            {
+                return;
+            }
+
+            OutlineNodeMetadataModel metadata = GetNodeMetadata(node);
+            metadata.PovCharacterId = NormalizeOptional(args.Value?.ToString());
+            await SaveOutlineNodeMetadataAsync(nodeId, metadata);
+        }
+
+        private async Task OnBoardPlaceInput(Guid nodeId, ChangeEventArgs args)
+        {
+            DocumentOutlineNodeDto? node = _outlineNodes.FirstOrDefault(item => item.Id == nodeId);
+            if (node is null)
+            {
+                return;
+            }
+
+            OutlineNodeMetadataModel metadata = GetNodeMetadata(node);
+            metadata.PlaceId = NormalizeOptional(args.Value?.ToString());
+            await SaveOutlineNodeMetadataAsync(nodeId, metadata);
+        }
+
+        private async Task OnBoardTimeRefInput(Guid nodeId, ChangeEventArgs args)
+        {
+            DocumentOutlineNodeDto? node = _outlineNodes.FirstOrDefault(item => item.Id == nodeId);
+            if (node is null)
+            {
+                return;
+            }
+
+            OutlineNodeMetadataModel metadata = GetNodeMetadata(node);
+            metadata.TimeRef = NormalizeOptional(args.Value?.ToString());
+            await SaveOutlineNodeMetadataAsync(nodeId, metadata);
+        }
+
+        private async Task OnBoardKeyEventsInput(Guid nodeId, ChangeEventArgs args)
+        {
+            DocumentOutlineNodeDto? node = _outlineNodes.FirstOrDefault(item => item.Id == nodeId);
+            if (node is null)
+            {
+                return;
+            }
+
+            OutlineNodeMetadataModel metadata = GetNodeMetadata(node);
+            metadata.KeyEvents = ParseMultilineList(args.Value?.ToString()).ToList();
+            await SaveOutlineNodeMetadataAsync(nodeId, metadata);
+        }
+
+        private async Task OnBoardOpenQuestionsInput(Guid nodeId, ChangeEventArgs args)
+        {
+            DocumentOutlineNodeDto? node = _outlineNodes.FirstOrDefault(item => item.Id == nodeId);
+            if (node is null)
+            {
+                return;
+            }
+
+            OutlineNodeMetadataModel metadata = GetNodeMetadata(node);
+            metadata.OpenQuestions = ParseMultilineList(args.Value?.ToString()).ToList();
+            await SaveOutlineNodeMetadataAsync(nodeId, metadata);
+        }
+
+        private async Task OnBoardLinkChanged(Guid nodeId, ChangeEventArgs args)
+        {
+            await OnOutlineLinkChanged(nodeId, args);
+        }
+
+        private async Task OnStructureUndoRequested()
+        {
+            if (!_outlineUndoEnabled)
+            {
+                return;
+            }
+
+            try
+            {
+                using HttpResponseMessage response = await Http.PostAsync(
+                    $"api/documents/{DocumentId}/outline/undo",
+                    content: null);
+                if (response.StatusCode == HttpStatusCode.NoContent)
+                {
+                    _outlineStatus = "Nothing to undo.";
+                    return;
+                }
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    _outlineStatus = "Undo failed.";
+                    return;
+                }
+
+                List<DocumentOutlineNodeDto>? updated =
+                    await response.Content.ReadFromJsonAsync<List<DocumentOutlineNodeDto>>();
+                if (updated is not null)
+                {
+                    _outlineNodes.Clear();
+                    _outlineNodes.AddRange(updated.OrderBy(node => node.ParentId).ThenBy(node => node.Order));
+                }
+
+                if (_activeSection is not null)
+                {
+                    await LoadSceneCardAsync(_activeSection.Id);
+                }
+
+                _outlineStatus = "Undo complete.";
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Outline undo failed.");
+                _outlineStatus = "Undo failed.";
+            }
+        }
+
+        private async Task OnStructureRedoRequested()
+        {
+            if (!_outlineUndoEnabled)
+            {
+                return;
+            }
+
+            try
+            {
+                using HttpResponseMessage response = await Http.PostAsync(
+                    $"api/documents/{DocumentId}/outline/redo",
+                    content: null);
+                if (response.StatusCode == HttpStatusCode.NoContent)
+                {
+                    _outlineStatus = "Nothing to redo.";
+                    return;
+                }
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    _outlineStatus = "Redo failed.";
+                    return;
+                }
+
+                List<DocumentOutlineNodeDto>? updated =
+                    await response.Content.ReadFromJsonAsync<List<DocumentOutlineNodeDto>>();
+                if (updated is not null)
+                {
+                    _outlineNodes.Clear();
+                    _outlineNodes.AddRange(updated.OrderBy(node => node.ParentId).ThenBy(node => node.Order));
+                }
+
+                if (_activeSection is not null)
+                {
+                    await LoadSceneCardAsync(_activeSection.Id);
+                }
+
+                _outlineStatus = "Redo complete.";
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Outline redo failed.");
+                _outlineStatus = "Redo failed.";
+            }
+        }
+
+        private static IReadOnlyList<string> ParseMultilineList(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return Array.Empty<string>();
+            }
+
+            return value
+                .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(item => item.Trim())
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
 
         private RenderFragment RenderOutlineNode(DocumentOutlineNodeDto node, int depth) => builder =>
@@ -4132,6 +4571,129 @@ namespace WriterApp.Client.Pages
             {
                 return false;
             }
+        }
+
+        private async Task LoadOutlineTemplatesAsync()
+        {
+            try
+            {
+                List<OutlineTemplateDto>? templates = await Http.GetFromJsonAsync<List<OutlineTemplateDto>>("api/outline-templates");
+                _outlineTemplates.Clear();
+                if (templates is not null)
+                {
+                    _outlineTemplates.AddRange(templates.OrderBy(template => template.Name));
+                }
+
+                if (_outlineTemplates.Count > 0 && !_selectedOutlineTemplateId.HasValue)
+                {
+                    _selectedOutlineTemplateId = _outlineTemplates[0].Id;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to load outline templates.");
+                _outlineTemplateStatus = "Failed to load templates.";
+            }
+        }
+
+        private async Task SaveSelectedOutlineTemplateAsync()
+        {
+            if (!_outlineTemplatesEnabled || !_activeOutlineNodeId.HasValue)
+            {
+                return;
+            }
+
+            string name = string.IsNullOrWhiteSpace(_outlineTemplateName)
+                ? "Untitled template"
+                : _outlineTemplateName.Trim();
+
+            HashSet<Guid> ids = CollectDescendants(_activeOutlineNodeId.Value);
+            List<OutlineTemplateNodeDto> nodes = _outlineNodes
+                .Where(node => ids.Contains(node.Id))
+                .OrderBy(node => node.ParentId)
+                .ThenBy(node => node.Order)
+                .Select(node => new OutlineTemplateNodeDto(
+                    node.Id,
+                    node.ParentId.HasValue && ids.Contains(node.ParentId.Value) ? node.ParentId : null,
+                    GetTemplateNodeType(node, ids),
+                    node.Title,
+                    node.Order,
+                    node.Notes,
+                    node.MetadataJson,
+                    node.LinkedSectionId))
+                .ToList();
+
+            OutlineTemplateCreateRequest payload = new(name, nodes);
+            using HttpResponseMessage response = await Http.PostAsJsonAsync("api/outline-templates", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                _outlineTemplateStatus = "Failed to save template.";
+                return;
+            }
+
+            _outlineTemplateStatus = "Template saved.";
+            _outlineTemplateName = string.Empty;
+            await LoadOutlineTemplatesAsync();
+        }
+
+        private string GetTemplateNodeType(DocumentOutlineNodeDto node, HashSet<Guid> inScopeIds)
+        {
+            if (node.LinkedSectionId.HasValue)
+            {
+                return "scene";
+            }
+
+            bool hasChildrenInScope = _outlineNodes.Any(child =>
+                child.ParentId == node.Id && inScopeIds.Contains(child.Id));
+            return hasChildrenInScope ? "chapter" : "scene";
+        }
+
+        private async Task ApplySelectedOutlineTemplateAsync()
+        {
+            if (!_outlineTemplatesEnabled || !_selectedOutlineTemplateId.HasValue)
+            {
+                return;
+            }
+
+            OutlineTemplateApplyOptionsDto options = new(
+                _activeOutlineNodeId,
+                CreateLinkedSections: true,
+                LinkStrategy: "create");
+            using HttpResponseMessage response = await Http.PostAsJsonAsync(
+                $"api/documents/{DocumentId}/outline/apply-template/{_selectedOutlineTemplateId.Value}",
+                options);
+            if (!response.IsSuccessStatusCode)
+            {
+                _outlineTemplateStatus = "Failed to apply template.";
+                return;
+            }
+
+            List<DocumentOutlineNodeDto>? updated = await response.Content.ReadFromJsonAsync<List<DocumentOutlineNodeDto>>();
+            if (updated is not null)
+            {
+                _outlineNodes.Clear();
+                _outlineNodes.AddRange(updated.OrderBy(node => node.ParentId).ThenBy(node => node.Order));
+                _outlineTemplateStatus = "Template applied.";
+            }
+        }
+
+        private async Task DeleteSelectedOutlineTemplateAsync()
+        {
+            if (!_outlineTemplatesEnabled || !_selectedOutlineTemplateId.HasValue)
+            {
+                return;
+            }
+
+            using HttpResponseMessage response = await Http.DeleteAsync($"api/outline-templates/{_selectedOutlineTemplateId.Value}");
+            if (!response.IsSuccessStatusCode)
+            {
+                _outlineTemplateStatus = "Failed to delete template.";
+                return;
+            }
+
+            _outlineTemplateStatus = "Template deleted.";
+            _selectedOutlineTemplateId = null;
+            await LoadOutlineTemplatesAsync();
         }
         private async Task OnExportRequested(string kind, string format)
         {
@@ -8354,6 +8916,18 @@ namespace WriterApp.Client.Pages
                     TocEnabled,
                     TocDepth);
             }
+        }
+
+        private sealed class OutlineNodeMetadataModel
+        {
+            public string? Purpose { get; set; }
+            public string? EmotionalBeat { get; set; }
+            public List<string> KeyEvents { get; set; } = new();
+            public List<string> OpenQuestions { get; set; } = new();
+            public string? PovCharacterId { get; set; }
+            public string? PlaceId { get; set; }
+            public string? TimeRef { get; set; }
+            public List<string> Tags { get; set; } = new();
         }
 
         private sealed record DiffChangeBlock(string BlockId, string Kind, string Preview)

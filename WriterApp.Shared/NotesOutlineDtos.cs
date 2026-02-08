@@ -13,9 +13,12 @@ namespace WriterApp.Application.Documents
         int Order,
         string Title,
         string? Notes,
-        Guid? LinkedSectionId);
+        Guid? LinkedSectionId,
+        string? MetadataJson = null);
 
     public sealed record DocumentOutlineLinkRequest(Guid? SectionId);
+
+    public sealed record DocumentOutlineMetadataUpdateRequest(string? MetadataJson);
 
     public sealed record OutlineApplyOptionsDto(
         bool CreateMissingSections = true,

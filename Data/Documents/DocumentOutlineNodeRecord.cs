@@ -23,6 +23,8 @@ namespace WriterApp.Data.Documents
 
         public string? Notes { get; set; }
 
+        public string? MetadataJson { get; set; }
+
         public Guid? LinkedSectionId { get; set; }
 
         public SectionRecord? LinkedSection { get; set; }
