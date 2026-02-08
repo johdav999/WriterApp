@@ -7,9 +7,15 @@ namespace WriterApp.Data.Documents
     {
         public Guid Id { get; set; }
 
+        public Guid ProjectId { get; set; }
+
+        public ProjectRecord? Project { get; set; }
+
         public string OwnerUserId { get; set; } = string.Empty;
 
         public string Title { get; set; } = string.Empty;
+
+        public DocumentKind DocumentKind { get; set; } = DocumentKind.Manuscript;
 
         public string? LanguageCode { get; set; }
 
@@ -18,6 +24,10 @@ namespace WriterApp.Data.Documents
         public DateTimeOffset CreatedAt { get; set; }
 
         public DateTimeOffset UpdatedAt { get; set; }
+
+        public long CreatedAtUnixSeconds { get; set; }
+
+        public long UpdatedAtUnixSeconds { get; set; }
 
         public bool IsArchived { get; set; }
 

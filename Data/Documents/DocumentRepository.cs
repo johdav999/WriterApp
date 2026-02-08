@@ -47,7 +47,7 @@ namespace WriterApp.Data.Documents
             List<DocumentRecord> documents = await query.ToListAsync(ct);
 
             documents = documents
-                .OrderByDescending(document => document.UpdatedAt)
+                .OrderByDescending(document => document.UpdatedAtUnixSeconds)
                 .ToList();
 
             if (documents.Count == 0)
@@ -85,6 +85,7 @@ namespace WriterApp.Data.Documents
 
             document.Title = nextTitle;
             document.UpdatedAt = DateTimeOffset.UtcNow;
+            document.UpdatedAtUnixSeconds = document.UpdatedAt.ToUnixTimeSeconds();
             await SqliteRetryHelper.ExecuteAsync(() => _dbContext.SaveChangesAsync(ct), ct);
             return document;
         }

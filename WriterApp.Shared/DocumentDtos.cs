@@ -10,7 +10,9 @@ namespace WriterApp.Application.Documents
         int WordCount,
         bool IsArchived,
         DateTimeOffset? ArchivedAt,
-        DateTimeOffset? DeletedAt);
+        DateTimeOffset? DeletedAt,
+        Guid ProjectId = default,
+        string Kind = "manuscript");
 
     public sealed record DocumentDetailDto(
         Guid Id,
@@ -21,14 +23,18 @@ namespace WriterApp.Application.Documents
         Guid? TranslationGroupId,
         bool IsArchived,
         DateTimeOffset? ArchivedAt,
-        DateTimeOffset? DeletedAt);
+        DateTimeOffset? DeletedAt,
+        Guid ProjectId = default,
+        string Kind = "manuscript");
 
     public sealed record DocumentCreateRequest(
         Guid? Id,
         string? Title,
         DateTimeOffset? CreatedAt,
         DateTimeOffset? UpdatedAt,
-        bool CreateDefaultStructure = true);
+        bool CreateDefaultStructure = true,
+        Guid? ProjectId = null,
+        string? Kind = null);
 
     public sealed record DocumentCreateResponse(
         DocumentDetailDto Document,
