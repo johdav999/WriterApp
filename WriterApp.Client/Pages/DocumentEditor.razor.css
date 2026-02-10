@@ -11,7 +11,7 @@
     --surface: var(--color-surface-1);
     --surface-muted: var(--color-surface-2);
     padding: var(--space-6);
-    height: 100%;
+    height: calc(100dvh - var(--topbar-height, 0px));
     min-height: 0;
     display: flex;
     flex-direction: column;
@@ -31,6 +31,7 @@
     flex: 1;
     min-height: 0;
     height: 100%;
+    overflow: hidden;
 }
 
 .section-panel {
@@ -353,7 +354,7 @@
     padding: var(--space-4);
     border-radius: var(--radius-md);
     border: 1px solid var(--color-border);
-    background: var(--surface);
+    background: var(--color-surface-1, #ffffff);
     box-shadow: var(--shadow-lg);
     z-index: 90;
     display: flex;
@@ -1568,6 +1569,14 @@
     flex-direction: column;
     height: 100%;
     min-height: 0;
+    overflow: hidden;
+}
+
+.rp-sticky-header {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: var(--panel-bg);
 }
 
 .rp-tabs {
@@ -1614,12 +1623,21 @@
 
 .rp-scroll {
     flex: 1;
+    height: 100%;
     min-height: 0;
     overflow-y: auto;
     overflow-x: hidden;
+    scrollbar-gutter: stable;
+    padding-right: 2px;
+    display: flex;
+    flex-direction: column;
+}
+
+.rp-content {
     padding: var(--space-3);
     display: grid;
     gap: 12px;
+    min-height: 0;
 }
 
 .rp-footer {
@@ -2220,6 +2238,15 @@
     flex-wrap: wrap;
 }
 
+.outline-templates-dialog {
+    width: min(680px, calc(100vw - 32px));
+}
+
+.outline-template-options {
+    display: grid;
+    gap: 8px;
+}
+
 .outline-action-bar {
     position: sticky;
     bottom: 0;
@@ -2787,6 +2814,31 @@
     .section-panel,
     .context-drawer {
         display: none;
+    }
+}
+
+@media (max-width: 880px) {
+    .editor-shell {
+        height: auto;
+    }
+
+    .editor-workspace {
+        height: auto;
+    }
+
+    .context-drawer,
+    .rp-shell {
+        height: auto;
+        min-height: 0;
+    }
+
+    .rp-scroll {
+        overflow: visible;
+        padding-right: 0;
+    }
+
+    .rp-sticky-header {
+        position: static;
     }
 }
 
@@ -3477,6 +3529,7 @@
 
 .import-dialog {
     width: min(520px, calc(100vw - 48px));
+    background: var(--color-surface-1, #ffffff);
 }
 
 .import-form {

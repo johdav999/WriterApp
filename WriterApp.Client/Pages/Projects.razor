@@ -2,6 +2,8 @@
 @page "/projects/{ProjectId:guid}"
 @using System.Net
 @using System.Net.Http.Json
+@using System.Globalization
+@using System.Text.Json
 @using Microsoft.AspNetCore.Components
 @using WriterApp.Application.Documents
 @using WriterApp.Client.Services
@@ -9,6 +11,8 @@
 @inject NavigationManager Navigation
 @inject IConfiguration Configuration
 @inject IJSRuntime JS
+@inject ILogger<Projects> Logger
+@inject OutlineTemplatesClient OutlineTemplatesClient
 @inject WriterApp.Client.State.CurrentDocumentStateService CurrentDocumentStateService
 @inject WriterApp.Client.Services.CoachRecommendationService CoachRecommendationService
 @implements IAsyncDisposable
@@ -262,7 +266,10 @@ else
             else
             {
                 <div class="projects-workspace">
-                    <aside class="projects-tree" aria-label="Navigator">
+                    <aside class="projects-tree"
+                           aria-label="Navigator"
+                           @onmouseup="OnPointerDragCancel"
+                           @onmouseleave="OnPointerDragCancel">
                         <div class="panel-header">
                             <h2>Navigator</h2>
                             <p>Parts, chapters, and scenes in manuscript order.</p>
@@ -280,6 +287,15 @@ else
                                     disabled="@(!CanAddSelectedNodeType())">
                                 Add
                             </button>
+                            @if (_outlineTemplatesEnabled)
+                            {
+                                <button type="button"
+                                        class="secondary"
+                                        @onclick="OpenOutlineTemplatesModalAsync"
+                                        disabled="@_isOutlineTemplateActionInFlight">
+                                    Templates...
+                                </button>
+                            }
                         </div>
                         <ul class="tree-list">
                             @foreach (ProjectNodeDto root in GetChildren(null))
@@ -360,31 +376,187 @@ else
     </div>
 }
 
+@if (_openNodeMenuId.HasValue && OpenNodeMenuNode is not null)
+{
+    <div class="tree-menu-overlay" role="presentation">
+        <button type="button"
+                class="tree-menu-overlay-backdrop"
+                style="position:fixed;inset:0;border:0;margin:0;padding:0;background:transparent;"
+                aria-label="Close node menu"
+                @onclick="CloseNodeMenu"></button>
+        <div class="tree-menu-popover"
+             role="menu"
+             style="@GetNodeMenuStyle()"
+             tabindex="0"
+             @ref="_nodeMenuRef"
+             @onkeydown="OnNodeMenuKeyDown"
+             @onclick:stopPropagation="true">
+            <button type="button" role="menuitem" @onclick="OnNodeMenuRenameAsync">Rename</button>
+            @if (IsPart(OpenNodeMenuNode))
+            {
+                <button type="button" role="menuitem" @onclick="OnNodeMenuAddChapterAsync">Add chapter</button>
+            }
+            else if (IsChapter(OpenNodeMenuNode))
+            {
+                <button type="button" role="menuitem" @onclick="OnNodeMenuAddSceneAsync">Add scene</button>
+            }
+            else if (IsScene(OpenNodeMenuNode))
+            {
+                <button type="button" role="menuitem" @onclick="OnNodeMenuOpenSceneAsync">Open scene</button>
+            }
+            @if (_outlineTemplatesEnabled)
+            {
+                <button type="button" role="menuitem" @onclick="OnNodeMenuTemplatesAsync">Templates...</button>
+            }
+            <button type="button" role="menuitem" class="danger" @onclick="OnNodeMenuDeleteAsync">Delete</button>
+        </div>
+    </div>
+}
+
+@if (_outlineTemplatesEnabled && _isOutlineTemplatesModalOpen)
+{
+    <div class="projects-templates-overlay" @onclick="CloseOutlineTemplatesModal">
+        <div class="projects-templates-dialog" role="dialog" aria-modal="true" @onclick:stopPropagation="true">
+            <div class="projects-templates-header">
+                <h3>Outline templates</h3>
+            </div>
+            <div class="projects-templates-body">
+                <div class="projects-templates-row">
+                    <label for="project-outline-template-name">Create from current navigator</label>
+                    <div class="projects-templates-create">
+                        <input id="project-outline-template-name"
+                               placeholder="Template name"
+                               @bind="_outlineTemplateName" />
+                        <button type="button"
+                                class="secondary"
+                                @onclick="CreateTemplateFromCurrentProjectAsync"
+                                disabled="@(_nodes.Count == 0 || _isOutlineTemplateActionInFlight)">
+                            Create
+                        </button>
+                    </div>
+                </div>
+
+                <div class="projects-templates-row">
+                    <label for="project-outline-template-select">Saved templates</label>
+                    @if (_isOutlineTemplatesLoading)
+                    {
+                        <div class="projects-empty">Loading templates...</div>
+                    }
+                    else if (_outlineTemplates.Count == 0)
+                    {
+                        <div class="projects-empty">No templates yet.</div>
+                    }
+                    else
+                    {
+                        <select id="project-outline-template-select"
+                                @bind="_selectedOutlineTemplateId"
+                                disabled="@_isOutlineTemplateActionInFlight">
+                            @foreach (OutlineTemplateDto template in _outlineTemplates)
+                            {
+                                <option value="@template.Id">@template.Name (@template.NodeCount nodes)</option>
+                            }
+                        </select>
+                    }
+                </div>
+
+                <div class="projects-templates-row">
+                    <label>Apply options</label>
+                    <div class="projects-templates-options">
+                        <label>
+                            <input type="checkbox"
+                                   @bind="_applyTemplateUnderSelectedProjectNode"
+                                   disabled="@(!_selectedNodeId.HasValue || _isOutlineTemplateActionInFlight)" />
+                            Insert under selected node
+                        </label>
+                        <label>
+                            <input type="checkbox"
+                                   @bind="_applyTemplateCreateLinkedSections"
+                                   disabled="@_isOutlineTemplateActionInFlight" />
+                            Create linked sections/pages
+                        </label>
+                        <label for="project-outline-template-link-strategy">Link strategy</label>
+                        <select id="project-outline-template-link-strategy"
+                                @bind="_applyTemplateLinkStrategy"
+                                disabled="@_isOutlineTemplateActionInFlight">
+                            <option value="none">No linking</option>
+                            <option value="by-title">Link by title</option>
+                            <option value="create">Create new sections</option>
+                        </select>
+                    </div>
+                </div>
+
+                @if (!string.IsNullOrWhiteSpace(_outlineTemplateStatus))
+                {
+                    <div class='projects-templates-status @(string.Equals(_outlineTemplateStatus, "Template applied.", StringComparison.Ordinal) || string.Equals(_outlineTemplateStatus, "Template created.", StringComparison.Ordinal) || string.Equals(_outlineTemplateStatus, "Template deleted.", StringComparison.Ordinal) ? string.Empty : "is-error")'>
+                        @_outlineTemplateStatus
+                    </div>
+                }
+            </div>
+            <div class="projects-templates-footer">
+                <button type="button"
+                        class="secondary"
+                        @onclick="ApplySelectedOutlineTemplateAsync"
+                        disabled="@(!_selectedOutlineTemplateId.HasValue || _isOutlineTemplateActionInFlight)">
+                    @(_isOutlineTemplateActionInFlight ? "Applying..." : "Apply")
+                </button>
+                <button type="button"
+                        class="secondary"
+                        @onclick="DeleteSelectedOutlineTemplateAsync"
+                        disabled="@(!_selectedOutlineTemplateId.HasValue || _isOutlineTemplateActionInFlight)">
+                    Delete
+                </button>
+                <button type="button" @onclick="CloseOutlineTemplatesModal">Close</button>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
+    // Temporary toggle: set to true to show navigator row word counts again.
+    private bool _showNavigatorTreeWordCount = false;
+
     private bool _projectsEnabled;
     private bool _loading = true;
     private bool _creatingProject;
     private bool _creatingFromDocument;
     private bool _goalsEnabled;
+    private bool _outlineTemplatesEnabled;
+    private bool _isOutlineTemplatesModalOpen;
+    private bool _isOutlineTemplatesLoading;
+    private bool _isOutlineTemplateActionInFlight;
     private string _activeTab = "structure";
     private string? _error;
+    private string? _outlineTemplateStatus;
     private readonly List<ProjectDto> _projects = new();
     private readonly List<ProjectNodeDto> _nodes = new();
+    private readonly List<OutlineTemplateDto> _outlineTemplates = new();
     private ProjectDto? _activeProject;
     private ProjectProgressDashboardDto? _progress;
     private Guid? _selectedProjectId;
     private Guid? _selectedNodeId;
+    private Guid? _selectedOutlineTemplateId;
     private Guid? _renamingNodeId;
     private Guid? _openNodeMenuId;
+    private readonly Dictionary<Guid, ElementReference> _nodeMenuButtons = new();
+    private ElementReference _nodeMenuRef;
+    private double _openNodeMenuX;
+    private double _openNodeMenuY;
+    private bool _shouldFocusNodeMenu;
     private string _renameDraft = string.Empty;
     private Guid? _dragNodeId;
+    private bool _pointerDragActive;
+    private Guid? _pointerDragHoverNodeId;
     private int _dailyTargetDraft;
     private int _weeklyTargetDraft;
     private string _timezoneDraft = "UTC";
     private string _milestoneTitleDraft = string.Empty;
     private int? _milestoneTargetWordsDraft;
     private string _sessionNotesDraft = string.Empty;
+    private string _outlineTemplateName = string.Empty;
     private string _addNodeType = "part";
+    private string _applyTemplateLinkStrategy = "none";
+    private bool _applyTemplateUnderSelectedProjectNode;
+    private bool _applyTemplateCreateLinkedSections;
     private readonly HashSet<Guid> _collapsedNodeIds = new();
     private CancellationTokenSource? _sessionTickerCts;
     private int _sessionElapsedSeconds;
@@ -392,6 +564,8 @@ else
 
     private ProjectNodeDto? _selectedNode =>
         _selectedNodeId.HasValue ? _nodes.FirstOrDefault(node => node.Id == _selectedNodeId.Value) : null;
+    private ProjectNodeDto? OpenNodeMenuNode =>
+        _openNodeMenuId.HasValue ? _nodes.FirstOrDefault(node => node.Id == _openNodeMenuId.Value) : null;
 
     [Parameter]
     public Guid? ProjectId { get; set; }
@@ -404,6 +578,9 @@ else
         _goalsEnabled = Configuration.GetValue<bool?>("Workflow:GoalsEnabled")
             ?? Configuration.GetValue<bool?>("WriterApp:Workflow:GoalsEnabled")
             ?? false;
+        _outlineTemplatesEnabled = Configuration.GetValue<bool?>("Workflow:OutlineTemplatesEnabled")
+            ?? Configuration.GetValue<bool?>("WriterApp:Workflow:OutlineTemplatesEnabled")
+            ?? false;
 
         if (!_projectsEnabled)
         {
@@ -411,6 +588,7 @@ else
             return;
         }
 
+        await RefreshOutlineTemplatesAvailabilityAsync();
         await LoadProjectsAsync();
     }
 
@@ -782,14 +960,22 @@ else
         bool isSelected = _selectedNodeId == node.Id;
         bool isRenaming = _renamingNodeId == node.Id;
         bool isMenuOpen = _openNodeMenuId == node.Id;
+        bool isPointerDropTarget = _pointerDragActive
+            && _dragNodeId.HasValue
+            && _dragNodeId.Value != node.Id
+            && _pointerDragHoverNodeId == node.Id;
         List<ProjectNodeDto> children = GetChildren(node.Id).ToList();
         bool hasChildren = children.Count > 0;
         bool isCollapsed = hasChildren && _collapsedNodeIds.Contains(node.Id);
+        string displayTitle = GetDisplayNodeTitle(node.Title, node.NodeType);
 
         builder.OpenElement(seq++, "li");
-        builder.AddAttribute(seq++, "class", "tree-node");
+        builder.AddAttribute(seq++, "class", isPointerDropTarget ? "tree-node is-drop-target" : "tree-node");
+        builder.AddAttribute(seq++, "onmouseenter", EventCallback.Factory.Create<MouseEventArgs>(this, () => OnNodePointerEnter(node.Id)));
+        builder.AddAttribute(seq++, "onmouseup", EventCallback.Factory.Create<MouseEventArgs>(this, () => OnNodePointerDropAsync(node.Id)));
         builder.AddAttribute(seq++, "ondragover", EventCallback.Factory.Create<DragEventArgs>(this, OnNodeDragOver));
-        builder.AddAttribute(seq++, "ondrop", EventCallback.Factory.Create<DragEventArgs>(this, () => OnNodeDropAsync(node.Id)));
+        builder.AddEventPreventDefaultAttribute(seq++, "ondragover", true);
+        builder.AddAttribute(seq++, "ondrop", EventCallback.Factory.Create<DragEventArgs>(this, (args) => OnNodeDropAsync(node.Id, args)));
 
         builder.OpenElement(seq++, "div");
         builder.AddAttribute(seq++, "class", isSelected ? "tree-row is-selected" : "tree-row");
@@ -799,6 +985,11 @@ else
         builder.AddAttribute(seq++, "aria-selected", isSelected ? "true" : "false");
         builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => OnNodeSelected(node.Id)));
         builder.AddAttribute(seq++, "onkeydown", EventCallback.Factory.Create<KeyboardEventArgs>(this, (args) => OnNodeRowKeyDown(args, node.Id)));
+
+        builder.OpenElement(seq++, "span");
+        builder.AddAttribute(seq++, "class", "tree-indent");
+        builder.AddAttribute(seq++, "aria-hidden", "true");
+        builder.CloseElement();
 
         builder.OpenElement(seq++, "button");
         builder.AddAttribute(seq++, "type", "button");
@@ -816,13 +1007,16 @@ else
         builder.AddContent(seq++, "▸");
         builder.CloseElement();
 
-        builder.OpenElement(seq++, "button");
-        builder.AddAttribute(seq++, "type", "button");
+        builder.OpenElement(seq++, "span");
         builder.AddAttribute(seq++, "class", "tree-drag");
         builder.AddAttribute(seq++, "draggable", true);
+        builder.AddAttribute(seq++, "role", "button");
+        builder.AddAttribute(seq++, "tabindex", "0");
         builder.AddAttribute(seq++, "aria-label", "Drag to reorder");
-        builder.AddEventStopPropagationAttribute(seq++, "onclick", true);
-        builder.AddAttribute(seq++, "ondragstart", EventCallback.Factory.Create<DragEventArgs>(this, () => OnNodeDragStart(node.Id)));
+        builder.AddEventStopPropagationAttribute(seq++, "onmousedown", true);
+        builder.AddAttribute(seq++, "onmousedown", EventCallback.Factory.Create<MouseEventArgs>(this, () => OnNodeDragHandleMouseDown(node.Id)));
+        builder.AddAttribute(seq++, "ondragstart", EventCallback.Factory.Create<DragEventArgs>(this, (args) => OnNodeDragStart(node.Id, args)));
+        builder.AddAttribute(seq++, "ondragend", EventCallback.Factory.Create<DragEventArgs>(this, (args) => OnNodeDragEnd(node.Id, args)));
         builder.AddContent(seq++, "::");
         builder.CloseElement();
 
@@ -852,15 +1046,20 @@ else
             builder.AddAttribute(seq++, "class", "tree-select");
             builder.OpenElement(seq++, "span");
             builder.AddAttribute(seq++, "class", "tree-select-title");
-            builder.AddContent(seq++, GetDisplayNodeTitle(node.Title, node.NodeType));
+            builder.AddAttribute(seq++, "title", displayTitle);
+            builder.AddAttribute(seq++, "tabindex", "0");
+            builder.AddContent(seq++, displayTitle);
             builder.CloseElement();
             builder.CloseElement();
         }
 
-        builder.OpenElement(seq++, "span");
-        builder.AddAttribute(seq++, "class", "tree-meta");
-        builder.AddContent(seq++, $"{FormatWordCount(node.WordCountCache)} words");
-        builder.CloseElement();
+        if (_showNavigatorTreeWordCount)
+        {
+            builder.OpenElement(seq++, "span");
+            builder.AddAttribute(seq++, "class", "tree-meta");
+            builder.AddContent(seq++, $"{FormatWordCount(node.WordCountCache)} words");
+            builder.CloseElement();
+        }
 
         builder.OpenElement(seq++, "div");
         builder.AddAttribute(seq++, "class", "tree-row-actions");
@@ -872,54 +1071,10 @@ else
         builder.AddAttribute(seq++, "aria-haspopup", "menu");
         builder.AddAttribute(seq++, "aria-expanded", isMenuOpen ? "true" : "false");
         builder.AddEventStopPropagationAttribute(seq++, "onclick", true);
-        builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => ToggleNodeMenu(node.Id)));
+        builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create<MouseEventArgs>(this, async args => await ToggleNodeMenuAsync(node.Id, args)));
+        builder.AddElementReferenceCapture(seq++, elementReference => _nodeMenuButtons[node.Id] = elementReference);
         builder.AddContent(seq++, "⋯");
         builder.CloseElement();
-
-        if (isMenuOpen)
-        {
-            builder.OpenElement(seq++, "div");
-            builder.AddAttribute(seq++, "class", "tree-row-menu");
-            builder.AddAttribute(seq++, "role", "menu");
-            builder.AddEventStopPropagationAttribute(seq++, "onclick", true);
-
-            builder.OpenElement(seq++, "button");
-            builder.AddAttribute(seq++, "type", "button");
-            builder.AddAttribute(seq++, "role", "menuitem");
-            builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => StartInlineRename(node.Id)));
-            builder.AddContent(seq++, "Rename");
-            builder.CloseElement();
-
-            if (IsPart(node))
-            {
-                builder.OpenElement(seq++, "button");
-                builder.AddAttribute(seq++, "type", "button");
-                builder.AddAttribute(seq++, "role", "menuitem");
-                builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => AddNodeUnderNodeAsync(node.Id, "chapter", "New Chapter")));
-                builder.AddContent(seq++, "Add chapter");
-                builder.CloseElement();
-            }
-            else if (IsChapter(node))
-            {
-                builder.OpenElement(seq++, "button");
-                builder.AddAttribute(seq++, "type", "button");
-                builder.AddAttribute(seq++, "role", "menuitem");
-                builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => AddSceneUnderAsync(node.Id)));
-                builder.AddContent(seq++, "Add scene");
-                builder.CloseElement();
-            }
-            else if (IsScene(node))
-            {
-                builder.OpenElement(seq++, "button");
-                builder.AddAttribute(seq++, "type", "button");
-                builder.AddAttribute(seq++, "role", "menuitem");
-                builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, async () => await OpenSpecificSceneInEditorAsync(node.Id)));
-                builder.AddContent(seq++, "Open scene");
-                builder.CloseElement();
-            }
-
-            builder.CloseElement();
-        }
 
         builder.CloseElement();
         builder.CloseElement();
@@ -943,7 +1098,7 @@ else
     {
         _selectedNodeId = nodeId;
         _renamingNodeId = null;
-        _openNodeMenuId = null;
+        CloseNodeMenu();
         ProjectNodeDto? node = _selectedNode;
         _renameDraft = node?.Title ?? string.Empty;
     }
@@ -955,6 +1110,10 @@ else
         {
             OnNodeSelected(nodeId);
         }
+        else if (string.Equals(args.Key, "Escape", StringComparison.Ordinal))
+        {
+            CloseNodeMenu();
+        }
     }
 
     private void OnRenameInput(ChangeEventArgs args)
@@ -964,7 +1123,7 @@ else
 
     private void StartInlineRename(Guid nodeId)
     {
-        _openNodeMenuId = null;
+        CloseNodeMenu();
         _selectedNodeId = nodeId;
         _renamingNodeId = nodeId;
         ProjectNodeDto? node = _nodes.FirstOrDefault(item => item.Id == nodeId);
@@ -1039,15 +1198,215 @@ else
         _renameDraft = node?.Title ?? string.Empty;
     }
 
-    private void ToggleNodeMenu(Guid nodeId)
+    private async Task ToggleNodeMenuAsync(Guid nodeId, MouseEventArgs args)
     {
-        _openNodeMenuId = _openNodeMenuId == nodeId ? null : nodeId;
+        if (_openNodeMenuId == nodeId)
+        {
+            CloseNodeMenu();
+            return;
+        }
+
+        NodeMenuAnchorLayout? anchor = null;
+        if (_nodeMenuButtons.TryGetValue(nodeId, out ElementReference buttonRef))
+        {
+            try
+            {
+                anchor = await JS.InvokeAsync<NodeMenuAnchorLayout?>("writerProjectsMenu.getAnchorLayout", buttonRef);
+            }
+            catch
+            {
+                anchor = null;
+            }
+        }
+
+        if (anchor is null)
+        {
+            double viewportWidth = 0;
+            double viewportHeight = 0;
+            try
+            {
+                NodeMenuViewport? viewport = await JS.InvokeAsync<NodeMenuViewport?>("writerProjectsMenu.getViewport");
+                if (viewport is not null)
+                {
+                    viewportWidth = viewport.Width;
+                    viewportHeight = viewport.Height;
+                }
+            }
+            catch
+            {
+                // ignore and fallback defaults below
+            }
+
+            anchor = new NodeMenuAnchorLayout
+            {
+                Left = args.ClientX,
+                Top = args.ClientY,
+                Right = args.ClientX,
+                Bottom = args.ClientY,
+                Width = 0,
+                Height = 0,
+                ViewportWidth = viewportWidth <= 0 ? 1280 : viewportWidth,
+                ViewportHeight = viewportHeight <= 0 ? 720 : viewportHeight
+            };
+        }
+
+        const double menuWidth = 184;
+        const double menuHeight = 196;
+        const double gap = 6;
+        const double viewportPadding = 8;
+
+        double x = anchor.Right - menuWidth;
+        double maxX = Math.Max(viewportPadding, anchor.ViewportWidth - menuWidth - viewportPadding);
+        x = Math.Max(viewportPadding, Math.Min(maxX, x));
+
+        double y = anchor.Bottom + gap;
+        bool shouldFlipUp = y + menuHeight > anchor.ViewportHeight - viewportPadding;
+        if (shouldFlipUp)
+        {
+            y = anchor.Top - gap - menuHeight;
+        }
+
+        double maxY = Math.Max(viewportPadding, anchor.ViewportHeight - menuHeight - viewportPadding);
+        y = Math.Max(viewportPadding, Math.Min(maxY, y));
+
+        _openNodeMenuX = x;
+        _openNodeMenuY = y;
+        _openNodeMenuId = nodeId;
+        _shouldFocusNodeMenu = true;
+    }
+
+    private void CloseNodeMenu()
+    {
+        _openNodeMenuId = null;
+        _shouldFocusNodeMenu = false;
+    }
+
+    private string GetNodeMenuStyle()
+    {
+        string left = Math.Round(_openNodeMenuX).ToString(CultureInfo.InvariantCulture);
+        string top = Math.Round(_openNodeMenuY).ToString(CultureInfo.InvariantCulture);
+        return $"position:fixed;left:{left}px;top:{top}px;z-index:1201;";
+    }
+
+    private Task OnNodeMenuKeyDown(KeyboardEventArgs args)
+    {
+        if (string.Equals(args.Key, "Escape", StringComparison.Ordinal))
+        {
+            CloseNodeMenu();
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private async Task OnNodeMenuRenameAsync()
+    {
+        Guid? nodeId = _openNodeMenuId;
+        CloseNodeMenu();
+        if (nodeId.HasValue)
+        {
+            StartInlineRename(nodeId.Value);
+        }
+
+        await Task.CompletedTask;
+    }
+
+    private async Task OnNodeMenuAddChapterAsync()
+    {
+        Guid? nodeId = _openNodeMenuId;
+        CloseNodeMenu();
+        if (nodeId.HasValue)
+        {
+            await AddNodeUnderNodeAsync(nodeId.Value, "chapter", "New Chapter");
+        }
+    }
+
+    private async Task OnNodeMenuAddSceneAsync()
+    {
+        Guid? nodeId = _openNodeMenuId;
+        CloseNodeMenu();
+        if (nodeId.HasValue)
+        {
+            await AddSceneUnderAsync(nodeId.Value);
+        }
+    }
+
+    private async Task OnNodeMenuOpenSceneAsync()
+    {
+        Guid? nodeId = _openNodeMenuId;
+        CloseNodeMenu();
+        if (nodeId.HasValue)
+        {
+            await OpenSpecificSceneInEditorAsync(nodeId.Value);
+        }
+    }
+
+    private async Task OnNodeMenuTemplatesAsync()
+    {
+        Guid? nodeId = _openNodeMenuId;
+        CloseNodeMenu();
+        if (nodeId.HasValue)
+        {
+            _selectedNodeId = nodeId.Value;
+        }
+
+        await OpenOutlineTemplatesModalAsync();
+    }
+
+    private async Task OnNodeMenuDeleteAsync()
+    {
+        Guid? nodeId = _openNodeMenuId;
+        CloseNodeMenu();
+        if (nodeId.HasValue)
+        {
+            await DeleteNodeAsync(nodeId.Value);
+        }
     }
 
     private async Task AddNodeUnderNodeAsync(Guid parentId, string nodeType, string title)
     {
-        _openNodeMenuId = null;
+        CloseNodeMenu();
         await AddNodeInternalAsync(parentId, nodeType, title);
+    }
+
+    private async Task DeleteNodeAsync(Guid nodeId)
+    {
+        if (_activeProject is null)
+        {
+            return;
+        }
+
+        ProjectNodeDto? node = _nodes.FirstOrDefault(item => item.Id == nodeId);
+        if (node is null)
+        {
+            return;
+        }
+
+        bool confirmed;
+        try
+        {
+            string label = GetDisplayNodeTitle(node.Title, node.NodeType);
+            confirmed = await JS.InvokeAsync<bool>("confirm", $"Delete '{label}' and its child nodes?");
+        }
+        catch
+        {
+            confirmed = false;
+        }
+
+        if (!confirmed)
+        {
+            return;
+        }
+
+        CloseNodeMenu();
+        using HttpResponseMessage response = await Http.DeleteAsync($"api/projects/{_activeProject.Id}/nodes/{nodeId}");
+        if (!response.IsSuccessStatusCode)
+        {
+            _error = "Delete node failed.";
+            return;
+        }
+
+        _collapsedNodeIds.Remove(nodeId);
+        await RefreshProjectAsync(_activeProject.Id);
     }
 
     private async Task RefreshProjectAsync(Guid projectId)
@@ -1212,6 +1571,452 @@ else
         return true;
     }
 
+    private async Task RefreshOutlineTemplatesAvailabilityAsync()
+    {
+        try
+        {
+            using HttpResponseMessage response = await Http.GetAsync("api/outline-templates");
+            if (response.StatusCode == HttpStatusCode.NotFound || response.StatusCode == HttpStatusCode.Forbidden)
+            {
+                _outlineTemplatesEnabled = false;
+                return;
+            }
+
+            if (response.IsSuccessStatusCode)
+            {
+                _outlineTemplatesEnabled = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogDebug(ex, "Unable to probe outline template availability. Using configured value.");
+        }
+    }
+
+    private async Task LoadOutlineTemplatesAsync(bool preserveSelection = true)
+    {
+        _isOutlineTemplatesLoading = true;
+        try
+        {
+            IReadOnlyList<OutlineTemplateDto> templates = await OutlineTemplatesClient.GetTemplatesAsync();
+            Guid? previousSelection = preserveSelection ? _selectedOutlineTemplateId : null;
+
+            _outlineTemplates.Clear();
+            _outlineTemplates.AddRange(templates.OrderBy(template => template.Name));
+
+            if (previousSelection.HasValue && _outlineTemplates.Any(template => template.Id == previousSelection.Value))
+            {
+                _selectedOutlineTemplateId = previousSelection.Value;
+            }
+            else
+            {
+                _selectedOutlineTemplateId = _outlineTemplates.FirstOrDefault()?.Id;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to load outline templates in Projects.");
+            _outlineTemplateStatus = "Unable to load templates.";
+        }
+        finally
+        {
+            _isOutlineTemplatesLoading = false;
+        }
+    }
+
+    private async Task OpenOutlineTemplatesModalAsync()
+    {
+        if (!_outlineTemplatesEnabled)
+        {
+            return;
+        }
+
+        _isOutlineTemplatesModalOpen = true;
+        _outlineTemplateStatus = null;
+        _outlineTemplateName = string.Empty;
+        _applyTemplateUnderSelectedProjectNode = _selectedNodeId.HasValue;
+        _applyTemplateCreateLinkedSections = false;
+        _applyTemplateLinkStrategy = "none";
+        await LoadOutlineTemplatesAsync();
+    }
+
+    private void CloseOutlineTemplatesModal()
+    {
+        _isOutlineTemplatesModalOpen = false;
+        _isOutlineTemplateActionInFlight = false;
+        _outlineTemplateStatus = null;
+    }
+
+    private async Task CreateTemplateFromCurrentProjectAsync()
+    {
+        if (!_outlineTemplatesEnabled || _nodes.Count == 0 || _isOutlineTemplateActionInFlight)
+        {
+            return;
+        }
+
+        _isOutlineTemplateActionInFlight = true;
+        _outlineTemplateStatus = null;
+        try
+        {
+            string name = string.IsNullOrWhiteSpace(_outlineTemplateName)
+                ? "Untitled template"
+                : _outlineTemplateName.Trim();
+
+            List<OutlineTemplateNodeDto> nodes = BuildTemplateNodesFromCurrentProject();
+            OutlineTemplateCreateRequest request = new(name, nodes);
+            using HttpResponseMessage response = await OutlineTemplatesClient.CreateTemplateAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                string? message = await OutlineTemplatesClient.ReadErrorMessageAsync(response);
+                _outlineTemplateStatus = string.IsNullOrWhiteSpace(message)
+                    ? "Failed to create template."
+                    : message;
+                return;
+            }
+
+            _outlineTemplateName = string.Empty;
+            _outlineTemplateStatus = "Template created.";
+            await LoadOutlineTemplatesAsync(preserveSelection: false);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to create outline template from project.");
+            _outlineTemplateStatus = "Failed to create template.";
+        }
+        finally
+        {
+            _isOutlineTemplateActionInFlight = false;
+        }
+    }
+
+    private List<OutlineTemplateNodeDto> BuildTemplateNodesFromCurrentProject()
+    {
+        return _nodes
+            .OrderBy(node => node.ParentId)
+            .ThenBy(node => node.OrderIndex)
+            .Select(node => new OutlineTemplateNodeDto(
+                node.Id,
+                node.ParentId,
+                node.NodeType,
+                node.Title,
+                node.OrderIndex,
+                null,
+                node.MetadataJson,
+                node.LinkedSectionId))
+            .ToList();
+    }
+
+    private async Task ApplySelectedOutlineTemplateAsync()
+    {
+        if (!_outlineTemplatesEnabled || !_selectedOutlineTemplateId.HasValue || _activeProject is null || _isOutlineTemplateActionInFlight)
+        {
+            return;
+        }
+
+        _isOutlineTemplateActionInFlight = true;
+        _outlineTemplateStatus = null;
+        try
+        {
+            Guid? manuscriptDocumentId = await EnsureManuscriptDocumentIdAsync(_activeProject!.Id);
+            if (!manuscriptDocumentId.HasValue)
+            {
+                _outlineTemplateStatus = "Unable to resolve manuscript document for this project.";
+                return;
+            }
+
+            List<DocumentOutlineNodeDto> beforeNodes = await Http.GetFromJsonAsync<List<DocumentOutlineNodeDto>>(
+                    $"api/documents/{manuscriptDocumentId.Value}/outline/nodes")
+                ?? new List<DocumentOutlineNodeDto>();
+            HashSet<Guid> existingIds = beforeNodes.Select(node => node.Id).ToHashSet();
+
+            OutlineTemplateApplyOptionsDto options = new(
+                ParentNodeId: null,
+                CreateLinkedSections: _applyTemplateCreateLinkedSections,
+                LinkStrategy: _applyTemplateLinkStrategy);
+
+            using HttpResponseMessage response = await OutlineTemplatesClient.ApplyTemplateAsync(
+                manuscriptDocumentId.Value,
+                _selectedOutlineTemplateId.Value,
+                options);
+            if (!response.IsSuccessStatusCode)
+            {
+                string? message = await OutlineTemplatesClient.ReadErrorMessageAsync(response);
+                _outlineTemplateStatus = string.IsNullOrWhiteSpace(message)
+                    ? "Failed to apply template."
+                    : message;
+                return;
+            }
+
+            List<DocumentOutlineNodeDto>? updated = await response.Content.ReadFromJsonAsync<List<DocumentOutlineNodeDto>>();
+            if (updated is null)
+            {
+                _outlineTemplateStatus = "Template applied, but no outline data was returned.";
+                return;
+            }
+
+            List<DocumentOutlineNodeDto> inserted = updated
+                .Where(node => !existingIds.Contains(node.Id))
+                .OrderBy(node => node.ParentId)
+                .ThenBy(node => node.Order)
+                .ToList();
+
+            Guid? targetProjectParent = _applyTemplateUnderSelectedProjectNode ? _selectedNodeId : null;
+            int mirroredCount = await MirrorInsertedOutlineNodesToProjectAsync(inserted, targetProjectParent);
+            await RefreshProjectAsync(_activeProject.Id);
+
+            _outlineTemplateStatus = mirroredCount > 0
+                ? "Template applied."
+                : "Template applied, but no new project nodes were added.";
+            _isOutlineTemplatesModalOpen = false;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to apply outline template from project.");
+            _outlineTemplateStatus = "Failed to apply template.";
+        }
+        finally
+        {
+            _isOutlineTemplateActionInFlight = false;
+        }
+    }
+
+    private async Task<int> MirrorInsertedOutlineNodesToProjectAsync(
+        IReadOnlyList<DocumentOutlineNodeDto> insertedNodes,
+        Guid? targetParentProjectNodeId)
+    {
+        if (_activeProject is null || insertedNodes.Count == 0)
+        {
+            return 0;
+        }
+
+        HashSet<Guid> insertedIds = insertedNodes.Select(node => node.Id).ToHashSet();
+        Dictionary<Guid, List<DocumentOutlineNodeDto>> childrenByParent = insertedNodes
+            .Where(node => node.ParentId.HasValue && insertedIds.Contains(node.ParentId.Value))
+            .GroupBy(node => node.ParentId!.Value)
+            .ToDictionary(
+                group => group.Key,
+                group => group.OrderBy(node => node.Order).ToList());
+
+        List<DocumentOutlineNodeDto> roots = insertedNodes
+            .Where(node => !node.ParentId.HasValue || !insertedIds.Contains(node.ParentId.Value))
+            .OrderBy(node => node.Order)
+            .ToList();
+
+        int mirrored = 0;
+
+        async Task MirrorSubtreeAsync(DocumentOutlineNodeDto source, Guid? parentProjectNodeId, int depth)
+        {
+            string nodeType = InferProjectNodeType(source, depth);
+            ProjectNodeDto? created = await CreateProjectNodeFromTemplateAsync(
+                parentProjectNodeId,
+                nodeType,
+                source.Title,
+                source.LinkedSectionId,
+                source.MetadataJson);
+            if (created is null)
+            {
+                return;
+            }
+
+            mirrored++;
+            if (!childrenByParent.TryGetValue(source.Id, out List<DocumentOutlineNodeDto>? children))
+            {
+                return;
+            }
+
+            foreach (DocumentOutlineNodeDto child in children)
+            {
+                await MirrorSubtreeAsync(child, created.Id, depth + 1);
+            }
+        }
+
+        foreach (DocumentOutlineNodeDto root in roots)
+        {
+            await MirrorSubtreeAsync(root, targetParentProjectNodeId, 0);
+        }
+
+        return mirrored;
+    }
+
+    private async Task<ProjectNodeDto?> CreateProjectNodeFromTemplateAsync(
+        Guid? parentId,
+        string nodeType,
+        string title,
+        Guid? linkedSectionId,
+        string? metadataJson)
+    {
+        if (_activeProject is null)
+        {
+            return null;
+        }
+
+        string safeTitle = string.IsNullOrWhiteSpace(title)
+            ? $"New {GetNodeTypeLabel(nodeType)}"
+            : title.Trim();
+
+        ProjectNodeCreateRequest request = new(parentId, nodeType, safeTitle, null, linkedSectionId, metadataJson);
+        using HttpResponseMessage response = await Http.PostAsJsonAsync($"api/projects/{_activeProject.Id}/nodes", request);
+        if (!response.IsSuccessStatusCode)
+        {
+            string? message = await OutlineTemplatesClient.ReadErrorMessageAsync(response);
+            _outlineTemplateStatus = string.IsNullOrWhiteSpace(message)
+                ? "Failed to mirror template nodes into project tree."
+                : message;
+            return null;
+        }
+
+        return await response.Content.ReadFromJsonAsync<ProjectNodeDto>();
+    }
+
+    private static string InferProjectNodeType(DocumentOutlineNodeDto node, int depth)
+    {
+        if (TryGetNodeTypeFromMetadata(node.MetadataJson, out string metadataType))
+        {
+            return metadataType;
+        }
+
+        if (node.LinkedSectionId.HasValue)
+        {
+            return "scene";
+        }
+
+        string title = node.Title?.Trim() ?? string.Empty;
+        if (title.StartsWith("scene", StringComparison.OrdinalIgnoreCase))
+        {
+            return "scene";
+        }
+
+        if (title.StartsWith("chapter", StringComparison.OrdinalIgnoreCase))
+        {
+            return "chapter";
+        }
+
+        if (title.StartsWith("part", StringComparison.OrdinalIgnoreCase))
+        {
+            return "part";
+        }
+
+        return depth switch
+        {
+            <= 0 => "part",
+            1 => "chapter",
+            _ => "scene"
+        };
+    }
+
+    private static bool TryGetNodeTypeFromMetadata(string? metadataJson, out string nodeType)
+    {
+        nodeType = string.Empty;
+        if (string.IsNullOrWhiteSpace(metadataJson))
+        {
+            return false;
+        }
+
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(metadataJson);
+            JsonElement root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            if (!root.TryGetProperty("nodeType", out JsonElement value)
+                && !root.TryGetProperty("type", out value))
+            {
+                return false;
+            }
+
+            string? raw = value.GetString();
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return false;
+            }
+
+            string normalized = raw.Trim().ToLowerInvariant();
+            if (normalized is not ("part" or "chapter" or "scene"))
+            {
+                return false;
+            }
+
+            nodeType = normalized;
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private async Task<Guid?> EnsureManuscriptDocumentIdAsync(Guid projectId)
+    {
+        using HttpResponseMessage docsResponse = await Http.GetAsync($"api/projects/{projectId}/documents");
+        if (!docsResponse.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        List<ProjectDocumentDto>? docs = await docsResponse.Content.ReadFromJsonAsync<List<ProjectDocumentDto>>();
+        ProjectDocumentDto? manuscript = docs?
+            .Where(item => item.DeletedAt is null && string.Equals(item.Kind, "manuscript", StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(item => item.UpdatedAt)
+            .FirstOrDefault();
+        if (manuscript is not null)
+        {
+            return manuscript.Id;
+        }
+
+        ProjectDocumentCreateRequest createRequest = new(
+            Id: null,
+            Title: "Manuscript",
+            Kind: "manuscript",
+            CreateDefaultStructure: false);
+        using HttpResponseMessage createResponse = await Http.PostAsJsonAsync($"api/projects/{projectId}/documents", createRequest);
+        if (!createResponse.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        DocumentCreateResponse? created = await createResponse.Content.ReadFromJsonAsync<DocumentCreateResponse>();
+        return created?.Document.Id;
+    }
+
+    private async Task DeleteSelectedOutlineTemplateAsync()
+    {
+        if (!_outlineTemplatesEnabled || !_selectedOutlineTemplateId.HasValue || _isOutlineTemplateActionInFlight)
+        {
+            return;
+        }
+
+        _isOutlineTemplateActionInFlight = true;
+        _outlineTemplateStatus = null;
+        try
+        {
+            using HttpResponseMessage response = await OutlineTemplatesClient.DeleteTemplateAsync(_selectedOutlineTemplateId.Value);
+            if (!response.IsSuccessStatusCode)
+            {
+                string? message = await OutlineTemplatesClient.ReadErrorMessageAsync(response);
+                _outlineTemplateStatus = string.IsNullOrWhiteSpace(message)
+                    ? "Failed to delete template."
+                    : message;
+                return;
+            }
+
+            _outlineTemplateStatus = "Template deleted.";
+            _selectedOutlineTemplateId = null;
+            await LoadOutlineTemplatesAsync(preserveSelection: false);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to delete outline template from project modal.");
+            _outlineTemplateStatus = "Failed to delete template.";
+        }
+        finally
+        {
+            _isOutlineTemplateActionInFlight = false;
+        }
+    }
+
     private async Task AddNodeInternalAsync(Guid? parentId, string nodeType, string title)
     {
         if (_activeProject is null)
@@ -1253,20 +2058,90 @@ else
         }
     }
 
-    private void OnNodeDragStart(Guid nodeId)
+    private void OnNodeDragStart(Guid nodeId, DragEventArgs args)
     {
         _dragNodeId = nodeId;
+        _pointerDragActive = false;
+        _pointerDragHoverNodeId = null;
+        if (args.DataTransfer is not null)
+        {
+            args.DataTransfer.DropEffect = "move";
+            args.DataTransfer.EffectAllowed = "move";
+        }
+        LogDnd($"dragstart node={nodeId}");
+    }
+
+    private void OnNodeDragHandleMouseDown(Guid nodeId)
+    {
+        _dragNodeId = nodeId;
+        _pointerDragActive = true;
+        _pointerDragHoverNodeId = null;
+        LogDnd($"handle mousedown node={nodeId}");
+    }
+
+    private void OnNodeDragEnd(Guid nodeId, DragEventArgs _)
+    {
+        LogDnd($"dragend node={nodeId} activeDrag={_dragNodeId?.ToString() ?? "<null>"}");
+        _dragNodeId = null;
+        _pointerDragActive = false;
+        _pointerDragHoverNodeId = null;
+    }
+
+    private void OnNodePointerEnter(Guid nodeId)
+    {
+        if (!_pointerDragActive || !_dragNodeId.HasValue || _dragNodeId.Value == nodeId)
+        {
+            return;
+        }
+
+        _pointerDragHoverNodeId = nodeId;
+        LogDnd($"pointer enter target={nodeId} dragNode={_dragNodeId.Value}");
+        StateHasChanged();
+    }
+
+    private async Task OnNodePointerDropAsync(Guid targetNodeId)
+    {
+        if (!_pointerDragActive || !_dragNodeId.HasValue)
+        {
+            return;
+        }
+
+        LogDnd($"pointer drop target={targetNodeId} dragNode={_dragNodeId.Value}");
+        _pointerDragActive = false;
+        _pointerDragHoverNodeId = null;
+        await OnNodeDropAsync(targetNodeId, new DragEventArgs());
+    }
+
+    private void OnPointerDragCancel(MouseEventArgs _)
+    {
+        if (!_pointerDragActive)
+        {
+            return;
+        }
+
+        LogDnd($"pointer drag cancel dragNode={_dragNodeId?.ToString() ?? "<null>"}");
+        _pointerDragActive = false;
+        _pointerDragHoverNodeId = null;
+        _dragNodeId = null;
     }
 
     private Task OnNodeDragOver(DragEventArgs args)
     {
+        if (_dragNodeId.HasValue && args.DataTransfer is not null)
+        {
+            args.DataTransfer.DropEffect = "move";
+        }
+
+        string active = _dragNodeId?.ToString() ?? "<null>";
+        LogDnd($"dragover activeDrag={active} dropEffect={args.DataTransfer?.DropEffect ?? "<null>"}");
         return Task.CompletedTask;
     }
 
-    private async Task OnNodeDropAsync(Guid targetNodeId)
+    private async Task OnNodeDropAsync(Guid targetNodeId, DragEventArgs _)
     {
         if (_activeProject is null || !_dragNodeId.HasValue || _dragNodeId == targetNodeId)
         {
+            LogDnd($"drop ignored target={targetNodeId} activeProject={_activeProject is not null} dragNode={_dragNodeId?.ToString() ?? "<null>"}");
             return;
         }
 
@@ -1274,9 +2149,12 @@ else
         ProjectNodeDto? target = _nodes.FirstOrDefault(node => node.Id == targetNodeId);
         if (dragged is null || target is null)
         {
+            LogDnd($"drop aborted target={targetNodeId} draggedFound={dragged is not null} targetFound={target is not null}");
             _dragNodeId = null;
             return;
         }
+
+        LogDnd($"drop begin dragged={dragged.Id} target={target.Id} sameParent={dragged.ParentId == target.ParentId}");
 
         if (dragged.ParentId == target.ParentId)
         {
@@ -1286,14 +2164,20 @@ else
             int to = siblings.FindIndex(node => node.Id == target.Id);
             if (from >= 0 && to >= 0 && from != to)
             {
+                LogDnd($"drop reorder siblings parent={parentId?.ToString() ?? "<root>"} from={from} to={to}");
                 ProjectNodeDto moved = siblings[from];
                 siblings.RemoveAt(from);
                 siblings.Insert(to, moved);
                 await SaveSiblingOrderAsync(parentId, siblings.Select(node => node.Id).ToList());
             }
+            else
+            {
+                LogDnd($"drop no-op siblings from={from} to={to}");
+            }
         }
         else if (IsScene(dragged) && IsChapter(target))
         {
+            LogDnd($"drop move scene->chapter scene={dragged.Id} chapter={target.Id}");
             ProjectNodePatchRequest patch = new(
                 dragged.Title,
                 target.Id,
@@ -1305,6 +2189,7 @@ else
                 patch);
             if (!patchResponse.IsSuccessStatusCode)
             {
+                LogDnd($"drop patch failed status={(int)patchResponse.StatusCode}");
                 _error = "Move node failed.";
                 _dragNodeId = null;
                 return;
@@ -1314,8 +2199,13 @@ else
             newOrder.Add(dragged.Id);
             await SaveSiblingOrderAsync(target.Id, newOrder);
         }
+        else
+        {
+            LogDnd($"drop unsupported move draggedType={dragged.NodeType} targetType={target.NodeType}");
+        }
 
         _dragNodeId = null;
+        LogDnd($"drop complete target={targetNodeId}");
         await RefreshProjectAsync(_activeProject.Id);
     }
 
@@ -1333,8 +2223,19 @@ else
             request);
         if (!response.IsSuccessStatusCode)
         {
+            LogDnd($"reorder failed parent={parentRoute} status={(int)response.StatusCode}");
             _error = "Reorder failed.";
         }
+        else
+        {
+            LogDnd($"reorder saved parent={parentRoute} count={order.Count}");
+        }
+    }
+
+    private void LogDnd(string message)
+    {
+        Logger.LogInformation("Navigator DnD: {Message}", message);
+        Console.WriteLine($"Navigator DnD: {message}");
     }
 
     private async Task OpenSceneFromProgressAsync(Guid sceneNodeId)
@@ -1356,7 +2257,7 @@ else
         }
 
         _selectedNodeId = sceneNodeId;
-        _openNodeMenuId = null;
+        CloseNodeMenu();
         await OpenSceneInEditorAsync();
     }
 
@@ -1436,12 +2337,49 @@ else
         return $"writerapp.project.resume.{projectId:D}";
     }
 
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_shouldFocusNodeMenu && _openNodeMenuId.HasValue)
+        {
+            _shouldFocusNodeMenu = false;
+            await _nodeMenuRef.FocusAsync();
+        }
+
+        await base.OnAfterRenderAsync(firstRender);
+    }
+
     public ValueTask DisposeAsync()
     {
         _sessionTickerCts?.Cancel();
         _sessionTickerCts?.Dispose();
         _sessionTickerCts = null;
         return ValueTask.CompletedTask;
+    }
+
+    private sealed class NodeMenuAnchorLayout
+    {
+        public double Left { get; set; }
+
+        public double Top { get; set; }
+
+        public double Right { get; set; }
+
+        public double Bottom { get; set; }
+
+        public double Width { get; set; }
+
+        public double Height { get; set; }
+
+        public double ViewportWidth { get; set; }
+
+        public double ViewportHeight { get; set; }
+    }
+
+    private sealed class NodeMenuViewport
+    {
+        public double Width { get; set; }
+
+        public double Height { get; set; }
     }
 
     private static bool IsPart(ProjectNodeDto node)

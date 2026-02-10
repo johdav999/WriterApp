@@ -64,3 +64,9 @@ From `WriterApp.Client`:
 - `npm run build` (one-time bundle)
 - `npm run dev` (watch mode; writes to `WriterApp.Client/wwwroot/js/tiptap-editor.bundle.js`)
 Then run the server as usual (`dotnet run` from the repo root).
+
+## Outline Templates Flag
+- Canonical flag: `WriterApp:Workflow:OutlineTemplatesEnabled`.
+- Default (`appsettings.json`): `false`.
+- Development (`appsettings.Development.json`): `true`.
+- When disabled, template UI is hidden and `/api/outline-templates` endpoints return `404` with `"Outline templates are disabled."`.

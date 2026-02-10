@@ -121,7 +121,9 @@
             <div class="landing-list">
                 @foreach (ProjectListItemDto item in _projectItems)
                 {
-                    bool menuOpen = _openProjectMenuId == item.ProjectId;
+                    Guid rowProjectId = item.ProjectId;
+                    Guid? rowPrimaryDocumentId = item.PrimaryDocumentId;
+                    bool menuOpen = _openProjectMenuId == rowProjectId;
                     <article class="landing-card project-card">
                         <div class="landing-meta">
                             <div class="landing-title">@item.Title</div>
@@ -143,7 +145,7 @@
                             <button type="button"
                                     class="primary"
                                     title="Resume your last writing context for this project."
-                                    @onclick="() => ResumeProjectAsync(item.ProjectId)">
+                                    @onclick="() => ResumeProjectAsync(rowProjectId)">
                                 Resume
                             </button>
                             <div class="project-overflow">
@@ -153,7 +155,7 @@
                                         aria-haspopup="menu"
                                         aria-expanded="@menuOpen"
                                         @onkeydown="OnProjectMenuKeyDown"
-                                        @onclick="() => ToggleProjectMenu(item.ProjectId)">
+                                        @onclick="() => ToggleProjectMenu(rowProjectId)">
                                     ...
                                 </button>
                                 @if (menuOpen)
@@ -166,13 +168,13 @@
                                         <button type="button"
                                                 role="menuitem"
                                                 @onclick:stopPropagation="true"
-                                                @onclick="() => OpenProject(item.ProjectId)">
+                                                @onclick="() => OpenProject(rowProjectId)">
                                             Open project
                                         </button>
                                         <button type="button"
                                                 role="menuitem"
                                                 @onclick:stopPropagation="true"
-                                                @onclick="() => OpenManuscriptAsync(item.ProjectId, item.PrimaryDocumentId)">
+                                                @onclick="() => OpenManuscriptFromMenuAsync(rowProjectId, rowPrimaryDocumentId)">
                                             Open manuscript
                                         </button>
                                         <button type="button"
@@ -185,7 +187,7 @@
                                                 class="danger"
                                                 role="menuitem"
                                                 @onclick:stopPropagation="true"
-                                                @onclick="() => DeleteProjectFromMenu(item.ProjectId)">
+                                                @onclick="() => DeleteProjectFromMenu(rowProjectId)">
                                             Delete
                                         </button>
                                     </div>
@@ -426,7 +428,7 @@
         _projectErrorMessage = null;
         try
         {
-            using HttpResponseMessage response = await Http.GetAsync("api/projects/list-items");
+            using HttpResponseMessage response = await Http.GetAsync("/api/projects/list-items");
             if (response.StatusCode == HttpStatusCode.NotFound)
             {
                 _projectsEnabled = false;
@@ -469,7 +471,7 @@
         try
         {
             ProjectCreateRequest request = new("Untitled project", null, null, null, null, null);
-            using HttpResponseMessage response = await Http.PostAsJsonAsync("api/projects", request);
+            using HttpResponseMessage response = await Http.PostAsJsonAsync("/api/projects", request);
             response.EnsureSuccessStatusCode();
             ProjectDto? created = await response.Content.ReadFromJsonAsync<ProjectDto>();
             if (created is null)
@@ -541,11 +543,18 @@
         await DeleteProjectAsync(projectId);
     }
 
-    private Task OpenManuscriptAsync(Guid projectId, Guid? primaryDocumentId)
+    private async Task OpenManuscriptFromMenuAsync(Guid projectId, Guid? primaryDocumentId)
     {
+        if (projectId == Guid.Empty || _projectItems.All(item => item.ProjectId != projectId))
+        {
+            _projectErrorMessage = "Project not found.";
+            CloseProjectMenu();
+            return;
+        }
+
         CloseProjectMenu();
         _ = primaryDocumentId;
-        return OpenManuscriptInternalAsync(projectId);
+        await OpenManuscriptInternalAsync(projectId);
     }
 
     private async Task OpenManuscriptInternalAsync(Guid projectId)
@@ -572,7 +581,7 @@
         }
 
         ProjectUpdateRequest payload = new(nextTitle.Trim(), null, null, null, null, null);
-        using HttpResponseMessage response = await Http.PatchAsJsonAsync($"api/projects/{item.ProjectId}", payload);
+        using HttpResponseMessage response = await Http.PatchAsJsonAsync($"/api/projects/{item.ProjectId:D}", payload);
         if (!response.IsSuccessStatusCode)
         {
             _projectErrorMessage = $"Rename failed: {(int)response.StatusCode}";
@@ -590,14 +599,40 @@
             return;
         }
 
-        using HttpResponseMessage response = await Http.DeleteAsync($"api/projects/{projectId}");
-        if (!response.IsSuccessStatusCode)
+        using HttpResponseMessage response = await Http.DeleteAsync($"/api/projects/{projectId:D}");
+        using (response)
         {
-            _projectErrorMessage = $"Delete failed: {(int)response.StatusCode}";
+            if (!response.IsSuccessStatusCode)
+            {
+                string detail = (await response.Content.ReadAsStringAsync()).Trim();
+                _projectErrorMessage = string.IsNullOrWhiteSpace(detail)
+                    ? $"Delete failed: {(int)response.StatusCode}"
+                    : $"Delete failed: {(int)response.StatusCode} {detail}";
+                return;
+            }
+
+            RemoveProjectFromList(projectId);
+            await LoadProjectItemsAsync();
+        }
+    }
+
+    private void RemoveProjectFromList(Guid projectId)
+    {
+        if (projectId == Guid.Empty)
+        {
             return;
         }
 
-        await LoadProjectItemsAsync();
+        _projectItems.RemoveAll(item => item.ProjectId == projectId);
+        if (_continueProject?.ProjectId == projectId)
+        {
+            _continueProject = _projectItems.FirstOrDefault();
+        }
+
+        if (_openProjectMenuId == projectId)
+        {
+            _openProjectMenuId = null;
+        }
     }
 
     private async Task LoadDocumentsAsync()

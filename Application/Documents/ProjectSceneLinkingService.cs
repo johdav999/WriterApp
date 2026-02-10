@@ -161,8 +161,15 @@ namespace WriterApp.Application.Documents
                 return Array.Empty<ManuscriptSceneSectionItem>();
             }
 
-            Dictionary<Guid?, List<ProjectNodeRecord>> byParent = nodes
-                .GroupBy(item => item.ParentId)
+            List<ProjectNodeRecord> roots = nodes
+                .Where(item => !item.ParentId.HasValue)
+                .OrderBy(item => item.OrderIndex)
+                .ThenBy(item => item.Id)
+                .ToList();
+
+            Dictionary<Guid, List<ProjectNodeRecord>> byParent = nodes
+                .Where(item => item.ParentId.HasValue)
+                .GroupBy(item => item.ParentId!.Value)
                 .ToDictionary(
                     group => group.Key,
                     group => group
@@ -171,10 +178,6 @@ namespace WriterApp.Application.Documents
                         .ToList());
 
             List<(ProjectNodeRecord Scene, SceneLinkResult Link)> orderedScenes = new();
-            List<ProjectNodeRecord> roots = byParent.TryGetValue(null, out List<ProjectNodeRecord>? rootNodes)
-                ? rootNodes
-                : new List<ProjectNodeRecord>();
-
             foreach (ProjectNodeRecord root in roots)
             {
                 await CollectSceneNodesDepthFirstAsync(root, project, ownerUserId, byParent, orderedScenes, ct);
@@ -266,7 +269,7 @@ namespace WriterApp.Application.Documents
             ProjectNodeRecord node,
             ProjectRecord project,
             string ownerUserId,
-            IReadOnlyDictionary<Guid?, List<ProjectNodeRecord>> byParent,
+            IReadOnlyDictionary<Guid, List<ProjectNodeRecord>> byParent,
             ICollection<(ProjectNodeRecord Scene, SceneLinkResult Link)> destination,
             CancellationToken ct)
         {

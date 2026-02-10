@@ -17,7 +17,7 @@
         </div>
         <div class="app-header-center">
             <div class="app-breadcrumb">
-                <NavLink class="app-breadcrumb-link" href="documents" Match="NavLinkMatch.Prefix">Documents</NavLink>
+                <NavLink class="app-breadcrumb-link" href="documents" Match="NavLinkMatch.Prefix">Projects</NavLink>
                 @if (!string.IsNullOrWhiteSpace(_documentTitle))
                 {
                     <span class="app-breadcrumb-separator">-&gt;</span>
@@ -53,7 +53,7 @@
                 <a class="app-nav-link @GetDocumentsActiveClass()"
                    href="documents"
                    @onclick="OnDocumentsNavClicked"
-                   @onclick:preventDefault="true">Documents</a>
+                   @onclick:preventDefault="true">Projects</a>
             </nav>
             <article class="content">
                 @Body

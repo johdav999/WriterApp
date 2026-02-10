@@ -648,6 +648,14 @@ else
                                         disabled="@_outlineApplyInFlight">
                                         @(_outlineApplyInFlight ? "Applying..." : "Apply outline to sections")
                                     </button>
+                                    @if (_outlineTemplatesEnabled)
+                                    {
+                                        <button type="button"
+                                                class="outline-btn outline-btn--ghost"
+                                                @onclick="OpenOutlineTemplatesModalAsync">
+                                            Templates...
+                                        </button>
+                                    }
                                 </div>
                             </div>
                             @if (_outlineProposalPreview is not null)
@@ -676,6 +684,12 @@ else
                             @if (!string.IsNullOrWhiteSpace(_outlineStatus))
                             {
                                 <div class="outline-status">@_outlineStatus</div>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(_outlineTemplateStatus))
+                            {
+                                <div class='outline-status @(string.Equals(_outlineTemplateStatus, "Template applied.", StringComparison.Ordinal) || string.Equals(_outlineTemplateStatus, "Template created.", StringComparison.Ordinal) || string.Equals(_outlineTemplateStatus, "Template deleted.", StringComparison.Ordinal) ? string.Empty : "outline-status--error")'>
+                                    @_outlineTemplateStatus
+                                </div>
                             }
                         </div>
                     }
@@ -1058,6 +1072,106 @@ else
                         disabled="@_isDeletingSection">
                     Cancel
                 </button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_outlineTemplatesEnabled && _isOutlineTemplatesModalOpen)
+{
+    <div class="modal-overlay" @onclick="CloseOutlineTemplatesModal">
+        <div class="modal outline-templates-dialog modal-panel" role="dialog" aria-modal="true" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <div class="modal-title">Outline templates</div>
+            </div>
+            <div class="modal-body">
+                <div class="template-manager-row">
+                    <label class="export-panel-label" for="outline-template-name">Create from current outline</label>
+                    <div class="template-manager-create">
+                        <input id="outline-template-name"
+                               class="export-panel-input"
+                               placeholder="Template name"
+                               @bind="_outlineTemplateName" />
+                        <button type="button"
+                                @onclick="CreateTemplateFromCurrentOutlineAsync"
+                                disabled="@(_outlineNodes.Count == 0 || _isOutlineTemplateActionInFlight)">
+                            Create
+                        </button>
+                    </div>
+                </div>
+
+                <div class="template-manager-row">
+                    <label class="export-panel-label" for="outline-template-select">Saved templates</label>
+                    @if (_isOutlineTemplatesLoading)
+                    {
+                        <div class="export-panel-note">Loading templates...</div>
+                    }
+                    else if (_outlineTemplates.Count == 0)
+                    {
+                        <div class="export-panel-note">No templates yet.</div>
+                    }
+                    else
+                    {
+                        <select id="outline-template-select"
+                                class="outline-link-select"
+                                @bind="_selectedOutlineTemplateId"
+                                disabled="@_isOutlineTemplateActionInFlight">
+                            @foreach (OutlineTemplateDto template in _outlineTemplates)
+                            {
+                                <option value="@template.Id">@template.Name (@template.NodeCount nodes)</option>
+                            }
+                        </select>
+                    }
+                </div>
+
+                <div class="template-manager-row">
+                    <label class="export-panel-label">Apply options</label>
+                    <div class="outline-template-options">
+                        <label>
+                            <input type="checkbox"
+                                   @bind="_applyTemplateAtSelectedNode"
+                                   disabled="@(!_selectedOutlineNodeId.HasValue || _isOutlineTemplateActionInFlight)" />
+                            Insert under selected node
+                        </label>
+                        <label>
+                            <input type="checkbox"
+                                   @bind="_applyTemplateCreateLinkedSections"
+                                   disabled="@_isOutlineTemplateActionInFlight" />
+                            Create linked sections/pages
+                        </label>
+                        <label for="outline-template-link-strategy">Link strategy</label>
+                        <select id="outline-template-link-strategy"
+                                class="outline-link-select"
+                                @bind="_applyTemplateLinkStrategy"
+                                disabled="@_isOutlineTemplateActionInFlight">
+                            <option value="none">No linking</option>
+                            <option value="by-title">Link by title</option>
+                            <option value="create">Create new sections</option>
+                        </select>
+                    </div>
+                </div>
+
+                @if (!string.IsNullOrWhiteSpace(_outlineTemplateStatus))
+                {
+                    <div class='outline-status @(string.Equals(_outlineTemplateStatus, "Template applied.", StringComparison.Ordinal) || string.Equals(_outlineTemplateStatus, "Template created.", StringComparison.Ordinal) || string.Equals(_outlineTemplateStatus, "Template deleted.", StringComparison.Ordinal) ? string.Empty : "outline-status--error")'>
+                        @_outlineTemplateStatus
+                    </div>
+                }
+            </div>
+            <div class="modal-footer">
+                <button type="button"
+                        class="outline-btn outline-btn--secondary"
+                        @onclick="ApplySelectedOutlineTemplateAsync"
+                        disabled="@(!_selectedOutlineTemplateId.HasValue || _isOutlineTemplateActionInFlight)">
+                    @(_isOutlineTemplateActionInFlight ? "Applying..." : "Apply template")
+                </button>
+                <button type="button"
+                        class="outline-btn outline-btn--ghost outline-btn--danger"
+                        @onclick="DeleteSelectedOutlineTemplateAsync"
+                        disabled="@(!_selectedOutlineTemplateId.HasValue || _isOutlineTemplateActionInFlight)">
+                    Delete
+                </button>
+                <button type="button" @onclick="CloseOutlineTemplatesModal">Close</button>
             </div>
         </div>
     </div>

@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using WriterApp.Application.Documents;
 using WriterApp.Application.Security;
 using WriterApp.Data;
@@ -27,6 +28,7 @@ namespace WriterApp.Controllers
         private readonly IProjectGoalsService _goals;
         private readonly IProjectSceneLinkingService _sceneLinking;
         private readonly IConfiguration _configuration;
+        private readonly ILogger<ProjectsController> _logger;
 
         public ProjectsController(
             AppDbContext dbContext,
@@ -34,7 +36,8 @@ namespace WriterApp.Controllers
             IProjectWordCountService wordCounts,
             IProjectGoalsService goals,
             IProjectSceneLinkingService sceneLinking,
-            IConfiguration configuration)
+            IConfiguration configuration,
+            ILogger<ProjectsController> logger)
         {
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
@@ -42,6 +45,7 @@ namespace WriterApp.Controllers
             _goals = goals ?? throw new ArgumentNullException(nameof(goals));
             _sceneLinking = sceneLinking ?? throw new ArgumentNullException(nameof(sceneLinking));
             _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         [HttpGet]
@@ -442,28 +446,92 @@ namespace WriterApp.Controllers
         }
 
         [HttpDelete("{projectId:guid}")]
+        [HttpDelete("/app/api/projects/{projectId:guid}")]
         public async Task<IActionResult> DeleteProject(Guid projectId, CancellationToken ct)
         {
+            _logger.LogInformation("Projects delete requested: projectId={ProjectId} path={Path}", projectId, Request.Path.Value);
             if (!IsEnabled())
             {
+                _logger.LogWarning("Projects delete rejected: projects workflow disabled. projectId={ProjectId}", projectId);
                 return NotFound();
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
-            ProjectRecord? project = await _dbContext.Projects
-                .FirstOrDefaultAsync(item => item.Id == projectId && item.OwnerUserId == userId, ct);
+            ProjectRecord? project = await ResolveProjectForDeleteAsync(projectId, userId, ct);
+
             if (project is null)
             {
+                _logger.LogWarning("Projects delete not found: incomingId={IncomingId} userId={UserId}", projectId, userId);
                 return NotFound();
             }
 
+            _logger.LogInformation("Projects delete resolved: incomingId={IncomingId} resolvedProjectId={ResolvedProjectId}", projectId, project.Id);
+
             List<DocumentRecord> documents = await _dbContext.Documents
-                .Where(item => item.ProjectId == projectId && item.OwnerUserId == userId)
+                .Where(item => item.ProjectId == project.Id && item.OwnerUserId == userId)
                 .ToListAsync(ct);
             _dbContext.Documents.RemoveRange(documents);
             _dbContext.Projects.Remove(project);
             await _dbContext.SaveChangesAsync(ct);
+            _logger.LogInformation("Projects delete success: projectId={ProjectId} removedDocuments={DocumentCount}", project.Id, documents.Count);
             return NoContent();
+        }
+
+        private async Task<ProjectRecord?> ResolveProjectForDeleteAsync(Guid incomingId, string userId, CancellationToken ct)
+        {
+            ProjectRecord? project = await _dbContext.Projects
+                .FirstOrDefaultAsync(item => item.Id == incomingId && item.OwnerUserId == userId, ct);
+            if (project is not null)
+            {
+                return project;
+            }
+
+            Guid? projectIdFromDocument = await _dbContext.Documents
+                .AsNoTracking()
+                .Where(item => item.Id == incomingId && item.OwnerUserId == userId)
+                .Select(item => (Guid?)item.ProjectId)
+                .FirstOrDefaultAsync(ct);
+            if (projectIdFromDocument.HasValue)
+            {
+                return await _dbContext.Projects
+                    .FirstOrDefaultAsync(item => item.Id == projectIdFromDocument.Value && item.OwnerUserId == userId, ct);
+            }
+
+            Guid? projectIdFromNode = await _dbContext.ProjectNodes
+                .AsNoTracking()
+                .Where(item => item.Id == incomingId)
+                .Join(
+                    _dbContext.Projects.AsNoTracking(),
+                    node => node.ProjectId,
+                    row => row.Id,
+                    (node, row) => new { row.Id, row.OwnerUserId })
+                .Where(item => item.OwnerUserId == userId)
+                .Select(item => (Guid?)item.Id)
+                .FirstOrDefaultAsync(ct);
+            if (projectIdFromNode.HasValue)
+            {
+                return await _dbContext.Projects
+                    .FirstOrDefaultAsync(item => item.Id == projectIdFromNode.Value && item.OwnerUserId == userId, ct);
+            }
+
+            Guid projectIdFromSection = await _dbContext.Sections
+                .AsNoTracking()
+                .Where(item => item.Id == incomingId)
+                .Join(
+                    _dbContext.Documents.AsNoTracking(),
+                    section => section.DocumentId,
+                    document => document.Id,
+                    (section, document) => new { document.ProjectId, document.OwnerUserId })
+                .Where(item => item.OwnerUserId == userId)
+                .Select(item => item.ProjectId)
+                .FirstOrDefaultAsync(ct);
+            if (projectIdFromSection != Guid.Empty)
+            {
+                return await _dbContext.Projects
+                    .FirstOrDefaultAsync(item => item.Id == projectIdFromSection && item.OwnerUserId == userId, ct);
+            }
+
+            return null;
         }
 
         [HttpGet("with-documents")]
@@ -1038,6 +1106,56 @@ namespace WriterApp.Controllers
                 .ToList();
 
             return Ok(result);
+        }
+
+        [HttpDelete("{projectId:guid}/nodes/{nodeId:guid}")]
+        public async Task<IActionResult> DeleteNode(
+            Guid projectId,
+            Guid nodeId,
+            CancellationToken ct)
+        {
+            if (!IsEnabled())
+            {
+                return NotFound();
+            }
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            ProjectRecord? project = await _dbContext.Projects
+                .FirstOrDefaultAsync(item => item.Id == projectId && item.OwnerUserId == userId, ct);
+            if (project is null)
+            {
+                return NotFound();
+            }
+
+            ProjectNodeRecord? node = await _dbContext.ProjectNodes
+                .FirstOrDefaultAsync(item => item.ProjectId == projectId && item.Id == nodeId, ct);
+            if (node is null)
+            {
+                return NotFound();
+            }
+
+            Guid? parentId = node.ParentId;
+            List<ProjectNodeRecord> siblings = await _dbContext.ProjectNodes
+                .Where(item => item.ProjectId == projectId && item.ParentId == parentId && item.Id != nodeId)
+                .OrderBy(item => item.OrderIndex)
+                .ToListAsync(ct);
+
+            _dbContext.ProjectNodes.Remove(node);
+
+            for (int i = 0; i < siblings.Count; i++)
+            {
+                if (siblings[i].OrderIndex != i)
+                {
+                    siblings[i].OrderIndex = i;
+                    siblings[i].UpdatedUtc = DateTimeOffset.UtcNow;
+                }
+            }
+
+            project.UpdatedUtc = DateTimeOffset.UtcNow;
+            await _dbContext.SaveChangesAsync(ct);
+            await _wordCounts.RefreshProjectAsync(projectId, ct);
+
+            return NoContent();
         }
 
         [HttpPost("{projectId:guid}/nodes/{nodeId:guid}/open-scene")]

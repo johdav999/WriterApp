@@ -746,7 +746,9 @@ namespace WriterApp.Controllers
                 NarrativePurpose = source.NarrativePurpose,
                 OrderIndex = sourceIndex + 1,
                 CreatedAt = now,
-                UpdatedAt = now
+                UpdatedAt = now,
+                LanguageCode = source.LanguageCode,
+                TranslationGroupId = source.TranslationGroupId
             };
             _dbContext.Sections.Add(duplicated);
 

@@ -7,7 +7,9 @@ namespace WriterApp.Application.Documents
         Guid Id,
         string Name,
         DateTimeOffset CreatedUtc,
-        DateTimeOffset UpdatedUtc);
+        DateTimeOffset UpdatedUtc,
+        int NodeCount = 0,
+        string? Description = null);
 
     public sealed record OutlineTemplateNodeDto(
         Guid SourceId,

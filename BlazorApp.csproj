@@ -52,7 +52,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="WriterApp.Client\WriterApp.Client.csproj" />
+    <ProjectReference Include="WriterApp.Client\WriterApp.Client.csproj"
+                      Condition="'$(ExcludeClientProjectReference)' != 'true'" />
     <ProjectReference Include="WriterApp.Shared\WriterApp.Shared.csproj" />
   </ItemGroup>
 
