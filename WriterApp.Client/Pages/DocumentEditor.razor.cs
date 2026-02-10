@@ -406,6 +406,7 @@ namespace WriterApp.Client.Pages
         private readonly HashSet<string> _availableActionKeys = new(StringComparer.OrdinalIgnoreCase);
         private readonly List<AiHistoryEntry> _aiHistoryEntries = new();
         private Guid? _expandedAiHistoryId;
+        private HistoryFilter _historyFilter = HistoryFilter.All;
         private AiUsageStatusDto? _aiUsageStatus;
         private bool _aiUsageRefreshInProgress;
         private bool _canShowAiMenu;
@@ -8566,24 +8567,94 @@ namespace WriterApp.Client.Pages
             }
         }
 
+        private void SetHistoryFilter(HistoryFilter filter)
+        {
+            _historyFilter = filter;
+        }
+
+        private string GetHistoryFilterClass(HistoryFilter filter)
+        {
+            return _historyFilter == filter ? "is-active" : string.Empty;
+        }
+
+        private IReadOnlyList<CombinedHistoryItem> GetFilteredHistoryItems()
+        {
+            IEnumerable<CombinedHistoryItem> items = GetCombinedHistoryItems();
+            return _historyFilter switch
+            {
+                HistoryFilter.Snapshots => items.Where(item => item.Type == HistoryItemType.Snapshot).ToList(),
+                HistoryFilter.Commands => items.Where(item => item.Type == HistoryItemType.Command).ToList(),
+                _ => items.ToList()
+            };
+        }
+
+        private IEnumerable<CombinedHistoryItem> GetCombinedHistoryItems()
+        {
+            IEnumerable<CombinedHistoryItem> snapshots = _pageVersions.Select(version =>
+                new CombinedHistoryItem(
+                    HistoryItemType.Snapshot,
+                    version.CreatedAt,
+                    version,
+                    null));
+
+            IEnumerable<CombinedHistoryItem> commands = _aiHistoryEntries.Select(entry =>
+                new CombinedHistoryItem(
+                    HistoryItemType.Command,
+                    entry.Timestamp,
+                    null,
+                    entry));
+
+            return snapshots
+                .Concat(commands)
+                .OrderByDescending(item => item.Timestamp);
+        }
+
+        private static string GetCommandScopeLabel(string actionKey)
+        {
+            if (actionKey.EndsWith(".selection", StringComparison.OrdinalIgnoreCase)
+                || actionKey.Contains("selection", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Selection";
+            }
+
+            if (actionKey.EndsWith(".document", StringComparison.OrdinalIgnoreCase)
+                || actionKey.Contains("document", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Document";
+            }
+
+            return "Section";
+        }
+
+        private static string GetCommandStatusLabel(AiHistoryEntry entry)
+        {
+            return entry.IsApplied ? "Applied" : "Failed";
+        }
+
+        private static string GetCommandStatusClass(AiHistoryEntry entry)
+        {
+            return entry.IsApplied ? "is-applied" : "is-failed";
+        }
+
+        private static string GetSnapshotDisplayLabel(string reason)
+        {
+            if (string.IsNullOrWhiteSpace(reason))
+            {
+                return "Snapshot (Manual)";
+            }
+
+            return reason.Trim().ToLowerInvariant() switch
+            {
+                "pre-ai" => "Snapshot (Pre-AI)",
+                "autosnap" => "Snapshot (Auto)",
+                "auto" => "Snapshot (Auto)",
+                _ => "Snapshot (Manual)"
+            };
+        }
+
         private static string GetVersionReasonLabel(string reason)
         {
-            if (string.Equals(reason, "pre-ai", StringComparison.OrdinalIgnoreCase))
-            {
-                return "Pre-AI";
-            }
-
-            if (string.Equals(reason, "pre-restore", StringComparison.OrdinalIgnoreCase))
-            {
-                return "Pre-restore";
-            }
-
-            if (string.Equals(reason, "autosnap", StringComparison.OrdinalIgnoreCase))
-            {
-                return "Autosnap";
-            }
-
-            return string.IsNullOrWhiteSpace(reason) ? "Snapshot" : reason;
+            return GetSnapshotDisplayLabel(reason);
         }
 
         private static Guid? TryParseGuid(object? value)
@@ -9258,6 +9329,12 @@ namespace WriterApp.Client.Pages
             DateTimeOffset? LastAppliedAt = null,
             int AppliedCount = 0);
 
+        private sealed record CombinedHistoryItem(
+            HistoryItemType Type,
+            DateTimeOffset Timestamp,
+            PageVersionListItemDto? Version,
+            AiHistoryEntry? Command);
+
         private sealed record PendingAiProposal(
             Guid ProposalId,
             string ActionKey,
@@ -9495,6 +9572,19 @@ namespace WriterApp.Client.Pages
             NotesTasks,
             History,
             Advanced
+        }
+
+        private enum HistoryItemType
+        {
+            Snapshot,
+            Command
+        }
+
+        private enum HistoryFilter
+        {
+            All,
+            Snapshots,
+            Commands
         }
     }
 }

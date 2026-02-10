@@ -1579,6 +1579,29 @@ else
                         else if (_activeContextTab == ContextTab.History)
                         {
                             <div class="drawer-panel version-history-panel">
+                                <div class="history-filter-bar" role="tablist" aria-label="History filter">
+                                    <button type="button"
+                                            class="history-filter-button @GetHistoryFilterClass(HistoryFilter.All)"
+                                            role="tab"
+                                            aria-selected="@(_historyFilter == HistoryFilter.All)"
+                                            @onclick="() => SetHistoryFilter(HistoryFilter.All)">
+                                        All
+                                    </button>
+                                    <button type="button"
+                                            class="history-filter-button @GetHistoryFilterClass(HistoryFilter.Snapshots)"
+                                            role="tab"
+                                            aria-selected="@(_historyFilter == HistoryFilter.Snapshots)"
+                                            @onclick="() => SetHistoryFilter(HistoryFilter.Snapshots)">
+                                        Snapshots
+                                    </button>
+                                    <button type="button"
+                                            class="history-filter-button @GetHistoryFilterClass(HistoryFilter.Commands)"
+                                            role="tab"
+                                            aria-selected="@(_historyFilter == HistoryFilter.Commands)"
+                                            @onclick="() => SetHistoryFilter(HistoryFilter.Commands)">
+                                        AI Commands
+                                    </button>
+                                </div>
                                 @if (_versionsLoading)
                                 {
                                     <div class="drawer-empty">Loading versions...</div>
@@ -1587,30 +1610,90 @@ else
                                 {
                                     <div class="drawer-empty">@_versionsError</div>
                                 }
-                                else if (_pageVersions.Count == 0)
+                                else if (GetFilteredHistoryItems().Count == 0)
                                 {
-                                    <div class="drawer-empty">No versions yet.</div>
+                                    <div class="drawer-empty">No history items for this filter.</div>
                                 }
                                 else
                                 {
                                     <ul class="version-history-list">
-                                        @foreach (PageVersionListItemDto version in _pageVersions)
+                                        @foreach (CombinedHistoryItem item in GetFilteredHistoryItems())
                                         {
-                                            <li class="version-history-item">
-                                                <div class="version-history-meta">
-                                                    <span class="version-history-badge">@GetVersionReasonLabel(version.Reason)</span>
-                                                    <span class="version-history-time">@version.CreatedAt.ToLocalTime().ToString("g")</span>
-                                                </div>
-                                                <div class="version-history-sub">Words: @version.WordCount</div>
-                                                <div class="version-history-actions">
-                                                    <button type="button" @onclick="() => SelectDiffBaseAsync(version)">
-                                                        Compare
-                                                    </button>
-                                                    <button type="button" class="danger" @onclick="() => PromptRestoreVersion(version)">
-                                                        Restore
-                                                    </button>
-                                                </div>
-                                            </li>
+                                            if (item.Type == HistoryItemType.Snapshot && item.Version is not null)
+                                            {
+                                                PageVersionListItemDto version = item.Version;
+                                                <li class="version-history-item history-item-card history-item-card--snapshot">
+                                                    <div class="version-history-meta">
+                                                        <span class="version-history-badge history-type-badge history-type-badge--snapshot">@GetSnapshotDisplayLabel(version.Reason)</span>
+                                                        <span class="version-history-time">@version.CreatedAt.ToLocalTime().ToString("g")</span>
+                                                    </div>
+                                                    <div class="version-history-sub">Words: @version.WordCount</div>
+                                                    <div class="history-item-helper">Restores the document to this checkpoint.</div>
+                                                    <div class="version-history-actions">
+                                                        <button type="button" @onclick="() => SelectDiffBaseAsync(version)">
+                                                            Compare
+                                                        </button>
+                                                        <button type="button" class="danger" @onclick="() => PromptRestoreVersion(version)">
+                                                            Restore
+                                                        </button>
+                                                    </div>
+                                                </li>
+                                            }
+                                            else if (item.Type == HistoryItemType.Command && item.Command is not null)
+                                            {
+                                                AiHistoryEntry entry = item.Command;
+                                                bool showDetails = _expandedAiHistoryId == entry.Id;
+                                                <li class="version-history-item history-item-card history-item-card--command">
+                                                    <div class="version-history-meta">
+                                                        <span class="version-history-badge history-type-badge history-type-badge--command">AI Command</span>
+                                                        <span class="version-history-time">@entry.Timestamp.ToLocalTime().ToString("g")</span>
+                                                    </div>
+                                                    <div class="history-command-summary">@entry.Label</div>
+                                                    <div class="version-history-sub">
+                                                        <span>Scope: @GetCommandScopeLabel(entry.ActionKey)</span>
+                                                        <span class="history-command-status @GetCommandStatusClass(entry)">@GetCommandStatusLabel(entry)</span>
+                                                    </div>
+                                                    <div class="version-history-actions">
+                                                        <button type="button"
+                                                                class="ai-details-toggle"
+                                                                aria-expanded="@showDetails"
+                                                                aria-controls="@GetAiHistoryDetailsId(entry)"
+                                                                @onclick="() => OnToggleAiHistoryDetails(entry)">
+                                                            @(showDetails ? "Hide details" : "Details")
+                                                        </button>
+                                                    </div>
+                                                    @if (showDetails)
+                                                    {
+                                                        <div id="@GetAiHistoryDetailsId(entry)" class="ai-history-details">
+                                                            <div class="ai-history-details-header">
+                                                                <div class="ai-history-details-summary">@(entry.Summary ?? entry.Label)</div>
+                                                                <div class="ai-history-details-sub">
+                                                                    <span>@entry.Timestamp.ToLocalTime().ToString("g")</span>
+                                                                    <span>@entry.ActionKey</span>
+                                                                    @if (entry.LastAppliedAt is not null)
+                                                                    {
+                                                                        <span>Last applied @entry.LastAppliedAt.Value.ToLocalTime().ToString("g")</span>
+                                                                    }
+                                                                    @if (entry.AppliedCount > 0)
+                                                                    {
+                                                                        <span>Applied @entry.AppliedCount time(s)</span>
+                                                                    }
+                                                                </div>
+                                                            </div>
+                                                            <div class="ai-history-details-compare">
+                                                                <div class="ai-history-details-block">
+                                                                    <div class="ai-history-details-label">Before</div>
+                                                                    <pre>@FormatHistoryText(entry.BeforeText)</pre>
+                                                                </div>
+                                                                <div class="ai-history-details-block">
+                                                                    <div class="ai-history-details-label">After</div>
+                                                                    <pre>@FormatHistoryText(entry.AfterText)</pre>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    }
+                                                </li>
+                                            }
                                         }
                                     </ul>
                                 }
@@ -1763,34 +1846,36 @@ else
 
 @if (_isRestoreDialogOpen)
 {
-    <div class="modal-backdrop" @onclick="CancelRestoreVersion"></div>
-    <div class="modal" role="dialog" aria-modal="true">
-        <div class="modal-title">Restore this version?</div>
-        <div class="modal-body">
-            This will replace the current page content. A pre-restore snapshot will be created automatically.
-            @if (_pendingRestoreVersion is not null)
+    <div class="modal-overlay" role="presentation">
+        <div class="modal-backdrop" @onclick="CancelRestoreVersion"></div>
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="restoreVersionTitle">
+            <div class="modal-title" id="restoreVersionTitle">Restore this version?</div>
+            <div class="modal-body">
+                This will replace the current page content. A pre-restore snapshot will be created automatically.
+                @if (_pendingRestoreVersion is not null)
+                {
+                    <div class="version-restore-meta">
+                        Version: @_pendingRestoreVersion.CreatedAt.ToLocalTime().ToString("g")
+                    </div>
+                }
+            </div>
+            @if (!string.IsNullOrWhiteSpace(_restoreError))
             {
-                <div class="version-restore-meta">
-                    Version: @_pendingRestoreVersion.CreatedAt.ToLocalTime().ToString("g")
-                </div>
+                <div class="modal-error">@_restoreError</div>
             }
-        </div>
-        @if (!string.IsNullOrWhiteSpace(_restoreError))
-        {
-            <div class="modal-error">@_restoreError</div>
-        }
-        <div class="modal-actions">
-            <button type="button"
-                    class="danger"
-                    @onclick="ConfirmRestoreVersionAsync"
-                    disabled="@_restoreInFlight">
-                Restore
-            </button>
-            <button type="button"
-                    @onclick="CancelRestoreVersion"
-                    disabled="@_restoreInFlight">
-                Cancel
-            </button>
+            <div class="modal-actions">
+                <button type="button"
+                        class="danger"
+                        @onclick="ConfirmRestoreVersionAsync"
+                        disabled="@_restoreInFlight">
+                    Restore
+                </button>
+                <button type="button"
+                        @onclick="CancelRestoreVersion"
+                        disabled="@_restoreInFlight">
+                    Cancel
+                </button>
+            </div>
         </div>
     </div>
 }
