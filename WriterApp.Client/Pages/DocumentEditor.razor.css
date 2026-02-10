@@ -17,6 +17,7 @@
     flex-direction: column;
     box-sizing: border-box;
     flex: 1;
+    overflow: hidden;
 }
 
 .editor-shell.is-full-width {
@@ -1567,6 +1568,7 @@
 .rp-shell {
     display: flex;
     flex-direction: column;
+    flex: 1 1 auto;
     height: 100%;
     min-height: 0;
     overflow: hidden;
@@ -1622,22 +1624,38 @@
 }
 
 .rp-scroll {
-    flex: 1;
+    flex: 1 1 auto;
     height: 100%;
     min-height: 0;
     overflow-y: auto;
     overflow-x: hidden;
     scrollbar-gutter: stable;
+    scrollbar-width: auto;
     padding-right: 2px;
     display: flex;
     flex-direction: column;
+    overscroll-behavior: contain;
 }
 
 .rp-content {
+    flex: 0 0 auto;
     padding: var(--space-3);
     display: grid;
     gap: 12px;
     min-height: 0;
+}
+
+.rp-scroll::-webkit-scrollbar {
+    width: 10px;
+}
+
+.rp-scroll::-webkit-scrollbar-thumb {
+    background: rgba(107, 114, 128, 0.55);
+    border-radius: 999px;
+}
+
+.rp-scroll::-webkit-scrollbar-track {
+    background: rgba(229, 231, 235, 0.45);
 }
 
 .rp-footer {
@@ -2852,6 +2870,33 @@
     gap: 10px;
 }
 
+.history-filter-bar {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    padding: 4px;
+    border-radius: 12px;
+    border: 1px solid #d1d5db;
+    background: #f3f4f6;
+}
+
+.history-filter-button {
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: transparent;
+    padding: 6px 10px;
+    font-size: 0.8rem;
+    color: #4b5563;
+    cursor: pointer;
+}
+
+.history-filter-button.is-active {
+    background: #ffffff;
+    border-color: #cbd5e1;
+    color: #111827;
+    font-weight: 600;
+}
+
 .version-history-list {
     list-style: none;
     margin: 0;
@@ -2867,6 +2912,16 @@
     background: var(--surface);
     display: grid;
     gap: 6px;
+}
+
+.history-item-card--snapshot {
+    border-color: #c7d2fe;
+    background: #f8faff;
+}
+
+.history-item-card--command {
+    border-color: #d1fae5;
+    background: #f6fffb;
 }
 
 .version-history-meta {
@@ -2886,6 +2941,14 @@
     text-transform: uppercase;
 }
 
+.history-type-badge--snapshot {
+    background: #1e3a8a;
+}
+
+.history-type-badge--command {
+    background: #065f46;
+}
+
 .version-history-time {
     font-size: 0.8rem;
     color: var(--text-muted);
@@ -2894,6 +2957,29 @@
 .version-history-sub {
     font-size: 0.82rem;
     color: var(--text-muted);
+}
+
+.history-item-helper {
+    font-size: 0.75rem;
+    color: #6b7280;
+}
+
+.history-command-summary {
+    font-size: 0.92rem;
+    font-weight: 600;
+    color: #111827;
+}
+
+.history-command-status {
+    font-weight: 600;
+}
+
+.history-command-status.is-applied {
+    color: #166534;
+}
+
+.history-command-status.is-failed {
+    color: #b91c1c;
 }
 
 .version-history-actions {
