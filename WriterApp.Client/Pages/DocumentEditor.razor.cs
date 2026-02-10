@@ -48,6 +48,9 @@ namespace WriterApp.Client.Pages
         public HttpClient Http { get; set; } = default!;
 
         [Inject]
+        public OutlineTemplatesClient OutlineTemplatesClient { get; set; } = default!;
+
+        [Inject]
         public NavigationManager Navigation { get; set; } = default!;
 
         [Inject]
@@ -519,9 +522,15 @@ namespace WriterApp.Client.Pages
         private string _outlineBoardPovFilter = string.Empty;
         private string _outlineBoardPlaceFilter = string.Empty;
         private string _outlineBoardTimeFilter = string.Empty;
+        private bool _isOutlineTemplatesModalOpen;
+        private bool _isOutlineTemplatesLoading;
+        private bool _isOutlineTemplateActionInFlight;
         private string _outlineTemplateName = string.Empty;
         private Guid? _selectedOutlineTemplateId;
         private readonly List<OutlineTemplateDto> _outlineTemplates = new();
+        private bool _applyTemplateAtSelectedNode = true;
+        private bool _applyTemplateCreateLinkedSections;
+        private string _applyTemplateLinkStrategy = "none";
         private string? _outlineTemplateStatus;
         private PendingAiProposal? _pendingAiProposal;
         private bool _pendingDetailsExpanded;
@@ -609,8 +618,7 @@ namespace WriterApp.Client.Pages
             _outlineBoardEnabled = Configuration.GetValue<bool?>("Workflow:OutlineBoardEnabled")
                 ?? Configuration.GetValue<bool?>("WriterApp:Workflow:OutlineBoardEnabled")
                 ?? false;
-            _outlineTemplatesEnabled = Configuration.GetValue<bool?>("Workflow:OutlineTemplatesEnabled")
-                ?? Configuration.GetValue<bool?>("WriterApp:Workflow:OutlineTemplatesEnabled")
+            _outlineTemplatesEnabled = Configuration.GetValue<bool?>("WriterApp:Workflow:OutlineTemplatesEnabled")
                 ?? false;
             _outlineUndoEnabled = Configuration.GetValue<bool?>("Workflow:OutlineUndoEnabled")
                 ?? Configuration.GetValue<bool?>("WriterApp:Workflow:OutlineUndoEnabled")
@@ -4975,127 +4983,241 @@ namespace WriterApp.Client.Pages
             }
         }
 
-        private async Task LoadOutlineTemplatesAsync()
+        private async Task LoadOutlineTemplatesAsync(bool preserveSelection = true)
         {
+            _isOutlineTemplatesLoading = true;
             try
             {
-                List<OutlineTemplateDto>? templates = await Http.GetFromJsonAsync<List<OutlineTemplateDto>>("api/outline-templates");
-                _outlineTemplates.Clear();
-                if (templates is not null)
-                {
-                    _outlineTemplates.AddRange(templates.OrderBy(template => template.Name));
-                }
+                IReadOnlyList<OutlineTemplateDto> templates = await OutlineTemplatesClient.GetTemplatesAsync();
+                Guid? previousSelection = preserveSelection ? _selectedOutlineTemplateId : null;
 
-                if (_outlineTemplates.Count > 0 && !_selectedOutlineTemplateId.HasValue)
+                _outlineTemplates.Clear();
+                _outlineTemplates.AddRange(templates.OrderBy(template => template.Name));
+
+                if (previousSelection.HasValue && _outlineTemplates.Any(template => template.Id == previousSelection.Value))
                 {
-                    _selectedOutlineTemplateId = _outlineTemplates[0].Id;
+                    _selectedOutlineTemplateId = previousSelection.Value;
+                }
+                else
+                {
+                    _selectedOutlineTemplateId = _outlineTemplates.FirstOrDefault()?.Id;
                 }
             }
             catch (Exception ex)
             {
                 Logger.LogWarning(ex, "Failed to load outline templates.");
-                _outlineTemplateStatus = "Failed to load templates.";
+                _outlineTemplateStatus = "Unable to load templates.";
+            }
+            finally
+            {
+                _isOutlineTemplatesLoading = false;
             }
         }
 
-        private async Task SaveSelectedOutlineTemplateAsync()
+        private async Task OpenOutlineTemplatesModalAsync()
         {
-            if (!_outlineTemplatesEnabled || !_activeOutlineNodeId.HasValue)
+            if (!_outlineTemplatesEnabled)
             {
                 return;
             }
 
-            string name = string.IsNullOrWhiteSpace(_outlineTemplateName)
-                ? "Untitled template"
-                : _outlineTemplateName.Trim();
+            _isOutlineTemplatesModalOpen = true;
+            _outlineTemplateStatus = null;
+            _outlineTemplateName = string.Empty;
+            _applyTemplateAtSelectedNode = _activeOutlineNodeId.HasValue;
+            _applyTemplateCreateLinkedSections = false;
+            _applyTemplateLinkStrategy = "none";
+            await LoadOutlineTemplatesAsync();
+        }
 
-            HashSet<Guid> ids = CollectDescendants(_activeOutlineNodeId.Value);
-            List<OutlineTemplateNodeDto> nodes = _outlineNodes
-                .Where(node => ids.Contains(node.Id))
+        private void CloseOutlineTemplatesModal()
+        {
+            _isOutlineTemplatesModalOpen = false;
+            _isOutlineTemplateActionInFlight = false;
+            _outlineTemplateStatus = null;
+        }
+
+        private async Task CreateTemplateFromCurrentOutlineAsync()
+        {
+            if (!_outlineTemplatesEnabled || _outlineNodes.Count == 0 || _isOutlineTemplateActionInFlight)
+            {
+                return;
+            }
+
+            _isOutlineTemplateActionInFlight = true;
+            _outlineTemplateStatus = null;
+            try
+            {
+                string name = string.IsNullOrWhiteSpace(_outlineTemplateName)
+                    ? "Untitled template"
+                    : _outlineTemplateName.Trim();
+
+                List<OutlineTemplateNodeDto> nodes = BuildTemplateNodesFromCurrentOutline();
+                OutlineTemplateCreateRequest payload = new(name, nodes);
+                using HttpResponseMessage response = await OutlineTemplatesClient.CreateTemplateAsync(payload);
+                if (!response.IsSuccessStatusCode)
+                {
+                    string? message = await OutlineTemplatesClient.ReadErrorMessageAsync(response);
+                    _outlineTemplateStatus = string.IsNullOrWhiteSpace(message)
+                        ? "Failed to create template."
+                        : message;
+                    return;
+                }
+
+                _outlineTemplateName = string.Empty;
+                _outlineTemplateStatus = "Template created.";
+                await LoadOutlineTemplatesAsync(preserveSelection: false);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to create outline template.");
+                _outlineTemplateStatus = "Failed to create template.";
+            }
+            finally
+            {
+                _isOutlineTemplateActionInFlight = false;
+            }
+        }
+
+        private List<OutlineTemplateNodeDto> BuildTemplateNodesFromCurrentOutline()
+        {
+            return _outlineNodes
                 .OrderBy(node => node.ParentId)
                 .ThenBy(node => node.Order)
                 .Select(node => new OutlineTemplateNodeDto(
                     node.Id,
-                    node.ParentId.HasValue && ids.Contains(node.ParentId.Value) ? node.ParentId : null,
-                    GetTemplateNodeType(node, ids),
+                    node.ParentId,
+                    InferTemplateNodeType(node.Id),
                     node.Title,
                     node.Order,
                     node.Notes,
                     node.MetadataJson,
                     node.LinkedSectionId))
                 .ToList();
-
-            OutlineTemplateCreateRequest payload = new(name, nodes);
-            using HttpResponseMessage response = await Http.PostAsJsonAsync("api/outline-templates", payload);
-            if (!response.IsSuccessStatusCode)
-            {
-                _outlineTemplateStatus = "Failed to save template.";
-                return;
-            }
-
-            _outlineTemplateStatus = "Template saved.";
-            _outlineTemplateName = string.Empty;
-            await LoadOutlineTemplatesAsync();
         }
 
-        private string GetTemplateNodeType(DocumentOutlineNodeDto node, HashSet<Guid> inScopeIds)
+        private string InferTemplateNodeType(Guid nodeId)
         {
+            DocumentOutlineNodeDto? node = _outlineNodes.FirstOrDefault(item => item.Id == nodeId);
+            if (node is null)
+            {
+                return "scene";
+            }
+
             if (node.LinkedSectionId.HasValue)
             {
                 return "scene";
             }
 
-            bool hasChildrenInScope = _outlineNodes.Any(child =>
-                child.ParentId == node.Id && inScopeIds.Contains(child.Id));
-            return hasChildrenInScope ? "chapter" : "scene";
+            bool hasChildren = _outlineNodes.Any(child => child.ParentId == nodeId);
+            if (!hasChildren)
+            {
+                return "scene";
+            }
+
+            return node.ParentId.HasValue ? "chapter" : "part";
         }
 
         private async Task ApplySelectedOutlineTemplateAsync()
         {
-            if (!_outlineTemplatesEnabled || !_selectedOutlineTemplateId.HasValue)
+            if (!_outlineTemplatesEnabled || !_selectedOutlineTemplateId.HasValue || _isOutlineTemplateActionInFlight)
             {
                 return;
             }
 
-            OutlineTemplateApplyOptionsDto options = new(
-                _activeOutlineNodeId,
-                CreateLinkedSections: true,
-                LinkStrategy: "create");
-            using HttpResponseMessage response = await Http.PostAsJsonAsync(
-                $"api/documents/{DocumentId}/outline/apply-template/{_selectedOutlineTemplateId.Value}",
-                options);
-            if (!response.IsSuccessStatusCode)
+            _isOutlineTemplateActionInFlight = true;
+            _outlineTemplateStatus = null;
+            try
             {
-                _outlineTemplateStatus = "Failed to apply template.";
-                return;
-            }
+                Guid? targetParentId = _applyTemplateAtSelectedNode ? _activeOutlineNodeId : null;
+                OutlineTemplateApplyOptionsDto options = new(
+                    targetParentId,
+                    _applyTemplateCreateLinkedSections,
+                    _applyTemplateLinkStrategy);
 
-            List<DocumentOutlineNodeDto>? updated = await response.Content.ReadFromJsonAsync<List<DocumentOutlineNodeDto>>();
-            if (updated is not null)
-            {
+                HashSet<Guid> previousNodeIds = _outlineNodes.Select(node => node.Id).ToHashSet();
+                using HttpResponseMessage response = await OutlineTemplatesClient.ApplyTemplateAsync(
+                    DocumentId,
+                    _selectedOutlineTemplateId.Value,
+                    options);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    string? message = await OutlineTemplatesClient.ReadErrorMessageAsync(response);
+                    _outlineTemplateStatus = string.IsNullOrWhiteSpace(message)
+                        ? "Failed to apply template."
+                        : message;
+                    return;
+                }
+
+                List<DocumentOutlineNodeDto>? updated = await response.Content.ReadFromJsonAsync<List<DocumentOutlineNodeDto>>();
+                if (updated is null)
+                {
+                    _outlineTemplateStatus = "Template applied, but no outline data was returned.";
+                    return;
+                }
+
                 _outlineNodes.Clear();
                 _outlineNodes.AddRange(updated.OrderBy(node => node.ParentId).ThenBy(node => node.Order));
+
+                List<DocumentOutlineNodeDto> inserted = _outlineNodes
+                    .Where(node => !previousNodeIds.Contains(node.Id))
+                    .OrderBy(node => node.ParentId)
+                    .ThenBy(node => node.Order)
+                    .ToList();
+                if (inserted.Count > 0)
+                {
+                    _activeOutlineNodeId = inserted[0].Id;
+                }
+
                 _outlineTemplateStatus = "Template applied.";
+                _isOutlineTemplatesModalOpen = false;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to apply outline template.");
+                _outlineTemplateStatus = "Failed to apply template.";
+            }
+            finally
+            {
+                _isOutlineTemplateActionInFlight = false;
             }
         }
 
         private async Task DeleteSelectedOutlineTemplateAsync()
         {
-            if (!_outlineTemplatesEnabled || !_selectedOutlineTemplateId.HasValue)
+            if (!_outlineTemplatesEnabled || !_selectedOutlineTemplateId.HasValue || _isOutlineTemplateActionInFlight)
             {
                 return;
             }
 
-            using HttpResponseMessage response = await Http.DeleteAsync($"api/outline-templates/{_selectedOutlineTemplateId.Value}");
-            if (!response.IsSuccessStatusCode)
+            _isOutlineTemplateActionInFlight = true;
+            _outlineTemplateStatus = null;
+            try
             {
+                using HttpResponseMessage response = await OutlineTemplatesClient.DeleteTemplateAsync(_selectedOutlineTemplateId.Value);
+                if (!response.IsSuccessStatusCode)
+                {
+                    string? message = await OutlineTemplatesClient.ReadErrorMessageAsync(response);
+                    _outlineTemplateStatus = string.IsNullOrWhiteSpace(message)
+                        ? "Failed to delete template."
+                        : message;
+                    return;
+                }
+
+                _outlineTemplateStatus = "Template deleted.";
+                _selectedOutlineTemplateId = null;
+                await LoadOutlineTemplatesAsync(preserveSelection: false);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to delete outline template.");
                 _outlineTemplateStatus = "Failed to delete template.";
-                return;
             }
-
-            _outlineTemplateStatus = "Template deleted.";
-            _selectedOutlineTemplateId = null;
-            await LoadOutlineTemplatesAsync();
+            finally
+            {
+                _isOutlineTemplateActionInFlight = false;
+            }
         }
         private async Task OnExportRequested(string kind, string format)
         {

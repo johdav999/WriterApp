@@ -168,22 +168,33 @@ namespace WriterApp.Controllers
         {
             if (ShouldUseOutlineOrder(documentRecord, scope))
             {
+                List<SectionRecord> allSections = await _dbContext.Sections
+                    .AsNoTracking()
+                    .Where(section => section.DocumentId == documentRecord.Id)
+                    .OrderBy(section => section.OrderIndex)
+                    .ToListAsync(ct);
+                if (allSections.Count == 0)
+                {
+                    return allSections;
+                }
+
                 IReadOnlyList<ManuscriptSceneSectionItem> sceneSections =
                     await _projectSceneLinkingService.GetManuscriptSceneSectionsAsync(documentRecord.ProjectId, userId, ct);
-                return sceneSections
-                    .Select((item, index) => new SectionRecord
+                Dictionary<Guid, string> outlineTitleBySectionId = sceneSections
+                    .Where(item => !string.IsNullOrWhiteSpace(item.SceneNode.Title))
+                    .GroupBy(item => item.Section.Id)
+                    .ToDictionary(group => group.Key, group => group.First().SceneNode.Title);
+
+                foreach (SectionRecord section in allSections)
+                {
+                    if (outlineTitleBySectionId.TryGetValue(section.Id, out string? outlineTitle)
+                        && !string.IsNullOrWhiteSpace(outlineTitle))
                     {
-                        Id = item.Section.Id,
-                        DocumentId = item.DocumentId,
-                        Title = item.SceneNode.Title,
-                        NarrativePurpose = item.Section.NarrativePurpose,
-                        OrderIndex = index,
-                        CreatedAt = item.Section.CreatedAt,
-                        UpdatedAt = item.Section.UpdatedAt,
-                        LanguageCode = item.Section.LanguageCode,
-                        TranslationGroupId = item.Section.TranslationGroupId
-                    })
-                    .ToList();
+                        section.Title = outlineTitle.Trim();
+                    }
+                }
+
+                return allSections;
             }
 
             IQueryable<SectionRecord> sectionQuery = _dbContext.Sections

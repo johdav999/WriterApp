@@ -44,9 +44,15 @@ namespace WriterApp.Controllers
             [FromBody] OutlineTemplateCreateRequest request,
             CancellationToken ct)
         {
-            if (!IsEnabled())
+            ActionResult? disabled = RejectIfDisabled();
+            if (disabled is not null)
             {
-                return NotFound();
+                return disabled;
+            }
+
+            if (request is null)
+            {
+                return BadRequest(new { message = "Request body is required." });
             }
 
             if (string.IsNullOrWhiteSpace(request.Name))
@@ -59,6 +65,12 @@ namespace WriterApp.Controllers
                 return BadRequest(new { message = "Template requires at least one node." });
             }
 
+            if (!TryValidateTemplateNodes(request.Nodes, out string validationError))
+            {
+                return BadRequest(new { message = validationError });
+            }
+
+            List<OutlineTemplateNodeDto> normalizedNodes = NormalizeTemplateNodes(request.Nodes);
             string userId = _userIdResolver.ResolveUserId(User);
             DateTimeOffset now = DateTimeOffset.UtcNow;
             OutlineTemplateRecord template = new()
@@ -66,7 +78,7 @@ namespace WriterApp.Controllers
                 Id = Guid.NewGuid(),
                 OwnerUserId = userId,
                 Name = request.Name.Trim(),
-                TemplateJson = JsonSerializer.Serialize(request.Nodes, JsonOptions),
+                TemplateJson = JsonSerializer.Serialize(normalizedNodes, JsonOptions),
                 CreatedUtc = now,
                 UpdatedUtc = now
             };
@@ -80,32 +92,29 @@ namespace WriterApp.Controllers
         [HttpGet("outline-templates")]
         public async Task<ActionResult<IReadOnlyList<OutlineTemplateDto>>> ListTemplates(CancellationToken ct)
         {
-            if (!IsEnabled())
+            ActionResult? disabled = RejectIfDisabled();
+            if (disabled is not null)
             {
-                return NotFound();
+                return disabled;
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
-            List<OutlineTemplateDto> templates = await _dbContext.OutlineTemplates
+            List<OutlineTemplateRecord> templates = await _dbContext.OutlineTemplates
                 .AsNoTracking()
                 .Where(template => template.OwnerUserId == userId)
                 .OrderBy(template => template.Name)
-                .Select(template => new OutlineTemplateDto(
-                    template.Id,
-                    template.Name,
-                    template.CreatedUtc,
-                    template.UpdatedUtc))
                 .ToListAsync(ct);
 
-            return Ok(templates);
+            return Ok(templates.Select(ToDto).ToList());
         }
 
         [HttpDelete("outline-templates/{id:guid}")]
         public async Task<IActionResult> DeleteTemplate(Guid id, CancellationToken ct)
         {
-            if (!IsEnabled())
+            ActionResult? disabled = RejectIfDisabled();
+            if (disabled is not null)
             {
-                return NotFound();
+                return disabled;
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
@@ -128,9 +137,10 @@ namespace WriterApp.Controllers
             [FromBody] OutlineTemplateApplyOptionsDto? options,
             CancellationToken ct)
         {
-            if (!IsEnabled())
+            ActionResult? disabled = RejectIfDisabled();
+            if (disabled is not null)
             {
-                return NotFound();
+                return disabled;
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
@@ -156,7 +166,17 @@ namespace WriterApp.Controllers
                 return BadRequest(new { message = "Template has no nodes." });
             }
 
+            if (!TryValidateTemplateNodes(nodes, out string validationError))
+            {
+                return BadRequest(new { message = validationError });
+            }
+
             OutlineTemplateApplyOptionsDto settings = options ?? new OutlineTemplateApplyOptionsDto(null, false, "none");
+            if (!TryNormalizeLinkStrategy(settings.LinkStrategy, out string strategy))
+            {
+                return BadRequest(new { message = "linkStrategy must be one of: none, by-title, create." });
+            }
+
             Guid? parentRoot = settings.ParentNodeId;
             if (parentRoot.HasValue)
             {
@@ -178,7 +198,6 @@ namespace WriterApp.Controllers
                 .Where(group => !string.IsNullOrWhiteSpace(group.Key))
                 .ToDictionary(group => group.Key, group => group.First());
 
-            string strategy = (settings.LinkStrategy ?? "none").Trim().ToLowerInvariant();
             DateTimeOffset now = DateTimeOffset.UtcNow;
             Dictionary<Guid, Guid> idMap = new();
             List<DocumentOutlineNodeRecord> newNodes = new();
@@ -190,10 +209,7 @@ namespace WriterApp.Controllers
                 .Select(node => (int?)node.Order)
                 .MaxAsync(ct) ?? -1;
 
-            List<OutlineTemplateNodeDto> ordered = nodes
-                .OrderBy(node => node.ParentSourceId.HasValue ? 1 : 0)
-                .ThenBy(node => node.Order)
-                .ToList();
+            List<OutlineTemplateNodeDto> ordered = BuildApplyOrder(nodes);
 
             foreach (OutlineTemplateNodeDto source in ordered)
             {
@@ -206,7 +222,7 @@ namespace WriterApp.Controllers
                 int order = source.ParentSourceId.HasValue ? source.Order : baseOrder + 1 + source.Order;
 
                 Guid? linkedSectionId = null;
-                if (string.Equals(source.NodeType, "scene", StringComparison.OrdinalIgnoreCase))
+                if (IsSceneNode(source.NodeType))
                 {
                     linkedSectionId = ResolveSectionLink(
                         source,
@@ -339,6 +355,187 @@ namespace WriterApp.Controllers
                 : value.Trim().ToLowerInvariant();
         }
 
+        private ActionResult? RejectIfDisabled()
+        {
+            if (IsEnabled())
+            {
+                return null;
+            }
+
+            return NotFound(new { message = "Outline templates are disabled." });
+        }
+
+        private static bool TryValidateTemplateNodes(
+            IReadOnlyList<OutlineTemplateNodeDto> nodes,
+            out string message)
+        {
+            if (nodes.Count == 0)
+            {
+                message = "Template requires at least one node.";
+                return false;
+            }
+
+            Dictionary<Guid, Guid?> parentById = new();
+            HashSet<Guid> ids = new();
+            foreach (OutlineTemplateNodeDto node in nodes)
+            {
+                if (node.SourceId == Guid.Empty)
+                {
+                    message = "Template node sourceId is required.";
+                    return false;
+                }
+
+                if (!ids.Add(node.SourceId))
+                {
+                    message = "Template node sourceId values must be unique.";
+                    return false;
+                }
+
+                if (node.ParentSourceId == node.SourceId)
+                {
+                    message = "Template node cannot reference itself as parent.";
+                    return false;
+                }
+
+                string nodeType = NormalizeNodeType(node.NodeType);
+                if (!IsSupportedNodeType(nodeType))
+                {
+                    message = "Template nodeType must be one of: part, chapter, scene.";
+                    return false;
+                }
+
+                if (string.IsNullOrWhiteSpace(node.Title))
+                {
+                    message = "Template node title is required.";
+                    return false;
+                }
+
+                if (node.Order < 0)
+                {
+                    message = "Template node order must be zero or positive.";
+                    return false;
+                }
+
+                parentById[node.SourceId] = node.ParentSourceId;
+            }
+
+            foreach (Guid? parentId in parentById.Values)
+            {
+                if (parentId.HasValue && !ids.Contains(parentId.Value))
+                {
+                    message = "Template parentSourceId must reference another node in the template.";
+                    return false;
+                }
+            }
+
+            if (parentById.Values.All(parent => parent.HasValue))
+            {
+                message = "Template requires at least one root node.";
+                return false;
+            }
+
+            foreach (Guid nodeId in ids)
+            {
+                HashSet<Guid> seen = new();
+                Guid? current = nodeId;
+                while (current.HasValue)
+                {
+                    if (!seen.Add(current.Value))
+                    {
+                        message = "Template hierarchy contains a cycle.";
+                        return false;
+                    }
+
+                    current = parentById[current.Value];
+                }
+            }
+
+            message = string.Empty;
+            return true;
+        }
+
+        private static List<OutlineTemplateNodeDto> NormalizeTemplateNodes(IReadOnlyList<OutlineTemplateNodeDto> nodes)
+        {
+            return nodes
+                .Select(node => node with
+                {
+                    NodeType = NormalizeNodeType(node.NodeType),
+                    Title = string.IsNullOrWhiteSpace(node.Title) ? "Untitled" : node.Title.Trim(),
+                    Notes = string.IsNullOrWhiteSpace(node.Notes) ? null : node.Notes.Trim(),
+                    MetadataJson = string.IsNullOrWhiteSpace(node.MetadataJson) ? null : node.MetadataJson.Trim()
+                })
+                .ToList();
+        }
+
+        private static List<OutlineTemplateNodeDto> BuildApplyOrder(IReadOnlyList<OutlineTemplateNodeDto> nodes)
+        {
+            List<OutlineTemplateNodeDto> ordered = new(nodes.Count);
+            List<OutlineTemplateNodeDto> rootNodes = nodes
+                .Where(node => !node.ParentSourceId.HasValue)
+                .OrderBy(node => node.Order)
+                .ThenBy(node => node.Title, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            Dictionary<Guid, List<OutlineTemplateNodeDto>> byParent = nodes
+                .Where(node => node.ParentSourceId.HasValue)
+                .GroupBy(node => node.ParentSourceId!.Value)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group
+                        .OrderBy(node => node.Order)
+                        .ThenBy(node => node.Title, StringComparer.OrdinalIgnoreCase)
+                        .ToList());
+
+            void Visit(Guid parentId)
+            {
+                if (!byParent.TryGetValue(parentId, out List<OutlineTemplateNodeDto>? children))
+                {
+                    return;
+                }
+
+                foreach (OutlineTemplateNodeDto child in children)
+                {
+                    ordered.Add(child);
+                    Visit(child.SourceId);
+                }
+            }
+
+            foreach (OutlineTemplateNodeDto root in rootNodes)
+            {
+                ordered.Add(root);
+                Visit(root.SourceId);
+            }
+
+            return ordered;
+        }
+
+        private static bool TryNormalizeLinkStrategy(string? strategy, out string normalized)
+        {
+            normalized = string.IsNullOrWhiteSpace(strategy)
+                ? "none"
+                : strategy.Trim().ToLowerInvariant();
+
+            return normalized is "none" or "by-title" or "create";
+        }
+
+        private static string NormalizeNodeType(string? nodeType)
+        {
+            string normalized = string.IsNullOrWhiteSpace(nodeType)
+                ? "scene"
+                : nodeType.Trim().ToLowerInvariant();
+
+            return normalized;
+        }
+
+        private static bool IsSupportedNodeType(string nodeType)
+        {
+            return nodeType is "part" or "chapter" or "scene";
+        }
+
+        private static bool IsSceneNode(string? nodeType)
+        {
+            return string.Equals(nodeType, "scene", StringComparison.OrdinalIgnoreCase);
+        }
+
         private bool IsUndoEnabled()
         {
             return _configuration.GetValue<bool?>("Workflow:OutlineUndoEnabled")
@@ -348,18 +545,34 @@ namespace WriterApp.Controllers
 
         private bool IsEnabled()
         {
-            return _configuration.GetValue<bool?>("Workflow:OutlineTemplatesEnabled")
-                ?? _configuration.GetValue<bool?>("WriterApp:Workflow:OutlineTemplatesEnabled")
+            return _configuration.GetValue<bool?>("WriterApp:Workflow:OutlineTemplatesEnabled")
                 ?? false;
         }
 
         private static OutlineTemplateDto ToDto(OutlineTemplateRecord template)
         {
+            int nodeCount = 0;
+            if (!string.IsNullOrWhiteSpace(template.TemplateJson))
+            {
+                try
+                {
+                    List<OutlineTemplateNodeDto>? nodes = JsonSerializer.Deserialize<List<OutlineTemplateNodeDto>>(
+                        template.TemplateJson,
+                        JsonOptions);
+                    nodeCount = nodes?.Count ?? 0;
+                }
+                catch
+                {
+                    nodeCount = 0;
+                }
+            }
+
             return new OutlineTemplateDto(
                 template.Id,
                 template.Name,
                 template.CreatedUtc,
-                template.UpdatedUtc);
+                template.UpdatedUtc,
+                nodeCount);
         }
     }
 }

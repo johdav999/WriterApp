@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -61,9 +62,11 @@ namespace WriterApp.Application.Exporting
 
                 DocxHtmlConverter converter = new(body, mainPart, mainPart.NumberingDefinitionsPart!, _logger, _fetchRemoteImages, _httpClientFactory);
 
+                bool hasExplicitBreakRules = resolved.ChapterBreakRules is not null && resolved.ChapterBreakRules.Count > 0;
                 bool breakOnH1 = ExportHelpers.HasChapterBreak(resolved, "h1");
-                bool breakOnSection = ExportHelpers.HasChapterBreak(resolved, "section");
+                bool breakOnSection = ExportHelpers.HasChapterBreak(resolved, "section") || !hasExplicitBreakRules;
                 bool hasContent = false;
+                bool hasRenderedSection = false;
 
                 if (resolved.IncludeTitlePage)
                 {
@@ -79,7 +82,7 @@ namespace WriterApp.Application.Exporting
 
                 foreach (Section section in ExportHelpers.GetOrderedSections(document))
                 {
-                    if (breakOnSection && hasContent)
+                    if (breakOnSection && hasRenderedSection)
                     {
                         converter.AppendPageBreak();
                     }
@@ -92,6 +95,8 @@ namespace WriterApp.Application.Exporting
                     {
                         converter.AppendHtml(sectionHtml, breakOnH1, ref hasContent);
                     }
+
+                    hasRenderedSection = true;
                 }
 
                 mainPart.Document.Save();
@@ -412,8 +417,14 @@ namespace WriterApp.Application.Exporting
 
                         if (tag is "img")
                         {
-                            // TODO: Support embedding images in DOCX exports.
-                            AppendPlainParagraph("[Image omitted]");
+                            Paragraph imageParagraph = new();
+                            if (!TryAppendImage(imageParagraph, element))
+                            {
+                                string src = element.GetAttribute("src") ?? string.Empty;
+                                AppendRun(imageParagraph, string.IsNullOrWhiteSpace(src) ? "[Image omitted]" : $"[Image: {src}]", new InlineStyle());
+                            }
+
+                            _body.Append(imageParagraph);
                             hasContent = true;
                             continue;
                         }
@@ -436,6 +447,16 @@ namespace WriterApp.Application.Exporting
 
             private void AppendTable(IElement tableElement)
             {
+                List<IElement> rows = tableElement.QuerySelectorAll("tr").OfType<IElement>().ToList();
+                if (rows.Count == 0)
+                {
+                    return;
+                }
+
+                int maxColumns = rows.Max(GetRowColumnCount);
+                List<int> columnWidthsTwips = ResolveColumnWidthsTwips(tableElement, maxColumns);
+                bool hasColumnWidths = columnWidthsTwips.Count > 0;
+
                 Table table = new();
                 TableProperties props = new(
                     new TableBorders(
@@ -445,33 +466,369 @@ namespace WriterApp.Application.Exporting
                         new RightBorder { Val = BorderValues.Single, Size = 4 },
                         new InsideHorizontalBorder { Val = BorderValues.Single, Size = 4 },
                         new InsideVerticalBorder { Val = BorderValues.Single, Size = 4 }));
+                if (hasColumnWidths)
+                {
+                    props.Append(new TableLayout { Type = TableLayoutValues.Fixed });
+                }
+
                 table.AppendChild(props);
 
-                foreach (IElement rowElement in tableElement.QuerySelectorAll("tr"))
+                if (maxColumns > 0)
+                {
+                    TableGrid tableGrid = new();
+                    for (int index = 0; index < maxColumns; index++)
+                    {
+                        GridColumn column = new();
+                        if (index < columnWidthsTwips.Count)
+                        {
+                            column.Width = columnWidthsTwips[index].ToString(CultureInfo.InvariantCulture);
+                        }
+
+                        tableGrid.Append(column);
+                    }
+
+                    table.Append(tableGrid);
+                }
+
+                foreach (IElement rowElement in rows)
                 {
                     TableRow row = new();
+                    int? rowHeightTwips = ResolveRowHeightTwips(rowElement);
+                    if (rowHeightTwips.HasValue)
+                    {
+                        row.Append(new TableRowProperties(
+                            new TableRowHeight
+                            {
+                                Val = (UInt32Value)(uint)Math.Max(0, rowHeightTwips.Value),
+                                HeightType = HeightRuleValues.AtLeast
+                            }));
+                    }
+
+                    int columnIndex = 0;
                     foreach (IElement cellElement in rowElement.Children.Where(c =>
                                  c.TagName.Equals("TD", StringComparison.OrdinalIgnoreCase)
                                  || c.TagName.Equals("TH", StringComparison.OrdinalIgnoreCase)))
                     {
-                        if (cellElement.HasAttribute("colspan") || cellElement.HasAttribute("rowspan"))
+                        int colspan = ParsePositiveInt(cellElement.GetAttribute("colspan")) ?? 1;
+                        int? rowspan = ParsePositiveInt(cellElement.GetAttribute("rowspan"));
+                        if (rowspan.HasValue && rowspan.Value > 1)
                         {
-                            _logger.LogDebug("[DOCX] Table cell span not supported; rendering without spans.");
+                            _logger.LogDebug("[DOCX] Table row span not fully supported; rendering current row without vertical merge.");
                         }
 
                         TableCell cell = new();
-                        TableCellProperties cellProps = new(new TableCellWidth { Type = TableWidthUnitValues.Auto });
+                        TableCellProperties cellProps = new();
+
+                        int? cellWidthTwips = ResolveCellWidthTwips(cellElement, columnWidthsTwips, columnIndex);
+                        if (cellWidthTwips.HasValue)
+                        {
+                            cellProps.Append(new TableCellWidth
+                            {
+                                Type = TableWidthUnitValues.Dxa,
+                                Width = cellWidthTwips.Value.ToString(CultureInfo.InvariantCulture)
+                            });
+                        }
+                        else
+                        {
+                            cellProps.Append(new TableCellWidth { Type = TableWidthUnitValues.Auto });
+                        }
+
+                        if (colspan > 1)
+                        {
+                            cellProps.Append(new GridSpan { Val = colspan });
+                        }
+
+                        bool isHeaderCell = cellElement.TagName.Equals("TH", StringComparison.OrdinalIgnoreCase);
+                        string? fill = ResolveCellFillHex(cellElement, isHeaderCell);
+                        if (!string.IsNullOrWhiteSpace(fill))
+                        {
+                            cellProps.Append(new Shading
+                            {
+                                Val = ShadingPatternValues.Clear,
+                                Color = "auto",
+                                Fill = fill
+                            });
+                        }
+
                         cell.Append(cellProps);
 
                         Paragraph cellParagraph = new();
                         AppendInlineNodes(cellElement.ChildNodes, cellParagraph, new InlineStyle());
                         cell.Append(cellParagraph);
                         row.Append(cell);
+
+                        columnIndex += Math.Max(1, colspan);
                     }
+
                     table.Append(row);
                 }
 
                 _body.Append(table);
+            }
+
+            private static List<int> ResolveColumnWidthsTwips(IElement tableElement, int maxColumns)
+            {
+                const int maxTableWidthTwips = 9360; // ~6.5in writable width
+                const int minColumnWidthTwips = 720; // 0.5in guardrail
+
+                List<int?> widths = Enumerable.Repeat<int?>(null, Math.Max(0, maxColumns)).ToList();
+                if (maxColumns <= 0)
+                {
+                    return new List<int>();
+                }
+
+                List<IElement> columns = tableElement.QuerySelectorAll("col").OfType<IElement>().ToList();
+                for (int index = 0; index < columns.Count && index < widths.Count; index++)
+                {
+                    widths[index] = ResolveWidthTwips(columns[index]);
+                }
+
+                if (widths.All(width => !width.HasValue))
+                {
+                    IElement? firstRow = tableElement.QuerySelectorAll("tr").OfType<IElement>().FirstOrDefault();
+                    if (firstRow is not null)
+                    {
+                        int columnIndex = 0;
+                        foreach (IElement cell in firstRow.Children.Where(c =>
+                                     c.TagName.Equals("TD", StringComparison.OrdinalIgnoreCase)
+                                     || c.TagName.Equals("TH", StringComparison.OrdinalIgnoreCase)))
+                        {
+                            int colspan = ParsePositiveInt(cell.GetAttribute("colspan")) ?? 1;
+                            int? width = ResolveWidthTwips(cell);
+                            for (int offset = 0; offset < colspan && columnIndex + offset < widths.Count; offset++)
+                            {
+                                widths[columnIndex + offset] = width;
+                            }
+
+                            columnIndex += Math.Max(1, colspan);
+                        }
+                    }
+                }
+
+                int knownCount = widths.Count(width => width.HasValue && width.Value > 0);
+                int knownTotal = widths.Where(width => width.HasValue && width.Value > 0).Sum(width => width!.Value);
+
+                int fallbackWidth = knownCount > 0
+                    ? Math.Max(minColumnWidthTwips, knownTotal / knownCount)
+                    : Math.Max(minColumnWidthTwips, maxTableWidthTwips / maxColumns);
+
+                List<int> normalized = widths
+                    .Select(width => Math.Max(minColumnWidthTwips, width ?? fallbackWidth))
+                    .ToList();
+
+                int totalWidth = normalized.Sum();
+                if (totalWidth > maxTableWidthTwips && totalWidth > 0)
+                {
+                    double scale = (double)maxTableWidthTwips / totalWidth;
+                    normalized = normalized
+                        .Select(width => Math.Max(minColumnWidthTwips, (int)Math.Round(width * scale)))
+                        .ToList();
+                }
+
+                return normalized;
+            }
+
+            private static int GetRowColumnCount(IElement rowElement)
+            {
+                int count = 0;
+                foreach (IElement cellElement in rowElement.Children.Where(c =>
+                             c.TagName.Equals("TD", StringComparison.OrdinalIgnoreCase)
+                             || c.TagName.Equals("TH", StringComparison.OrdinalIgnoreCase)))
+                {
+                    count += ParsePositiveInt(cellElement.GetAttribute("colspan")) ?? 1;
+                }
+
+                return Math.Max(1, count);
+            }
+
+            private static int? ResolveCellWidthTwips(IElement cellElement, IReadOnlyList<int> columnWidthsTwips, int columnIndex)
+            {
+                int? cellWidth = ResolveWidthTwips(cellElement);
+                if (cellWidth.HasValue)
+                {
+                    return cellWidth;
+                }
+
+                if (columnIndex >= 0 && columnIndex < columnWidthsTwips.Count)
+                {
+                    return columnWidthsTwips[columnIndex];
+                }
+
+                return null;
+            }
+
+            private static int? ResolveWidthTwips(IElement element)
+            {
+                string? dataColWidth = element.GetAttribute("data-colwidth") ?? element.GetAttribute("colwidth");
+                if (!string.IsNullOrWhiteSpace(dataColWidth))
+                {
+                    string first = dataColWidth.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault() ?? string.Empty;
+                    int? parsed = ParseLengthToTwips(first);
+                    if (parsed.HasValue)
+                    {
+                        return parsed;
+                    }
+                }
+
+                string? width = GetStyleValue(element, "width")
+                    ?? GetStyleValue(element, "min-width")
+                    ?? element.GetAttribute("width");
+                return ParseLengthToTwips(width);
+            }
+
+            private static int? ResolveRowHeightTwips(IElement rowElement)
+            {
+                string? value = GetStyleValue(rowElement, "height")
+                    ?? GetStyleValue(rowElement, "min-height")
+                    ?? rowElement.GetAttribute("height");
+                return ParseLengthToTwips(value);
+            }
+
+            private static int? ParseLengthToTwips(string? value)
+            {
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    return null;
+                }
+
+                string normalized = value.Trim().ToLowerInvariant();
+                if (normalized.EndsWith("%", StringComparison.Ordinal))
+                {
+                    return null;
+                }
+
+                double factor = 15d; // px -> twips at 96 DPI
+                if (normalized.EndsWith("px", StringComparison.Ordinal))
+                {
+                    normalized = normalized[..^2].Trim();
+                    factor = 15d;
+                }
+                else if (normalized.EndsWith("pt", StringComparison.Ordinal))
+                {
+                    normalized = normalized[..^2].Trim();
+                    factor = 20d;
+                }
+                else if (normalized.EndsWith("in", StringComparison.Ordinal))
+                {
+                    normalized = normalized[..^2].Trim();
+                    factor = 1440d;
+                }
+                else if (normalized.EndsWith("cm", StringComparison.Ordinal))
+                {
+                    normalized = normalized[..^2].Trim();
+                    factor = 1440d / 2.54d;
+                }
+                else if (normalized.EndsWith("mm", StringComparison.Ordinal))
+                {
+                    normalized = normalized[..^2].Trim();
+                    factor = 1440d / 25.4d;
+                }
+
+                if (!double.TryParse(normalized, NumberStyles.Float, CultureInfo.InvariantCulture, out double numeric) || numeric <= 0)
+                {
+                    return null;
+                }
+
+                return (int)Math.Round(numeric * factor);
+            }
+
+            private static int? ParsePositiveInt(string? value)
+            {
+                if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed) || parsed <= 0)
+                {
+                    return null;
+                }
+
+                return parsed;
+            }
+
+            private static string? ResolveCellFillHex(IElement cellElement, bool isHeaderCell)
+            {
+                string? color = GetStyleValue(cellElement, "background-color")
+                    ?? GetStyleValue(cellElement, "background");
+                string? normalized = NormalizeHexColor(color);
+                if (!string.IsNullOrWhiteSpace(normalized))
+                {
+                    return normalized;
+                }
+
+                return isHeaderCell ? "D9D9D9" : null;
+            }
+
+            private static string? GetStyleValue(IElement element, string propertyName)
+            {
+                string? style = element.GetAttribute("style");
+                if (string.IsNullOrWhiteSpace(style))
+                {
+                    return null;
+                }
+
+                string prefix = $"{propertyName}:";
+                foreach (string part in style.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    if (part.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return part[prefix.Length..].Trim();
+                    }
+                }
+
+                return null;
+            }
+
+            private static string? NormalizeHexColor(string? raw)
+            {
+                if (string.IsNullOrWhiteSpace(raw))
+                {
+                    return null;
+                }
+
+                string value = raw.Trim();
+                int bang = value.IndexOf('!');
+                if (bang >= 0)
+                {
+                    value = value[..bang].Trim();
+                }
+
+                if (value.StartsWith("#", StringComparison.Ordinal))
+                {
+                    string hex = value[1..].Trim();
+                    if (hex.Length == 3)
+                    {
+                        hex = string.Concat(hex.Select(ch => $"{ch}{ch}"));
+                    }
+
+                    if (hex.Length == 6 && hex.All(Uri.IsHexDigit))
+                    {
+                        return hex.ToUpperInvariant();
+                    }
+
+                    return null;
+                }
+
+                if (value.StartsWith("rgb(", StringComparison.OrdinalIgnoreCase) && value.EndsWith(')'))
+                {
+                    string payload = value[4..^1];
+                    string[] parts = payload.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    if (parts.Length == 3
+                        && byte.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out byte r)
+                        && byte.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out byte g)
+                        && byte.TryParse(parts[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out byte b))
+                    {
+                        return $"{r:X2}{g:X2}{b:X2}";
+                    }
+                }
+
+                return value.ToLowerInvariant() switch
+                {
+                    "black" => "000000",
+                    "white" => "FFFFFF",
+                    "gray" or "grey" => "808080",
+                    "lightgray" or "lightgrey" => "D3D3D3",
+                    "red" => "FF0000",
+                    "green" => "008000",
+                    "blue" => "0000FF",
+                    _ => null
+                };
             }
 
             private void AppendBlockquote(IElement element)

@@ -50,10 +50,10 @@
         <div class="nav-item px-3">
             <a class="nav-link @GetDocumentsActiveClass()"
                href="documents"
-               title="Browse and manage your documents."
+               title="Open the Projects hub."
                @onclick="OnDocumentsNavClicked"
                @onclick:preventDefault="true">
-                <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Documents
+                <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Projects
             </a>
         </div>
         @if (_projectsEnabled)
@@ -134,29 +134,13 @@
 
     private async Task OnDocumentsNavClicked()
     {
-        await NavigateDocumentsAsync();
+        await NavigateProjectsHubAsync();
     }
 
-    private async Task NavigateDocumentsAsync()
+    private Task NavigateProjectsHubAsync()
     {
-        await LastOpenedDocumentStateService.LoadAsync();
-
-        if (IsDocumentsListRoute() && LastOpenedDocumentStateService.State is { } state)
-        {
-            (Guid? sectionId, bool shouldClear) = await TryResolveSectionAsync(state);
-            if (sectionId is not null)
-            {
-                Navigation.NavigateTo($"documents/{state.DocumentId}/sections/{sectionId}");
-                return;
-            }
-
-            if (shouldClear)
-            {
-                await LastOpenedDocumentStateService.ClearAsync();
-            }
-        }
-
         Navigation.NavigateTo("documents");
+        return Task.CompletedTask;
     }
 
     private async Task<(Guid? SectionId, bool ShouldClear)> TryResolveSectionAsync(LastOpenedDocumentState state)

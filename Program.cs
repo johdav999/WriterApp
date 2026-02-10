@@ -7,7 +7,9 @@ using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Server.Circuits;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.Data.Sqlite;
@@ -135,6 +137,7 @@ builder.Services.AddScoped(sp =>
     NavigationManager navigation = sp.GetRequiredService<NavigationManager>();
     return new HttpClient { BaseAddress = new Uri(navigation.BaseUri) };
 });
+builder.Services.AddScoped<OutlineTemplatesClient>();
 
 builder.Services.AddMemoryCache();
 
@@ -334,9 +337,12 @@ using (IServiceScope scope = app.Services.CreateScope())
         logger.LogInformation("Database migrations applied.");
     }
 
+    EnsureOutlineTemplatesTable(dbContext, logger);
+
     if (app.Environment.IsDevelopment())
     {
         LogTablePresence(dbContext, logger, "PageVersions");
+        LogTablePresence(dbContext, logger, "OutlineTemplates");
     }
 
     try
@@ -398,9 +404,76 @@ if (!app.Environment.IsDevelopment())
 }
 
 bool wasmEnabled = app.Configuration.GetValue<bool>("WriterApp:WasmClient:Enabled");
+List<string> wasmFrameworkRoots = new();
 if (wasmEnabled)
 {
     app.UseBlazorFrameworkFiles("/app");
+
+    string[] pathAnchors =
+    {
+        app.Environment.ContentRootPath,
+        Directory.GetCurrentDirectory(),
+        AppContext.BaseDirectory,
+        Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."))
+    };
+
+    static string ResolveFromAnchors(IEnumerable<string> anchors, params string[] segments)
+    {
+        foreach (string anchor in anchors)
+        {
+            string candidate = Path.Combine(new[] { anchor }.Concat(segments).ToArray());
+            if (Directory.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    // Serve client static files from multiple local locations so /app assets resolve in debug.
+    List<string> appAssetRoots = new()
+    {
+        ResolveFromAnchors(pathAnchors, "WriterApp.Client", "bin", "Debug", "net9.0", "wwwroot"),
+        ResolveFromAnchors(pathAnchors, "WriterApp.Client", "bin", "Release", "net9.0", "wwwroot"),
+        ResolveFromAnchors(pathAnchors, "WriterApp.Client", "wwwroot")
+    };
+
+    foreach (string assetRoot in appAssetRoots.Where(path => !string.IsNullOrWhiteSpace(path)).Distinct(StringComparer.OrdinalIgnoreCase))
+    {
+        app.UseStaticFiles(new StaticFileOptions
+        {
+            FileProvider = new PhysicalFileProvider(assetRoot),
+            RequestPath = "/app"
+        });
+    }
+
+    string scopedCssBundleRoot = ResolveFromAnchors(
+        pathAnchors,
+        "WriterApp.Client",
+        "obj",
+        app.Environment.IsDevelopment() ? "Debug" : "Release",
+        "net9.0",
+        "scopedcss",
+        "bundle");
+
+    if (!string.IsNullOrWhiteSpace(scopedCssBundleRoot))
+    {
+        app.UseStaticFiles(new StaticFileOptions
+        {
+            FileProvider = new PhysicalFileProvider(scopedCssBundleRoot),
+            RequestPath = "/app"
+        });
+    }
+
+    wasmFrameworkRoots = new[]
+    {
+        ResolveFromAnchors(pathAnchors, "WriterApp.Client", "bin", "Debug", "net9.0", "wwwroot", "_framework"),
+        ResolveFromAnchors(pathAnchors, "WriterApp.Client", "bin", "Release", "net9.0", "wwwroot", "_framework")
+    }
+    .Where(path => !string.IsNullOrWhiteSpace(path))
+    .Distinct(StringComparer.OrdinalIgnoreCase)
+    .ToList();
 }
 
 app.UseStaticFiles();
@@ -408,7 +481,7 @@ app.UseRouting();
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapGet("/", () => Results.Redirect("/app/documents"));
+app.MapGet("/", () => Results.Redirect("/app/projects"));
 
 app.MapGet("/__ping", () => Results.Ok("pong"));
 
@@ -567,8 +640,67 @@ app.MapRazorComponents<App>()
 
 if (wasmEnabled)
 {
-    app.MapFallbackToFile("/app", "app/index.html");
-    app.MapFallbackToFile("/app/{*path:nonfile}", "app/index.html");
+    FileExtensionContentTypeProvider contentTypeProvider = new();
+    app.MapGet("/app/_framework/{*file}", async context =>
+    {
+        string relativeFile = context.Request.RouteValues["file"]?.ToString() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(relativeFile) || relativeFile.Contains("..", StringComparison.Ordinal))
+        {
+            context.Response.StatusCode = StatusCodes.Status404NotFound;
+            return;
+        }
+
+        foreach (string root in wasmFrameworkRoots)
+        {
+            string candidate = Path.Combine(root, relativeFile.Replace('/', Path.DirectorySeparatorChar));
+            if (!File.Exists(candidate))
+            {
+                continue;
+            }
+
+            if (!contentTypeProvider.TryGetContentType(candidate, out string? contentType))
+            {
+                contentType = "application/octet-stream";
+            }
+
+            context.Response.ContentType = contentType;
+            await context.Response.SendFileAsync(candidate);
+            return;
+        }
+
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+    });
+
+    string runtimeAppIndex = Path.Combine(app.Environment.WebRootPath ?? string.Empty, "app", "index.html");
+    string sourceAppIndex = Path.Combine(app.Environment.ContentRootPath, "WriterApp.Client", "wwwroot", "index.html");
+
+    app.MapGet("/app", async context =>
+    {
+        string? indexPath = ResolveAppIndexPath(runtimeAppIndex, sourceAppIndex);
+        if (indexPath is null)
+        {
+            context.Response.StatusCode = StatusCodes.Status404NotFound;
+            await context.Response.WriteAsync("Client app index not found.");
+            return;
+        }
+
+        context.Response.ContentType = "text/html; charset=utf-8";
+        await context.Response.SendFileAsync(indexPath);
+    });
+
+    app.MapFallback("/app/{*path:nonfile}", async context =>
+    {
+        string? indexPath = ResolveAppIndexPath(runtimeAppIndex, sourceAppIndex);
+        if (indexPath is null)
+        {
+            context.Response.StatusCode = StatusCodes.Status404NotFound;
+            await context.Response.WriteAsync("Client app index not found.");
+            return;
+        }
+
+        context.Response.ContentType = "text/html; charset=utf-8";
+        await context.Response.SendFileAsync(indexPath);
+    });
 }
 
 // --------------------
@@ -706,6 +838,47 @@ static void ApplySqlitePragmas(AppDbContext dbContext, ILogger logger)
     }
 }
 
+static void EnsureOutlineTemplatesTable(AppDbContext dbContext, ILogger logger)
+{
+    if (!dbContext.Database.IsSqlite())
+    {
+        return;
+    }
+
+    const string createTableSql = """
+        CREATE TABLE IF NOT EXISTS "OutlineTemplates" (
+            "Id" TEXT NOT NULL CONSTRAINT "PK_OutlineTemplates" PRIMARY KEY,
+            "OwnerUserId" TEXT NOT NULL,
+            "Name" TEXT NOT NULL,
+            "TemplateJson" TEXT NOT NULL,
+            "CreatedUtc" TEXT NOT NULL,
+            "UpdatedUtc" TEXT NOT NULL
+        );
+        """;
+
+    const string createOwnerIndexSql = """
+        CREATE INDEX IF NOT EXISTS "IX_OutlineTemplates_OwnerUserId"
+        ON "OutlineTemplates" ("OwnerUserId");
+        """;
+
+    const string createUpdatedIndexSql = """
+        CREATE INDEX IF NOT EXISTS "IX_OutlineTemplates_UpdatedUtc"
+        ON "OutlineTemplates" ("UpdatedUtc");
+        """;
+
+    try
+    {
+        dbContext.Database.ExecuteSqlRaw(createTableSql);
+        dbContext.Database.ExecuteSqlRaw(createOwnerIndexSql);
+        dbContext.Database.ExecuteSqlRaw(createUpdatedIndexSql);
+        logger.LogInformation("SQLite outline templates schema ensured.");
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Failed to ensure SQLite OutlineTemplates schema.");
+    }
+}
+
 static void LogTablePresence(AppDbContext dbContext, ILogger logger, string tableName)
 {
     try
@@ -747,4 +920,19 @@ static void LogExceptionChain(ILogger logger, Exception ex)
         current = current.InnerException;
         depth++;
     }
+}
+
+static string? ResolveAppIndexPath(string runtimeAppIndex, string sourceAppIndex)
+{
+    if (File.Exists(runtimeAppIndex))
+    {
+        return runtimeAppIndex;
+    }
+
+    if (File.Exists(sourceAppIndex))
+    {
+        return sourceAppIndex;
+    }
+
+    return null;
 }

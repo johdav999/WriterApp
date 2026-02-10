@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 using WriterApp.Client;
+using WriterApp.Application.Documents;
 
 
 
@@ -14,6 +15,7 @@ builder.Services.AddScoped(sp =>
 {
     return new HttpClient { BaseAddress = new Uri($"{origin}/") };
 });
+builder.Services.AddScoped<OutlineTemplatesClient>();
 builder.Services.AddScoped<WriterApp.Client.State.LayoutStateService>();
 builder.Services.AddScoped<WriterApp.Client.State.CurrentDocumentStateService>();
 builder.Services.AddSingleton<WriterApp.Client.State.LastOpenedDocumentStateService>();

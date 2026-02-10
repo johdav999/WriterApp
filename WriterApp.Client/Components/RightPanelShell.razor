@@ -1,20 +1,27 @@
 @namespace WriterApp.Client.Components
 
 <div class="rp-shell @Class">
-    @if (Tabs is not null)
-    {
-        <div class="rp-tabs">
-            @Tabs
-        </div>
-    }
-    @if (Header is not null)
-    {
-        <div class="rp-header">
-            @Header
-        </div>
-    }
     <div class="rp-scroll">
-        @Body
+        @if (Tabs is not null || Header is not null)
+        {
+            <div class="rp-sticky-header">
+                @if (Tabs is not null)
+                {
+                    <div class="rp-tabs">
+                        @Tabs
+                    </div>
+                }
+                @if (Header is not null)
+                {
+                    <div class="rp-header">
+                        @Header
+                    </div>
+                }
+            </div>
+        }
+        <div class="rp-content">
+            @Body
+        </div>
     </div>
     @if (Footer is not null)
     {

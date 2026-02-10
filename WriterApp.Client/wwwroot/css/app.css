@@ -207,25 +207,44 @@ code {
 }
 
 /* Project navigator tree rows (RenderTreeBuilder nodes don't get scoped CSS) */
+.projects-tree {
+    container-type: inline-size;
+}
+
 .tree-node {
     margin: 0;
     position: relative;
+    min-width: 0;
+}
+
+.tree-node.is-drop-target > .tree-row {
+    outline: 1px solid var(--color-primary);
+    background: var(--color-primary-soft);
 }
 
 .tree-row {
     --depth-step: 18px;
     display: grid;
-    grid-template-columns: 24px 28px auto minmax(0, 1fr) auto auto;
-    gap: var(--space-2);
+    /* indent | disclosure | drag | badge | title | menu */
+    grid-template-columns: calc(var(--depth, 0) * var(--depth-step)) 24px 28px max-content minmax(0, 1fr) 28px;
+    column-gap: var(--space-2);
+    row-gap: 0;
     align-items: center;
     min-height: 36px;
     padding: 0 var(--space-2);
-    padding-inline-start: calc(var(--space-1) + (var(--depth, 0) * var(--depth-step)));
     border: 1px solid transparent;
     border-radius: var(--radius-sm);
     cursor: pointer;
     position: relative;
-    white-space: nowrap;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow: visible;
+    box-sizing: border-box;
+}
+
+.tree-row > * {
+    min-width: 0;
 }
 
 .tree-row::before {
@@ -258,6 +277,7 @@ code {
 }
 
 .tree-disclosure {
+    grid-column: 2;
     border: none;
     background: transparent;
     min-height: 28px;
@@ -282,6 +302,7 @@ code {
 }
 
 .tree-drag {
+    grid-column: 3;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
     background: var(--color-surface-2);
@@ -289,24 +310,40 @@ code {
     padding: 0 var(--space-2);
     color: var(--color-text-subtle);
     cursor: grab;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+    -webkit-user-drag: element;
 }
 
 .tree-select {
+    grid-column: 5;
     min-width: 0;
-    display: block;
+    display: flex;
+    align-items: center;
+    min-height: 28px;
+    width: 100%;
     color: var(--color-text);
+    overflow: hidden;
+    cursor: pointer;
 }
 
 .tree-select-title {
     font-weight: 600;
     line-height: 1.2;
+    display: block;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .tree-rename {
+    grid-column: 5;
     width: 100%;
     min-width: 0;
+    overflow: hidden;
 }
 
 .tree-rename-input {
@@ -320,10 +357,17 @@ code {
 }
 
 .tree-node-badge {
+    grid-column: 4;
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+    min-width: max-content;
+    overflow: hidden;
     border: 1px solid var(--color-border);
     border-radius: 999px;
-    padding: 2px 8px;
+    padding: 2px 10px;
     font-size: var(--font-size-caption);
+    line-height: 1.2;
     color: var(--color-text-subtle);
     background: var(--color-surface-2);
     white-space: nowrap;
@@ -348,17 +392,38 @@ code {
 }
 
 .tree-meta {
+    display: none;
     font-size: var(--font-size-caption);
     color: var(--color-text-muted);
     font-variant-numeric: tabular-nums;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
     justify-self: end;
+    white-space: nowrap;
+    text-align: right;
+    min-width: 8ch;
+    max-width: 14ch;
+    pointer-events: none;
+    user-select: none;
 }
 
 .tree-row-actions {
+    grid-column: 6;
     position: relative;
+    width: 28px;
+    justify-self: end;
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.12s ease;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.tree-indent {
+    grid-column: 1;
+    width: 100%;
+    min-width: 0;
+    height: 1px;
+    pointer-events: none;
 }
 
 .tree-row:hover .tree-row-actions,
@@ -410,4 +475,8 @@ code {
 .tree-row-menu button:focus-visible {
     background: var(--color-surface-2);
     outline: none;
+}
+
+.tree-row-menu button.danger {
+    color: var(--color-danger);
 }

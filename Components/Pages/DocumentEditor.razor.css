@@ -245,7 +245,7 @@
     padding: 16px;
     border-radius: 14px;
     border: 1px solid #e5e7eb;
-    background: var(--surface, #fff);
+    background: var(--color-surface-1, #ffffff);
     box-shadow: 0 20px 40px rgba(15, 23, 42, 0.2);
     z-index: 9010;
     display: flex;
@@ -253,6 +253,10 @@
     gap: 10px;
     pointer-events: auto;
     opacity: 1;
+}
+
+.modal.import-dialog {
+    background: var(--color-surface-1, #ffffff);
 }
 
 .modal-panel {
@@ -1489,6 +1493,15 @@
     justify-content: flex-start;
     gap: 8px;
     flex-wrap: wrap;
+}
+
+.outline-templates-dialog {
+    width: min(680px, calc(100vw - 32px));
+}
+
+.outline-template-options {
+    display: grid;
+    gap: 8px;
 }
 
 .outline-action-bar {

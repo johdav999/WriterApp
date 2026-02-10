@@ -28,6 +28,8 @@ else if (!string.IsNullOrWhiteSpace(_error))
     private bool _loading = true;
     private string? _error;
 
+    private sealed record ManuscriptOpenTarget(Guid DocumentId, Guid? SectionId);
+
     protected override async Task OnParametersSetAsync()
     {
         _loading = true;
@@ -36,6 +38,13 @@ else if (!string.IsNullOrWhiteSpace(_error))
         try
         {
             await SaveResumeTargetAsync(ProjectId);
+            ManuscriptOpenTarget? manuscriptTarget = await EnsureManuscriptTargetAsync(ProjectId);
+            if (manuscriptTarget is null)
+            {
+                _error = "Project not found.";
+                return;
+            }
+
             using HttpResponseMessage response = await Http.GetAsync($"api/projects/{ProjectId}/tree");
             if (response.StatusCode == HttpStatusCode.NotFound)
             {
@@ -50,20 +59,21 @@ else if (!string.IsNullOrWhiteSpace(_error))
             }
 
             ProjectTreeDto? tree = await response.Content.ReadFromJsonAsync<ProjectTreeDto>();
-            if (tree is null || tree.Nodes.Count == 0)
+            ProjectNodeDto? firstScene = tree is null ? null : FindFirstScene(tree.Nodes);
+            if (firstScene is not null)
             {
-                _error = "Project has no outline nodes yet.";
+                Navigation.NavigateTo($"projects/{ProjectId}/scenes/{firstScene.Id}/edit", replace: true);
                 return;
             }
 
-            ProjectNodeDto? firstScene = FindFirstScene(tree.Nodes);
-            if (firstScene is null)
+            Guid? sectionId = manuscriptTarget.SectionId ?? await GetFirstSectionIdAsync(manuscriptTarget.DocumentId);
+            if (sectionId.HasValue)
             {
-                _error = "Project has no scene nodes yet.";
+                Navigation.NavigateTo($"documents/{manuscriptTarget.DocumentId}/sections/{sectionId.Value}", replace: true);
                 return;
             }
 
-            Navigation.NavigateTo($"projects/{ProjectId}/scenes/{firstScene.Id}/edit", replace: true);
+            _error = "Manuscript exists but has no sections. Open the project and create content first.";
         }
         catch (Exception ex)
         {
@@ -96,15 +106,17 @@ else if (!string.IsNullOrWhiteSpace(_error))
 
     private static ProjectNodeDto? FindFirstScene(IReadOnlyList<ProjectNodeDto> nodes)
     {
-        Dictionary<Guid?, List<ProjectNodeDto>> byParent = nodes
-            .GroupBy(node => node.ParentId)
+        List<ProjectNodeDto> roots = nodes
+            .Where(node => !node.ParentId.HasValue)
+            .OrderBy(node => node.OrderIndex)
+            .ToList();
+
+        Dictionary<Guid, List<ProjectNodeDto>> byParent = nodes
+            .Where(node => node.ParentId.HasValue)
+            .GroupBy(node => node.ParentId!.Value)
             .ToDictionary(
                 group => group.Key,
                 group => group.OrderBy(node => node.OrderIndex).ToList());
-
-        List<ProjectNodeDto> roots = byParent.TryGetValue(null, out List<ProjectNodeDto>? rootNodes)
-            ? rootNodes
-            : new List<ProjectNodeDto>();
 
         foreach (ProjectNodeDto root in roots)
         {
@@ -121,7 +133,7 @@ else if (!string.IsNullOrWhiteSpace(_error))
             .FirstOrDefault();
     }
 
-    private static ProjectNodeDto? FindFirstSceneDepthFirst(ProjectNodeDto node, IReadOnlyDictionary<Guid?, List<ProjectNodeDto>> byParent)
+    private static ProjectNodeDto? FindFirstSceneDepthFirst(ProjectNodeDto node, IReadOnlyDictionary<Guid, List<ProjectNodeDto>> byParent)
     {
         if (string.Equals(node.NodeType, "scene", StringComparison.OrdinalIgnoreCase))
         {
@@ -143,5 +155,58 @@ else if (!string.IsNullOrWhiteSpace(_error))
         }
 
         return null;
+    }
+
+    private async Task<ManuscriptOpenTarget?> EnsureManuscriptTargetAsync(Guid projectId)
+    {
+        using HttpResponseMessage docsResponse = await Http.GetAsync($"api/projects/{projectId}/documents");
+        if (docsResponse.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+
+        docsResponse.EnsureSuccessStatusCode();
+        List<ProjectDocumentDto>? docs = await docsResponse.Content.ReadFromJsonAsync<List<ProjectDocumentDto>>();
+        ProjectDocumentDto? manuscript = docs?
+            .Where(item => item.DeletedAt is null && string.Equals(item.Kind, "manuscript", StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(item => item.UpdatedAt)
+            .FirstOrDefault();
+        if (manuscript is not null)
+        {
+            Guid? firstSectionId = await GetFirstSectionIdAsync(manuscript.Id);
+            return new ManuscriptOpenTarget(manuscript.Id, firstSectionId);
+        }
+
+        ProjectDocumentCreateRequest createRequest = new(
+            Id: null,
+            Title: "Manuscript",
+            Kind: "manuscript",
+            CreateDefaultStructure: true);
+        using HttpResponseMessage createResponse = await Http.PostAsJsonAsync($"api/projects/{projectId}/documents", createRequest);
+        if (!createResponse.IsSuccessStatusCode)
+        {
+            string message = await createResponse.Content.ReadAsStringAsync();
+            throw new InvalidOperationException(
+                string.IsNullOrWhiteSpace(message)
+                    ? $"Create manuscript failed: {(int)createResponse.StatusCode}"
+                    : $"Create manuscript failed: {(int)createResponse.StatusCode} {message}");
+        }
+
+        DocumentCreateResponse? created = await createResponse.Content.ReadFromJsonAsync<DocumentCreateResponse>();
+        if (created is null)
+        {
+            throw new InvalidOperationException("Create manuscript returned no payload.");
+        }
+
+        return new ManuscriptOpenTarget(created.Document.Id, created.DefaultSectionId);
+    }
+
+    private async Task<Guid?> GetFirstSectionIdAsync(Guid documentId)
+    {
+        List<SectionDto>? sections = await Http.GetFromJsonAsync<List<SectionDto>>($"api/documents/{documentId}/sections");
+        SectionDto? first = sections?
+            .OrderBy(section => section.OrderIndex)
+            .FirstOrDefault();
+        return first?.Id;
     }
 }
