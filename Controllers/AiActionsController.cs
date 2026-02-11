@@ -760,17 +760,30 @@ namespace WriterApp.Controllers
                     return false;
                 }
 
-                string? narrativePurpose = GetNullableString(root, "narrativePurpose");
-                string? emotionalBeat = GetNullableString(root, "emotionalBeat");
-                string? keyEvents = GetNullableString(root, "keyEvents");
-                string? openQuestions = GetNullableString(root, "openQuestions");
-                string? povCharacterId = GetNullableString(root, "povCharacterId");
-                string? placeId = GetNullableString(root, "placeId");
-                string? timelineEventId = GetNullableString(root, "timelineEventId");
-                string? timeRef = GetNullableString(root, "timeRef");
-                List<string> tags = GetStringArray(root, "tags");
-                List<SceneCardReferenceDto> references = GetReferenceArray(root, "references");
-                explanation = GetNullableString(root, "explanation");
+                JsonElement payload = TryGetObject(root, "sceneCard", out JsonElement sceneCard)
+                    ? sceneCard
+                    : root;
+
+                string? narrativePurpose = GetFirstNullableString(payload, "narrativePurpose", "narrative_purpose");
+                string? emotionalBeat = GetFirstNullableString(payload, "emotionalBeat", "emotional_beat");
+                string? keyEvents = GetFirstNullableString(payload, "keyEvents", "key_events");
+                string? openQuestions = GetFirstNullableString(payload, "openQuestions", "open_questions");
+                string? povCharacterId = GetFirstNullableString(payload, "povCharacterId", "povCharacter", "pov_character_id", "pov");
+                string? placeId = GetFirstNullableString(payload, "placeId", "settingPlace", "setting", "location", "place_id");
+                string? timelineEventId = GetFirstNullableString(payload, "timelineEventId", "timeline_event_id", "eventId");
+                string? timeRef = GetFirstNullableString(payload, "timeRef", "timelineMarker", "timeline_marker", "time_ref");
+                List<string> tags = GetStringArray(payload, "tags");
+                if (tags.Count == 0)
+                {
+                    string? tagsText = GetFirstNullableString(payload, "tags", "tagsCsv", "tagList", "sceneTags");
+                    if (!string.IsNullOrWhiteSpace(tagsText))
+                    {
+                        tags = ParseCsvList(tagsText);
+                    }
+                }
+
+                List<SceneCardReferenceDto> references = GetReferenceArray(payload, "references");
+                explanation = GetFirstNullableString(root, "explanation", "reasoning", "summary");
 
                 proposal = new SectionSceneCardProposalDto(
                     narrativePurpose ?? string.Empty,
@@ -799,7 +812,7 @@ namespace WriterApp.Controllers
                 return null;
             }
 
-            if (!element.TryGetProperty(propertyName, out JsonElement value))
+            if (!TryGetPropertyIgnoreCase(element, propertyName, out JsonElement value))
             {
                 return null;
             }
@@ -815,11 +828,25 @@ namespace WriterApp.Controllers
             };
         }
 
+        private static string? GetFirstNullableString(JsonElement element, params string[] propertyNames)
+        {
+            foreach (string propertyName in propertyNames)
+            {
+                string? value = GetNullableString(element, propertyName);
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    return value.Trim();
+                }
+            }
+
+            return null;
+        }
+
         private static List<string> GetStringArray(JsonElement element, string propertyName)
         {
             List<string> values = new();
             if (element.ValueKind != JsonValueKind.Object
-                || !element.TryGetProperty(propertyName, out JsonElement value)
+                || !TryGetPropertyIgnoreCase(element, propertyName, out JsonElement value)
                 || value.ValueKind != JsonValueKind.Array)
             {
                 return values;
@@ -844,7 +871,7 @@ namespace WriterApp.Controllers
         {
             List<SceneCardReferenceDto> values = new();
             if (element.ValueKind != JsonValueKind.Object
-                || !element.TryGetProperty(propertyName, out JsonElement value)
+                || !TryGetPropertyIgnoreCase(element, propertyName, out JsonElement value)
                 || value.ValueKind != JsonValueKind.Array)
             {
                 return values;
@@ -868,6 +895,49 @@ namespace WriterApp.Controllers
             }
 
             return values;
+        }
+
+        private static bool TryGetObject(JsonElement element, string propertyName, out JsonElement value)
+        {
+            value = default;
+            return element.ValueKind == JsonValueKind.Object
+                && TryGetPropertyIgnoreCase(element, propertyName, out value)
+                && value.ValueKind == JsonValueKind.Object;
+        }
+
+        private static bool TryGetPropertyIgnoreCase(JsonElement element, string propertyName, out JsonElement value)
+        {
+            value = default;
+            if (element.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            foreach (JsonProperty property in element.EnumerateObject())
+            {
+                if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = property.Value;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static List<string> ParseCsvList(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return new List<string>();
+            }
+
+            return text
+                .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                .Select(item => item.Trim())
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
 
         private static bool TryExtractJsonPayload(string input, out string payload)

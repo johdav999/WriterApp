@@ -26,7 +26,7 @@ else
         <div class="editor-workspace @GetWorkspaceClass()">
             <aside class="section-panel @GetSectionsPanelClass()">
                 <div class="section-panel-header">
-                    <h2>Sections</h2>
+                    <h2>Scene Sections</h2>
                     <div class="section-panel-actions">
                         @if (_isReorderingSections)
                         {
@@ -924,37 +924,29 @@ else
                                        class="notes-input scene-card-input"
                                        value="@_scenePovCharacterId"
                                        @oninput="OnScenePovInput"
-                                       placeholder="chr_... (optional)" />
+                                       title='@GetTooltip("The viewpoint character for this scene. Leave empty if omniscient or shifting POV.")'
+                                       placeholder="e.g., Klara" />
+                                <div class="scene-card-help">The viewpoint character for this scene. Leave empty if omniscient or shifting POV.</div>
                                 <label class="scene-card-label" for="scene-place">Setting / place</label>
                                 <input id="scene-place"
                                        class="notes-input scene-card-input"
                                        value="@_scenePlaceId"
                                        @oninput="OnScenePlaceInput"
-                                       placeholder="plc_... (optional)" />
+                                       title='@GetTooltip("Location of the scene: place, room, or broader setting.")'
+                                       placeholder="e.g., Old town cafe, Goteborg" />
+                                <div class="scene-card-help">Location of the scene: place, room, or broader setting. Can include time-of-day if useful.</div>
                                 <label class="scene-card-label" for="scene-time-ref">Timeline marker</label>
                                 <input id="scene-time-ref"
                                        class="notes-input scene-card-input"
                                        value="@_sceneTimeRef"
                                        @oninput="OnSceneTimeRefInput"
                                        placeholder="Day 3 / two weeks later" />
-                                <label class="scene-card-label" for="scene-timeline-event">Timeline event id</label>
-                                <input id="scene-timeline-event"
-                                       class="notes-input scene-card-input"
-                                       value="@_sceneTimelineEventId"
-                                       @oninput="OnSceneTimelineEventInput"
-                                       placeholder="evt_... (optional)" />
                                 <label class="scene-card-label" for="scene-tags">Tags (comma separated)</label>
                                 <input id="scene-tags"
                                        class="notes-input scene-card-input"
                                        value="@_sceneTagsText"
                                        @oninput="OnSceneTagsInput"
                                        placeholder="reveal, fight, romance" />
-                                <label class="scene-card-label" for="scene-refs">References (JSON array)</label>
-                                <textarea id="scene-refs"
-                                          class="notes-input scene-card-input"
-                                          value="@_sceneReferencesJson"
-                                          @oninput="OnSceneReferencesJsonInput"
-                                          placeholder='[{"kind":"character","targetId":"chr_1","note":"..." }]' />
                                 @if (!string.IsNullOrWhiteSpace(_sceneStatus))
                                 {
                                     <div class="drawer-empty">@_sceneStatus</div>
@@ -1408,6 +1400,26 @@ else
                                             @onclick="() => SetHistoryFilter(HistoryFilter.Commands)">
                                         AI Commands
                                     </button>
+                                </div>
+                                <div class="ai-history-toolbar">
+                                    <button type="button"
+                                            class="ai-history-button"
+                                            @onclick="LoadAiHistoryAsync">
+                                        Refresh history
+                                    </button>
+                                    <button type="button"
+                                            class="ai-history-button"
+                                            @onclick="OnAiUndoRequested"
+                                            disabled="@(!_canAiUndo || _aiUndoRedoInFlight)">
+                                        AI Undo
+                                    </button>
+                                    <button type="button"
+                                            class="ai-history-button"
+                                            @onclick="OnAiRedoRequested"
+                                            disabled="@(!_canAiRedo || _aiUndoRedoInFlight)">
+                                        AI Redo
+                                    </button>
+                                    <span class="ai-history-count-pill">@_aiHistoryEntries.Count</span>
                                 </div>
                                 @if (_versionsLoading)
                                 {

@@ -1301,12 +1301,19 @@ namespace WriterApp.AI.Providers.OpenAI
             string emotionalBeat = GetInputValue(request, "emotional_beat", string.Empty);
             string keyEvents = GetInputValue(request, "key_events", string.Empty);
             string openQuestions = GetInputValue(request, "open_questions", string.Empty);
+            string povCharacterId = GetInputValue(request, "pov_character_id", string.Empty);
+            string placeId = GetInputValue(request, "place_id", string.Empty);
+            string timelineEventId = GetInputValue(request, "timeline_event_id", string.Empty);
+            string timeRef = GetInputValue(request, "time_ref", string.Empty);
+            string tagsJson = GetInputValue(request, "tags_json", "[]");
+            string referencesJson = GetInputValue(request, "references_json", "[]");
 
             string systemPrompt = "You are a story editor. Return JSON only.";
             StringBuilder userPrompt = new();
             userPrompt.AppendLine("Produce a JSON object with keys:");
-            userPrompt.AppendLine("narrativePurpose, emotionalBeat, keyEvents, openQuestions, explanation.");
+            userPrompt.AppendLine("narrativePurpose, emotionalBeat, keyEvents, openQuestions, povCharacterId, placeId, timeRef, tags, explanation.");
             userPrompt.AppendLine("Use concise, readable sentences. Keep user intent.");
+            userPrompt.AppendLine("Return tags as a JSON array of short strings.");
             userPrompt.AppendLine($"Mode: {mode}");
             if (!string.IsNullOrWhiteSpace(sectionTitle))
             {
@@ -1322,6 +1329,12 @@ namespace WriterApp.AI.Providers.OpenAI
             userPrompt.AppendLine($"Emotional beat: {emotionalBeat}");
             userPrompt.AppendLine($"Key events: {keyEvents}");
             userPrompt.AppendLine($"Open questions: {openQuestions}");
+            userPrompt.AppendLine($"POV character: {povCharacterId}");
+            userPrompt.AppendLine($"Setting/place: {placeId}");
+            userPrompt.AppendLine($"Timeline event id: {timelineEventId}");
+            userPrompt.AppendLine($"Timeline marker: {timeRef}");
+            userPrompt.AppendLine($"Tags JSON: {tagsJson}");
+            userPrompt.AppendLine($"References JSON: {referencesJson}");
             userPrompt.AppendLine("Return JSON only, no prose outside the JSON.");
 
             Dictionary<string, object> payload = new()

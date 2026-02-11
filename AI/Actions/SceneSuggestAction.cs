@@ -64,7 +64,13 @@ namespace WriterApp.AI.Actions
                 ["narrative_purpose"] = GetOption(input.Options, "narrative_purpose"),
                 ["emotional_beat"] = GetOption(input.Options, "emotional_beat"),
                 ["key_events"] = GetOption(input.Options, "key_events"),
-                ["open_questions"] = GetOption(input.Options, "open_questions")
+                ["open_questions"] = GetOption(input.Options, "open_questions"),
+                ["pov_character_id"] = GetOption(input.Options, "pov_character_id"),
+                ["place_id"] = GetOption(input.Options, "place_id"),
+                ["timeline_event_id"] = GetOption(input.Options, "timeline_event_id"),
+                ["time_ref"] = GetOption(input.Options, "time_ref"),
+                ["tags_json"] = GetOption(input.Options, "tags_json"),
+                ["references_json"] = GetOption(input.Options, "references_json")
             };
 
             return new AiRequest(
