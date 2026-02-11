@@ -3565,16 +3565,25 @@ namespace WriterApp.Client.Pages
             }
 
             string beforeSnapshot = BuildSceneCardSnapshotJson();
-            _sceneNarrativePurpose = _sceneAiProposal.NarrativePurpose ?? string.Empty;
-            _sceneEmotionalBeat = _sceneAiProposal.EmotionalBeat ?? string.Empty;
-            _sceneKeyEvents = _sceneAiProposal.KeyEvents ?? string.Empty;
-            _sceneOpenQuestions = _sceneAiProposal.OpenQuestions ?? string.Empty;
-            _scenePovCharacterId = _sceneAiProposal.PovCharacterId ?? string.Empty;
-            _scenePlaceId = _sceneAiProposal.PlaceId ?? string.Empty;
-            _sceneTimelineEventId = _sceneAiProposal.TimelineEventId ?? string.Empty;
-            _sceneTimeRef = _sceneAiProposal.TimeRef ?? string.Empty;
-            _sceneTagsText = string.Join(", ", _sceneAiProposal.Tags ?? Array.Empty<string>());
-            _sceneReferencesJson = SerializeSceneReferences(_sceneAiProposal.References);
+            ApplySuggestedValue(ref _sceneNarrativePurpose, _sceneAiProposal.NarrativePurpose);
+            ApplySuggestedValue(ref _sceneEmotionalBeat, _sceneAiProposal.EmotionalBeat);
+            ApplySuggestedValue(ref _sceneKeyEvents, _sceneAiProposal.KeyEvents);
+            ApplySuggestedValue(ref _sceneOpenQuestions, _sceneAiProposal.OpenQuestions);
+            ApplySuggestedValue(ref _scenePovCharacterId, _sceneAiProposal.PovCharacterId);
+            ApplySuggestedValue(ref _scenePlaceId, _sceneAiProposal.PlaceId);
+            ApplySuggestedValue(ref _sceneTimelineEventId, _sceneAiProposal.TimelineEventId);
+            ApplySuggestedValue(ref _sceneTimeRef, _sceneAiProposal.TimeRef);
+
+            IReadOnlyList<string> normalizedTags = NormalizeTagList(_sceneAiProposal.Tags);
+            if (normalizedTags.Count > 0)
+            {
+                _sceneTagsText = string.Join(", ", normalizedTags);
+            }
+
+            if (_sceneAiProposal.References is not null && _sceneAiProposal.References.Count > 0)
+            {
+                _sceneReferencesJson = SerializeSceneReferences(_sceneAiProposal.References);
+            }
 
             await SaveSceneCardAsync(_activeSection.Id, isAutosave: false);
 
@@ -3628,6 +3637,31 @@ namespace WriterApp.Client.Pages
                 .Where(tag => !string.IsNullOrWhiteSpace(tag))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
+        }
+
+        private static IReadOnlyList<string> NormalizeTagList(IReadOnlyList<string>? tags)
+        {
+            if (tags is null || tags.Count == 0)
+            {
+                return Array.Empty<string>();
+            }
+
+            return tags
+                .Select(tag => tag?.Trim())
+                .Where(tag => !string.IsNullOrWhiteSpace(tag))
+                .Select(tag => tag!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+
+        private static void ApplySuggestedValue(ref string target, string? suggestion)
+        {
+            if (string.IsNullOrWhiteSpace(suggestion))
+            {
+                return;
+            }
+
+            target = suggestion.Trim();
         }
 
         private static IReadOnlyList<SceneCardReferenceDto> ParseSceneReferences(string json)

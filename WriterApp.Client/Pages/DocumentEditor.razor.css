@@ -1868,6 +1868,12 @@
     margin-top: 4px;
 }
 
+.scene-card-help {
+    font-size: 0.78rem;
+    color: var(--muted);
+    margin-top: -2px;
+}
+
 .scene-card-input {
     min-height: 96px;
 }

@@ -651,6 +651,10 @@ namespace WriterApp.AI.Providers.Mock
                 ["emotionalBeat"] = "Emotional shift goes here.",
                 ["keyEvents"] = "- Key event 1\n- Key event 2",
                 ["openQuestions"] = mode == "open_questions" ? "- What happens next?" : "- Open thread to resolve.",
+                ["povCharacterId"] = "Klara",
+                ["placeId"] = "Old town cafe, Goteborg",
+                ["timeRef"] = "Day 3, evening",
+                ["tags"] = new[] { "reveal", "tension", "dialogue" },
                 ["explanation"] = $"Mock scene card ({mode})."
             };
 
