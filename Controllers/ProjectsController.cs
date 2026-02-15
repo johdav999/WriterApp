@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using WriterApp.Application.Documents;
@@ -1033,6 +1034,372 @@ namespace WriterApp.Controllers
             return Ok(ToDto(node));
         }
 
+        [HttpPost("{projectId:guid}/nodes/{nodeId:guid}/duplicate")]
+        public async Task<ActionResult<ProjectNodeDuplicateResponse>> DuplicateNode(
+            Guid projectId,
+            Guid nodeId,
+            [FromBody] ProjectNodeDuplicateRequest? request,
+            CancellationToken ct)
+        {
+            if (!IsEnabled())
+            {
+                return NotFound();
+            }
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            ProjectRecord? project = await _dbContext.Projects
+                .FirstOrDefaultAsync(item => item.Id == projectId && item.OwnerUserId == userId, ct);
+            if (project is null)
+            {
+                return NotFound();
+            }
+
+            List<ProjectNodeRecord> projectNodes = await _dbContext.ProjectNodes
+                .Where(item => item.ProjectId == projectId)
+                .OrderBy(item => item.ParentId)
+                .ThenBy(item => item.OrderIndex)
+                .ThenBy(item => item.Id)
+                .ToListAsync(ct);
+
+            ProjectNodeRecord? sourceRoot = projectNodes.FirstOrDefault(item => item.Id == nodeId);
+            if (sourceRoot is null)
+            {
+                return NotFound();
+            }
+
+            bool duplicateDeep = request?.Deep ?? sourceRoot.NodeType != ProjectNodeType.Scene;
+            Dictionary<Guid, List<ProjectNodeRecord>> childrenByParent = projectNodes
+                .Where(item => item.ParentId.HasValue)
+                .GroupBy(item => item.ParentId!.Value)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group
+                        .OrderBy(item => item.OrderIndex)
+                        .ThenBy(item => item.Id)
+                        .ToList());
+
+            List<ProjectNodeRecord> sourceSubtree = new();
+            void CollectSubtree(ProjectNodeRecord node, bool deep)
+            {
+                sourceSubtree.Add(node);
+                if (!deep)
+                {
+                    return;
+                }
+
+                if (!childrenByParent.TryGetValue(node.Id, out List<ProjectNodeRecord>? children))
+                {
+                    return;
+                }
+
+                foreach (ProjectNodeRecord child in children)
+                {
+                    CollectSubtree(child, deep: true);
+                }
+            }
+
+            CollectSubtree(sourceRoot, duplicateDeep);
+
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            Guid? parentId = sourceRoot.ParentId;
+            int insertAt = sourceRoot.OrderIndex + 1;
+
+            List<ProjectNodeRecord> siblingsToShift = projectNodes
+                .Where(item => item.ParentId == parentId && item.Id != sourceRoot.Id && item.OrderIndex >= insertAt)
+                .OrderBy(item => item.OrderIndex)
+                .ToList();
+            foreach (ProjectNodeRecord sibling in siblingsToShift)
+            {
+                sibling.OrderIndex += 1;
+                sibling.UpdatedUtc = now;
+            }
+
+            HashSet<Guid> sourceSectionIds = sourceSubtree
+                .Where(item => item.NodeType == ProjectNodeType.Scene && item.LinkedSectionId.HasValue)
+                .Select(item => item.LinkedSectionId!.Value)
+                .ToHashSet();
+
+            Dictionary<Guid, SectionRecord> sectionsById = sourceSectionIds.Count == 0
+                ? new Dictionary<Guid, SectionRecord>()
+                : await _dbContext.Sections
+                    .AsNoTracking()
+                    .Where(item => sourceSectionIds.Contains(item.Id))
+                    .ToDictionaryAsync(item => item.Id, ct);
+
+            List<PageRecord> sourcePages = sourceSectionIds.Count == 0
+                ? new List<PageRecord>()
+                : await _dbContext.Pages
+                    .AsNoTracking()
+                    .Where(item => sourceSectionIds.Contains(item.SectionId))
+                    .OrderBy(item => item.OrderIndex)
+                    .ThenBy(item => item.Id)
+                    .ToListAsync(ct);
+            Dictionary<Guid, List<PageRecord>> pagesBySection = sourcePages
+                .GroupBy(item => item.SectionId)
+                .ToDictionary(group => group.Key, group => group.ToList());
+            HashSet<Guid> sourcePageIds = sourcePages.Select(item => item.Id).ToHashSet();
+
+            Dictionary<Guid, PageNoteRecord> pageNotesByPage = sourcePageIds.Count == 0
+                ? new Dictionary<Guid, PageNoteRecord>()
+                : await _dbContext.PageNotes
+                    .AsNoTracking()
+                    .Where(item => sourcePageIds.Contains(item.PageId))
+                    .ToDictionaryAsync(item => item.PageId, ct);
+
+            Dictionary<Guid, List<PageAnnotationRecord>> annotationsByPage = sourcePageIds.Count == 0
+                ? new Dictionary<Guid, List<PageAnnotationRecord>>()
+                : (await _dbContext.PageAnnotations
+                    .AsNoTracking()
+                    .Where(item => sourcePageIds.Contains(item.PageId))
+                    .ToListAsync(ct))
+                    .GroupBy(item => item.PageId)
+                    .ToDictionary(
+                        group => group.Key,
+                        group => group
+                            .OrderBy(item => item.CreatedAt)
+                            .ThenBy(item => item.Id)
+                            .ToList());
+
+            Dictionary<Guid, SectionSceneCardRecord> sceneCardsBySection = sourceSectionIds.Count == 0
+                ? new Dictionary<Guid, SectionSceneCardRecord>()
+                : await _dbContext.SectionSceneCards
+                    .AsNoTracking()
+                    .Where(item => sourceSectionIds.Contains(item.SectionId))
+                    .ToDictionaryAsync(item => item.SectionId, ct);
+
+            Dictionary<Guid, SectionNoteRecord> sectionNotesBySection = sourceSectionIds.Count == 0
+                ? new Dictionary<Guid, SectionNoteRecord>()
+                : await _dbContext.SectionNotes
+                    .AsNoTracking()
+                    .Where(item => sourceSectionIds.Contains(item.SectionId))
+                    .ToDictionaryAsync(item => item.SectionId, ct);
+
+            Dictionary<Guid, int> nextSectionOrderByDocument = new();
+            async Task<int> GetNextSectionOrderAsync(Guid documentId)
+            {
+                if (nextSectionOrderByDocument.TryGetValue(documentId, out int cached))
+                {
+                    nextSectionOrderByDocument[documentId] = cached + 1;
+                    return cached;
+                }
+
+                int max = await _dbContext.Sections
+                    .AsNoTracking()
+                    .Where(item => item.DocumentId == documentId)
+                    .Select(item => (int?)item.OrderIndex)
+                    .MaxAsync(ct) ?? -1;
+                int next = max + 1;
+                nextSectionOrderByDocument[documentId] = next + 1;
+                return next;
+            }
+
+            async Task<Guid?> DuplicateLinkedSectionAsync(Guid sourceSectionId)
+            {
+                if (!sectionsById.TryGetValue(sourceSectionId, out SectionRecord? sourceSection))
+                {
+                    return null;
+                }
+
+                int sectionOrder = await GetNextSectionOrderAsync(sourceSection.DocumentId);
+                SectionRecord newSection = new()
+                {
+                    Id = Guid.NewGuid(),
+                    DocumentId = sourceSection.DocumentId,
+                    Title = sourceSection.Title,
+                    NarrativePurpose = sourceSection.NarrativePurpose,
+                    LanguageCode = sourceSection.LanguageCode,
+                    TranslationGroupId = sourceSection.TranslationGroupId,
+                    OrderIndex = sectionOrder,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                };
+                _dbContext.Sections.Add(newSection);
+
+                if (sceneCardsBySection.TryGetValue(sourceSectionId, out SectionSceneCardRecord? sourceCard))
+                {
+                    _dbContext.SectionSceneCards.Add(new SectionSceneCardRecord
+                    {
+                        SectionId = newSection.Id,
+                        NarrativePurpose = sourceCard.NarrativePurpose,
+                        EmotionalBeat = sourceCard.EmotionalBeat,
+                        KeyEvents = sourceCard.KeyEvents,
+                        OpenQuestions = sourceCard.OpenQuestions,
+                        PovCharacterId = sourceCard.PovCharacterId,
+                        PlaceId = sourceCard.PlaceId,
+                        TimelineEventId = sourceCard.TimelineEventId,
+                        TimeRef = sourceCard.TimeRef,
+                        TagsJson = sourceCard.TagsJson,
+                        ReferencesJson = sourceCard.ReferencesJson,
+                        UpdatedUtc = now
+                    });
+                }
+
+                if (sectionNotesBySection.TryGetValue(sourceSectionId, out SectionNoteRecord? sourceNote))
+                {
+                    _dbContext.SectionNotes.Add(new SectionNoteRecord
+                    {
+                        SectionId = newSection.Id,
+                        NotesText = sourceNote.NotesText,
+                        UpdatedAtUtc = now
+                    });
+                }
+
+                List<PageRecord> pages = pagesBySection.TryGetValue(sourceSectionId, out List<PageRecord>? sourceSectionPages)
+                    ? sourceSectionPages
+                    : new List<PageRecord>();
+                Dictionary<Guid, Guid> pageIdMap = new();
+                foreach (PageRecord sourcePage in pages)
+                {
+                    Guid newPageId = Guid.NewGuid();
+                    pageIdMap[sourcePage.Id] = newPageId;
+
+                    _dbContext.Pages.Add(new PageRecord
+                    {
+                        Id = newPageId,
+                        DocumentId = sourcePage.DocumentId,
+                        SectionId = newSection.Id,
+                        Title = sourcePage.Title,
+                        Content = sourcePage.Content,
+                        OrderIndex = sourcePage.OrderIndex,
+                        CreatedAt = now,
+                        UpdatedAt = now
+                    });
+
+                    if (pageNotesByPage.TryGetValue(sourcePage.Id, out PageNoteRecord? sourcePageNote))
+                    {
+                        _dbContext.PageNotes.Add(new PageNoteRecord
+                        {
+                            PageId = newPageId,
+                            Notes = sourcePageNote.Notes,
+                            UpdatedAt = now
+                        });
+                    }
+                }
+
+                foreach ((Guid sourcePageId, Guid newPageId) in pageIdMap)
+                {
+                    if (!annotationsByPage.TryGetValue(sourcePageId, out List<PageAnnotationRecord>? sourceAnnotations))
+                    {
+                        continue;
+                    }
+
+                    foreach (PageAnnotationRecord sourceAnnotation in sourceAnnotations)
+                    {
+                        _dbContext.PageAnnotations.Add(new PageAnnotationRecord
+                        {
+                            Id = Guid.NewGuid(),
+                            DocumentId = sourceAnnotation.DocumentId,
+                            PageId = newPageId,
+                            Kind = sourceAnnotation.Kind,
+                            Status = sourceAnnotation.Status,
+                            AnchorFrom = sourceAnnotation.AnchorFrom,
+                            AnchorTo = sourceAnnotation.AnchorTo,
+                            AnchorText = sourceAnnotation.AnchorText,
+                            Content = sourceAnnotation.Content,
+                            AuthorUserId = sourceAnnotation.AuthorUserId,
+                            CreatedAt = sourceAnnotation.CreatedAt,
+                            ResolvedAt = sourceAnnotation.ResolvedAt
+                        });
+                    }
+                }
+
+                return newSection.Id;
+            }
+
+            Dictionary<Guid, Guid> duplicatedIdMap = new();
+            List<ProjectNodeRecord> createdNodes = new();
+            List<string> existingSiblingTitles = projectNodes
+                .Where(item => item.ParentId == parentId)
+                .Select(item => item.Title)
+                .ToList();
+
+            foreach (ProjectNodeRecord sourceNode in sourceSubtree)
+            {
+                bool isRoot = sourceNode.Id == sourceRoot.Id;
+                Guid? newParentId = isRoot
+                    ? parentId
+                    : sourceNode.ParentId.HasValue && duplicatedIdMap.TryGetValue(sourceNode.ParentId.Value, out Guid mappedParentId)
+                        ? mappedParentId
+                        : null;
+                string title = isRoot
+                    ? BuildDuplicateNodeTitle(sourceNode.Title, existingSiblingTitles)
+                    : sourceNode.Title;
+
+                ProjectNodeRecord duplicate = new()
+                {
+                    Id = Guid.NewGuid(),
+                    ProjectId = sourceNode.ProjectId,
+                    ParentId = newParentId,
+                    NodeType = sourceNode.NodeType,
+                    Title = title,
+                    OrderIndex = isRoot ? insertAt : sourceNode.OrderIndex,
+                    LinkedSectionId = sourceNode.NodeType == ProjectNodeType.Scene ? sourceNode.LinkedSectionId : null,
+                    MetadataJson = sourceNode.MetadataJson,
+                    WordCountCache = sourceNode.WordCountCache,
+                    UpdatedUtc = now
+                };
+
+                if (duplicate.NodeType == ProjectNodeType.Scene && sourceNode.LinkedSectionId.HasValue)
+                {
+                    duplicate.LinkedSectionId = await DuplicateLinkedSectionAsync(sourceNode.LinkedSectionId.Value);
+                }
+
+                _dbContext.ProjectNodes.Add(duplicate);
+                createdNodes.Add(duplicate);
+                duplicatedIdMap[sourceNode.Id] = duplicate.Id;
+                if (isRoot)
+                {
+                    existingSiblingTitles.Add(duplicate.Title);
+                }
+            }
+
+            await using IDbContextTransaction transaction = await _dbContext.Database.BeginTransactionAsync(ct);
+
+            // Keep aggregate caches in sync without triggering a full project recalc.
+            int duplicatedWordCountDelta = sourceRoot.WordCountCache;
+            List<ProjectNodeRecord> aggregateNodesUpdated = new();
+            Guid? aggregateNodeId = sourceRoot.ParentId;
+            while (aggregateNodeId.HasValue)
+            {
+                ProjectNodeRecord? aggregateNode = projectNodes.FirstOrDefault(item => item.Id == aggregateNodeId.Value);
+                if (aggregateNode is null)
+                {
+                    break;
+                }
+
+                aggregateNode.WordCountCache += duplicatedWordCountDelta;
+                aggregateNode.UpdatedUtc = now;
+                aggregateNodesUpdated.Add(aggregateNode);
+                aggregateNodeId = aggregateNode.ParentId;
+            }
+
+            project.UpdatedUtc = now;
+            await _dbContext.SaveChangesAsync(ct);
+            await transaction.CommitAsync(ct);
+
+            Guid newRootId = duplicatedIdMap[sourceRoot.Id];
+            ProjectNodeRecord? newRoot = createdNodes.FirstOrDefault(item => item.Id == newRootId);
+            if (newRoot is null)
+            {
+                return StatusCode(500, new { message = "Duplicate node failed." });
+            }
+
+            return Ok(new ProjectNodeDuplicateResponse(
+                newRoot.Id,
+                createdNodes
+                    .OrderBy(item => item.ParentId)
+                    .ThenBy(item => item.OrderIndex)
+                    .Select(ToDto)
+                    .ToList(),
+                siblingsToShift
+                    .Concat(aggregateNodesUpdated)
+                    .GroupBy(item => item.Id)
+                    .Select(group => group.First())
+                    .OrderBy(item => item.OrderIndex)
+                    .Select(ToDto)
+                    .ToList()));
+        }
+
         [HttpPost("{projectId:guid}/nodes/{nodeId:guid}/reorder")]
         public async Task<ActionResult<IReadOnlyList<ProjectNodeDto>>> ReorderChildren(
             Guid projectId,
@@ -1425,6 +1792,26 @@ namespace WriterApp.Controllers
                 ProjectNodeType.FrontMatterItem => "frontMatterItem",
                 _ => "scene"
             };
+        }
+
+        private static string BuildDuplicateNodeTitle(string? title, IEnumerable<string> existingTitles)
+        {
+            string baseTitle = string.IsNullOrWhiteSpace(title) ? "Untitled" : title.Trim();
+            HashSet<string> normalized = new(
+                existingTitles
+                    .Where(item => !string.IsNullOrWhiteSpace(item))
+                    .Select(item => item.Trim()),
+                StringComparer.OrdinalIgnoreCase);
+
+            string candidate = $"{baseTitle} (Copy)";
+            int counter = 2;
+            while (normalized.Contains(candidate))
+            {
+                candidate = $"{baseTitle} (Copy {counter})";
+                counter++;
+            }
+
+            return candidate;
         }
 
         private static ProjectDto ToDto(ProjectRecord project, int totalWords)

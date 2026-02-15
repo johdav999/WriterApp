@@ -96,6 +96,14 @@ namespace WriterApp.Application.Documents
     public sealed record ProjectNodeReorderRequest(
         IReadOnlyList<Guid> OrderedChildIds);
 
+    public sealed record ProjectNodeDuplicateRequest(
+        bool? Deep = null);
+
+    public sealed record ProjectNodeDuplicateResponse(
+        Guid RootNodeId,
+        IReadOnlyList<ProjectNodeDto> CreatedNodes,
+        IReadOnlyList<ProjectNodeDto> UpdatedNodes);
+
     public sealed record ProjectSceneOpenTargetDto(
         Guid ProjectId,
         Guid NodeId,

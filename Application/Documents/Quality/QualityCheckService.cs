@@ -317,22 +317,6 @@ namespace WriterApp.Application.Documents
                 return null;
             }
 
-            if (string.Equals(record.RuleId, "style.repeated_words", StringComparison.OrdinalIgnoreCase))
-            {
-                int deleteFrom = from;
-                if (deleteFrom > 0 && char.IsWhiteSpace(plainText[deleteFrom - 1]))
-                {
-                    deleteFrom--;
-                }
-
-                if (to > deleteFrom)
-                {
-                    return new QualityIssueFix("delete", deleteFrom, to, null);
-                }
-
-                return null;
-            }
-
             if (string.Equals(record.RuleId, "consistency.proper_names", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(record.RuleId, "terminology.glossary", StringComparison.OrdinalIgnoreCase))
             {
@@ -343,7 +327,70 @@ namespace WriterApp.Application.Documents
                 }
             }
 
+            if (string.Equals(record.RuleId, "readability.paragraph_length", StringComparison.OrdinalIgnoreCase))
+            {
+                string? replacement = TrySplitParagraph(plainText, from, to);
+                if (!string.IsNullOrWhiteSpace(replacement))
+                {
+                    return new QualityIssueFix("replace", from, to, replacement);
+                }
+            }
+
             return null;
+        }
+
+        private static string? TrySplitParagraph(string plainText, int from, int to)
+        {
+            if (string.IsNullOrWhiteSpace(plainText) || to <= from)
+            {
+                return null;
+            }
+
+            string paragraph = plainText[from..to];
+            if (string.IsNullOrWhiteSpace(paragraph))
+            {
+                return null;
+            }
+
+            MatchCollection sentenceBreaks = Regex.Matches(paragraph, @"[.!?](?:[""'\u201d\u2019\)\]])?\s+");
+            if (sentenceBreaks.Count == 0)
+            {
+                return null;
+            }
+
+            int target = paragraph.Length / 2;
+            int splitIndex = -1;
+            int bestDistance = int.MaxValue;
+            foreach (Match match in sentenceBreaks)
+            {
+                int candidate = match.Index + match.Length;
+                if (candidate <= 0 || candidate >= paragraph.Length)
+                {
+                    continue;
+                }
+
+                int distance = Math.Abs(target - candidate);
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    splitIndex = candidate;
+                }
+            }
+
+            if (splitIndex <= 0 || splitIndex >= paragraph.Length)
+            {
+                return null;
+            }
+
+            string left = paragraph[..splitIndex].TrimEnd();
+            string right = paragraph[splitIndex..].TrimStart();
+            if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
+            {
+                return null;
+            }
+
+            string replacement = $"{left}\n\n{right}";
+            return string.Equals(replacement, paragraph, StringComparison.Ordinal) ? null : replacement;
         }
 
         private static string? TryExtractQuotedSuggestion(string? suggestion)

@@ -167,6 +167,7 @@ builder.Services.AddSingleton<ISectionImportService, SectionImportService>();
 builder.Services.AddScoped<IBibleStore, EfCoreBibleStore>();
 builder.Services.AddSingleton<BiblePatchApplier>();
 builder.Services.AddScoped<BibleRefreshService>();
+builder.Services.Configure<QualityRewriteValidationOptions>(builder.Configuration.GetSection("WriterApp:QualityRewriteValidation"));
 builder.Services.AddScoped<WriterApp.Application.Documents.IDocumentRepository, WriterApp.Data.Documents.DocumentRepository>();
 builder.Services.AddScoped<WriterApp.Application.Documents.ISectionRepository, WriterApp.Data.Documents.SectionRepository>();
 builder.Services.AddScoped<WriterApp.Application.Documents.IPageRepository, WriterApp.Data.Documents.PageRepository>();
@@ -311,6 +312,7 @@ builder.Services.AddServerSideBlazor()
     .AddCircuitOptions(o => o.DetailedErrors = true);
 
 var app = builder.Build();
+QualityRewriteOutputValidator.Configure(app.Services.GetRequiredService<IOptions<QualityRewriteValidationOptions>>().Value);
 
 AdminPolicyDiagnostics.Configure(app.Services.GetRequiredService<ILoggerFactory>());
 

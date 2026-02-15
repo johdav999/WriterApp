@@ -67,6 +67,8 @@ else
     private string? _lastAnnotationsFingerprint;
     private string? _lastQualityIssuesFingerprint;
     private EditorStatusSnapshot _lastStatusSnapshot = EditorStatusSnapshot.Empty;
+    private string? _lastQualityFixFailureReason;
+    private string? _lastQualityFixFailureSource;
 
     [Parameter]
     public PageDto? Page { get; set; }
@@ -228,6 +230,8 @@ else
     private Task OnEditorReady(IJSObjectReference editor)
     {
         _editorInstance = editor;
+        _lastAnnotationsFingerprint = null;
+        _lastQualityIssuesFingerprint = null;
         _ = UpdatePageBreaksAsync();
         _ = SetHeadingNumberingEnabledAsync(HeadingNumberingEnabled);
         _ = SetHeadingNumberingPrefixAsync(HeadingNumberingPrefix);
@@ -236,6 +240,7 @@ else
         _ = ApplySearchHighlightAsync(_pendingSearchHighlightQuery ?? SearchHighlightQuery);
         _ = ApplyAiDecorationsAsync();
         _ = ApplyAnnotationsAsync();
+        _ = ApplyQualityIssuesAsync();
         _ = AttachAnnotationClicksAsync();
         if (_pendingSetContent && _editorRef is not null)
         {
@@ -313,7 +318,7 @@ else
 
         _pendingSearchHighlightQuery = null;
         _searchHighlightActive = true;
-        await JSRuntime.InvokeVoidAsync("tiptapEditor.setSearchHighlights", _editorInstance, normalized);
+        await InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync("tiptapEditor.setSearchHighlights", _editorInstance, normalized));
     }
 
     private async Task ClearSearchHighlightAsync()
@@ -327,7 +332,7 @@ else
 
         _searchHighlightActive = false;
         _pendingSearchHighlightQuery = null;
-        await JSRuntime.InvokeVoidAsync("tiptapEditor.clearSearchHighlights", _editorInstance);
+        await InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync("tiptapEditor.clearSearchHighlights", _editorInstance));
     }
 
     private async Task ApplyAiDecorationsAsync()
@@ -337,7 +342,7 @@ else
             return;
         }
 
-        await JSRuntime.InvokeVoidAsync("tiptapEditor.setAiDecorations", _editorInstance, _pendingAiDecorations);
+        await InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync("tiptapEditor.setAiDecorations", _editorInstance, _pendingAiDecorations));
     }
 
     private async Task ApplyAnnotationsAsync()
@@ -357,7 +362,7 @@ else
 
         if (Annotations is null || Annotations.Count == 0)
         {
-            await JSRuntime.InvokeVoidAsync("tiptapEditor.clearAnnotations", _editorInstance);
+            await InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync("tiptapEditor.clearAnnotations", _editorInstance));
             return;
         }
 
@@ -370,7 +375,7 @@ else
             status = annotation.Status
         }).ToList();
 
-        await JSRuntime.InvokeVoidAsync("tiptapEditor.setAnnotations", _editorInstance, payload);
+        await InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync("tiptapEditor.setAnnotations", _editorInstance, payload));
     }
 
     private async Task ApplyQualityIssuesAsync()
@@ -384,7 +389,7 @@ else
         {
             if (!string.Equals(_lastQualityIssuesFingerprint, "__disabled__", StringComparison.Ordinal))
             {
-                await JSRuntime.InvokeVoidAsync("tiptapEditor.clearQualityIssues", _editorInstance);
+                await InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync("tiptapEditor.clearQualityIssues", _editorInstance));
             }
 
             _lastQualityIssuesFingerprint = "__disabled__";
@@ -398,7 +403,7 @@ else
 
             if (QualityIssues is null || QualityIssues.Count == 0)
             {
-                await JSRuntime.InvokeVoidAsync("tiptapEditor.clearQualityIssues", _editorInstance);
+                await InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync("tiptapEditor.clearQualityIssues", _editorInstance));
             }
             else
             {
@@ -414,14 +419,14 @@ else
                     ruleId = issue.RuleId
                 }).ToList();
 
-                await JSRuntime.InvokeVoidAsync("tiptapEditor.setQualityIssues", _editorInstance, payload);
+                await InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync("tiptapEditor.setQualityIssues", _editorInstance, payload));
             }
         }
 
-        await JSRuntime.InvokeVoidAsync(
+        await InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync(
             "tiptapEditor.setQualityIssuesActive",
             _editorInstance,
-            string.IsNullOrWhiteSpace(ActiveQualityIssueKey) ? null : ActiveQualityIssueKey);
+            string.IsNullOrWhiteSpace(ActiveQualityIssueKey) ? null : ActiveQualityIssueKey));
     }
 
     private static string NormalizeQualityIssueSeverity(string? severity)
@@ -1218,6 +1223,11 @@ else
 
         string? anchorText = string.IsNullOrWhiteSpace(fix.AnchorText) ? issueAnchorText : fix.AnchorText;
         string? resolvedIssueKey = string.IsNullOrWhiteSpace(fix.IssueKey) ? issueKey : fix.IssueKey;
+        string effectiveKind = string.Equals(fix.Kind, "rewrite", StringComparison.OrdinalIgnoreCase)
+            ? "replace"
+            : fix.Kind;
+        _lastQualityFixFailureReason = null;
+        _lastQualityFixFailureSource = null;
 
         try
         {
@@ -1226,7 +1236,7 @@ else
                 _editorInstance,
                 new
                 {
-                    kind = fix.Kind,
+                    kind = effectiveKind,
                     from = fix.From,
                     to = fix.To,
                     text = fix.Text,
@@ -1250,10 +1260,13 @@ else
 
             if (!result.Applied || !result.Changed)
             {
+                _lastQualityFixFailureReason = result.Reason;
+                _lastQualityFixFailureSource = result.Source;
                 Logger.LogWarning(
-                    "Quality fix apply failed/no-op. IssueKey={IssueKey}, Kind={Kind}, From={From}, To={To}, Applied={Applied}, Changed={Changed}, Reason={Reason}, Source={Source}, DocFrom={DocFrom}, DocTo={DocTo}",
+                    "Quality fix apply failed/no-op. PageId={PageId}, IssueKey={IssueKey}, Kind={Kind}, From={From}, To={To}, Applied={Applied}, Changed={Changed}, Reason={Reason}, Source={Source}, DocFrom={DocFrom}, DocTo={DocTo}",
+                    Page?.Id,
                     resolvedIssueKey,
-                    fix.Kind,
+                    effectiveKind,
                     fix.From,
                     fix.To,
                     result.Applied,
@@ -1265,10 +1278,13 @@ else
             }
             else
             {
+                _lastQualityFixFailureReason = null;
+                _lastQualityFixFailureSource = null;
                 Logger.LogInformation(
-                    "Quality fix applied. IssueKey={IssueKey}, Kind={Kind}, From={From}, To={To}, Source={Source}, DocFrom={DocFrom}, DocTo={DocTo}",
+                    "Quality fix applied. PageId={PageId}, IssueKey={IssueKey}, Kind={Kind}, From={From}, To={To}, Source={Source}, DocFrom={DocFrom}, DocTo={DocTo}",
+                    Page?.Id,
                     resolvedIssueKey,
-                    fix.Kind,
+                    effectiveKind,
                     fix.From,
                     fix.To,
                     result.Source,
@@ -1280,6 +1296,8 @@ else
         }
         catch (JSException)
         {
+            _lastQualityFixFailureReason = "js_exception";
+            _lastQualityFixFailureSource = null;
             try
             {
                 return await JSRuntime.InvokeAsync<bool>(
@@ -1287,7 +1305,7 @@ else
                     _editorInstance,
                     new
                     {
-                        kind = fix.Kind,
+                        kind = effectiveKind,
                         from = fix.From,
                         to = fix.To,
                         text = fix.Text,
@@ -1297,10 +1315,15 @@ else
             }
             catch (JSException)
             {
+                _lastQualityFixFailureReason = "js_exception";
+                _lastQualityFixFailureSource = null;
                 return false;
             }
         }
     }
+
+    public string? LastQualityFixFailureReason => _lastQualityFixFailureReason;
+    public string? LastQualityFixFailureSource => _lastQualityFixFailureSource;
 
     public async Task<QualityIssueRangeResolution?> ResolvePlainRangeAsync(int from, int to, string? anchorText = null)
     {
@@ -1339,6 +1362,22 @@ else
         catch (ObjectDisposedException)
         {
         }
+        catch (JSException ex) when (IsDisposedJsObjectException(ex))
+        {
+            _editorInstance = null;
+            _lastAnnotationsFingerprint = null;
+            _lastQualityIssuesFingerprint = null;
+            _searchHighlightActive = false;
+            _pendingSearchHighlightQuery = SearchHighlightQuery?.Trim() ?? string.Empty;
+        }
+    }
+
+    private static bool IsDisposedJsObjectException(JSException ex)
+    {
+        string? message = ex.Message;
+        return !string.IsNullOrWhiteSpace(message)
+            && message.Contains("does not exist", StringComparison.OrdinalIgnoreCase)
+            && message.Contains("disposed", StringComparison.OrdinalIgnoreCase);
     }
 
     public async Task InvokeCommandAsync(string command, params object?[] extraArgs)
