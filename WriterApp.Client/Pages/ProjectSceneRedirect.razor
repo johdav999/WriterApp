@@ -67,7 +67,7 @@ else if (!string.IsNullOrWhiteSpace(_error))
             }
 
             await SaveResumeTargetAsync(ProjectId, SceneNodeId);
-            Navigation.NavigateTo($"documents/{target.DocumentId}/sections/{target.SectionId}", replace: true);
+            Navigation.NavigateTo($"projects/{ProjectId}/scenes/{SceneNodeId}", replace: true);
         }
         catch (Exception ex)
         {
@@ -89,7 +89,7 @@ else if (!string.IsNullOrWhiteSpace(_error))
         try
         {
             string key = $"writerapp.project.resume.{projectId:D}";
-            string value = $"projects/{projectId}/scenes/{sceneNodeId}/edit";
+            string value = $"projects/{projectId}/scenes/{sceneNodeId}";
             await JS.InvokeVoidAsync("localStorage.setItem", key, value);
         }
         catch

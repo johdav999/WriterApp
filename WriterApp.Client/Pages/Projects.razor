@@ -2367,7 +2367,7 @@ else
         {
             return;
         }
-        string target = $"projects/{_activeProject.Id}/scenes/{_selectedNode.Id}/edit";
+        string target = $"projects/{_activeProject.Id}/scenes/{_selectedNode.Id}";
         await SaveResumeTargetAsync(_activeProject.Id, target);
         Navigation.NavigateTo(target);
         await Task.CompletedTask;
@@ -2837,4 +2837,3 @@ else
         Guid? PrimaryCtaSceneNodeId,
         List<CoachSuggestion> Suggestions);
 }
-

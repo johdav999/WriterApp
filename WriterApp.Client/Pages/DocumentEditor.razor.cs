@@ -41,6 +41,12 @@ namespace WriterApp.Client.Pages
         [Parameter]
         public Guid SectionId { get; set; }
 
+        [Parameter]
+        public Guid ProjectId { get; set; }
+
+        [Parameter]
+        public Guid SceneNodeId { get; set; }
+
         [SupplyParameterFromQuery(Name = "search")]
         public string? SearchQuery { get; set; }
 
@@ -58,6 +64,9 @@ namespace WriterApp.Client.Pages
 
         [Inject]
         public CurrentDocumentStateService CurrentDocumentStateService { get; set; } = default!;
+
+        [Inject]
+        public CurrentSceneStateService CurrentSceneStateService { get; set; } = default!;
 
         [Inject]
         public LastOpenedDocumentStateService LastOpenedDocumentStateService { get; set; } = default!;
@@ -661,8 +670,88 @@ namespace WriterApp.Client.Pages
 
         protected override async Task OnParametersSetAsync()
         {
+            if (ProjectId != Guid.Empty && SceneNodeId != Guid.Empty)
+            {
+                CurrentSceneStateService.SetCurrent(ProjectId, SceneNodeId);
+                bool resolved = await EnsureLegacySectionTargetForSceneRouteAsync();
+                if (!resolved)
+                {
+                    _isLoading = false;
+                    _loadError = "This scene is not yet mapped to a legacy section route.";
+                    return;
+                }
+            }
+            else if (DocumentId != Guid.Empty && SectionId != Guid.Empty)
+            {
+                bool redirected = await TryRedirectLegacySectionRouteAsync();
+                if (redirected)
+                {
+                    return;
+                }
+
+                CurrentSceneStateService.Clear();
+            }
+
             CurrentDocumentStateService.SetCurrent(DocumentId, SectionId);
             await LoadDocumentAsync();
+        }
+
+        private async Task<bool> EnsureLegacySectionTargetForSceneRouteAsync()
+        {
+            if (DocumentId != Guid.Empty && SectionId != Guid.Empty)
+            {
+                return true;
+            }
+
+            try
+            {
+                using HttpResponseMessage response = await Http.PostAsync(
+                    $"api/projects/{ProjectId}/nodes/{SceneNodeId}/open-scene",
+                    null);
+                if (!response.IsSuccessStatusCode)
+                {
+                    return false;
+                }
+
+                ProjectSceneOpenTargetDto? target = await response.Content.ReadFromJsonAsync<ProjectSceneOpenTargetDto>();
+                if (target is null || !target.DocumentId.HasValue || !target.SectionId.HasValue)
+                {
+                    return false;
+                }
+
+                DocumentId = target.DocumentId.Value;
+                SectionId = target.SectionId.Value;
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private async Task<bool> TryRedirectLegacySectionRouteAsync()
+        {
+            if (DocumentId == Guid.Empty || SectionId == Guid.Empty)
+            {
+                return false;
+            }
+
+            try
+            {
+                ProjectSceneOpenTargetDto? sceneTarget = await Http.GetFromJsonAsync<ProjectSceneOpenTargetDto>(
+                    $"api/sections/{SectionId}/scene-target");
+                if (sceneTarget is null || sceneTarget.ProjectId == Guid.Empty || sceneTarget.SceneNodeId == Guid.Empty)
+                {
+                    return false;
+                }
+
+                Navigation.NavigateTo($"/projects/{sceneTarget.ProjectId}/scenes/{sceneTarget.SceneNodeId}", replace: true);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private async Task LoadDocumentAsync()

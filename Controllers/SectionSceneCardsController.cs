@@ -54,6 +54,7 @@ namespace WriterApp.Controllers
         [HttpGet("sections/{sectionId:guid}/scene-card")]
         public async Task<ActionResult<SectionSceneCardDto>> GetSceneCard(Guid sectionId, CancellationToken ct)
         {
+            AddLegacyApiHeaders();
             await EnsureSceneCardSchemaAsync(ct);
 
             string userId = _userIdResolver.ResolveUserId(User);
@@ -68,6 +69,24 @@ namespace WriterApp.Controllers
 
             if (card is null)
             {
+                SceneCardRecord? sceneCard = await FindAnySceneCardBySectionAsync(sectionId, ct);
+                if (sceneCard is not null)
+                {
+                    return Ok(new SectionSceneCardDto(
+                        sectionId,
+                        sceneCard.NarrativePurpose ?? string.Empty,
+                        sceneCard.EmotionalBeat ?? string.Empty,
+                        sceneCard.KeyEvents ?? string.Empty,
+                        sceneCard.OpenQuestions ?? string.Empty,
+                        sceneCard.UpdatedAtUtc,
+                        sceneCard.PovCharacterId,
+                        sceneCard.PlaceId,
+                        sceneCard.TimelineEventId,
+                        sceneCard.TimeRef,
+                        DeserializeTags(sceneCard.TagsJson),
+                        DeserializeReferences(sceneCard.ReferencesJson)));
+                }
+
                 return Ok(new SectionSceneCardDto(
                     sectionId,
                     string.Empty,
@@ -106,6 +125,7 @@ namespace WriterApp.Controllers
             [FromBody] SectionSceneCardUpdateRequest request,
             CancellationToken ct)
         {
+            AddLegacyApiHeaders();
             await EnsureSceneCardSchemaAsync(ct);
 
             string userId = _userIdResolver.ResolveUserId(User);
@@ -214,6 +234,7 @@ namespace WriterApp.Controllers
             {
                 return NotFound();
             }
+            await MirrorSectionSceneCardToScenesAsync(sectionId, updatedCard, ct);
             await _searchIndex.UpsertSceneCardAsync(section, updatedCard, ct);
             IReadOnlyList<string> updatedTags = DeserializeTags(updatedCard.TagsJson);
             IReadOnlyList<SceneCardReferenceDto> updatedReferences = DeserializeReferences(updatedCard.ReferencesJson);
@@ -317,9 +338,75 @@ namespace WriterApp.Controllers
                 ?? false;
         }
 
+        private void AddLegacyApiHeaders()
+        {
+            Response.Headers["Deprecation"] = "true";
+            Response.Headers["Link"] = "</api/scenes/{sceneNodeId}/scene-card>; rel=\"successor-version\"";
+        }
+
         private static string SerializeState(UpdateSceneCardCommand.SceneCardState state)
         {
             return JsonSerializer.Serialize(state, JsonOptions);
+        }
+
+        private async Task<SceneCardRecord?> FindAnySceneCardBySectionAsync(Guid sectionId, CancellationToken ct)
+        {
+            Guid? sceneNodeId = await _dbContext.ProjectNodes
+                .AsNoTracking()
+                .Where(node => node.NodeType == ProjectNodeType.Scene && node.LinkedSectionId == sectionId)
+                .Select(node => (Guid?)node.Id)
+                .FirstOrDefaultAsync(ct);
+            if (!sceneNodeId.HasValue)
+            {
+                return null;
+            }
+
+            return await _dbContext.SceneCards
+                .AsNoTracking()
+                .FirstOrDefaultAsync(item => item.SceneNodeId == sceneNodeId.Value, ct);
+        }
+
+        private async Task MirrorSectionSceneCardToScenesAsync(
+            Guid sectionId,
+            SectionSceneCardRecord updatedCard,
+            CancellationToken ct)
+        {
+            Guid[] sceneNodeIds = await _dbContext.ProjectNodes
+                .Where(node => node.NodeType == ProjectNodeType.Scene && node.LinkedSectionId == sectionId)
+                .Select(node => node.Id)
+                .ToArrayAsync(ct);
+            if (sceneNodeIds.Length == 0)
+            {
+                return;
+            }
+
+            Dictionary<Guid, SceneCardRecord> existingByScene = await _dbContext.SceneCards
+                .Where(item => sceneNodeIds.Contains(item.SceneNodeId))
+                .ToDictionaryAsync(item => item.SceneNodeId, ct);
+
+            foreach (Guid sceneNodeId in sceneNodeIds)
+            {
+                if (!existingByScene.TryGetValue(sceneNodeId, out SceneCardRecord? sceneCard))
+                {
+                    sceneCard = new SceneCardRecord
+                    {
+                        SceneNodeId = sceneNodeId
+                    };
+                    _dbContext.SceneCards.Add(sceneCard);
+                }
+
+                sceneCard.NarrativePurpose = updatedCard.NarrativePurpose;
+                sceneCard.EmotionalBeat = updatedCard.EmotionalBeat;
+                sceneCard.KeyEvents = updatedCard.KeyEvents;
+                sceneCard.OpenQuestions = updatedCard.OpenQuestions;
+                sceneCard.PovCharacterId = updatedCard.PovCharacterId;
+                sceneCard.PlaceId = updatedCard.PlaceId;
+                sceneCard.TimelineEventId = updatedCard.TimelineEventId;
+                sceneCard.TimeRef = updatedCard.TimeRef;
+                sceneCard.TagsJson = updatedCard.TagsJson;
+                sceneCard.ReferencesJson = updatedCard.ReferencesJson;
+                sceneCard.UpdatedAtUtc = updatedCard.UpdatedUtc;
+            }
         }
 
         private async Task EnsureSceneCardSchemaAsync(CancellationToken ct)
