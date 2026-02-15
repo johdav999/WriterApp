@@ -177,6 +177,7 @@ builder.Services.AddScoped<WriterApp.Application.Documents.IQualityCheckService,
 builder.Services.AddScoped<WriterApp.Application.Documents.IProjectWordCountService, WriterApp.Application.Documents.ProjectWordCountService>();
 builder.Services.AddScoped<WriterApp.Application.Documents.IProjectGoalsService, WriterApp.Application.Documents.ProjectGoalsService>();
 builder.Services.AddScoped<WriterApp.Application.Documents.IProjectSceneLinkingService, WriterApp.Application.Documents.ProjectSceneLinkingService>();
+builder.Services.AddScoped<WriterApp.Application.Documents.ISceneContentBackfillService, WriterApp.Application.Documents.SceneContentBackfillService>();
 builder.Services.AddSingleton<WriterApp.Application.Commands.IStructureCommandProcessor, WriterApp.Application.Commands.StructureCommandProcessor>();
 builder.Services.AddSingleton<ISearchIndexBackfillQueue, SearchIndexBackfillQueue>();
 builder.Services.AddHostedService<SearchIndexBackfillHostedService>();
@@ -363,6 +364,31 @@ using (IServiceScope scope = app.Services.CreateScope())
     }
 
     ApplySqlitePragmas(dbContext, logger);
+
+    bool runSceneContentBackfillOnStartup =
+        app.Configuration.GetValue<bool?>("Workflow:SceneContentBackfillRunOnStartup")
+        ?? app.Configuration.GetValue<bool?>("WriterApp:Workflow:SceneContentBackfillRunOnStartup")
+        ?? false;
+    if (runSceneContentBackfillOnStartup)
+    {
+        try
+        {
+            ISceneContentBackfillService backfill = scope.ServiceProvider.GetRequiredService<ISceneContentBackfillService>();
+            SceneContentBackfillResult result = await backfill.BackfillAsync(CancellationToken.None);
+            logger.LogInformation(
+                "Startup scene-content backfill completed. TotalScenes={TotalScenes}, ExistingSceneContent={ExistingSceneContent}, CreatedSceneContent={CreatedSceneContent}, CreatedSceneNotes={CreatedSceneNotes}, CreatedSceneCards={CreatedSceneCards}, FailedScenes={FailedScenes}.",
+                result.TotalScenes,
+                result.ExistingSceneContent,
+                result.CreatedSceneContent,
+                result.CreatedSceneNotes,
+                result.CreatedSceneCards,
+                result.FailedScenes);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Startup scene-content backfill failed.");
+        }
+    }
 }
 
 

@@ -1556,15 +1556,60 @@ namespace WriterApp.Controllers
                 return BadRequest(new { message = "Only scene nodes can be opened in the editor." });
             }
 
-            SceneLinkResult? link = await _sceneLinking.EnsureSceneLinkedSectionAsync(project, node, userId, ct);
-            if (link is null)
-            {
-                return NotFound();
-            }
+            await EnsureSceneContentExistsAsync(project, node, ct);
 
             await _dbContext.SaveChangesAsync(ct);
 
-            return Ok(new ProjectSceneOpenTargetDto(projectId, nodeId, link.DocumentId, link.SectionId));
+            Guid? documentId = null;
+            Guid? sectionId = node.LinkedSectionId;
+            if (sectionId.HasValue)
+            {
+                documentId = await _dbContext.Sections
+                    .AsNoTracking()
+                    .Where(section => section.Id == sectionId.Value)
+                    .Select(section => (Guid?)section.DocumentId)
+                    .FirstOrDefaultAsync(ct);
+            }
+
+            return Ok(new ProjectSceneOpenTargetDto(projectId, nodeId, documentId, sectionId));
+        }
+
+        private async Task EnsureSceneContentExistsAsync(ProjectRecord project, ProjectNodeRecord sceneNode, CancellationToken ct)
+        {
+            if (sceneNode.NodeType != ProjectNodeType.Scene)
+            {
+                return;
+            }
+
+            bool exists = await _dbContext.SceneContents
+                .AsNoTracking()
+                .AnyAsync(item => item.SceneNodeId == sceneNode.Id, ct);
+            if (exists)
+            {
+                return;
+            }
+
+            string content = string.Empty;
+            if (sceneNode.LinkedSectionId.HasValue)
+            {
+                Guid sectionId = sceneNode.LinkedSectionId.Value;
+                List<string> parts = await _dbContext.Pages
+                    .AsNoTracking()
+                    .Where(page => page.SectionId == sectionId)
+                    .OrderBy(page => page.OrderIndex)
+                    .ThenBy(page => page.UpdatedAt)
+                    .Select(page => page.Content ?? string.Empty)
+                    .ToListAsync(ct);
+
+                content = string.Join("\n\n", parts.Where(part => !string.IsNullOrWhiteSpace(part)));
+            }
+
+            _dbContext.SceneContents.Add(new SceneContentRecord
+            {
+                SceneNodeId = sceneNode.Id,
+                ContentJson = content,
+                UpdatedAtUtc = DateTimeOffset.UtcNow
+            });
         }
 
         [HttpGet("{projectId:guid}/stats")]

@@ -6,6 +6,7 @@
 @implements IDisposable
 @inject LayoutStateService LayoutStateService
 @inject CurrentDocumentStateService CurrentDocumentStateService
+@inject CurrentSceneStateService CurrentSceneStateService
 @inject CurrentProjectStateService CurrentProjectStateService
 @inject LastOpenedDocumentStateService LastOpenedDocumentStateService
 @inject HttpClient Http
@@ -74,6 +75,7 @@
     {
         LayoutStateService.Changed += HandleLayoutStateChange;
         CurrentDocumentStateService.Changed += HandleDocumentStateChange;
+        CurrentSceneStateService.Changed += HandleSceneStateChange;
         CurrentProjectStateService.Changed += HandleProjectStateChange;
         Navigation.LocationChanged += HandleLocationChanged;
         await LayoutStateService.InitializeAsync();
@@ -85,6 +87,7 @@
     {
         LayoutStateService.Changed -= HandleLayoutStateChange;
         CurrentDocumentStateService.Changed -= HandleDocumentStateChange;
+        CurrentSceneStateService.Changed -= HandleSceneStateChange;
         CurrentProjectStateService.Changed -= HandleProjectStateChange;
         Navigation.LocationChanged -= HandleLocationChanged;
     }
@@ -97,6 +100,11 @@
     private void HandleDocumentStateChange()
     {
         _ = RefreshDocumentTitleAsync();
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void HandleSceneStateChange()
+    {
         InvokeAsync(StateHasChanged);
     }
 
@@ -119,10 +127,10 @@
     }
 
     private bool HasCurrentEditorLink =>
-        CurrentDocumentStateService.DocumentId is Guid documentId &&
-        CurrentDocumentStateService.SectionId is Guid sectionId &&
-        documentId != Guid.Empty &&
-        sectionId != Guid.Empty;
+        CurrentSceneStateService.ProjectId is Guid projectId &&
+        CurrentSceneStateService.SceneNodeId is Guid sceneNodeId &&
+        projectId != Guid.Empty &&
+        sceneNodeId != Guid.Empty;
 
     private bool HasCurrentSynopsisLink =>
         CurrentDocumentStateService.DocumentId is Guid documentId &&
@@ -140,9 +148,9 @@
             return "documents";
         }
 
-        Guid documentId = CurrentDocumentStateService.DocumentId!.Value;
-        Guid sectionId = CurrentDocumentStateService.SectionId!.Value;
-        return $"documents/{documentId}/sections/{sectionId}";
+        Guid projectId = CurrentSceneStateService.ProjectId!.Value;
+        Guid sceneNodeId = CurrentSceneStateService.SceneNodeId!.Value;
+        return $"projects/{projectId}/scenes/{sceneNodeId}";
     }
 
     private string GetSynopsisLink()

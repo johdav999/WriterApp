@@ -62,7 +62,7 @@ else if (!string.IsNullOrWhiteSpace(_error))
             ProjectNodeDto? firstScene = tree is null ? null : FindFirstScene(tree.Nodes);
             if (firstScene is not null)
             {
-                Navigation.NavigateTo($"projects/{ProjectId}/scenes/{firstScene.Id}/edit", replace: true);
+                Navigation.NavigateTo($"projects/{ProjectId}/scenes/{firstScene.Id}", replace: true);
                 return;
             }
 

@@ -896,6 +896,245 @@ namespace BlazorApp.Migrations
                     b.ToTable("Projects");
                 });
 
+            modelBuilder.Entity("WriterApp.Data.Documents.SceneAnnotationRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AnchorText")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("AnchorFrom")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("AnchorTo")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("AuthorUserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Content")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("ResolvedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("SceneNodeId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt");
+
+                    b.HasIndex("Kind");
+
+                    b.HasIndex("SceneNodeId");
+
+                    b.HasIndex("Status");
+
+                    b.ToTable("SceneAnnotations");
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Documents.SceneCardRecord", b =>
+                {
+                    b.Property<Guid>("SceneNodeId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("EmotionalBeat")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("KeyEvents")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("NarrativePurpose")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OpenQuestions")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PlaceId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PovCharacterId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ReferencesJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TagsJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TimeRef")
+                        .HasMaxLength(120)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TimelineEventId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("SceneNodeId");
+
+                    b.ToTable("SceneCards");
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Documents.SceneContentRecord", b =>
+                {
+                    b.Property<Guid>("SceneNodeId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ContentJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LanguageCode")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("SceneNodeId");
+
+                    b.ToTable("SceneContents");
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Documents.SceneNoteRecord", b =>
+                {
+                    b.Property<Guid>("SceneNodeId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("NotesText")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("SceneNodeId");
+
+                    b.ToTable("SceneNotes");
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Documents.SceneQualityIssueRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AnchorText")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ContentHash")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("EndOffset")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("IssueKey")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Message")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RuleId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("SceneNodeId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Scope")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Severity")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("StartOffset")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Suggestion")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ContentHash");
+
+                    b.HasIndex("IssueKey");
+
+                    b.HasIndex("SceneNodeId");
+
+                    b.HasIndex("Scope");
+
+                    b.ToTable("SceneQualityIssues");
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Documents.SceneVersionRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("ContentCompressed")
+                        .IsRequired()
+                        .HasColumnType("BLOB");
+
+                    b.Property<string>("ContentTextHash")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("SceneNodeId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("SizeBytes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("WordCount")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt");
+
+                    b.HasIndex("SceneNodeId");
+
+                    b.ToTable("SceneVersions");
+                });
+
             modelBuilder.Entity("WriterApp.Data.Documents.SectionRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1727,6 +1966,72 @@ namespace BlazorApp.Migrations
                         .IsRequired();
 
                     b.Navigation("Project");
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Documents.SceneAnnotationRecord", b =>
+                {
+                    b.HasOne("WriterApp.Data.Documents.ProjectNodeRecord", "SceneNode")
+                        .WithMany()
+                        .HasForeignKey("SceneNodeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("SceneNode");
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Documents.SceneCardRecord", b =>
+                {
+                    b.HasOne("WriterApp.Data.Documents.ProjectNodeRecord", "SceneNode")
+                        .WithOne()
+                        .HasForeignKey("WriterApp.Data.Documents.SceneCardRecord", "SceneNodeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("SceneNode");
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Documents.SceneContentRecord", b =>
+                {
+                    b.HasOne("WriterApp.Data.Documents.ProjectNodeRecord", "SceneNode")
+                        .WithOne()
+                        .HasForeignKey("WriterApp.Data.Documents.SceneContentRecord", "SceneNodeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("SceneNode");
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Documents.SceneNoteRecord", b =>
+                {
+                    b.HasOne("WriterApp.Data.Documents.ProjectNodeRecord", "SceneNode")
+                        .WithOne()
+                        .HasForeignKey("WriterApp.Data.Documents.SceneNoteRecord", "SceneNodeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("SceneNode");
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Documents.SceneQualityIssueRecord", b =>
+                {
+                    b.HasOne("WriterApp.Data.Documents.ProjectNodeRecord", "SceneNode")
+                        .WithMany()
+                        .HasForeignKey("SceneNodeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("SceneNode");
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Documents.SceneVersionRecord", b =>
+                {
+                    b.HasOne("WriterApp.Data.Documents.ProjectNodeRecord", "SceneNode")
+                        .WithMany()
+                        .HasForeignKey("SceneNodeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("SceneNode");
                 });
 
             modelBuilder.Entity("WriterApp.Data.Documents.SectionRecord", b =>

@@ -35,6 +35,12 @@ namespace WriterApp.Data
         public DbSet<PageNoteRecord> PageNotes => Set<PageNoteRecord>();
         public DbSet<SectionNoteRecord> SectionNotes => Set<SectionNoteRecord>();
         public DbSet<SectionSceneCardRecord> SectionSceneCards => Set<SectionSceneCardRecord>();
+        public DbSet<SceneContentRecord> SceneContents => Set<SceneContentRecord>();
+        public DbSet<SceneNoteRecord> SceneNotes => Set<SceneNoteRecord>();
+        public DbSet<SceneCardRecord> SceneCards => Set<SceneCardRecord>();
+        public DbSet<SceneAnnotationRecord> SceneAnnotations => Set<SceneAnnotationRecord>();
+        public DbSet<SceneQualityIssueRecord> SceneQualityIssues => Set<SceneQualityIssueRecord>();
+        public DbSet<SceneVersionRecord> SceneVersions => Set<SceneVersionRecord>();
         public DbSet<OutlineTemplateRecord> OutlineTemplates => Set<OutlineTemplateRecord>();
         public DbSet<ProjectRecord> Projects => Set<ProjectRecord>();
         public DbSet<ProjectNodeRecord> ProjectNodes => Set<ProjectNodeRecord>();
@@ -460,6 +466,102 @@ namespace WriterApp.Data
                 entity.HasOne(card => card.Section)
                     .WithOne(section => section.SceneCard)
                     .HasForeignKey<SectionSceneCardRecord>(card => card.SectionId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<SceneContentRecord>(entity =>
+            {
+                entity.HasKey(item => item.SceneNodeId);
+                entity.Property(item => item.ContentJson).IsRequired();
+                entity.Property(item => item.UpdatedAtUtc).IsRequired();
+                entity.HasOne(item => item.SceneNode)
+                    .WithOne()
+                    .HasForeignKey<SceneContentRecord>(item => item.SceneNodeId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<SceneNoteRecord>(entity =>
+            {
+                entity.HasKey(item => item.SceneNodeId);
+                entity.Property(item => item.NotesText).IsRequired();
+                entity.Property(item => item.UpdatedAtUtc).IsRequired();
+                entity.HasOne(item => item.SceneNode)
+                    .WithOne()
+                    .HasForeignKey<SceneNoteRecord>(item => item.SceneNodeId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<SceneCardRecord>(entity =>
+            {
+                entity.HasKey(item => item.SceneNodeId);
+                entity.Property(item => item.UpdatedAtUtc).IsRequired();
+                entity.Property(item => item.TimeRef).HasMaxLength(120);
+                entity.HasOne(item => item.SceneNode)
+                    .WithOne()
+                    .HasForeignKey<SceneCardRecord>(item => item.SceneNodeId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<SceneAnnotationRecord>(entity =>
+            {
+                entity.HasKey(item => item.Id);
+                entity.Property(item => item.SceneNodeId).IsRequired();
+                entity.Property(item => item.Kind).IsRequired();
+                entity.Property(item => item.Status).IsRequired();
+                entity.Property(item => item.AnchorFrom).IsRequired();
+                entity.Property(item => item.AnchorTo).IsRequired();
+                entity.Property(item => item.AnchorText).IsRequired();
+                entity.Property(item => item.Content).IsRequired();
+                entity.Property(item => item.AuthorUserId).IsRequired();
+                entity.Property(item => item.CreatedAt).IsRequired();
+                entity.Property(item => item.ResolvedAt);
+                entity.HasIndex(item => item.SceneNodeId);
+                entity.HasIndex(item => item.Status);
+                entity.HasIndex(item => item.Kind);
+                entity.HasIndex(item => item.CreatedAt);
+                entity.HasOne(item => item.SceneNode)
+                    .WithMany()
+                    .HasForeignKey(item => item.SceneNodeId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<SceneQualityIssueRecord>(entity =>
+            {
+                entity.HasKey(item => item.Id);
+                entity.Property(item => item.SceneNodeId).IsRequired();
+                entity.Property(item => item.Scope).IsRequired();
+                entity.Property(item => item.IssueKey).IsRequired();
+                entity.Property(item => item.RuleId).IsRequired();
+                entity.Property(item => item.Kind).IsRequired();
+                entity.Property(item => item.Severity).IsRequired();
+                entity.Property(item => item.Message).IsRequired();
+                entity.Property(item => item.ContentHash).IsRequired();
+                entity.Property(item => item.CreatedAt).IsRequired();
+                entity.HasIndex(item => item.SceneNodeId);
+                entity.HasIndex(item => item.Scope);
+                entity.HasIndex(item => item.ContentHash);
+                entity.HasIndex(item => item.IssueKey);
+                entity.HasOne(item => item.SceneNode)
+                    .WithMany()
+                    .HasForeignKey(item => item.SceneNodeId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<SceneVersionRecord>(entity =>
+            {
+                entity.HasKey(item => item.Id);
+                entity.Property(item => item.SceneNodeId).IsRequired();
+                entity.Property(item => item.CreatedAt).IsRequired();
+                entity.Property(item => item.Reason).IsRequired();
+                entity.Property(item => item.ContentCompressed).IsRequired();
+                entity.Property(item => item.ContentTextHash).IsRequired();
+                entity.Property(item => item.SizeBytes).IsRequired();
+                entity.Property(item => item.WordCount).IsRequired();
+                entity.HasIndex(item => item.SceneNodeId);
+                entity.HasIndex(item => item.CreatedAt);
+                entity.HasOne(item => item.SceneNode)
+                    .WithMany()
+                    .HasForeignKey(item => item.SceneNodeId)
                     .OnDelete(DeleteBehavior.Cascade);
             });
 

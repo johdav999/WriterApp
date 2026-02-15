@@ -106,9 +106,9 @@ namespace WriterApp.Application.Documents
 
     public sealed record ProjectSceneOpenTargetDto(
         Guid ProjectId,
-        Guid NodeId,
-        Guid DocumentId,
-        Guid SectionId);
+        Guid SceneNodeId,
+        Guid? DocumentId,
+        Guid? SectionId);
 
     public sealed record ProjectStatsDto(
         Guid ProjectId,

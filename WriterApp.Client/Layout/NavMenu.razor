@@ -3,6 +3,7 @@
 @using WriterApp.Application.Documents
 @implements IDisposable
 @inject CurrentDocumentStateService CurrentDocumentStateService
+@inject CurrentSceneStateService CurrentSceneStateService
 @inject LastOpenedDocumentStateService LastOpenedDocumentStateService
 @inject HttpClient Http
 @inject NavigationManager Navigation
@@ -82,11 +83,13 @@
     {
         _projectsEnabled = true;
         CurrentDocumentStateService.Changed += HandleDocumentStateChange;
+        CurrentSceneStateService.Changed += HandleDocumentStateChange;
     }
 
     public void Dispose()
     {
         CurrentDocumentStateService.Changed -= HandleDocumentStateChange;
+        CurrentSceneStateService.Changed -= HandleDocumentStateChange;
     }
 
     private void HandleDocumentStateChange()
@@ -95,10 +98,10 @@
     }
 
     private bool HasCurrentEditorLink =>
-        CurrentDocumentStateService.DocumentId is Guid documentId &&
-        CurrentDocumentStateService.SectionId is Guid sectionId &&
-        documentId != Guid.Empty &&
-        sectionId != Guid.Empty;
+        CurrentSceneStateService.ProjectId is Guid projectId &&
+        CurrentSceneStateService.SceneNodeId is Guid sceneNodeId &&
+        projectId != Guid.Empty &&
+        sceneNodeId != Guid.Empty;
 
     private bool HasCurrentSynopsisLink =>
         CurrentDocumentStateService.DocumentId is Guid documentId &&
@@ -111,9 +114,9 @@
             return "documents";
         }
 
-        Guid documentId = CurrentDocumentStateService.DocumentId!.Value;
-        Guid sectionId = CurrentDocumentStateService.SectionId!.Value;
-        return $"documents/{documentId}/sections/{sectionId}";
+        Guid projectId = CurrentSceneStateService.ProjectId!.Value;
+        Guid sceneNodeId = CurrentSceneStateService.SceneNodeId!.Value;
+        return $"projects/{projectId}/scenes/{sceneNodeId}";
     }
 
     private string GetSynopsisLink()
