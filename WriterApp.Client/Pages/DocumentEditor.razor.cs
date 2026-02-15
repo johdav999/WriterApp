@@ -3122,7 +3122,7 @@ namespace WriterApp.Client.Pages
             bool applySucceeded = await _pageEditor.ApplyQualityIssueFixAsync(continuityFix, applyRange.Before, issueKey);
             if (!applySucceeded)
             {
-                _continuityStatus = "Can't apply automatically; text changed.";
+                _continuityStatus = GetQualityFixFailureMessage();
                 return false;
             }
 
@@ -4806,7 +4806,8 @@ namespace WriterApp.Client.Pages
                 if (!string.Equals(kind, "document", StringComparison.OrdinalIgnoreCase))
                 {
                     string templateQuery = string.Empty;
-                    if (string.Equals(format, "html", StringComparison.OrdinalIgnoreCase)
+                    if ((string.Equals(format, "html", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(format, "docx", StringComparison.OrdinalIgnoreCase))
                         && _selectedTemplateId.HasValue)
                     {
                         templateQuery = $"&templateId={_selectedTemplateId.Value}";
@@ -5247,9 +5248,12 @@ namespace WriterApp.Client.Pages
             return $"<html><head><meta charset=\"utf-8\"></head><body>{rawHtml}{injected}</body></html>";
         }
 
-        private const string PreviewBootstrapScript = @"
+private const string PreviewBootstrapScript = @"
 <style id=""__WRITER_PREVIEW__"">
     body { margin: 0; padding: 24px; box-sizing: border-box; position: relative; }
+    table { border-collapse: collapse; border-spacing: 0; width: 100%; border: 1px solid #9aa4b2; }
+    th, td { border: 1px solid #9aa4b2; padding: 6px 8px; vertical-align: top; }
+    td:empty::after { content: ""\00a0""; }
     .preview-pagebreak-overlay { position: absolute; left: 0; right: 0; top: 0; pointer-events: none; }
     .preview-pagebreak-line { position: absolute; left: 0; right: 0; border-top: 1px dashed rgba(148, 163, 184, 0.7); }
     mark.preview-search-hit { background: #fde68a; padding: 0 2px; border-radius: 3px; }
@@ -7609,13 +7613,26 @@ namespace WriterApp.Client.Pages
                 foreach (PageQualityIssueDto issue in _qualityIssues.Where(item => !CanApplyQualityIssue(item)))
                 {
                     Logger.LogDebug(
-                        "Quality issue is not applyable. Key={IssueKey}, Rule={RuleId}, Kind={Kind}, Severity={Severity}, FixKind={FixKind}, Reason={Reason}",
+                        "Quality issue is not applyable. Key={IssueKey}, Rule={RuleId}, Kind={Kind}, Severity={Severity}, HasFix={HasFix}, FixKind={FixKind}, Reason={Reason}",
                         issue.IssueKey,
                         issue.RuleId,
                         issue.Kind,
                         issue.Severity,
+                        issue.Fix is not null,
                         issue.Fix?.Kind,
                         GetQualityIssueApplyUnavailableReason(issue));
+                }
+
+                foreach (PageQualityIssueDto issue in _qualityIssues)
+                {
+                    Logger.LogDebug(
+                        "Quality issue card. Key={IssueKey}, Rule={RuleId}, Kind={Kind}, Severity={Severity}, HasFix={HasFix}, Applyable={Applyable}",
+                        issue.IssueKey,
+                        issue.RuleId,
+                        issue.Kind,
+                        issue.Severity,
+                        issue.Fix is not null,
+                        CanApplyQualityIssue(issue));
                 }
 
                 ReconcileQualityIssueStateAfterRefresh();
@@ -7713,14 +7730,21 @@ namespace WriterApp.Client.Pages
                 return;
             }
 
+            PageQualityIssueDto effectiveIssue = await EnsureAutoProposableFixAsync(issue);
+            if (QualityIssueCapabilities.IsAutoProposable(effectiveIssue) && !HasValidAutoProposableFix(effectiveIssue))
+            {
+                _qualityIssueActionErrors[effectiveIssue.IssueKey] = GetAutoProposableFailureMessage(effectiveIssue);
+                return;
+            }
+
             _proposalError = null;
-            _proposalIssue = issue;
-            _proposalPreview = await BuildQualityProposalPreviewAsync(issue);
+            _proposalIssue = effectiveIssue;
+            _proposalPreview = await BuildQualityProposalPreviewAsync(effectiveIssue);
             _isQualityProposalOpen = true;
             _isProposalApplying = false;
-            _qualityIssueActionErrors.Remove(issue.IssueKey);
+            _qualityIssueActionErrors.Remove(effectiveIssue.IssueKey);
 
-            await ShowQualityIssueInTextAsync(issue);
+            await ShowQualityIssueInTextAsync(effectiveIssue);
         }
 
         private async Task ConfirmQualityProposalApplyAsync()
@@ -7742,7 +7766,7 @@ namespace WriterApp.Client.Pages
             if (!applied)
             {
                 _proposalError = string.IsNullOrWhiteSpace(error)
-                    ? "Can't apply automatically; text changed."
+                    ? GetQualityFixFailureMessage()
                     : error;
                 _isProposalApplying = false;
                 return;
@@ -7857,8 +7881,19 @@ namespace WriterApp.Client.Pages
             }
 
             _qualityIssueActionErrors[issue.IssueKey] = string.IsNullOrWhiteSpace(error)
-                ? "Can't apply automatically; text changed."
+                ? GetQualityFixFailureMessage()
                 : error;
+        }
+
+        private string GetQualityFixFailureMessage()
+        {
+            string? reason = _pageEditor?.LastQualityFixFailureReason;
+            if (string.Equals(reason, "could_not_resolve_range", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Couldn't locate the original text for this issue (document changed). Click 'Show in text' then regenerate fix.";
+            }
+
+            return "Can't apply automatically; text changed.";
         }
 
         private async Task<(bool Applied, string? Error)> ApplyQualityIssueChangeCoreAsync(PageQualityIssueDto issue)
@@ -7880,10 +7915,21 @@ namespace WriterApp.Client.Pages
 
             try
             {
-                bool applied = await _pageEditor.ApplyQualityIssueFixAsync(issue.Fix, issue.AnchorText, issue.IssueKey);
+                PageQualityIssueDto effectiveIssue = await EnsureAutoProposableFixAsync(issue);
+                if (effectiveIssue.Fix is null)
+                {
+                    return (false, "Can't apply this issue.");
+                }
+
+                if (QualityIssueCapabilities.IsAutoProposable(effectiveIssue) && !HasValidAutoProposableFix(effectiveIssue))
+                {
+                    return (false, GetAutoProposableFailureMessage(effectiveIssue));
+                }
+
+                bool applied = await _pageEditor.ApplyQualityIssueFixAsync(effectiveIssue.Fix, effectiveIssue.AnchorText, effectiveIssue.IssueKey);
                 if (!applied)
                 {
-                    return (false, "Can't apply automatically; text changed.");
+                    return (false, GetQualityFixFailureMessage());
                 }
 
                 await _pageEditor.SaveNowAsync();
@@ -7913,6 +7959,416 @@ namespace WriterApp.Client.Pages
             }
         }
 
+        private async Task<PageQualityIssueDto> EnsureAutoProposableFixAsync(PageQualityIssueDto issue)
+        {
+            if (!QualityIssueCapabilities.IsAutoProposable(issue))
+            {
+                return issue;
+            }
+
+            if (QualityIssueCapabilities.IsRepeatedWordIssue(issue))
+            {
+                return await EnsureRepeatedWordRewriteFixAsync(issue);
+            }
+
+            if (QualityIssueCapabilities.IsSentenceLengthIssue(issue))
+            {
+                return await EnsureSentenceLengthRewriteFixAsync(issue);
+            }
+
+            return issue;
+        }
+
+        private static string GetAutoProposableFailureMessage(PageQualityIssueDto issue)
+        {
+            if (QualityIssueCapabilities.IsRepeatedWordIssue(issue))
+            {
+                return "Couldn't reduce repetition automatically.";
+            }
+
+            if (QualityIssueCapabilities.IsSentenceLengthIssue(issue))
+            {
+                return "Couldn't split this sentence automatically.";
+            }
+
+            return "Couldn't generate an automatic suggestion.";
+        }
+
+        private async Task<PageQualityIssueDto> EnsureRepeatedWordRewriteFixAsync(PageQualityIssueDto issue)
+        {
+            if (_pageEditor is null || _activeSection is null)
+            {
+                return issue;
+            }
+
+            bool alreadyRewrite = HasValidRepeatedWordRewriteFix(issue);
+            if (alreadyRewrite)
+            {
+                return issue;
+            }
+
+            string plainText = await _pageEditor.GetPlainTextAsync() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(plainText))
+            {
+                return issue;
+            }
+
+            RepeatedWordApplyRange? applyRange = await BuildRepeatedWordApplyRangeAsync(issue, plainText);
+            if (applyRange is null || string.IsNullOrWhiteSpace(applyRange.Before))
+            {
+                return issue;
+            }
+
+            string anchor = issue.AnchorText ?? issue.Fix?.AnchorText ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(anchor))
+            {
+                return issue;
+            }
+
+            string rewritten = await GenerateRepeatedWordRewriteAsync(issue, plainText, applyRange, strictMode: false);
+            bool valid = QualityRewriteOutputValidator.TryValidateRepeatedWordReduction(
+                applyRange.Before,
+                rewritten,
+                anchor,
+                out int originalCount,
+                out int candidateCount,
+                out _);
+            if (!valid)
+            {
+                rewritten = await GenerateRepeatedWordRewriteAsync(issue, plainText, applyRange, strictMode: true);
+                valid = QualityRewriteOutputValidator.TryValidateRepeatedWordReduction(
+                    applyRange.Before,
+                    rewritten,
+                    anchor,
+                    out originalCount,
+                    out candidateCount,
+                    out _);
+            }
+
+            string normalized = QualityRewriteOutputValidator.NormalizeRepeatedWordCandidate(rewritten);
+            if (!valid || !QualityRewriteOutputValidator.TryValidateRepeatedWordReduction(
+                    applyRange.Before,
+                    normalized,
+                    anchor,
+                    out originalCount,
+                    out candidateCount,
+                    out _))
+            {
+                Logger.LogWarning(
+                    "Repeated-word rewrite rejected. IssueKey={IssueKey}, Anchor={Anchor}, OriginalCount={OriginalCount}, CandidateCount={CandidateCount}",
+                    issue.IssueKey,
+                    anchor,
+                    originalCount,
+                    candidateCount);
+                return issue;
+            }
+
+            QualityIssueFixDto updatedFix = new(
+                "rewrite",
+                applyRange.PlainFrom,
+                applyRange.PlainTo,
+                normalized,
+                anchor,
+                issue.IssueKey,
+                applyRange.DocFrom,
+                applyRange.DocTo,
+                applyRange.Before);
+
+            PageQualityIssueDto updatedIssue = issue with
+            {
+                Fix = updatedFix,
+                AnchorText = anchor
+            };
+
+            UpsertQualityIssue(updatedIssue);
+            return updatedIssue;
+        }
+
+        private async Task<PageQualityIssueDto> EnsureSentenceLengthRewriteFixAsync(PageQualityIssueDto issue)
+        {
+            if (_pageEditor is null || _activeSection is null)
+            {
+                return issue;
+            }
+
+            bool alreadyRewrite =
+                issue.Fix is not null
+                && string.Equals(issue.Fix.Kind, "rewrite", StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(issue.Fix.Text)
+                && !string.IsNullOrWhiteSpace(issue.Fix.ExpectedText)
+                && !LooksLikeInstructionLeak(issue.Fix.Text);
+            if (alreadyRewrite)
+            {
+                return issue;
+            }
+
+            string plainText = await _pageEditor.GetPlainTextAsync() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(plainText))
+            {
+                return issue;
+            }
+
+            RepeatedWordApplyRange? applyRange = await BuildRepeatedWordApplyRangeAsync(issue, plainText);
+            if (applyRange is null || string.IsNullOrWhiteSpace(applyRange.Before))
+            {
+                return issue;
+            }
+
+            string rewritten = await GenerateSentenceLengthRewriteAsync(issue, plainText, applyRange, strictMode: false);
+            string normalized = NormalizeContinuityRewriteCandidate(rewritten);
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                rewritten = await GenerateSentenceLengthRewriteAsync(issue, plainText, applyRange, strictMode: true);
+                normalized = NormalizeContinuityRewriteCandidate(rewritten);
+            }
+
+            if (string.IsNullOrWhiteSpace(normalized)
+                || LooksLikeInstructionLeak(normalized)
+                || string.Equals(normalized.Trim(), applyRange.Before.Trim(), StringComparison.Ordinal))
+            {
+                return issue;
+            }
+
+            QualityIssueFixDto updatedFix = new(
+                "rewrite",
+                applyRange.PlainFrom,
+                applyRange.PlainTo,
+                normalized,
+                issue.AnchorText,
+                issue.IssueKey,
+                applyRange.DocFrom,
+                applyRange.DocTo,
+                applyRange.Before);
+
+            PageQualityIssueDto updatedIssue = issue with
+            {
+                Fix = updatedFix,
+                AnchorText = applyRange.Before
+            };
+
+            UpsertQualityIssue(updatedIssue);
+            return updatedIssue;
+        }
+
+        private async Task<string> GenerateSentenceLengthRewriteAsync(PageQualityIssueDto issue, string plainText, RepeatedWordApplyRange applyRange, bool strictMode)
+        {
+            if (_activeSection is null)
+            {
+                return string.Empty;
+            }
+
+            string instruction = "Rewrite the text below in the SAME LANGUAGE as the input. Preserve meaning and tone. Split the long/complex sentence into shorter clear sentences where helpful. Return ONLY the rewritten span text (no explanation, no bullets, no quotes).";
+            if (strictMode)
+            {
+                instruction += " Your previous output was invalid. Return final rewritten prose only.";
+            }
+
+            Dictionary<string, object?> parameters = new()
+            {
+                ["instruction"] = instruction,
+                ["tone"] = "Neutral",
+                ["length"] = "Same",
+                ["preserve_terms"] = true
+            };
+
+            AiActionExecuteRequestDto request = new(
+                DocumentId,
+                _activeSection.Id,
+                _activePage?.Id,
+                applyRange.PlainFrom,
+                applyRange.PlainTo,
+                applyRange.Before,
+                plainText,
+                GetOutlineTextForAi(),
+                parameters);
+
+            try
+            {
+                using HttpResponseMessage result = await Http.PostAsJsonAsync("api/ai/actions/rewrite.selection/execute", request);
+                if (!result.IsSuccessStatusCode)
+                {
+                    return string.Empty;
+                }
+
+                AiActionExecuteResponseDto? response = await result.Content.ReadFromJsonAsync<AiActionExecuteResponseDto>();
+                return response?.ProposedText ?? string.Empty;
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
+        private void UpsertQualityIssue(PageQualityIssueDto updatedIssue)
+        {
+            int index = _qualityIssues.FindIndex(item => string.Equals(item.IssueKey, updatedIssue.IssueKey, StringComparison.Ordinal));
+            if (index >= 0)
+            {
+                _qualityIssues[index] = updatedIssue;
+            }
+        }
+
+        private async Task<string> GenerateRepeatedWordRewriteAsync(PageQualityIssueDto issue, string plainText, RepeatedWordApplyRange applyRange, bool strictMode)
+        {
+            if (_activeSection is null)
+            {
+                return string.Empty;
+            }
+
+            string anchor = issue.AnchorText ?? issue.Fix?.AnchorText ?? string.Empty;
+            int originalCount = QualityRewriteOutputValidator.CountOccurrences(applyRange.Before, anchor);
+            string instruction = $"Rewrite the text below in the SAME LANGUAGE. Preserve meaning and tone. Reduce repetition of this word/phrase: '{anchor}'. In your rewrite, '{anchor}' must appear fewer times than in the original span (ideally once). Use synonyms or restructure. Return ONLY the rewritten span, no explanations.";
+            if (strictMode)
+            {
+                instruction += $" Your output still repeats '{anchor}'. Rewrite again and ensure it appears at most once. Original count was {originalCount}.";
+            }
+
+            Dictionary<string, object?> parameters = new()
+            {
+                ["instruction"] = instruction,
+                ["tone"] = "Neutral",
+                ["length"] = "Same",
+                ["preserve_terms"] = true
+            };
+
+            AiActionExecuteRequestDto request = new(
+                DocumentId,
+                _activeSection.Id,
+                _activePage?.Id,
+                applyRange.PlainFrom,
+                applyRange.PlainTo,
+                applyRange.Before,
+                plainText,
+                GetOutlineTextForAi(),
+                parameters);
+
+            try
+            {
+                using HttpResponseMessage result = await Http.PostAsJsonAsync("api/ai/actions/rewrite.selection/execute", request);
+                if (!result.IsSuccessStatusCode)
+                {
+                    return string.Empty;
+                }
+
+                AiActionExecuteResponseDto? response = await result.Content.ReadFromJsonAsync<AiActionExecuteResponseDto>();
+                return QualityRewriteOutputValidator.NormalizeRepeatedWordCandidate(response?.ProposedText);
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
+        private async Task<RepeatedWordApplyRange?> BuildRepeatedWordApplyRangeAsync(PageQualityIssueDto issue, string plainText)
+        {
+            if (_pageEditor is null || string.IsNullOrWhiteSpace(plainText))
+            {
+                return null;
+            }
+
+            int anchorFrom = Math.Clamp(issue.Fix?.From ?? issue.StartOffset, 0, plainText.Length);
+            int anchorTo = Math.Clamp(issue.Fix?.To ?? issue.EndOffset, anchorFrom, plainText.Length);
+            if (anchorTo <= anchorFrom)
+            {
+                anchorFrom = Math.Clamp(issue.StartOffset, 0, plainText.Length);
+                anchorTo = Math.Clamp(issue.EndOffset, anchorFrom, plainText.Length);
+                if (anchorTo <= anchorFrom)
+                {
+                    return null;
+                }
+            }
+
+            ContinuityRewriteSpan sentenceSpan = ContinuityRewriteSpanResolver.ExpandToSentenceSpan(
+                plainText,
+                anchorFrom,
+                anchorTo - anchorFrom,
+                contextRadius: 56);
+            if (sentenceSpan.Length <= 0 || string.IsNullOrWhiteSpace(sentenceSpan.Before))
+            {
+                return null;
+            }
+
+            PageEditor.QualityIssueRangeResolution? resolved = await _pageEditor.ResolvePlainRangeAsync(
+                sentenceSpan.Start,
+                sentenceSpan.Start + sentenceSpan.Length,
+                sentenceSpan.Before);
+            if (resolved is null
+                || !resolved.Resolved
+                || !resolved.DocFrom.HasValue
+                || !resolved.DocTo.HasValue
+                || !resolved.From.HasValue
+                || !resolved.To.HasValue
+                || resolved.To.Value <= resolved.From.Value)
+            {
+                return null;
+            }
+
+            int plainFrom = resolved.From.Value;
+            int plainTo = resolved.To.Value;
+            if (plainTo <= plainFrom || plainTo > plainText.Length)
+            {
+                return null;
+            }
+
+            ContinuityRewriteSpan aligned = ContinuityRewriteSpanResolver.BuildFromRange(
+                plainText,
+                plainFrom,
+                plainTo - plainFrom,
+                contextRadius: 56);
+
+            return new RepeatedWordApplyRange(
+                plainFrom,
+                plainTo,
+                resolved.DocFrom.Value,
+                resolved.DocTo.Value,
+                aligned.Before,
+                aligned.Prefix,
+                aligned.Suffix,
+                aligned.StartsSentence,
+                aligned.EndsSentence);
+        }
+
+        private static bool HasValidAutoProposableFix(PageQualityIssueDto issue)
+        {
+            if (QualityIssueCapabilities.IsRepeatedWordIssue(issue))
+            {
+                return HasValidRepeatedWordRewriteFix(issue);
+            }
+
+            if (QualityIssueCapabilities.IsSentenceLengthIssue(issue))
+            {
+                return issue.Fix is not null
+                    && string.Equals(issue.Fix.Kind, "rewrite", StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrWhiteSpace(issue.Fix.Text)
+                    && !LooksLikeInstructionLeak(issue.Fix.Text);
+            }
+
+            return issue.Fix is not null;
+        }
+
+        private static bool HasValidRepeatedWordRewriteFix(PageQualityIssueDto issue)
+        {
+            if (issue.Fix is null)
+            {
+                return false;
+            }
+
+            if (!string.Equals(issue.Fix.Kind, "rewrite", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            string original = issue.Fix.ExpectedText ?? issue.AnchorText ?? string.Empty;
+            string anchor = issue.Fix.AnchorText ?? issue.AnchorText ?? string.Empty;
+            return QualityRewriteOutputValidator.TryValidateRepeatedWordReduction(
+                original,
+                issue.Fix.Text ?? string.Empty,
+                anchor,
+                out _,
+                out _,
+                out _);
+        }
+
         private bool IsQualityIssueSelected(PageQualityIssueDto issue)
         {
             return string.Equals(_selectedQualityIssueKey, issue.IssueKey, StringComparison.Ordinal);
@@ -7930,6 +8386,11 @@ namespace WriterApp.Client.Pages
                 return "An apply operation is already running for this issue.";
             }
 
+            if (QualityIssueCapabilities.IsAutoProposable(issue))
+            {
+                return null;
+            }
+
             if (issue.Fix is null)
             {
                 return "No automatic fix is available for this issue.";
@@ -7943,7 +8404,8 @@ namespace WriterApp.Client.Pages
             bool supported =
                 string.Equals(issue.Fix.Kind, "replace", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(issue.Fix.Kind, "delete", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(issue.Fix.Kind, "insert", StringComparison.OrdinalIgnoreCase);
+                || string.Equals(issue.Fix.Kind, "insert", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(issue.Fix.Kind, "rewrite", StringComparison.OrdinalIgnoreCase);
 
             if (!supported)
             {
@@ -9448,6 +9910,17 @@ namespace WriterApp.Client.Pages
             bool StartsSentence,
             bool EndsSentence,
             string Source);
+
+        private sealed record RepeatedWordApplyRange(
+            int PlainFrom,
+            int PlainTo,
+            int DocFrom,
+            int DocTo,
+            string Before,
+            string Prefix,
+            string Suffix,
+            bool StartsSentence,
+            bool EndsSentence);
 
         private sealed record ContextPanelStateStorage(string Category, string Tab);
 

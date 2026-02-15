@@ -6,6 +6,7 @@
 @implements IDisposable
 @inject LayoutStateService LayoutStateService
 @inject CurrentDocumentStateService CurrentDocumentStateService
+@inject CurrentProjectStateService CurrentProjectStateService
 @inject LastOpenedDocumentStateService LastOpenedDocumentStateService
 @inject HttpClient Http
 @inject NavigationManager Navigation
@@ -17,7 +18,7 @@
         </div>
         <div class="app-header-center">
             <div class="app-breadcrumb">
-                <NavLink class="app-breadcrumb-link" href="documents" Match="NavLinkMatch.Prefix">Projects</NavLink>
+                <NavLink class="app-breadcrumb-link" href="@GetProjectBreadcrumbHref()" Match="NavLinkMatch.Prefix">@GetProjectBreadcrumbLabel()</NavLink>
                 @if (!string.IsNullOrWhiteSpace(_documentTitle))
                 {
                     <span class="app-breadcrumb-separator">-&gt;</span>
@@ -73,14 +74,19 @@
     {
         LayoutStateService.Changed += HandleLayoutStateChange;
         CurrentDocumentStateService.Changed += HandleDocumentStateChange;
+        CurrentProjectStateService.Changed += HandleProjectStateChange;
+        Navigation.LocationChanged += HandleLocationChanged;
         await LayoutStateService.InitializeAsync();
         await LastOpenedDocumentStateService.LoadAsync();
+        await RefreshProjectBreadcrumbAsync();
     }
 
     public void Dispose()
     {
         LayoutStateService.Changed -= HandleLayoutStateChange;
         CurrentDocumentStateService.Changed -= HandleDocumentStateChange;
+        CurrentProjectStateService.Changed -= HandleProjectStateChange;
+        Navigation.LocationChanged -= HandleLocationChanged;
     }
 
     private void HandleLayoutStateChange(LayoutState state)
@@ -91,6 +97,18 @@
     private void HandleDocumentStateChange()
     {
         _ = RefreshDocumentTitleAsync();
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void HandleProjectStateChange()
+    {
+        _ = RefreshProjectBreadcrumbAsync();
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void HandleLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        _ = RefreshProjectBreadcrumbAsync();
         InvokeAsync(StateHasChanged);
     }
 
@@ -136,6 +154,80 @@
 
         Guid documentId = CurrentDocumentStateService.DocumentId!.Value;
         return $"synopsis/{documentId}";
+    }
+
+    private string GetProjectBreadcrumbHref()
+    {
+        return _breadcrumbProjectId.HasValue
+            ? $"projects/{_breadcrumbProjectId.Value}"
+            : "projects";
+    }
+
+    private string GetProjectBreadcrumbLabel()
+    {
+        if (_breadcrumbProjectId is null)
+        {
+            return "Projects";
+        }
+
+        if (!string.IsNullOrWhiteSpace(_breadcrumbProjectTitle))
+        {
+            return _breadcrumbProjectTitle;
+        }
+
+        return _isProjectBreadcrumbLoading ? "Loading project..." : "Projects";
+    }
+
+    private async Task RefreshProjectBreadcrumbAsync()
+    {
+        Guid? nextProjectId = null;
+        if (TryGetRouteProjectId(out Guid routeProjectId))
+        {
+            nextProjectId = routeProjectId;
+        }
+        else if (CurrentProjectStateService.ProjectId.HasValue)
+        {
+            nextProjectId = CurrentProjectStateService.ProjectId.Value;
+        }
+
+        if (!nextProjectId.HasValue)
+        {
+            _breadcrumbProjectId = null;
+            _breadcrumbProjectTitle = string.Empty;
+            _isProjectBreadcrumbLoading = false;
+            return;
+        }
+
+        Guid resolvedProjectId = nextProjectId.Value;
+        _breadcrumbProjectId = resolvedProjectId;
+
+        if (CurrentProjectStateService.ProjectId == resolvedProjectId &&
+            !string.IsNullOrWhiteSpace(CurrentProjectStateService.ProjectTitle))
+        {
+            _breadcrumbProjectTitle = CurrentProjectStateService.ProjectTitle!;
+            _isProjectBreadcrumbLoading = false;
+            return;
+        }
+
+        if (CurrentProjectStateService.TryGetCachedTitle(resolvedProjectId, out string cachedTitle))
+        {
+            _breadcrumbProjectTitle = cachedTitle;
+            _isProjectBreadcrumbLoading = false;
+            if (CurrentProjectStateService.ProjectId == resolvedProjectId)
+            {
+                CurrentProjectStateService.SetCurrent(resolvedProjectId, cachedTitle);
+            }
+            return;
+        }
+
+        _breadcrumbProjectTitle = string.Empty;
+        _isProjectBreadcrumbLoading = true;
+        await Task.CompletedTask;
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await RefreshProjectBreadcrumbAsync();
     }
 
     private async Task RefreshDocumentTitleAsync()
@@ -245,6 +337,20 @@
         return segments.Length == 1 && string.Equals(segments[0], "documents", StringComparison.OrdinalIgnoreCase);
     }
 
+    private bool TryGetRouteProjectId(out Guid projectId)
+    {
+        string[] segments = GetRouteSegments();
+        if (segments.Length >= 2 &&
+            string.Equals(segments[0], "projects", StringComparison.OrdinalIgnoreCase) &&
+            Guid.TryParse(segments[1], out projectId))
+        {
+            return true;
+        }
+
+        projectId = Guid.Empty;
+        return false;
+    }
+
     private string[] GetRouteSegments()
     {
         string relative = Navigation.ToBaseRelativePath(Navigation.Uri);
@@ -266,4 +372,7 @@
 
     private string _documentTitle = string.Empty;
     private Guid? _loadedDocumentId;
+    private Guid? _breadcrumbProjectId;
+    private string _breadcrumbProjectTitle = string.Empty;
+    private bool _isProjectBreadcrumbLoading;
 }

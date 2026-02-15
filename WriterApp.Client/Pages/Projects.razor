@@ -391,24 +391,27 @@ else
              @ref="_nodeMenuRef"
              @onkeydown="OnNodeMenuKeyDown"
              @onclick:stopPropagation="true">
-            <button type="button" role="menuitem" @onclick="OnNodeMenuRenameAsync">Rename</button>
+            <button type="button" role="menuitem" @onclick="OnNodeMenuRenameAsync" disabled="@_duplicateNodeInFlight">Rename</button>
+            <button type="button" role="menuitem" @onclick="OnNodeMenuDuplicateAsync" disabled="@_duplicateNodeInFlight">
+                @(_duplicateNodeInFlight ? "Duplicating..." : "Duplicate")
+            </button>
             @if (IsPart(OpenNodeMenuNode))
             {
-                <button type="button" role="menuitem" @onclick="OnNodeMenuAddChapterAsync">Add chapter</button>
+                <button type="button" role="menuitem" @onclick="OnNodeMenuAddChapterAsync" disabled="@_duplicateNodeInFlight">Add chapter</button>
             }
             else if (IsChapter(OpenNodeMenuNode))
             {
-                <button type="button" role="menuitem" @onclick="OnNodeMenuAddSceneAsync">Add scene</button>
+                <button type="button" role="menuitem" @onclick="OnNodeMenuAddSceneAsync" disabled="@_duplicateNodeInFlight">Add scene</button>
             }
             else if (IsScene(OpenNodeMenuNode))
             {
-                <button type="button" role="menuitem" @onclick="OnNodeMenuOpenSceneAsync">Open scene</button>
+                <button type="button" role="menuitem" @onclick="OnNodeMenuOpenSceneAsync" disabled="@_duplicateNodeInFlight">Open scene</button>
             }
             @if (_outlineTemplatesEnabled)
             {
-                <button type="button" role="menuitem" @onclick="OnNodeMenuTemplatesAsync">Templates...</button>
+                <button type="button" role="menuitem" @onclick="OnNodeMenuTemplatesAsync" disabled="@_duplicateNodeInFlight">Templates...</button>
             }
-            <button type="button" role="menuitem" class="danger" @onclick="OnNodeMenuDeleteAsync">Delete</button>
+            <button type="button" role="menuitem" class="danger" @onclick="OnNodeMenuDeleteAsync" disabled="@_duplicateNodeInFlight">Delete</button>
         </div>
     </div>
 }
@@ -546,6 +549,7 @@ else
     private Guid? _dragNodeId;
     private bool _pointerDragActive;
     private Guid? _pointerDragHoverNodeId;
+    private bool _duplicateNodeInFlight;
     private int _dailyTargetDraft;
     private int _weeklyTargetDraft;
     private string _timezoneDraft = "UTC";
@@ -1340,6 +1344,16 @@ else
         }
     }
 
+    private async Task OnNodeMenuDuplicateAsync()
+    {
+        Guid? nodeId = _openNodeMenuId;
+        CloseNodeMenu();
+        if (nodeId.HasValue)
+        {
+            await DuplicateNodeAsync(nodeId.Value);
+        }
+    }
+
     private async Task OnNodeMenuTemplatesAsync()
     {
         Guid? nodeId = _openNodeMenuId;
@@ -1407,6 +1421,92 @@ else
 
         _collapsedNodeIds.Remove(nodeId);
         await RefreshProjectAsync(_activeProject.Id);
+    }
+
+    private async Task DuplicateNodeAsync(Guid nodeId)
+    {
+        if (_activeProject is null || _duplicateNodeInFlight)
+        {
+            return;
+        }
+
+        _duplicateNodeInFlight = true;
+        _error = null;
+
+        try
+        {
+            ProjectNodeDto? source = _nodes.FirstOrDefault(item => item.Id == nodeId);
+            bool? deep = source is null
+                ? null
+                : IsScene(source)
+                    ? false
+                    : true;
+
+            ProjectNodeDuplicateRequest payload = new(deep);
+            using HttpResponseMessage response = await Http.PostAsJsonAsync(
+                $"api/projects/{_activeProject.Id}/nodes/{nodeId}/duplicate",
+                payload);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _error = "Duplicate node failed.";
+                return;
+            }
+
+            ProjectNodeDuplicateResponse? result = await response.Content.ReadFromJsonAsync<ProjectNodeDuplicateResponse>();
+            if (result is null)
+            {
+                _error = "Duplicate node failed.";
+                return;
+            }
+
+            foreach (ProjectNodeDto updated in result.UpdatedNodes)
+            {
+                int existingIndex = _nodes.FindIndex(item => item.Id == updated.Id);
+                if (existingIndex >= 0)
+                {
+                    _nodes[existingIndex] = updated;
+                }
+            }
+
+            foreach (ProjectNodeDto created in result.CreatedNodes)
+            {
+                if (_nodes.All(item => item.Id != created.Id))
+                {
+                    _nodes.Add(created);
+                }
+            }
+
+            ProjectNodeDto? duplicatedRoot = _nodes.FirstOrDefault(item => item.Id == result.RootNodeId);
+            if (duplicatedRoot?.ParentId.HasValue == true)
+            {
+                _collapsedNodeIds.Remove(duplicatedRoot.ParentId.Value);
+            }
+
+            _selectedNodeId = result.RootNodeId;
+            if (_selectedNode is not null)
+            {
+                _renameDraft = _selectedNode.Title;
+            }
+
+            int totalWords = _nodes.Where(item => item.ParentId is null).Sum(item => item.WordCountCache);
+            _activeProject = _activeProject with
+            {
+                TotalWordCount = totalWords,
+                UpdatedUtc = DateTimeOffset.UtcNow
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Duplicate node failed.");
+            _error = ex is HttpRequestException
+                ? "Duplicate node failed (request timed out or server unreachable)."
+                : "Duplicate node failed.";
+        }
+        finally
+        {
+            _duplicateNodeInFlight = false;
+        }
     }
 
     private async Task RefreshProjectAsync(Guid projectId)

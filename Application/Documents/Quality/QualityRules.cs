@@ -48,6 +48,8 @@ namespace WriterApp.Application.Documents
                     continue;
                 }
 
+                QualityIssueFix? fix = BuildSplitFix(context, paragraph);
+
                 yield return new QualityIssue(
                     string.Empty,
                     Id,
@@ -58,8 +60,75 @@ namespace WriterApp.Application.Documents
                     paragraph.Text,
                     paragraph.Start,
                     paragraph.End,
-                    null);
+                    fix);
             }
+        }
+
+        private static QualityIssueFix? BuildSplitFix(QualityCheckContext context, QualityParagraph paragraph)
+        {
+            if (string.IsNullOrEmpty(context.Text))
+            {
+                return null;
+            }
+
+            int paragraphStart = Math.Max(0, paragraph.Start);
+            int paragraphEnd = Math.Clamp(paragraph.End, paragraphStart, context.Text.Length);
+            if (paragraphEnd <= paragraphStart)
+            {
+                return null;
+            }
+
+            List<QualitySentence> sentences = context.Sentences
+                .Where(sentence => sentence.Start >= paragraphStart && sentence.End <= paragraphEnd)
+                .ToList();
+            if (sentences.Count < 2)
+            {
+                return null;
+            }
+
+            int totalWords = sentences.Sum(sentence => sentence.WordCount);
+            if (totalWords <= 1)
+            {
+                return null;
+            }
+
+            int runningWords = 0;
+            int splitSentenceIndex = 0;
+            int bestDistance = int.MaxValue;
+            int targetWords = totalWords / 2;
+            for (int i = 0; i < sentences.Count - 1; i++)
+            {
+                runningWords += sentences[i].WordCount;
+                int distance = Math.Abs(targetWords - runningWords);
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    splitSentenceIndex = i;
+                }
+            }
+
+            int splitAbsolute = sentences[splitSentenceIndex].End;
+            int splitRelative = splitAbsolute - paragraphStart;
+            if (splitRelative <= 0 || splitRelative >= (paragraphEnd - paragraphStart))
+            {
+                return null;
+            }
+
+            string paragraphText = context.Text.Substring(paragraphStart, paragraphEnd - paragraphStart);
+            string left = paragraphText[..splitRelative].TrimEnd();
+            string right = paragraphText[splitRelative..].TrimStart();
+            if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
+            {
+                return null;
+            }
+
+            string replacement = $"{left}\n\n{right}";
+            if (string.Equals(replacement, paragraphText, StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            return new QualityIssueFix("replace", paragraphStart, paragraphEnd, replacement);
         }
     }
 
@@ -115,12 +184,6 @@ namespace WriterApp.Application.Documents
                 string key = token.Text;
                 if (recent.TryGetValue(key, out QualityToken? prev))
                 {
-                    QualityIssueFix? fix = null;
-                    if (IsAdjacentDuplicate(context.Text, prev, token, out int fixFrom, out int fixTo))
-                    {
-                        fix = new QualityIssueFix("delete", fixFrom, fixTo, null);
-                    }
-
                     yield return new QualityIssue(
                         string.Empty,
                         Id,
@@ -131,7 +194,7 @@ namespace WriterApp.Application.Documents
                         token.Text,
                         token.Start,
                         token.End,
-                        fix);
+                        null);
                 }
 
                 recent[key] = token;
@@ -147,35 +210,6 @@ namespace WriterApp.Application.Documents
             }
         }
 
-        private static bool IsAdjacentDuplicate(string text, QualityToken previous, QualityToken current, out int from, out int to)
-        {
-            from = current.Start;
-            to = current.End;
-
-            if (string.IsNullOrEmpty(text) || current.Start < previous.End || current.End > text.Length)
-            {
-                return false;
-            }
-
-            int gapLength = current.Start - previous.End;
-            if (gapLength < 0)
-            {
-                return false;
-            }
-
-            string gap = gapLength == 0 ? string.Empty : text.Substring(previous.End, gapLength);
-            if (gapLength > 0 && gap.Any(ch => !char.IsWhiteSpace(ch)))
-            {
-                return false;
-            }
-
-            if (from > 0 && char.IsWhiteSpace(text[from - 1]))
-            {
-                from--;
-            }
-
-            return to > from;
-        }
     }
 
     public sealed class PassiveVoiceRule : IQualityRule

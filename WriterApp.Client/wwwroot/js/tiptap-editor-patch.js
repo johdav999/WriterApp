@@ -776,6 +776,15 @@
       return result;
     };
 
+    const parseOptionalNumber = (value) => {
+      if (value === null || value === undefined || value === "") {
+        return null;
+      }
+
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+
     const resolveTargetRangeFromFix = (editor, fix) => {
       if (!editor?.view || !fix) {
         return { ok: false, reason: "invalid_editor_or_fix" };
@@ -934,20 +943,23 @@
         });
       }
 
-      let docFrom = Number(fix.docFrom);
-      let docTo = Number(fix.docTo);
+      let docFrom = parseOptionalNumber(fix.docFrom);
+      let docTo = parseOptionalNumber(fix.docTo);
       let target = { from: Number(fix.from) || 0, to: Number(fix.to) || 0, source: "doc-captured-range" };
       let anchorMatchedAtRange = false;
+      const docSize = Number(editor?.state?.doc?.content?.size) || 0;
+      const requiresRange = kind === "replace" || kind === "delete";
 
-      const hasCapturedDocRange = Number.isFinite(docFrom) && Number.isFinite(docTo);
-      if (!hasCapturedDocRange) {
+      const resolveFallbackTarget = () => {
         const resolved = resolveTargetRangeFromFix(editor, fix);
         if (!resolved.ok) {
-          return buildFixApplyResult(false, false, resolved.reason || "range_resolution_failed", {
+          return buildFixApplyResult(false, false, "could_not_resolve_range", {
             issueKey,
+            kind,
+            source: resolved.target?.source ?? null,
             from: resolved.target?.from ?? null,
             to: resolved.target?.to ?? null,
-            source: resolved.target?.source ?? null
+            resolutionReason: resolved.reason || "range_resolution_failed"
           });
         }
 
@@ -955,22 +967,112 @@
         docFrom = resolved.docFrom;
         docTo = resolved.docTo;
         anchorMatchedAtRange = !!resolved.anchorMatchedAtRange;
+        return null;
+      };
+
+      const hasCapturedDocRange = docFrom !== null && docTo !== null;
+      if (hasCapturedDocRange) {
+        const capturedLooksValid = docFrom > 0
+          && docTo > 0
+          && docFrom <= docSize
+          && docTo <= docSize
+          && (!requiresRange || docTo > docFrom);
+
+        if (!capturedLooksValid) {
+          const fallbackFailure = resolveFallbackTarget();
+          if (fallbackFailure) {
+            return fallbackFailure;
+          }
+        } else {
+          target = {
+            from: Number.isFinite(Number(fix.from)) ? Number(fix.from) : 0,
+            to: Number.isFinite(Number(fix.to)) ? Number(fix.to) : 0,
+            source: "doc-captured-range"
+          };
+        }
       } else {
+        const fallbackFailure = resolveFallbackTarget();
+        if (fallbackFailure) {
+          return fallbackFailure;
+        }
+      }
+
+      if (docFrom === null || docTo === null) {
+        const fallbackFailure = resolveFallbackTarget();
+        if (fallbackFailure) {
+          return fallbackFailure;
+        }
+      }
+
+      if (!Number.isFinite(docFrom) || !Number.isFinite(docTo)) {
+        return buildFixApplyResult(false, false, "could_not_resolve_range", {
+          issueKey,
+          kind,
+          source: target.source,
+          from: target?.from ?? null,
+          to: target?.to ?? null,
+          resolutionReason: "doc_range_missing_after_resolution"
+        });
+      }
+
+      if (requiresRange && docTo <= docFrom) {
+        const fallbackFailure = resolveFallbackTarget();
+        if (fallbackFailure) {
+          return fallbackFailure;
+        }
+      }
+
+      if (requiresRange && docTo <= docFrom) {
+        return buildFixApplyResult(false, false, "could_not_resolve_range", {
+          issueKey,
+          kind,
+          source: target.source,
+          docFrom,
+          docTo,
+          resolutionReason: "resolved_doc_range_invalid"
+        });
+      }
+
+      if (docFrom > docSize || docTo > docSize || docFrom < 0 || docTo < 0) {
+        const fallbackFailure = resolveFallbackTarget();
+        if (fallbackFailure) {
+          return fallbackFailure;
+        }
+      }
+
+      if (docFrom > docSize || docTo > docSize || docFrom < 0 || docTo < 0) {
+        return buildFixApplyResult(false, false, "could_not_resolve_range", {
+          issueKey,
+          kind,
+          source: target.source,
+          docFrom,
+          docTo,
+          resolutionReason: "resolved_doc_range_out_of_bounds"
+        });
+      }
+
+      docFrom = Number(docFrom);
+      docTo = Number(docTo);
+
+      if (window.__waQualityDebug === true) {
+        console.debug("[quality] apply target resolved", {
+          issueKey,
+          kind,
+          source: target.source,
+          plainFrom: target.from,
+          plainTo: target.to,
+          docFrom,
+          docTo,
+          docSize
+        });
+      }
+
+      if (target.source === "doc-captured-range") {
         target = {
           from: Number.isFinite(Number(fix.from)) ? Number(fix.from) : 0,
           to: Number.isFinite(Number(fix.to)) ? Number(fix.to) : 0,
           source: "doc-captured-range"
         };
-
-        if ((kind === "replace" || kind === "delete") && docTo <= docFrom) {
-          return buildFixApplyResult(false, false, "captured_doc_range_invalid", {
-            issueKey,
-            kind,
-            source: target.source,
-            docFrom,
-            docTo
-          });
-        }
       }
 
       const expectedText = typeof fix.expectedText === "string" ? fix.expectedText : null;

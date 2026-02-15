@@ -2019,7 +2019,9 @@ else
                             class="export-panel-select"
                             @bind="SelectedTemplateIdValue"
                             @bind:after="MarkPresetAsCustom"
-                            disabled="@(!string.Equals(_exportFormatSelection, "html", StringComparison.OrdinalIgnoreCase))">
+                            disabled="@(!string.Equals(_exportFormatSelection, "html", StringComparison.OrdinalIgnoreCase) &&
+                                        !string.Equals(_exportFormatSelection, "pdf", StringComparison.OrdinalIgnoreCase) &&
+                                        !string.Equals(_exportFormatSelection, "docx", StringComparison.OrdinalIgnoreCase))">
                         @foreach (ExportTemplateDto template in _exportTemplates)
                         {
                             <option value="@template.Id">@template.Name @GetPresetTag(template.PresetKey)</option>
@@ -2140,7 +2142,7 @@ else
             </div>
             <div class="export-panel-row export-panel-actions">
                 <button type="button" class="link-button" @onclick="OpenTemplateManagerAsync">Manage templates...</button>
-                <span class="export-panel-hint">Templates apply to HTML/PDF exports.</span>
+                <span class="export-panel-hint">Templates apply to HTML/PDF/DOCX exports.</span>
             </div>
             @if (!string.IsNullOrWhiteSpace(_templateLoadError))
             {
