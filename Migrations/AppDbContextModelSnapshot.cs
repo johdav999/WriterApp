@@ -934,6 +934,23 @@ namespace BlazorApp.Migrations
                     b.ToTable("Sections");
                 });
 
+            modelBuilder.Entity("WriterApp.Data.Documents.SectionNoteRecord", b =>
+                {
+                    b.Property<Guid>("SectionId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("NotesText")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("SectionId");
+
+                    b.ToTable("SectionNotes");
+                });
+
             modelBuilder.Entity("WriterApp.Data.Documents.SectionSceneCardRecord", b =>
                 {
                     b.Property<Guid>("SectionId")
@@ -1721,6 +1738,17 @@ namespace BlazorApp.Migrations
                         .IsRequired();
 
                     b.Navigation("Document");
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Documents.SectionNoteRecord", b =>
+                {
+                    b.HasOne("WriterApp.Data.Documents.SectionRecord", "Section")
+                        .WithOne()
+                        .HasForeignKey("WriterApp.Data.Documents.SectionNoteRecord", "SectionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Section");
                 });
 
             modelBuilder.Entity("WriterApp.Data.Documents.SectionSceneCardRecord", b =>

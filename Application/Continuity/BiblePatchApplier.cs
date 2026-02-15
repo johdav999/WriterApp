@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text;
 
 namespace WriterApp.Application.Continuity
 {
@@ -33,11 +34,12 @@ namespace WriterApp.Application.Continuity
 
             try
             {
-                JsonNode? candidateNode = JsonNode.Parse(patchOrContentJson);
-                if (candidateNode is not JsonObject candidate)
+                if (!TryParseCandidateObject(patchOrContentJson, out JsonObject? candidate) || candidate is null)
                 {
                     return false;
                 }
+
+                NormalizeCandidate(candidate, bibleType);
 
                 if (candidate.TryGetPropertyValue("ops", out JsonNode? opsNode) && opsNode is JsonArray ops)
                 {
@@ -57,6 +59,195 @@ namespace WriterApp.Application.Continuity
             catch (JsonException)
             {
                 return false;
+            }
+        }
+
+        private static bool TryParseCandidateObject(string payload, out JsonObject? candidate)
+        {
+            candidate = null;
+            if (string.IsNullOrWhiteSpace(payload))
+            {
+                return false;
+            }
+
+            JsonNode? parsed = TryParseNode(payload);
+            if (parsed is JsonObject parsedObject)
+            {
+                candidate = parsedObject;
+                return true;
+            }
+
+            // Some providers still wrap strict JSON in markdown fences or extra text.
+            string trimmed = payload.Trim();
+            int start = trimmed.IndexOf('{');
+            int end = trimmed.LastIndexOf('}');
+            if (start >= 0 && end > start)
+            {
+                string objectSlice = trimmed.Substring(start, end - start + 1);
+                JsonNode? sliced = TryParseNode(objectSlice);
+                if (sliced is JsonObject slicedObject)
+                {
+                    candidate = slicedObject;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static JsonNode? TryParseNode(string json)
+        {
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return null;
+            }
+
+            JsonDocumentOptions options = new()
+            {
+                AllowTrailingCommas = true,
+                CommentHandling = JsonCommentHandling.Skip
+            };
+
+            try
+            {
+                return JsonNode.Parse(json, documentOptions: options);
+            }
+            catch (JsonException)
+            {
+                // Retry once with lightweight cleanup for common model formatting mistakes.
+                string normalized = NormalizeJsonCandidate(json);
+                if (string.Equals(normalized, json, StringComparison.Ordinal))
+                {
+                    return null;
+                }
+
+                try
+                {
+                    return JsonNode.Parse(normalized, documentOptions: options);
+                }
+                catch (JsonException)
+                {
+                    return null;
+                }
+            }
+        }
+
+        private static string NormalizeJsonCandidate(string json)
+        {
+            string normalized = json
+                .Replace('\u201C', '"')
+                .Replace('\u201D', '"')
+                .Replace('\u2018', '\'')
+                .Replace('\u2019', '\'');
+
+            return RemoveTrailingCommas(normalized);
+        }
+
+        private static string RemoveTrailingCommas(string value)
+        {
+            StringBuilder builder = new(value.Length);
+            bool inString = false;
+            bool escaping = false;
+
+            for (int i = 0; i < value.Length; i++)
+            {
+                char ch = value[i];
+
+                if (inString)
+                {
+                    builder.Append(ch);
+                    if (escaping)
+                    {
+                        escaping = false;
+                    }
+                    else if (ch == '\\')
+                    {
+                        escaping = true;
+                    }
+                    else if (ch == '"')
+                    {
+                        inString = false;
+                    }
+
+                    continue;
+                }
+
+                if (ch == '"')
+                {
+                    inString = true;
+                    builder.Append(ch);
+                    continue;
+                }
+
+                if (ch != ',')
+                {
+                    builder.Append(ch);
+                    continue;
+                }
+
+                int lookAhead = i + 1;
+                while (lookAhead < value.Length && char.IsWhiteSpace(value[lookAhead]))
+                {
+                    lookAhead++;
+                }
+
+                if (lookAhead < value.Length && (value[lookAhead] == '}' || value[lookAhead] == ']'))
+                {
+                    continue;
+                }
+
+                builder.Append(ch);
+            }
+
+            return builder.ToString();
+        }
+
+        private static void NormalizeCandidate(JsonObject candidate, BibleType bibleType)
+        {
+            if (candidate["ops"] is null && candidate["operations"] is JsonArray operations)
+            {
+                candidate["ops"] = operations.DeepClone();
+            }
+
+            string collectionKey = ResolveCollectionKey(bibleType);
+            if (candidate[collectionKey] is JsonArray)
+            {
+                return;
+            }
+
+            switch (bibleType)
+            {
+                case BibleType.Character:
+                    PromoteCollectionAlias(candidate, collectionKey, "people");
+                    PromoteCollectionAlias(candidate, collectionKey, "characterEntries");
+                    break;
+                case BibleType.Place:
+                    PromoteCollectionAlias(candidate, collectionKey, "locations");
+                    PromoteCollectionAlias(candidate, collectionKey, "placeEntries");
+                    break;
+                case BibleType.Timeline:
+                    PromoteCollectionAlias(candidate, collectionKey, "timelineEvents");
+                    if (candidate[collectionKey] is not JsonArray
+                        && candidate["timeline"] is JsonObject timeline
+                        && timeline["events"] is JsonArray nestedEvents)
+                    {
+                        candidate[collectionKey] = nestedEvents.DeepClone();
+                    }
+
+                    break;
+            }
+        }
+
+        private static void PromoteCollectionAlias(JsonObject candidate, string collectionKey, string aliasKey)
+        {
+            if (candidate[collectionKey] is JsonArray)
+            {
+                return;
+            }
+
+            if (candidate[aliasKey] is JsonArray aliasArray)
+            {
+                candidate[collectionKey] = aliasArray.DeepClone();
             }
         }
 

@@ -28,7 +28,8 @@ namespace WriterApp.Application.Documents
                     "Consider splitting the sentence for clarity.",
                     sentence.Text,
                     sentence.Start,
-                    sentence.End);
+                    sentence.End,
+                    null);
             }
         }
     }
@@ -56,7 +57,8 @@ namespace WriterApp.Application.Documents
                     "Consider breaking the paragraph into smaller chunks.",
                     paragraph.Text,
                     paragraph.Start,
-                    paragraph.End);
+                    paragraph.End,
+                    null);
             }
         }
     }
@@ -93,7 +95,8 @@ namespace WriterApp.Application.Documents
                 "Shorter sentences or simpler words can improve readability.",
                 null,
                 0,
-                Math.Min(context.Text.Length, 1));
+                Math.Min(context.Text.Length, 1),
+                null);
         }
     }
 
@@ -112,6 +115,12 @@ namespace WriterApp.Application.Documents
                 string key = token.Text;
                 if (recent.TryGetValue(key, out QualityToken? prev))
                 {
+                    QualityIssueFix? fix = null;
+                    if (IsAdjacentDuplicate(context.Text, prev, token, out int fixFrom, out int fixTo))
+                    {
+                        fix = new QualityIssueFix("delete", fixFrom, fixTo, null);
+                    }
+
                     yield return new QualityIssue(
                         string.Empty,
                         Id,
@@ -121,7 +130,8 @@ namespace WriterApp.Application.Documents
                         "Try varying the word choice.",
                         token.Text,
                         token.Start,
-                        token.End);
+                        token.End,
+                        fix);
                 }
 
                 recent[key] = token;
@@ -135,6 +145,36 @@ namespace WriterApp.Application.Documents
                     }
                 }
             }
+        }
+
+        private static bool IsAdjacentDuplicate(string text, QualityToken previous, QualityToken current, out int from, out int to)
+        {
+            from = current.Start;
+            to = current.End;
+
+            if (string.IsNullOrEmpty(text) || current.Start < previous.End || current.End > text.Length)
+            {
+                return false;
+            }
+
+            int gapLength = current.Start - previous.End;
+            if (gapLength < 0)
+            {
+                return false;
+            }
+
+            string gap = gapLength == 0 ? string.Empty : text.Substring(previous.End, gapLength);
+            if (gapLength > 0 && gap.Any(ch => !char.IsWhiteSpace(ch)))
+            {
+                return false;
+            }
+
+            if (from > 0 && char.IsWhiteSpace(text[from - 1]))
+            {
+                from--;
+            }
+
+            return to > from;
         }
     }
 
@@ -162,7 +202,8 @@ namespace WriterApp.Application.Documents
                     "Consider using active voice for stronger clarity.",
                     match.Value,
                     sentence.Start + match.Index,
-                    sentence.Start + match.Index + match.Length);
+                    sentence.Start + match.Index + match.Length,
+                    null);
             }
         }
     }
@@ -220,7 +261,8 @@ namespace WriterApp.Application.Documents
                         $"Use \"{preferred}\" for consistency.",
                         token.Text,
                         token.Start,
-                        token.End);
+                        token.End,
+                        new QualityIssueFix("replace", token.Start, token.End, preferred));
                 }
             }
         }
@@ -249,7 +291,8 @@ namespace WriterApp.Application.Documents
                     "Make sure the timeline shift is clear to readers.",
                     match.Value,
                     match.Index,
-                    match.Index + match.Length);
+                    match.Index + match.Length,
+                    null);
             }
         }
     }
@@ -283,7 +326,8 @@ namespace WriterApp.Application.Documents
                             $"Use \"{canonical}\" to match your glossary.",
                             token.Text,
                             token.Start,
-                            token.End);
+                            token.End,
+                            new QualityIssueFix("replace", token.Start, token.End, canonical));
                     }
 
                     continue;
@@ -305,7 +349,8 @@ namespace WriterApp.Application.Documents
                     $"Consider using \"{canonicalMatch}\" for consistency.",
                     token.Text,
                     token.Start,
-                    token.End);
+                    token.End,
+                    null);
             }
         }
 

@@ -19,6 +19,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.JSInterop;
 using WriterApp.Application.AI;
+using WriterApp.Application.Continuity;
 using WriterApp.Application.Documents;
 using WriterApp.Application.Exporting;
 using WriterApp.Client.Diagnostics;
@@ -396,6 +397,12 @@ namespace WriterApp.Client.Pages
         private bool _continuityBusy;
         private string? _selectedContinuityIssueKey;
         private bool _pendingContinuityHighlights;
+        private bool _isContinuityProposalOpen;
+        private ContinuityIssue? _pendingContinuityIssue;
+        private ContinuityProposalPreview? _continuityProposalPreview;
+        private string? _continuityProposalError;
+        private bool _isApplyingContinuityProposal;
+        private ContinuityApplyRange? _pendingContinuityRange;
         private BibleSnapshotDto? _characterBibleSnapshot;
         private BibleSnapshotDto? _placeBibleSnapshot;
         private BibleSnapshotDto? _timelineBibleSnapshot;
@@ -457,12 +464,30 @@ namespace WriterApp.Client.Pages
         private readonly List<PageQualityIssueDto> _qualityIssues = new();
         private bool _qualityLoading;
         private string? _qualityError;
+        private string? _qualityStatus;
         private bool _qualityFromCache;
         private string _qualityScope = "page";
         private string _qualityFilterSeverity = "all";
         private string _qualityFilterKind = "all";
+        private bool _isStyleQualityTabActive;
+        private string? _selectedQualityIssueKey;
+        private readonly HashSet<string> _qualityApplyingIssueKeys = new(StringComparer.Ordinal);
+        private readonly HashSet<string> _qualityAppliedIssueKeys = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, string> _qualityIssueActionErrors = new(StringComparer.Ordinal);
+        private bool _isQualityProposalOpen;
+        private PageQualityIssueDto? _proposalIssue;
+        private string? _proposalError;
+        private bool _isProposalApplying;
+        private QualityProposalPreview? _proposalPreview;
         private string _notesDraft = string.Empty;
         private string? _notesStatus;
+        private string? _notesError;
+        private DateTimeOffset? _notesLastSavedAtUtc;
+        private CancellationTokenSource? _notesAutosaveCts;
+        private bool _notesSaveInFlight;
+        private bool _notesSaveQueued;
+        private int _notesEditVersion;
+        private int _notesSavedVersion;
         private string _sceneNarrativePurpose = string.Empty;
         private string _sceneEmotionalBeat = string.Empty;
         private string _sceneKeyEvents = string.Empty;
@@ -498,6 +523,7 @@ namespace WriterApp.Client.Pages
         private const int PageBreakGapPx = 32;
         private const int PagePaddingX = 20;
         private const int PagePaddingY = 24;
+        private static readonly TimeSpan NotesAutosaveDebounce = TimeSpan.FromMilliseconds(700);
         private static readonly TimeSpan SceneCardAutosaveDebounce = TimeSpan.FromSeconds(2.5);
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -751,7 +777,8 @@ namespace WriterApp.Client.Pages
                 await RestoreContextPanelStateAsync();
 
                 await LoadHeadingPrefixCountersAsync();
-                _notesDraft = await LoadPageNotesAsync(_activePage.Id);
+                ResetNotesAutosaveState();
+                _notesDraft = await LoadSectionNotesAsync(_activeSection.Id, CancellationToken.None);
                 _notesStatus = null;
                 await LoadSceneCardAsync(_activeSection.Id);
                 await LoadAiHistoryAsync();
@@ -831,6 +858,8 @@ namespace WriterApp.Client.Pages
 
         private async Task OnSectionSelected(Guid sectionId)
         {
+            await FlushNotesSaveAsync();
+
             if (_pageEditor is not null)
             {
                 await _pageEditor.ForceSaveIfDifferentAsync("navigate");
@@ -1744,6 +1773,9 @@ namespace WriterApp.Client.Pages
         public void Dispose()
         {
             LayoutStateService.Changed -= OnLayoutStateChanged;
+            _notesAutosaveCts?.Cancel();
+            _notesAutosaveCts?.Dispose();
+            _notesAutosaveCts = null;
             _sceneAutosaveCts?.Cancel();
             _sceneAutosaveCts?.Dispose();
             _sceneAutosaveCts = null;
@@ -2252,8 +2284,16 @@ namespace WriterApp.Client.Pages
             bool persistSelection = true,
             bool loadTabData = true)
         {
+            bool wasStyleQualityActive = _isStyleQualityTabActive;
             _activeContextTab = tab;
             _activePanelCategory = GetCategoryForTab(tab);
+            _isStyleQualityTabActive = tab == ContextTab.Quality;
+
+            if (wasStyleQualityActive && !_isStyleQualityTabActive && _pageEditor is not null)
+            {
+                _selectedQualityIssueKey = null;
+                await _pageEditor.ClearAllQualityIssueHighlightsAsync();
+            }
 
             if (!loadTabData)
             {
@@ -2285,6 +2325,11 @@ namespace WriterApp.Client.Pages
             if (persistSelection)
             {
                 await PersistContextPanelStateAsync();
+            }
+
+            if (_isStyleQualityTabActive)
+            {
+                await SyncQualityIssueHighlightAsync();
             }
         }
 
@@ -2667,31 +2712,15 @@ namespace WriterApp.Client.Pages
 
         private async Task OnNotesSave()
         {
-            if (_activePage is null)
-            {
-                return;
-            }
-
-            try
-            {
-                await SavePageNotesAsync(_activePage.Id, _notesDraft);
-                _notesStatus = "Notes saved.";
-            }
-            catch (Exception ex)
-            {
-                Logger.LogError(ex, "Notes save failed.");
-                _notesStatus = "Failed to save notes.";
-            }
-            finally
-            {
-                await InvokeAsync(StateHasChanged);
-            }
+            await FlushNotesSaveAsync();
         }
 
         private void OnNotesInput(ChangeEventArgs args)
         {
             _notesDraft = args.Value?.ToString() ?? string.Empty;
-            _notesStatus = null;
+            _notesError = null;
+            _notesEditVersion++;
+            QueueNotesAutosave();
         }
 
         private bool HasAction(string actionKey)
@@ -2797,19 +2826,39 @@ namespace WriterApp.Client.Pages
             }
         }
 
-        private async Task ExecuteContinuityActionAsync(string actionKey, string successMessage, Dictionary<string, object?>? options)
+        private async Task<AiActionExecuteResponseDto?> ExecuteContinuityActionAsync(string actionKey, string successMessage, Dictionary<string, object?>? options)
         {
             if (_activeSection is null || _continuityBusy || !HasAction(actionKey))
             {
-                return;
+                return null;
             }
 
             _continuityBusy = true;
             _continuityStatus = null;
             try
             {
-                string html = _pageEditor?.GetContent() ?? string.Empty;
-                string plain = PlainTextMapper.ToPlainText(html);
+                string plain = string.Empty;
+                if (_pageEditor is not null)
+                {
+                    plain = await _pageEditor.GetPlainTextAsync() ?? string.Empty;
+                    if (string.IsNullOrWhiteSpace(plain))
+                    {
+                        string htmlFromEditor = await _pageEditor.GetContentAsync();
+                        plain = PlainTextMapper.ToPlainText(htmlFromEditor);
+                    }
+                }
+                else
+                {
+                    plain = PlainTextMapper.ToPlainText(_activePage?.Content ?? string.Empty);
+                }
+
+                Logger.LogWarning(
+                    "Continuity action source text resolved. Action={Action}, SectionId={SectionId}, PageId={PageId}, PlainLength={PlainLength}",
+                    actionKey,
+                    _activeSection.Id,
+                    _activePage?.Id,
+                    plain.Length);
+
                 Dictionary<string, object?> resolvedOptions = options is null
                     ? new Dictionary<string, object?>()
                     : new Dictionary<string, object?>(options);
@@ -2835,14 +2884,26 @@ namespace WriterApp.Client.Pages
                 if (!result.IsSuccessStatusCode)
                 {
                     _continuityStatus = "Continuity action failed.";
-                    return;
+                    return null;
                 }
 
                 AiActionExecuteResponseDto? response = await result.Content.ReadFromJsonAsync<AiActionExecuteResponseDto>();
-                if (response is null || string.IsNullOrWhiteSpace(response.ProposedText))
+                bool hasOperations = response?.Operations is { Count: > 0 };
+                if (response is null || (string.IsNullOrWhiteSpace(response.ProposedText) && !hasOperations))
                 {
                     _continuityStatus = "Continuity action returned no output.";
-                    return;
+                    return null;
+                }
+
+                if (string.Equals(actionKey, "continuity.apply_fix", StringComparison.OrdinalIgnoreCase))
+                {
+                    Logger.LogWarning(
+                        "Continuity apply_fix response received. ProposalId={ProposalId}, Operations={Operations}, ProposedTextLength={ProposedTextLength}, SectionId={SectionId}, PageId={PageId}",
+                        response.ProposalId,
+                        response.Operations?.Count ?? 0,
+                        response.ProposedText?.Length ?? 0,
+                        _activeSection.Id,
+                        _activePage?.Id);
                 }
 
                 if (string.Equals(actionKey, "continuity.check_section", StringComparison.OrdinalIgnoreCase))
@@ -2850,7 +2911,7 @@ namespace WriterApp.Client.Pages
                     if (!TryParseContinuityReport(response.ProposedText, out ContinuityReport? report) || report is null)
                     {
                         _continuityStatus = "Continuity report parsing failed.";
-                        return;
+                        return null;
                     }
 
                     _continuityReport = NormalizeContinuityReport(report, plain.Length);
@@ -2861,11 +2922,13 @@ namespace WriterApp.Client.Pages
 
                 _continuityStatus = successMessage;
                 await LoadAiHistoryAsync();
+                return response;
             }
             catch (Exception ex)
             {
                 Logger.LogWarning(ex, "Continuity action failed.");
                 _continuityStatus = "Continuity action failed.";
+                return null;
             }
             finally
             {
@@ -2897,32 +2960,888 @@ namespace WriterApp.Client.Pages
             await InvokeAsync(StateHasChanged);
         }
 
-        private async Task OnApplyContinuityFixAsync(ContinuityIssue issue)
+        private async Task OpenContinuityProposalAsync(ContinuityIssue issue)
         {
             if (!CanShowContinuityCoachFixes || _continuityBusy || _activeSection is null)
             {
                 return;
             }
 
-            string fixText = issue.SuggestedFix?.Trim() ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(fixText))
+            string plain = _pageEditor is null
+                ? string.Empty
+                : (await _pageEditor.GetPlainTextAsync() ?? string.Empty);
+            ContinuityApplyRange? applyRange = await BuildContinuityApplyRangeAsync(issue, plain);
+            if (applyRange is null)
             {
-                _continuityStatus = "No suggested fix text was provided.";
+                _continuityStatus = "Can't apply automatically; text changed.";
                 await InvokeAsync(StateHasChanged);
                 return;
             }
 
-            int start = Math.Max(0, issue.Anchor.PlainTextStart);
-            int length = Math.Max(0, issue.Anchor.PlainTextLength);
-            Dictionary<string, object?> options = new()
+            ContinuityIssue resolvedIssue = await EnsureContinuityIssueHasRevisedFixAsync(issue, plain, applyRange);
+            string fixText = ResolveContinuityFixText(resolvedIssue);
+            if (string.IsNullOrWhiteSpace(fixText) && !IsLikelyDuplicateContinuityIssue(resolvedIssue))
             {
-                ["section_id"] = _activeSection.Id,
-                ["anchor_start"] = start,
-                ["anchor_length"] = length,
-                ["suggested_fix"] = fixText
+                _continuityStatus = "The suggestion didn't contain revised prose. Please regenerate.";
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            _pendingContinuityIssue = resolvedIssue;
+            _pendingContinuityRange = applyRange;
+            _continuityProposalPreview = BuildContinuityProposalPreview(applyRange, fixText);
+            _continuityProposalError = null;
+            _isApplyingContinuityProposal = false;
+            _isContinuityProposalOpen = true;
+
+            _selectedContinuityIssueKey = GetContinuityIssueKey(resolvedIssue);
+            _pendingContinuityHighlights = true;
+            await ApplyContinuityHighlightsAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+
+        private static ContinuityProposalPreview BuildContinuityProposalPreview(ContinuityApplyRange range, string fixText)
+        {
+            string after = string.IsNullOrEmpty(fixText)
+                ? "(Delete duplicated text in highlighted range.)"
+                : fixText;
+            return new ContinuityProposalPreview(
+                range.Before,
+                after,
+                range.Prefix,
+                range.Suffix,
+                range.PlainFrom,
+                Math.Max(0, range.PlainTo - range.PlainFrom));
+        }
+
+        private async Task ConfirmContinuityProposalApplyAsync()
+        {
+            if (_pendingContinuityIssue is null || _isApplyingContinuityProposal)
+            {
+                return;
+            }
+
+            _isApplyingContinuityProposal = true;
+            _continuityProposalError = null;
+            try
+            {
+                bool applied = await ApplyContinuityFixCoreAsync(_pendingContinuityIssue, _pendingContinuityRange);
+                if (!applied)
+                {
+                    _continuityProposalError = _continuityStatus ?? "Continuity fix could not be applied.";
+                    return;
+                }
+
+                RemoveContinuityIssueFromCurrentReport(_pendingContinuityIssue);
+                await OnClearContinuityHighlightsAsync();
+                CloseContinuityProposal();
+            }
+            finally
+            {
+                _isApplyingContinuityProposal = false;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+
+        private async Task<bool> ApplyContinuityFixCoreAsync(ContinuityIssue issue, ContinuityApplyRange? proposalRange = null)
+        {
+            if (_activeSection is null || _pageEditor is null)
+            {
+                return false;
+            }
+
+            string beforePlain = await _pageEditor.GetPlainTextAsync() ?? string.Empty;
+            ContinuityApplyRange? applyRange = proposalRange ?? await BuildContinuityApplyRangeAsync(issue, beforePlain);
+            if (applyRange is null)
+            {
+                _continuityStatus = "Can't apply automatically; text changed.";
+                return false;
+            }
+
+            if (beforePlain.Length < applyRange.PlainTo
+                || !string.Equals(
+                    beforePlain.Substring(applyRange.PlainFrom, applyRange.PlainTo - applyRange.PlainFrom),
+                    applyRange.Before,
+                    StringComparison.Ordinal))
+            {
+                _continuityStatus = "Can't apply automatically; text changed.";
+                return false;
+            }
+
+            ContinuityIssue resolvedIssue = await EnsureContinuityIssueHasRevisedFixAsync(issue, beforePlain, applyRange);
+            string fixText = ResolveContinuityFixText(resolvedIssue);
+            if (string.IsNullOrWhiteSpace(fixText) && !IsLikelyDuplicateContinuityIssue(resolvedIssue))
+            {
+                _continuityStatus = "The suggestion didn't contain revised prose. Please regenerate.";
+                return false;
+            }
+
+            string issueKey = GetContinuityIssueKey(resolvedIssue);
+            Guid? pageId = _activePage?.Id;
+
+            if (!string.IsNullOrEmpty(fixText)
+                && !ContinuityRewriteValidator.ValidateReplacement(
+                    applyRange.Prefix,
+                    fixText,
+                    applyRange.Suffix,
+                    applyRange.StartsSentence,
+                    applyRange.EndsSentence,
+                    applyRange.Before.Length,
+                    out string? replacementError))
+            {
+                _continuityStatus = "Suggestion didn't integrate cleanly; please regenerate.";
+                Logger.LogWarning("Continuity replacement validation failed before apply. IssueKey={IssueKey}, Error={Error}", issueKey, replacementError);
+                return false;
+            }
+
+            string kind = string.IsNullOrEmpty(fixText) ? "delete" : "replace";
+            QualityIssueFixDto continuityFix = new(
+                kind,
+                applyRange.PlainFrom,
+                applyRange.PlainTo,
+                fixText,
+                applyRange.Before,
+                issueKey,
+                applyRange.DocFrom,
+                applyRange.DocTo,
+                applyRange.Before);
+
+            Logger.LogWarning(
+                "Continuity direct apply start. DocumentId={DocumentId}, SectionId={SectionId}, PageId={PageId}, IssueKey={IssueKey}, Kind={Kind}, PlainFrom={PlainFrom}, PlainTo={PlainTo}, DocFrom={DocFrom}, DocTo={DocTo}, ReplacementLength={ReplacementLength}",
+                DocumentId,
+                _activeSection.Id,
+                pageId,
+                issueKey,
+                kind,
+                applyRange.PlainFrom,
+                applyRange.PlainTo,
+                applyRange.DocFrom,
+                applyRange.DocTo,
+                fixText.Length);
+
+            bool applySucceeded = await _pageEditor.ApplyQualityIssueFixAsync(continuityFix, applyRange.Before, issueKey);
+            if (!applySucceeded)
+            {
+                _continuityStatus = "Can't apply automatically; text changed.";
+                return false;
+            }
+
+            string afterPlain = await _pageEditor.GetPlainTextAsync() ?? string.Empty;
+            if (string.Equals(beforePlain, afterPlain, StringComparison.Ordinal))
+            {
+                _continuityStatus = "Couldn't apply because text changed; please rerun continuity check.";
+                Logger.LogWarning(
+                    "Continuity fix produced no text change. DocumentId={DocumentId}, SectionId={SectionId}, PageId={PageId}, ProposalId={ProposalId}, IssueKey={IssueKey}, BeforeLength={BeforeLength}, AfterLength={AfterLength}",
+                    DocumentId,
+                    _activeSection.Id,
+                    pageId,
+                    Guid.Empty,
+                    issueKey,
+                    beforePlain.Length,
+                    afterPlain.Length);
+                return false;
+            }
+
+            await _pageEditor.ForceSaveIfDifferentAsync("continuity-apply");
+            _continuityStatus = "Continuity fix applied.";
+            Logger.LogWarning(
+                "Continuity fix applied. DocumentId={DocumentId}, SectionId={SectionId}, PageId={PageId}, ProposalId={ProposalId}, IssueKey={IssueKey}, BeforeLength={BeforeLength}, AfterLength={AfterLength}",
+                DocumentId,
+                _activeSection.Id,
+                pageId,
+                Guid.Empty,
+                issueKey,
+                beforePlain.Length,
+                afterPlain.Length);
+            return true;
+        }
+
+        private async Task<ContinuityIssue> EnsureContinuityIssueHasRevisedFixAsync(ContinuityIssue issue, string plainText, ContinuityApplyRange applyRange)
+        {
+            string normalizedFix = ResolveContinuityFixText(issue);
+            if (!string.IsNullOrWhiteSpace(normalizedFix)
+                && ContinuityRewriteValidator.ValidateReplacement(
+                    applyRange.Prefix,
+                    normalizedFix,
+                    applyRange.Suffix,
+                    applyRange.StartsSentence,
+                    applyRange.EndsSentence,
+                    applyRange.Before.Length,
+                    out _))
+            {
+                return issue with { SuggestedFix = normalizedFix };
+            }
+
+            if (IsLikelyDuplicateContinuityIssue(issue))
+            {
+                return issue with { SuggestedFix = string.Empty };
+            }
+
+            string firstAttempt = await GenerateContinuityRewriteAsync(issue, plainText, applyRange, strictMode: false);
+            if (!string.IsNullOrWhiteSpace(firstAttempt))
+            {
+                Logger.LogWarning(
+                    "Continuity rewrite retry succeeded. DocumentId={DocumentId}, SectionId={SectionId}, PageId={PageId}, Strict={Strict}, IssueKey={IssueKey}, TextLength={TextLength}",
+                    DocumentId,
+                    _activeSection?.Id,
+                    _activePage?.Id,
+                    false,
+                    GetContinuityIssueKey(issue),
+                    firstAttempt.Length);
+                return issue with { SuggestedFix = firstAttempt };
+            }
+
+            string strictAttempt = await GenerateContinuityRewriteAsync(issue, plainText, applyRange, strictMode: true);
+            if (!string.IsNullOrWhiteSpace(strictAttempt))
+            {
+                Logger.LogWarning(
+                    "Continuity rewrite retry succeeded. DocumentId={DocumentId}, SectionId={SectionId}, PageId={PageId}, Strict={Strict}, IssueKey={IssueKey}, TextLength={TextLength}",
+                    DocumentId,
+                    _activeSection?.Id,
+                    _activePage?.Id,
+                    true,
+                    GetContinuityIssueKey(issue),
+                    strictAttempt.Length);
+                return issue with { SuggestedFix = strictAttempt };
+            }
+
+            Logger.LogWarning(
+                "Continuity rewrite retry failed. DocumentId={DocumentId}, SectionId={SectionId}, PageId={PageId}, IssueKey={IssueKey}",
+                DocumentId,
+                _activeSection?.Id,
+                _activePage?.Id,
+                GetContinuityIssueKey(issue));
+            return issue with { SuggestedFix = string.Empty };
+        }
+
+        private async Task<string> GenerateContinuityRewriteAsync(ContinuityIssue issue, string plainText, ContinuityApplyRange applyRange, bool strictMode)
+        {
+            if (_activeSection is null)
+            {
+                return string.Empty;
+            }
+
+            string source = plainText ?? string.Empty;
+            int start = applyRange.PlainFrom;
+            int end = applyRange.PlainTo;
+            int length = Math.Max(0, end - start);
+            if (length <= 0 || source.Length < end)
+            {
+                return string.Empty;
+            }
+
+            string selectedText = source.Substring(start, length);
+            if (string.IsNullOrWhiteSpace(selectedText))
+            {
+                return string.Empty;
+            }
+
+            string instruction = strictMode
+                ? $"Rewrite exactly the selected span to resolve this continuity issue while preserving voice and style: {issue.Message}. Output rewritten span text only. Do not include prefix or suffix. Do not output instructions, analysis, labels, markdown, bullets, or quotes around the full answer. The output must integrate cleanly with prefix and suffix, must not start/end mid-word, should start with a capital letter when the span starts a sentence, and should end with sentence punctuation when the span ends a sentence."
+                : $"Rewrite exactly the selected span to resolve this continuity issue while preserving voice and style: {issue.Message}. Return revised span only (no prefix/suffix, no explanation). Avoid repeating prefix/suffix text at boundaries.";
+
+            Dictionary<string, object?> parameters = new()
+            {
+                ["instruction"] = instruction,
+                ["tone"] = "Neutral",
+                ["length"] = "Same",
+                ["preserve_terms"] = true
             };
 
-            await ExecuteContinuityActionAsync("continuity.apply_fix", "Continuity fix prepared. Apply from AI preview.", options);
+            AiActionExecuteRequestDto request = new(
+                DocumentId,
+                _activeSection.Id,
+                _activePage?.Id,
+                start,
+                end,
+                selectedText,
+                source,
+                GetOutlineTextForAi(),
+                parameters);
+
+            try
+            {
+                using HttpResponseMessage result = await Http.PostAsJsonAsync("api/ai/actions/rewrite.selection/execute", request);
+                if (!result.IsSuccessStatusCode)
+                {
+                    Logger.LogWarning(
+                        "Continuity rewrite retry request failed. DocumentId={DocumentId}, SectionId={SectionId}, PageId={PageId}, Strict={Strict}, StatusCode={StatusCode}, IssueKey={IssueKey}",
+                        DocumentId,
+                        _activeSection.Id,
+                        _activePage?.Id,
+                        strictMode,
+                        result.StatusCode,
+                        GetContinuityIssueKey(issue));
+                    return string.Empty;
+                }
+
+                AiActionExecuteResponseDto? response = await result.Content.ReadFromJsonAsync<AiActionExecuteResponseDto>();
+                string candidate = NormalizeContinuityRewriteCandidate(response?.ProposedText);
+                if (string.IsNullOrWhiteSpace(candidate))
+                {
+                    Logger.LogWarning(
+                        "Continuity rewrite retry returned invalid prose. DocumentId={DocumentId}, SectionId={SectionId}, PageId={PageId}, Strict={Strict}, IssueKey={IssueKey}, ProposedPreview={ProposedPreview}",
+                        DocumentId,
+                        _activeSection.Id,
+                        _activePage?.Id,
+                        strictMode,
+                        GetContinuityIssueKey(issue),
+                        CreateLogPreview(response?.ProposedText, 160));
+                    return string.Empty;
+                }
+
+                if (!ContinuityRewriteValidator.ValidateReplacement(
+                    applyRange.Prefix,
+                    candidate,
+                    applyRange.Suffix,
+                    applyRange.StartsSentence,
+                    applyRange.EndsSentence,
+                    applyRange.Before.Length,
+                    out string? validationError))
+                {
+                    Logger.LogWarning(
+                        "Continuity rewrite retry rejected by join validation. DocumentId={DocumentId}, SectionId={SectionId}, PageId={PageId}, Strict={Strict}, IssueKey={IssueKey}, Error={Error}, CandidatePreview={CandidatePreview}",
+                        DocumentId,
+                        _activeSection.Id,
+                        _activePage?.Id,
+                        strictMode,
+                        GetContinuityIssueKey(issue),
+                        validationError,
+                        CreateLogPreview(candidate, 160));
+                    return string.Empty;
+                }
+
+                return candidate;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(
+                    ex,
+                    "Continuity rewrite retry threw. DocumentId={DocumentId}, SectionId={SectionId}, PageId={PageId}, Strict={Strict}, IssueKey={IssueKey}",
+                    DocumentId,
+                    _activeSection.Id,
+                    _activePage?.Id,
+                    strictMode,
+                    GetContinuityIssueKey(issue));
+                return string.Empty;
+            }
+        }
+
+        private async Task<ContinuityApplyRange?> BuildContinuityApplyRangeAsync(ContinuityIssue issue, string plainText)
+        {
+            if (_pageEditor is null)
+            {
+                return null;
+            }
+
+            ContinuityRewriteSpan expanded = ContinuityRewriteSpanResolver.ExpandToSentenceSpan(
+                plainText,
+                issue.Anchor.PlainTextStart,
+                issue.Anchor.PlainTextLength,
+                contextRadius: 56);
+
+            if (expanded.Length <= 0 || string.IsNullOrWhiteSpace(expanded.Before))
+            {
+                return null;
+            }
+
+            PageEditor.QualityIssueRangeResolution? resolved = await _pageEditor.ResolvePlainRangeAsync(
+                expanded.Start,
+                expanded.Start + expanded.Length,
+                expanded.Before);
+            if (resolved is null
+                || !resolved.Resolved
+                || !resolved.DocFrom.HasValue
+                || !resolved.DocTo.HasValue
+                || !resolved.From.HasValue
+                || !resolved.To.HasValue)
+            {
+                Logger.LogWarning(
+                    "Continuity range resolution failed. IssueKey={IssueKey}, Reason={Reason}, Source={Source}",
+                    GetContinuityIssueKey(issue),
+                    resolved?.Reason,
+                    resolved?.Source);
+                return null;
+            }
+
+            int plainFrom = resolved.From.Value;
+            int plainTo = resolved.To.Value;
+            int docFrom = resolved.DocFrom.Value;
+            int docTo = resolved.DocTo.Value;
+            string source = resolved.Source ?? "resolved";
+            if (plainTo <= plainFrom || plainText.Length < plainTo)
+            {
+                return null;
+            }
+
+            ContinuityRewriteSpan sentenceAligned = ContinuityRewriteSpanResolver.ExpandToSentenceSpan(
+                plainText,
+                plainFrom,
+                plainTo - plainFrom,
+                contextRadius: 56);
+
+            bool needsSentenceRealignment = sentenceAligned.Start != plainFrom
+                || sentenceAligned.Length != (plainTo - plainFrom);
+            if (needsSentenceRealignment)
+            {
+                PageEditor.QualityIssueRangeResolution? sentenceResolution = await _pageEditor.ResolvePlainRangeAsync(
+                    sentenceAligned.Start,
+                    sentenceAligned.Start + sentenceAligned.Length,
+                    sentenceAligned.Before);
+                if (sentenceResolution is null
+                    || !sentenceResolution.Resolved
+                    || !sentenceResolution.DocFrom.HasValue
+                    || !sentenceResolution.DocTo.HasValue
+                    || !sentenceResolution.From.HasValue
+                    || !sentenceResolution.To.HasValue
+                    || sentenceResolution.To.Value <= sentenceResolution.From.Value)
+                {
+                    Logger.LogWarning(
+                        "Continuity sentence realignment failed. IssueKey={IssueKey}, Reason={Reason}, Source={Source}",
+                        GetContinuityIssueKey(issue),
+                        sentenceResolution?.Reason,
+                        sentenceResolution?.Source);
+                    return null;
+                }
+
+                plainFrom = sentenceResolution.From.Value;
+                plainTo = sentenceResolution.To.Value;
+                docFrom = sentenceResolution.DocFrom.Value;
+                docTo = sentenceResolution.DocTo.Value;
+                source = sentenceResolution.Source ?? "resolved-sentence";
+            }
+
+            if (plainTo <= plainFrom || plainText.Length < plainTo)
+            {
+                return null;
+            }
+
+            ContinuityRewriteSpan finalContext = ContinuityRewriteSpanResolver.BuildFromRange(
+                plainText,
+                plainFrom,
+                plainTo - plainFrom,
+                contextRadius: 56);
+
+            Logger.LogWarning(
+                "Continuity apply range resolved. IssueKey={IssueKey}, Source={Source}, PlainFrom={PlainFrom}, PlainTo={PlainTo}, DocFrom={DocFrom}, DocTo={DocTo}, StartsSentence={StartsSentence}, EndsSentence={EndsSentence}, BeforeLength={BeforeLength}",
+                GetContinuityIssueKey(issue),
+                source,
+                plainFrom,
+                plainTo,
+                docFrom,
+                docTo,
+                finalContext.StartsSentence,
+                finalContext.EndsSentence,
+                finalContext.Before.Length);
+
+            return new ContinuityApplyRange(
+                plainFrom,
+                plainTo,
+                docFrom,
+                docTo,
+                finalContext.Before,
+                finalContext.Prefix,
+                finalContext.Suffix,
+                finalContext.StartsSentence,
+                finalContext.EndsSentence,
+                source);
+        }
+
+        private static bool TryRemapContinuityOperations(
+            IReadOnlyList<AiTextOperationDto> operations,
+            string plainText,
+            out List<AiTextOperationDto> remapped,
+            out string? error)
+        {
+            remapped = new List<AiTextOperationDto>();
+            error = null;
+            if (operations is null || operations.Count == 0)
+            {
+                error = "No operations to apply.";
+                return false;
+            }
+
+            string text = plainText ?? string.Empty;
+            int textLength = text.Length;
+            int lastEnd = 0;
+            List<AiTextOperationDto> ascending = operations
+                .OrderBy(operation => operation.From)
+                .ThenBy(operation => operation.To)
+                .ToList();
+
+            foreach (AiTextOperationDto operation in ascending)
+            {
+                int from = Math.Clamp(operation.From, 0, textLength);
+                int to = Math.Clamp(operation.To, from, textLength);
+                string expected = operation.ExpectedText ?? string.Empty;
+                string kind = operation.Type?.Trim().ToLowerInvariant() ?? string.Empty;
+                bool needsSpan = string.Equals(kind, "replace", StringComparison.Ordinal)
+                    || string.Equals(kind, "delete", StringComparison.Ordinal);
+
+                bool exactMatch = string.IsNullOrEmpty(expected)
+                    || (to >= from
+                        && to <= textLength
+                        && string.Equals(text.Substring(from, to - from), expected, StringComparison.Ordinal));
+
+                if (!exactMatch && !string.IsNullOrEmpty(expected))
+                {
+                    List<int> candidates = FindAllOccurrences(text, expected);
+                    if (candidates.Count == 0)
+                    {
+                        error = "Can't apply automatically; text changed.";
+                        return false;
+                    }
+
+                    int chosenStart = candidates
+                        .OrderBy(candidate => candidate < lastEnd ? 1 : 0)
+                        .ThenBy(candidate => Math.Abs(candidate - operation.From))
+                        .First();
+                    from = chosenStart;
+                    to = Math.Min(textLength, chosenStart + expected.Length);
+                }
+
+                if (needsSpan && to <= from)
+                {
+                    error = "Can't apply automatically; text changed.";
+                    return false;
+                }
+
+                if (from < lastEnd)
+                {
+                    error = "Overlapping continuity operations are not supported.";
+                    return false;
+                }
+
+                remapped.Add(new AiTextOperationDto(operation.Type, from, to, operation.Text, operation.ExpectedText));
+                lastEnd = Math.Max(lastEnd, to);
+            }
+
+            return true;
+        }
+
+        private static List<int> FindAllOccurrences(string source, string value)
+        {
+            List<int> positions = new();
+            if (string.IsNullOrEmpty(source) || string.IsNullOrEmpty(value))
+            {
+                return positions;
+            }
+
+            int start = 0;
+            while (start <= source.Length - value.Length)
+            {
+                int index = source.IndexOf(value, start, StringComparison.Ordinal);
+                if (index < 0)
+                {
+                    break;
+                }
+
+                positions.Add(index);
+                start = index + Math.Max(1, value.Length);
+            }
+
+            return positions;
+        }
+
+        private static string ResolveContinuityFixText(ContinuityIssue issue)
+        {
+            string suggested = issue.SuggestedFix?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(suggested))
+            {
+                return string.Empty;
+            }
+
+            string normalized = NormalizeContinuityRewriteCandidate(suggested);
+            if (!string.IsNullOrWhiteSpace(normalized))
+            {
+                return normalized;
+            }
+
+            if (IsLikelyDuplicateContinuityIssue(issue))
+            {
+                // For duplicate/repeated paragraph issues, instruction-like fix text means "remove duplicate span".
+                return string.Empty;
+            }
+
+            return string.Empty;
+        }
+
+        private static string NormalizeContinuityRewriteCandidate(string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return string.Empty;
+            }
+
+            string candidate = text.Trim();
+            if (TryExtractRevisedTextCandidate(candidate, out string extracted))
+            {
+                candidate = extracted.Trim();
+            }
+
+            return LooksLikeInstructionLeak(candidate) ? string.Empty : candidate;
+        }
+
+        private static bool TryExtractRevisedTextCandidate(string source, out string revised)
+        {
+            revised = string.Empty;
+            if (string.IsNullOrWhiteSpace(source))
+            {
+                return false;
+            }
+
+            string value = source.Trim();
+            int revisedStart = value.IndexOf("<<REVISED>>", StringComparison.OrdinalIgnoreCase);
+            int revisedEnd = value.IndexOf("<<END>>", StringComparison.OrdinalIgnoreCase);
+            if (revisedStart >= 0 && revisedEnd > revisedStart)
+            {
+                int contentStart = revisedStart + "<<REVISED>>".Length;
+                revised = value.Substring(contentStart, revisedEnd - contentStart).Trim();
+                return !string.IsNullOrWhiteSpace(revised);
+            }
+
+            if (value.StartsWith("{", StringComparison.Ordinal) && value.EndsWith("}", StringComparison.Ordinal))
+            {
+                try
+                {
+                    using JsonDocument doc = JsonDocument.Parse(value);
+                    if (doc.RootElement.ValueKind == JsonValueKind.Object
+                        && doc.RootElement.TryGetProperty("revisedText", out JsonElement revisedText)
+                        && revisedText.ValueKind == JsonValueKind.String)
+                    {
+                        revised = revisedText.GetString()?.Trim() ?? string.Empty;
+                        return !string.IsNullOrWhiteSpace(revised);
+                    }
+                }
+                catch (JsonException)
+                {
+                }
+            }
+
+            MatchCollection quotedMatches = Regex.Matches(value, "\"([^\"]{24,})\"");
+            if (quotedMatches.Count > 0)
+            {
+                Match longest = quotedMatches
+                    .Cast<Match>()
+                    .OrderByDescending(match => match.Groups[1].Value.Length)
+                    .First();
+                revised = longest.Groups[1].Value.Trim();
+                return !string.IsNullOrWhiteSpace(revised);
+            }
+
+            return false;
+        }
+
+        private static bool IsLikelyDuplicateContinuityIssue(ContinuityIssue issue)
+        {
+            string type = issue.Type?.Trim().ToLowerInvariant() ?? string.Empty;
+            string message = issue.Message?.Trim().ToLowerInvariant() ?? string.Empty;
+            return type.Contains("repeat", StringComparison.Ordinal)
+                || type.Contains("duplicate", StringComparison.Ordinal)
+                || message.Contains("repeat", StringComparison.Ordinal)
+                || message.Contains("duplicate", StringComparison.Ordinal)
+                || message.Contains("same paragraph", StringComparison.Ordinal)
+                || message.Contains("repeated paragraph", StringComparison.Ordinal);
+        }
+
+        private static string CreateLogPreview(string? value, int maxChars)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return string.Empty;
+            }
+
+            string normalized = value
+                .Replace('\r', ' ')
+                .Replace('\n', ' ')
+                .Trim();
+            if (normalized.Length <= maxChars)
+            {
+                return normalized;
+            }
+
+            return normalized.Substring(0, Math.Max(0, maxChars)) + "...";
+        }
+
+        private static bool TryValidateContinuityOperations(
+            IReadOnlyList<AiTextOperationDto> operations,
+            string beforePlain,
+            out string? error)
+        {
+            error = null;
+            int length = beforePlain?.Length ?? 0;
+
+            List<AiTextOperationDto> ascending = operations
+                .OrderBy(operation => operation.From)
+                .ThenBy(operation => operation.To)
+                .ToList();
+
+            for (int index = 0; index < ascending.Count; index++)
+            {
+                AiTextOperationDto operation = ascending[index];
+                string kind = operation.Type?.Trim().ToLowerInvariant() ?? string.Empty;
+                if (!string.Equals(kind, "replace", StringComparison.Ordinal)
+                    && !string.Equals(kind, "delete", StringComparison.Ordinal)
+                    && !string.Equals(kind, "insert", StringComparison.Ordinal))
+                {
+                    error = "Unsupported continuity operation.";
+                    return false;
+                }
+
+                if (operation.From < 0 || operation.To < 0 || operation.From > operation.To || operation.To > length)
+                {
+                    error = "Can't apply automatically; text changed.";
+                    return false;
+                }
+
+                if (index > 0)
+                {
+                    AiTextOperationDto prev = ascending[index - 1];
+                    if (operation.From < prev.To)
+                    {
+                        error = "Overlapping continuity operations are not supported.";
+                        return false;
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(operation.ExpectedText))
+                {
+                    string actual = beforePlain.Substring(operation.From, operation.To - operation.From);
+                    if (!string.Equals(actual, operation.ExpectedText, StringComparison.Ordinal))
+                    {
+                        error = "Can't apply automatically; text changed.";
+                        return false;
+                    }
+                }
+
+                if ((string.Equals(kind, "replace", StringComparison.Ordinal) || string.Equals(kind, "insert", StringComparison.Ordinal))
+                    && LooksLikeInstructionLeak(operation.Text))
+                {
+                    error = "Continuity fix was rejected because replacement text looked like instructions.";
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool LooksLikeInstructionLeak(string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return false;
+            }
+
+            string normalized = text.Trim();
+            string lowered = normalized.ToLowerInvariant();
+            string[] imperativeStarts =
+            {
+                "adjust ",
+                "change ",
+                "fix ",
+                "rewrite ",
+                "update ",
+                "make ",
+                "ensure ",
+                "move ",
+                "remove ",
+                "replace ",
+                "delete ",
+                "insert "
+            };
+
+            if (imperativeStarts.Any(prefix => lowered.StartsWith(prefix, StringComparison.Ordinal)))
+            {
+                return true;
+            }
+
+            if (Regex.IsMatch(normalized, @"^\s*(?:-|\*|\d+\.)\s+", RegexOptions.Multiline))
+            {
+                return true;
+            }
+
+            string firstLine = normalized.Split('\n')[0].Trim();
+            if (firstLine.Length <= 80 && firstLine.EndsWith(":", StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            if (lowered.Contains("remove duplicate paragraph", StringComparison.Ordinal)
+                || lowered.Contains("remove the repeated paragraphs", StringComparison.Ordinal)
+                || lowered.Contains("remove repeated paragraph", StringComparison.Ordinal)
+                || lowered.Contains("maintain narrative clarity", StringComparison.Ordinal)
+                || lowered.Contains("improve narrative clarity", StringComparison.Ordinal)
+                || lowered.Contains("as an ai", StringComparison.Ordinal)
+                || lowered.Contains("arrives before", StringComparison.Ordinal)
+                || lowered.Contains("arrives after", StringComparison.Ordinal)
+                || lowered.StartsWith("instruction:", StringComparison.Ordinal)
+                || lowered.StartsWith("analysis:", StringComparison.Ordinal)
+                || lowered.StartsWith("explanation:", StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            if (normalized.Length <= 220
+                && (normalized.StartsWith("Please ", StringComparison.OrdinalIgnoreCase)
+                    || normalized.StartsWith("Use ", StringComparison.OrdinalIgnoreCase)
+                    || normalized.StartsWith("Return ", StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        private void CancelContinuityProposal()
+        {
+            if (_isApplyingContinuityProposal)
+            {
+                return;
+            }
+
+            CloseContinuityProposal();
+        }
+
+        private void CloseContinuityProposal()
+        {
+            _isContinuityProposalOpen = false;
+            _pendingContinuityIssue = null;
+            _pendingContinuityRange = null;
+            _continuityProposalPreview = null;
+            _continuityProposalError = null;
+            _isApplyingContinuityProposal = false;
+        }
+
+        private void OnContinuityProposalKeyDown(KeyboardEventArgs args)
+        {
+            if (!string.Equals(args.Key, "Escape", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            CancelContinuityProposal();
+        }
+
+        private void RemoveContinuityIssueFromCurrentReport(ContinuityIssue issue)
+        {
+            if (_continuityReport is null || _continuityReport.Issues.Count == 0)
+            {
+                return;
+            }
+
+            string targetKey = GetContinuityIssueKey(issue);
+            List<ContinuityIssue> remaining = _continuityReport.Issues
+                .Where(item => !string.Equals(GetContinuityIssueKey(item), targetKey, StringComparison.Ordinal))
+                .ToList();
+
+            if (remaining.Count == _continuityReport.Issues.Count)
+            {
+                return;
+            }
+
+            _continuityReport = _continuityReport with { Issues = remaining };
+            _selectedContinuityIssueKey = remaining.Select(GetContinuityIssueKey).FirstOrDefault();
+            _pendingContinuityHighlights = true;
         }
 
         private async Task OnClearContinuityHighlightsAsync()
@@ -3717,25 +4636,147 @@ namespace WriterApp.Client.Pages
                 Logger.LogWarning(ex, "AI history apply failed.");
             }
         }
-        private async Task<string> LoadPageNotesAsync(Guid pageId)
+        private async Task<string> LoadSectionNotesAsync(Guid sectionId, CancellationToken ct)
         {
             try
             {
-                PageNotesDto? result = await Http.GetFromJsonAsync<PageNotesDto>($"api/pages/{pageId}/notes");
-                return result?.Notes ?? string.Empty;
+                SectionNotesDto? result = await Http.GetFromJsonAsync<SectionNotesDto>($"api/sections/{sectionId}/notes", ct);
+                _notesLastSavedAtUtc = result?.UpdatedAtUtc;
+                return result?.NotesText ?? string.Empty;
             }
             catch (Exception ex)
             {
                 Logger.LogWarning(ex, "Notes load failed.");
+                _notesError = "Failed to load notes. Changes will retry on edit.";
                 return string.Empty;
             }
         }
 
-        private async Task SavePageNotesAsync(Guid pageId, string value)
+        private async Task<SectionNotesDto?> SaveSectionNotesAsync(Guid sectionId, string value, CancellationToken ct)
         {
-            PageNotesDto payload = new(pageId, value ?? string.Empty, DateTimeOffset.UtcNow);
-            using HttpResponseMessage response = await Http.PutAsJsonAsync($"api/pages/{pageId}/notes", payload);
+            SectionNotesDto payload = new(sectionId, value ?? string.Empty, DateTimeOffset.UtcNow);
+            using HttpResponseMessage response = await Http.PutAsJsonAsync($"api/sections/{sectionId}/notes", payload, ct);
             response.EnsureSuccessStatusCode();
+            return await response.Content.ReadFromJsonAsync<SectionNotesDto>(cancellationToken: ct);
+        }
+
+        private void ResetNotesAutosaveState()
+        {
+            _notesAutosaveCts?.Cancel();
+            _notesAutosaveCts?.Dispose();
+            _notesAutosaveCts = null;
+            _notesSaveInFlight = false;
+            _notesSaveQueued = false;
+            _notesEditVersion = 0;
+            _notesSavedVersion = 0;
+            _notesStatus = null;
+            _notesError = null;
+            _notesLastSavedAtUtc = null;
+        }
+
+        private void QueueNotesAutosave()
+        {
+            if (_activeSection is null)
+            {
+                return;
+            }
+
+            _notesAutosaveCts?.Cancel();
+            _notesAutosaveCts?.Dispose();
+            _notesAutosaveCts = new CancellationTokenSource();
+            Guid sectionId = _activeSection.Id;
+            int version = _notesEditVersion;
+            _notesStatus = "Saving...";
+            _ = DebouncedNotesSaveAsync(sectionId, version, _notesAutosaveCts.Token);
+        }
+
+        private async Task DebouncedNotesSaveAsync(Guid sectionId, int version, CancellationToken ct)
+        {
+            try
+            {
+                await Task.Delay(NotesAutosaveDebounce, ct);
+            }
+            catch (TaskCanceledException)
+            {
+                return;
+            }
+
+            await SaveNotesCoreAsync(sectionId, version, ct);
+        }
+
+        private async Task FlushNotesSaveAsync()
+        {
+            if (_activeSection is null)
+            {
+                return;
+            }
+
+            _notesAutosaveCts?.Cancel();
+            _notesAutosaveCts?.Dispose();
+            _notesAutosaveCts = null;
+            _notesEditVersion++;
+            await SaveNotesCoreAsync(_activeSection.Id, _notesEditVersion, CancellationToken.None);
+        }
+
+        private async Task SaveNotesCoreAsync(Guid sectionId, int version, CancellationToken ct)
+        {
+            if (_activeSection?.Id != sectionId)
+            {
+                return;
+            }
+
+            _notesSaveQueued = true;
+            if (_notesSaveInFlight)
+            {
+                return;
+            }
+
+            while (_notesSaveQueued)
+            {
+                _notesSaveQueued = false;
+                int saveVersion = Math.Max(version, _notesEditVersion);
+                string snapshot = _notesDraft ?? string.Empty;
+                _notesSaveInFlight = true;
+                _notesStatus = "Saving...";
+                await InvokeAsync(StateHasChanged);
+
+                try
+                {
+                    SectionNotesDto? saved = await SaveSectionNotesAsync(sectionId, snapshot, ct);
+                    if (saveVersion >= _notesSavedVersion)
+                    {
+                        _notesSavedVersion = saveVersion;
+                        _notesLastSavedAtUtc = saved?.UpdatedAtUtc ?? DateTimeOffset.UtcNow;
+                        _notesStatus = "Saved";
+                        _notesError = null;
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError(ex, "Notes save failed.");
+                    _notesStatus = "Save failed";
+                    _notesError = "Could not save notes. Changes will retry on next edit.";
+                }
+                finally
+                {
+                    _notesSaveInFlight = false;
+                    await InvokeAsync(StateHasChanged);
+                }
+
+                if (_activeSection?.Id != sectionId)
+                {
+                    return;
+                }
+
+                if (_notesSavedVersion < _notesEditVersion)
+                {
+                    _notesSaveQueued = true;
+                }
+            }
         }
 
         private string GetOutlineTextForAi()
@@ -6013,9 +7054,11 @@ namespace WriterApp.Client.Pages
                 int start = Math.Clamp(issue.Anchor.PlainTextStart, 0, Math.Max(0, plainTextLength));
                 int maxLen = Math.Max(0, plainTextLength - start);
                 int length = Math.Clamp(issue.Anchor.PlainTextLength, 0, maxLen);
+                string normalizedFix = ResolveContinuityFixText(issue);
                 normalized.Add(issue with
                 {
-                    Anchor = new ContinuityAnchor(start, length)
+                    Anchor = new ContinuityAnchor(start, length),
+                    SuggestedFix = normalizedFix
                 });
             }
 
@@ -6405,12 +7448,21 @@ namespace WriterApp.Client.Pages
             {
                 _qualityIssues.Clear();
                 _qualityError = null;
+                _qualityStatus = null;
+                _selectedQualityIssueKey = null;
+                _qualityIssueActionErrors.Clear();
+                _qualityAppliedIssueKeys.Clear();
+                _qualityApplyingIssueKeys.Clear();
                 return;
             }
 
             _qualityLoading = true;
             _qualityError = null;
+            _qualityStatus = null;
             _qualityFromCache = false;
+            _qualityIssueActionErrors.Clear();
+            _qualityAppliedIssueKeys.Clear();
+            _qualityApplyingIssueKeys.Clear();
 
             try
             {
@@ -6422,6 +7474,9 @@ namespace WriterApp.Client.Pages
                 {
                     _qualityIssues.AddRange(issues);
                 }
+
+                ReconcileQualityIssueStateAfterRefresh();
+                await SyncQualityIssueHighlightAsync();
             }
             catch (Exception ex)
             {
@@ -6495,7 +7550,11 @@ namespace WriterApp.Client.Pages
 
             _qualityLoading = true;
             _qualityError = null;
+            _qualityStatus = null;
             _qualityFromCache = false;
+            _qualityIssueActionErrors.Clear();
+            _qualityAppliedIssueKeys.Clear();
+            _qualityApplyingIssueKeys.Clear();
 
             try
             {
@@ -6537,6 +7596,30 @@ namespace WriterApp.Client.Pages
                 {
                     _qualityIssues.AddRange(result.Issues);
                 }
+
+                int applyableCount = _qualityIssues.Count(CanApplyQualityIssue);
+                Logger.LogInformation(
+                    "Quality checks loaded for page {PageId}. Issues={IssueCount}, Applyable={ApplyableCount}, Scope={Scope}, FromCache={FromCache}",
+                    _activePage.Id,
+                    _qualityIssues.Count,
+                    applyableCount,
+                    scope,
+                    _qualityFromCache);
+
+                foreach (PageQualityIssueDto issue in _qualityIssues.Where(item => !CanApplyQualityIssue(item)))
+                {
+                    Logger.LogDebug(
+                        "Quality issue is not applyable. Key={IssueKey}, Rule={RuleId}, Kind={Kind}, Severity={Severity}, FixKind={FixKind}, Reason={Reason}",
+                        issue.IssueKey,
+                        issue.RuleId,
+                        issue.Kind,
+                        issue.Severity,
+                        issue.Fix?.Kind,
+                        GetQualityIssueApplyUnavailableReason(issue));
+                }
+
+                ReconcileQualityIssueStateAfterRefresh();
+                await SyncQualityIssueHighlightAsync();
             }
             catch (Exception ex)
             {
@@ -6568,10 +7651,394 @@ namespace WriterApp.Client.Pages
                 }
 
                 _qualityIssues.RemoveAll(item => item.IssueKey == issue.IssueKey);
+                _qualityIssueActionErrors.Remove(issue.IssueKey);
+                _qualityAppliedIssueKeys.Remove(issue.IssueKey);
+                _qualityApplyingIssueKeys.Remove(issue.IssueKey);
+
+                if (_selectedQualityIssueKey == issue.IssueKey)
+                {
+                    _selectedQualityIssueKey = null;
+                    if (_pageEditor is not null)
+                    {
+                        await _pageEditor.ClearQualityIssueHighlightAsync(issue.IssueKey);
+                    }
+                }
+
+                await SyncQualityIssueHighlightAsync();
             }
             catch (Exception ex)
             {
                 _qualityError = $"Failed to dismiss issue: {ex.Message}";
+            }
+        }
+
+        private async Task ShowQualityIssueInTextAsync(PageQualityIssueDto issue)
+        {
+            _selectedQualityIssueKey = issue.IssueKey;
+            _qualityIssueActionErrors.Remove(issue.IssueKey);
+
+            if (_pageEditor is null)
+            {
+                return;
+            }
+
+            await _pageEditor.SetActiveQualityIssueAsync(issue.IssueKey);
+
+            bool highlighted = await _pageEditor.ScrollToQualityIssueAsync(issue.IssueKey);
+            if (!highlighted)
+            {
+                highlighted = await _pageEditor.HighlightQualityIssueAsync(
+                    issue.IssueKey,
+                    issue.StartOffset,
+                    issue.EndOffset,
+                    issue.AnchorText);
+            }
+
+            if (!highlighted)
+            {
+                _qualityIssueActionErrors[issue.IssueKey] = "Can't locate this issue in the current text.";
+            }
+        }
+
+        private async Task OpenQualityProposalAsync(PageQualityIssueDto issue)
+        {
+            if (_activePage is null || _pageEditor is null || !CanApplyQualityIssue(issue))
+            {
+                Logger.LogInformation(
+                    "Quality apply request ignored. PageReady={PageReady}, EditorReady={EditorReady}, IssueKey={IssueKey}, Reason={Reason}",
+                    _activePage is not null,
+                    _pageEditor is not null,
+                    issue.IssueKey,
+                    GetQualityIssueApplyUnavailableReason(issue));
+                return;
+            }
+
+            _proposalError = null;
+            _proposalIssue = issue;
+            _proposalPreview = await BuildQualityProposalPreviewAsync(issue);
+            _isQualityProposalOpen = true;
+            _isProposalApplying = false;
+            _qualityIssueActionErrors.Remove(issue.IssueKey);
+
+            await ShowQualityIssueInTextAsync(issue);
+        }
+
+        private async Task ConfirmQualityProposalApplyAsync()
+        {
+            if (_proposalIssue is null || _proposalIssue.Fix is null || _activePage is null || _pageEditor is null)
+            {
+                return;
+            }
+
+            if (_isProposalApplying)
+            {
+                return;
+            }
+
+            _proposalError = null;
+            _isProposalApplying = true;
+
+            (bool applied, string? error) = await ApplyQualityIssueChangeCoreAsync(_proposalIssue);
+            if (!applied)
+            {
+                _proposalError = string.IsNullOrWhiteSpace(error)
+                    ? "Can't apply automatically; text changed."
+                    : error;
+                _isProposalApplying = false;
+                return;
+            }
+
+            _isProposalApplying = false;
+            CloseQualityProposal();
+        }
+
+        private void CancelQualityProposal()
+        {
+            if (_isProposalApplying)
+            {
+                return;
+            }
+
+            CloseQualityProposal();
+        }
+
+        private void CloseQualityProposal()
+        {
+            _isQualityProposalOpen = false;
+            _proposalIssue = null;
+            _proposalPreview = null;
+            _proposalError = null;
+            _isProposalApplying = false;
+        }
+
+        private async Task<QualityProposalPreview> BuildQualityProposalPreviewAsync(PageQualityIssueDto issue)
+        {
+            string before = issue.Fix?.AnchorText ?? issue.AnchorText ?? string.Empty;
+            string after = issue.Fix?.Text ?? string.Empty;
+            string prefix = string.Empty;
+            string suffix = string.Empty;
+
+            if (_pageEditor is null || issue.Fix is null)
+            {
+                return new QualityProposalPreview(before, after, prefix, suffix);
+            }
+
+            string plainText = await _pageEditor.GetPlainTextAsync() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(plainText))
+            {
+                return new QualityProposalPreview(before, after, prefix, suffix);
+            }
+
+            int from = Math.Clamp(issue.Fix.From, 0, plainText.Length);
+            int to = Math.Clamp(issue.Fix.To, from, plainText.Length);
+            if (string.IsNullOrWhiteSpace(before) && to > from)
+            {
+                before = plainText[from..to];
+            }
+
+            int snippetStart = from;
+            int snippetEnd = to;
+
+            if (!string.IsNullOrWhiteSpace(before))
+            {
+                int nearest = FindNearestOccurrence(plainText, before, from);
+                if (nearest >= 0)
+                {
+                    snippetStart = nearest;
+                    snippetEnd = Math.Min(plainText.Length, nearest + before.Length);
+                }
+            }
+
+            int contextStart = Math.Max(0, snippetStart - 40);
+            int contextEnd = Math.Min(plainText.Length, snippetEnd + 40);
+            prefix = plainText[contextStart..snippetStart];
+            suffix = plainText[snippetEnd..contextEnd];
+
+            return new QualityProposalPreview(before, after, prefix, suffix);
+        }
+
+        private static int FindNearestOccurrence(string source, string value, int targetIndex)
+        {
+            if (string.IsNullOrWhiteSpace(source) || string.IsNullOrWhiteSpace(value))
+            {
+                return -1;
+            }
+
+            List<int> matches = new();
+            int searchFrom = 0;
+            while (searchFrom <= source.Length - value.Length)
+            {
+                int found = source.IndexOf(value, searchFrom, StringComparison.Ordinal);
+                if (found < 0)
+                {
+                    break;
+                }
+
+                matches.Add(found);
+                searchFrom = found + Math.Max(1, value.Length);
+            }
+
+            if (matches.Count == 0)
+            {
+                return -1;
+            }
+
+            return matches
+                .OrderBy(index => Math.Abs(index - targetIndex))
+                .First();
+        }
+
+        private async Task ApplyQualityIssueChangeAsync(PageQualityIssueDto issue)
+        {
+            (bool applied, string? error) = await ApplyQualityIssueChangeCoreAsync(issue);
+            if (applied)
+            {
+                return;
+            }
+
+            _qualityIssueActionErrors[issue.IssueKey] = string.IsNullOrWhiteSpace(error)
+                ? "Can't apply automatically; text changed."
+                : error;
+        }
+
+        private async Task<(bool Applied, string? Error)> ApplyQualityIssueChangeCoreAsync(PageQualityIssueDto issue)
+        {
+            if (_activePage is null || _pageEditor is null)
+            {
+                return (false, "Editor is not ready.");
+            }
+
+            if (issue.Fix is null || !CanApplyQualityIssue(issue) || _qualityApplyingIssueKeys.Contains(issue.IssueKey))
+            {
+                return (false, "Can't apply this issue.");
+            }
+
+            _qualityIssueActionErrors.Remove(issue.IssueKey);
+            _qualityAppliedIssueKeys.Remove(issue.IssueKey);
+            _qualityApplyingIssueKeys.Add(issue.IssueKey);
+            _qualityStatus = null;
+
+            try
+            {
+                bool applied = await _pageEditor.ApplyQualityIssueFixAsync(issue.Fix, issue.AnchorText, issue.IssueKey);
+                if (!applied)
+                {
+                    return (false, "Can't apply automatically; text changed.");
+                }
+
+                await _pageEditor.SaveNowAsync();
+                await _pageEditor.ClearQualityIssueHighlightAsync(issue.IssueKey);
+                _qualityAppliedIssueKeys.Add(issue.IssueKey);
+                _qualityStatus = "Applied.";
+
+                if (string.Equals(_qualityScope, "page", StringComparison.OrdinalIgnoreCase))
+                {
+                    await RunQualityChecksAsync();
+                }
+                else
+                {
+                    _qualityIssues.RemoveAll(item => item.IssueKey == issue.IssueKey);
+                    await SyncQualityIssueHighlightAsync();
+                }
+
+                return (true, null);
+            }
+            catch (Exception ex)
+            {
+                return (false, $"Apply failed: {ex.Message}");
+            }
+            finally
+            {
+                _qualityApplyingIssueKeys.Remove(issue.IssueKey);
+            }
+        }
+
+        private bool IsQualityIssueSelected(PageQualityIssueDto issue)
+        {
+            return string.Equals(_selectedQualityIssueKey, issue.IssueKey, StringComparison.Ordinal);
+        }
+
+        private bool CanApplyQualityIssue(PageQualityIssueDto issue)
+        {
+            return GetQualityIssueApplyUnavailableReason(issue) is null;
+        }
+
+        private string? GetQualityIssueApplyUnavailableReason(PageQualityIssueDto issue)
+        {
+            if (_qualityApplyingIssueKeys.Contains(issue.IssueKey))
+            {
+                return "An apply operation is already running for this issue.";
+            }
+
+            if (issue.Fix is null)
+            {
+                return "No automatic fix is available for this issue.";
+            }
+
+            if (string.IsNullOrWhiteSpace(issue.Fix.Kind))
+            {
+                return "Fix kind is missing.";
+            }
+
+            bool supported =
+                string.Equals(issue.Fix.Kind, "replace", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(issue.Fix.Kind, "delete", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(issue.Fix.Kind, "insert", StringComparison.OrdinalIgnoreCase);
+
+            if (!supported)
+            {
+                return $"Unsupported fix kind: {issue.Fix.Kind}.";
+            }
+
+            return null;
+        }
+
+        private string GetQualityIssueApplyButtonTitle(PageQualityIssueDto issue)
+        {
+            return GetQualityIssueApplyUnavailableReason(issue) ?? "Apply suggested change.";
+        }
+
+        private void ReconcileQualityIssueStateAfterRefresh()
+        {
+            if (_qualityIssues.Count == 0)
+            {
+                _qualityAppliedIssueKeys.Clear();
+                _qualityApplyingIssueKeys.Clear();
+                _qualityIssueActionErrors.Clear();
+                return;
+            }
+
+            HashSet<string> validKeys = _qualityIssues
+                .Select(item => item.IssueKey)
+                .Where(key => !string.IsNullOrWhiteSpace(key))
+                .ToHashSet(StringComparer.Ordinal);
+
+            _qualityAppliedIssueKeys.RemoveWhere(key => !validKeys.Contains(key));
+            _qualityApplyingIssueKeys.RemoveWhere(key => !validKeys.Contains(key));
+
+            List<string> staleErrorKeys = _qualityIssueActionErrors.Keys
+                .Where(key => !validKeys.Contains(key))
+                .ToList();
+            foreach (string staleKey in staleErrorKeys)
+            {
+                _qualityIssueActionErrors.Remove(staleKey);
+            }
+        }
+
+        private string? GetQualityIssueActionError(PageQualityIssueDto issue)
+        {
+            if (_qualityIssueActionErrors.TryGetValue(issue.IssueKey, out string? message))
+            {
+                return message;
+            }
+
+            return null;
+        }
+
+        private bool IsQualityIssueApplying(PageQualityIssueDto issue)
+        {
+            return _qualityApplyingIssueKeys.Contains(issue.IssueKey);
+        }
+
+        private bool IsQualityIssueApplied(PageQualityIssueDto issue)
+        {
+            return _qualityAppliedIssueKeys.Contains(issue.IssueKey);
+        }
+
+        private async Task SyncQualityIssueHighlightAsync()
+        {
+            if (_pageEditor is null)
+            {
+                return;
+            }
+
+            if (!_isStyleQualityTabActive)
+            {
+                await _pageEditor.ClearAllQualityIssueHighlightsAsync();
+                return;
+            }
+
+            if (_qualityIssues.Count == 0)
+            {
+                if (!string.IsNullOrWhiteSpace(_selectedQualityIssueKey))
+                {
+                    await _pageEditor.SetActiveQualityIssueAsync(null);
+                }
+
+                _selectedQualityIssueKey = null;
+                return;
+            }
+
+            PageQualityIssueDto? issue = _qualityIssues
+                .FirstOrDefault(item => string.Equals(item.IssueKey, _selectedQualityIssueKey, StringComparison.Ordinal));
+
+            if (issue is not null)
+            {
+                await _pageEditor.SetActiveQualityIssueAsync(issue.IssueKey);
+            }
+            else
+            {
+                await _pageEditor.SetActiveQualityIssueAsync(null);
             }
         }
 
@@ -6815,6 +8282,27 @@ namespace WriterApp.Client.Pages
             _annotationFilterStatus = "all";
             _annotationFilterKind = "all";
             await SetContextTabAsync(ContextTab.Annotations);
+        }
+
+        private async Task OnAnnotationCardClickedAsync(PageAnnotationDto annotation)
+        {
+            if (_pageEditor is null)
+            {
+                return;
+            }
+
+            _annotationFocusedId = annotation.Id;
+            _annotationActionError = null;
+
+            bool scrolled = await _pageEditor.ScrollToAnnotationAsync(
+                annotation.Id.ToString(),
+                annotation.AnchorFrom,
+                annotation.AnchorTo);
+
+            if (!scrolled)
+            {
+                _annotationActionError = "Could not locate annotation in document.";
+            }
         }
 
         private static string GetAnnotationElementId(PageAnnotationDto annotation)
@@ -7949,6 +9437,18 @@ namespace WriterApp.Client.Pages
 
         private sealed record ContinuityReport(string SchemaVersion, IReadOnlyList<ContinuityIssue> Issues);
 
+        private sealed record ContinuityApplyRange(
+            int PlainFrom,
+            int PlainTo,
+            int DocFrom,
+            int DocTo,
+            string Before,
+            string Prefix,
+            string Suffix,
+            bool StartsSentence,
+            bool EndsSentence,
+            string Source);
+
         private sealed record ContextPanelStateStorage(string Category, string Tab);
 
         private sealed record PromptPresetDto(
@@ -8076,6 +9576,12 @@ namespace WriterApp.Client.Pages
         {
             public static DiffSummary Empty => new(0, 0, 0, 0, 0);
         }
+
+        private sealed record QualityProposalPreview(
+            string Before,
+            string After,
+            string Prefix,
+            string Suffix);
 
         private enum ContextTab
         {

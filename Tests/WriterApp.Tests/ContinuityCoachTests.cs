@@ -134,9 +134,75 @@ namespace WriterApp.Tests
             Assert.Contains("blue eyes", revertedText, StringComparison.Ordinal);
         }
 
+        [Fact]
+        public async Task ApplyContinuityFixAction_RejectsInstructionLikeSuggestedFix()
+        {
+            Document document = DocumentFactory.CreateNewDocument();
+            Guid sectionId = document.Chapters[0].Sections[0].SectionId;
+            const string selected = "Maya arrived at 08:10.";
+
+            IAiOrchestrator orchestrator = BuildOrchestrator(new ApplyContinuityFixAction());
+            AiExecutionResult result = await orchestrator.ExecuteActionAsync(
+                ApplyContinuityFixAction.ActionIdValue,
+                new AiActionInput(
+                    document,
+                    sectionId,
+                    new TextRange(0, selected.Length),
+                    selected,
+                    "Apply continuity fix",
+                    new Dictionary<string, object?>
+                    {
+                        ["section_id"] = sectionId,
+                        ["anchor_start"] = 0,
+                        ["anchor_length"] = selected.Length,
+                        ["suggested_fix"] = "Adjust the times so Maya arrives before 08:00.",
+                        ["issue_type"] = "timeline",
+                        ["issue_message"] = "Timeline inconsistency."
+                    }),
+                CancellationToken.None);
+
+            Assert.False(result.Succeeded);
+            Assert.Null(result.Proposal);
+            Assert.Equal("ai.continuity_fix_rejected_instruction_text", result.ErrorCode);
+        }
+
+        [Fact]
+        public async Task ContinuityCheckAction_SanitizesInstructionLikeSuggestedFix()
+        {
+            Document document = CreateContradictoryDocument();
+            Guid sectionId = document.Chapters[0].Sections[0].SectionId;
+            string plainText = PlainTextMapper.ToPlainText(document.Chapters[0].Sections[0].Content.Value);
+
+            IAiOrchestrator orchestrator = BuildOrchestrator(
+                new InstructionLeakContinuityProvider(),
+                new ContinuityCheckAction());
+
+            AiExecutionResult result = await orchestrator.ExecuteActionAsync(
+                ContinuityCheckAction.ActionIdValue,
+                new AiActionInput(
+                    document,
+                    sectionId,
+                    new TextRange(0, plainText.Length),
+                    plainText,
+                    "Check continuity",
+                    new Dictionary<string, object?>()),
+                CancellationToken.None);
+
+            Assert.True(result.Succeeded);
+            Assert.NotNull(result.Proposal);
+            Assert.True(ContinuityJson.TryParseContinuityReport(result.Proposal!.ProposedText, out ContinuityReport? report));
+            Assert.NotNull(report);
+            ContinuityIssue issue = Assert.Single(report!.Issues);
+            Assert.True(string.IsNullOrWhiteSpace(issue.SuggestedFix));
+        }
+
         private static IAiOrchestrator BuildOrchestrator(params IAiAction[] actions)
         {
-            IAiProvider provider = new ContinuityTestProvider();
+            return BuildOrchestrator(new ContinuityTestProvider(), actions);
+        }
+
+        private static IAiOrchestrator BuildOrchestrator(IAiProvider provider, params IAiAction[] actions)
+        {
             IAiProviderRegistry registry = new DefaultAiProviderRegistry(new[] { provider });
             WriterAiOptions options = new() { Enabled = true };
             IAiRouter router = new DefaultAiRouter(registry, Options.Create(options), NullLogger<DefaultAiRouter>.Instance);
@@ -217,6 +283,34 @@ namespace WriterApp.Tests
                 return "{\"schemaVersion\":\"1.0\",\"issues\":[{\"severity\":\"high\",\"type\":\"character\",\"message\":\"Mira eye color is inconsistent.\",\"evidence\":{\"sectionId\":\""
                     + request.Context.SectionId
                     + "\",\"quote\":\"blue eyes ... brown eyes\"},\"suggestedFix\":\"Keep one consistent eye color.\",\"anchor\":{\"plainTextStart\":0,\"plainTextLength\":48}}]}";
+            }
+        }
+
+        private sealed class InstructionLeakContinuityProvider : IAiProvider
+        {
+            public string ProviderId => "continuity-leak-test";
+
+            public AiProviderCapabilities Capabilities => new(true, false);
+
+            public Task<AiResult> ExecuteAsync(AiRequest request, CancellationToken ct)
+            {
+                string output = "{\"schemaVersion\":\"1.0\",\"issues\":[{\"severity\":\"high\",\"type\":\"timeline\",\"message\":\"Timeline inconsistency.\",\"evidence\":{\"sectionId\":\""
+                    + request.Context.SectionId
+                    + "\",\"quote\":\"07:50 then 08:10\"},\"suggestedFix\":\"Adjust the times so Maya arrives before 08:00 and reorder events.\",\"anchor\":{\"plainTextStart\":0,\"plainTextLength\":48}}]}";
+
+                AiArtifact artifact = new(
+                    Guid.NewGuid(),
+                    AiModality.Text,
+                    "application/json",
+                    output,
+                    null,
+                    null);
+
+                return Task.FromResult(new AiResult(
+                    request.RequestId,
+                    new List<AiArtifact> { artifact },
+                    new AiUsage(0, 0, TimeSpan.Zero),
+                    new Dictionary<string, object>()));
             }
         }
 

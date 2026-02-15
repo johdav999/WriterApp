@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
@@ -21,7 +22,7 @@ namespace WriterApp.Application.Documents
             QualityCheckRunRequest request,
             CancellationToken ct);
 
-        Task<IReadOnlyList<PageQualityIssueRecord>> ListIssuesAsync(
+        Task<IReadOnlyList<PageQualityIssueDto>> ListIssuesAsync(
             string userId,
             Guid pageId,
             bool includeDismissed,
@@ -93,6 +94,9 @@ namespace WriterApp.Application.Documents
                 IReadOnlyList<QualityParagraph> paragraphs = QualityTextAnalyzer.GetParagraphs(text);
                 QualityCheckContext context = new(text, tokens, sentences, paragraphs, glossary);
                 IReadOnlyList<QualityIssue> issues = _engine.Evaluate(context, MaxIssues);
+                Dictionary<string, QualityIssueFix?> fixesByKey = issues
+                    .GroupBy(issue => issue.IssueKey, StringComparer.Ordinal)
+                    .ToDictionary(group => group.Key, group => group.First().Fix, StringComparer.Ordinal);
 
                 records = issues.Select(issue => new PageQualityIssueRecord
                     {
@@ -129,8 +133,50 @@ namespace WriterApp.Application.Documents
                         _dbContext.PageQualityIssues.AddRange(records);
                     }
 
-                    await _dbContext.SaveChangesAsync(ct);
+                await _dbContext.SaveChangesAsync(ct);
                 }
+
+                List<string> dismissedKeys = await _dbContext.PageQualityIssueDismissals
+                    .AsNoTracking()
+                    .Where(dismissal => dismissal.PageId == page.Id && dismissal.UserId == userId)
+                    .Select(dismissal => dismissal.IssueKey)
+                    .ToListAsync(ct);
+                HashSet<string> dismissedKeysSet = dismissedKeys.ToHashSet(StringComparer.Ordinal);
+
+                List<PageQualityIssueDto> computedIssues = records
+                    .Where(record => !dismissedKeysSet.Contains(record.IssueKey))
+                    .OrderBy(record => record.Severity)
+                    .ThenBy(record => record.StartOffset)
+                    .Select(record =>
+                    {
+                        QualityIssueFix? fix = null;
+                        if (fixesByKey.TryGetValue(record.IssueKey, out QualityIssueFix? ruleFix) && ruleFix is not null)
+                        {
+                            fix = ruleFix;
+                        }
+                        else
+                        {
+                            fix = BuildFixFromRecord(text, record);
+                        }
+
+                        return MapToDto(record, fix);
+                    })
+                    .ToList();
+
+                _logger.LogInformation(
+                    "Quality checks run (computed). PageId={PageId}, Scope={Scope}, IssueCount={IssueCount}, FixCount={FixCount}, FromCache={FromCache}",
+                    page.Id,
+                    scope,
+                    computedIssues.Count,
+                    computedIssues.Count(item => item.Fix is not null),
+                    fromCache);
+
+                return new QualityCheckRunResultDto(
+                    page.Id,
+                    scope,
+                    contentHash,
+                    fromCache,
+                    computedIssues);
             }
 
             List<string> dismissed = await _dbContext.PageQualityIssueDismissals
@@ -144,8 +190,16 @@ namespace WriterApp.Application.Documents
                 .Where(record => !dismissedSet.Contains(record.IssueKey))
                 .OrderBy(record => record.Severity)
                 .ThenBy(record => record.StartOffset)
-                .Select(MapToDto)
+                .Select(record => MapToDto(record, BuildFixFromRecord(text, record)))
                 .ToList();
+
+            _logger.LogInformation(
+                "Quality checks run (cache). PageId={PageId}, Scope={Scope}, IssueCount={IssueCount}, FixCount={FixCount}, FromCache={FromCache}",
+                page.Id,
+                scope,
+                resultIssues.Count,
+                resultIssues.Count(item => item.Fix is not null),
+                fromCache);
 
             return new QualityCheckRunResultDto(
                 page.Id,
@@ -155,7 +209,7 @@ namespace WriterApp.Application.Documents
                 resultIssues);
         }
 
-        public async Task<IReadOnlyList<PageQualityIssueRecord>> ListIssuesAsync(
+        public async Task<IReadOnlyList<PageQualityIssueDto>> ListIssuesAsync(
             string userId,
             Guid pageId,
             bool includeDismissed,
@@ -165,10 +219,21 @@ namespace WriterApp.Application.Documents
                 .AsNoTracking()
                 .Where(issue => issue.PageId == pageId)
                 .ToListAsync(ct);
+            string pageText = PlainTextMapper.ToPlainText(
+                await _dbContext.Pages
+                    .AsNoTracking()
+                    .Where(page => page.Id == pageId)
+                    .Select(page => page.Content)
+                    .FirstOrDefaultAsync(ct)
+                ?? string.Empty);
 
             if (includeDismissed)
             {
-                return records;
+                return records
+                    .OrderBy(record => record.Severity)
+                    .ThenBy(record => record.StartOffset)
+                    .Select(record => MapToDto(record, BuildFixFromRecord(pageText, record)))
+                    .ToList();
             }
 
             List<string> dismissed = await _dbContext.PageQualityIssueDismissals
@@ -178,7 +243,12 @@ namespace WriterApp.Application.Documents
                 .ToListAsync(ct);
             HashSet<string> dismissedSet = dismissed.ToHashSet(StringComparer.Ordinal);
 
-            return records.Where(record => !dismissedSet.Contains(record.IssueKey)).ToList();
+            return records
+                .Where(record => !dismissedSet.Contains(record.IssueKey))
+                .OrderBy(record => record.Severity)
+                .ThenBy(record => record.StartOffset)
+                .Select(record => MapToDto(record, BuildFixFromRecord(pageText, record)))
+                .ToList();
         }
 
         public async Task DismissIssueAsync(string userId, Guid pageId, string issueKey, CancellationToken ct)
@@ -215,7 +285,7 @@ namespace WriterApp.Application.Documents
             await _dbContext.SaveChangesAsync(ct);
         }
 
-        private static PageQualityIssueDto MapToDto(PageQualityIssueRecord record)
+        private static PageQualityIssueDto MapToDto(PageQualityIssueRecord record, QualityIssueFix? fix)
         {
             return new PageQualityIssueDto(
                 record.IssueKey,
@@ -229,7 +299,67 @@ namespace WriterApp.Application.Documents
                 record.AnchorText,
                 record.StartOffset,
                 record.EndOffset,
+                fix is null ? null : new QualityIssueFixDto(fix.Kind, fix.From, fix.To, fix.Text, record.AnchorText, record.IssueKey),
                 record.CreatedAt);
+        }
+
+        private static QualityIssueFix? BuildFixFromRecord(string plainText, PageQualityIssueRecord record)
+        {
+            if (string.IsNullOrWhiteSpace(plainText))
+            {
+                return null;
+            }
+
+            int from = Math.Clamp(record.StartOffset, 0, plainText.Length);
+            int to = Math.Clamp(record.EndOffset, from, plainText.Length);
+            if (to <= from)
+            {
+                return null;
+            }
+
+            if (string.Equals(record.RuleId, "style.repeated_words", StringComparison.OrdinalIgnoreCase))
+            {
+                int deleteFrom = from;
+                if (deleteFrom > 0 && char.IsWhiteSpace(plainText[deleteFrom - 1]))
+                {
+                    deleteFrom--;
+                }
+
+                if (to > deleteFrom)
+                {
+                    return new QualityIssueFix("delete", deleteFrom, to, null);
+                }
+
+                return null;
+            }
+
+            if (string.Equals(record.RuleId, "consistency.proper_names", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(record.RuleId, "terminology.glossary", StringComparison.OrdinalIgnoreCase))
+            {
+                string? replacement = TryExtractQuotedSuggestion(record.Suggestion);
+                if (!string.IsNullOrWhiteSpace(replacement))
+                {
+                    return new QualityIssueFix("replace", from, to, replacement);
+                }
+            }
+
+            return null;
+        }
+
+        private static string? TryExtractQuotedSuggestion(string? suggestion)
+        {
+            if (string.IsNullOrWhiteSpace(suggestion))
+            {
+                return null;
+            }
+
+            Match match = Regex.Match(suggestion, "\"([^\"]+)\"");
+            if (!match.Success || match.Groups.Count < 2)
+            {
+                return null;
+            }
+
+            return match.Groups[1].Value.Trim();
         }
 
         private static string ComputeHash(string value)

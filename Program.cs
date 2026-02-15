@@ -481,7 +481,7 @@ app.UseRouting();
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapGet("/", () => Results.Redirect("/app/projects"));
+app.MapGet("/", () => Results.Redirect("/app/documents"));
 
 app.MapGet("/__ping", () => Results.Ok("pong"));
 

@@ -3,6 +3,17 @@ using System.Collections.Generic;
 
 namespace WriterApp.Application.Documents
 {
+    public sealed record QualityIssueFixDto(
+        string Kind,
+        int From,
+        int To,
+        string? Text,
+        string? AnchorText = null,
+        string? IssueKey = null,
+        int? DocFrom = null,
+        int? DocTo = null,
+        string? ExpectedText = null);
+
     public sealed record PageQualityIssueDto(
         string IssueKey,
         Guid DocumentId,
@@ -15,6 +26,7 @@ namespace WriterApp.Application.Documents
         string? AnchorText,
         int StartOffset,
         int EndOffset,
+        QualityIssueFixDto? Fix,
         DateTimeOffset CreatedAt);
 
     public sealed record QualityCheckRunRequest(

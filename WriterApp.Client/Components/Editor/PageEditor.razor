@@ -117,6 +117,12 @@ else
     public IReadOnlyList<PageQualityIssueDto>? QualityIssues { get; set; }
 
     [Parameter]
+    public bool QualityHighlightsEnabled { get; set; }
+
+    [Parameter]
+    public string? ActiveQualityIssueKey { get; set; }
+
+    [Parameter]
     public string? VersionStatusMessage { get; set; }
 
     [Parameter]
@@ -374,31 +380,90 @@ else
             return;
         }
 
+        if (!QualityHighlightsEnabled)
+        {
+            if (!string.Equals(_lastQualityIssuesFingerprint, "__disabled__", StringComparison.Ordinal))
+            {
+                await JSRuntime.InvokeVoidAsync("tiptapEditor.clearQualityIssues", _editorInstance);
+            }
+
+            _lastQualityIssuesFingerprint = "__disabled__";
+            return;
+        }
+
         string fingerprint = BuildQualityIssuesFingerprint(QualityIssues);
-        if (string.Equals(fingerprint, _lastQualityIssuesFingerprint, StringComparison.Ordinal))
+        if (!string.Equals(fingerprint, _lastQualityIssuesFingerprint, StringComparison.Ordinal))
         {
-            return;
+            _lastQualityIssuesFingerprint = fingerprint;
+
+            if (QualityIssues is null || QualityIssues.Count == 0)
+            {
+                await JSRuntime.InvokeVoidAsync("tiptapEditor.clearQualityIssues", _editorInstance);
+            }
+            else
+            {
+                var payload = QualityIssues.Select(issue => new
+                {
+                    issueKey = issue.IssueKey,
+                    id = issue.IssueKey,
+                    from = issue.StartOffset,
+                    to = issue.EndOffset,
+                    kind = NormalizeQualityIssueKind(issue.Kind),
+                    severity = NormalizeQualityIssueSeverity(issue.Severity),
+                    anchorText = issue.AnchorText,
+                    ruleId = issue.RuleId
+                }).ToList();
+
+                await JSRuntime.InvokeVoidAsync("tiptapEditor.setQualityIssues", _editorInstance, payload);
+            }
         }
 
-        _lastQualityIssuesFingerprint = fingerprint;
+        await JSRuntime.InvokeVoidAsync(
+            "tiptapEditor.setQualityIssuesActive",
+            _editorInstance,
+            string.IsNullOrWhiteSpace(ActiveQualityIssueKey) ? null : ActiveQualityIssueKey);
+    }
 
-        if (QualityIssues is null || QualityIssues.Count == 0)
+    private static string NormalizeQualityIssueSeverity(string? severity)
+    {
+        string normalized = (severity ?? "info").Trim().ToLowerInvariant();
+        if (normalized is "high" or "critical" or "error")
         {
-            await JSRuntime.InvokeVoidAsync("tiptapEditor.clearQualityIssues", _editorInstance);
-            return;
+            return "severity-high";
         }
 
-        var payload = QualityIssues.Select(issue => new
+        if (normalized is "warning" or "warn" or "medium")
         {
-            id = issue.IssueKey,
-            from = issue.StartOffset,
-            to = issue.EndOffset,
-            kind = issue.Kind,
-            severity = issue.Severity,
-            anchorText = issue.AnchorText
-        }).ToList();
+            return "severity-warning";
+        }
 
-        await JSRuntime.InvokeVoidAsync("tiptapEditor.setQualityIssues", _editorInstance, payload);
+        return "severity-info";
+    }
+
+    private static string NormalizeQualityIssueKind(string? kind)
+    {
+        string raw = string.IsNullOrWhiteSpace(kind) ? "general" : kind.Trim().ToLowerInvariant();
+        if (raw.Contains("passive", StringComparison.Ordinal))
+        {
+            return "passive";
+        }
+
+        if (raw.Contains("repeat", StringComparison.Ordinal) || raw.Contains("duplicate", StringComparison.Ordinal))
+        {
+            return "repeated";
+        }
+
+        if (raw.Contains("clarity", StringComparison.Ordinal))
+        {
+            return "clarity";
+        }
+
+        if (raw.Contains("consisten", StringComparison.Ordinal))
+        {
+            return "consistency";
+        }
+
+        return Regex.Replace(raw, "[^a-z0-9]+", "-").Trim('-');
     }
 
     private async Task AttachAnnotationClicksAsync()
@@ -948,7 +1013,7 @@ else
 
         return string.Join("|", issues
             .OrderBy(item => item.IssueKey)
-            .Select(item => $"{item.IssueKey}:{item.StartOffset}:{item.EndOffset}:{item.Kind}:{item.Severity}"));
+            .Select(item => $"{item.IssueKey}:{item.StartOffset}:{item.EndOffset}:{item.Kind}:{item.Severity}:{item.Fix?.Kind}:{item.Fix?.From}:{item.Fix?.To}:{item.Fix?.Text}"));
     }
 
     public async Task<IReadOnlyList<PageAnnotationAnchorUpdateRequest>> GetAnnotationAnchorsAsync()
@@ -1005,6 +1070,23 @@ else
         return await JSRuntime.InvokeAsync<string?>("tiptapEditor.getSelectionText", _editorInstance);
     }
 
+    public async Task<string?> GetPlainTextAsync()
+    {
+        if (_editorInstance is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await JSRuntime.InvokeAsync<string?>("tiptapEditor.getPlainText", _editorInstance);
+        }
+        catch (JSException)
+        {
+            return null;
+        }
+    }
+
     public async Task SetAiDecorationsAsync(IReadOnlyList<AiDecorationRange>? ranges)
     {
         _pendingAiDecorations = ranges ?? Array.Empty<AiDecorationRange>();
@@ -1019,6 +1101,230 @@ else
     public Task ClearAiDecorationsAsync()
     {
         return SetAiDecorationsAsync(Array.Empty<AiDecorationRange>());
+    }
+
+    public async Task<bool> HighlightQualityIssueAsync(string issueKey, int from, int to, string? anchorText = null)
+    {
+        if (_editorInstance is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            return await JSRuntime.InvokeAsync<bool>(
+                "tiptapEditor.highlightQualityIssue",
+                _editorInstance,
+                from,
+                to,
+                issueKey,
+                anchorText);
+        }
+        catch (JSException)
+        {
+            return false;
+        }
+    }
+
+    public Task ClearQualityIssueHighlightAsync(string issueId)
+    {
+        if (_editorInstance is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        return InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync(
+            "tiptapEditor.clearQualityIssueHighlight",
+            _editorInstance,
+            issueId));
+    }
+
+    public Task ClearAllQualityIssueHighlightsAsync()
+    {
+        if (_editorInstance is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        return InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync(
+            "tiptapEditor.clearQualityIssues",
+            _editorInstance));
+    }
+
+    public Task SetActiveQualityIssueAsync(string? issueKey)
+    {
+        if (_editorInstance is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        return InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync(
+            "tiptapEditor.setQualityIssuesActive",
+            _editorInstance,
+            string.IsNullOrWhiteSpace(issueKey) ? null : issueKey));
+    }
+
+    public async Task<bool> ScrollToQualityIssueAsync(string issueKey)
+    {
+        if (_editorInstance is null || string.IsNullOrWhiteSpace(issueKey))
+        {
+            return false;
+        }
+
+        try
+        {
+            return await JSRuntime.InvokeAsync<bool>(
+                "tiptapEditor.scrollToQualityIssue",
+                _editorInstance,
+                issueKey);
+        }
+        catch (JSException)
+        {
+            return false;
+        }
+    }
+
+    public async Task<bool> ScrollToAnnotationAsync(string annotationId, int from, int to)
+    {
+        if (_editorInstance is null || string.IsNullOrWhiteSpace(annotationId))
+        {
+            return false;
+        }
+
+        try
+        {
+            return await JSRuntime.InvokeAsync<bool>(
+                "tiptapEditor.scrollToAnnotation",
+                _editorInstance,
+                new
+                {
+                    id = annotationId,
+                    from,
+                    to
+                });
+        }
+        catch (JSException)
+        {
+            return false;
+        }
+    }
+
+    public async Task<bool> ApplyQualityIssueFixAsync(QualityIssueFixDto fix, string? issueAnchorText = null, string? issueKey = null)
+    {
+        if (_editorInstance is null)
+        {
+            return false;
+        }
+
+        string? anchorText = string.IsNullOrWhiteSpace(fix.AnchorText) ? issueAnchorText : fix.AnchorText;
+        string? resolvedIssueKey = string.IsNullOrWhiteSpace(fix.IssueKey) ? issueKey : fix.IssueKey;
+
+        try
+        {
+            QualityIssueFixApplyResult? result = await JSRuntime.InvokeAsync<QualityIssueFixApplyResult>(
+                "tiptapEditor.applyQualityIssueFixDetailed",
+                _editorInstance,
+                new
+                {
+                    kind = fix.Kind,
+                    from = fix.From,
+                    to = fix.To,
+                    text = fix.Text,
+                    anchorText,
+                    issueKey = resolvedIssueKey,
+                    docFrom = fix.DocFrom,
+                    docTo = fix.DocTo,
+                    expectedText = fix.ExpectedText
+                });
+
+            if (result is null)
+            {
+                Logger.LogWarning(
+                    "Quality fix interop returned null. IssueKey={IssueKey}, Kind={Kind}, From={From}, To={To}",
+                    resolvedIssueKey,
+                    fix.Kind,
+                    fix.From,
+                    fix.To);
+                return false;
+            }
+
+            if (!result.Applied || !result.Changed)
+            {
+                Logger.LogWarning(
+                    "Quality fix apply failed/no-op. IssueKey={IssueKey}, Kind={Kind}, From={From}, To={To}, Applied={Applied}, Changed={Changed}, Reason={Reason}, Source={Source}, DocFrom={DocFrom}, DocTo={DocTo}",
+                    resolvedIssueKey,
+                    fix.Kind,
+                    fix.From,
+                    fix.To,
+                    result.Applied,
+                    result.Changed,
+                    result.Reason,
+                    result.Source,
+                    result.DocFrom,
+                    result.DocTo);
+            }
+            else
+            {
+                Logger.LogInformation(
+                    "Quality fix applied. IssueKey={IssueKey}, Kind={Kind}, From={From}, To={To}, Source={Source}, DocFrom={DocFrom}, DocTo={DocTo}",
+                    resolvedIssueKey,
+                    fix.Kind,
+                    fix.From,
+                    fix.To,
+                    result.Source,
+                    result.DocFrom,
+                    result.DocTo);
+            }
+
+            return result.Applied && result.Changed;
+        }
+        catch (JSException)
+        {
+            try
+            {
+                return await JSRuntime.InvokeAsync<bool>(
+                    "tiptapEditor.applyQualityIssueFix",
+                    _editorInstance,
+                    new
+                    {
+                        kind = fix.Kind,
+                        from = fix.From,
+                        to = fix.To,
+                        text = fix.Text,
+                        anchorText,
+                        issueKey = resolvedIssueKey
+                    });
+            }
+            catch (JSException)
+            {
+                return false;
+            }
+        }
+    }
+
+    public async Task<QualityIssueRangeResolution?> ResolvePlainRangeAsync(int from, int to, string? anchorText = null)
+    {
+        if (_editorInstance is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await JSRuntime.InvokeAsync<QualityIssueRangeResolution>(
+                "tiptapEditor.resolvePlainRangeDetailed",
+                _editorInstance,
+                new
+                {
+                    from,
+                    to,
+                    anchorText
+                });
+        }
+        catch (JSException)
+        {
+            return null;
+        }
     }
 
     private async Task InvokeJsSafeAsync(Func<ValueTask> action)
@@ -1132,5 +1438,27 @@ else
         string? VersionStatusMessage)
     {
         public static EditorStatusSnapshot Empty { get; } = new(0, 1, 1, "All changes saved", "clean-indicator", null);
+    }
+
+    private sealed record QualityIssueFixApplyResult
+    {
+        public bool Applied { get; init; }
+        public bool Changed { get; init; }
+        public string? Reason { get; init; }
+        public string? Source { get; init; }
+        public int? DocFrom { get; init; }
+        public int? DocTo { get; init; }
+    }
+
+    public sealed record QualityIssueRangeResolution
+    {
+        public bool Resolved { get; init; }
+        public string? Reason { get; init; }
+        public string? Source { get; init; }
+        public int? From { get; init; }
+        public int? To { get; init; }
+        public int? DocFrom { get; init; }
+        public int? DocTo { get; init; }
+        public string? ExpectedText { get; init; }
     }
 }
