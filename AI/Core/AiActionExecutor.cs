@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -123,14 +124,7 @@ namespace WriterApp.AI.Core
 
                 foreach (ContinuityIssue issue in report.Issues ?? new List<ContinuityIssue>())
                 {
-                    int adjustedStart = Math.Max(0, issue.Anchor.PlainTextStart) + chunk.Start;
-                    ContinuityIssue adjustedIssue = issue with
-                    {
-                        Anchor = issue.Anchor with
-                        {
-                            PlainTextStart = adjustedStart
-                        }
-                    };
+                    ContinuityIssue adjustedIssue = NormalizeContinuityIssue(issue, fullText, chunk.Start);
 
                     string key = BuildContinuityIssueMergeKey(adjustedIssue);
                     if (!mergedIssues.TryGetValue(key, out ContinuityIssue? existing))
@@ -223,6 +217,11 @@ namespace WriterApp.AI.Core
 
             foreach (string candidate in EnumerateContinuityJsonCandidates(raw))
             {
+                if (!IsStrictContinuityReportJson(candidate))
+                {
+                    continue;
+                }
+
                 try
                 {
                     ContinuityReport? parsed = JsonSerializer.Deserialize<ContinuityReport>(candidate);
@@ -241,6 +240,97 @@ namespace WriterApp.AI.Core
             }
 
             return false;
+        }
+
+        private static bool IsStrictContinuityReportJson(string json)
+        {
+            try
+            {
+                using JsonDocument doc = JsonDocument.Parse(json);
+                if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                {
+                    return false;
+                }
+
+                HashSet<string> rootAllowed = new(StringComparer.Ordinal)
+                {
+                    "schemaVersion",
+                    "issues"
+                };
+
+                foreach (JsonProperty property in doc.RootElement.EnumerateObject())
+                {
+                    if (!rootAllowed.Contains(property.Name))
+                    {
+                        return false;
+                    }
+                }
+
+                if (!doc.RootElement.TryGetProperty("issues", out JsonElement issuesElement) || issuesElement.ValueKind != JsonValueKind.Array)
+                {
+                    return false;
+                }
+
+                HashSet<string> issueAllowed = new(StringComparer.Ordinal)
+                {
+                    "severity",
+                    "type",
+                    "message",
+                    "evidence",
+                    "suggestedFix",
+                    "anchor"
+                };
+                HashSet<string> evidenceAllowed = new(StringComparer.Ordinal) { "sectionId", "quote" };
+                HashSet<string> anchorAllowed = new(StringComparer.Ordinal) { "plainTextStart", "plainTextLength" };
+
+                foreach (JsonElement issue in issuesElement.EnumerateArray())
+                {
+                    if (issue.ValueKind != JsonValueKind.Object)
+                    {
+                        return false;
+                    }
+
+                    foreach (JsonProperty property in issue.EnumerateObject())
+                    {
+                        if (!issueAllowed.Contains(property.Name))
+                        {
+                            return false;
+                        }
+                    }
+
+                    if (!issue.TryGetProperty("evidence", out JsonElement evidenceElement) || evidenceElement.ValueKind != JsonValueKind.Object)
+                    {
+                        return false;
+                    }
+
+                    foreach (JsonProperty property in evidenceElement.EnumerateObject())
+                    {
+                        if (!evidenceAllowed.Contains(property.Name))
+                        {
+                            return false;
+                        }
+                    }
+
+                    if (!issue.TryGetProperty("anchor", out JsonElement anchorElement) || anchorElement.ValueKind != JsonValueKind.Object)
+                    {
+                        return false;
+                    }
+
+                    foreach (JsonProperty property in anchorElement.EnumerateObject())
+                    {
+                        if (!anchorAllowed.Contains(property.Name))
+                        {
+                            return false;
+                        }
+                    }
+                }
+
+                return true;
+            }
+            catch (JsonException)
+            {
+                return false;
+            }
         }
 
         private static IEnumerable<string> EnumerateContinuityJsonCandidates(string raw)
@@ -451,6 +541,34 @@ namespace WriterApp.AI.Core
             {
                 AiArtifact? textArtifact = result.Artifacts.FirstOrDefault(artifact => artifact.Modality == AiModality.Text);
                 proposedText = textArtifact?.TextContent ?? string.Empty;
+                if (string.Equals(action.ActionId, ContinuityCheckAction.ActionIdValue, StringComparison.Ordinal)
+                    && TryParseContinuityReport(proposedText, out ContinuityReport? parsedReport)
+                    && parsedReport is not null)
+                {
+                    string sectionText = request.Context.SelectionText ?? request.Context.OriginalText ?? string.Empty;
+                    int sanitizedFixCount = 0;
+                    List<ContinuityIssue> normalizedIssues = new();
+                    foreach (ContinuityIssue issue in parsedReport.Issues)
+                    {
+                        ContinuityIssue normalizedIssue = NormalizeContinuityIssue(issue, sectionText, 0);
+                        if (!string.IsNullOrWhiteSpace(issue.SuggestedFix)
+                            && string.IsNullOrWhiteSpace(normalizedIssue.SuggestedFix))
+                        {
+                            sanitizedFixCount++;
+                        }
+
+                        normalizedIssues.Add(normalizedIssue);
+                    }
+
+                    if (sanitizedFixCount > 0)
+                    {
+                        _logger.LogWarning(
+                            "Continuity check sanitized {SanitizedCount} instruction-like suggestions.",
+                            sanitizedFixCount);
+                    }
+
+                    proposedText = JsonSerializer.Serialize(parsedReport with { Issues = normalizedIssues });
+                }
             }
             else if (string.Equals(action.ActionId, ProposeNextParagraphAction.ActionIdValue, StringComparison.Ordinal))
             {
@@ -807,10 +925,107 @@ namespace WriterApp.AI.Core
             return actionId.Substring(0, separator);
         }
 
+        private static ContinuityIssue NormalizeContinuityIssue(ContinuityIssue issue, string sourceText, int startOffsetAdjustment)
+        {
+            string text = sourceText ?? string.Empty;
+            int max = Math.Max(0, text.Length);
+            int rawStart = Math.Max(0, issue.Anchor.PlainTextStart) + Math.Max(0, startOffsetAdjustment);
+            int start = Math.Clamp(rawStart, 0, max);
+            int length = Math.Max(0, issue.Anchor.PlainTextLength);
+            if (start + length > max)
+            {
+                length = Math.Max(0, max - start);
+            }
+
+            string excerpt = BuildReadableAnchorExcerpt(text, start, length, 380);
+            ContinuityEvidence evidence = issue.Evidence ?? new ContinuityEvidence(string.Empty, string.Empty);
+            string normalizedFix = NormalizeContinuitySuggestedFix(issue.SuggestedFix);
+            return issue with
+            {
+                Anchor = new ContinuityAnchor(start, length),
+                Evidence = evidence with
+                {
+                    Quote = string.IsNullOrWhiteSpace(excerpt) ? evidence.Quote : excerpt
+                },
+                SuggestedFix = normalizedFix
+            };
+        }
+
+        private static string BuildReadableAnchorExcerpt(string text, int start, int length, int maxChars)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return string.Empty;
+            }
+
+            int safeMax = Math.Max(80, maxChars);
+            int safeStart = Math.Clamp(start, 0, text.Length);
+            int safeEnd = Math.Clamp(safeStart + Math.Max(0, length), safeStart, text.Length);
+            if (safeEnd <= safeStart)
+            {
+                safeEnd = Math.Min(text.Length, safeStart + 1);
+            }
+
+            int leftSentenceBreak = LastBoundaryIndex(text, safeStart);
+            int rightSentenceBreak = NextBoundaryIndex(text, safeEnd);
+            int snippetStart = leftSentenceBreak < 0 ? 0 : leftSentenceBreak + 1;
+            int snippetEnd = rightSentenceBreak < 0 ? text.Length : rightSentenceBreak + 1;
+
+            string snippet = text.Substring(snippetStart, Math.Max(0, snippetEnd - snippetStart)).Trim();
+            if (snippet.Length <= safeMax)
+            {
+                return snippet;
+            }
+
+            int contextStart = Math.Max(0, safeStart - (safeMax / 2));
+            int contextEnd = Math.Min(text.Length, safeEnd + (safeMax / 2));
+            if (contextEnd - contextStart > safeMax)
+            {
+                contextEnd = Math.Min(text.Length, contextStart + safeMax);
+            }
+
+            return text.Substring(contextStart, Math.Max(0, contextEnd - contextStart)).Trim();
+        }
+
+        private static int LastBoundaryIndex(string text, int fromExclusive)
+        {
+            for (int index = Math.Min(fromExclusive - 1, text.Length - 1); index >= 0; index--)
+            {
+                char ch = text[index];
+                if (ch == '.' || ch == '!' || ch == '?' || ch == '\n')
+                {
+                    return index;
+                }
+            }
+
+            return -1;
+        }
+
+        private static int NextBoundaryIndex(string text, int fromInclusive)
+        {
+            for (int index = Math.Max(0, fromInclusive); index < text.Length; index++)
+            {
+                char ch = text[index];
+                if (ch == '.' || ch == '!' || ch == '?' || ch == '\n')
+                {
+                    return index;
+                }
+            }
+
+            return -1;
+        }
+
         private static AiExecutionOutcome BuildApplyContinuityFixOutcome(IAiAction action, AiActionInput input, AiRequest request)
         {
-            string suggestedFix = GetOption(input.Options, "suggested_fix");
-            if (string.IsNullOrWhiteSpace(suggestedFix))
+            string rawSuggestedFix = GetOption(input.Options, "suggested_fix");
+            string suggestedFix = NormalizeContinuitySuggestedFix(rawSuggestedFix);
+            string issueType = GetOption(input.Options, "issue_type");
+            string issueMessage = GetOption(input.Options, "issue_message");
+            bool duplicateIssue = IsLikelyDuplicateIssue(issueType, issueMessage);
+            bool hadInstructionLikeFix = !string.IsNullOrWhiteSpace(rawSuggestedFix)
+                && string.IsNullOrWhiteSpace(suggestedFix);
+
+            if (string.IsNullOrWhiteSpace(suggestedFix) && !duplicateIssue)
             {
                 AiResult rejectedResult = new(
                     request.RequestId,
@@ -823,9 +1038,13 @@ namespace WriterApp.AI.Core
                 return AiExecutionOutcome.Rejected(
                     rejectedResult,
                     "local",
-                    "ai.continuity_fix_missing_text",
-                    "Continuity fix requires suggested text.");
+                    hadInstructionLikeFix ? "ai.continuity_fix_rejected_instruction_text" : "ai.continuity_fix_missing_text",
+                    hadInstructionLikeFix
+                        ? "Continuity fix was rejected because replacement text looked like instructions."
+                        : "Continuity fix requires suggested text.");
             }
+
+            string replacementText = suggestedFix;
 
             int start = Math.Max(0, ParseIntOption(input.Options, "anchor_start", input.SelectionRange.Start));
             int length = Math.Max(0, ParseIntOption(input.Options, "anchor_length", input.SelectionRange.Length));
@@ -833,7 +1052,7 @@ namespace WriterApp.AI.Core
             TextRange targetRange = new(start, length);
             List<ProposedOperation> operations = new()
             {
-                new ReplaceTextRangeOperation(sectionId, targetRange, suggestedFix)
+                new ReplaceTextRangeOperation(sectionId, targetRange, replacementText)
             };
 
             AiProposal proposal = new(
@@ -851,7 +1070,7 @@ namespace WriterApp.AI.Core
                 "Section",
                 input.Instruction,
                 input.SelectedText,
-                suggestedFix);
+                replacementText);
 
             AiResult result = new(
                 request.RequestId,
@@ -863,6 +1082,138 @@ namespace WriterApp.AI.Core
                 });
 
             return AiExecutionOutcome.Success(proposal, result, "local");
+        }
+
+        private static bool LooksLikeInstructionText(string text)
+        {
+            string normalized = (text ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                return false;
+            }
+
+            string lowered = normalized.ToLowerInvariant();
+            string[] imperativeStarts =
+            {
+                "adjust ",
+                "change ",
+                "fix ",
+                "rewrite ",
+                "update ",
+                "make ",
+                "ensure ",
+                "move ",
+                "remove ",
+                "replace ",
+                "delete ",
+                "insert "
+            };
+
+            if (imperativeStarts.Any(prefix => lowered.StartsWith(prefix, StringComparison.Ordinal)))
+            {
+                return true;
+            }
+
+            if (Regex.IsMatch(normalized, @"^\s*(?:-|\*|\d+\.)\s+", RegexOptions.Multiline))
+            {
+                return true;
+            }
+
+            string firstLine = normalized.Split('\n')[0].Trim();
+            if (firstLine.Length <= 80 && firstLine.EndsWith(":", StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            return lowered.Contains("remove duplicate paragraph", StringComparison.Ordinal)
+                || lowered.Contains("remove repeated paragraph", StringComparison.Ordinal)
+                || lowered.Contains("remove the repeated paragraphs", StringComparison.Ordinal)
+                || lowered.Contains("maintain narrative clarity", StringComparison.Ordinal)
+                || lowered.Contains("improve narrative clarity", StringComparison.Ordinal)
+                || lowered.Contains("as an ai", StringComparison.Ordinal)
+                || lowered.Contains("arrives before", StringComparison.Ordinal)
+                || lowered.Contains("arrives after", StringComparison.Ordinal)
+                || lowered.StartsWith("instruction:", StringComparison.Ordinal)
+                || lowered.StartsWith("analysis:", StringComparison.Ordinal)
+                || lowered.StartsWith("explanation:", StringComparison.Ordinal);
+        }
+
+        private static string NormalizeContinuitySuggestedFix(string text)
+        {
+            string candidate = (text ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(candidate))
+            {
+                return string.Empty;
+            }
+
+            if (TryExtractRevisedTextCandidate(candidate, out string extracted))
+            {
+                candidate = extracted.Trim();
+            }
+
+            return LooksLikeInstructionText(candidate) ? string.Empty : candidate;
+        }
+
+        private static bool TryExtractRevisedTextCandidate(string source, out string revised)
+        {
+            revised = string.Empty;
+            if (string.IsNullOrWhiteSpace(source))
+            {
+                return false;
+            }
+
+            string value = source.Trim();
+            int revisedStart = value.IndexOf("<<REVISED>>", StringComparison.OrdinalIgnoreCase);
+            int revisedEnd = value.IndexOf("<<END>>", StringComparison.OrdinalIgnoreCase);
+            if (revisedStart >= 0 && revisedEnd > revisedStart)
+            {
+                int contentStart = revisedStart + "<<REVISED>>".Length;
+                revised = value.Substring(contentStart, revisedEnd - contentStart).Trim();
+                return !string.IsNullOrWhiteSpace(revised);
+            }
+
+            if (value.StartsWith("{", StringComparison.Ordinal) && value.EndsWith("}", StringComparison.Ordinal))
+            {
+                try
+                {
+                    using JsonDocument doc = JsonDocument.Parse(value);
+                    if (doc.RootElement.ValueKind == JsonValueKind.Object
+                        && doc.RootElement.TryGetProperty("revisedText", out JsonElement revisedText)
+                        && revisedText.ValueKind == JsonValueKind.String)
+                    {
+                        revised = revisedText.GetString()?.Trim() ?? string.Empty;
+                        return !string.IsNullOrWhiteSpace(revised);
+                    }
+                }
+                catch (JsonException)
+                {
+                }
+            }
+
+            MatchCollection quotedMatches = Regex.Matches(value, "\"([^\"]{24,})\"");
+            if (quotedMatches.Count > 0)
+            {
+                Match longest = quotedMatches
+                    .Cast<Match>()
+                    .OrderByDescending(match => match.Groups[1].Value.Length)
+                    .First();
+                revised = longest.Groups[1].Value.Trim();
+                return !string.IsNullOrWhiteSpace(revised);
+            }
+
+            return false;
+        }
+
+        private static bool IsLikelyDuplicateIssue(string issueType, string issueMessage)
+        {
+            string type = (issueType ?? string.Empty).Trim().ToLowerInvariant();
+            string message = (issueMessage ?? string.Empty).Trim().ToLowerInvariant();
+            return type.Contains("repeat", StringComparison.Ordinal)
+                || type.Contains("duplicate", StringComparison.Ordinal)
+                || message.Contains("repeat", StringComparison.Ordinal)
+                || message.Contains("duplicate", StringComparison.Ordinal)
+                || message.Contains("same paragraph", StringComparison.Ordinal)
+                || message.Contains("repeated paragraph", StringComparison.Ordinal);
         }
 
         private static int ParseIntOption(Dictionary<string, object?>? options, string key, int fallback)

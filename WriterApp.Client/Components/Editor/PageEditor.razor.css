@@ -35,25 +35,31 @@
     font-weight: 600;
 }
 
-.quality-issue {
+::deep .quality-issue {
     border-bottom: 2px solid rgba(251, 146, 60, 0.75);
     background: rgba(251, 146, 60, 0.12);
 }
 
-.quality-issue--info {
+::deep .quality-issue--info {
     border-bottom-color: rgba(59, 130, 246, 0.75);
     background: rgba(59, 130, 246, 0.12);
 }
 
-.quality-issue--warning {
+::deep .quality-issue--warning {
     border-bottom-color: rgba(245, 158, 11, 0.75);
     background: rgba(245, 158, 11, 0.12);
 }
 
-.quality-issue--repeated-word {
+::deep .quality-issue--repeated-word {
     border-bottom-style: dotted;
 }
 
-.quality-issue--passive-voice {
+::deep .quality-issue--passive-voice {
     border-bottom-style: dashed;
+}
+
+::deep .quality-issue--active {
+    outline: 2px solid rgba(37, 99, 235, 0.7);
+    outline-offset: 1px;
+    background: rgba(37, 99, 235, 0.18);
 }

@@ -401,12 +401,12 @@ namespace WriterApp.AI.Actions
 
             Dictionary<string, object> inputs = new()
             {
-                ["instruction"] = "Run continuity consistency checks for this section.",
+                ["instruction"] = "Run continuity consistency checks for this section and propose minimal rewrite fixes for anchored spans.",
                 ["section_text"] = sectionText,
                 ["character_bible_json"] = characterBibleJson,
                 ["place_bible_json"] = placeBibleJson,
                 ["timeline_bible_json"] = timelineBibleJson,
-                ["output_contract"] = "Return strict JSON only: {\"schemaVersion\":\"1.0\",\"issues\":[{\"severity\":\"low|medium|high|critical\",\"type\":\"character|place|timeline\",\"message\":\"...\",\"evidence\":{\"sectionId\":\"<guid>\",\"quote\":\"...\"},\"suggestedFix\":\"...\",\"anchor\":{\"plainTextStart\":0,\"plainTextLength\":10}}]}"
+                ["output_contract"] = "Return strict JSON only: {\"schemaVersion\":\"1.0\",\"issues\":[{\"severity\":\"low|medium|high|critical\",\"type\":\"character|place|timeline\",\"message\":\"...\",\"evidence\":{\"sectionId\":\"<guid>\",\"quote\":\"...\"},\"suggestedFix\":\"<revised narrative prose for the anchored span only>\",\"anchor\":{\"plainTextStart\":0,\"plainTextLength\":10}}]}"
             };
 
             return new AiRequest(
@@ -475,7 +475,7 @@ namespace WriterApp.AI.Actions
 
             Dictionary<string, object> inputs = new()
             {
-                ["instruction"] = "Apply the provided continuity fix at the anchored range.",
+                ["instruction"] = "Apply the provided continuity rewrite at the anchored range. The fix text must be revised narrative prose only.",
                 ["suggested_fix"] = suggestedFix,
                 ["anchor_start"] = anchorStart,
                 ["anchor_length"] = anchorLength

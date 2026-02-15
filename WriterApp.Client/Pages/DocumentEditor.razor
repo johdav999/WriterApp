@@ -557,6 +557,8 @@ else
                                             StatusChanged="OnEditorStatusChanged"
                                             Annotations="_annotations"
                                             QualityIssues="_qualityIssues"
+                                            QualityHighlightsEnabled="@_isStyleQualityTabActive"
+                                            ActiveQualityIssueKey="@(_isStyleQualityTabActive ? _selectedQualityIssueKey : null)"
                                             VersionStatusMessage="@_versionStatusMessage"
                                             AnnotationClicked="OnAnnotationClickedAsync"
                                             PageBreaks="PageBreaks"
@@ -757,6 +759,10 @@ else
                                 {
                                     <div class="quality-cache-note">Showing cached results for this version.</div>
                                 }
+                                @if (!string.IsNullOrWhiteSpace(_qualityStatus))
+                                {
+                                    <div class="quality-cache-note">@_qualityStatus</div>
+                                }
                             }
                             else if (_activeContextTab == ContextTab.History)
                             {
@@ -801,10 +807,16 @@ else
                         }
                         else if (_activeContextTab == ContextTab.Notes)
                         {
-                            <textarea class="notes-input"
-                                      value="@_notesDraft"
-                                      @oninput="OnNotesInput"
-                                      placeholder="Add notes for this section..."></textarea>
+                            <div class="notes-panel">
+                                <textarea class="notes-input"
+                                          value="@_notesDraft"
+                                          @oninput="OnNotesInput"
+                                          placeholder="Add notes for this section..."></textarea>
+                                @if (!string.IsNullOrWhiteSpace(_notesError))
+                                {
+                                    <div class="notes-error">@_notesError</div>
+                                }
+                            </div>
                         }
                         else if (_activeContextTab == ContextTab.Scene)
                         {
@@ -1190,7 +1202,7 @@ else
                                                             {
                                                                 <button type="button"
                                                                         disabled="@(_continuityBusy || string.IsNullOrWhiteSpace(issue.SuggestedFix))"
-                                                                        @onclick="() => OnApplyContinuityFixAsync(issue)">
+                                                                        @onclick="() => OpenContinuityProposalAsync(issue)">
                                                                     Apply suggested fix
                                                                 </button>
                                                             }
@@ -1303,7 +1315,8 @@ else
                                         @foreach (PageAnnotationDto annotation in _annotations)
                                         {
                                             <li class="annotation-item @GetAnnotationItemClass(annotation) @GetAnnotationFocusClass(annotation)"
-                                                id="@GetAnnotationElementId(annotation)">
+                                                id="@GetAnnotationElementId(annotation)"
+                                                @onclick="() => OnAnnotationCardClickedAsync(annotation)">
                                                 <div class="annotation-meta">
                                                     <span class="annotation-kind">@GetAnnotationKindLabel(annotation.Kind)</span>
                                                     <span class="annotation-time">@annotation.CreatedAt.ToLocalTime().ToString("g")</span>
@@ -1319,11 +1332,16 @@ else
                                                 <div class="annotation-actions">
                                                     @if (string.Equals(annotation.Status, "resolved", StringComparison.OrdinalIgnoreCase))
                                                     {
-                                                        <button type="button" @onclick="() => ReopenAnnotationAsync(annotation)">Reopen</button>
+                                                        <button type="button"
+                                                                @onclick="() => ReopenAnnotationAsync(annotation)"
+                                                                @onclick:stopPropagation="true">Reopen</button>
                                                     }
                                                     else
                                                     {
-                                                        <button type="button" class="danger" @onclick="() => ResolveAnnotationAsync(annotation)">Resolve</button>
+                                                        <button type="button"
+                                                                class="danger"
+                                                                @onclick="() => ResolveAnnotationAsync(annotation)"
+                                                                @onclick:stopPropagation="true">Resolve</button>
                                                     }
                                                 </div>
                                             </li>
@@ -1352,7 +1370,8 @@ else
                                     <ul class="quality-list">
                                         @foreach (PageQualityIssueDto issue in FilterQualityIssues())
                                         {
-                                            <li class="quality-item @GetQualityIssueClass(issue)">
+                                            <li class="quality-item @GetQualityIssueClass(issue) @(IsQualityIssueSelected(issue) ? "quality-item--selected" : string.Empty)"
+                                                @onclick="() => ShowQualityIssueInTextAsync(issue)">
                                                 <div class="quality-meta">
                                                     <span class="quality-kind">@issue.Kind</span>
                                                     <span class="quality-severity">@issue.Severity</span>
@@ -1364,11 +1383,37 @@ else
                                                 }
                                                 @if (!string.IsNullOrWhiteSpace(issue.AnchorText))
                                                 {
-                                                    <div class="quality-anchor">“@issue.AnchorText”</div>
+                                                    <div class="quality-anchor">"@issue.AnchorText"</div>
                                                 }
                                                 <div class="quality-actions">
-                                                    <button type="button" class="danger" @onclick="() => DismissQualityIssueAsync(issue)">Dismiss</button>
+                                                    <button type="button"
+                                                            @onclick="() => ShowQualityIssueInTextAsync(issue)"
+                                                            @onclick:stopPropagation="true">
+                                                        Scroll to
+                                                    </button>
+                                                    <button type="button"
+                                                            class="primary"
+                                                            disabled="@(!CanApplyQualityIssue(issue))"
+                                                            title="@GetQualityIssueApplyButtonTitle(issue)"
+                                                            @onclick="() => OpenQualityProposalAsync(issue)"
+                                                            @onclick:stopPropagation="true">
+                                                        Apply changes
+                                                    </button>
+                                                    <button type="button"
+                                                            class="danger"
+                                                            @onclick="() => DismissQualityIssueAsync(issue)"
+                                                            @onclick:stopPropagation="true">
+                                                        Dismiss
+                                                    </button>
                                                 </div>
+                                                @if (IsQualityIssueApplied(issue))
+                                                {
+                                                    <div class="quality-applied">Applied.</div>
+                                                }
+                                                @if (!string.IsNullOrWhiteSpace(GetQualityIssueActionError(issue)))
+                                                {
+                                                    <div class="quality-error">@GetQualityIssueActionError(issue)</div>
+                                                }
                                             </li>
                                         }
                                     </ul>
@@ -1540,7 +1585,7 @@ else
                                 {
                                     <span class="rp-status">@_notesStatus</span>
                                 }
-                                <button type="button" @onclick="OnNotesSave">Save notes</button>
+                                <button type="button" @onclick="OnNotesSave">Save now</button>
                             </div>
                         }
                         else if (_activeContextTab == ContextTab.Scene)
@@ -1652,6 +1697,133 @@ else
                 <button type="button"
                         @onclick="CancelDeleteSection"
                         disabled="@_isDeletingSection">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_isQualityProposalOpen && _proposalIssue is not null)
+{
+    <div class="modal-overlay" role="presentation">
+        <div class="modal-backdrop" @onclick="CancelQualityProposal"></div>
+        <div class="modal quality-proposal-dialog" role="dialog" aria-modal="true" aria-labelledby="qualityProposalTitle">
+            <div class="modal-title" id="qualityProposalTitle">Apply suggested change?</div>
+            <div class="modal-body">
+                <div class="quality-proposal-meta">
+                    <span>@_proposalIssue.Kind</span>
+                    <span>@_proposalIssue.Severity</span>
+                    @if (!string.IsNullOrWhiteSpace(_proposalIssue.RuleId))
+                    {
+                        <span>@_proposalIssue.RuleId</span>
+                    }
+                </div>
+                <div class="quality-proposal-message">@_proposalIssue.Message</div>
+                @if (!string.IsNullOrWhiteSpace(_proposalIssue.Suggestion))
+                {
+                    <div class="quality-proposal-suggestion">@_proposalIssue.Suggestion</div>
+                }
+                @if (_proposalPreview is not null)
+                {
+                    <div class="quality-proposal-preview">
+                        <div class="quality-proposal-label">Before</div>
+                        <pre>@_proposalPreview.Before</pre>
+                        <div class="quality-proposal-label">After</div>
+                        <pre>@_proposalPreview.After</pre>
+                    </div>
+                    @if (!string.IsNullOrEmpty(_proposalPreview.Prefix) || !string.IsNullOrEmpty(_proposalPreview.Suffix))
+                    {
+                        <div class="quality-proposal-context">
+                            <div class="quality-proposal-label">Context</div>
+                            <div class="quality-proposal-context-line">
+                                <span>@_proposalPreview.Prefix</span><span class="quality-proposal-token quality-proposal-token--before">@_proposalPreview.Before</span><span>@_proposalPreview.Suffix</span>
+                            </div>
+                            <div class="quality-proposal-context-line">
+                                <span>@_proposalPreview.Prefix</span><span class="quality-proposal-token quality-proposal-token--after">@_proposalPreview.After</span><span>@_proposalPreview.Suffix</span>
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+            @if (!string.IsNullOrWhiteSpace(_proposalError))
+            {
+                <div class="modal-error">@_proposalError</div>
+            }
+            <div class="modal-actions">
+                <button type="button"
+                        class="primary"
+                        @onclick="ConfirmQualityProposalApplyAsync"
+                        disabled="@_isProposalApplying">
+                    @(_isProposalApplying ? "Applying..." : "Accept change")
+                </button>
+                <button type="button"
+                        @onclick="CancelQualityProposal"
+                        disabled="@_isProposalApplying">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_isContinuityProposalOpen && _pendingContinuityIssue is not null)
+{
+    <div class="modal-overlay" role="presentation">
+        <div class="modal-backdrop" @onclick="CancelContinuityProposal"></div>
+        <div class="modal quality-proposal-dialog"
+             role="dialog"
+             aria-modal="true"
+             aria-labelledby="continuityProposalTitle"
+             tabindex="0"
+             @onkeydown="OnContinuityProposalKeyDown">
+            <div class="modal-title" id="continuityProposalTitle">Apply suggested fix?</div>
+            <div class="modal-body">
+                <div class="quality-proposal-meta">
+                    <span>@_pendingContinuityIssue.Type</span>
+                    <span>@_pendingContinuityIssue.Severity</span>
+                </div>
+                <div class="quality-proposal-message">@_pendingContinuityIssue.Message</div>
+                @if (!string.IsNullOrWhiteSpace(_pendingContinuityIssue.Evidence.Quote))
+                {
+                    <div class="quality-proposal-suggestion">"@_pendingContinuityIssue.Evidence.Quote"</div>
+                }
+                @if (_continuityProposalPreview is not null)
+                {
+                    <div class="quality-proposal-preview">
+                        <div class="quality-proposal-label">Before</div>
+                        <pre>@_continuityProposalPreview.Before</pre>
+                        <div class="quality-proposal-label">After</div>
+                        <pre>@_continuityProposalPreview.After</pre>
+                    </div>
+                    @if (!string.IsNullOrEmpty(_continuityProposalPreview.Prefix) || !string.IsNullOrEmpty(_continuityProposalPreview.Suffix))
+                    {
+                        <div class="quality-proposal-context">
+                            <div class="quality-proposal-label">Context</div>
+                            <div class="quality-proposal-context-line">
+                                <span>@_continuityProposalPreview.Prefix</span><span class="quality-proposal-token quality-proposal-token--before">@_continuityProposalPreview.Before</span><span>@_continuityProposalPreview.Suffix</span>
+                            </div>
+                            <div class="quality-proposal-context-line">
+                                <span>@_continuityProposalPreview.Prefix</span><span class="quality-proposal-token quality-proposal-token--after">@_continuityProposalPreview.After</span><span>@_continuityProposalPreview.Suffix</span>
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+            @if (!string.IsNullOrWhiteSpace(_continuityProposalError))
+            {
+                <div class="modal-error">@_continuityProposalError</div>
+            }
+            <div class="modal-actions">
+                <button type="button"
+                        class="primary"
+                        @onclick="ConfirmContinuityProposalApplyAsync"
+                        disabled="@_isApplyingContinuityProposal">
+                    @(_isApplyingContinuityProposal ? "Applying..." : "Apply")
+                </button>
+                <button type="button"
+                        @onclick="CancelContinuityProposal"
+                        disabled="@_isApplyingContinuityProposal">
                     Cancel
                 </button>
             </div>

@@ -4,6 +4,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -79,7 +80,23 @@ namespace WriterApp.Application.Continuity
 
             if (!_patchApplier.TryApply(bibleType, existingJson, aiResult.Proposal.ProposedText!, out BiblePatchApplyResult patchResult))
             {
-                throw new InvalidOperationException($"{bibleType} bible patch validation failed.");
+                string preview = CreatePreview(aiResult.Proposal.ProposedText!);
+                IReadOnlyList<SectionDeltaPayload> fallbackSections = changedSections.Count > 0
+                    ? changedSections
+                    : ResolveAllSections(document);
+
+                if (bibleType == BibleType.Timeline
+                    && TryApplyTimelineFallbackPatch(existingJson, fallbackSections, out patchResult))
+                {
+                    _logger.LogWarning(
+                        "[BIBLE] Timeline patch validation failed; applied deterministic fallback patch with {SectionCount} sections. preview={Preview}",
+                        fallbackSections.Count,
+                        preview);
+                }
+                else
+                {
+                    throw new InvalidOperationException($"{bibleType} bible patch validation failed. Response preview: {preview}");
+                }
             }
 
             BibleRefreshStats stats = patchResult.Stats with
@@ -164,6 +181,24 @@ namespace WriterApp.Application.Continuity
             return deltas;
         }
 
+        private static List<SectionDeltaPayload> ResolveAllSections(Document document)
+        {
+            return document.Chapters
+                .SelectMany(chapter => chapter.Sections)
+                .OrderBy(section => section.Order)
+                .Select(section =>
+                {
+                    string plain = State.PlainTextMapper.ToPlainText(section.Content.Value ?? string.Empty);
+                    return new SectionDeltaPayload(
+                        section.SectionId,
+                        section.Title ?? string.Empty,
+                        section.Order,
+                        plain,
+                        true);
+                })
+                .ToList();
+        }
+
         private static string BuildSourceHash(Dictionary<Guid, string> sectionHashes)
         {
             StringBuilder builder = new();
@@ -182,6 +217,99 @@ namespace WriterApp.Application.Continuity
         {
             byte[] bytes = SHA256.HashData(Encoding.UTF8.GetBytes(input ?? string.Empty));
             return Convert.ToHexString(bytes);
+        }
+
+        private static string CreatePreview(string value, int maxLength = 360)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return "<empty>";
+            }
+
+            string normalized = value.Replace('\r', ' ').Replace('\n', ' ').Trim();
+            if (normalized.Length <= maxLength)
+            {
+                return normalized;
+            }
+
+            return normalized.Substring(0, maxLength) + "...";
+        }
+
+        private bool TryApplyTimelineFallbackPatch(
+            string existingJson,
+            IReadOnlyList<SectionDeltaPayload> changedSections,
+            out BiblePatchApplyResult result)
+        {
+            result = new BiblePatchApplyResult(existingJson, BibleJson.EmptyStats());
+            if (changedSections.Count == 0)
+            {
+                return false;
+            }
+
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            JsonArray ops = new();
+
+            foreach (SectionDeltaPayload section in changedSections.OrderBy(item => item.Order))
+            {
+                string summary = BuildTimelineSummary(section.Content);
+                JsonObject data = new()
+                {
+                    ["id"] = section.SectionId.ToString(),
+                    ["title"] = string.IsNullOrWhiteSpace(section.Title) ? "Untitled Scene" : section.Title.Trim(),
+                    ["timeRef"] = string.Empty,
+                    ["order"] = section.Order,
+                    ["locationId"] = string.Empty,
+                    ["participants"] = new JsonArray(),
+                    ["summary"] = summary,
+                    ["constraints"] = new JsonArray(),
+                    ["lastUpdatedUtc"] = now.ToString("O"),
+                    ["evidence"] = new JsonArray
+                    {
+                        new JsonObject
+                        {
+                            ["sectionId"] = section.SectionId.ToString(),
+                            ["quote"] = summary
+                        }
+                    }
+                };
+
+                ops.Add(new JsonObject
+                {
+                    ["op"] = "upsertTimelineEvent",
+                    ["id"] = section.SectionId.ToString(),
+                    ["data"] = data
+                });
+            }
+
+            JsonObject patch = new()
+            {
+                ["bibleType"] = "Timeline",
+                ["schemaVersion"] = 1,
+                ["ops"] = ops,
+                ["stats"] = new JsonObject
+                {
+                    ["updatedEntries"] = 0,
+                    ["newEntries"] = changedSections.Count,
+                    ["flags"] = 0
+                }
+            };
+
+            return _patchApplier.TryApply(BibleType.Timeline, existingJson, patch.ToJsonString(BibleJson.JsonOptions), out result);
+        }
+
+        private static string BuildTimelineSummary(string content, int maxLength = 280)
+        {
+            string normalized = (content ?? string.Empty)
+                .Replace('\r', ' ')
+                .Replace('\n', ' ')
+                .Trim();
+
+            if (normalized.Length <= maxLength)
+            {
+                return normalized;
+            }
+
+            return normalized.Substring(0, maxLength).TrimEnd() + "...";
         }
 
         private sealed record SectionDeltaPayload(

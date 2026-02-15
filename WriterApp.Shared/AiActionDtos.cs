@@ -4,6 +4,13 @@ using WriterApp.Application.Documents;
 
 namespace WriterApp.Application.AI
 {
+    public sealed record AiTextOperationDto(
+        string Type,
+        int From,
+        int To,
+        string? Text = null,
+        string? ExpectedText = null);
+
     public sealed record AiActionDescriptorDto(
         string ActionKey,
         string DisplayName,
@@ -33,7 +40,8 @@ namespace WriterApp.Application.AI
         string? PreviewText = null,
         bool? WasTruncated = null,
         SectionSceneCardProposalDto? ProposedSceneCard = null,
-        string? ProposalExplanation = null);
+        string? ProposalExplanation = null,
+        IReadOnlyList<AiTextOperationDto>? Operations = null);
 
     public sealed record AiActionHistoryEntryDto(
         Guid ProposalId,

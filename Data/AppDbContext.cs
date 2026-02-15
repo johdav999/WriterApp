@@ -33,6 +33,7 @@ namespace WriterApp.Data
         public DbSet<PageVersionRecord> PageVersions => Set<PageVersionRecord>();
         public DbSet<DocumentOutlineNodeRecord> DocumentOutlineNodes => Set<DocumentOutlineNodeRecord>();
         public DbSet<PageNoteRecord> PageNotes => Set<PageNoteRecord>();
+        public DbSet<SectionNoteRecord> SectionNotes => Set<SectionNoteRecord>();
         public DbSet<SectionSceneCardRecord> SectionSceneCards => Set<SectionSceneCardRecord>();
         public DbSet<OutlineTemplateRecord> OutlineTemplates => Set<OutlineTemplateRecord>();
         public DbSet<ProjectRecord> Projects => Set<ProjectRecord>();
@@ -437,6 +438,17 @@ namespace WriterApp.Data
                 entity.HasOne(note => note.Page)
                     .WithOne()
                     .HasForeignKey<PageNoteRecord>(note => note.PageId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<SectionNoteRecord>(entity =>
+            {
+                entity.HasKey(note => note.SectionId);
+                entity.Property(note => note.NotesText).IsRequired();
+                entity.Property(note => note.UpdatedAtUtc).IsRequired();
+                entity.HasOne(note => note.Section)
+                    .WithOne()
+                    .HasForeignKey<SectionNoteRecord>(note => note.SectionId)
                     .OnDelete(DeleteBehavior.Cascade);
             });
 

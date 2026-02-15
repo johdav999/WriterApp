@@ -399,6 +399,9 @@ namespace WriterApp.Controllers
             bool? wasTruncated = null;
             SectionSceneCardProposalDto? proposedSceneCard = null;
             string? proposalExplanation = null;
+            IReadOnlyList<AiTextOperationDto>? operations = BuildTextOperations(
+                proposal.Operations,
+                proposal.OriginalText ?? request.OriginalText);
 
             if (string.Equals(actionKey, GenerateOutlineAction.ActionIdValue, StringComparison.Ordinal))
             {
@@ -451,7 +454,8 @@ namespace WriterApp.Controllers
                 previewText,
                 wasTruncated,
                 proposedSceneCard,
-                proposalExplanation);
+                proposalExplanation,
+                operations);
 
             string requestJson = JsonSerializer.Serialize(request, new JsonSerializerOptions(JsonSerializerDefaults.Web));
             string responseJson = JsonSerializer.Serialize(response, new JsonSerializerOptions(JsonSerializerDefaults.Web));
@@ -473,6 +477,49 @@ namespace WriterApp.Controllers
                 ResultJson: responseJson), ct);
 
             return Ok(response);
+        }
+
+        private static IReadOnlyList<AiTextOperationDto>? BuildTextOperations(
+            IReadOnlyList<ProposedOperation>? proposalOperations,
+            string? originalText)
+        {
+            if (proposalOperations is null || proposalOperations.Count == 0)
+            {
+                return null;
+            }
+
+            List<AiTextOperationDto> operations = new();
+            foreach (ProposedOperation operation in proposalOperations)
+            {
+                if (operation is not ReplaceTextRangeOperation replace)
+                {
+                    continue;
+                }
+
+                int from = Math.Max(0, replace.Range.Start);
+                int to = Math.Max(from, replace.Range.Start + Math.Max(0, replace.Range.Length));
+                string? expected = TryExtractExpectedText(originalText, from, to);
+                operations.Add(new AiTextOperationDto("replace", from, to, replace.NewText, expected));
+            }
+
+            return operations.Count == 0 ? null : operations;
+        }
+
+        private static string? TryExtractExpectedText(string? source, int from, int to)
+        {
+            if (string.IsNullOrEmpty(source))
+            {
+                return null;
+            }
+
+            int start = Math.Clamp(from, 0, source.Length);
+            int end = Math.Clamp(to, start, source.Length);
+            if (end <= start)
+            {
+                return string.Empty;
+            }
+
+            return source.Substring(start, end - start);
         }
 
         private static IReadOnlyList<string> BuildRequiredInputs(IAiAction action)

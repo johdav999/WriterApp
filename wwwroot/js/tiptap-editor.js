@@ -178,6 +178,7 @@ const IndentExtension = Extension.create({
 });
 
 const aiDecorationsKey = new PluginKey("aiDecorations");
+const qualityIssueDecorationsKey = new PluginKey("qualityIssueDecorations");
 const pageGapDecorationsKey = new PluginKey("pageGapDecorations");
 
 const AiDecorationsExtension = Extension.create({
@@ -200,6 +201,33 @@ const AiDecorationsExtension = Extension.create({
                 props: {
                     decorations(state) {
                         return aiDecorationsKey.getState(state);
+                    }
+                }
+            })
+        ];
+    }
+});
+
+const QualityIssueDecorationsExtension = Extension.create({
+    name: "qualityIssueDecorations",
+    addProseMirrorPlugins() {
+        return [
+            new Plugin({
+                key: qualityIssueDecorationsKey,
+                state: {
+                    init: () => DecorationSet.empty,
+                    apply: (tr, value) => {
+                        const next = tr.getMeta(qualityIssueDecorationsKey);
+                        if (next) {
+                            return next;
+                        }
+
+                        return value.map(tr.mapping, tr.doc);
+                    }
+                },
+                props: {
+                    decorations(state) {
+                        return qualityIssueDecorationsKey.getState(state);
                     }
                 }
             })
@@ -857,7 +885,7 @@ function buildPlainTextSegments(doc) {
     doc.descendants((node, pos) => {
         if (node.isTextblock) {
             if (lastTextblock && plainIndex > 0) {
-                plainIndex += 1;
+                plainIndex += 2;
             }
 
             lastTextblock = true;
@@ -877,6 +905,35 @@ function buildPlainTextSegments(doc) {
     });
 
     return segments;
+}
+
+function getEditorPlainText(editor) {
+    if (!editor?.state?.doc) {
+        return "";
+    }
+
+    const segments = buildPlainTextSegments(editor.state.doc);
+    if (segments.length === 0) {
+        return "";
+    }
+
+    const parts = [];
+    let nextOffset = 0;
+    segments.forEach(segment => {
+        if (segment.start > nextOffset) {
+            parts.push("\n\n");
+            nextOffset = segment.start;
+        }
+
+        const length = Math.max(0, segment.to - segment.from);
+        if (length > 0) {
+            const text = editor.state.doc.textBetween(segment.from, segment.to, "", "");
+            parts.push(text);
+            nextOffset = segment.end;
+        }
+    });
+
+    return parts.join("");
 }
 
 function mapPlainOffsetToDoc(segments, offset) {
@@ -917,6 +974,138 @@ function buildAiDecorations(editor, ranges) {
     });
 
     return DecorationSet.create(editor.state.doc, decorations);
+}
+
+function normalizePlainRange(from, to) {
+    const safeFrom = Math.max(0, Number(from) || 0);
+    const safeTo = Math.max(0, Number(to) || safeFrom);
+    return {
+        from: Math.min(safeFrom, safeTo),
+        to: Math.max(safeFrom, safeTo)
+    };
+}
+
+function mapPlainRangeToDocRange(editor, from, to) {
+    const normalized = normalizePlainRange(from, to);
+    const segments = buildPlainTextSegments(editor.state.doc);
+    const docFrom = mapPlainOffsetToDoc(segments, normalized.from);
+    const docTo = mapPlainOffsetToDoc(segments, normalized.to);
+    if (docFrom === null || docTo === null || docTo <= docFrom) {
+        return null;
+    }
+
+    return { from: docFrom, to: docTo };
+}
+
+function resolveRangeFromAnchorText(editor, anchorText) {
+    const query = typeof anchorText === "string" ? anchorText.trim() : "";
+    if (!query) {
+        return null;
+    }
+
+    const plain = getEditorPlainText(editor);
+    if (!plain) {
+        return null;
+    }
+
+    const index = plain.toLowerCase().indexOf(query.toLowerCase());
+    if (index < 0) {
+        return null;
+    }
+
+    const from = index;
+    const to = index + query.length;
+    return { from, to };
+}
+
+function ensureQualityIssueState(editor) {
+    if (!editor.__qualityIssueState) {
+        editor.__qualityIssueState = {
+            issues: [],
+            activeIssueId: null,
+            manualHighlight: null
+        };
+    }
+
+    return editor.__qualityIssueState;
+}
+
+function getIssueKey(issue) {
+    if (!issue) {
+        return null;
+    }
+
+    return issue.issueKey ?? issue.id ?? null;
+}
+
+function normalizeIssueSeverity(value) {
+    const severity = String(value || "info").toLowerCase();
+    if (severity === "warning" || severity === "high") {
+        return "warning";
+    }
+
+    return "info";
+}
+
+function rebuildQualityIssueDecorations(editor) {
+    if (!editor || !editor.view) {
+        return;
+    }
+
+    const state = ensureQualityIssueState(editor);
+    const decorations = [];
+    const issues = Array.isArray(state.issues) ? state.issues : [];
+
+    issues.forEach(issue => {
+        const docRange = mapPlainRangeToDocRange(editor, issue.from, issue.to);
+        if (!docRange) {
+            return;
+        }
+
+        const severity = normalizeIssueSeverity(issue.severity);
+        const kind = String(issue.kind || "").toLowerCase();
+        const classes = [
+            "quality-issue",
+            `quality-issue--${severity}`
+        ];
+
+        if (kind) {
+            classes.push(`quality-issue--${kind}`);
+        }
+
+        const issueKey = getIssueKey(issue);
+        if (state.activeIssueId && issueKey !== null && String(issueKey) === String(state.activeIssueId)) {
+            classes.push("quality-issue--active");
+        }
+
+        decorations.push(Decoration.inline(docRange.from, docRange.to, { class: classes.join(" ") }));
+    });
+
+    if (state.manualHighlight && state.manualHighlight.from < state.manualHighlight.to) {
+        const manualRange = mapPlainRangeToDocRange(editor, state.manualHighlight.from, state.manualHighlight.to);
+        if (manualRange) {
+            decorations.push(Decoration.inline(manualRange.from, manualRange.to, { class: "quality-issue quality-issue--active" }));
+        }
+    }
+
+    const set = DecorationSet.create(editor.state.doc, decorations);
+    editor.view.dispatch(editor.state.tr.setMeta(qualityIssueDecorationsKey, set));
+}
+
+function focusAndScrollToRange(editor, docFrom, docTo) {
+    if (!editor || !editor.view) {
+        return;
+    }
+
+    editor.commands.focus();
+    try {
+        editor.chain().focus().setTextSelection({ from: docFrom, to: docTo }).run();
+    } catch (error) {
+        editor.chain().focus().setTextSelection(docFrom).run();
+    }
+
+    const tr = editor.state.tr.scrollIntoView();
+    editor.view.dispatch(tr);
 }
 
 window.tiptapEditor = {
@@ -1011,6 +1200,7 @@ window.tiptapEditor = {
                 Link.configure({ openOnClick: false }),
                 IndentExtension,
                 AiDecorationsExtension,
+                QualityIssueDecorationsExtension,
                 PageGapDecorationsExtension,
                 ShortcutExtension
             ],
@@ -1029,6 +1219,7 @@ window.tiptapEditor = {
         });
 
         editor.__interopState = interopState;
+        ensureQualityIssueState(editor);
         maybeDebugEditorLayout(editor);
 
         let lastFormattingState = "";
@@ -1182,6 +1373,182 @@ window.tiptapEditor = {
         const decorations = buildAiDecorations(editor, ranges);
         const tr = editor.state.tr.setMeta(aiDecorationsKey, decorations);
         editor.view.dispatch(tr);
+    },
+
+    setQualityIssues: function (editor, issues) {
+        if (!editor || !editor.view) {
+            return;
+        }
+
+        const state = ensureQualityIssueState(editor);
+        state.issues = Array.isArray(issues) ? issues : [];
+
+        if (window.__waQualityDebug && !editor.__waQualityIssueDebugLogged) {
+            editor.__waQualityIssueDebugLogged = true;
+            const sample = state.issues.length > 0 ? state.issues[0] : null;
+            console.debug("[quality] setQualityIssues sample keys", sample ? Object.keys(sample) : []);
+        }
+
+        if (state.activeIssueId) {
+            const activeExists = state.issues.some(issue => {
+                const key = getIssueKey(issue);
+                return key !== null && String(key) === String(state.activeIssueId);
+            });
+            if (window.__waQualityDebug) {
+                console.debug("[quality] active match", {
+                    activeIssueId: state.activeIssueId,
+                    matched: activeExists
+                });
+            }
+            if (!activeExists) {
+                state.activeIssueId = null;
+                state.manualHighlight = null;
+            }
+        }
+
+        rebuildQualityIssueDecorations(editor);
+    },
+
+    setQualityIssuesActive: function (editor, issueId) {
+        if (!editor || !editor.view) {
+            return;
+        }
+
+        const state = ensureQualityIssueState(editor);
+        state.activeIssueId = issueId ? String(issueId) : null;
+        rebuildQualityIssueDecorations(editor);
+    },
+
+    clearQualityIssues: function (editor) {
+        if (!editor || !editor.view) {
+            return;
+        }
+
+        const state = ensureQualityIssueState(editor);
+        state.issues = [];
+        state.activeIssueId = null;
+        state.manualHighlight = null;
+        rebuildQualityIssueDecorations(editor);
+    },
+
+    scrollToQualityIssue: function (editor, issueId) {
+        if (!editor || !editor.view || !issueId) {
+            return false;
+        }
+
+        const state = ensureQualityIssueState(editor);
+        const issue = (state.issues || []).find(item => {
+            const key = getIssueKey(item);
+            return key !== null && String(key) === String(issueId);
+        });
+
+        if (!issue) {
+            return false;
+        }
+
+        return window.tiptapEditor.highlightQualityIssue(
+            editor,
+            issue.from,
+            issue.to,
+            issueId,
+            issue.anchorText || null);
+    },
+
+    highlightQualityIssue: function (editor, from, to, issueId, anchorText) {
+        if (!editor || !editor.view) {
+            return false;
+        }
+
+        if (window.__waQualityDebug) {
+            console.debug("[quality] highlight request", { issueId, from, to, anchorText });
+        }
+
+        const state = ensureQualityIssueState(editor);
+        let range = normalizePlainRange(from, to);
+        let mapped = range.to > range.from
+            ? mapPlainRangeToDocRange(editor, range.from, range.to)
+            : null;
+
+        if (!mapped) {
+            const fromAnchor = resolveRangeFromAnchorText(editor, anchorText);
+            if (!fromAnchor) {
+                return false;
+            }
+
+            range = normalizePlainRange(fromAnchor.from, fromAnchor.to);
+            mapped = mapPlainRangeToDocRange(editor, range.from, range.to);
+            if (!mapped) {
+                return false;
+            }
+        }
+
+        state.activeIssueId = issueId ? String(issueId) : null;
+        state.manualHighlight = {
+            issueKey: issueId ? String(issueId) : null,
+            from: range.from,
+            to: range.to
+        };
+        rebuildQualityIssueDecorations(editor);
+        if (window.__waQualityDebug) {
+            console.debug("[quality] highlight resolved", {
+                issueId: state.activeIssueId,
+                mappedFrom: mapped.from,
+                mappedTo: mapped.to,
+                decorationsRebuilt: true
+            });
+        }
+        focusAndScrollToRange(editor, mapped.from, mapped.to);
+        return true;
+    },
+
+    clearQualityIssueHighlight: function (editor, issueId) {
+        if (!editor || !editor.view) {
+            return;
+        }
+
+        const state = ensureQualityIssueState(editor);
+        if (!issueId || String(state.activeIssueId) === String(issueId)) {
+            state.activeIssueId = null;
+            state.manualHighlight = null;
+        }
+
+        rebuildQualityIssueDecorations(editor);
+    },
+
+    applyQualityIssueFix: function (editor, fix) {
+        if (!editor || !editor.view || !fix) {
+            return false;
+        }
+
+        const kind = String(fix.kind || "").toLowerCase();
+        const from = Number(fix.from);
+        const to = Number(fix.to);
+        if (!Number.isFinite(from) || !Number.isFinite(to)) {
+            return false;
+        }
+
+        const normalized = normalizePlainRange(from, to);
+        const mapped = mapPlainRangeToDocRange(editor, normalized.from, normalized.to);
+        if (!mapped) {
+            return false;
+        }
+
+        const text = typeof fix.text === "string" ? fix.text : "";
+        const tr = editor.state.tr;
+
+        if (kind === "replace") {
+            tr.insertText(text, mapped.from, mapped.to);
+        } else if (kind === "delete") {
+            tr.delete(mapped.from, mapped.to);
+        } else if (kind === "insert") {
+            tr.insertText(text, mapped.from);
+        } else {
+            return false;
+        }
+
+        editor.view.dispatch(tr.scrollIntoView());
+        editor.commands.focus();
+        return true;
     },
 
     attachContextMenu: function (elementId, dotNetRef) {

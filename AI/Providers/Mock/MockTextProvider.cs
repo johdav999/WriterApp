@@ -724,7 +724,7 @@ namespace WriterApp.AI.Providers.Mock
                         type = "character",
                         message = "Mira is described as confident near deep water, which conflicts with prior fear.",
                         evidence = new { sectionId, quote = "Mira stepped onto the flooded dock without hesitation." },
-                        suggestedFix = "Reframe the action to show hesitation or explain the change.",
+                        suggestedFix = "Mira paused at the waterline, her breath tightening before she stepped onto the flooded dock.",
                         anchor = new { plainTextStart = 0, plainTextLength = 64 }
                     }
                 }

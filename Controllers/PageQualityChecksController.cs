@@ -53,29 +53,12 @@ namespace WriterApp.Controllers
                 return NotFound();
             }
 
-            IReadOnlyList<PageQualityIssueRecord> issues = await _qualityChecks.ListIssuesAsync(
+            IReadOnlyList<PageQualityIssueDto> issues = await _qualityChecks.ListIssuesAsync(
                 userId,
                 pageId,
                 includeDismissed,
                 ct);
-
-            List<PageQualityIssueDto> dto = issues
-                .Select(record => new PageQualityIssueDto(
-                    record.IssueKey,
-                    record.DocumentId,
-                    record.PageId,
-                    record.RuleId,
-                    record.Kind,
-                    record.Severity,
-                    record.Message,
-                    record.Suggestion,
-                    record.AnchorText,
-                    record.StartOffset,
-                    record.EndOffset,
-                    record.CreatedAt))
-                .ToList();
-
-            return Ok(dto);
+            return Ok(issues.ToList());
         }
 
         [HttpPost("run")]

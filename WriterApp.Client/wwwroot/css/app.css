@@ -123,6 +123,51 @@ code {
     text-align: start;
 }
 
+:root {
+    --qi-passive: #7c3aed;
+    --qi-repeated: #c2410c;
+    --qi-clarity: #0369a1;
+    --qi-consistency: #166534;
+    --qi-general: #334155;
+}
+
+.ProseMirror .quality-issue {
+    --qi-color: var(--qi-general);
+    border-bottom: 2px solid var(--qi-color);
+    background: color-mix(in srgb, var(--qi-color) 16%, transparent);
+    border-radius: 3px;
+}
+
+.ProseMirror .quality-issue.quality-issue--active {
+    outline: 2px solid var(--qi-color);
+    outline-offset: 1px;
+}
+
+.ProseMirror .quality-issue.quality-issue--passive {
+    --qi-color: var(--qi-passive);
+}
+
+.ProseMirror .quality-issue.quality-issue--repeated {
+    --qi-color: var(--qi-repeated);
+}
+
+.ProseMirror .quality-issue.quality-issue--clarity {
+    --qi-color: var(--qi-clarity);
+}
+
+.ProseMirror .quality-issue.quality-issue--consistency {
+    --qi-color: var(--qi-consistency);
+}
+
+.ProseMirror .quality-issue.quality-issue--severity-warning {
+    background: color-mix(in srgb, var(--qi-color) 22%, transparent);
+}
+
+.ProseMirror .quality-issue.quality-issue--severity-high {
+    border-bottom-width: 3px;
+    background: color-mix(in srgb, var(--qi-color) 28%, transparent);
+}
+
 /* Outline tree nodes (RenderTreeBuilder nodes don't get scoped CSS) */
 .outline-node__row {
     display: flex;

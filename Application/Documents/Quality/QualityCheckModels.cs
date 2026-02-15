@@ -3,6 +3,12 @@ using System.Collections.Generic;
 
 namespace WriterApp.Application.Documents
 {
+    public sealed record QualityIssueFix(
+        string Kind,
+        int From,
+        int To,
+        string? Text);
+
     public sealed record QualityIssue(
         string IssueKey,
         string RuleId,
@@ -12,7 +18,8 @@ namespace WriterApp.Application.Documents
         string? Suggestion,
         string? AnchorText,
         int StartOffset,
-        int EndOffset);
+        int EndOffset,
+        QualityIssueFix? Fix);
 
     public sealed record QualityToken(string Text, int Start, int End);
 
