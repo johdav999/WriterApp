@@ -74,6 +74,15 @@ else
     public PageDto? Page { get; set; }
 
     [Parameter]
+    public bool UseSceneContentPersistence { get; set; }
+
+    [Parameter]
+    public Guid? SceneProjectId { get; set; }
+
+    [Parameter]
+    public Guid? SceneNodeId { get; set; }
+
+    [Parameter]
     public EventCallback<PageDto> OnPageSaved { get; set; }
 
     [Parameter]
@@ -563,19 +572,34 @@ else
                 fingerprint = BuildFingerprint(_content)
             });
 
-            PageUpdateRequest request = new(null, _content);
-            using HttpRequestMessage message = new(
-                HttpMethod.Put,
-                $"api/pages/{_currentPage.Id}")
+            HttpResponseMessage response;
+            if (UseSceneContentPersistence
+                && SceneProjectId.HasValue
+                && SceneProjectId.Value != Guid.Empty
+                && SceneNodeId.HasValue
+                && SceneNodeId.Value != Guid.Empty)
             {
-                Content = JsonContent.Create(request)
-            };
-            if (!string.IsNullOrWhiteSpace(HeadingNumberingTraceId))
-            {
-                message.Headers.Add("X-Trace-Id", HeadingNumberingTraceId);
+                SceneContentUpdateRequest request = new(_content, null);
+                response = await Http.PutAsJsonAsync(
+                    $"api/projects/{SceneProjectId.Value}/scenes/{SceneNodeId.Value}/content",
+                    request);
             }
+            else
+            {
+                PageUpdateRequest request = new(null, _content);
+                using HttpRequestMessage message = new(
+                    HttpMethod.Put,
+                    $"api/pages/{_currentPage.Id}")
+                {
+                    Content = JsonContent.Create(request)
+                };
+                if (!string.IsNullOrWhiteSpace(HeadingNumberingTraceId))
+                {
+                    message.Headers.Add("X-Trace-Id", HeadingNumberingTraceId);
+                }
 
-            using HttpResponseMessage response = await Http.SendAsync(message);
+                response = await Http.SendAsync(message);
+            }
 
             if (!response.IsSuccessStatusCode)
             {
@@ -590,18 +614,31 @@ else
                 return;
             }
 
-            PageDto? updated = await response.Content.ReadFromJsonAsync<PageDto>();
-            if (updated is null)
+            PageDto updated;
+            if (UseSceneContentPersistence)
             {
-                _saveState = SaveState.Failed;
-                await InvokeAsync(StateHasChanged);
-                await DebugLogAsync("AUTOSAVE_FAIL", new
+                SceneContentDto? sceneUpdated = await response.Content.ReadFromJsonAsync<SceneContentDto>();
+                string updatedContent = sceneUpdated?.ContentJson ?? _content;
+                DateTimeOffset updatedAt = sceneUpdated?.UpdatedAtUtc ?? DateTimeOffset.UtcNow;
+                updated = _currentPage with { Content = updatedContent, UpdatedAt = updatedAt };
+            }
+            else
+            {
+                PageDto? pageUpdated = await response.Content.ReadFromJsonAsync<PageDto>();
+                if (pageUpdated is null)
                 {
-                    traceId = HeadingNumberingTraceId,
-                    pageId = _currentPage.Id,
-                    status = "null"
-                });
-                return;
+                    _saveState = SaveState.Failed;
+                    await InvokeAsync(StateHasChanged);
+                    await DebugLogAsync("AUTOSAVE_FAIL", new
+                    {
+                        traceId = HeadingNumberingTraceId,
+                        pageId = _currentPage.Id,
+                        status = "null"
+                    });
+                    return;
+                }
+
+                updated = pageUpdated;
             }
 
             _currentPage = updated;

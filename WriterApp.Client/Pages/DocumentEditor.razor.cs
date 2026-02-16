@@ -591,6 +591,7 @@ namespace WriterApp.Client.Pages
                 || string.Equals(issue.Severity, _continuitySeverityFilter, StringComparison.OrdinalIgnoreCase));
         private bool IsTranslationProposal => IsTranslationActionKey(_pendingAiProposal?.ActionKey);
         private bool ShowTranslationSwitcher => GetTranslationLinks().Any(item => !item.IsActive);
+        private bool IsSceneRoute => ProjectId != Guid.Empty && SceneNodeId != Guid.Empty;
 
         protected override async Task OnInitializedAsync()
         {
@@ -842,6 +843,11 @@ namespace WriterApp.Client.Pages
                     _loadError = "No pages available.";
                     return;
                 }
+
+                if (IsSceneRoute)
+                {
+                    await LoadSceneContentIntoActivePageAsync();
+                }
                 ResetVersionStatusTracking();
 
                 Logger.LogDebug(
@@ -906,6 +912,37 @@ namespace WriterApp.Client.Pages
             PageDto primary = pages[0];
             string combined = string.Join("\n\n", pages.Select(page => page.Content ?? string.Empty));
             return primary with { Content = combined };
+        }
+
+        private async Task LoadSceneContentIntoActivePageAsync()
+        {
+            if (!IsSceneRoute || _activePage is null)
+            {
+                return;
+            }
+
+            try
+            {
+                SceneContentDto? sceneContent = await Http.GetFromJsonAsync<SceneContentDto>(
+                    $"api/projects/{ProjectId}/scenes/{SceneNodeId}/content");
+                if (sceneContent is null)
+                {
+                    return;
+                }
+
+                string content = sceneContent.ContentJson ?? string.Empty;
+                _activePage = _activePage with { Content = content, UpdatedAt = sceneContent.UpdatedAtUtc };
+                if (_activeSection is not null
+                    && _pagesBySection.TryGetValue(_activeSection.Id, out List<PageDto>? pages)
+                    && pages.Count > 0)
+                {
+                    pages[0] = pages[0] with { Content = content, UpdatedAt = sceneContent.UpdatedAtUtc };
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Scene content load failed.");
+            }
         }
 
         private async Task EnsureSectionHasPageAsync(Guid sectionId)
@@ -4378,12 +4415,12 @@ namespace WriterApp.Client.Pages
 
         private async Task OnSceneCardSave()
         {
-            if (_activeSection is null)
+            if (_activeSection is null && !IsSceneRoute)
             {
                 return;
             }
 
-            await SaveSceneCardAsync(_activeSection.Id, isAutosave: false);
+            await SaveSceneCardAsync(_activeSection?.Id ?? Guid.Empty, isAutosave: false);
         }
 
         private async Task LoadSceneCardAsync(Guid sectionId)
@@ -4399,19 +4436,37 @@ namespace WriterApp.Client.Pages
 
             try
             {
-                SectionSceneCardDto? card =
-                    await Http.GetFromJsonAsync<SectionSceneCardDto>($"api/sections/{sectionId}/scene-card");
+                if (IsSceneRoute)
+                {
+                    SceneCardDto? card =
+                        await Http.GetFromJsonAsync<SceneCardDto>($"api/scenes/{SceneNodeId}/scene-card");
+                    _sceneNarrativePurpose = card?.NarrativePurpose ?? string.Empty;
+                    _sceneEmotionalBeat = card?.EmotionalBeat ?? string.Empty;
+                    _sceneKeyEvents = card?.KeyEvents ?? string.Empty;
+                    _sceneOpenQuestions = card?.OpenQuestions ?? string.Empty;
+                    _scenePovCharacterId = card?.PovCharacterId ?? string.Empty;
+                    _scenePlaceId = card?.PlaceId ?? string.Empty;
+                    _sceneTimelineEventId = card?.TimelineEventId ?? string.Empty;
+                    _sceneTimeRef = card?.TimeRef ?? string.Empty;
+                    _sceneTagsText = string.Join(", ", card?.Tags ?? Array.Empty<string>());
+                    _sceneReferencesJson = SerializeSceneReferences(card?.References);
+                }
+                else
+                {
+                    SectionSceneCardDto? card =
+                        await Http.GetFromJsonAsync<SectionSceneCardDto>($"api/sections/{sectionId}/scene-card");
 
-                _sceneNarrativePurpose = card?.NarrativePurpose ?? string.Empty;
-                _sceneEmotionalBeat = card?.EmotionalBeat ?? string.Empty;
-                _sceneKeyEvents = card?.KeyEvents ?? string.Empty;
-                _sceneOpenQuestions = card?.OpenQuestions ?? string.Empty;
-                _scenePovCharacterId = card?.PovCharacterId ?? string.Empty;
-                _scenePlaceId = card?.PlaceId ?? string.Empty;
-                _sceneTimelineEventId = card?.TimelineEventId ?? string.Empty;
-                _sceneTimeRef = card?.TimeRef ?? string.Empty;
-                _sceneTagsText = string.Join(", ", card?.Tags ?? Array.Empty<string>());
-                _sceneReferencesJson = SerializeSceneReferences(card?.References);
+                    _sceneNarrativePurpose = card?.NarrativePurpose ?? string.Empty;
+                    _sceneEmotionalBeat = card?.EmotionalBeat ?? string.Empty;
+                    _sceneKeyEvents = card?.KeyEvents ?? string.Empty;
+                    _sceneOpenQuestions = card?.OpenQuestions ?? string.Empty;
+                    _scenePovCharacterId = card?.PovCharacterId ?? string.Empty;
+                    _scenePlaceId = card?.PlaceId ?? string.Empty;
+                    _sceneTimelineEventId = card?.TimelineEventId ?? string.Empty;
+                    _sceneTimeRef = card?.TimeRef ?? string.Empty;
+                    _sceneTagsText = string.Join(", ", card?.Tags ?? Array.Empty<string>());
+                    _sceneReferencesJson = SerializeSceneReferences(card?.References);
+                }
             }
             catch (Exception ex)
             {
@@ -4422,14 +4477,14 @@ namespace WriterApp.Client.Pages
 
         private void QueueSceneCardAutosave()
         {
-            if (_activeSection is null)
+            if (_activeSection is null && !IsSceneRoute)
             {
                 return;
             }
 
             _sceneAutosaveCts?.Cancel();
             _sceneAutosaveCts = new CancellationTokenSource();
-            _ = DebouncedSceneCardSaveAsync(_sceneAutosaveCts, _activeSection.Id);
+            _ = DebouncedSceneCardSaveAsync(_sceneAutosaveCts, _activeSection?.Id ?? Guid.Empty);
         }
 
         private async Task DebouncedSceneCardSaveAsync(CancellationTokenSource cts, Guid sectionId)
@@ -4451,7 +4506,7 @@ namespace WriterApp.Client.Pages
 
         private async Task SaveSceneCardAsync(Guid sectionId, bool isAutosave)
         {
-            if (_sceneSaveInFlight || _sceneCardSectionId != sectionId)
+            if (_sceneSaveInFlight || (!IsSceneRoute && _sceneCardSectionId != sectionId))
             {
                 return;
             }
@@ -4459,7 +4514,7 @@ namespace WriterApp.Client.Pages
             _sceneSaveInFlight = true;
             try
             {
-                SectionSceneCardUpdateRequest payload = new(
+                SceneCardUpdateRequest scenePayload = new(
                     _sceneNarrativePurpose,
                     _sceneEmotionalBeat,
                     _sceneKeyEvents,
@@ -4471,8 +4526,26 @@ namespace WriterApp.Client.Pages
                     ParseTags(_sceneTagsText),
                     ParseSceneReferences(_sceneReferencesJson));
 
-                using HttpResponseMessage response =
-                    await Http.PutAsJsonAsync($"api/sections/{sectionId}/scene-card", payload);
+                HttpResponseMessage response;
+                if (IsSceneRoute)
+                {
+                    response = await Http.PutAsJsonAsync($"api/scenes/{SceneNodeId}/scene-card", scenePayload);
+                }
+                else
+                {
+                    SectionSceneCardUpdateRequest payload = new(
+                        scenePayload.NarrativePurpose,
+                        scenePayload.EmotionalBeat,
+                        scenePayload.KeyEvents,
+                        scenePayload.OpenQuestions,
+                        scenePayload.PovCharacterId,
+                        scenePayload.PlaceId,
+                        scenePayload.TimelineEventId,
+                        scenePayload.TimeRef,
+                        scenePayload.Tags,
+                        scenePayload.References);
+                    response = await Http.PutAsJsonAsync($"api/sections/{sectionId}/scene-card", payload);
+                }
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -4480,7 +4553,30 @@ namespace WriterApp.Client.Pages
                     return;
                 }
 
-                SectionSceneCardDto? updated = await response.Content.ReadFromJsonAsync<SectionSceneCardDto>();
+                SceneCardDto? updated;
+                if (IsSceneRoute)
+                {
+                    updated = await response.Content.ReadFromJsonAsync<SceneCardDto>();
+                }
+                else
+                {
+                    SectionSceneCardDto? legacy = await response.Content.ReadFromJsonAsync<SectionSceneCardDto>();
+                    updated = legacy is null
+                        ? null
+                        : new SceneCardDto(
+                            SceneNodeId,
+                            legacy.NarrativePurpose,
+                            legacy.EmotionalBeat,
+                            legacy.KeyEvents,
+                            legacy.OpenQuestions,
+                            legacy.UpdatedUtc,
+                            legacy.PovCharacterId,
+                            legacy.PlaceId,
+                            legacy.TimelineEventId,
+                            legacy.TimeRef,
+                            legacy.Tags,
+                            legacy.References);
+                }
                 if (updated is not null)
                 {
                     _sceneNarrativePurpose = updated.NarrativePurpose ?? string.Empty;
@@ -4705,7 +4801,7 @@ namespace WriterApp.Client.Pages
             var payload = new
             {
                 DocumentId,
-                SectionId = _activeSection?.Id,
+                SectionId = IsSceneRoute ? (Guid?)null : _activeSection?.Id,
                 PageId = _activePage?.Id,
                 BeforeContent = before,
                 AfterContent = after
@@ -4729,9 +4825,16 @@ namespace WriterApp.Client.Pages
         {
             try
             {
-                SectionNotesDto? result = await Http.GetFromJsonAsync<SectionNotesDto>($"api/sections/{sectionId}/notes", ct);
-                _notesLastSavedAtUtc = result?.UpdatedAtUtc;
-                return result?.NotesText ?? string.Empty;
+                if (IsSceneRoute)
+                {
+                    SceneNotesDto? result = await Http.GetFromJsonAsync<SceneNotesDto>($"api/scenes/{SceneNodeId}/notes", ct);
+                    _notesLastSavedAtUtc = result?.UpdatedAtUtc;
+                    return result?.NotesText ?? string.Empty;
+                }
+
+                SectionNotesDto? legacy = await Http.GetFromJsonAsync<SectionNotesDto>($"api/sections/{sectionId}/notes", ct);
+                _notesLastSavedAtUtc = legacy?.UpdatedAtUtc;
+                return legacy?.NotesText ?? string.Empty;
             }
             catch (Exception ex)
             {
@@ -4741,12 +4844,22 @@ namespace WriterApp.Client.Pages
             }
         }
 
-        private async Task<SectionNotesDto?> SaveSectionNotesAsync(Guid sectionId, string value, CancellationToken ct)
+        private async Task<DateTimeOffset?> SaveSectionNotesAsync(Guid sectionId, string value, CancellationToken ct)
         {
-            SectionNotesDto payload = new(sectionId, value ?? string.Empty, DateTimeOffset.UtcNow);
-            using HttpResponseMessage response = await Http.PutAsJsonAsync($"api/sections/{sectionId}/notes", payload, ct);
-            response.EnsureSuccessStatusCode();
-            return await response.Content.ReadFromJsonAsync<SectionNotesDto>(cancellationToken: ct);
+            if (IsSceneRoute)
+            {
+                SceneNotesUpdateRequest payload = new(value ?? string.Empty);
+                using HttpResponseMessage response = await Http.PutAsJsonAsync($"api/scenes/{SceneNodeId}/notes", payload, ct);
+                response.EnsureSuccessStatusCode();
+                SceneNotesDto? saved = await response.Content.ReadFromJsonAsync<SceneNotesDto>(cancellationToken: ct);
+                return saved?.UpdatedAtUtc;
+            }
+
+            SectionNotesDto legacyPayload = new(sectionId, value ?? string.Empty, DateTimeOffset.UtcNow);
+            using HttpResponseMessage legacyResponse = await Http.PutAsJsonAsync($"api/sections/{sectionId}/notes", legacyPayload, ct);
+            legacyResponse.EnsureSuccessStatusCode();
+            SectionNotesDto? legacySaved = await legacyResponse.Content.ReadFromJsonAsync<SectionNotesDto>(cancellationToken: ct);
+            return legacySaved?.UpdatedAtUtc;
         }
 
         private void ResetNotesAutosaveState()
@@ -4831,14 +4944,14 @@ namespace WriterApp.Client.Pages
 
                 try
                 {
-                    SectionNotesDto? saved = await SaveSectionNotesAsync(sectionId, snapshot, ct);
-                    if (saveVersion >= _notesSavedVersion)
-                    {
-                        _notesSavedVersion = saveVersion;
-                        _notesLastSavedAtUtc = saved?.UpdatedAtUtc ?? DateTimeOffset.UtcNow;
-                        _notesStatus = "Saved";
-                        _notesError = null;
-                    }
+                DateTimeOffset? savedAt = await SaveSectionNotesAsync(sectionId, snapshot, ct);
+                if (saveVersion >= _notesSavedVersion)
+                {
+                    _notesSavedVersion = saveVersion;
+                    _notesLastSavedAtUtc = savedAt ?? DateTimeOffset.UtcNow;
+                    _notesStatus = "Saved";
+                    _notesError = null;
+                }
                 }
                 catch (OperationCanceledException)
                 {

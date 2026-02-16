@@ -65,36 +65,6 @@
 
 <div class="editor-shell @GetLayoutStateClass()" style="@GetLayoutStateStyle()">
     <div class="editor-workspace @GetWorkspaceClass()">
-        <aside class="section-panel @GetSectionsPanelClass()">
-            <div class="section-panel-header">
-                <h2>Sections</h2>
-                <div class="section-panel-actions">
-                    <button type="button" @onclick="() => OnCreateSection(SectionKind.Chapter)">Add chapter</button>
-                    <button type="button" @onclick="() => OnCreateSection(SectionKind.Section)">Add section</button>
-                </div>
-            </div>
-            <ul class="section-nav-list">
-                    @foreach (Section section in _orderedSections)
-                    {
-                        <li class="drop-zone @(GetDropZoneClass(section.SectionId, DropPosition.Before))" @ondragover="OnDragOver" @ondragover:preventDefault @ondragenter="() => OnDragEnter(section.SectionId, DropPosition.Before)" @ondrop="() => OnDrop(section.SectionId, DropPosition.Before)"></li>
-                        <li class="section-nav-row @GetDraggingClass(section.SectionId)" draggable="@(_orderedSections.Count > 1 ? "true" : "false")" @ondragstart="(args) => OnDragStart(section.SectionId, args)" @ondragend="OnDragEnd">
-                            <button type="button"
-                                    class="section-nav-item @GetActiveSectionClass(section.SectionId)"
-                                    @onclick="() => OnSectionSelected(section.SectionId)">
-                                <span class="section-order">@GetSectionOrderLabel(section)</span>
-                                <span class="section-title">@GetSectionTitle(section)</span>
-                            </button>
-                            <div class="section-nav-actions">
-                                <span class="drag-handle" aria-hidden="true">:::</span>
-                                <button type="button" class="section-action" @onclick="() => OnRenameSection(section.SectionId)">Rename</button>
-                                <button type="button" class="section-action" @onclick="() => OnDuplicateSection(section.SectionId)">Duplicate</button>
-                                <button type="button" class="section-action" @onclick="() => OnDeleteSection(section.SectionId)" disabled="@(_orderedSections.Count <= 1)">Delete</button>
-                            </div>
-                        </li>
-                        <li class="drop-zone @(GetDropZoneClass(section.SectionId, DropPosition.After))" @ondragover="OnDragOver" @ondragover:preventDefault @ondragenter="() => OnDragEnter(section.SectionId, DropPosition.After)" @ondrop="() => OnDrop(section.SectionId, DropPosition.After)"></li>
-                    }
-            </ul>
-        </aside>
 
         <div class="editor-split @GetPreviewSplitClass()">
             <section class="editor-main">
@@ -593,7 +563,7 @@
 
     .editor-workspace {
         display: grid;
-        grid-template-columns: var(--section-panel-width) minmax(0, 1fr) var(--context-panel-width);
+        grid-template-columns: minmax(0, 1fr) var(--context-panel-width);
         gap: 24px;
         align-items: start;
     }
@@ -1135,7 +1105,7 @@
     }
 
     .editor-workspace.is-context-collapsed {
-        grid-template-columns: var(--section-panel-width) minmax(0, 1fr);
+        grid-template-columns: minmax(0, 1fr);
     }
 
     .editor-workspace.is-sections-collapsed {
