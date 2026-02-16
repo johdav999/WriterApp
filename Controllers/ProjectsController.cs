@@ -1593,13 +1593,20 @@ namespace WriterApp.Controllers
             if (sceneNode.LinkedSectionId.HasValue)
             {
                 Guid sectionId = sceneNode.LinkedSectionId.Value;
-                List<string> parts = await _dbContext.Pages
+                List<string> parts = (await _dbContext.Pages
                     .AsNoTracking()
                     .Where(page => page.SectionId == sectionId)
+                    .Select(page => new
+                    {
+                        page.OrderIndex,
+                        page.UpdatedAt,
+                        Content = page.Content ?? string.Empty
+                    })
+                    .ToListAsync(ct))
                     .OrderBy(page => page.OrderIndex)
                     .ThenBy(page => page.UpdatedAt)
-                    .Select(page => page.Content ?? string.Empty)
-                    .ToListAsync(ct);
+                    .Select(page => page.Content)
+                    .ToList();
 
                 content = string.Join("\n\n", parts.Where(part => !string.IsNullOrWhiteSpace(part)));
             }

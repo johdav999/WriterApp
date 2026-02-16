@@ -19,7 +19,7 @@
 
 .editor-workspace {
     display: grid;
-    grid-template-columns: var(--section-panel-width) minmax(0, 1fr) var(--context-panel-width);
+    grid-template-columns: minmax(0, 1fr) var(--context-panel-width);
     gap: 24px;
     align-items: start;
 }
@@ -603,7 +603,7 @@
 }
 
 .editor-workspace.is-context-collapsed {
-    grid-template-columns: var(--section-panel-width) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
 }
 
 .editor-workspace.is-sections-collapsed {

@@ -25,127 +25,6 @@ else
 {
     <div class="editor-shell @GetLayoutStateClass()" style="@GetLayoutStyle()">
         <div class="editor-workspace @GetWorkspaceClass()">
-            <aside class="section-panel @GetSectionsPanelClass()">
-                <div class="section-panel-header">
-                    <h2>Scene Sections</h2>
-                    <div class="section-panel-actions">
-                        @if (_isReorderingSections)
-                        {
-                            <span class="section-order-status">Saving order...</span>
-                        }
-                        @if (_sectionReorderDiagnosticsEnabled)
-                        {
-                            <span class="section-order-debug">
-                                Reorder debug: @_lastReorderStatus / @_lastReorderCount / @_lastReorderCorrelationId
-                            </span>
-                        }
-                        @if (_dndDebugEnabled)
-                        {
-                            <span class="section-order-debug">
-                                DND: @_dndDebugStatus
-                                @if (_dndDebugLastAt.HasValue)
-                                {
-                                    <span>@_dndDebugLastAt.Value.ToLocalTime().ToString("HH:mm:ss")</span>
-                                }
-                                <span>drag=@_dndDebugLastDraggedId</span>
-                                <span>target=@_dndDebugLastTargetId</span>
-                            </span>
-                        }
-                        @if (!string.IsNullOrWhiteSpace(_sectionError))
-                        {
-                            <span class="ai-preview-status error">@_sectionError</span>
-                        }
-                        @if (!string.IsNullOrWhiteSpace(_importSummary))
-                        {
-                            <span class="ai-preview-status">@_importSummary</span>
-                        }
-                        <button type="button"
-                                class="panel-toggle"
-                                aria-label="Add section"
-                                title='@GetTooltip("Add a new section or chapter.")'
-                                @onclick="CreateSectionAsync"
-                                disabled="@_isCreatingSection">
-                            @(_isCreatingSection ? "Adding..." : "Add section")
-                        </button>
-                    </div>
-                </div>
-                <ul class="section-nav-list">
-                    @foreach (SectionDto item in _sections)
-                    {
-                        <li class="section-nav-row"
-                            @ondragover:preventDefault="true"
-                            @ondrop="() => OnSectionDrop(item.Id)">
-                            <button type="button"
-                                    class="section-drag-handle"
-                                    draggable="@(!_isReorderingSections ? "true" : "false")"
-                                    @ondragstart="() => OnSectionDragStart(item.Id)"
-                                    disabled="@_isReorderingSections"
-                                    aria-label="Reorder section"
-                                    title='@GetTooltip("Drag to reorder sections.")'>
-                                ⋮⋮
-                            </button>
-                            @if (_renamingSectionId == item.Id)
-                            {
-                                <div class="section-rename">
-                                    <input class="section-rename-input"
-                                           value="@_sectionRenameDraft"
-                                           maxlength="120"
-                                           @oninput="OnSectionRenameInput"
-                                           @onkeydown="(args) => OnSectionRenameKeyDown(args, item.Id)"
-                                           @onblur="() => OnSectionRenameBlurAsync(item.Id)" />
-                                    @if (!string.IsNullOrWhiteSpace(_sectionRenameError))
-                                    {
-                                        <div class="section-rename-error">@_sectionRenameError</div>
-                                    }
-                                </div>
-                            }
-                            else
-                            {
-                                <button type="button"
-                                        class="section-nav-item @(item.Id == _activeSection.Id ? "is-active" : string.Empty)"
-                                        @onclick="() => OnSectionSelected(item.Id)"
-                                        title='@GetTooltip("Select this section to edit.")'>
-                                    <span class="section-title section-title-editable"
-                                          @onclick="() => BeginSectionRename(item.Id)"
-                                          @onclick:stopPropagation="true"
-                                          @onclick:preventDefault="true">
-                                        @item.Title
-                                    </span>
-                                </button>
-                                <div class="section-menu">
-                                    <button type="button"
-                                            class="section-menu-toggle"
-                                            aria-label="Section actions"
-                                            title='@GetTooltip("Section actions: rename, duplicate, or delete.")'
-                                            @onclick="() => ToggleSectionMenu(item.Id)"
-                                            @onclick:stopPropagation="true"
-                                            @onclick:preventDefault="true">
-                                        ...
-                                    </button>
-                                    @if (_sectionMenuOpenId == item.Id)
-                                    {
-                                        <div class="section-menu-panel">
-                                            <button type="button" @onclick="() => BeginSectionRename(item.Id)">Rename</button>
-                                            <button type="button" @onclick="() => DuplicateSectionAsync(item.Id)">Duplicate</button>
-                                            <button type="button" @onclick="() => PromptImportSection(item.Id)">Import</button>
-                                            <button type="button"
-                                                    class="danger"
-                                                    @onclick="() => PromptDeleteSection(item.Id)">
-                                                Delete
-                                            </button>
-                                        </div>
-                                    }
-                                </div>
-                            }
-                        </li>
-                    }
-                    <li class="section-nav-row"
-                        @ondragover:preventDefault="true"
-                        @ondrop="OnSectionDropAfterLast">
-                        <span class="visually-hidden">Drop to move to end</span>&nbsp;
-                    </li>
-                </ul>
-            </aside>
 
             <section class="editor-main">
                 <div class="editor-main-header">
@@ -553,6 +432,9 @@ else
                                 <PageEditor @ref="_pageEditor"
                                             @key="_activePage.Id"
                                             Page="_activePage"
+                                            UseSceneContentPersistence="@IsSceneRoute"
+                                            SceneProjectId="@(IsSceneRoute ? ProjectId : null)"
+                                            SceneNodeId="@(IsSceneRoute ? SceneNodeId : null)"
                                             OnPageSaved="OnPageSaved"
                                             ShowStatusBar="false"
                                             StatusChanged="OnEditorStatusChanged"
