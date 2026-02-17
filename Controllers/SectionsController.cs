@@ -593,6 +593,7 @@ namespace WriterApp.Controllers
                 document.UpdatedAt = now;
             }
 
+            await SyncLinkedSceneContentAsync(targetSectionId, finalHtml, targetSection.LanguageCode, now, ct);
             await _dbContext.SaveChangesAsync(ct);
             await _searchIndex.UpsertPageAsync(primaryPage, ct);
             await _pageVersionService.CreateSnapshotAsync(
@@ -623,6 +624,43 @@ namespace WriterApp.Controllers
                 converted.Warnings.ToList(),
                 converted.Format,
                 targetSectionId));
+        }
+
+        private async Task SyncLinkedSceneContentAsync(
+            Guid sectionId,
+            string html,
+            string? languageCode,
+            DateTimeOffset updatedAtUtc,
+            CancellationToken ct)
+        {
+            Guid[] sceneNodeIds = await _dbContext.ProjectNodes
+                .Where(node => node.NodeType == ProjectNodeType.Scene && node.LinkedSectionId == sectionId)
+                .Select(node => node.Id)
+                .ToArrayAsync(ct);
+            if (sceneNodeIds.Length == 0)
+            {
+                return;
+            }
+
+            Dictionary<Guid, SceneContentRecord> existing = await _dbContext.SceneContents
+                .Where(item => sceneNodeIds.Contains(item.SceneNodeId))
+                .ToDictionaryAsync(item => item.SceneNodeId, ct);
+
+            foreach (Guid sceneNodeId in sceneNodeIds)
+            {
+                if (!existing.TryGetValue(sceneNodeId, out SceneContentRecord? sceneContent))
+                {
+                    sceneContent = new SceneContentRecord
+                    {
+                        SceneNodeId = sceneNodeId
+                    };
+                    _dbContext.SceneContents.Add(sceneContent);
+                }
+
+                sceneContent.ContentJson = html ?? string.Empty;
+                sceneContent.LanguageCode = string.IsNullOrWhiteSpace(languageCode) ? null : languageCode.Trim();
+                sceneContent.UpdatedAtUtc = updatedAtUtc;
+            }
         }
 
         [HttpDelete("{sectionId:guid}")]

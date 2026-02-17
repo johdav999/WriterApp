@@ -12,7 +12,10 @@ namespace WriterApp.Application.Documents
         string? IssueKey = null,
         int? DocFrom = null,
         int? DocTo = null,
-        string? ExpectedText = null);
+        string? ExpectedText = null,
+        string? BeforeAnchor = null,
+        string? AfterAnchor = null,
+        string? NeedleText = null);
 
     public sealed record PageQualityIssueDto(
         string IssueKey,

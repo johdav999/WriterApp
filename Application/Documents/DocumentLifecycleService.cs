@@ -147,10 +147,11 @@ namespace WriterApp.Application.Documents
 
         public async Task<int> CleanupExpiredTrashAsync(TimeSpan retention, CancellationToken ct)
         {
-            DateTimeOffset cutoff = DateTimeOffset.UtcNow.Subtract(retention);
+            DateTime cutoffUtc = DateTime.UtcNow.Subtract(retention);
             List<Guid> expiredIds = await _dbContext.Documents
                 .AsNoTracking()
-                .Where(document => document.DeletedAt != null && document.DeletedAt < cutoff)
+                // SQLite struggles with some DateTimeOffset comparisons; compare against UTC DateTime explicitly.
+                .Where(document => document.DeletedAt.HasValue && document.DeletedAt.Value.UtcDateTime < cutoffUtc)
                 .Select(document => document.Id)
                 .ToListAsync(ct);
 

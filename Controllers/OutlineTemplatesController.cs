@@ -545,7 +545,8 @@ namespace WriterApp.Controllers
 
         private bool IsEnabled()
         {
-            return _configuration.GetValue<bool?>("WriterApp:Workflow:OutlineTemplatesEnabled")
+            return _configuration.GetValue<bool?>("Workflow:OutlineTemplatesEnabled")
+                ?? _configuration.GetValue<bool?>("WriterApp:Workflow:OutlineTemplatesEnabled")
                 ?? false;
         }
 

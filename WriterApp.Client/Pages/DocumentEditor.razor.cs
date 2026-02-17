@@ -119,7 +119,9 @@ namespace WriterApp.Client.Pages
         private readonly List<SectionTranslationLinkDto> _sectionTranslationLinks = new();
         private bool _layoutStateInitialized;
         private PageEditor? _pageEditor;
+        private Projects? _navigatorPanel;
         private PageEditor.EditorStatusSnapshot _editorStatus = PageEditor.EditorStatusSnapshot.Empty;
+        private DateTimeOffset _nextNavigatorRefreshUtc = DateTimeOffset.MinValue;
         private string _headingTraceId = string.Empty;
         private Guid? _draggedSectionId;
         private bool _isReorderingSections;
@@ -322,17 +324,27 @@ namespace WriterApp.Client.Pages
                 "Tighten selection",
                 "Tighten selection",
                 true,
-                new Dictionary<string, object?>(),
-                "Trim excess words while preserving meaning.",
-                false),
+                new Dictionary<string, object?>
+                {
+                    ["target_reduction_pct"] = 15,
+                    ["min_reduction_pct"] = 10,
+                    ["preserve_meaning"] = true
+                },
+                "Reduce word count by removing redundancy while preserving meaning and voice.",
+                true),
             new AiActionOption(
                 "tighten.section",
                 "Tighten section",
                 "Tighten section",
                 false,
-                new Dictionary<string, object?>(),
-                "Trim excess words while preserving meaning.",
-                false),
+                new Dictionary<string, object?>
+                {
+                    ["target_reduction_pct"] = 15,
+                    ["min_reduction_pct"] = 10,
+                    ["preserve_meaning"] = true
+                },
+                "Reduce word count by removing redundancy while preserving meaning and voice.",
+                true),
             new AiActionOption(
                 "expand.selection",
                 "Expand selection",
@@ -340,7 +352,7 @@ namespace WriterApp.Client.Pages
                 true,
                 new Dictionary<string, object?>(),
                 "Add detail while preserving intent.",
-                false),
+                true),
             new AiActionOption(
                 "expand.section",
                 "Expand section",
@@ -348,7 +360,7 @@ namespace WriterApp.Client.Pages
                 false,
                 new Dictionary<string, object?>(),
                 "Add detail while preserving intent.",
-                false),
+                true),
             new AiActionOption(
                 "change_tone.selection",
                 "Change tone (selection)",
@@ -359,7 +371,7 @@ namespace WriterApp.Client.Pages
                     ["tone"] = "Formal"
                 },
                 "Shift tone while preserving facts and structure.",
-                false),
+                true),
             new AiActionOption(
                 "change_tone.section",
                 "Change tone (section)",
@@ -370,7 +382,7 @@ namespace WriterApp.Client.Pages
                     ["tone"] = "Formal"
                 },
                 "Shift tone while preserving facts and structure.",
-                false),
+                true),
             new AiActionOption(
                 "show_dont_tell.selection",
                 "Show, don't tell (selection)",
@@ -378,7 +390,7 @@ namespace WriterApp.Client.Pages
                 true,
                 new Dictionary<string, object?>(),
                 "Rewrite abstractions into concrete, sensory prose.",
-                false),
+                true),
             new AiActionOption(
                 "show_dont_tell.section",
                 "Show, don't tell (section)",
@@ -386,9 +398,8 @@ namespace WriterApp.Client.Pages
                 false,
                 new Dictionary<string, object?>(),
                 "Rewrite abstractions into concrete, sensory prose.",
-                false)
+                true)
         };
-        private string _selectedReviseTool = "tighten";
         private readonly List<PromptPresetDto> _promptPresets = new();
         private readonly List<Guid> _pinnedPromptPresetIds = new();
         private string? _promptStatus;
@@ -475,6 +486,7 @@ namespace WriterApp.Client.Pages
         private string? _qualityError;
         private string? _qualityStatus;
         private bool _qualityFromCache;
+        private bool _qualityHasRunOnce;
         private string _qualityScope = "page";
         private string _qualityFilterSeverity = "all";
         private string _qualityFilterKind = "all";
@@ -482,6 +494,7 @@ namespace WriterApp.Client.Pages
         private string? _selectedQualityIssueKey;
         private readonly HashSet<string> _qualityApplyingIssueKeys = new(StringComparer.Ordinal);
         private readonly HashSet<string> _qualityAppliedIssueKeys = new(StringComparer.Ordinal);
+        private readonly HashSet<string> _qualityMetaLeakWarnedIssueKeys = new(StringComparer.Ordinal);
         private readonly Dictionary<string, string> _qualityIssueActionErrors = new(StringComparer.Ordinal);
         private bool _isQualityProposalOpen;
         private PageQualityIssueDto? _proposalIssue;
@@ -493,10 +506,12 @@ namespace WriterApp.Client.Pages
         private string? _notesError;
         private DateTimeOffset? _notesLastSavedAtUtc;
         private CancellationTokenSource? _notesAutosaveCts;
+        private CancellationTokenSource? _notesRetryCts;
         private bool _notesSaveInFlight;
         private bool _notesSaveQueued;
         private int _notesEditVersion;
         private int _notesSavedVersion;
+        private int _notesRetryAttempt;
         private string _sceneNarrativePurpose = string.Empty;
         private string _sceneEmotionalBeat = string.Empty;
         private string _sceneKeyEvents = string.Empty;
@@ -517,6 +532,7 @@ namespace WriterApp.Client.Pages
         private string? _sceneAiError;
         private bool _sceneAiInFlight;
         private PendingAiProposal? _pendingAiProposal;
+        private AiSelectionSnapshot? _lastAiSelectionSnapshot;
         private bool _pendingDetailsExpanded;
         private bool _aiUndoRedoInFlight;
         private bool _canAiUndo;
@@ -533,6 +549,12 @@ namespace WriterApp.Client.Pages
         private const int PagePaddingX = 20;
         private const int PagePaddingY = 24;
         private static readonly TimeSpan NotesAutosaveDebounce = TimeSpan.FromMilliseconds(700);
+        private static readonly TimeSpan[] NotesAutosaveRetryDelays =
+        {
+            TimeSpan.FromSeconds(5),
+            TimeSpan.FromSeconds(15),
+            TimeSpan.FromSeconds(30)
+        };
         private static readonly TimeSpan SceneCardAutosaveDebounce = TimeSpan.FromSeconds(2.5);
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -557,15 +579,6 @@ namespace WriterApp.Client.Pages
             _aiActions.Where(action => action.RequiresSelection && action.IncludeInLists);
         private IEnumerable<AiActionOption> SectionAiActions =>
             _aiActions.Where(action => !action.RequiresSelection && action.IncludeInLists);
-        private bool CanShowReviseTools =>
-            HasAction("tighten.selection")
-            || HasAction("tighten.section")
-            || HasAction("expand.selection")
-            || HasAction("expand.section")
-            || HasAction("change_tone.selection")
-            || HasAction("change_tone.section")
-            || HasAction("show_dont_tell.selection")
-            || HasAction("show_dont_tell.section");
         private bool CanShowContinuityCoach =>
             HasAction("continuity.extract_character_bible")
             || HasAction("continuity.extract_place_bible")
@@ -577,6 +590,10 @@ namespace WriterApp.Client.Pages
         private bool CanRunExtractPlaceBible => HasAction("continuity.extract_place_bible");
         private bool CanRunExtractTimelineBible => HasAction("continuity.extract_timeline_bible");
         private bool CanRunContinuityCheck => HasAction("continuity.check_section");
+        private bool CanRunBibleUpdate =>
+            CanRunExtractCharacterBible
+            && CanRunExtractPlaceBible
+            && CanRunExtractTimelineBible;
         private bool CanShowPromptLibrary =>
             HasAction("custom_transform");
         private IReadOnlyList<PromptPresetDto> PinnedPromptPresets =>
@@ -838,6 +855,7 @@ namespace WriterApp.Client.Pages
                 _sectionTranslationGroupId = _activeSection.TranslationGroupId;
 
                 _activePage = GetPrimaryPage(_activeSection.Id);
+                _qualityHasRunOnce = false;
                 if (_activePage is null)
                 {
                     _loadError = "No pages available.";
@@ -1193,6 +1211,18 @@ namespace WriterApp.Client.Pages
             _importError = null;
         }
 
+        private void PromptImportCurrentSection()
+        {
+            _isDocumentMenuOpen = false;
+            if (_activeSection is null)
+            {
+                _importError = "No active section to import into.";
+                return;
+            }
+
+            PromptImportSection(_activeSection.Id);
+        }
+
         private void CancelImportSection()
         {
             _isImportDialogOpen = false;
@@ -1256,10 +1286,15 @@ namespace WriterApp.Client.Pages
 
                 if (_activeSection?.Id == result.TargetSectionId && _activePage is not null)
                 {
-                    _activePage = _activePage with { Content = result.Html, UpdatedAt = DateTimeOffset.UtcNow };
+                    bool appendMode = QualityFixClientHelpers.IsAppendMode(_importMode);
+                    string existingHtml = _activePage.Content ?? string.Empty;
+                    string mergedHtml = appendMode
+                        ? QualityFixClientHelpers.MergeImportedHtmlForAppend(existingHtml, result.Html)
+                        : result.Html;
+                    _activePage = _activePage with { Content = mergedHtml, UpdatedAt = DateTimeOffset.UtcNow };
                     if (_pagesBySection.TryGetValue(result.TargetSectionId, out List<PageDto>? pages) && pages.Count > 0)
                     {
-                        pages[0] = pages[0] with { Content = result.Html, UpdatedAt = DateTimeOffset.UtcNow };
+                        pages[0] = pages[0] with { Content = mergedHtml, UpdatedAt = DateTimeOffset.UtcNow };
                         for (int i = 1; i < pages.Count; i++)
                         {
                             pages[i] = pages[i] with { Content = string.Empty, UpdatedAt = DateTimeOffset.UtcNow };
@@ -1268,7 +1303,7 @@ namespace WriterApp.Client.Pages
 
                     if (_pageEditor is not null)
                     {
-                        await _pageEditor.SetContentAsync(result.Html, markDirty: false);
+                        await _pageEditor.SetContentAsync(mergedHtml, markDirty: false);
                         await _pageEditor.RefreshPageBreaksAsync();
                     }
                 }
@@ -1797,8 +1832,14 @@ namespace WriterApp.Client.Pages
             if (_activePage?.Id == page.Id)
             {
                 _activePage = page;
+                _qualityHasRunOnce = false;
                 await LoadPageVersionsAsync();
                 await UpdateAnnotationAnchorsAsync();
+            }
+
+            if (IsSceneRoute)
+            {
+                await RefreshNavigatorInspectorAsync();
             }
 
             await InvokeAsync(StateHasChanged);
@@ -1902,6 +1943,9 @@ namespace WriterApp.Client.Pages
             _notesAutosaveCts?.Cancel();
             _notesAutosaveCts?.Dispose();
             _notesAutosaveCts = null;
+            _notesRetryCts?.Cancel();
+            _notesRetryCts?.Dispose();
+            _notesRetryCts = null;
             _sceneAutosaveCts?.Cancel();
             _sceneAutosaveCts?.Dispose();
             _sceneAutosaveCts = null;
@@ -2550,6 +2594,63 @@ namespace WriterApp.Client.Pages
             await OnSectionSelected(_sections[index + 1].Id);
         }
 
+        private Guid? GetNavigatorProjectId()
+        {
+            if (ProjectId != Guid.Empty)
+            {
+                return ProjectId;
+            }
+
+            return CurrentSceneStateService.ProjectId;
+        }
+
+        private async Task OpenSceneFromNavigatorAsync(Guid sceneNodeId)
+        {
+            Guid? projectId = GetNavigatorProjectId();
+            if (!projectId.HasValue || projectId.Value == Guid.Empty || sceneNodeId == Guid.Empty)
+            {
+                return;
+            }
+
+            if (ProjectId == projectId.Value && SceneNodeId == sceneNodeId)
+            {
+                return;
+            }
+
+            await FlushNotesSaveAsync();
+            if (_pageEditor is not null)
+            {
+                await _pageEditor.ForceSaveIfDifferentAsync("navigate");
+            }
+
+            string target = SceneRouteBuilder.BuildRelativeSceneEditorPath(projectId.Value, sceneNodeId);
+            Navigation.NavigateTo(target);
+        }
+
+        private async Task RefreshNavigatorInspectorAsync(bool force = false)
+        {
+            if (!IsSceneRoute || _navigatorPanel is null)
+            {
+                return;
+            }
+
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            if (!force && now < _nextNavigatorRefreshUtc)
+            {
+                return;
+            }
+
+            _nextNavigatorRefreshUtc = now.AddSeconds(5);
+            try
+            {
+                await _navigatorPanel.RefreshActiveProjectTreeAsync();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogDebug(ex, "Unable to refresh embedded navigator tree after scene save.");
+            }
+        }
+
         private string GetPanelCategoryClass(PanelCategory category)
         {
             return _activePanelCategory == category ? "is-active" : string.Empty;
@@ -2577,6 +2678,7 @@ namespace WriterApp.Client.Pages
             {
                 PanelCategory.Coach,
                 PanelCategory.Story,
+                PanelCategory.Navigator,
                 PanelCategory.NotesTasks,
                 PanelCategory.History
             };
@@ -2614,6 +2716,10 @@ namespace WriterApp.Client.Pages
                     tabs.Add(ContextTab.Scene);
                     break;
 
+                case PanelCategory.Navigator:
+                    tabs.Add(ContextTab.Navigator);
+                    break;
+
                 case PanelCategory.NotesTasks:
                     tabs.Add(ContextTab.Notes);
                     tabs.Add(ContextTab.Annotations);
@@ -2643,6 +2749,7 @@ namespace WriterApp.Client.Pages
                 ContextTab.Continuity => "Consistency",
                 ContextTab.Quality => "Style & quality",
                 ContextTab.Scene => "Scene card",
+                ContextTab.Navigator => "Project navigator",
                 ContextTab.PromptLibrary => "Prompt Library",
                 _ => tab.ToString()
             };
@@ -2654,6 +2761,7 @@ namespace WriterApp.Client.Pages
             {
                 PanelCategory.Coach => "Coach tools",
                 PanelCategory.Story => "Story tools",
+                PanelCategory.Navigator => "Navigator",
                 PanelCategory.NotesTasks => "Notes & tasks",
                 PanelCategory.History => "History tools",
                 PanelCategory.Advanced => "Advanced tools",
@@ -2672,6 +2780,7 @@ namespace WriterApp.Client.Pages
                 ContextTab.Annotations => "Track notes, comments, TODOs, and highlights.",
                 ContextTab.Notes => "Keep personal notes for this section.",
                 ContextTab.History => "Review versions and compare content changes.",
+                ContextTab.Navigator => "Parts, chapters, and scenes in manuscript order.",
                 ContextTab.PromptLibrary => "Run reusable prompt presets for edits and planning.",
                 _ => null
             };
@@ -2760,6 +2869,7 @@ namespace WriterApp.Client.Pages
             return tab switch
             {
                 ContextTab.Scene => PanelCategory.Story,
+                ContextTab.Navigator => PanelCategory.Navigator,
                 ContextTab.Notes => PanelCategory.NotesTasks,
                 ContextTab.Annotations => PanelCategory.NotesTasks,
                 ContextTab.History => PanelCategory.History,
@@ -2854,43 +2964,6 @@ namespace WriterApp.Client.Pages
             return _availableActionKeys.Contains(actionKey);
         }
 
-        private void OnReviseToolChanged(ChangeEventArgs args)
-        {
-            _selectedReviseTool = args.Value?.ToString() ?? "tighten";
-        }
-
-        private async Task OnReviseRequested()
-        {
-            bool hasSelection = _currentSelectionRange is not null;
-            AiActionOption? action = ResolveReviseAction(_selectedReviseTool, hasSelection);
-            if (action is null)
-            {
-                return;
-            }
-
-            await OnAiActionSelected(action);
-        }
-
-        private AiActionOption? ResolveReviseAction(string tool, bool hasSelection)
-        {
-            string actionKey = tool switch
-            {
-                "tighten" => hasSelection ? "tighten.selection" : "tighten.section",
-                "expand" => hasSelection ? "expand.selection" : "expand.section",
-                "change_tone" => hasSelection ? "change_tone.selection" : "change_tone.section",
-                "show_dont_tell" => hasSelection ? "show_dont_tell.selection" : "show_dont_tell.section",
-                _ => hasSelection ? "tighten.selection" : "tighten.section"
-            };
-
-            AiActionOption? action = _aiActionPresets.FirstOrDefault(entry => string.Equals(entry.ActionKey, actionKey, StringComparison.OrdinalIgnoreCase));
-            if (action is null || !HasAction(action.ActionKey))
-            {
-                return null;
-            }
-
-            return action;
-        }
-
         private async Task OnRefreshCharacterBibleAsync() => await RefreshBibleAsync("character", fullRebuild: false);
 
         private async Task OnRefreshPlaceBibleAsync() => await RefreshBibleAsync("place", fullRebuild: false);
@@ -2906,6 +2979,79 @@ namespace WriterApp.Client.Pages
         private async Task OnCheckContinuityAsync()
         {
             await ExecuteContinuityActionAsync("continuity.check_section", "Continuity check complete.", null);
+        }
+
+        private async Task OnUpdateAllBiblesAsync()
+        {
+            if (_activeSection is null || _continuityBusy || !CanRunBibleUpdate)
+            {
+                return;
+            }
+
+            _continuityBusy = true;
+            List<string> failures = new();
+            try
+            {
+                (string Type, Func<BibleSnapshotDto?> Snapshot)[] steps =
+                {
+                    ("character", () => _characterBibleSnapshot),
+                    ("place", () => _placeBibleSnapshot),
+                    ("timeline", () => _timelineBibleSnapshot)
+                };
+
+                for (int index = 0; index < steps.Length; index++)
+                {
+                    (string bibleType, Func<BibleSnapshotDto?> getSnapshot) = steps[index];
+                    bool fullRebuild = NeedsFullBibleBuild(getSnapshot());
+                    string phase = fullRebuild ? "building" : "refreshing";
+                    _continuityStatus = $"Updating bibles: {CultureInfo.InvariantCulture.TextInfo.ToTitleCase(bibleType)} ({index + 1}/{steps.Length})...";
+                    await InvokeAsync(StateHasChanged);
+
+                    try
+                    {
+                        RefreshBibleRequest request = new(fullRebuild, _activeSection.Id);
+                        using HttpResponseMessage response = await Http.PostAsJsonAsync(
+                            $"api/documents/{DocumentId}/bibles/{bibleType}/refresh",
+                            request);
+                        if (!response.IsSuccessStatusCode)
+                        {
+                            failures.Add($"{bibleType} ({(int)response.StatusCode})");
+                            Logger.LogWarning(
+                                "Update Bible request failed. Type={BibleType}, Phase={Phase}, Status={Status}",
+                                bibleType,
+                                phase,
+                                response.StatusCode);
+                            continue;
+                        }
+
+                        BibleSnapshotDto? snapshot = await response.Content.ReadFromJsonAsync<BibleSnapshotDto>();
+                        if (snapshot is not null)
+                        {
+                            SetBibleSnapshot(snapshot);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        failures.Add(bibleType);
+                        Logger.LogWarning(ex, "Update Bible request failed. Type={BibleType}, Phase={Phase}", bibleType, phase);
+                    }
+                }
+
+                _continuityStatus = failures.Count == 0
+                    ? "Bibles updated successfully."
+                    : $"Bible update completed with errors: {string.Join(", ", failures)}";
+                await LoadAiHistoryAsync();
+            }
+            finally
+            {
+                _continuityBusy = false;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+
+        private static bool NeedsFullBibleBuild(BibleSnapshotDto? snapshot)
+        {
+            return snapshot is null || snapshot.LastRefreshUtc is null;
         }
 
         private async Task RefreshBibleAsync(string bibleType, bool fullRebuild)
@@ -3116,6 +3262,12 @@ namespace WriterApp.Client.Pages
             _pendingContinuityIssue = resolvedIssue;
             _pendingContinuityRange = applyRange;
             _continuityProposalPreview = BuildContinuityProposalPreview(applyRange, fixText);
+            Logger.LogInformation(
+                "Continuity proposal prepared. IssueKey={IssueKey}, IsDeletion={IsDeletion}, BeforeLength={BeforeLength}, AfterLength={AfterLength}",
+                GetContinuityIssueKey(resolvedIssue),
+                string.IsNullOrEmpty(fixText),
+                applyRange.Before.Length,
+                fixText.Length);
             _continuityProposalError = null;
             _isApplyingContinuityProposal = false;
             _isContinuityProposalOpen = true;
@@ -3128,16 +3280,17 @@ namespace WriterApp.Client.Pages
 
         private static ContinuityProposalPreview BuildContinuityProposalPreview(ContinuityApplyRange range, string fixText)
         {
-            string after = string.IsNullOrEmpty(fixText)
-                ? "(Delete duplicated text in highlighted range.)"
-                : fixText;
+            bool isDeletion = string.IsNullOrEmpty(fixText);
+            string after = isDeletion ? string.Empty : fixText;
             return new ContinuityProposalPreview(
                 range.Before,
                 after,
                 range.Prefix,
                 range.Suffix,
                 range.PlainFrom,
-                Math.Max(0, range.PlainTo - range.PlainFrom));
+                Math.Max(0, range.PlainTo - range.PlainFrom),
+                isDeletion,
+                range.Before);
         }
 
         private async Task ConfirmContinuityProposalApplyAsync()
@@ -3184,14 +3337,18 @@ namespace WriterApp.Client.Pages
                 return false;
             }
 
-            if (beforePlain.Length < applyRange.PlainTo
+            bool staleRange = beforePlain.Length < applyRange.PlainTo
                 || !string.Equals(
                     beforePlain.Substring(applyRange.PlainFrom, applyRange.PlainTo - applyRange.PlainFrom),
                     applyRange.Before,
-                    StringComparison.Ordinal))
+                    StringComparison.Ordinal);
+            if (staleRange)
             {
-                _continuityStatus = "Can't apply automatically; text changed.";
-                return false;
+                Logger.LogInformation(
+                    "Continuity apply detected stale plain range; delegating recovery to editor range resolver. IssueKey={IssueKey}, PlainFrom={PlainFrom}, PlainTo={PlainTo}",
+                    GetContinuityIssueKey(issue),
+                    applyRange.PlainFrom,
+                    applyRange.PlainTo);
             }
 
             ContinuityIssue resolvedIssue = await EnsureContinuityIssueHasRevisedFixAsync(issue, beforePlain, applyRange);
@@ -3230,7 +3387,10 @@ namespace WriterApp.Client.Pages
                 issueKey,
                 applyRange.DocFrom,
                 applyRange.DocTo,
-                applyRange.Before);
+                applyRange.Before,
+                applyRange.Prefix,
+                applyRange.Suffix,
+                BuildNeedle(applyRange.Before));
 
             Logger.LogWarning(
                 "Continuity direct apply start. DocumentId={DocumentId}, SectionId={SectionId}, PageId={PageId}, IssueKey={IssueKey}, Kind={Kind}, PlainFrom={PlainFrom}, PlainTo={PlainTo}, DocFrom={DocFrom}, DocTo={DocTo}, ReplacementLength={ReplacementLength}",
@@ -3893,11 +4053,20 @@ namespace WriterApp.Client.Pages
             }
 
             if (lowered.Contains("remove duplicate paragraph", StringComparison.Ordinal)
+                || lowered.Contains("highlighted range", StringComparison.Ordinal)
                 || lowered.Contains("remove the repeated paragraphs", StringComparison.Ordinal)
                 || lowered.Contains("remove repeated paragraph", StringComparison.Ordinal)
                 || lowered.Contains("maintain narrative clarity", StringComparison.Ordinal)
                 || lowered.Contains("improve narrative clarity", StringComparison.Ordinal)
                 || lowered.Contains("as an ai", StringComparison.Ordinal)
+                || lowered.Contains("openai", StringComparison.Ordinal)
+                || lowered.Contains("responses", StringComparison.Ordinal)
+                || lowered.Contains("tool:", StringComparison.Ordinal)
+                || lowered.Contains("system:", StringComparison.Ordinal)
+                || lowered.Contains("assistant:", StringComparison.Ordinal)
+                || lowered.Contains("you are ", StringComparison.Ordinal)
+                || lowered.Contains("\"model\"", StringComparison.Ordinal)
+                || lowered.Contains("\"input\"", StringComparison.Ordinal)
                 || lowered.Contains("arrives before", StringComparison.Ordinal)
                 || lowered.Contains("arrives after", StringComparison.Ordinal)
                 || lowered.StartsWith("instruction:", StringComparison.Ordinal)
@@ -3916,6 +4085,59 @@ namespace WriterApp.Client.Pages
             }
 
             return false;
+        }
+
+        private static string BuildNeedle(string? source)
+        {
+            if (string.IsNullOrWhiteSpace(source))
+            {
+                return string.Empty;
+            }
+
+            string normalized = source.Trim();
+            int maxLength = Math.Min(80, normalized.Length);
+            if (maxLength <= 0)
+            {
+                return string.Empty;
+            }
+
+            int minLength = Math.Min(30, maxLength);
+            int length = Math.Max(minLength, maxLength);
+            int start = Math.Max(0, (normalized.Length - length) / 2);
+            return normalized.Substring(start, length);
+        }
+
+        private async Task RecomputeContinuityRangeAsync()
+        {
+            if (_pendingContinuityIssue is null || _pageEditor is null)
+            {
+                return;
+            }
+
+            string plain = await _pageEditor.GetPlainTextAsync() ?? string.Empty;
+            ContinuityApplyRange? recalculated = await BuildContinuityApplyRangeAsync(_pendingContinuityIssue, plain);
+            if (recalculated is null)
+            {
+                _continuityProposalError = "The text changed and we couldn't safely locate the target range. Click 'Show in text' then try again.";
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            _pendingContinuityRange = recalculated;
+            string fixText = ResolveContinuityFixText(_pendingContinuityIssue);
+            _continuityProposalPreview = BuildContinuityProposalPreview(recalculated, fixText);
+            _continuityProposalError = null;
+            await InvokeAsync(StateHasChanged);
+        }
+
+        private async Task ShowPendingContinuityIssueInTextAsync()
+        {
+            if (_pendingContinuityIssue is null)
+            {
+                return;
+            }
+
+            await OnJumpToContinuityIssueAsync(_pendingContinuityIssue);
         }
 
         private void CancelContinuityProposal()
@@ -4616,6 +4838,7 @@ namespace WriterApp.Client.Pages
             try
             {
                 string originalSnapshot = BuildSceneCardSnapshotJson();
+                string sectionPlainText = await GetCurrentAiPlainTextAsync();
                 AiActionExecuteRequestDto payload = new(
                     DocumentId,
                     _activeSection.Id,
@@ -4623,7 +4846,7 @@ namespace WriterApp.Client.Pages
                     null,
                     null,
                     originalSnapshot,
-                    null,
+                    sectionPlainText,
                     null,
                     new Dictionary<string, object?>
                     {
@@ -4634,7 +4857,7 @@ namespace WriterApp.Client.Pages
                     await Http.PostAsJsonAsync($"api/ai/actions/{actionKey}/execute", payload);
                 if (!response.IsSuccessStatusCode)
                 {
-                    _sceneAiError = "AI action failed.";
+                    _sceneAiError = await ReadApiErrorMessageAsync(response, "AI action failed.");
                     return;
                 }
 
@@ -4758,6 +4981,17 @@ namespace WriterApp.Client.Pages
                 .ToArray();
         }
 
+        private static string GetSceneProposalTagsDisplay(IReadOnlyList<string>? tags)
+        {
+            IReadOnlyList<string> normalized = NormalizeTagList(tags);
+            if (normalized.Count == 0)
+            {
+                return "(not provided)";
+            }
+
+            return string.Join(", ", normalized);
+        }
+
         private static void ApplySuggestedValue(ref string target, string? suggestion)
         {
             if (string.IsNullOrWhiteSpace(suggestion))
@@ -4850,14 +5084,22 @@ namespace WriterApp.Client.Pages
             {
                 SceneNotesUpdateRequest payload = new(value ?? string.Empty);
                 using HttpResponseMessage response = await Http.PutAsJsonAsync($"api/scenes/{SceneNodeId}/notes", payload, ct);
-                response.EnsureSuccessStatusCode();
+                if (!response.IsSuccessStatusCode)
+                {
+                    string message = await ReadApiErrorMessageAsync(response, "Could not save notes.");
+                    throw new HttpRequestException(message, null, response.StatusCode);
+                }
                 SceneNotesDto? saved = await response.Content.ReadFromJsonAsync<SceneNotesDto>(cancellationToken: ct);
                 return saved?.UpdatedAtUtc;
             }
 
             SectionNotesDto legacyPayload = new(sectionId, value ?? string.Empty, DateTimeOffset.UtcNow);
             using HttpResponseMessage legacyResponse = await Http.PutAsJsonAsync($"api/sections/{sectionId}/notes", legacyPayload, ct);
-            legacyResponse.EnsureSuccessStatusCode();
+            if (!legacyResponse.IsSuccessStatusCode)
+            {
+                string message = await ReadApiErrorMessageAsync(legacyResponse, "Could not save notes.");
+                throw new HttpRequestException(message, null, legacyResponse.StatusCode);
+            }
             SectionNotesDto? legacySaved = await legacyResponse.Content.ReadFromJsonAsync<SectionNotesDto>(cancellationToken: ct);
             return legacySaved?.UpdatedAtUtc;
         }
@@ -4867,10 +5109,14 @@ namespace WriterApp.Client.Pages
             _notesAutosaveCts?.Cancel();
             _notesAutosaveCts?.Dispose();
             _notesAutosaveCts = null;
+            _notesRetryCts?.Cancel();
+            _notesRetryCts?.Dispose();
+            _notesRetryCts = null;
             _notesSaveInFlight = false;
             _notesSaveQueued = false;
             _notesEditVersion = 0;
             _notesSavedVersion = 0;
+            _notesRetryAttempt = 0;
             _notesStatus = null;
             _notesError = null;
             _notesLastSavedAtUtc = null;
@@ -4886,6 +5132,9 @@ namespace WriterApp.Client.Pages
             _notesAutosaveCts?.Cancel();
             _notesAutosaveCts?.Dispose();
             _notesAutosaveCts = new CancellationTokenSource();
+            _notesRetryCts?.Cancel();
+            _notesRetryCts?.Dispose();
+            _notesRetryCts = null;
             Guid sectionId = _activeSection.Id;
             int version = _notesEditVersion;
             _notesStatus = "Saving...";
@@ -4916,6 +5165,9 @@ namespace WriterApp.Client.Pages
             _notesAutosaveCts?.Cancel();
             _notesAutosaveCts?.Dispose();
             _notesAutosaveCts = null;
+            _notesRetryCts?.Cancel();
+            _notesRetryCts?.Dispose();
+            _notesRetryCts = null;
             _notesEditVersion++;
             await SaveNotesCoreAsync(_activeSection.Id, _notesEditVersion, CancellationToken.None);
         }
@@ -4936,6 +5188,7 @@ namespace WriterApp.Client.Pages
             while (_notesSaveQueued)
             {
                 _notesSaveQueued = false;
+                bool queueImmediateRetry = true;
                 int saveVersion = Math.Max(version, _notesEditVersion);
                 string snapshot = _notesDraft ?? string.Empty;
                 _notesSaveInFlight = true;
@@ -4944,24 +5197,38 @@ namespace WriterApp.Client.Pages
 
                 try
                 {
-                DateTimeOffset? savedAt = await SaveSectionNotesAsync(sectionId, snapshot, ct);
-                if (saveVersion >= _notesSavedVersion)
-                {
-                    _notesSavedVersion = saveVersion;
-                    _notesLastSavedAtUtc = savedAt ?? DateTimeOffset.UtcNow;
-                    _notesStatus = "Saved";
-                    _notesError = null;
-                }
+                    DateTimeOffset? savedAt = await SaveSectionNotesAsync(sectionId, snapshot, ct);
+                    _notesRetryAttempt = 0;
+                    _notesRetryCts?.Cancel();
+                    _notesRetryCts?.Dispose();
+                    _notesRetryCts = null;
+                    if (saveVersion >= _notesSavedVersion)
+                    {
+                        _notesSavedVersion = saveVersion;
+                        _notesLastSavedAtUtc = savedAt ?? DateTimeOffset.UtcNow;
+                        _notesStatus = "Saved";
+                        _notesError = null;
+                    }
                 }
                 catch (OperationCanceledException)
                 {
                     return;
+                }
+                catch (HttpRequestException ex) when (ShouldRetryNotesSave(ex.StatusCode))
+                {
+                    Logger.LogWarning(ex, "Notes save transient failure: {StatusCode}", ex.StatusCode);
+                    TimeSpan retryDelay = GetNextNotesRetryDelay();
+                    _notesStatus = "Server unavailable";
+                    _notesError = $"Could not save notes. Retrying in {(int)retryDelay.TotalSeconds}s.";
+                    ScheduleNotesRetry(sectionId, retryDelay);
+                    queueImmediateRetry = false;
                 }
                 catch (Exception ex)
                 {
                     Logger.LogError(ex, "Notes save failed.");
                     _notesStatus = "Save failed";
                     _notesError = "Could not save notes. Changes will retry on next edit.";
+                    queueImmediateRetry = false;
                 }
                 finally
                 {
@@ -4974,11 +5241,65 @@ namespace WriterApp.Client.Pages
                     return;
                 }
 
-                if (_notesSavedVersion < _notesEditVersion)
+                if (queueImmediateRetry && _notesSavedVersion < _notesEditVersion)
                 {
                     _notesSaveQueued = true;
                 }
             }
+        }
+
+        private static bool ShouldRetryNotesSave(HttpStatusCode? statusCode)
+        {
+            return statusCode is null
+                || statusCode == HttpStatusCode.BadGateway
+                || statusCode == HttpStatusCode.ServiceUnavailable
+                || statusCode == HttpStatusCode.GatewayTimeout
+                || statusCode == HttpStatusCode.TooManyRequests;
+        }
+
+        private TimeSpan GetNextNotesRetryDelay()
+        {
+            int index = Math.Min(_notesRetryAttempt, NotesAutosaveRetryDelays.Length - 1);
+            _notesRetryAttempt++;
+            return NotesAutosaveRetryDelays[index];
+        }
+
+        private void ScheduleNotesRetry(Guid sectionId, TimeSpan delay)
+        {
+            if (_activeSection?.Id != sectionId)
+            {
+                return;
+            }
+
+            _notesRetryCts?.Cancel();
+            _notesRetryCts?.Dispose();
+            _notesRetryCts = new CancellationTokenSource();
+            CancellationToken retryToken = _notesRetryCts.Token;
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(delay, retryToken);
+                    if (retryToken.IsCancellationRequested)
+                    {
+                        return;
+                    }
+
+                    await InvokeAsync(async () =>
+                    {
+                        if (_activeSection?.Id != sectionId)
+                        {
+                            return;
+                        }
+
+                        _notesEditVersion++;
+                        await SaveNotesCoreAsync(sectionId, _notesEditVersion, retryToken);
+                    });
+                }
+                catch (TaskCanceledException)
+                {
+                }
+            }, CancellationToken.None);
         }
 
         private string GetOutlineTextForAi()
@@ -6395,29 +6716,29 @@ private const string PreviewBootstrapScript = @"
                 return;
             }
 
-            string? html = _pageEditor?.GetContent();
-            string plain = PlainTextMapper.ToPlainText(html ?? string.Empty);
+            string plain = await GetCurrentAiPlainTextAsync();
             TextRange selectionRange = new(0, 0);
             string selection = string.Empty;
+            AiSelectionSnapshot? selectionSnapshot = null;
 
             if (action.RequiresSelection)
             {
-                if (_currentSelectionRange is null)
+                selectionSnapshot = await BuildAiSelectionSnapshotAsync(plain);
+                if (selectionSnapshot is null)
                 {
+                    ShowAiMessage("Select text to run this action.");
+                    await InvokeAsync(StateHasChanged);
                     return;
                 }
 
-                selectionRange = NormalizeRange(_currentSelectionRange, plain.Length);
-                selection = ExtractRangeText(plain, selectionRange);
-                if (string.IsNullOrWhiteSpace(selection))
-                {
-                    return;
-                }
+                _lastAiSelectionSnapshot = selectionSnapshot;
+                selectionRange = selectionSnapshot.PlainRange;
+                selection = selectionSnapshot.SelectionText;
             }
 
             if (IsTranslationActionKey(action.ActionKey))
             {
-                OpenTranslateModal(action, plain, selectionRange, selection);
+                OpenTranslateModal(action, plain, selectionRange, selection, selectionSnapshot);
                 await InvokeAsync(StateHasChanged);
                 return;
             }
@@ -6430,6 +6751,7 @@ private const string PreviewBootstrapScript = @"
             int? selectionStart = action.RequiresSelection ? selectionRange.Start : null;
             int? selectionEnd = action.RequiresSelection ? selectionRange.Start + selectionRange.Length : null;
             string? originalText = action.RequiresSelection ? selection : null;
+            LogAiSelectionDiagnostics(action.ActionKey, originalText);
 
             AiActionExecuteRequestDto request = new(
                 DocumentId,
@@ -6450,7 +6772,8 @@ private const string PreviewBootstrapScript = @"
                     request);
                 if (!result.IsSuccessStatusCode)
                 {
-                    ShowAiMessage("AI action failed.");
+                    string errorMessage = await ReadApiErrorMessageAsync(result, "AI action failed.");
+                    ShowAiMessage(errorMessage);
                     await InvokeAsync(StateHasChanged);
                     return;
                 }
@@ -6465,7 +6788,8 @@ private const string PreviewBootstrapScript = @"
             }
             catch (Exception ex)
             {
-                ShowAiMessage(ex.Message);
+                Logger.LogWarning(ex, "AI action request failed for {ActionKey}.", action.ActionKey);
+                ShowAiMessage("AI action failed.");
                 await InvokeAsync(StateHasChanged);
                 return;
             }
@@ -6476,29 +6800,100 @@ private const string PreviewBootstrapScript = @"
                 proposedText = NormalizeSingleParagraph(proposedText ?? string.Empty);
             }
 
+            string? originalForProposal = action.RequiresSelection ? selection : response.OriginalText;
+            if (IsTightenAction(action.ActionKey))
+            {
+                proposedText = await EnsureMeaningfulTightenAsync(action, request, originalForProposal, proposedText);
+            }
+
             _translationApplyMode = "replace";
             _pendingAiProposal = new PendingAiProposal(
                 response.ProposalId,
                 action.ActionKey,
                 action.Instruction,
-                response.OriginalText,
+                originalForProposal,
                 proposedText,
                 response.ChangesSummary,
                 null,
-                response.CreatedUtc);
+                response.CreatedUtc,
+                new PendingAiProposalContext(
+                    action.RequiresSelection,
+                    _activeSection.Id,
+                    _activePage?.Id,
+                    selectionSnapshot));
             _pendingDetailsExpanded = false;
             await LoadAiHistoryAsync();
             await InvokeAsync(StateHasChanged);
+        }
+
+        private async Task<string?> EnsureMeaningfulTightenAsync(
+            AiActionOption action,
+            AiActionExecuteRequestDto request,
+            string? originalText,
+            string? proposedText)
+        {
+            if (!IsLowImpactTighten(originalText, proposedText))
+            {
+                return proposedText;
+            }
+
+            Dictionary<string, object?> retryParameters = new(action.Parameters)
+            {
+                ["instruction"] =
+                    "Tighten this passage. Keep meaning, voice, and facts. Remove redundancy and filler. Target 10-25% fewer words. Return only revised text.",
+                ["target_reduction_pct"] = 20,
+                ["min_reduction_pct"] = 10,
+                ["preserve_meaning"] = true
+            };
+
+            AiActionExecuteRequestDto retryRequest = request with
+            {
+                Parameters = retryParameters
+            };
+
+            try
+            {
+                using HttpResponseMessage retryResult = await Http.PostAsJsonAsync(
+                    $"api/ai/actions/{action.ActionKey}/execute",
+                    retryRequest);
+                if (!retryResult.IsSuccessStatusCode)
+                {
+                    return proposedText;
+                }
+
+                AiActionExecuteResponseDto? retryResponse = await retryResult.Content.ReadFromJsonAsync<AiActionExecuteResponseDto>();
+                if (retryResponse is null || string.IsNullOrWhiteSpace(retryResponse.ProposedText))
+                {
+                    return proposedText;
+                }
+
+                string candidate = retryResponse.ProposedText;
+                return IsLowImpactTighten(originalText, candidate) ? proposedText : candidate;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogDebug(ex, "Tighten retry failed.");
+                return proposedText;
+            }
         }
 
         private void OpenTranslateModal(
             AiActionOption action,
             string plainText,
             TextRange selectionRange,
-            string selectionText)
+            string selectionText,
+            AiSelectionSnapshot? selectionSnapshot = null)
         {
+            AiSelectionSnapshot? effectiveSnapshot = selectionSnapshot;
+            if (action.RequiresSelection
+                && effectiveSnapshot is null
+                && !string.IsNullOrWhiteSpace(selectionText))
+            {
+                effectiveSnapshot = BuildFallbackSelectionSnapshot(selectionText, selectionRange);
+            }
+
             _pendingTranslateAction = action;
-            _pendingTranslateContext = new TranslateContext(plainText, selectionRange, selectionText);
+            _pendingTranslateContext = new TranslateContext(plainText, selectionRange, selectionText, effectiveSnapshot);
             _translationApplyMode = "replace";
             if (string.IsNullOrWhiteSpace(_translateSourceLanguage) || string.Equals(_translateSourceLanguage, "auto", StringComparison.OrdinalIgnoreCase))
             {
@@ -6520,6 +6915,14 @@ private const string PreviewBootstrapScript = @"
                 return;
             }
 
+            if (_pendingTranslateAction.RequiresSelection && string.IsNullOrWhiteSpace(_pendingTranslateContext.SelectionText))
+            {
+                ShowAiMessage("Select text to translate.");
+                _isTranslateModalOpen = false;
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
             await ExecuteTranslateActionAsync(_pendingTranslateAction, _pendingTranslateContext);
             _isTranslateModalOpen = false;
             await InvokeAsync(StateHasChanged);
@@ -6527,6 +6930,13 @@ private const string PreviewBootstrapScript = @"
 
         private async Task ExecuteTranslateActionAsync(AiActionOption action, TranslateContext context)
         {
+            if (action.RequiresSelection && string.IsNullOrWhiteSpace(context.SelectionText))
+            {
+                ShowAiMessage("Select text to translate.");
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
             Dictionary<string, object?> parameters = new(action.Parameters)
             {
                 ["instruction"] = action.Instruction,
@@ -6538,6 +6948,7 @@ private const string PreviewBootstrapScript = @"
             int? selectionStart = action.RequiresSelection ? context.SelectionRange.Start : null;
             int? selectionEnd = action.RequiresSelection ? context.SelectionRange.Start + context.SelectionRange.Length : null;
             string? originalText = action.RequiresSelection ? context.SelectionText : null;
+            LogAiSelectionDiagnostics(action.ActionKey, originalText);
 
             AiActionExecuteRequestDto request = new(
                 DocumentId,
@@ -6558,7 +6969,8 @@ private const string PreviewBootstrapScript = @"
                     request);
                 if (!result.IsSuccessStatusCode)
                 {
-                    ShowAiMessage("AI translation failed.");
+                    string errorMessage = await ReadApiErrorMessageAsync(result, "AI translation failed.");
+                    ShowAiMessage(errorMessage);
                     await InvokeAsync(StateHasChanged);
                     return;
                 }
@@ -6573,7 +6985,8 @@ private const string PreviewBootstrapScript = @"
             }
             catch (Exception ex)
             {
-                ShowAiMessage(ex.Message);
+                Logger.LogWarning(ex, "AI translation request failed for {ActionKey}.", action.ActionKey);
+                ShowAiMessage("AI translation failed.");
                 await InvokeAsync(StateHasChanged);
                 return;
             }
@@ -6582,11 +6995,16 @@ private const string PreviewBootstrapScript = @"
                 response.ProposalId,
                 action.ActionKey,
                 action.Instruction,
-                response.OriginalText,
+                action.RequiresSelection ? context.SelectionText : response.OriginalText,
                 response.ProposedText,
                 response.ChangesSummary,
                 null,
-                response.CreatedUtc);
+                response.CreatedUtc,
+                new PendingAiProposalContext(
+                    action.RequiresSelection,
+                    _activeSection!.Id,
+                    _activePage?.Id,
+                    context.SelectionSnapshot));
             _pendingDetailsExpanded = false;
             await LoadAiHistoryAsync();
             await InvokeAsync(StateHasChanged);
@@ -6616,7 +7034,7 @@ private const string PreviewBootstrapScript = @"
             }
         }
 
-        private void OpenTranslateModalFromProposal()
+        private async Task OpenTranslateModalFromProposal()
         {
             if (_pendingAiProposal is null)
             {
@@ -6636,21 +7054,103 @@ private const string PreviewBootstrapScript = @"
                     action,
                     _pendingTranslateContext.PlainText,
                     _pendingTranslateContext.SelectionRange,
-                    _pendingTranslateContext.SelectionText);
+                    _pendingTranslateContext.SelectionText,
+                    _pendingTranslateContext.SelectionSnapshot);
+                await InvokeAsync(StateHasChanged);
                 return;
             }
 
-            string? html = _pageEditor?.GetContent();
-            string plain = PlainTextMapper.ToPlainText(html ?? string.Empty);
+            string plain = await GetCurrentAiPlainTextAsync();
             TextRange selectionRange = new(0, 0);
             string selection = string.Empty;
+            AiSelectionSnapshot? selectionSnapshot = null;
             if (action.RequiresSelection && _currentSelectionRange is not null)
             {
                 selectionRange = NormalizeRange(_currentSelectionRange, plain.Length);
-                selection = ExtractRangeText(plain, selectionRange);
+                selection = await GetSelectionTextOrFallbackAsync(plain, selectionRange);
+                if (!string.IsNullOrWhiteSpace(selection))
+                {
+                    SelectionDocRange range = await GetSelectionDocRangeAsync();
+                    selectionSnapshot = new AiSelectionSnapshot(
+                        selection,
+                        selectionRange,
+                        range.From,
+                        range.To,
+                        ComputeShortHash(selection));
+                }
+            }
+            else if (action.RequiresSelection)
+            {
+                selectionSnapshot = _lastAiSelectionSnapshot;
+                if (selectionSnapshot is not null)
+                {
+                    selectionRange = selectionSnapshot.PlainRange;
+                    selection = selectionSnapshot.SelectionText;
+                }
             }
 
-            OpenTranslateModal(action, plain, selectionRange, selection);
+            OpenTranslateModal(action, plain, selectionRange, selection, selectionSnapshot);
+            await InvokeAsync(StateHasChanged);
+        }
+
+        private static async Task<string> ReadApiErrorMessageAsync(HttpResponseMessage response, string fallback)
+        {
+            try
+            {
+                string payload = await response.Content.ReadAsStringAsync();
+                if (string.IsNullOrWhiteSpace(payload))
+                {
+                    return fallback;
+                }
+
+                using JsonDocument doc = JsonDocument.Parse(payload);
+                JsonElement root = doc.RootElement;
+
+                string? detail = GetJsonString(root, "detail");
+                if (!string.IsNullOrWhiteSpace(detail))
+                {
+                    return detail.Trim();
+                }
+
+                string? message = GetJsonString(root, "message");
+                if (!string.IsNullOrWhiteSpace(message))
+                {
+                    return message.Trim();
+                }
+
+                string? title = GetJsonString(root, "title");
+                if (!string.IsNullOrWhiteSpace(title))
+                {
+                    return title.Trim();
+                }
+            }
+            catch
+            {
+            }
+
+            return fallback;
+        }
+
+        private static string? GetJsonString(JsonElement root, string name)
+        {
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            foreach (JsonProperty property in root.EnumerateObject())
+            {
+                if (!string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                return property.Value.ValueKind == JsonValueKind.String
+                    ? property.Value.GetString()
+                    : property.Value.GetRawText();
+            }
+
+            return null;
         }
 
         private void ShowAiMessage(string message)
@@ -6687,6 +7187,11 @@ private const string PreviewBootstrapScript = @"
                 return;
             }
 
+            if (!await ValidatePendingProposalSelectionAsync(pending))
+            {
+                return;
+            }
+
             string? beforeContent = _pageEditor is null ? null : await _pageEditor.GetContentAsync();
             bool appendParagraph = string.Equals(
                 pending.ActionKey,
@@ -6699,6 +7204,21 @@ private const string PreviewBootstrapScript = @"
             if (appendParagraph)
             {
                 await InvokePageCommandAsync("appendParagraph", proposedText);
+            }
+            else if (pending.Context?.RequiresSelection == true && pending.Context.SelectionSnapshot is not null)
+            {
+                await InvokePageCommandAsync(
+                    "replaceTextRange",
+                    pending.Context.SelectionSnapshot.DocFrom,
+                    pending.Context.SelectionSnapshot.DocTo,
+                    proposedText);
+            }
+            else if (IsSectionScopeAction(pending.ActionKey))
+            {
+                if (_pageEditor is not null)
+                {
+                    await _pageEditor.SetContentAsync(PlainTextToHtml(proposedText));
+                }
             }
             else
             {
@@ -6737,7 +7257,23 @@ private const string PreviewBootstrapScript = @"
 
             if (string.Equals(pending.ActionKey, "translate.selection", StringComparison.OrdinalIgnoreCase))
             {
-                await InvokePageCommandAsync("replaceSelection", translatedText);
+                if (!await ValidatePendingProposalSelectionAsync(pending))
+                {
+                    return;
+                }
+
+                if (pending.Context?.SelectionSnapshot is not null)
+                {
+                    await InvokePageCommandAsync(
+                        "replaceTextRange",
+                        pending.Context.SelectionSnapshot.DocFrom,
+                        pending.Context.SelectionSnapshot.DocTo,
+                        translatedText);
+                }
+                else
+                {
+                    await InvokePageCommandAsync("replaceSelection", translatedText);
+                }
             }
             else if (string.Equals(pending.ActionKey, "translate.section", StringComparison.OrdinalIgnoreCase))
             {
@@ -7180,6 +7716,66 @@ private const string PreviewBootstrapScript = @"
         private static string FormatHistoryText(string? text)
         {
             return string.IsNullOrWhiteSpace(text) ? "No content captured." : text;
+        }
+
+        private bool ShouldShowTightenMetrics()
+        {
+            return _pendingAiProposal is not null
+                && IsTightenAction(_pendingAiProposal.ActionKey)
+                && !string.IsNullOrWhiteSpace(_pendingAiProposal.OriginalText)
+                && !string.IsNullOrWhiteSpace(_pendingAiProposal.ProposedText);
+        }
+
+        private bool ShouldShowTightenLowImpactWarning()
+        {
+            if (_pendingAiProposal is null || !IsTightenAction(_pendingAiProposal.ActionKey))
+            {
+                return false;
+            }
+
+            return IsLowImpactTighten(_pendingAiProposal.OriginalText, _pendingAiProposal.ProposedText);
+        }
+
+        private int GetPendingOriginalWordCount()
+        {
+            return CountWords(_pendingAiProposal?.OriginalText ?? string.Empty);
+        }
+
+        private int GetPendingProposedWordCount()
+        {
+            return CountWords(_pendingAiProposal?.ProposedText ?? string.Empty);
+        }
+
+        private string GetPendingTightenDeltaLabel()
+        {
+            int originalWords = GetPendingOriginalWordCount();
+            int proposedWords = GetPendingProposedWordCount();
+            if (originalWords <= 0)
+            {
+                return "0%";
+            }
+
+            double percent = ((double)(originalWords - proposedWords) / originalWords) * 100d;
+            return percent.ToString("+#0.0;-#0.0;0.0", CultureInfo.InvariantCulture) + "%";
+        }
+
+        private static bool IsTightenAction(string? actionKey)
+        {
+            return !string.IsNullOrWhiteSpace(actionKey)
+                && actionKey.StartsWith("tighten.", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsLowImpactTighten(string? originalText, string? proposedText)
+        {
+            int originalWords = CountWords(originalText ?? string.Empty);
+            if (originalWords <= 0)
+            {
+                return false;
+            }
+
+            int proposedWords = CountWords(proposedText ?? string.Empty);
+            double reduction = ((double)(originalWords - proposedWords) / originalWords) * 100d;
+            return reduction < 2d;
         }
 
         private static bool TryParseContinuityReport(string? json, out ContinuityReport? report)
@@ -7655,6 +8251,7 @@ private const string PreviewBootstrapScript = @"
                 _qualityIssues.Clear();
                 _qualityError = null;
                 _qualityStatus = null;
+                _qualityHasRunOnce = false;
                 _selectedQualityIssueKey = null;
                 _qualityIssueActionErrors.Clear();
                 _qualityAppliedIssueKeys.Clear();
@@ -7679,6 +8276,10 @@ private const string PreviewBootstrapScript = @"
                 if (issues is not null)
                 {
                     _qualityIssues.AddRange(issues);
+                }
+                if (_qualityIssues.Count > 0)
+                {
+                    _qualityHasRunOnce = true;
                 }
 
                 ReconcileQualityIssueStateAfterRefresh();
@@ -7710,6 +8311,7 @@ private const string PreviewBootstrapScript = @"
         private Task OnQualityScopeChanged(ChangeEventArgs args)
         {
             _qualityScope = args.Value?.ToString() ?? "page";
+            _qualityHasRunOnce = false;
             return Task.CompletedTask;
         }
 
@@ -7723,6 +8325,11 @@ private const string PreviewBootstrapScript = @"
         {
             _qualityFilterKind = args.Value?.ToString() ?? "all";
             return Task.CompletedTask;
+        }
+
+        private string GetQualityRunButtonLabel()
+        {
+            return _qualityHasRunOnce ? "Re-run check" : "Run check";
         }
 
         private IEnumerable<PageQualityIssueDto> FilterQualityIssues()
@@ -7796,6 +8403,7 @@ private const string PreviewBootstrapScript = @"
                     return;
                 }
 
+                _qualityHasRunOnce = true;
                 _qualityFromCache = result.FromCache;
                 _qualityIssues.Clear();
                 if (result.Issues.Count > 0)
@@ -8000,7 +8608,19 @@ private const string PreviewBootstrapScript = @"
         private async Task<QualityProposalPreview> BuildQualityProposalPreviewAsync(PageQualityIssueDto issue)
         {
             string before = issue.Fix?.AnchorText ?? issue.AnchorText ?? string.Empty;
-            string after = issue.Fix?.Text ?? string.Empty;
+            string after = QualityFixClientHelpers.BuildProposalAfterText(issue.Fix);
+            if (issue.Fix is not null
+                && string.IsNullOrWhiteSpace(after)
+                && !string.IsNullOrWhiteSpace(issue.Fix.Text)
+                && QualityFixClientHelpers.LooksLikeProposalMetaLeak(issue.Fix.Text)
+                && _qualityMetaLeakWarnedIssueKeys.Add(issue.IssueKey))
+            {
+                Logger.LogWarning(
+                    "Quality proposal text looked like meta/prompt payload and was suppressed. IssueKey={IssueKey}, RuleId={RuleId}, Kind={Kind}",
+                    issue.IssueKey,
+                    issue.RuleId,
+                    issue.Kind);
+            }
             string prefix = string.Empty;
             string suffix = string.Empty;
 
@@ -8090,9 +8710,13 @@ private const string PreviewBootstrapScript = @"
         private string GetQualityFixFailureMessage()
         {
             string? reason = _pageEditor?.LastQualityFixFailureReason;
+            if (string.Equals(reason, "doc_expected_text_mismatch", StringComparison.OrdinalIgnoreCase))
+            {
+                return "The text changed and we couldn't safely locate the target range. Click 'Show in text' then try again.";
+            }
             if (string.Equals(reason, "could_not_resolve_range", StringComparison.OrdinalIgnoreCase))
             {
-                return "Couldn't locate the original text for this issue (document changed). Click 'Show in text' then regenerate fix.";
+                return "The text changed and we couldn't safely locate the target range. Click 'Show in text' then try again.";
             }
 
             return "Can't apply automatically; text changed.";
@@ -8227,7 +8851,12 @@ private const string PreviewBootstrapScript = @"
                 return issue;
             }
 
-            string rewritten = await GenerateRepeatedWordRewriteAsync(issue, plainText, applyRange, strictMode: false);
+            string rewritten = BuildDeterministicRepeatedWordRewrite(applyRange.Before, anchor);
+            if (string.IsNullOrWhiteSpace(rewritten)
+                || string.Equals(rewritten.Trim(), applyRange.Before.Trim(), StringComparison.Ordinal))
+            {
+                rewritten = await GenerateRepeatedWordRewriteAsync(issue, plainText, applyRange, strictMode: false);
+            }
             bool valid = QualityRewriteOutputValidator.TryValidateRepeatedWordReduction(
                 applyRange.Before,
                 rewritten,
@@ -8284,6 +8913,23 @@ private const string PreviewBootstrapScript = @"
 
             UpsertQualityIssue(updatedIssue);
             return updatedIssue;
+        }
+
+        private static string BuildDeterministicRepeatedWordRewrite(string source, string anchor)
+        {
+            if (string.IsNullOrWhiteSpace(source) || string.IsNullOrWhiteSpace(anchor))
+            {
+                return string.Empty;
+            }
+
+            string escaped = Regex.Escape(anchor.Trim());
+            string pattern = $@"(?<!\w)({escaped})(?:\s+\1)+(?!\w)";
+            string collapsed = Regex.Replace(
+                source,
+                pattern,
+                match => match.Groups[1].Value,
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            return collapsed;
         }
 
         private async Task<PageQualityIssueDto> EnsureSentenceLengthRewriteFixAsync(PageQualityIssueDto issue)
@@ -8925,7 +9571,159 @@ private const string PreviewBootstrapScript = @"
                 return null;
             }
 
-            return await _pageEditor.GetSelectionTextAsync();
+            try
+            {
+                return await _pageEditor.GetSelectionTextAsync();
+            }
+            catch (JSException ex)
+            {
+                Logger.LogDebug(ex, "GetSelectionText interop failed.");
+                return null;
+            }
+        }
+
+        private async Task<string> GetSelectionTextOrFallbackAsync(string plainText, TextRange range)
+        {
+            string? liveSelection = await GetSelectionTextAsync();
+            if (!string.IsNullOrWhiteSpace(liveSelection))
+            {
+                return liveSelection;
+            }
+
+            return ExtractRangeText(plainText, range);
+        }
+
+        private async Task<AiSelectionSnapshot?> BuildAiSelectionSnapshotAsync(string plainText)
+        {
+            if (_pageEditor is null)
+            {
+                return null;
+            }
+
+            TextRange plainRange = _currentSelectionRange is null
+                ? new TextRange(0, 0)
+                : NormalizeRange(_currentSelectionRange, plainText.Length);
+
+            string selectionText = _currentSelectionRange is null
+                ? (await GetSelectionTextAsync() ?? string.Empty)
+                : await GetSelectionTextOrFallbackAsync(plainText, plainRange);
+            if (string.IsNullOrWhiteSpace(selectionText))
+            {
+                return null;
+            }
+
+            SelectionDocRange docRange = await GetSelectionDocRangeAsync();
+            if (docRange.To <= docRange.From)
+            {
+                return null;
+            }
+
+            if (_currentSelectionRange is null)
+            {
+                plainRange = new TextRange(0, selectionText.Length);
+            }
+
+            return new AiSelectionSnapshot(
+                selectionText,
+                plainRange,
+                docRange.From,
+                docRange.To,
+                ComputeShortHash(selectionText));
+        }
+
+        private static AiSelectionSnapshot BuildFallbackSelectionSnapshot(string selectionText, TextRange plainRange)
+        {
+            int docFrom = Math.Max(0, plainRange.Start);
+            int docTo = Math.Max(docFrom, plainRange.Start + plainRange.Length);
+            return new AiSelectionSnapshot(
+                selectionText,
+                plainRange,
+                docFrom,
+                docTo,
+                ComputeShortHash(selectionText));
+        }
+
+        private async Task<bool> ValidatePendingProposalSelectionAsync(PendingAiProposal pending)
+        {
+            PendingAiProposalContext? context = pending.Context;
+            if (context is null || !context.RequiresSelection)
+            {
+                return true;
+            }
+
+            if (_activeSection is null || _activeSection.Id != context.SectionId)
+            {
+                ShowAiMessage("This proposal was created for a different section. Re-run the AI action.");
+                await InvokeAsync(StateHasChanged);
+                return false;
+            }
+
+            if (context.SelectionSnapshot is null)
+            {
+                ShowAiMessage("Selection context is missing. Re-run the AI action.");
+                await InvokeAsync(StateHasChanged);
+                return false;
+            }
+
+            SelectionDocRange currentRange = await GetSelectionDocRangeAsync();
+            if (currentRange.From != context.SelectionSnapshot.DocFrom
+                || currentRange.To != context.SelectionSnapshot.DocTo)
+            {
+                ShowAiMessage("Selection changed since the proposal was created. Re-run the AI action.");
+                await InvokeAsync(StateHasChanged);
+                return false;
+            }
+
+            string currentSelection = await GetSelectionTextAsync() ?? string.Empty;
+            if (!string.Equals(
+                    ComputeShortHash(currentSelection),
+                    context.SelectionSnapshot.SelectionHash,
+                    StringComparison.Ordinal))
+            {
+                ShowAiMessage("Selected text changed since the proposal was created. Re-run the AI action.");
+                await InvokeAsync(StateHasChanged);
+                return false;
+            }
+
+            return true;
+        }
+
+        private async Task<string> GetCurrentAiPlainTextAsync()
+        {
+            if (_pageEditor is not null)
+            {
+                string? plain = await _pageEditor.GetPlainTextAsync();
+                if (!string.IsNullOrWhiteSpace(plain))
+                {
+                    return plain;
+                }
+            }
+
+            string? html = _pageEditor?.GetContent();
+            return PlainTextMapper.ToPlainText(html ?? string.Empty);
+        }
+
+        private void LogAiSelectionDiagnostics(string actionKey, string? selectionText)
+        {
+            int length = selectionText?.Length ?? 0;
+            string preview = string.IsNullOrWhiteSpace(selectionText)
+                ? "<empty>"
+                : selectionText.Trim().Replace("\r", " ", StringComparison.Ordinal).Replace("\n", " ", StringComparison.Ordinal);
+            if (preview.Length > 50)
+            {
+                preview = preview.Substring(0, 50);
+            }
+
+            Logger.LogDebug(
+                "AI action request prepared. Action={ActionKey}, SelectionLength={SelectionLength}, SelectionPreview={SelectionPreview}",
+                actionKey,
+                length,
+                preview);
+        }
+
+        private static bool IsSectionScopeAction(string actionKey)
+        {
+            return actionKey.EndsWith(".section", StringComparison.OrdinalIgnoreCase);
         }
 
         private async Task ScrollAnnotationIntoViewAsync(Guid annotationId)
@@ -9564,13 +10362,21 @@ private const string PreviewBootstrapScript = @"
                 return "Version";
             }
 
-            return $"{version.CreatedAt.ToLocalTime():g} � {GetVersionReasonLabel(version.Reason)} � {version.WordCount} words";
+            return BuildVersionDisplayLabel(version.CreatedAt, version.Reason, version.WordCount);
         }
 
         private static string FormatVersionLabel(PageVersionListItemDto version)
         {
-            return $"{version.CreatedAt.ToLocalTime():g} � {GetVersionReasonLabel(version.Reason)} � {version.WordCount} words";
+            return BuildVersionDisplayLabel(version.CreatedAt, version.Reason, version.WordCount);
         }
+
+        private static string BuildVersionDisplayLabel(DateTimeOffset createdAt, string reason, int wordCount)
+        {
+            // Keep dropdown labels free from replacement/private-use glyphs.
+            string label = $"{createdAt.ToLocalTime():g} • {GetVersionReasonLabel(reason)} • {wordCount} words";
+            return QualityFixClientHelpers.SanitizeUiLabel(label, $"{createdAt.ToLocalTime():g} - Snapshot - {wordCount} words");
+        }
+
 
         private async Task GoToNextChange()
         {
@@ -10032,7 +10838,14 @@ private const string PreviewBootstrapScript = @"
             string? ProposedText,
             string? ChangesSummary,
             string? ErrorMessage,
-            DateTimeOffset CreatedUtc);
+            DateTimeOffset CreatedUtc,
+            PendingAiProposalContext? Context = null);
+
+        private sealed record PendingAiProposalContext(
+            bool RequiresSelection,
+            Guid SectionId,
+            Guid? PageId,
+            AiSelectionSnapshot? SelectionSnapshot);
 
         private sealed record TranslationApplyOption(string Value, string Label);
 
@@ -10046,7 +10859,15 @@ private const string PreviewBootstrapScript = @"
         private sealed record TranslateContext(
             string PlainText,
             TextRange SelectionRange,
-            string SelectionText);
+            string SelectionText,
+            AiSelectionSnapshot? SelectionSnapshot = null);
+
+        private sealed record AiSelectionSnapshot(
+            string SelectionText,
+            TextRange PlainRange,
+            int DocFrom,
+            int DocTo,
+            string SelectionHash);
 
         private sealed record ImageUploadResponse(
             Guid ImageId,
@@ -10258,10 +11079,21 @@ private const string PreviewBootstrapScript = @"
             string Prefix,
             string Suffix);
 
+        private sealed record ContinuityProposalPreview(
+            string Before,
+            string After,
+            string Prefix,
+            string Suffix,
+            int PlainFrom,
+            int Length,
+            bool IsDeletion,
+            string DeletionText);
+
         private enum ContextTab
         {
             Notes,
             Scene,
+            Navigator,
             Ai,
             Continuity,
             PromptLibrary,
@@ -10274,6 +11106,7 @@ private const string PreviewBootstrapScript = @"
         {
             Coach,
             Story,
+            Navigator,
             NotesTasks,
             History,
             Advanced
@@ -10293,5 +11126,9 @@ private const string PreviewBootstrapScript = @"
         }
     }
 }
+
+
+
+
 
 

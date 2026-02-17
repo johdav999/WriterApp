@@ -41,6 +41,7 @@ else
 
 @code {
     private const int AutosaveDebounceMs = 800;
+    private const string CommandsModuleVersion = "20260216.1";
     private SectionEditor? _editorRef;
     private CancellationTokenSource? _autosaveCts;
     private PageDto? _currentPage;
@@ -1268,21 +1269,31 @@ else
 
         try
         {
-            QualityIssueFixApplyResult? result = await JSRuntime.InvokeAsync<QualityIssueFixApplyResult>(
-                "tiptapEditor.applyQualityIssueFixDetailed",
-                _editorInstance,
-                new
-                {
-                    kind = effectiveKind,
-                    from = fix.From,
-                    to = fix.To,
-                    text = fix.Text,
-                    anchorText,
-                    issueKey = resolvedIssueKey,
-                    docFrom = fix.DocFrom,
-                    docTo = fix.DocTo,
-                    expectedText = fix.ExpectedText
-                });
+            async Task<QualityIssueFixApplyResult?> ApplyOnceAsync(object payload)
+            {
+                return await JSRuntime.InvokeAsync<QualityIssueFixApplyResult>(
+                    "tiptapEditor.applyQualityIssueFixDetailed",
+                    _editorInstance,
+                    payload);
+            }
+
+            object basePayload = new
+            {
+                kind = effectiveKind,
+                from = fix.From,
+                to = fix.To,
+                text = fix.Text,
+                anchorText,
+                issueKey = resolvedIssueKey,
+                docFrom = fix.DocFrom,
+                docTo = fix.DocTo,
+                expectedText = fix.ExpectedText,
+                beforeAnchor = fix.BeforeAnchor,
+                afterAnchor = fix.AfterAnchor,
+                needleText = fix.NeedleText
+            };
+
+            QualityIssueFixApplyResult? result = await ApplyOnceAsync(basePayload);
 
             if (result is null)
             {
@@ -1293,6 +1304,41 @@ else
                     fix.From,
                     fix.To);
                 return false;
+            }
+
+            bool shouldRetry = (!result.Applied || !result.Changed)
+                && (string.Equals(result.Reason, "doc_expected_text_mismatch", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(result.Reason, "could_not_resolve_range", StringComparison.OrdinalIgnoreCase));
+            if (shouldRetry)
+            {
+                Logger.LogWarning(
+                    "Quality fix apply retry requested. PageId={PageId}, IssueKey={IssueKey}, Reason={Reason}",
+                    Page?.Id,
+                    resolvedIssueKey,
+                    result.Reason);
+
+                QualityIssueRangeResolution? resolution = await ResolvePlainRangeAsync(fix.From, fix.To, anchorText);
+                object retryPayload = new
+                {
+                    kind = effectiveKind,
+                    from = fix.From,
+                    to = fix.To,
+                    text = fix.Text,
+                    anchorText,
+                    issueKey = resolvedIssueKey,
+                    docFrom = resolution?.DocFrom,
+                    docTo = resolution?.DocTo,
+                    expectedText = resolution?.ExpectedText ?? fix.ExpectedText,
+                    beforeAnchor = fix.BeforeAnchor,
+                    afterAnchor = fix.AfterAnchor,
+                    needleText = fix.NeedleText
+                };
+
+                QualityIssueFixApplyResult? retryResult = await ApplyOnceAsync(retryPayload);
+                if (retryResult is not null)
+                {
+                    result = retryResult;
+                }
             }
 
             if (!result.Applied || !result.Changed)
@@ -1437,7 +1483,36 @@ else
             args[i + 1] = extraArgs[i];
         }
 
-        await _commandsModule.InvokeVoidAsync(command, args);
+        try
+        {
+            await _commandsModule.InvokeVoidAsync(command, args);
+        }
+        catch (JSException ex) when (IsMissingCommandException(ex, command))
+        {
+            if (string.Equals(command, "replaceTextRange", StringComparison.Ordinal)
+                && extraArgs.Length >= 3
+                && extraArgs[2] is string fallbackText)
+            {
+                Logger.LogWarning(
+                    ex,
+                    "Editor command {Command} was unavailable in the loaded JS module. Falling back to replaceSelection.",
+                    command);
+                await _commandsModule.InvokeVoidAsync("replaceSelection", _editorInstance, fallbackText);
+            }
+            else
+            {
+                Logger.LogWarning(
+                    ex,
+                    "Editor command {Command} was unavailable in the loaded JS module.",
+                    command);
+                return;
+            }
+        }
+        catch (JSException ex)
+        {
+            Logger.LogWarning(ex, "Editor command {Command} failed.", command);
+            return;
+        }
 
         if (!string.Equals(command, "focusEditor", StringComparison.Ordinal))
         {
@@ -1451,8 +1526,20 @@ else
         {
             _commandsModule = await JSRuntime.InvokeAsync<IJSObjectReference>(
                 "import",
-                $"{Navigation.BaseUri}js/tiptap-commands.js");
+                $"{Navigation.BaseUri}js/tiptap-commands.js?v={CommandsModuleVersion}");
         }
+    }
+
+    private static bool IsMissingCommandException(JSException exception, string command)
+    {
+        string message = exception.Message ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return false;
+        }
+
+        return message.Contains(command, StringComparison.OrdinalIgnoreCase)
+            && message.Contains("undefined", StringComparison.OrdinalIgnoreCase);
     }
 
     [JSInvokable]

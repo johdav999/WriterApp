@@ -1311,9 +1311,11 @@ namespace WriterApp.AI.Providers.OpenAI
             string systemPrompt = "You are a story editor. Return JSON only.";
             StringBuilder userPrompt = new();
             userPrompt.AppendLine("Produce a JSON object with keys:");
-            userPrompt.AppendLine("narrativePurpose, emotionalBeat, keyEvents, openQuestions, povCharacterId, placeId, timeRef, tags, explanation.");
+            userPrompt.AppendLine("narrativePurpose, emotionalBeat, keyEvents, openQuestions, povCharacterId, placeId, timelineEventId, timeRef, tags, references, explanation.");
             userPrompt.AppendLine("Use concise, readable sentences. Keep user intent.");
             userPrompt.AppendLine("Return tags as a JSON array of short strings.");
+            userPrompt.AppendLine("Always include all keys. Use empty string for unknown string fields and [] for tags/references.");
+            userPrompt.AppendLine("references must be a JSON array of objects: {\"kind\":\"...\",\"targetId\":\"...\",\"note\":\"...\"}.");
             userPrompt.AppendLine($"Mode: {mode}");
             if (!string.IsNullOrWhiteSpace(sectionTitle))
             {

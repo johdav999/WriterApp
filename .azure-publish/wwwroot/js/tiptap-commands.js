@@ -203,6 +203,41 @@ export function replaceSelection(editor, content) {
     editor.chain().focus().insertContent(text).run();
 }
 
+export function replaceTextRange(editor, from, to, content) {
+    if (!editor) {
+        return;
+    }
+
+    const start = Number(from);
+    const end = Number(to);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) {
+        return;
+    }
+
+    const text = typeof content === "string" ? content : "";
+    const normalizedFrom = Math.max(0, Math.min(start, end));
+    const normalizedTo = Math.max(normalizedFrom, Math.max(start, end));
+    editor.chain().focus().setTextSelection({ from: normalizedFrom, to: normalizedTo }).insertContent(text).run();
+}
+
+export function appendParagraph(editor, content) {
+    if (!editor) {
+        return;
+    }
+
+    const text = typeof content === "string" ? content.trim() : "";
+    if (!text) {
+        return;
+    }
+
+    const paragraph = {
+        type: "paragraph",
+        content: [{ type: "text", text }]
+    };
+
+    editor.chain().focus().insertContentAt(editor.state.doc.content.size, paragraph).run();
+}
+
 export function scrollToPosition(editor, position) {
     if (!editor) {
         return;

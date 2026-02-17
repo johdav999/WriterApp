@@ -338,6 +338,10 @@
     isolation: isolate;
 }
 
+.modal-overlay-dimmed {
+    background: rgba(15, 23, 42, 0.4);
+}
+
 .modal-backdrop {
     position: absolute;
     inset: 0;
@@ -378,7 +382,7 @@
     top: auto;
     left: auto;
     transform: none;
-    background: var(--surface);
+    background: var(--surface, var(--color-surface-1, #ffffff));
     color: var(--text-strong);
     width: min(720px, 100%);
     max-height: min(80vh, 900px);
@@ -2672,7 +2676,7 @@
     padding: 12px;
     border-radius: 14px;
     border: 1px solid #e5e7eb;
-    background: var(--surface);
+    background: var(--surface, var(--color-surface-1, #ffffff));
     display: grid;
     gap: 10px;
 }
@@ -3589,6 +3593,23 @@
     font-size: 0.8rem;
 }
 
+.quality-refresh.primary {
+    border-color: #1d4ed8;
+    background: #1d4ed8;
+    color: #ffffff;
+    font-weight: 600;
+}
+
+.quality-refresh:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+}
+
+.quality-precheck-hint {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
 .quality-cache-note {
     font-size: 0.75rem;
     color: var(--text-muted);
@@ -3785,4 +3806,18 @@
 .import-file-name {
     font-size: 0.8rem;
     color: var(--text-muted);
+}
+
+.editor-navigator-host {
+    min-height: 0;
+}
+
+.editor-navigator-host ::deep .projects-tree {
+    height: 100%;
+    max-height: none;
+    box-shadow: none;
+}
+
+.editor-navigator-host ::deep .tree-list {
+    max-height: none;
 }

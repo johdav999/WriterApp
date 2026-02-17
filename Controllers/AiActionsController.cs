@@ -6,8 +6,11 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using WriterApp.AI.Abstractions;
 using WriterApp.AI.Actions;
 using WriterApp.Application.AI;
@@ -35,6 +38,7 @@ namespace WriterApp.Controllers
         private readonly IUserIdResolver _userIdResolver;
         private readonly IAiActionHistoryStore _historyStore;
         private readonly IPageVersionService _pageVersions;
+        private readonly ILogger<AiActionsController> _logger;
         private const int OutlineMaxSectionChars = 2000;
         private const int OutlineMaxSections = 60;
         private const int SceneMaxSectionChars = 4000;
@@ -53,7 +57,8 @@ namespace WriterApp.Controllers
             AppDbContext dbContext,
             IUserIdResolver userIdResolver,
             IAiActionHistoryStore historyStore,
-            IPageVersionService pageVersions)
+            IPageVersionService pageVersions,
+            ILogger<AiActionsController> logger)
         {
             _orchestrator = orchestrator ?? throw new ArgumentNullException(nameof(orchestrator));
             _documents = documents ?? throw new ArgumentNullException(nameof(documents));
@@ -63,6 +68,7 @@ namespace WriterApp.Controllers
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
             _historyStore = historyStore ?? throw new ArgumentNullException(nameof(historyStore));
             _pageVersions = pageVersions ?? throw new ArgumentNullException(nameof(pageVersions));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         [HttpGet]
@@ -102,22 +108,51 @@ namespace WriterApp.Controllers
                 return Unauthorized();
             }
 
-            IReadOnlyList<AiActionHistoryEntry> entries = await _historyStore.ListAsync(userId, documentId, ct);
-            List<AiActionHistoryEntryDto> result = entries
-                .OrderByDescending(entry => entry.CreatedUtc)
-                .Select(entry => new AiActionHistoryEntryDto(
-                    entry.ProposalId,
-                    entry.ActionKey,
-                    entry.Summary,
-                    entry.OriginalText,
-                    entry.ProposedText,
-                    entry.CreatedUtc,
-                    entry.IsApplied,
-                    entry.LastAppliedAt,
-                    entry.AppliedCount))
-                .ToList();
+            string correlationId = Request.Headers["X-Correlation-ID"].FirstOrDefault() ?? HttpContext.TraceIdentifier;
+            try
+            {
+                IReadOnlyList<AiActionHistoryEntry> entries = await _historyStore.ListAsync(userId, documentId, ct);
+                List<AiActionHistoryEntryDto> result = entries
+                    .OrderByDescending(entry => entry.CreatedUtc)
+                    .Select(entry => new AiActionHistoryEntryDto(
+                        entry.ProposalId,
+                        entry.ActionKey,
+                        entry.Summary,
+                        entry.OriginalText,
+                        entry.ProposedText,
+                        entry.CreatedUtc,
+                        entry.IsApplied,
+                        entry.LastAppliedAt,
+                        entry.AppliedCount))
+                    .ToList();
 
-            return Ok(result);
+                _logger.LogInformation(
+                    "AI history listed. TraceId={TraceId}, CorrelationId={CorrelationId}, UserId={UserId}, DocumentId={DocumentId}, Count={Count}",
+                    HttpContext.TraceIdentifier,
+                    correlationId,
+                    userId,
+                    documentId,
+                    result.Count);
+
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    ex,
+                    "AI history load failed. TraceId={TraceId}, CorrelationId={CorrelationId}, UserId={UserId}, DocumentId={DocumentId}",
+                    HttpContext.TraceIdentifier,
+                    correlationId,
+                    userId,
+                    documentId);
+
+                ProblemDetails problem = BuildProblemDetails(
+                    StatusCodes.Status503ServiceUnavailable,
+                    "History unavailable",
+                    "AI history is temporarily unavailable. Please retry.",
+                    "ai.history_unavailable");
+                return StatusCode(problem.Status!.Value, problem);
+            }
         }
 
         [HttpPost("history/{historyEntryId:guid}/applied")]
@@ -253,6 +288,8 @@ namespace WriterApp.Controllers
             [FromBody] AiActionExecuteRequestDto request,
             CancellationToken ct)
         {
+            var actionTimer = System.Diagnostics.Stopwatch.StartNew();
+            string correlationId = Request.Headers["X-Correlation-ID"].FirstOrDefault() ?? HttpContext.TraceIdentifier;
             if (request is null)
             {
                 return BadRequest(new { message = "Request body is required." });
@@ -320,11 +357,21 @@ namespace WriterApp.Controllers
 
             if (action.RequiresSelection && (!request.SelectionStart.HasValue || !request.SelectionEnd.HasValue))
             {
-                return BadRequest(new { message = "Selection range is required for this action." });
+                return BadRequest(new
+                {
+                    message = "Selection range is required for this action.",
+                    action = actionKey,
+                    required = new[] { "selectionStart", "selectionEnd" }
+                });
             }
             if (action.RequiresSelection && string.IsNullOrWhiteSpace(request.OriginalText))
             {
-                return BadRequest(new { message = "originalText is required for this action." });
+                return BadRequest(new
+                {
+                    message = "originalText is required for this action.",
+                    action = actionKey,
+                    required = new[] { "originalText" }
+                });
             }
 
             bool outlineTruncated = false;
@@ -351,6 +398,10 @@ namespace WriterApp.Controllers
             Dictionary<string, object?> options = request.Parameters is null
                 ? new Dictionary<string, object?>()
                 : new Dictionary<string, object?>(request.Parameters);
+            if (!string.IsNullOrWhiteSpace(request.SurroundingText))
+            {
+                options["section_text_override"] = request.SurroundingText;
+            }
             if (string.Equals(actionKey, GenerateOutlineAction.ActionIdValue, StringComparison.Ordinal))
             {
                 options["max_section_chars"] = OutlineMaxSectionChars;
@@ -359,8 +410,26 @@ namespace WriterApp.Controllers
             }
             if (RequiresSceneMetadata(actionKey))
             {
-                SectionSceneCardRecord? sceneCard = await _dbContext.SectionSceneCards
-                    .FindAsync(new object?[] { sectionId }, ct);
+                SectionSceneCardRecord? sceneCard = null;
+                try
+                {
+                    sceneCard = await _dbContext.SectionSceneCards
+                        .FindAsync(new object?[] { sectionId }, ct);
+                }
+                catch (SqliteException ex) when (
+                    ex.Message.Contains("no such column", StringComparison.OrdinalIgnoreCase)
+                    || ex.Message.Contains("no such table", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Production-safe fallback for transient schema drift while migrations are being reconciled.
+                    _logger.LogWarning(
+                        ex,
+                        "Scene metadata table/columns unavailable. Falling back to empty scene card context. TraceId={TraceId}, CorrelationId={CorrelationId}, ActionKey={ActionKey}, DocumentId={DocumentId}, SectionId={SectionId}",
+                        HttpContext.TraceIdentifier,
+                        correlationId,
+                        actionKey,
+                        documentId,
+                        sectionId);
+                }
                 options["narrative_purpose"] = sceneCard?.NarrativePurpose ?? string.Empty;
                 options["emotional_beat"] = sceneCard?.EmotionalBeat ?? string.Empty;
                 options["key_events"] = sceneCard?.KeyEvents ?? string.Empty;
@@ -385,11 +454,123 @@ namespace WriterApp.Controllers
                 instruction,
                 options);
 
-            AiExecutionResult result = await _orchestrator.ExecuteActionAsync(actionKey, input, ct);
+            if (RequiresSectionText(actionKey))
+            {
+                string sectionTextForValidation = ResolveSectionTextForValidation(aiDocument, sectionId, request.SurroundingText);
+                if (string.IsNullOrWhiteSpace(sectionTextForValidation))
+                {
+                    return CreateAiProblem(
+                        StatusCodes.Status400BadRequest,
+                        "Missing scene text",
+                        "This action needs section text. Add content to the scene and try again.",
+                        "ai.missing_section_text");
+                }
+            }
+
+            _logger.LogInformation(
+                "AI action request {ActionKey}. TraceId={TraceId}, CorrelationId={CorrelationId}, UserId={UserId}, DocumentId={DocumentId}, SectionId={SectionId}, PageId={PageId}, RequiresSelection={RequiresSelection}, SelectionLength={SelectionLength}, SurroundingLength={SurroundingLength}, ParameterCount={ParameterCount}",
+                actionKey,
+                HttpContext.TraceIdentifier,
+                correlationId,
+                userId,
+                documentId,
+                sectionId,
+                request.PageId,
+                action.RequiresSelection,
+                selectedText.Length,
+                request.SurroundingText?.Length ?? 0,
+                request.Parameters?.Count ?? 0);
+
+            AiExecutionResult result;
+            try
+            {
+                result = await _orchestrator.ExecuteActionAsync(actionKey, input, ct);
+            }
+            catch (AiProviderException ex)
+            {
+                (int statusCode, string errorCode, string detail) = MapProviderException(ex);
+                _logger.LogWarning(
+                    ex,
+                    "AI provider failure for {ActionKey}. TraceId={TraceId}, CorrelationId={CorrelationId}, ProviderId={ProviderId}, DocumentId={DocumentId}, SectionId={SectionId}, PageId={PageId}, DurationMs={DurationMs}",
+                    actionKey,
+                    HttpContext.TraceIdentifier,
+                    correlationId,
+                    ex.ProviderId,
+                    documentId,
+                    sectionId,
+                    request.PageId,
+                    actionTimer.ElapsedMilliseconds);
+                return CreateAiProblem(statusCode, "AI request failed", detail, errorCode);
+            }
+            catch (OperationCanceledException ex) when (!ct.IsCancellationRequested)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "AI action timeout for {ActionKey}. TraceId={TraceId}, CorrelationId={CorrelationId}, DocumentId={DocumentId}, SectionId={SectionId}, DurationMs={DurationMs}",
+                    actionKey,
+                    HttpContext.TraceIdentifier,
+                    correlationId,
+                    documentId,
+                    sectionId,
+                    actionTimer.ElapsedMilliseconds);
+                return CreateAiProblem(
+                    StatusCodes.Status504GatewayTimeout,
+                    "AI request timed out",
+                    "The AI provider timed out. Try again.",
+                    "ai.timeout");
+            }
+            catch (TimeoutException ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "AI action timeout for {ActionKey}. TraceId={TraceId}, CorrelationId={CorrelationId}, DocumentId={DocumentId}, SectionId={SectionId}, DurationMs={DurationMs}",
+                    actionKey,
+                    HttpContext.TraceIdentifier,
+                    correlationId,
+                    documentId,
+                    sectionId,
+                    actionTimer.ElapsedMilliseconds);
+                return CreateAiProblem(
+                    StatusCodes.Status504GatewayTimeout,
+                    "AI request timed out",
+                    "The AI provider timed out. Try again.",
+                    "ai.timeout");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    ex,
+                    "Unhandled AI execution failure for {ActionKey}. TraceId={TraceId}, CorrelationId={CorrelationId}, DocumentId={DocumentId}, SectionId={SectionId}, PageId={PageId}, DurationMs={DurationMs}",
+                    actionKey,
+                    HttpContext.TraceIdentifier,
+                    correlationId,
+                    documentId,
+                    sectionId,
+                    request.PageId,
+                    actionTimer.ElapsedMilliseconds);
+                return CreateAiProblem(
+                    StatusCodes.Status503ServiceUnavailable,
+                    "AI service unavailable",
+                    "The AI service is currently unavailable. Try again shortly.",
+                    "ai.unavailable");
+            }
+
             if (!result.Succeeded || result.Proposal is null)
             {
-                string message = result.ErrorMessage ?? "AI action failed.";
-                return BadRequest(new { message });
+                string errorCode = string.IsNullOrWhiteSpace(result.ErrorCode) ? "ai.blocked" : result.ErrorCode!;
+                string message = string.IsNullOrWhiteSpace(result.ErrorMessage) ? "AI action failed." : result.ErrorMessage!;
+                int statusCode = MapBlockedErrorStatusCode(errorCode);
+                _logger.LogWarning(
+                    "AI action blocked {ActionKey}. TraceId={TraceId}, CorrelationId={CorrelationId}, Code={ErrorCode}, DocumentId={DocumentId}, SectionId={SectionId}, PageId={PageId}, DurationMs={DurationMs}",
+                    actionKey,
+                    HttpContext.TraceIdentifier,
+                    correlationId,
+                    errorCode,
+                    documentId,
+                    sectionId,
+                    request.PageId,
+                    actionTimer.ElapsedMilliseconds);
+                return CreateAiProblem(statusCode, "AI request blocked", message, errorCode);
             }
 
             AiProposal proposal = result.Proposal;
@@ -460,23 +641,170 @@ namespace WriterApp.Controllers
             string requestJson = JsonSerializer.Serialize(request, new JsonSerializerOptions(JsonSerializerDefaults.Web));
             string responseJson = JsonSerializer.Serialize(response, new JsonSerializerOptions(JsonSerializerDefaults.Web));
 
-            await _historyStore.AddAsync(new AiActionHistoryEntry(
-                proposal.ProposalId,
-                proposal.ActionId,
-                userId,
+            try
+            {
+                await _historyStore.AddAsync(new AiActionHistoryEntry(
+                    proposal.ProposalId,
+                    proposal.ActionId,
+                    userId,
+                    documentId,
+                    sectionId,
+                    response.CreatedUtc,
+                    summary,
+                    proposal.OriginalText ?? request.OriginalText,
+                    proposal.ProposedText,
+                    PageId: request.PageId,
+                    ProviderId: proposal.ProviderId,
+                    ModelId: null,
+                    RequestJson: requestJson,
+                    ResultJson: responseJson), ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    ex,
+                    "AI history persistence failed. TraceId={TraceId}, CorrelationId={CorrelationId}, ActionKey={ActionKey}, ProposalId={ProposalId}, DocumentId={DocumentId}, SectionId={SectionId}",
+                    HttpContext.TraceIdentifier,
+                    correlationId,
+                    actionKey,
+                    proposal.ProposalId,
+                    documentId,
+                    sectionId);
+            }
+
+            _logger.LogInformation(
+                "AI action completed {ActionKey}. TraceId={TraceId}, CorrelationId={CorrelationId}, DocumentId={DocumentId}, SectionId={SectionId}, DurationMs={DurationMs}",
+                actionKey,
+                HttpContext.TraceIdentifier,
+                correlationId,
                 documentId,
                 sectionId,
-                response.CreatedUtc,
-                summary,
-                proposal.OriginalText ?? request.OriginalText,
-                proposal.ProposedText,
-                PageId: request.PageId,
-                ProviderId: proposal.ProviderId,
-                ModelId: null,
-                RequestJson: requestJson,
-                ResultJson: responseJson), ct);
+                actionTimer.ElapsedMilliseconds);
 
             return Ok(response);
+        }
+
+        private ActionResult<AiActionExecuteResponseDto> CreateAiProblem(
+            int statusCode,
+            string title,
+            string detail,
+            string code)
+        {
+            ProblemDetails problem = BuildProblemDetails(statusCode, title, detail, code);
+
+            return new ObjectResult(problem)
+            {
+                StatusCode = statusCode
+            };
+        }
+
+        private ProblemDetails BuildProblemDetails(int statusCode, string title, string detail, string code)
+        {
+            ProblemDetails problem = new()
+            {
+                Status = statusCode,
+                Title = title,
+                Detail = detail
+            };
+            problem.Extensions["code"] = code;
+            problem.Extensions["traceId"] = HttpContext.TraceIdentifier;
+            problem.Extensions["correlationId"] = Request.Headers["X-Correlation-ID"].FirstOrDefault() ?? HttpContext.TraceIdentifier;
+            return problem;
+        }
+
+        private static int MapBlockedErrorStatusCode(string errorCode)
+        {
+            if (string.IsNullOrWhiteSpace(errorCode))
+            {
+                return StatusCodes.Status400BadRequest;
+            }
+
+            return errorCode switch
+            {
+                "ai.rate_limited" => StatusCodes.Status429TooManyRequests,
+                "ai.quota_exceeded" => StatusCodes.Status429TooManyRequests,
+                "ai.provider_unavailable" => StatusCodes.Status503ServiceUnavailable,
+                "ai.provider_missing" => StatusCodes.Status503ServiceUnavailable,
+                "ai.action_missing" => StatusCodes.Status400BadRequest,
+                _ => StatusCodes.Status400BadRequest
+            };
+        }
+
+        private static (int StatusCode, string ErrorCode, string Detail) MapProviderException(AiProviderException exception)
+        {
+            string message = exception.Message ?? string.Empty;
+            string normalized = message.ToLowerInvariant();
+
+            if (normalized.Contains("api key is not configured", StringComparison.Ordinal)
+                || normalized.Contains("status 401", StringComparison.Ordinal)
+                || normalized.Contains("status 403", StringComparison.Ordinal))
+            {
+                return (
+                    StatusCodes.Status503ServiceUnavailable,
+                    "ai.misconfigured",
+                    "AI provider is not configured for this environment.");
+            }
+
+            if (normalized.Contains("timed out", StringComparison.Ordinal)
+                || exception.InnerException is TimeoutException)
+            {
+                return (
+                    StatusCodes.Status504GatewayTimeout,
+                    "ai.timeout",
+                    "The AI provider timed out. Try again.");
+            }
+
+            if (normalized.Contains("rate limit", StringComparison.Ordinal)
+                || normalized.Contains("status 429", StringComparison.Ordinal))
+            {
+                return (
+                    StatusCodes.Status429TooManyRequests,
+                    "ai.rate_limited",
+                    "AI rate limit reached. Try again in a moment.");
+            }
+
+            if (normalized.Contains("quota", StringComparison.Ordinal))
+            {
+                return (
+                    StatusCodes.Status429TooManyRequests,
+                    "ai.quota_exceeded",
+                    "AI quota exceeded for this account.");
+            }
+
+            if (normalized.Contains("status 400", StringComparison.Ordinal)
+                || normalized.Contains("context length", StringComparison.Ordinal)
+                || normalized.Contains("too many tokens", StringComparison.Ordinal)
+                || normalized.Contains("invalid request", StringComparison.Ordinal))
+            {
+                return (
+                    StatusCodes.Status400BadRequest,
+                    "ai.invalid_request",
+                    "AI request was invalid or too large.");
+            }
+
+            return (
+                StatusCodes.Status503ServiceUnavailable,
+                "ai.provider_error",
+                "AI provider request failed.");
+        }
+
+        private static bool RequiresSectionText(string actionKey)
+        {
+            return IsSceneCardAction(actionKey)
+                || string.Equals(actionKey, ProposeNextParagraphAction.ActionIdValue, StringComparison.Ordinal);
+        }
+
+        private static string ResolveSectionTextForValidation(Document document, Guid sectionId, string? sectionTextOverride)
+        {
+            if (!string.IsNullOrWhiteSpace(sectionTextOverride))
+            {
+                return sectionTextOverride.Trim();
+            }
+
+            Section? section = document.Chapters
+                .SelectMany(chapter => chapter.Sections)
+                .FirstOrDefault(item => item.SectionId == sectionId);
+            return PlainTextMapper.ToPlainText(section?.Content.Value ?? string.Empty).Trim();
         }
 
         private static IReadOnlyList<AiTextOperationDto>? BuildTextOperations(
@@ -837,10 +1165,10 @@ namespace WriterApp.Controllers
                     emotionalBeat ?? string.Empty,
                     keyEvents ?? string.Empty,
                     openQuestions ?? string.Empty,
-                    povCharacterId,
-                    placeId,
-                    timelineEventId,
-                    timeRef,
+                    povCharacterId ?? string.Empty,
+                    placeId ?? string.Empty,
+                    timelineEventId ?? string.Empty,
+                    timeRef ?? string.Empty,
                     tags,
                     references);
 

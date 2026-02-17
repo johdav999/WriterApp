@@ -41,7 +41,12 @@ namespace WriterApp.AI.Actions
                 throw new ArgumentNullException(nameof(input));
             }
 
-            string sourceText = ResolveSourceText(input.Document, input.ActiveSectionId, input.SelectionRange);
+            string sourceText = ResolveSourceText(
+                input.Document,
+                input.ActiveSectionId,
+                input.SelectionRange,
+                input.SelectedText,
+                input.Options);
             TextRange range = new(0, sourceText.Length);
 
             string languageHint = string.IsNullOrWhiteSpace(input.Document.Metadata.Language)
@@ -94,17 +99,27 @@ namespace WriterApp.AI.Actions
                 new Dictionary<string, object>());
         }
 
-        private string ResolveSourceText(Document document, Guid sectionId, TextRange selectionRange)
+        private string ResolveSourceText(
+            Document document,
+            Guid sectionId,
+            TextRange selectionRange,
+            string? selectedText,
+            Dictionary<string, object?>? options)
         {
             if (Scope == TranslateScope.Document)
             {
                 return BuildDocumentText(document);
             }
 
-            string sectionText = ResolveSectionText(document, sectionId);
+            string sectionText = ResolveSectionText(document, sectionId, options);
             if (Scope == TranslateScope.Section)
             {
                 return sectionText;
+            }
+
+            if (!string.IsNullOrWhiteSpace(selectedText))
+            {
+                return selectedText;
             }
 
             TextRange normalizedRange = NormalizeRange(selectionRange, sectionText.Length);
@@ -137,8 +152,14 @@ namespace WriterApp.AI.Actions
             return $"Translate the {scopeLabel} from {source} to {target}. Style: {tone}. Preserve paragraph breaks and whitespace. Keep any [[SECTION:...]] marker lines unchanged.";
         }
 
-        private static string ResolveSectionText(Document document, Guid sectionId)
+        private static string ResolveSectionText(Document document, Guid sectionId, Dictionary<string, object?>? options)
         {
+            string? overrideText = GetOption(options, "section_text_override", null);
+            if (!string.IsNullOrWhiteSpace(overrideText))
+            {
+                return overrideText;
+            }
+
             for (int chapterIndex = 0; chapterIndex < document.Chapters.Count; chapterIndex++)
             {
                 Chapter chapter = document.Chapters[chapterIndex];
@@ -299,19 +320,19 @@ namespace WriterApp.AI.Actions
             return string.IsNullOrWhiteSpace(snippet) ? null : snippet;
         }
 
-        private static string GetOption(Dictionary<string, object?>? options, string key, string fallback)
+        private static string GetOption(Dictionary<string, object?>? options, string key, string? fallback)
         {
             if (options is null)
             {
-                return fallback;
+                return fallback ?? string.Empty;
             }
 
             if (!options.TryGetValue(key, out object? value))
             {
-                return fallback;
+                return fallback ?? string.Empty;
             }
 
-            return value?.ToString() ?? fallback;
+            return value?.ToString() ?? fallback ?? string.Empty;
         }
 
         protected enum TranslateScope

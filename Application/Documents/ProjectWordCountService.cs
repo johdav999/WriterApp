@@ -39,6 +39,12 @@ namespace WriterApp.Application.Documents
                 .Select(node => node.LinkedSectionId!.Value)
                 .ToHashSet();
 
+            HashSet<Guid> sceneNodeIds = nodes
+                .Where(node => node.NodeType == ProjectNodeType.Scene)
+                .Select(node => node.Id)
+                .ToHashSet();
+
+            Dictionary<Guid, int> sceneCounts = await LoadSceneWordCountsAsync(sceneNodeIds, ct);
             Dictionary<Guid, int> sectionCounts = await LoadSectionWordCountsAsync(linkedSectionIds, ct);
             DateTimeOffset now = DateTimeOffset.UtcNow;
 
@@ -47,7 +53,11 @@ namespace WriterApp.Application.Documents
                 if (node.NodeType == ProjectNodeType.Scene)
                 {
                     int next = 0;
-                    if (node.LinkedSectionId.HasValue)
+                    if (sceneCounts.TryGetValue(node.Id, out int sceneCount))
+                    {
+                        next = sceneCount;
+                    }
+                    else if (node.LinkedSectionId.HasValue)
                     {
                         sectionCounts.TryGetValue(node.LinkedSectionId.Value, out next);
                     }
@@ -132,6 +142,27 @@ namespace WriterApp.Application.Documents
                 }
 
                 counts[group.Key] = total;
+            }
+
+            return counts;
+        }
+
+        private async Task<Dictionary<Guid, int>> LoadSceneWordCountsAsync(HashSet<Guid> sceneNodeIds, CancellationToken ct)
+        {
+            if (sceneNodeIds.Count == 0)
+            {
+                return new Dictionary<Guid, int>();
+            }
+
+            List<SceneContentRecord> sceneContents = await _dbContext.SceneContents
+                .AsNoTracking()
+                .Where(item => sceneNodeIds.Contains(item.SceneNodeId))
+                .ToListAsync(ct);
+
+            Dictionary<Guid, int> counts = new();
+            foreach (SceneContentRecord sceneContent in sceneContents)
+            {
+                counts[sceneContent.SceneNodeId] = CountWords(sceneContent.ContentJson);
             }
 
             return counts;

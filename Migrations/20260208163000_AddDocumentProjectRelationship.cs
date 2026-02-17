@@ -13,6 +13,25 @@ namespace BlazorApp.Migrations
     {
         protected override void Up(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.Sql(
+                """
+                -- Self-heal for SQLite schema/history mismatches:
+                -- Some environments can report prior migrations as applied while Projects is missing.
+                -- Ensure Projects exists before INSERT INTO Projects below.
+                CREATE TABLE IF NOT EXISTS "Projects" (
+                    "Id" TEXT NOT NULL CONSTRAINT "PK_Projects" PRIMARY KEY,
+                    "OwnerUserId" TEXT NOT NULL,
+                    "Title" TEXT NOT NULL,
+                    "Subtitle" TEXT NULL,
+                    "AuthorName" TEXT NULL,
+                    "Language" TEXT NULL,
+                    "Genre" TEXT NULL,
+                    "DefaultExportSettingsJson" TEXT NULL,
+                    "CreatedUtc" TEXT NOT NULL,
+                    "UpdatedUtc" TEXT NOT NULL
+                );
+                """);
+
             migrationBuilder.AddColumn<int>(
                 name: "DocumentKind",
                 table: "Documents",

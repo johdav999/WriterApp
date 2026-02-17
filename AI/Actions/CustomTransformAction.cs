@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.RegularExpressions;
 using WriterApp.AI.Abstractions;
 using WriterApp.Application.Commands;
@@ -13,6 +14,10 @@ namespace WriterApp.AI.Actions
         public const string ActionIdValue = "custom_transform";
         private const int MaxTemplateLength = 2000;
         private static readonly Regex TokenRegex = new(@"\{([a-zA-Z0-9_]+)\}", RegexOptions.Compiled);
+        private static readonly Regex TokenNameRegex = new(@"^[a-zA-Z0-9_]+$", RegexOptions.Compiled);
+        private static readonly Regex AnyCurlyTokenRegex = new(@"\{([^{}]+)\}", RegexOptions.Compiled);
+        private static readonly Regex AnyHandlebarsTokenRegex = new(@"\{\{\s*([^{}]+?)\s*\}\}", RegexOptions.Compiled);
+        private static readonly Regex AnyJsTokenRegex = new(@"\$\{\s*([^{}]+?)\s*\}", RegexOptions.Compiled);
 
         public string ActionId => ActionIdValue;
 
@@ -48,8 +53,10 @@ namespace WriterApp.AI.Actions
                 throw new InvalidOperationException($"Custom template exceeds {MaxTemplateLength} characters.");
             }
 
-            ValidateTemplate(template);
-            string expanded = ExpandTemplate(template, input.Options);
+            string normalizedTemplate = NormalizeTemplate(template);
+            ValidateTemplate(normalizedTemplate);
+            bool strictTokens = GetOptionBool(input.Options, "strictTokens", false);
+            string expanded = ExpandTemplate(normalizedTemplate, input.Options, strictTokens);
             string instruction =
                 $"{expanded}\n\nReturn only revised text. Preserve names, POV, facts, and paragraph breaks. Keep the same language as input. No markdown. No commentary.";
 
@@ -87,14 +94,32 @@ namespace WriterApp.AI.Actions
                 new Dictionary<string, object>());
         }
 
-        public static string ExpandTemplate(string template, Dictionary<string, object?>? options)
+        public static string ExpandTemplate(string template, Dictionary<string, object?>? options, bool strictTokens = false)
         {
             if (string.IsNullOrWhiteSpace(template))
             {
                 return string.Empty;
             }
 
-            return TokenRegex.Replace(template, match =>
+            string normalizedTemplate = NormalizeTemplate(template);
+            ValidateTemplate(normalizedTemplate);
+
+            if (strictTokens)
+            {
+                List<string> missingTokens = TokenRegex.Matches(normalizedTemplate)
+                    .Select(match => match.Groups[1].Value)
+                    .Distinct(StringComparer.Ordinal)
+                    .Where(token => GetOption(options, token, null) is null)
+                    .Select(token => $"{{{token}}}")
+                    .ToList();
+                if (missingTokens.Count > 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Template is missing required token value(s): {string.Join(", ", missingTokens)}.");
+                }
+            }
+
+            return TokenRegex.Replace(normalizedTemplate, match =>
             {
                 string key = match.Groups[1].Value;
                 string? value = GetOption(options, key, null);
@@ -102,14 +127,41 @@ namespace WriterApp.AI.Actions
             });
         }
 
-        private static void ValidateTemplate(string template)
+        public static string NormalizeTemplate(string template)
         {
-            if (template.Contains("{{", StringComparison.Ordinal)
-                || template.Contains("}}", StringComparison.Ordinal)
-                || template.Contains("${", StringComparison.Ordinal)
-                || template.Contains("<%", StringComparison.Ordinal))
+            if (string.IsNullOrWhiteSpace(template))
+            {
+                return string.Empty;
+            }
+
+            string normalized = AnyHandlebarsTokenRegex.Replace(
+                template,
+                match => "{" + match.Groups[1].Value.Trim() + "}");
+            normalized = AnyJsTokenRegex.Replace(
+                normalized,
+                match => "{" + match.Groups[1].Value.Trim() + "}");
+            return normalized;
+        }
+
+        public static void ValidateTemplate(string template)
+        {
+            if (template.Contains("<%", StringComparison.Ordinal)
+                || template.Contains("%>", StringComparison.Ordinal))
             {
                 throw new InvalidOperationException("Template contains unsupported token syntax.");
+            }
+
+            List<string> invalidTokens = AnyCurlyTokenRegex.Matches(template)
+                .Select(match => match.Groups[1].Value)
+                .Where(name => !TokenNameRegex.IsMatch(name))
+                .Select(name => $"{{{name}}}")
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+
+            if (invalidTokens.Count > 0)
+            {
+                throw new InvalidOperationException(
+                    $"Template contains invalid token name(s): {string.Join(", ", invalidTokens)}. Allowed pattern: [a-zA-Z0-9_]+.");
             }
         }
 
@@ -166,6 +218,26 @@ namespace WriterApp.AI.Actions
             }
 
             return value.ToString() ?? fallback;
+        }
+
+        private static bool GetOptionBool(Dictionary<string, object?>? options, string key, bool fallback)
+        {
+            if (options is null || !options.TryGetValue(key, out object? value) || value is null)
+            {
+                return fallback;
+            }
+
+            if (value is bool boolValue)
+            {
+                return boolValue;
+            }
+
+            if (value is string stringValue && bool.TryParse(stringValue, out bool parsed))
+            {
+                return parsed;
+            }
+
+            return fallback;
         }
     }
 }
