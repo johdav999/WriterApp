@@ -6,6 +6,7 @@
 @using WriterApp.Client.Components.Editor
 @using WriterApp.Client.Components.AI
 @using WriterApp.Client.Components
+@using WriterApp.Client.Pages
 
 <PageTitle>@GetPageTitle()</PageTitle>
 
@@ -130,18 +131,6 @@ else
                 <div class="editor-actions">
                     <button type="button" title='@GetTooltip("Undo last change.")' @onclick="OnUndoRequested">Undo</button>
                     <button type="button" title='@GetTooltip("Redo last change.")' @onclick="OnRedoRequested">Redo</button>
-                    @if (CanShowReviseTools)
-                    {
-                        <div class="revise-tools">
-                            <select value="@_selectedReviseTool" @onchange="OnReviseToolChanged">
-                                <option value="tighten">Tighten</option>
-                                <option value="expand">Expand</option>
-                                <option value="change_tone">Change tone</option>
-                                <option value="show_dont_tell">Show, don't tell</option>
-                            </select>
-                            <button type="button" disabled="@IsAiQuotaExceeded" @onclick="OnReviseRequested">Revise</button>
-                        </div>
-                    }
                     @if (CanShowPromptLibrary && PinnedPromptPresets.Count > 0)
                     {
                         <div class="revise-tools">
@@ -161,6 +150,7 @@ else
                                 <button type="button" @onclick="OnToggleEditorWidthMode">@GetEditorWidthLabel()</button>
                                 <button type="button" @onclick="OnTogglePrintLayout">@GetPrintLayoutLabel()</button>
                                 <button type="button" @onclick="OnSaveNow">Save now</button>
+                                <button type="button" @onclick="PromptImportCurrentSection">Import...</button>
                                 <button type="button" @onclick="OnExportDialogOpenAsync">Export...</button>
                                 <button type="button" @onclick='@(() => OnExportRequested("synopsis", "markdown"))'>Export Synopsis (Markdown)</button>
                                 <button type="button" @onclick='@(() => OnExportRequested("synopsis", "html"))'>Export Synopsis (HTML)</button>
@@ -297,6 +287,16 @@ else
                                     <div class="ai-preview-text">@_pendingAiProposal.ProposedText</div>
                                 </div>
                             </div>
+                            @if (ShouldShowTightenMetrics())
+                            {
+                                <div class="ai-history-details-sub">
+                                    <span>Words: @GetPendingOriginalWordCount() -> @GetPendingProposedWordCount() (@GetPendingTightenDeltaLabel())</span>
+                                </div>
+                            }
+                            @if (ShouldShowTightenLowImpactWarning())
+                            {
+                                <div class="quality-cache-note">No meaningful tightening was produced. Try selecting a longer passage.</div>
+                            }
                         }
                         @if (!IsTranslationProposal)
                         {
@@ -491,6 +491,10 @@ else
                             {
                                 <span class="version-status" title="A version snapshot was saved.">@_editorStatus.VersionStatusMessage</span>
                             }
+                            @if (!string.IsNullOrWhiteSpace(_continuityStatus))
+                            {
+                                <span class="version-status" title="Continuity status.">@_continuityStatus</span>
+                            }
                         </div>
                     }
                 </div>
@@ -636,7 +640,12 @@ else
                                             <option value="glossary">Glossary</option>
                                         </select>
                                     </div>
-                                    <button type="button" class="quality-refresh" @onclick="RunQualityChecksAsync">Run checks</button>
+                                    <button type="button"
+                                            class="quality-refresh primary"
+                                            disabled="@_qualityLoading"
+                                            @onclick="RunQualityChecksAsync">
+                                        @(_qualityLoading ? "Scanning..." : GetQualityRunButtonLabel())
+                                    </button>
                                 </div>
                                 @if (_qualityFromCache)
                                 {
@@ -650,6 +659,10 @@ else
                             else if (_activeContextTab == ContextTab.History)
                             {
                                 <div class="rp-title">History</div>
+                            }
+                            else if (_activeContextTab == ContextTab.Navigator)
+                            {
+                                <div class="rp-title">Navigator</div>
                             }
                         }
                     </Header>
@@ -759,6 +772,22 @@ else
                                                     <strong>Open questions</strong>
                                                     <div>@_sceneOpenQuestions</div>
                                                 </div>
+                                                <div class="scene-card-preview-field">
+                                                    <strong>POV character</strong>
+                                                    <div>@(string.IsNullOrWhiteSpace(_scenePovCharacterId) ? "(not provided)" : _scenePovCharacterId)</div>
+                                                </div>
+                                                <div class="scene-card-preview-field">
+                                                    <strong>Setting / place</strong>
+                                                    <div>@(string.IsNullOrWhiteSpace(_scenePlaceId) ? "(not provided)" : _scenePlaceId)</div>
+                                                </div>
+                                                <div class="scene-card-preview-field">
+                                                    <strong>Timeline marker</strong>
+                                                    <div>@(string.IsNullOrWhiteSpace(_sceneTimeRef) ? "(not provided)" : _sceneTimeRef)</div>
+                                                </div>
+                                                <div class="scene-card-preview-field">
+                                                    <strong>Tags</strong>
+                                                    <div>@(string.IsNullOrWhiteSpace(_sceneTagsText) ? "(not provided)" : _sceneTagsText)</div>
+                                                </div>
                                             </div>
                                             <div class="scene-card-preview-col">
                                                 <div class="scene-card-preview-label">Proposed</div>
@@ -777,6 +806,22 @@ else
                                                 <div class="scene-card-preview-field">
                                                     <strong>Open questions</strong>
                                                     <div>@_sceneAiProposal.OpenQuestions</div>
+                                                </div>
+                                                <div class="scene-card-preview-field">
+                                                    <strong>POV character</strong>
+                                                    <div>@(string.IsNullOrWhiteSpace(_sceneAiProposal.PovCharacterId) ? "(not provided)" : _sceneAiProposal.PovCharacterId)</div>
+                                                </div>
+                                                <div class="scene-card-preview-field">
+                                                    <strong>Setting / place</strong>
+                                                    <div>@(string.IsNullOrWhiteSpace(_sceneAiProposal.PlaceId) ? "(not provided)" : _sceneAiProposal.PlaceId)</div>
+                                                </div>
+                                                <div class="scene-card-preview-field">
+                                                    <strong>Timeline marker</strong>
+                                                    <div>@(string.IsNullOrWhiteSpace(_sceneAiProposal.TimeRef) ? "(not provided)" : _sceneAiProposal.TimeRef)</div>
+                                                </div>
+                                                <div class="scene-card-preview-field">
+                                                    <strong>Tags</strong>
+                                                    <div>@GetSceneProposalTagsDisplay(_sceneAiProposal.Tags)</div>
                                                 </div>
                                             </div>
                                         </div>
@@ -848,6 +893,15 @@ else
                                 }
                             </div>
                         }
+                        else if (_activeContextTab == ContextTab.Navigator)
+                        {
+                            <div class="editor-navigator-host">
+                                <Projects ProjectId="@GetNavigatorProjectId()"
+                                          EmbedNavigator="true"
+                                          @ref="_navigatorPanel"
+                                          SceneOpenRequested="OpenSceneFromNavigatorAsync" />
+                            </div>
+                        }
                         else if (_activeContextTab == ContextTab.Ai)
                         {
                             <div class="drawer-panel ai-panel continuity-panel">
@@ -875,6 +929,7 @@ else
                                                     <div class="ai-action-item">
                                                         <button type="button"
                                                                 disabled="@(_currentSelectionRange is null || IsAiQuotaExceeded)"
+                                                                @onmousedown:preventDefault="true"
                                                                 @onclick="() => OnAiActionSelected(action)">
                                                             @action.Label
                                                         </button>
@@ -996,34 +1051,10 @@ else
                                 {
                                     <div class="ai-actions-list">
                                         <button type="button"
-                                                disabled="@(_continuityBusy || !CanRunExtractCharacterBible)"
-                                                @onclick="OnRefreshCharacterBibleAsync">
-                                            Refresh character bible
-                                        </button>
-                                        <button type="button"
-                                                disabled="@(_continuityBusy || !CanRunExtractPlaceBible)"
-                                                @onclick="OnRefreshPlaceBibleAsync">
-                                            Refresh place bible
-                                        </button>
-                                        <button type="button"
-                                                disabled="@(_continuityBusy || !CanRunExtractTimelineBible)"
-                                                @onclick="OnRefreshTimelineBibleAsync">
-                                            Refresh timeline bible
-                                        </button>
-                                        <button type="button"
-                                                disabled="@(_continuityBusy || !CanRunExtractCharacterBible)"
-                                                @onclick="OnFullRebuildCharacterBibleAsync">
-                                            Rebuild characters
-                                        </button>
-                                        <button type="button"
-                                                disabled="@(_continuityBusy || !CanRunExtractPlaceBible)"
-                                                @onclick="OnFullRebuildPlaceBibleAsync">
-                                            Rebuild places
-                                        </button>
-                                        <button type="button"
-                                                disabled="@(_continuityBusy || !CanRunExtractTimelineBible)"
-                                                @onclick="OnFullRebuildTimelineBibleAsync">
-                                            Rebuild timeline
+                                                class="quality-refresh primary"
+                                                disabled="@(_continuityBusy || !CanRunBibleUpdate)"
+                                                @onclick="OnUpdateAllBiblesAsync">
+                                            @(_continuityBusy ? "Updating bibles..." : "Update Bible")
                                         </button>
                                         <button type="button"
                                                 disabled="@(_continuityBusy || !CanRunContinuityCheck)"
@@ -1137,6 +1168,7 @@ else
                                         {
                                             <label class="export-panel-label" for="prompt-template">Template</label>
                                             <textarea id="prompt-template" class="notes-input scene-card-input" @bind="_promptTemplateDraft"></textarea>
+                                            <div class="drawer-empty">Tokens: <code>{token}</code>, <code>{{token}}</code>, <code>${token}</code>. Names must use letters, digits, or underscore.</div>
                                         }
                                         <label class="export-panel-label" for="prompt-params">Parameters (JSON)</label>
                                         <textarea id="prompt-params" class="notes-input scene-card-input" @bind="_promptParametersDraft"></textarea>
@@ -1243,6 +1275,10 @@ else
                                 else if (!string.IsNullOrWhiteSpace(_qualityError))
                                 {
                                     <div class="drawer-empty">@_qualityError</div>
+                                }
+                                else if (!_qualityHasRunOnce && _qualityIssues.Count == 0)
+                                {
+                                    <div class="drawer-empty quality-precheck-hint">Run quality check to find repetition, clarity issues, and pacing friction.</div>
                                 }
                                 else if (_qualityIssues.Count == 0)
                                 {
@@ -1676,8 +1712,17 @@ else
                     <div class="quality-proposal-preview">
                         <div class="quality-proposal-label">Before</div>
                         <pre>@_continuityProposalPreview.Before</pre>
-                        <div class="quality-proposal-label">After</div>
-                        <pre>@_continuityProposalPreview.After</pre>
+                        @if (_continuityProposalPreview.IsDeletion)
+                        {
+                            <div class="quality-proposal-label">Change</div>
+                            <div class="quality-proposal-suggestion">Remove highlighted text</div>
+                            <pre>@_continuityProposalPreview.DeletionText</pre>
+                        }
+                        else
+                        {
+                            <div class="quality-proposal-label">After</div>
+                            <pre>@_continuityProposalPreview.After</pre>
+                        }
                     </div>
                     @if (!string.IsNullOrEmpty(_continuityProposalPreview.Prefix) || !string.IsNullOrEmpty(_continuityProposalPreview.Suffix))
                     {
@@ -1686,9 +1731,12 @@ else
                             <div class="quality-proposal-context-line">
                                 <span>@_continuityProposalPreview.Prefix</span><span class="quality-proposal-token quality-proposal-token--before">@_continuityProposalPreview.Before</span><span>@_continuityProposalPreview.Suffix</span>
                             </div>
-                            <div class="quality-proposal-context-line">
-                                <span>@_continuityProposalPreview.Prefix</span><span class="quality-proposal-token quality-proposal-token--after">@_continuityProposalPreview.After</span><span>@_continuityProposalPreview.Suffix</span>
-                            </div>
+                            @if (!_continuityProposalPreview.IsDeletion)
+                            {
+                                <div class="quality-proposal-context-line">
+                                    <span>@_continuityProposalPreview.Prefix</span><span class="quality-proposal-token quality-proposal-token--after">@_continuityProposalPreview.After</span><span>@_continuityProposalPreview.Suffix</span>
+                                </div>
+                            }
                         </div>
                     }
                 }
@@ -1696,6 +1744,18 @@ else
             @if (!string.IsNullOrWhiteSpace(_continuityProposalError))
             {
                 <div class="modal-error">@_continuityProposalError</div>
+                <div class="modal-actions">
+                    <button type="button"
+                            @onclick="ShowPendingContinuityIssueInTextAsync"
+                            disabled="@_isApplyingContinuityProposal">
+                        Show in text
+                    </button>
+                    <button type="button"
+                            @onclick="RecomputeContinuityRangeAsync"
+                            disabled="@_isApplyingContinuityProposal">
+                        Recompute range
+                    </button>
+                </div>
             }
             <div class="modal-actions">
                 <button type="button"
@@ -1740,9 +1800,9 @@ else
                         <option value="append">Append at end</option>
                     </select>
 
-                    <label for="import-file">File (.txt, .rtf, .docx)</label>
+                    <label for="import-file">File (.txt, .docx)</label>
                     <InputFile id="import-file"
-                               accept=".txt,.rtf,.docx"
+                               accept=".txt,.docx"
                                OnChange="OnImportFileSelected" />
                     @if (!string.IsNullOrWhiteSpace(_importFileName))
                     {
@@ -1776,7 +1836,7 @@ else
 
 @if (_isTranslateModalOpen)
 {
-    <div class="modal-overlay" @onclick="CloseTranslateModal">
+    <div class="modal-overlay modal-overlay-dimmed" @onclick="CloseTranslateModal">
         <div class="modal translate-dialog modal-panel" role="dialog" aria-modal="true" @onclick:stopPropagation="true">
             <div class="modal-header">
                 <div class="modal-title">Translate</div>

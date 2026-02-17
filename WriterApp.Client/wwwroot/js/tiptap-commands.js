@@ -382,6 +382,23 @@ export function replaceSelection(editor, content) {
     editor.chain().focus().insertContent(text).run();
 }
 
+export function replaceTextRange(editor, from, to, content) {
+    if (!editor) {
+        return;
+    }
+
+    const start = Number(from);
+    const end = Number(to);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) {
+        return;
+    }
+
+    const text = typeof content === "string" ? content : "";
+    const normalizedFrom = Math.max(0, Math.min(start, end));
+    const normalizedTo = Math.max(normalizedFrom, Math.max(start, end));
+    editor.chain().focus().setTextSelection({ from: normalizedFrom, to: normalizedTo }).insertContent(text).run();
+}
+
 export function appendParagraph(editor, content) {
     if (!editor) {
         return;
@@ -398,6 +415,26 @@ export function appendParagraph(editor, content) {
     };
 
     editor.chain().focus().insertContentAt(editor.state.doc.content.size, paragraph).run();
+}
+
+export function appendImportedHtml(editor, html) {
+    if (!editor) {
+        return;
+    }
+
+    const incoming = typeof html === "string" ? html.trim() : "";
+    if (!incoming) {
+        return;
+    }
+
+    const hasContent = (editor.state?.doc?.textContent || "").trim().length > 0;
+    const endPos = editor.state?.doc?.content?.size ?? 0;
+    const chain = editor.chain().focus(endPos);
+    if (hasContent) {
+        chain.insertContent("<p><br /></p>");
+    }
+
+    chain.insertContent(incoming).run();
 }
 
 export function scrollToPosition(editor, position) {

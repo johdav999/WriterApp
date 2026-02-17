@@ -96,29 +96,49 @@ namespace BlazorApp.Migrations
                         onDelete: ReferentialAction.Cascade);
                 });
 
-            migrationBuilder.CreateTable(
-                name: "WritingSessions",
-                columns: table => new
-                {
-                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
-                    ProjectId = table.Column<Guid>(type: "TEXT", nullable: false),
-                    StartedUtc = table.Column<DateTimeOffset>(type: "TEXT", nullable: false),
-                    EndedUtc = table.Column<DateTimeOffset>(type: "TEXT", nullable: true),
-                    DurationSeconds = table.Column<int>(type: "INTEGER", nullable: false),
-                    WordsDelta = table.Column<int>(type: "INTEGER", nullable: false),
-                    StartWordCount = table.Column<int>(type: "INTEGER", nullable: false),
-                    Notes = table.Column<string>(type: "TEXT", nullable: true)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_WritingSessions", x => x.Id);
-                    table.ForeignKey(
-                        name: "FK_WritingSessions_Projects_ProjectId",
-                        column: x => x.ProjectId,
-                        principalTable: "Projects",
-                        principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
-                });
+            if (ActiveProvider == "Microsoft.EntityFrameworkCore.Sqlite")
+            {
+                migrationBuilder.Sql(
+                    """
+                    -- SQLite clean-db safety: do not require Projects table presence to create this table.
+                    CREATE TABLE IF NOT EXISTS "WritingSessions" (
+                        "Id" TEXT NOT NULL CONSTRAINT "PK_WritingSessions" PRIMARY KEY,
+                        "ProjectId" TEXT NOT NULL,
+                        "StartedUtc" TEXT NOT NULL,
+                        "EndedUtc" TEXT NULL,
+                        "DurationSeconds" INTEGER NOT NULL,
+                        "WordsDelta" INTEGER NOT NULL,
+                        "StartWordCount" INTEGER NOT NULL,
+                        "Notes" TEXT NULL
+                    );
+                    """);
+            }
+            else
+            {
+                migrationBuilder.CreateTable(
+                    name: "WritingSessions",
+                    columns: table => new
+                    {
+                        Id = table.Column<Guid>(type: "TEXT", nullable: false),
+                        ProjectId = table.Column<Guid>(type: "TEXT", nullable: false),
+                        StartedUtc = table.Column<DateTimeOffset>(type: "TEXT", nullable: false),
+                        EndedUtc = table.Column<DateTimeOffset>(type: "TEXT", nullable: true),
+                        DurationSeconds = table.Column<int>(type: "INTEGER", nullable: false),
+                        WordsDelta = table.Column<int>(type: "INTEGER", nullable: false),
+                        StartWordCount = table.Column<int>(type: "INTEGER", nullable: false),
+                        Notes = table.Column<string>(type: "TEXT", nullable: true)
+                    },
+                    constraints: table =>
+                    {
+                        table.PrimaryKey("PK_WritingSessions", x => x.Id);
+                        table.ForeignKey(
+                            name: "FK_WritingSessions_Projects_ProjectId",
+                            column: x => x.ProjectId,
+                            principalTable: "Projects",
+                            principalColumn: "Id",
+                            onDelete: ReferentialAction.Cascade);
+                    });
+            }
 
             migrationBuilder.CreateIndex(
                 name: "IX_ProjectMilestones_ProjectId",
@@ -141,10 +161,21 @@ namespace BlazorApp.Migrations
                 columns: new[] { "ProjectId", "EventKey" },
                 unique: true);
 
-            migrationBuilder.CreateIndex(
-                name: "IX_WritingSessions_ProjectId_StartedUtc",
-                table: "WritingSessions",
-                columns: new[] { "ProjectId", "StartedUtc" });
+            if (ActiveProvider == "Microsoft.EntityFrameworkCore.Sqlite")
+            {
+                migrationBuilder.Sql(
+                    """
+                    CREATE INDEX IF NOT EXISTS "IX_WritingSessions_ProjectId_StartedUtc"
+                    ON "WritingSessions" ("ProjectId", "StartedUtc");
+                    """);
+            }
+            else
+            {
+                migrationBuilder.CreateIndex(
+                    name: "IX_WritingSessions_ProjectId_StartedUtc",
+                    table: "WritingSessions",
+                    columns: new[] { "ProjectId", "StartedUtc" });
+            }
         }
 
         protected override void Down(MigrationBuilder migrationBuilder)

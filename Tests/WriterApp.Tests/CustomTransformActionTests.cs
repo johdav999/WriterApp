@@ -36,6 +36,64 @@ namespace WriterApp.Tests
         }
 
         [Fact]
+        public void NormalizeTemplate_SupportsHandlebarsAndJsSyntax()
+        {
+            string normalized = CustomTransformAction.NormalizeTemplate("{{tone}} and ${length}");
+
+            Assert.Equal("{tone} and {length}", normalized);
+        }
+
+        [Theory]
+        [InlineData("<% tone %>")]
+        [InlineData("<%= tone %>")]
+        [InlineData("%>")]
+        public void ValidateTemplate_RejectsUnsupportedSyntax(string template)
+        {
+            InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() =>
+                CustomTransformAction.ValidateTemplate(template));
+
+            Assert.Contains("unsupported token syntax", ex.Message, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void ValidateTemplate_RejectsInvalidTokenName()
+        {
+            string normalized = CustomTransformAction.NormalizeTemplate("{tone-level}");
+            InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() =>
+                CustomTransformAction.ValidateTemplate(normalized));
+
+            Assert.Contains("{tone-level}", ex.Message, StringComparison.Ordinal);
+            Assert.Contains("[a-zA-Z0-9_]+", ex.Message, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void ExpandTemplate_StrictTokens_RejectsMissing()
+        {
+            Dictionary<string, object?> options = new()
+            {
+                ["tone"] = "dramatic"
+            };
+
+            InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() =>
+                CustomTransformAction.ExpandTemplate("{tone} and {length}", options, strictTokens: true));
+
+            Assert.Contains("{length}", ex.Message, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void ExpandTemplate_NonStrict_MissingBecomesEmpty()
+        {
+            Dictionary<string, object?> options = new()
+            {
+                ["tone"] = "dramatic"
+            };
+
+            string expanded = CustomTransformAction.ExpandTemplate("{tone} and {length}", options, strictTokens: false);
+
+            Assert.Equal("dramatic and ", expanded);
+        }
+
+        [Fact]
         public async Task ProposalApplyUndo_Works_ThroughCommandProcessor()
         {
             Document document = DocumentFactory.CreateNewDocument();

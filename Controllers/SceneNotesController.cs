@@ -1,10 +1,12 @@
 using System;
+using System.Linq;
 using System.Security;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using WriterApp.Application.Documents;
 using WriterApp.Application.Security;
 using WriterApp.Data;
@@ -19,18 +21,22 @@ namespace WriterApp.Controllers
     {
         private readonly AppDbContext _dbContext;
         private readonly IUserIdResolver _userIdResolver;
+        private readonly ILogger<SceneNotesController> _logger;
 
         public SceneNotesController(
             AppDbContext dbContext,
-            IUserIdResolver userIdResolver)
+            IUserIdResolver userIdResolver,
+            ILogger<SceneNotesController> logger)
         {
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         [HttpGet]
         public async Task<ActionResult<SceneNotesDto>> Get(Guid sceneNodeId, CancellationToken ct)
         {
+            string correlationId = Request.Headers["X-Correlation-ID"].FirstOrDefault() ?? HttpContext.TraceIdentifier;
             string userId;
             try
             {
@@ -51,9 +57,22 @@ namespace WriterApp.Controllers
                 .FirstOrDefaultAsync(item => item.SceneNodeId == sceneNodeId, ct);
             if (note is null)
             {
+                _logger.LogInformation(
+                    "Scene notes get empty. TraceId={TraceId}, CorrelationId={CorrelationId}, SceneNodeId={SceneNodeId}, UserId={UserId}",
+                    HttpContext.TraceIdentifier,
+                    correlationId,
+                    sceneNodeId,
+                    userId);
                 return Ok(new SceneNotesDto(sceneNodeId, string.Empty, DateTimeOffset.UtcNow));
             }
 
+            _logger.LogInformation(
+                "Scene notes loaded. TraceId={TraceId}, CorrelationId={CorrelationId}, SceneNodeId={SceneNodeId}, UserId={UserId}, Length={Length}",
+                HttpContext.TraceIdentifier,
+                correlationId,
+                sceneNodeId,
+                userId,
+                note.NotesText?.Length ?? 0);
             return Ok(new SceneNotesDto(sceneNodeId, note.NotesText, note.UpdatedAtUtc));
         }
 
@@ -63,6 +82,7 @@ namespace WriterApp.Controllers
             [FromBody] SceneNotesUpdateRequest request,
             CancellationToken ct)
         {
+            string correlationId = Request.Headers["X-Correlation-ID"].FirstOrDefault() ?? HttpContext.TraceIdentifier;
             string userId;
             try
             {
@@ -92,6 +112,14 @@ namespace WriterApp.Controllers
             note.NotesText = request.NotesText ?? string.Empty;
             note.UpdatedAtUtc = DateTimeOffset.UtcNow;
             await _dbContext.SaveChangesAsync(ct);
+
+            _logger.LogInformation(
+                "Scene notes saved. TraceId={TraceId}, CorrelationId={CorrelationId}, SceneNodeId={SceneNodeId}, UserId={UserId}, Length={Length}",
+                HttpContext.TraceIdentifier,
+                correlationId,
+                sceneNodeId,
+                userId,
+                note.NotesText.Length);
 
             return Ok(new SceneNotesDto(sceneNodeId, note.NotesText, note.UpdatedAtUtc));
         }

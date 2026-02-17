@@ -68,6 +68,34 @@ namespace WriterApp.Tests
             Assert.NotEmpty(file.FileContents);
         }
 
+        [Fact]
+        public async Task ExportPrintPost_UsesLinkedSceneContentFallback_WhenSectionPagesAreEmpty()
+        {
+            Guid documentId = Guid.NewGuid();
+            Guid projectId = Guid.NewGuid();
+            Guid sectionId = Guid.NewGuid();
+            using AppDbContext dbContext = BuildDbContext();
+            SeedManuscriptWithEmptyPageAndSceneContent(dbContext, documentId, projectId, sectionId);
+
+            ExportService exportService = BuildExportService();
+            IConfiguration config = BuildConfig();
+            DocumentExportController controller = BuildController(dbContext, exportService, config);
+
+            ExportDocumentRequest request = new(
+                documentId,
+                "html",
+                null,
+                "document");
+
+            ActionResult<DocumentExportController.ExportPrintPayload> result = await controller.ExportPrintPost(documentId, request, CancellationToken.None);
+            OkObjectResult ok = Assert.IsType<OkObjectResult>(result.Result);
+            DocumentExportController.ExportPrintPayload payload =
+                Assert.IsType<DocumentExportController.ExportPrintPayload>(ok.Value);
+
+            Assert.Contains("Fallback scene content from SceneContents", payload.Html);
+            Assert.Contains("Scene One", payload.Html);
+        }
+
         private static AppDbContext BuildDbContext()
         {
             DbContextOptions<AppDbContext> options = new DbContextOptionsBuilder<AppDbContext>()
@@ -119,6 +147,81 @@ namespace WriterApp.Tests
             context.Documents.Add(document);
             context.Sections.Add(section);
             context.Pages.Add(page);
+            context.SaveChanges();
+        }
+
+        private static void SeedManuscriptWithEmptyPageAndSceneContent(
+            AppDbContext context,
+            Guid documentId,
+            Guid projectId,
+            Guid sectionId)
+        {
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            Guid pageId = Guid.NewGuid();
+            Guid sceneNodeId = Guid.NewGuid();
+
+            context.Projects.Add(new ProjectRecord
+            {
+                Id = projectId,
+                OwnerUserId = "user-1",
+                Title = "Project",
+                CreatedUtc = now,
+                UpdatedUtc = now
+            });
+
+            context.Documents.Add(new DocumentRecord
+            {
+                Id = documentId,
+                ProjectId = projectId,
+                OwnerUserId = "user-1",
+                Title = "Manuscript Export",
+                DocumentKind = DocumentKind.Manuscript,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+
+            context.Sections.Add(new SectionRecord
+            {
+                Id = sectionId,
+                DocumentId = documentId,
+                Title = "Scene One",
+                OrderIndex = 0,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+
+            context.Pages.Add(new PageRecord
+            {
+                Id = pageId,
+                DocumentId = documentId,
+                SectionId = sectionId,
+                Title = "Page One",
+                Content = string.Empty,
+                OrderIndex = 0,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+
+            context.ProjectNodes.Add(new ProjectNodeRecord
+            {
+                Id = sceneNodeId,
+                ProjectId = projectId,
+                ParentId = null,
+                NodeType = ProjectNodeType.Scene,
+                Title = "Scene One",
+                OrderIndex = 0,
+                LinkedSectionId = sectionId,
+                WordCountCache = 0,
+                UpdatedUtc = now
+            });
+
+            context.SceneContents.Add(new SceneContentRecord
+            {
+                SceneNodeId = sceneNodeId,
+                ContentJson = "<p>Fallback scene content from SceneContents.</p>",
+                UpdatedAtUtc = now
+            });
+
             context.SaveChanges();
         }
 

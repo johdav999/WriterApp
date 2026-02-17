@@ -19,11 +19,61 @@
 
 <PageTitle>Projects</PageTitle>
 
-@if (!_projectsEnabled)
+@if (EmbedNavigator)
 {
-    <div class="projects-disabled">
-        Projects workflow is disabled by configuration.
-    </div>
+    @if (!_projectsEnabled)
+    {
+        <div class="projects-empty">Projects workflow is disabled by configuration.</div>
+    }
+    else if (_loading)
+    {
+        <div class="projects-loading">Loading projects...</div>
+    }
+    else if (_activeProject is null)
+    {
+        <div class="projects-empty">Open a project scene to use Navigator.</div>
+    }
+    else
+    {
+        <aside class="projects-tree"
+               aria-label="Navigator"
+               @onmouseup="OnPointerDragCancel"
+               @onmouseleave="OnPointerDragCancel">
+            <div class="panel-header">
+                <h2>Navigator</h2>
+                <p>Parts, chapters, and scenes in manuscript order.</p>
+            </div>
+            <div class="tree-actions">
+                <label for="add-node-type">Add...</label>
+                <select id="add-node-type" @bind="_addNodeType">
+                    <option value="part">Part</option>
+                    <option value="chapter">Chapter</option>
+                    <option value="scene">Scene</option>
+                </select>
+                <button type="button"
+                        class="secondary"
+                        @onclick="AddSelectedNodeTypeAsync"
+                        disabled="@(!CanAddSelectedNodeType())">
+                    Add
+                </button>
+                @if (_outlineTemplatesEnabled)
+                {
+                    <button type="button"
+                            class="secondary"
+                            @onclick="OpenOutlineTemplatesModalAsync"
+                            disabled="@_isOutlineTemplateActionInFlight">
+                        Templates...
+                    </button>
+                }
+            </div>
+            <ul class="tree-list">
+                @foreach (ProjectNodeDto root in GetChildren(null))
+                {
+                    @RenderNode(root, 0)
+                }
+            </ul>
+        </aside>
+    }
 }
 else
 {
@@ -561,6 +611,8 @@ else
     private string _applyTemplateLinkStrategy = "none";
     private bool _applyTemplateUnderSelectedProjectNode;
     private bool _applyTemplateCreateLinkedSections;
+    private bool _dndDiagnosticsEnabled;
+    private DateTimeOffset _lastDndDragOverLogUtc = DateTimeOffset.MinValue;
     private readonly HashSet<Guid> _collapsedNodeIds = new();
     private CancellationTokenSource? _sessionTickerCts;
     private int _sessionElapsedSeconds;
@@ -574,6 +626,12 @@ else
     [Parameter]
     public Guid? ProjectId { get; set; }
 
+    [Parameter]
+    public bool EmbedNavigator { get; set; }
+
+    [Parameter]
+    public EventCallback<Guid> SceneOpenRequested { get; set; }
+
     protected override async Task OnInitializedAsync()
     {
         _projectsEnabled = Configuration.GetValue<bool?>("Workflow:ProjectsEnabled")
@@ -585,6 +643,9 @@ else
         _outlineTemplatesEnabled = Configuration.GetValue<bool?>("Workflow:OutlineTemplatesEnabled")
             ?? Configuration.GetValue<bool?>("WriterApp:Workflow:OutlineTemplatesEnabled")
             ?? false;
+        _dndDiagnosticsEnabled = Configuration.GetValue<bool?>("Diagnostics:NavigatorDndEnabled")
+            ?? Configuration.GetValue<bool?>("WriterApp:Diagnostics:NavigatorDndEnabled")
+            ?? false;
 
         if (!_projectsEnabled)
         {
@@ -592,7 +653,11 @@ else
             return;
         }
 
-        await RefreshOutlineTemplatesAvailabilityAsync();
+        if (_outlineTemplatesEnabled)
+        {
+            await RefreshOutlineTemplatesAvailabilityAsync();
+        }
+
         await LoadProjectsAsync();
     }
 
@@ -1673,6 +1738,11 @@ else
 
     private async Task RefreshOutlineTemplatesAvailabilityAsync()
     {
+        if (!_outlineTemplatesEnabled)
+        {
+            return;
+        }
+
         try
         {
             using HttpResponseMessage response = await Http.GetAsync("api/outline-templates");
@@ -1691,6 +1761,23 @@ else
         {
             Logger.LogDebug(ex, "Unable to probe outline template availability. Using configured value.");
         }
+    }
+
+    public async Task RefreshActiveProjectTreeAsync()
+    {
+        if (!_projectsEnabled)
+        {
+            return;
+        }
+
+        Guid? projectId = _activeProject?.Id ?? _selectedProjectId;
+        if (!projectId.HasValue || projectId.Value == Guid.Empty)
+        {
+            return;
+        }
+
+        await LoadTreeAsync(projectId.Value);
+        await InvokeAsync(StateHasChanged);
     }
 
     private async Task LoadOutlineTemplatesAsync(bool preserveSelection = true)
@@ -2290,14 +2377,11 @@ else
             if (!patchResponse.IsSuccessStatusCode)
             {
                 LogDnd($"drop patch failed status={(int)patchResponse.StatusCode}");
-                _error = "Move node failed.";
+                string? message = await OutlineTemplatesClient.ReadErrorMessageAsync(patchResponse);
+                _error = string.IsNullOrWhiteSpace(message) ? "Move node failed." : message;
                 _dragNodeId = null;
                 return;
             }
-
-            List<Guid> newOrder = GetChildren(target.Id).Select(node => node.Id).ToList();
-            newOrder.Add(dragged.Id);
-            await SaveSiblingOrderAsync(target.Id, newOrder);
         }
         else
         {
@@ -2323,8 +2407,9 @@ else
             request);
         if (!response.IsSuccessStatusCode)
         {
-            LogDnd($"reorder failed parent={parentRoute} status={(int)response.StatusCode}");
-            _error = "Reorder failed.";
+            string? message = await OutlineTemplatesClient.ReadErrorMessageAsync(response);
+            LogDnd($"reorder failed parent={parentRoute} status={(int)response.StatusCode} detail={message}");
+            _error = string.IsNullOrWhiteSpace(message) ? "Reorder failed." : message;
         }
         else
         {
@@ -2334,8 +2419,26 @@ else
 
     private void LogDnd(string message)
     {
-        Logger.LogInformation("Navigator DnD: {Message}", message);
-        Console.WriteLine($"Navigator DnD: {message}");
+        bool isDragOver = message.StartsWith("dragover", StringComparison.OrdinalIgnoreCase);
+        if (isDragOver)
+        {
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            if (!_dndDiagnosticsEnabled || now - _lastDndDragOverLogUtc < TimeSpan.FromMilliseconds(500))
+            {
+                return;
+            }
+
+            _lastDndDragOverLogUtc = now;
+        }
+
+        if (_dndDiagnosticsEnabled)
+        {
+            Logger.LogInformation("Navigator DnD: {Message}", message);
+            Console.WriteLine($"Navigator DnD: {message}");
+            return;
+        }
+
+        Logger.LogDebug("Navigator DnD: {Message}", message);
     }
 
     private async Task OpenSceneFromProgressAsync(Guid sceneNodeId)
@@ -2367,6 +2470,13 @@ else
         {
             return;
         }
+
+        if (SceneOpenRequested.HasDelegate)
+        {
+            await SceneOpenRequested.InvokeAsync(_selectedNode.Id);
+            return;
+        }
+
         string target = $"projects/{_activeProject.Id}/scenes/{_selectedNode.Id}";
         await SaveResumeTargetAsync(_activeProject.Id, target);
         Navigation.NavigateTo(target);

@@ -570,6 +570,53 @@
       return matches;
     };
 
+    const findBestContextMatch = (plainText, beforeAnchor, needleText, afterAnchor, targetCenter) => {
+      if (!plainText) {
+        return null;
+      }
+
+      const normalizedNeedle = String(needleText || "").trim();
+      if (!normalizedNeedle) {
+        return null;
+      }
+
+      const matches = [];
+      let index = 0;
+      while (index <= plainText.length - normalizedNeedle.length) {
+        const foundAt = plainText.indexOf(normalizedNeedle, index);
+        if (foundAt < 0) {
+          break;
+        }
+
+        const foundTo = foundAt + normalizedNeedle.length;
+        const beforeWindow = plainText.slice(Math.max(0, foundAt - 120), foundAt);
+        const afterWindow = plainText.slice(foundTo, Math.min(plainText.length, foundTo + 120));
+        const beforeText = String(beforeAnchor || "").trim();
+        const afterText = String(afterAnchor || "").trim();
+        const beforeScore = beforeText && beforeWindow.includes(beforeText) ? 2 : 0;
+        const afterScore = afterText && afterWindow.includes(afterText) ? 2 : 0;
+        const center = (foundAt + foundTo) / 2;
+        const distancePenalty = Math.abs(center - Number(targetCenter || 0)) / 1000;
+        const score = beforeScore + afterScore - distancePenalty;
+
+        matches.push({
+          from: foundAt,
+          to: foundTo,
+          score
+        });
+
+        index = foundAt + Math.max(1, normalizedNeedle.length);
+      }
+
+      if (!matches.length) {
+        return null;
+      }
+
+      return matches
+        .slice()
+        .sort((a, b) => b.score - a.score)[0];
+    };
+
     api.setQualityIssues = function (editor, issues) {
       if (!editor) {
         return;
@@ -820,26 +867,17 @@
         anchorMatchedAtRange = anchorCandidates.includes(mappedRangeText);
         if (!anchorMatchedAtRange) {
           const matches = findAnchorOccurrences(plainText, anchorCandidates);
-          if (matches.length === 0) {
-            return {
-              ok: false,
-              reason: "anchor_not_found",
-              issueKey,
-              from: range.from,
-              to: range.to,
-              anchorLength: anchorCandidates[0]?.length || 0
-            };
+          if (matches.length > 0) {
+            const selected = matches
+              .slice()
+              .sort((a, b) => {
+                const aCenter = (a.from + a.to) / 2;
+                const bCenter = (b.from + b.to) / 2;
+                return Math.abs(aCenter - expectedCenter) - Math.abs(bCenter - expectedCenter);
+              })[0];
+
+            target = { from: selected.from, to: selected.to, source: matches.length === 1 ? "anchor-single" : "anchor-nearest" };
           }
-
-          const selected = matches
-            .slice()
-            .sort((a, b) => {
-              const aCenter = (a.from + a.to) / 2;
-              const bCenter = (b.from + b.to) / 2;
-              return Math.abs(aCenter - expectedCenter) - Math.abs(bCenter - expectedCenter);
-            })[0];
-
-          target = { from: selected.from, to: selected.to, source: matches.length === 1 ? "anchor-single" : "anchor-nearest" };
         }
       }
 
@@ -1076,6 +1114,153 @@
       }
 
       const expectedText = typeof fix.expectedText === "string" ? fix.expectedText : null;
+      const beforeAnchor = typeof fix.beforeAnchor === "string" ? fix.beforeAnchor : null;
+      const afterAnchor = typeof fix.afterAnchor === "string" ? fix.afterAnchor : null;
+      const needleText = typeof fix.needleText === "string" ? fix.needleText : null;
+      const buildDocRangeFromPlain = (plainFrom, plainTo) => {
+        const normalizedFrom = Number(plainFrom);
+        const normalizedTo = Number(plainTo);
+        if (!Number.isFinite(normalizedFrom) || !Number.isFinite(normalizedTo) || normalizedTo < normalizedFrom) {
+          return null;
+        }
+
+        const segments = buildPlainTextSegments(editor.state.doc);
+        const mappedFrom = mapPlainOffsetToDoc(segments, normalizedFrom);
+        const mappedTo = mapPlainOffsetToDoc(segments, normalizedTo);
+        if (mappedFrom === null || mappedTo === null || (kind !== "insert" && mappedTo <= mappedFrom)) {
+          return null;
+        }
+
+        return { docFrom: mappedFrom, docTo: mappedTo, from: normalizedFrom, to: normalizedTo };
+      };
+
+      const tryRecoverRangeFromExpectedText = () => {
+        if (!expectedText || kind === "insert") {
+          return null;
+        }
+
+        const currentPlain = getEditorPlainText(editor);
+        const expectedCandidates = [expectedText, ...buildAnchorCandidates(expectedText)]
+          .filter((value, index, arr) => value && arr.indexOf(value) === index);
+        const matches = findAnchorOccurrences(currentPlain, expectedCandidates);
+        if (!matches.length) {
+          if (window.__waQualityDebug === true) {
+            console.debug("[quality] expected-text recovery no matches", { issueKey, expectedLength: expectedText.length });
+          }
+          return null;
+        }
+
+        const currentTargetCenter = (Number(target?.from) + Number(target?.to)) / 2;
+        const nearest = matches
+          .slice()
+          .sort((a, b) => {
+            const aCenter = (a.from + a.to) / 2;
+            const bCenter = (b.from + b.to) / 2;
+            return Math.abs(aCenter - currentTargetCenter) - Math.abs(bCenter - currentTargetCenter);
+          })[0];
+
+        const mapped = buildDocRangeFromPlain(nearest.from, nearest.to);
+        if (!mapped) {
+          if (window.__waQualityDebug === true) {
+            console.debug("[quality] expected-text recovery mapping failed", { issueKey, from: nearest.from, to: nearest.to });
+          }
+          return null;
+        }
+
+        if (window.__waQualityDebug === true) {
+          console.debug("[quality] expected-text recovery selected", { issueKey, matches: matches.length, from: nearest.from, to: nearest.to });
+        }
+
+        return {
+          source: "expected-nearest",
+          from: nearest.from,
+          to: nearest.to,
+          docFrom: mapped.docFrom,
+          docTo: mapped.docTo
+        };
+      };
+
+      const tryRecoverRangeFromAnchor = () => {
+        const anchorCandidates = buildAnchorCandidates(fix.anchorText);
+        if (!anchorCandidates.length) {
+          return null;
+        }
+
+        const currentPlain = getEditorPlainText(editor);
+        const matches = findAnchorOccurrences(currentPlain, anchorCandidates);
+        if (!matches.length) {
+          if (window.__waQualityDebug === true) {
+            console.debug("[quality] anchor recovery no matches", { issueKey });
+          }
+          return null;
+        }
+
+        const currentTargetCenter = (Number(target?.from) + Number(target?.to)) / 2;
+        const nearest = matches
+          .slice()
+          .sort((a, b) => {
+            const aCenter = (a.from + a.to) / 2;
+            const bCenter = (b.from + b.to) / 2;
+            return Math.abs(aCenter - currentTargetCenter) - Math.abs(bCenter - currentTargetCenter);
+          })[0];
+
+        const mapped = buildDocRangeFromPlain(nearest.from, nearest.to);
+        if (!mapped) {
+          if (window.__waQualityDebug === true) {
+            console.debug("[quality] anchor recovery mapping failed", { issueKey, from: nearest.from, to: nearest.to });
+          }
+          return null;
+        }
+
+        if (window.__waQualityDebug === true) {
+          console.debug("[quality] anchor recovery selected", { issueKey, matches: matches.length, from: nearest.from, to: nearest.to });
+        }
+
+        return {
+          source: "anchor-nearest",
+          from: nearest.from,
+          to: nearest.to,
+          docFrom: mapped.docFrom,
+          docTo: mapped.docTo
+        };
+      };
+
+      const tryRecoverRangeFromContext = () => {
+        if (!needleText || kind === "insert") {
+          return null;
+        }
+
+        const currentPlain = getEditorPlainText(editor);
+        const currentTargetCenter = (Number(target?.from) + Number(target?.to)) / 2;
+        const contextual = findBestContextMatch(currentPlain, beforeAnchor, needleText, afterAnchor, currentTargetCenter);
+        if (!contextual) {
+          if (window.__waQualityDebug === true) {
+            console.debug("[quality] contextual recovery no match", { issueKey });
+          }
+          return null;
+        }
+
+        const mapped = buildDocRangeFromPlain(contextual.from, contextual.to);
+        if (!mapped) {
+          if (window.__waQualityDebug === true) {
+            console.debug("[quality] contextual recovery mapping failed", { issueKey, from: contextual.from, to: contextual.to });
+          }
+          return null;
+        }
+
+        if (window.__waQualityDebug === true) {
+          console.debug("[quality] contextual recovery selected", { issueKey, from: contextual.from, to: contextual.to });
+        }
+
+        return {
+          source: "contextual-nearest",
+          from: contextual.from,
+          to: contextual.to,
+          docFrom: mapped.docFrom,
+          docTo: mapped.docTo
+        };
+      };
+
       if (expectedText !== null && kind !== "insert") {
         const plainFrom = Number(target?.from);
         const plainTo = Number(target?.to);
@@ -1087,13 +1272,52 @@
         }
 
         if (current !== expectedText) {
-          return buildFixApplyResult(false, false, "doc_expected_text_mismatch", {
-            issueKey,
-            kind,
-            source: target.source,
-            docFrom,
-            docTo
-          });
+          let recovered = null;
+
+          const fallbackResolved = resolveTargetRangeFromFix(editor, { ...fix, docFrom: null, docTo: null });
+          if (fallbackResolved.ok) {
+            const fallbackCurrent = editor.state.doc.textBetween(fallbackResolved.docFrom, fallbackResolved.docTo, "", "");
+            if (fallbackCurrent === expectedText) {
+              recovered = {
+                source: `${fallbackResolved.target.source}-retry`,
+                from: fallbackResolved.target.from,
+                to: fallbackResolved.target.to,
+                docFrom: fallbackResolved.docFrom,
+                docTo: fallbackResolved.docTo
+              };
+            }
+          }
+
+          if (!recovered) {
+            recovered = tryRecoverRangeFromExpectedText();
+          }
+
+          if (!recovered && kind === "delete") {
+            recovered = tryRecoverRangeFromAnchor();
+          }
+
+          if (!recovered) {
+            recovered = tryRecoverRangeFromContext();
+          }
+
+          if (!recovered) {
+            return buildFixApplyResult(false, false, "doc_expected_text_mismatch", {
+              issueKey,
+              kind,
+              source: target.source,
+              docFrom,
+              docTo,
+              expectedLength: expectedText?.length || 0
+            });
+          }
+
+          target = {
+            from: recovered.from,
+            to: recovered.to,
+            source: recovered.source
+          };
+          docFrom = recovered.docFrom;
+          docTo = recovered.docTo;
         }
       }
 
@@ -1125,7 +1349,8 @@
           plainFrom: target.from,
           plainTo: target.to,
           source: target.source,
-          anchorMatchedAtRange
+          anchorMatchedAtRange,
+          expectedLength: expectedText?.length || 0
         });
       }
 

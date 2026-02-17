@@ -1,12 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Configuration;
@@ -57,8 +58,6 @@ namespace WriterApp.Controllers
                 return NotFound();
             }
 
-            await EnsureProjectsSchemaAsync(ct);
-
             string userId = _userIdResolver.ResolveUserId(User);
             List<ProjectRecord> projects = await _dbContext.Projects
                 .AsNoTracking()
@@ -90,8 +89,6 @@ namespace WriterApp.Controllers
             {
                 return NotFound();
             }
-
-            await EnsureProjectsSchemaAsync(ct);
 
             string userId = _userIdResolver.ResolveUserId(User);
             List<ProjectRecord> projects = await _dbContext.Projects
@@ -231,129 +228,6 @@ namespace WriterApp.Controllers
             }
 
             return Ok(result);
-        }
-
-        private async Task EnsureProjectsSchemaAsync(CancellationToken ct)
-        {
-            string provider = _dbContext.Database.ProviderName ?? string.Empty;
-            if (!provider.Contains("Sqlite", StringComparison.OrdinalIgnoreCase))
-            {
-                return;
-            }
-
-            string[] statements =
-            {
-                "PRAGMA foreign_keys = ON;",
-                """
-                CREATE TABLE IF NOT EXISTS Projects (
-                    Id TEXT NOT NULL CONSTRAINT PK_Projects PRIMARY KEY,
-                    OwnerUserId TEXT NOT NULL,
-                    Title TEXT NOT NULL,
-                    Subtitle TEXT NULL,
-                    AuthorName TEXT NULL,
-                    Language TEXT NULL,
-                    Genre TEXT NULL,
-                    DefaultExportSettingsJson TEXT NULL,
-                    CreatedUtc TEXT NOT NULL,
-                    UpdatedUtc TEXT NOT NULL
-                );
-                """,
-                """
-                CREATE TABLE IF NOT EXISTS ProjectNodes (
-                    Id TEXT NOT NULL CONSTRAINT PK_ProjectNodes PRIMARY KEY,
-                    ProjectId TEXT NOT NULL,
-                    ParentId TEXT NULL,
-                    NodeType INTEGER NOT NULL,
-                    Title TEXT NOT NULL,
-                    OrderIndex INTEGER NOT NULL,
-                    LinkedSectionId TEXT NULL,
-                    MetadataJson TEXT NULL,
-                    WordCountCache INTEGER NOT NULL,
-                    UpdatedUtc TEXT NOT NULL,
-                    CONSTRAINT FK_ProjectNodes_Projects_ProjectId FOREIGN KEY (ProjectId) REFERENCES Projects (Id) ON DELETE CASCADE,
-                    CONSTRAINT FK_ProjectNodes_ProjectNodes_ParentId FOREIGN KEY (ParentId) REFERENCES ProjectNodes (Id) ON DELETE CASCADE,
-                    CONSTRAINT FK_ProjectNodes_Sections_LinkedSectionId FOREIGN KEY (LinkedSectionId) REFERENCES Sections (Id) ON DELETE SET NULL
-                );
-                """,
-                """
-                CREATE TABLE IF NOT EXISTS ProjectGoals (
-                    ProjectId TEXT NOT NULL CONSTRAINT PK_ProjectGoals PRIMARY KEY,
-                    DailyTargetWords INTEGER NOT NULL,
-                    WeeklyTargetWords INTEGER NOT NULL,
-                    Timezone TEXT NOT NULL,
-                    UpdatedUtc TEXT NOT NULL,
-                    CONSTRAINT FK_ProjectGoals_Projects_ProjectId FOREIGN KEY (ProjectId) REFERENCES Projects (Id) ON DELETE CASCADE
-                );
-                """,
-                """
-                CREATE TABLE IF NOT EXISTS ProjectProgressDaily (
-                    ProjectId TEXT NOT NULL,
-                    Date TEXT NOT NULL,
-                    WordsDelta INTEGER NOT NULL,
-                    UpdatedUtc TEXT NOT NULL,
-                    CONSTRAINT PK_ProjectProgressDaily PRIMARY KEY (ProjectId, Date),
-                    CONSTRAINT FK_ProjectProgressDaily_Projects_ProjectId FOREIGN KEY (ProjectId) REFERENCES Projects (Id) ON DELETE CASCADE
-                );
-                """,
-                """
-                CREATE TABLE IF NOT EXISTS ProjectProgressEvents (
-                    Id TEXT NOT NULL CONSTRAINT PK_ProjectProgressEvents PRIMARY KEY,
-                    ProjectId TEXT NOT NULL,
-                    EventKey TEXT NOT NULL,
-                    Date TEXT NOT NULL,
-                    WordsDelta INTEGER NOT NULL,
-                    CreatedUtc TEXT NOT NULL,
-                    CONSTRAINT FK_ProjectProgressEvents_Projects_ProjectId FOREIGN KEY (ProjectId) REFERENCES Projects (Id) ON DELETE CASCADE
-                );
-                """,
-                """
-                CREATE TABLE IF NOT EXISTS ProjectMilestones (
-                    Id TEXT NOT NULL CONSTRAINT PK_ProjectMilestones PRIMARY KEY,
-                    ProjectId TEXT NOT NULL,
-                    Title TEXT NOT NULL,
-                    TargetWords INTEGER NULL,
-                    TargetNodeId TEXT NULL,
-                    Status INTEGER NOT NULL,
-                    CompletedUtc TEXT NULL,
-                    UpdatedUtc TEXT NOT NULL,
-                    CONSTRAINT FK_ProjectMilestones_Projects_ProjectId FOREIGN KEY (ProjectId) REFERENCES Projects (Id) ON DELETE CASCADE
-                );
-                """,
-                """
-                CREATE TABLE IF NOT EXISTS WritingSessions (
-                    Id TEXT NOT NULL CONSTRAINT PK_WritingSessions PRIMARY KEY,
-                    ProjectId TEXT NOT NULL,
-                    StartedUtc TEXT NOT NULL,
-                    EndedUtc TEXT NULL,
-                    DurationSeconds INTEGER NOT NULL,
-                    WordsDelta INTEGER NOT NULL,
-                    StartWordCount INTEGER NOT NULL,
-                    Notes TEXT NULL,
-                    CONSTRAINT FK_WritingSessions_Projects_ProjectId FOREIGN KEY (ProjectId) REFERENCES Projects (Id) ON DELETE CASCADE
-                );
-                """,
-                "CREATE INDEX IF NOT EXISTS IX_Projects_OwnerUserId ON Projects (OwnerUserId);",
-                "CREATE INDEX IF NOT EXISTS IX_Projects_UpdatedUtc ON Projects (UpdatedUtc);",
-                "CREATE INDEX IF NOT EXISTS IX_ProjectNodes_LinkedSectionId ON ProjectNodes (LinkedSectionId);",
-                "CREATE INDEX IF NOT EXISTS IX_ProjectNodes_ParentId ON ProjectNodes (ParentId);",
-                "CREATE INDEX IF NOT EXISTS IX_ProjectNodes_ProjectId_ParentId_OrderIndex ON ProjectNodes (ProjectId, ParentId, OrderIndex);",
-                "CREATE UNIQUE INDEX IF NOT EXISTS IX_ProjectProgressEvents_ProjectId_EventKey_UQ ON ProjectProgressEvents (ProjectId, EventKey);",
-                "CREATE INDEX IF NOT EXISTS IX_ProjectMilestones_ProjectId ON ProjectMilestones (ProjectId);",
-                "CREATE INDEX IF NOT EXISTS IX_ProjectMilestones_Status ON ProjectMilestones (Status);",
-                "CREATE INDEX IF NOT EXISTS IX_WritingSessions_ProjectId_StartedUtc ON WritingSessions (ProjectId, StartedUtc);"
-            };
-
-            foreach (string sql in statements)
-            {
-                try
-                {
-                    await _dbContext.Database.ExecuteSqlRawAsync(sql, ct);
-                }
-                catch (SqliteException ex) when (ex.SqliteErrorCode == 1 && ex.Message.Contains("already exists", StringComparison.OrdinalIgnoreCase))
-                {
-                    // Ignore concurrent create attempts.
-                }
-            }
         }
 
         [HttpPost]
@@ -542,8 +416,6 @@ namespace WriterApp.Controllers
             {
                 return NotFound();
             }
-
-            await EnsureProjectsSchemaAsync(ct);
 
             string userId = _userIdResolver.ResolveUserId(User);
             List<ProjectRecord> projects = await _dbContext.Projects
@@ -1413,11 +1285,24 @@ namespace WriterApp.Controllers
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
+            string correlationId = Request.Headers["X-Correlation-ID"].FirstOrDefault() ?? HttpContext.TraceIdentifier;
             ProjectRecord? project = await _dbContext.Projects
                 .FirstOrDefaultAsync(item => item.Id == projectId && item.OwnerUserId == userId, ct);
             if (project is null)
             {
                 return NotFound();
+            }
+
+            if (request?.OrderedChildIds is null)
+            {
+                return CreateReorderProblem(
+                    StatusCodes.Status400BadRequest,
+                    "Invalid reorder payload",
+                    "orderedChildIds is required.",
+                    "projects.reorder.invalid_payload",
+                    correlationId,
+                    null,
+                    null);
             }
 
             Guid? parentId = nodeId == Guid.Empty ? null : nodeId;
@@ -1432,21 +1317,79 @@ namespace WriterApp.Controllers
                 }
             }
 
+            Stopwatch stopwatch = Stopwatch.StartNew();
             List<ProjectNodeRecord> children = await _dbContext.ProjectNodes
                 .Where(item => item.ProjectId == projectId && item.ParentId == parentId)
                 .OrderBy(item => item.OrderIndex)
                 .ToListAsync(ct);
 
-            List<Guid> orderedIds = request.OrderedChildIds?.ToList() ?? new List<Guid>();
+            List<Guid> orderedIds = request.OrderedChildIds.ToList();
+            List<Guid> existingIds = children.Select(item => item.Id).ToList();
+            List<Guid> duplicateIds = orderedIds
+                .GroupBy(id => id)
+                .Where(group => group.Count() > 1)
+                .Select(group => group.Key)
+                .ToList();
+            if (duplicateIds.Count > 0)
+            {
+                _logger.LogWarning(
+                    "Project node reorder rejected: duplicate ids. ProjectId={ProjectId} ParentId={ParentId} CorrelationId={CorrelationId} DuplicateIds={DuplicateIds}",
+                    projectId,
+                    parentId,
+                    correlationId,
+                    string.Join(",", duplicateIds));
+                return CreateReorderProblem(
+                    StatusCodes.Status409Conflict,
+                    "Invalid reorder request",
+                    "orderedChildIds contains duplicate ids.",
+                    "projects.reorder.duplicate_ids",
+                    correlationId,
+                    existingIds,
+                    orderedIds,
+                    duplicateIds);
+            }
+
             if (orderedIds.Count != children.Count)
             {
-                return BadRequest(new { message = "Ordered child ids must match child count." });
+                _logger.LogWarning(
+                    "Project node reorder rejected: child count mismatch. ProjectId={ProjectId} ParentId={ParentId} CorrelationId={CorrelationId} ExistingCount={ExistingCount} OrderedCount={OrderedCount}",
+                    projectId,
+                    parentId,
+                    correlationId,
+                    children.Count,
+                    orderedIds.Count);
+                return CreateReorderProblem(
+                    StatusCodes.Status409Conflict,
+                    "Invalid reorder request",
+                    "orderedChildIds count does not match the current child count for this parent.",
+                    "projects.reorder.child_count_mismatch",
+                    correlationId,
+                    existingIds,
+                    orderedIds);
             }
 
             HashSet<Guid> existing = children.Select(item => item.Id).ToHashSet();
-            if (!orderedIds.All(id => existing.Contains(id)))
+            List<Guid> unknownIds = orderedIds.Where(id => !existing.Contains(id)).ToList();
+            List<Guid> missingIds = existingIds.Where(id => !orderedIds.Contains(id)).ToList();
+            if (unknownIds.Count > 0 || missingIds.Count > 0)
             {
-                return BadRequest(new { message = "Ordered ids must match existing children." });
+                _logger.LogWarning(
+                    "Project node reorder rejected: ids mismatch. ProjectId={ProjectId} ParentId={ParentId} CorrelationId={CorrelationId} UnknownIds={UnknownIds} MissingIds={MissingIds}",
+                    projectId,
+                    parentId,
+                    correlationId,
+                    string.Join(",", unknownIds),
+                    string.Join(",", missingIds));
+                return CreateReorderProblem(
+                    StatusCodes.Status409Conflict,
+                    "Invalid reorder request",
+                    "orderedChildIds must contain the exact set of current child ids for this parent.",
+                    "projects.reorder.child_set_mismatch",
+                    correlationId,
+                    existingIds,
+                    orderedIds,
+                    unknownIds: unknownIds,
+                    missingIds: missingIds);
             }
 
             Dictionary<Guid, int> orderLookup = orderedIds
@@ -1466,6 +1409,15 @@ namespace WriterApp.Controllers
             project.UpdatedUtc = DateTimeOffset.UtcNow;
             await _dbContext.SaveChangesAsync(ct);
             await _wordCounts.RefreshProjectAsync(projectId, ct);
+            stopwatch.Stop();
+
+            _logger.LogInformation(
+                "Project node reorder applied. ProjectId={ProjectId} ParentId={ParentId} CorrelationId={CorrelationId} ChildCount={ChildCount} DurationMs={DurationMs}",
+                projectId,
+                parentId,
+                correlationId,
+                orderedIds.Count,
+                stopwatch.ElapsedMilliseconds);
 
             List<ProjectNodeDto> result = children
                 .OrderBy(child => child.OrderIndex)
@@ -1789,6 +1741,54 @@ namespace WriterApp.Controllers
             }
 
             return Ok(session);
+        }
+
+        private ObjectResult CreateReorderProblem(
+            int statusCode,
+            string title,
+            string detail,
+            string code,
+            string correlationId,
+            IReadOnlyList<Guid>? currentChildIds,
+            IReadOnlyList<Guid>? orderedChildIds,
+            IReadOnlyList<Guid>? duplicateIds = null,
+            IReadOnlyList<Guid>? unknownIds = null,
+            IReadOnlyList<Guid>? missingIds = null)
+        {
+            ProblemDetails problem = new()
+            {
+                Status = statusCode,
+                Title = title,
+                Detail = detail
+            };
+            problem.Extensions["code"] = code;
+            problem.Extensions["traceId"] = HttpContext.TraceIdentifier;
+            problem.Extensions["correlationId"] = correlationId;
+            if (currentChildIds is not null)
+            {
+                problem.Extensions["currentChildIds"] = currentChildIds;
+            }
+            if (orderedChildIds is not null)
+            {
+                problem.Extensions["orderedChildIds"] = orderedChildIds;
+            }
+            if (duplicateIds is not null && duplicateIds.Count > 0)
+            {
+                problem.Extensions["duplicateIds"] = duplicateIds;
+            }
+            if (unknownIds is not null && unknownIds.Count > 0)
+            {
+                problem.Extensions["unknownIds"] = unknownIds;
+            }
+            if (missingIds is not null && missingIds.Count > 0)
+            {
+                problem.Extensions["missingIds"] = missingIds;
+            }
+
+            return new ObjectResult(problem)
+            {
+                StatusCode = statusCode
+            };
         }
 
         private bool IsEnabled()

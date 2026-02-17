@@ -262,6 +262,10 @@ namespace WriterApp.Controllers
         {
             List<Guid> sectionIds = sections.Select(section => section.Id).ToList();
             Dictionary<Guid, List<PageRecord>> pagesBySection = new();
+            Dictionary<Guid, string> sceneContentBySection = await LoadSceneContentBySectionAsync(
+                documentRecord.ProjectId,
+                sectionIds,
+                ct);
 
             if (!string.Equals(scope, "selection", StringComparison.OrdinalIgnoreCase))
             {
@@ -314,6 +318,12 @@ namespace WriterApp.Controllers
                 string content = string.Join("\n", pagesBySection.TryGetValue(section.Id, out List<PageRecord>? sectionPages)
                     ? sectionPages.Select(page => page.Content ?? string.Empty)
                     : Array.Empty<string>());
+                if (string.IsNullOrWhiteSpace(content)
+                    && sceneContentBySection.TryGetValue(section.Id, out string? fallbackSceneContent)
+                    && !string.IsNullOrWhiteSpace(fallbackSceneContent))
+                {
+                    content = fallbackSceneContent;
+                }
 
                 return new Section
                 {
@@ -336,6 +346,48 @@ namespace WriterApp.Controllers
                 Title = string.IsNullOrWhiteSpace(documentRecord.Title) ? "Draft" : documentRecord.Title,
                 Sections = exportSections
             };
+        }
+
+        private async Task<Dictionary<Guid, string>> LoadSceneContentBySectionAsync(
+            Guid projectId,
+            IReadOnlyCollection<Guid> sectionIds,
+            CancellationToken ct)
+        {
+            if (projectId == Guid.Empty || sectionIds.Count == 0)
+            {
+                return new Dictionary<Guid, string>();
+            }
+
+            List<(Guid SectionId, string ContentJson, DateTimeOffset UpdatedAtUtc)> rows =
+                (await _dbContext.ProjectNodes
+                    .AsNoTracking()
+                    .Where(node =>
+                        node.ProjectId == projectId
+                        && node.NodeType == ProjectNodeType.Scene
+                        && node.LinkedSectionId.HasValue
+                        && sectionIds.Contains(node.LinkedSectionId.Value))
+                    .Join(
+                        _dbContext.SceneContents.AsNoTracking(),
+                        node => node.Id,
+                        content => content.SceneNodeId,
+                        (node, content) => new
+                        {
+                            SectionId = node.LinkedSectionId!.Value,
+                            ContentJson = content.ContentJson ?? string.Empty,
+                            content.UpdatedAtUtc
+                        })
+                    .ToListAsync(ct))
+                .Select(item => (item.SectionId, item.ContentJson, item.UpdatedAtUtc))
+                .ToList();
+
+            return rows
+                .GroupBy(item => item.SectionId)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group
+                        .OrderByDescending(item => item.UpdatedAtUtc)
+                        .Select(item => item.ContentJson)
+                        .FirstOrDefault() ?? string.Empty);
         }
 
         private static bool TryValidateScope(

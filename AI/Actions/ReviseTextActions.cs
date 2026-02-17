@@ -40,11 +40,13 @@ namespace WriterApp.AI.Actions
                 throw new ArgumentNullException(nameof(input));
             }
 
-            string sectionPlainText = ResolveSectionText(input.Document, input.ActiveSectionId);
+            string sectionPlainText = ResolveSectionText(input.Document, input.ActiveSectionId, input.Options);
             TextRange normalizedRange = RequiresSelection
                 ? NormalizeRange(input.SelectionRange, sectionPlainText.Length)
                 : new TextRange(0, sectionPlainText.Length);
-            string sourceText = ExtractRange(sectionPlainText, normalizedRange);
+            string sourceText = RequiresSelection && !string.IsNullOrWhiteSpace(input.SelectedText)
+                ? input.SelectedText
+                : ExtractRange(sectionPlainText, normalizedRange);
             string tone = GetOption(input.Options, "tone", "Neutral");
 
             string? languageHint = string.IsNullOrWhiteSpace(input.Document.Metadata.Language)
@@ -98,8 +100,14 @@ namespace WriterApp.AI.Actions
             return $"{operation} Return only the revised {scope} text. Preserve names, facts, POV, tense, and paragraph breaks. Keep the same language as the input. No commentary, labels, or markdown.";
         }
 
-        private static string ResolveSectionText(Document document, Guid sectionId)
+        private static string ResolveSectionText(Document document, Guid sectionId, Dictionary<string, object?>? options)
         {
+            string? overrideText = GetOption(options, "section_text_override");
+            if (!string.IsNullOrWhiteSpace(overrideText))
+            {
+                return overrideText;
+            }
+
             for (int chapterIndex = 0; chapterIndex < document.Chapters.Count; chapterIndex++)
             {
                 Chapter chapter = document.Chapters[chapterIndex];
@@ -153,6 +161,16 @@ namespace WriterApp.AI.Actions
             }
 
             return value.ToString() ?? fallback;
+        }
+
+        private static string? GetOption(Dictionary<string, object?>? options, string key)
+        {
+            if (options is null || !options.TryGetValue(key, out object? value) || value is null)
+            {
+                return null;
+            }
+
+            return value.ToString();
         }
 
         protected enum ReviseMode

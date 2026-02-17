@@ -29,7 +29,11 @@ namespace WriterApp.AI.Actions
 
             Section? section = ResolveSection(input.Document, input.ActiveSectionId);
             string sectionTitle = section?.Title ?? string.Empty;
-            string sectionText = PlainTextMapper.ToPlainText(section?.Content.Value ?? string.Empty).Trim();
+            string sectionText = GetOption(input.Options, "section_text_override");
+            if (string.IsNullOrWhiteSpace(sectionText))
+            {
+                sectionText = PlainTextMapper.ToPlainText(section?.Content.Value ?? string.Empty).Trim();
+            }
             int maxChars = GetOptionInt(input.Options, "max_section_chars", 0);
             if (maxChars > 0 && sectionText.Length > maxChars)
             {
