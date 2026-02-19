@@ -43,7 +43,13 @@
     public EventCallback<EditorContextMenuRequest> ContextMenuRequested { get; set; }
 
     [Parameter]
+    public EventCallback<EditorLinkContextMenuRequest> LinkContextMenuRequested { get; set; }
+
+    [Parameter]
     public EventCallback<EditorSelectionRange> SelectionChanged { get; set; }
+
+    [Parameter]
+    public EventCallback LinkShortcutRequested { get; set; }
 
     [Parameter]
     public EventCallback FocusModeRequested { get; set; }
@@ -173,11 +179,29 @@
     }
 
     [JSInvokable]
+    public async Task OnEditorLinkContextMenu(double clientX, double clientY, string? href)
+    {
+        if (LinkContextMenuRequested.HasDelegate)
+        {
+            await LinkContextMenuRequested.InvokeAsync(new EditorLinkContextMenuRequest(clientX, clientY, href));
+        }
+    }
+
+    [JSInvokable]
     public async Task OnEditorSelectionChanged(int start, int end)
     {
         if (SelectionChanged.HasDelegate)
         {
             await SelectionChanged.InvokeAsync(new EditorSelectionRange(start, end));
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnEditorLinkShortcut()
+    {
+        if (LinkShortcutRequested.HasDelegate)
+        {
+            await LinkShortcutRequested.InvokeAsync();
         }
     }
 
@@ -278,6 +302,7 @@
     }
 
     public sealed record EditorContextMenuRequest(double X, double Y);
+    public sealed record EditorLinkContextMenuRequest(double X, double Y, string? Href);
 
     public sealed record EditorSelectionRange(int Start, int End);
 

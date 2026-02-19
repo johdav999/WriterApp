@@ -4,6 +4,7 @@
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <DefaultItemExcludes>$(DefaultItemExcludes);publish/**;publish\**;.azure-publish/**;.azure-publish\**</DefaultItemExcludes>
 
     <!-- Let the host decide -->
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>

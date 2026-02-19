@@ -143,9 +143,21 @@ namespace WriterApp.Client.Pages
         private double _contextMenuY;
         private bool _shouldFocusContextMenu;
         private ElementReference _contextMenuRef;
+        private bool _isLinkContextMenuOpen;
+        private double _linkContextMenuX;
+        private double _linkContextMenuY;
+        private string? _linkContextMenuHref;
         private bool _isToolbarOverflowOpen;
         private bool _isDocumentMenuOpen;
         private string _imageUploadInputKey = Guid.NewGuid().ToString("N");
+        private bool _isFeedbackDialogOpen;
+        private bool _feedbackSubmitting;
+        private string _feedbackType = "bug";
+        private string _feedbackSubject = string.Empty;
+        private string _feedbackDescription = string.Empty;
+        private bool _feedbackIncludeDiagnostics = true;
+        private string? _feedbackErrorMessage;
+        private string? _feedbackBannerMessage;
         private string? _imageUploadError;
         private bool _isExportDialogOpen;
         private bool _isTemplateManagerOpen;
@@ -180,7 +192,10 @@ namespace WriterApp.Client.Pages
         private int _previewPageCount = 1;
         private int _previewCurrentPage = 1;
         private string _previewSearchTerm = string.Empty;
+        private Guid? _synopsisPreviewCacheDocumentId;
+        private string? _synopsisPreviewCacheHtml;
         private DotNetObjectReference<DocumentEditor>? _previewScrollRef;
+        private string _exportContentSelection = "document";
         private string _exportScopeType = "document";
         private bool _exportIncludeTitlePage = true;
         private bool _exportIncludeToc = true;
@@ -320,32 +335,6 @@ namespace WriterApp.Client.Pages
                 new Dictionary<string, object?>(),
                 "Generate a 10-12 sentence continuation based on current section + scene beats."),
             new AiActionOption(
-                "tighten.selection",
-                "Tighten selection",
-                "Tighten selection",
-                true,
-                new Dictionary<string, object?>
-                {
-                    ["target_reduction_pct"] = 15,
-                    ["min_reduction_pct"] = 10,
-                    ["preserve_meaning"] = true
-                },
-                "Reduce word count by removing redundancy while preserving meaning and voice.",
-                true),
-            new AiActionOption(
-                "tighten.section",
-                "Tighten section",
-                "Tighten section",
-                false,
-                new Dictionary<string, object?>
-                {
-                    ["target_reduction_pct"] = 15,
-                    ["min_reduction_pct"] = 10,
-                    ["preserve_meaning"] = true
-                },
-                "Reduce word count by removing redundancy while preserving meaning and voice.",
-                true),
-            new AiActionOption(
                 "expand.selection",
                 "Expand selection",
                 "Expand selection",
@@ -360,28 +349,6 @@ namespace WriterApp.Client.Pages
                 false,
                 new Dictionary<string, object?>(),
                 "Add detail while preserving intent.",
-                true),
-            new AiActionOption(
-                "change_tone.selection",
-                "Change tone (selection)",
-                "Change tone",
-                true,
-                new Dictionary<string, object?>
-                {
-                    ["tone"] = "Formal"
-                },
-                "Shift tone while preserving facts and structure.",
-                true),
-            new AiActionOption(
-                "change_tone.section",
-                "Change tone (section)",
-                "Change tone",
-                false,
-                new Dictionary<string, object?>
-                {
-                    ["tone"] = "Formal"
-                },
-                "Shift tone while preserving facts and structure.",
                 true),
             new AiActionOption(
                 "show_dont_tell.selection",
@@ -407,7 +374,7 @@ namespace WriterApp.Client.Pages
         private string _promptNameDraft = string.Empty;
         private string _promptCategoryDraft = string.Empty;
         private string _promptKindDraft = "builtin";
-        private string _promptBuiltinActionIdDraft = "tighten.selection";
+        private string _promptBuiltinActionIdDraft = "rewrite.selection";
         private string _promptTemplateDraft = string.Empty;
         private string _promptParametersDraft = "{}";
         private string _promptRunScope = "selection";
@@ -813,6 +780,8 @@ namespace WriterApp.Client.Pages
                 {
                     _sections.Clear();
                     _pagesBySection.Clear();
+                    _synopsisPreviewCacheDocumentId = null;
+                    _synopsisPreviewCacheHtml = null;
                     _loadedDocumentId = DocumentId;
                 }
 
@@ -1931,6 +1900,181 @@ namespace WriterApp.Client.Pages
             return LayoutStateService.State.FocusMode ? null : text;
         }
 
+        private string? GetPanelCategoryTooltip(PanelCategory category)
+        {
+            string description = category switch
+            {
+                PanelCategory.Coach => "Writing: Run AI edits and guidance for the current draft.",
+                PanelCategory.Story => "Story: Capture scene intent and story metadata.",
+                PanelCategory.Navigator => "Navigator: Browse and open manuscript structure.",
+                PanelCategory.NotesTasks => "Notes & Tasks: Track notes, comments, and TODOs.",
+                PanelCategory.History => "History: Review and undo/redo AI actions.",
+                PanelCategory.Advanced => "Advanced: Use reusable prompt presets.",
+                _ => "Open panel."
+            };
+            return GetTooltip(description);
+        }
+
+        private string? GetContextTabTooltip(ContextTab tab)
+        {
+            string description = tab switch
+            {
+                ContextTab.Ai => "Writing tools: Run AI edits on the selection or section.",
+                ContextTab.Continuity => "Consistency: Check characters, places, and timeline for contradictions.",
+                ContextTab.Quality => "Style & quality: Find clarity, pacing, and readability issues.",
+                ContextTab.Scene => "Scene card: Capture narrative purpose, beats, and open questions.",
+                ContextTab.Navigator => "Project navigator: Open and move sections in the manuscript tree.",
+                ContextTab.Notes => "Notes: Save drafting reminders for this section.",
+                ContextTab.Annotations => "Annotations: Manage inline comments and TODO highlights.",
+                ContextTab.History => "History: Review previous versions and AI proposals.",
+                ContextTab.PromptLibrary => "Prompt library: Run saved custom edit prompts.",
+                _ => "Open tab."
+            };
+            return GetTooltip(description);
+        }
+
+        private string? GetAiActionTooltip(AiActionOption action)
+        {
+            if (action is null)
+            {
+                return null;
+            }
+
+            string text = !string.IsNullOrWhiteSpace(action.Description)
+                ? $"{action.Label}: {action.Description}"
+                : $"{action.Label}: Apply this AI transformation to your draft.";
+            return GetTooltip(text);
+        }
+
+        private string GetExportPreviewButtonLabel()
+        {
+            return string.Equals(_exportContentSelection, "synopsis", StringComparison.OrdinalIgnoreCase)
+                ? "Preview Synopsis"
+                : "Preview";
+        }
+
+        private string? GetExportPreviewButtonTooltip()
+        {
+            if (string.Equals(_exportContentSelection, "synopsis", StringComparison.OrdinalIgnoreCase))
+            {
+                return GetTooltip("Preview Synopsis: View the synopsis before exporting.");
+            }
+
+            return GetTooltip("Preview: View the current export output before downloading.");
+        }
+
+        private string? GetExportSubmitButtonTooltip()
+        {
+            if (string.Equals(_exportContentSelection, "synopsis", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(_exportFormatSelection, "docx", StringComparison.OrdinalIgnoreCase))
+            {
+                return GetTooltip("Export Synopsis to DOCX: Download the synopsis as a Word document.");
+            }
+
+            return GetTooltip("Export: Download the selected content in the chosen format.");
+        }
+
+        private string GetExportPreviewTitle()
+        {
+            return string.Equals(_exportContentSelection, "synopsis", StringComparison.OrdinalIgnoreCase)
+                ? "Synopsis preview"
+                : "Export preview";
+        }
+
+        private void OpenFeedbackDialog()
+        {
+            _isFeedbackDialogOpen = true;
+            _feedbackErrorMessage = null;
+            _feedbackBannerMessage = null;
+        }
+
+        private void CloseFeedbackDialog()
+        {
+            if (_feedbackSubmitting)
+            {
+                return;
+            }
+
+            _isFeedbackDialogOpen = false;
+            _feedbackErrorMessage = null;
+        }
+
+        private async Task SubmitFeedbackAsync()
+        {
+            _feedbackErrorMessage = null;
+
+            if (string.IsNullOrWhiteSpace(_feedbackType))
+            {
+                _feedbackErrorMessage = "Type is required.";
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(_feedbackSubject))
+            {
+                _feedbackErrorMessage = "Title is required.";
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(_feedbackDescription))
+            {
+                _feedbackErrorMessage = "Description is required.";
+                return;
+            }
+
+            _feedbackSubmitting = true;
+            _feedbackBannerMessage = null;
+            try
+            {
+                string? userAgent = null;
+                if (_feedbackIncludeDiagnostics)
+                {
+                    try
+                    {
+                        userAgent = await JSRuntime.InvokeAsync<string?>("tiptapEditor.getBrowserUserAgent");
+                    }
+                    catch
+                    {
+                        userAgent = null;
+                    }
+                }
+
+                FeedbackSubmitRequest payload = new(
+                    _feedbackType.Trim(),
+                    _feedbackSubject.Trim(),
+                    _feedbackDescription.Trim(),
+                    _feedbackIncludeDiagnostics,
+                    _feedbackIncludeDiagnostics
+                        ? new FeedbackDiagnosticsPayload(
+                            Navigation.Uri,
+                            typeof(DocumentEditor).Assembly.GetName().Version?.ToString() ?? "unknown",
+                            userAgent)
+                        : null);
+
+                using HttpResponseMessage response = await Http.PostAsJsonAsync("api/feedback", payload);
+                if (!response.IsSuccessStatusCode)
+                {
+                    _feedbackErrorMessage = "Could not send feedback. Please retry.";
+                    return;
+                }
+
+                _feedbackBannerMessage = "Thanks—feedback sent.";
+                _isFeedbackDialogOpen = false;
+                _feedbackSubject = string.Empty;
+                _feedbackDescription = string.Empty;
+                _feedbackType = "bug";
+                _feedbackIncludeDiagnostics = true;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Feedback submit failed.");
+                _feedbackErrorMessage = "Could not send feedback. Please retry.";
+            }
+            finally
+            {
+                _feedbackSubmitting = false;
+            }
+        }
+
         private async Task ToggleContextPanel()
         {
             LayoutState current = LayoutStateService.State;
@@ -2041,10 +2185,21 @@ namespace WriterApp.Client.Pages
 
         private Task OnEditorContextMenuRequested(SectionEditor.EditorContextMenuRequest request)
         {
+            CloseLinkContextMenu();
             _contextMenuX = request.X;
             _contextMenuY = request.Y;
             _isContextMenuOpen = true;
             _shouldFocusContextMenu = true;
+            return InvokeAsync(StateHasChanged);
+        }
+
+        private Task OnEditorLinkContextMenuRequested(SectionEditor.EditorLinkContextMenuRequest request)
+        {
+            CloseContextMenu();
+            _linkContextMenuX = request.X;
+            _linkContextMenuY = request.Y;
+            _linkContextMenuHref = request.Href;
+            _isLinkContextMenuOpen = true;
             return InvokeAsync(StateHasChanged);
         }
 
@@ -2061,10 +2216,23 @@ namespace WriterApp.Client.Pages
             _isContextMenuOpen = false;
         }
 
+        private void CloseLinkContextMenu()
+        {
+            _isLinkContextMenuOpen = false;
+            _linkContextMenuHref = null;
+        }
+
         private string GetContextMenuStyle()
         {
             string left = _contextMenuX.ToString(CultureInfo.InvariantCulture);
             string top = _contextMenuY.ToString(CultureInfo.InvariantCulture);
+            return $"left: {left}px; top: {top}px;";
+        }
+
+        private string GetLinkContextMenuStyle()
+        {
+            string left = _linkContextMenuX.ToString(CultureInfo.InvariantCulture);
+            string top = _linkContextMenuY.ToString(CultureInfo.InvariantCulture);
             return $"left: {left}px; top: {top}px;";
         }
 
@@ -2091,6 +2259,16 @@ namespace WriterApp.Client.Pages
             if (string.Equals(args.Key, "Escape", StringComparison.Ordinal))
             {
                 CloseContextMenu();
+            }
+
+            return Task.CompletedTask;
+        }
+
+        private Task OnLinkContextMenuKeyDown(KeyboardEventArgs args)
+        {
+            if (string.Equals(args.Key, "Escape", StringComparison.Ordinal))
+            {
+                CloseLinkContextMenu();
             }
 
             return Task.CompletedTask;
@@ -2273,6 +2451,16 @@ namespace WriterApp.Client.Pages
             }
         }
 
+        private async Task OnInsertImageRequested()
+        {
+            if (!_formattingState.CanInsertImage)
+            {
+                return;
+            }
+
+            await JSRuntime.InvokeVoidAsync("tiptapEditor.openFilePicker", "editor-image-upload");
+        }
+
         private async Task OnInsertImageFromUrlRequested()
         {
             string? input = await JSRuntime.InvokeAsync<string?>("prompt", "Image URL", string.Empty);
@@ -2297,14 +2485,20 @@ namespace WriterApp.Client.Pages
             return InvokePageCommandAsync("removeSelectedImage");
         }
 
-        private async Task OnLinkRequested()
+        private Task OnLinkRequested()
+        {
+            return PromptLinkAsync();
+        }
+
+        private async Task PromptLinkAsync(string? initialLink = null)
         {
             if (_pageEditor is null)
             {
                 return;
             }
 
-            string? link = await JSRuntime.InvokeAsync<string?>("prompt", "Link URL", string.Empty);
+            string defaultLink = string.IsNullOrWhiteSpace(initialLink) ? string.Empty : initialLink.Trim();
+            string? link = await JSRuntime.InvokeAsync<string?>("prompt", "Link URL", defaultLink);
             if (string.IsNullOrWhiteSpace(link))
             {
                 await InvokePageCommandAsync("unsetLink");
@@ -2312,6 +2506,36 @@ namespace WriterApp.Client.Pages
             }
 
             await InvokePageCommandAsync("setLink", link);
+        }
+
+        private Task OnLinkShortcutRequested()
+        {
+            return PromptLinkAsync();
+        }
+
+        private async Task OpenLinkFromContextMenu()
+        {
+            string? href = _linkContextMenuHref;
+            CloseLinkContextMenu();
+            if (string.IsNullOrWhiteSpace(href))
+            {
+                return;
+            }
+
+            await JSRuntime.InvokeVoidAsync("tiptapEditor.openInNewTab", href);
+        }
+
+        private async Task EditLinkFromContextMenu()
+        {
+            string? href = _linkContextMenuHref;
+            CloseLinkContextMenu();
+            await PromptLinkAsync(href);
+        }
+
+        private async Task RemoveLinkFromContextMenu()
+        {
+            CloseLinkContextMenu();
+            await InvokePageCommandAsync("unsetLink");
         }
 
         private Task OnHorizontalRuleRequested()
@@ -2445,7 +2669,7 @@ namespace WriterApp.Client.Pages
         private string GetPrintLayoutLabel()
         {
             return LayoutStateService.State.PrintLayoutEnabled
-                ? "Switch to simple page breaks"
+                ? "Switch to standard layout"
                 : "Switch to print layout";
         }
 
@@ -2508,9 +2732,26 @@ namespace WriterApp.Client.Pages
             return _activeContextTab == tab ? "is-active" : string.Empty;
         }
 
-        private bool ShowSceneCoachCard => !_isDiffMode && _activePanelCategory == PanelCategory.Coach;
+        private bool ShowContextCoachCard => !_isDiffMode;
 
-        private CoachCardRecommendation BuildSceneCoachRecommendation()
+        private CoachCardRecommendation BuildContextCoachRecommendation()
+        {
+            RightPanelCoachContext context = BuildRightPanelCoachContext();
+            return context.PanelCategory switch
+            {
+                PanelCategory.Coach when context.ContextTab == ContextTab.Ai => BuildWritingToolsCoachRecommendation(context),
+                PanelCategory.Coach when context.ContextTab == ContextTab.Continuity => BuildConsistencyCoachRecommendation(context),
+                PanelCategory.Coach when context.ContextTab == ContextTab.Quality => BuildStyleQualityCoachRecommendation(context),
+                PanelCategory.History => BuildHistoryCoachRecommendation(context),
+                PanelCategory.Navigator => BuildNavigatorCoachRecommendation(context),
+                PanelCategory.Story => BuildStoryCoachRecommendation(context),
+                PanelCategory.NotesTasks => BuildNotesTasksCoachRecommendation(context),
+                PanelCategory.Advanced => BuildAdvancedCoachRecommendation(context),
+                _ => BuildWritingToolsCoachRecommendation(context)
+            };
+        }
+
+        private RightPanelCoachContext BuildRightPanelCoachContext()
         {
             int missingFields = 0;
             if (string.IsNullOrWhiteSpace(_sceneNarrativePurpose))
@@ -2533,27 +2774,281 @@ namespace WriterApp.Client.Pages
                 missingFields++;
             }
 
-            bool hasSelection = _currentSelectionRange is not null
-                && _currentSelectionRange.End > _currentSelectionRange.Start;
+            bool hasSelection = _currentSelectionRange is not null && _currentSelectionRange.End > _currentSelectionRange.Start;
             bool hasContinuityReport = _continuityReport is not null;
             bool hasContinuityIssues = (_continuityReport?.Issues.Count ?? 0) > 0;
             bool hasStructure = _sections.Count > 0;
+            bool isSceneContext = IsSceneRoute;
 
-            SceneCoachInput input = new(
+            return new RightPanelCoachContext(
+                _activePanelCategory,
+                _activeContextTab,
+                isSceneContext,
                 hasSelection,
                 missingFields,
-                _qualityIssues.Count > 0,
+                _qualityIssues.Count,
                 hasContinuityReport,
                 hasContinuityIssues,
                 hasStructure,
+                _aiHistoryEntries.Count,
+                _pageVersions.Count,
+                _sections.Count,
                 _editorStatus.WordCount);
-
-            return CoachRecommendationService.BuildSceneRecommendation(input);
         }
 
-        private async Task OnSceneCoachPrimaryActionAsync()
+        private CoachCardRecommendation BuildWritingToolsCoachRecommendation(RightPanelCoachContext context)
         {
-            CoachCardRecommendation recommendation = BuildSceneCoachRecommendation();
+            List<string> observations = new();
+            if (context.HasSelection)
+            {
+                observations.Add("Selection is active, so targeted rewrite commands are ready.");
+            }
+            else
+            {
+                observations.Add("No selection is active yet. Selection actions stay disabled until you highlight text.");
+            }
+
+            if (context.IsSceneContext && context.MissingSceneCardFields >= 3)
+            {
+                observations.Add("Scene card context is sparse and can be bootstrapped from the current text.");
+            }
+            else if (context.IsSceneContext)
+            {
+                observations.Add("Scene card context is present and supports focused drafting decisions.");
+            }
+            else
+            {
+                observations.Add("You are editing section content in document mode.");
+            }
+
+            if (context.QualityIssueCount > 0)
+            {
+                observations.Add($"Quality checks currently list {context.QualityIssueCount} issue(s).");
+            }
+
+            CoachPrimaryAction primaryAction;
+            string primaryLabel;
+            string why;
+            if (context.IsSceneContext && context.MissingSceneCardFields >= 3)
+            {
+                primaryAction = CoachPrimaryAction.SuggestSceneCardFromText;
+                primaryLabel = "Suggest scene card from text";
+                why = "A stronger scene card clarifies intent before line edits.";
+            }
+            else if (context.QualityIssueCount > 0 || context.WordCount >= 160)
+            {
+                primaryAction = CoachPrimaryAction.RunQualityCheck;
+                primaryLabel = "Run quality check";
+                why = "A quality pass catches style and readability friction quickly.";
+            }
+            else
+            {
+                primaryAction = CoachPrimaryAction.OpenOutline;
+                primaryLabel = "Open navigator";
+                why = "Use structure to choose your next target before applying rewrites.";
+            }
+
+            return new CoachCardRecommendation(
+                context.IsSceneContext ? "Writing" : "Writing tools",
+                observations.Take(3).ToList(),
+                primaryLabel,
+                why,
+                primaryAction,
+                null,
+                null);
+        }
+
+        private CoachCardRecommendation BuildConsistencyCoachRecommendation(RightPanelCoachContext context)
+        {
+            List<string> observations = new()
+            {
+                $"Character bible: {GetBibleStatusLabel(_characterBibleSnapshot)}",
+                $"Place bible: {GetBibleStatusLabel(_placeBibleSnapshot)}",
+                $"Timeline bible: {GetBibleStatusLabel(_timelineBibleSnapshot)}"
+            };
+            if (context.HasContinuityIssues)
+            {
+                observations.Add("Continuity report has open issues in the current scope.");
+            }
+            else if (!context.HasContinuityReport)
+            {
+                observations.Add("No continuity report has been generated yet.");
+            }
+
+            return new CoachCardRecommendation(
+                "Consistency",
+                observations.Take(3).ToList(),
+                "Run continuity check",
+                "Continuity checks protect timeline, location, and entity consistency.",
+                CoachPrimaryAction.RunContinuityCheck,
+                null,
+                null);
+        }
+
+        private CoachCardRecommendation BuildStyleQualityCoachRecommendation(RightPanelCoachContext context)
+        {
+            List<string> observations = new();
+            if (context.QualityIssueCount > 0)
+            {
+                observations.Add($"{context.QualityIssueCount} quality issue(s) are currently listed.");
+                observations.Add("Apply proposal previews to accept targeted fixes with context.");
+            }
+            else
+            {
+                observations.Add("No quality issues are currently listed for this scope.");
+                observations.Add("Run a scan after major edits to catch regressions early.");
+            }
+
+            observations.Add("Use scope/severity filters to narrow findings before applying changes.");
+
+            return new CoachCardRecommendation(
+                "Style & quality",
+                observations.Take(3).ToList(),
+                "Run quality check",
+                "Short quality loops keep tone and readability consistent.",
+                CoachPrimaryAction.RunQualityCheck,
+                null,
+                null);
+        }
+
+        private CoachCardRecommendation BuildHistoryCoachRecommendation(RightPanelCoachContext context)
+        {
+            List<string> observations = new();
+            if (context.AiHistoryCount > 0)
+            {
+                observations.Add($"AI history contains {context.AiHistoryCount} command entr{(context.AiHistoryCount == 1 ? "y" : "ies")}.");
+            }
+            else
+            {
+                observations.Add("No AI command history has been captured yet.");
+            }
+
+            if (context.VersionCount > 0)
+            {
+                observations.Add($"Version history contains {context.VersionCount} snapshot(s).");
+            }
+            else
+            {
+                observations.Add("No page snapshots are available yet.");
+            }
+
+            observations.Add("Use AI undo/redo or diff compare to apply or roll back safely.");
+
+            return new CoachCardRecommendation(
+                "History",
+                observations.Take(3).ToList(),
+                "Refresh history",
+                "Frequent history review reduces risk when applying large rewrites.",
+                CoachPrimaryAction.OpenOutline,
+                null,
+                null);
+        }
+
+        private CoachCardRecommendation BuildNavigatorCoachRecommendation(RightPanelCoachContext context)
+        {
+            List<string> observations = new();
+            if (context.SectionCount > 0)
+            {
+                observations.Add($"Navigator currently reflects {context.SectionCount} section(s).");
+            }
+            else
+            {
+                observations.Add("No sections are available in navigator yet.");
+            }
+
+            observations.Add("Drag to reorder nodes and keep manuscript flow intentional.");
+            observations.Add("Open a target section from navigator to continue drafting in order.");
+
+            return new CoachCardRecommendation(
+                "Navigator",
+                observations.Take(3).ToList(),
+                "Refresh navigator",
+                "Keeping structure clean makes drafting and revision faster.",
+                CoachPrimaryAction.OpenOutline,
+                null,
+                null);
+        }
+
+        private CoachCardRecommendation BuildStoryCoachRecommendation(RightPanelCoachContext context)
+        {
+            List<string> observations = new();
+            if (context.IsSceneContext)
+            {
+                observations.Add("Scene card fields directly shape story beats and drafting focus.");
+                if (context.MissingSceneCardFields > 0)
+                {
+                    observations.Add($"{context.MissingSceneCardFields} scene-card field(s) are still empty.");
+                }
+            }
+            else
+            {
+                observations.Add("Story tools are available for the current section.");
+                observations.Add("Capture narrative intent and beats to guide revisions.");
+            }
+
+            observations.Add("Use purpose, emotional beat, and key events to anchor revisions.");
+            CoachPrimaryAction action = context.IsSceneContext
+                ? CoachPrimaryAction.SuggestSceneCardFromText
+                : CoachPrimaryAction.OpenOutline;
+            string label = context.IsSceneContext ? "Suggest scene card from text" : "Open navigator";
+
+            return new CoachCardRecommendation(
+                "Story",
+                observations.Take(3).ToList(),
+                label,
+                "Story metadata keeps chapter-level intent visible while drafting.",
+                action,
+                null,
+                null);
+        }
+
+        private CoachCardRecommendation BuildNotesTasksCoachRecommendation(RightPanelCoachContext context)
+        {
+            List<string> observations = new()
+            {
+                "Use notes for local drafting context and next-pass reminders.",
+                "Use annotations to pin TODOs and comments to exact text ranges."
+            };
+            if (!context.HasSelection)
+            {
+                observations.Add("Select text before creating annotation highlights.");
+            }
+
+            return new CoachCardRecommendation(
+                "Notes & tasks",
+                observations.Take(3).ToList(),
+                "Open annotations",
+                "Fast note capture prevents context loss between revision sessions.",
+                CoachPrimaryAction.OpenOutline,
+                null,
+                null);
+        }
+
+        private CoachCardRecommendation BuildAdvancedCoachRecommendation(RightPanelCoachContext context)
+        {
+            List<string> observations = new()
+            {
+                "Prompt Library presets can standardize common rewrite workflows.",
+                "Use parameterized prompts to keep custom transformations repeatable."
+            };
+            if (context.HasSelection)
+            {
+                observations.Add("Current selection is ready for selection-scoped prompt presets.");
+            }
+
+            return new CoachCardRecommendation(
+                "Advanced",
+                observations.Take(3).ToList(),
+                "Open prompt library",
+                "Reusable prompts reduce repetitive editing overhead.",
+                CoachPrimaryAction.OpenOutline,
+                null,
+                null);
+        }
+
+        private async Task OnContextCoachPrimaryActionAsync()
+        {
+            CoachCardRecommendation recommendation = BuildContextCoachRecommendation();
             switch (recommendation.PrimaryAction)
             {
                 case CoachPrimaryAction.SuggestSceneCardFromText:
@@ -2569,7 +3064,26 @@ namespace WriterApp.Client.Pages
                     break;
 
                 case CoachPrimaryAction.OpenOutline:
-                    await SetContextTabAsync(ContextTab.Scene);
+                    if (_activePanelCategory == PanelCategory.History)
+                    {
+                        await LoadAiHistoryAsync();
+                    }
+                    else if (_activePanelCategory == PanelCategory.Navigator)
+                    {
+                        await RefreshNavigatorInspectorAsync(force: true);
+                    }
+                    else if (_activePanelCategory == PanelCategory.NotesTasks)
+                    {
+                        await SetContextTabAsync(ContextTab.Annotations);
+                    }
+                    else if (_activePanelCategory == PanelCategory.Advanced)
+                    {
+                        await SetContextTabAsync(ContextTab.PromptLibrary);
+                    }
+                    else
+                    {
+                        await SetContextTabAsync(IsSceneRoute ? ContextTab.Scene : ContextTab.Navigator);
+                    }
                     break;
 
                 case CoachPrimaryAction.OpenNextScene:
@@ -2577,6 +3091,21 @@ namespace WriterApp.Client.Pages
                     break;
             }
         }
+
+        private sealed record RightPanelCoachContext(
+            PanelCategory PanelCategory,
+            ContextTab ContextTab,
+            bool IsSceneContext,
+            bool HasSelection,
+            int MissingSceneCardFields,
+            int QualityIssueCount,
+            bool HasContinuityReport,
+            bool HasContinuityIssues,
+            bool HasStructure,
+            int AiHistoryCount,
+            int VersionCount,
+            int SectionCount,
+            int WordCount);
 
         private async Task OpenNextSectionFromCoachAsync()
         {
@@ -2660,6 +3189,7 @@ namespace WriterApp.Client.Pages
         {
             return category switch
             {
+                PanelCategory.Coach => "Writing",
                 PanelCategory.NotesTasks => "Notes & Tasks",
                 _ => category.ToString()
             };
@@ -2759,7 +3289,7 @@ namespace WriterApp.Client.Pages
         {
             return category switch
             {
-                PanelCategory.Coach => "Coach tools",
+                PanelCategory.Coach => "Writing",
                 PanelCategory.Story => "Story tools",
                 PanelCategory.Navigator => "Navigator",
                 PanelCategory.NotesTasks => "Notes & tasks",
@@ -4310,7 +4840,7 @@ namespace WriterApp.Client.Pages
             _promptNameDraft = string.Empty;
             _promptCategoryDraft = string.Empty;
             _promptKindDraft = "builtin";
-            _promptBuiltinActionIdDraft = "tighten.selection";
+            _promptBuiltinActionIdDraft = "rewrite.selection";
             _promptTemplateDraft = string.Empty;
             _promptParametersDraft = "{}";
             _promptStatus = null;
@@ -4322,7 +4852,7 @@ namespace WriterApp.Client.Pages
             _promptNameDraft = preset.Name;
             _promptCategoryDraft = preset.Category ?? string.Empty;
             _promptKindDraft = preset.Kind;
-            _promptBuiltinActionIdDraft = preset.BuiltinActionId ?? "tighten.selection";
+            _promptBuiltinActionIdDraft = preset.BuiltinActionId ?? "rewrite.selection";
             _promptTemplateDraft = preset.TemplateText ?? string.Empty;
             _promptParametersDraft = JsonSerializer.Serialize(preset.Parameters ?? new Dictionary<string, object?>(), JsonOptions);
             _promptStatus = null;
@@ -5465,7 +5995,22 @@ namespace WriterApp.Client.Pages
             _previewHasFrontMatter = false;
             try
             {
-                ExportTemplateDto? template = GetSelectedTemplate();
+                if (string.Equals(_exportContentSelection, "synopsis", StringComparison.OrdinalIgnoreCase))
+                {
+                    _previewSidebarOpen = false;
+                    string synopsisHtml = await GetSynopsisPreviewHtmlAsync();
+                    _previewHtml = BuildPreviewHtml(synopsisHtml);
+                    _previewZoom = 1.0;
+                    _previewInitialized = false;
+                    _previewFrameLoaded = false;
+                    _previewHasFrontMatter = false;
+                    _previewSearchTerm = string.Empty;
+                    _previewPageCount = 1;
+                    _previewCurrentPage = 1;
+                    return;
+                }
+
+                _previewSidebarOpen = true;
                 if (!ValidateScope(out string? error))
                 {
                     _previewError = error;
@@ -5521,6 +6066,27 @@ namespace WriterApp.Client.Pages
             {
                 _isPreviewLoading = false;
             }
+        }
+
+        private async Task<string> GetSynopsisPreviewHtmlAsync()
+        {
+            if (_synopsisPreviewCacheDocumentId == DocumentId
+                && !string.IsNullOrWhiteSpace(_synopsisPreviewCacheHtml))
+            {
+                return _synopsisPreviewCacheHtml;
+            }
+
+            using HttpResponseMessage response = await Http.GetAsync(
+                $"api/documents/{DocumentId}/export?kind=synopsis&format=html");
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new InvalidOperationException("Synopsis preview failed.");
+            }
+
+            string html = await response.Content.ReadAsStringAsync();
+            _synopsisPreviewCacheDocumentId = DocumentId;
+            _synopsisPreviewCacheHtml = html;
+            return html;
         }
 
         private void ClosePreview()
@@ -5811,6 +6377,7 @@ private const string PreviewBootstrapScript = @"
         private void InitializeExportDefaults()
         {
             ExportTemplateDto? template = GetSelectedTemplate();
+            _exportContentSelection = "document";
             _exportIncludeTitlePage = true;
             _exportIncludeToc = template?.TocEnabled ?? true;
             _exportTocDepth = template?.TocDepth ?? 2;
@@ -5843,6 +6410,12 @@ private const string PreviewBootstrapScript = @"
         {
             if (string.Equals(_exportFormatSelection, "pdf", StringComparison.OrdinalIgnoreCase))
             {
+                if (!string.Equals(_exportContentSelection, "document", StringComparison.OrdinalIgnoreCase))
+                {
+                    _templateActionError = "PDF export is available for document content.";
+                    return;
+                }
+
                 await OnExportPdfRequested();
                 _isExportDialogOpen = false;
                 return;
@@ -5857,7 +6430,7 @@ private const string PreviewBootstrapScript = @"
                 _ => "html"
             };
 
-            await OnExportRequested("document", format);
+            await OnExportRequested(_exportContentSelection, format);
             _isExportDialogOpen = false;
         }
 
@@ -6016,6 +6589,13 @@ private const string PreviewBootstrapScript = @"
 
         private void NormalizeExportFormatSelection()
         {
+            if (!string.Equals(_exportContentSelection, "document", StringComparison.OrdinalIgnoreCase)
+                && (string.Equals(_exportFormatSelection, "pdf", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(_exportFormatSelection, "epub", StringComparison.OrdinalIgnoreCase)))
+            {
+                _exportFormatSelection = "html";
+            }
+
             if (string.Equals(_exportFormatSelection, "docx", StringComparison.OrdinalIgnoreCase) && !_docxExportEnabled)
             {
                 _exportFormatSelection = "html";
@@ -6216,6 +6796,7 @@ private const string PreviewBootstrapScript = @"
         private void MarkPresetAsCustom()
         {
             _selectedExportPresetId = null;
+            NormalizeExportFormatSelection();
         }
 
         private void OpenPresetSave()
@@ -7587,7 +8168,7 @@ private const string PreviewBootstrapScript = @"
 
             if (string.Equals(actionKey, "synopsis.story_coach", StringComparison.OrdinalIgnoreCase))
             {
-                return "Story Coach";
+                return "Story guidance";
             }
 
             if (string.Equals(actionKey, "scene.suggest", StringComparison.OrdinalIgnoreCase))
@@ -10905,6 +11486,18 @@ private const string PreviewBootstrapScript = @"
             Guid TargetSectionId);
 
         private sealed record ExportPrintPayload(string Html);
+
+        private sealed record FeedbackSubmitRequest(
+            string Type,
+            string Subject,
+            string Description,
+            bool IncludeDiagnostics,
+            FeedbackDiagnosticsPayload? Diagnostics);
+
+        private sealed record FeedbackDiagnosticsPayload(
+            string? Url,
+            string? Version,
+            string? UserAgent);
 
         private sealed record TextRange(int Start, int Length);
 

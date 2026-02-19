@@ -17,6 +17,7 @@ namespace WriterApp.Tests
             {
                 new MarkdownExportRenderer(),
                 new TemplatedHtmlExportRenderer(),
+                new SynopsisDocxExportRenderer(),
                 new SynopsisMarkdownExportRenderer(),
                 new SynopsisHtmlExportRenderer()
             }, new StubExportTemplateResolver());
@@ -106,6 +107,27 @@ namespace WriterApp.Tests
             string output = Encoding.UTF8.GetString(result.Content);
             Assert.DoesNotContain("DOC_ONLY_TEXT", output);
             Assert.Contains("Synopsis premise", output);
+        }
+
+        [Fact]
+        public void SynopsisExport_Docx_UsesSynopsisFileName()
+        {
+            Document document = DocumentFactory.CreateNewDocument();
+            document = document with { Metadata = document.Metadata with { Title = "My Book" } };
+            document.Synopsis.Premise = "Synopsis premise";
+
+            ExportService service = BuildExportService();
+            ExportResult result = service.ExportAsync(
+                document,
+                ExportKind.Synopsis,
+                ExportFormat.Docx,
+                new ExportOptions(),
+                "user",
+                null,
+                CancellationToken.None).GetAwaiter().GetResult();
+
+            Assert.Equal("application/vnd.openxmlformats-officedocument.wordprocessingml.document", result.MimeType);
+            Assert.Contains("Synopsis.docx", result.FileName, StringComparison.OrdinalIgnoreCase);
         }
 
         private static void ReplaceFirstSectionContent(Document document, string value)

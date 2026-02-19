@@ -392,7 +392,6 @@ namespace BlazorApp.Components.Pages
         private string? _lastReorderStatus;
         private int _lastReorderCount;
         private string? _lastReorderCorrelationId;
-        private bool _sectionReorderDiagnosticsEnabled;
         private IJSObjectReference? _exportModule;
         private const int SectionTitleMaxLength = 120;
         private const int PageBreakHeightPx = 980;
@@ -452,7 +451,6 @@ namespace BlazorApp.Components.Pages
         {
             HeaderState.DocumentTitleEdited += OnHeaderDocumentTitleEdited;
             _ = LoadAiUsageStatusAsync();
-            _sectionReorderDiagnosticsEnabled = true;
             _docxExportEnabled = Configuration.GetValue<bool?>("Exports:DocxEnabled") ?? false;
             _epubExportEnabled = Configuration.GetValue<bool?>("Exports:EpubEnabled") ?? false;
             bool defaultCommandCentric = IsDevelopmentEnvironment();
