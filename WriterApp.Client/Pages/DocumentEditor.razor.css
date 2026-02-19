@@ -993,6 +993,10 @@
     display: none;
 }
 
+#editor-image-upload {
+    display: none;
+}
+
 .editor-toolbar-upload-button {
     display: inline-flex;
     align-items: center;
@@ -2470,7 +2474,7 @@
     gap: 4px;
 }
 
-.ai-action-description {
+.ai-selection-hint {
     font-size: 0.78rem;
     color: var(--text-muted);
     padding-left: 4px;
@@ -2615,6 +2619,9 @@
     background: #f8fafc;
     display: grid;
     gap: 10px;
+    max-height: 60vh;
+    min-height: 0;
+    overflow: auto;
 }
 
 .ai-history-details-header {
@@ -2659,6 +2666,13 @@
 .ai-history-details-compare {
     display: grid;
     gap: 8px;
+    min-height: 0;
+    max-height: 44vh;
+    overflow: auto;
+}
+
+.ai-history-details-block {
+    min-height: 0;
 }
 
 .ai-history-details-block pre {
@@ -2669,6 +2683,8 @@
     background: var(--surface);
     font-size: 0.85rem;
     white-space: pre-wrap;
+    max-height: 30vh;
+    overflow: auto;
 }
 
 .ai-preview {
@@ -2677,8 +2693,11 @@
     border-radius: 14px;
     border: 1px solid #e5e7eb;
     background: var(--surface, var(--color-surface-1, #ffffff));
-    display: grid;
+    display: flex;
+    flex-direction: column;
     gap: 10px;
+    max-height: 78vh;
+    min-height: 30rem;
 }
 
 .ai-preview-header {
@@ -2700,7 +2719,9 @@
 
 .ai-preview-columns {
     display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px;
+    min-height: 0;
 }
 
 .ai-preview-pane {
@@ -2708,6 +2729,10 @@
     border-radius: 12px;
     padding: 8px;
     background: #f8fafc;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    max-height: min(60vh, 520px);
 }
 
 .ai-preview-label {
@@ -2715,6 +2740,11 @@
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: #6b7280;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: #f8fafc;
+    padding-bottom: 4px;
 }
 
 .ai-preview-text {
@@ -2722,6 +2752,10 @@
     font-size: 0.9rem;
     color: #1f2937;
     white-space: pre-wrap;
+    overflow: auto;
+    min-height: 0;
+    flex: 1;
+    padding-right: 4px;
 }
 
 .ai-preview-image img {
@@ -2732,6 +2766,25 @@
 .ai-preview-actions {
     display: flex;
     gap: 8px;
+}
+
+@media (max-width: 1100px) {
+    .ai-preview-columns {
+        grid-template-columns: 1fr;
+    }
+
+    .ai-preview {
+        min-height: 18rem;
+    }
+}
+
+.feedback-dialog {
+    width: min(700px, 94vw);
+}
+
+.feedback-form {
+    display: grid;
+    gap: 10px;
 }
 
 .ai-quota-message {

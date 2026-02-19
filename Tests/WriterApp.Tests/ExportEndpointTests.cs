@@ -46,6 +46,31 @@ namespace WriterApp.Tests
         }
 
         [Fact]
+        public async Task ExportDocumentGet_SynopsisDocx_ReturnsFile()
+        {
+            Guid documentId = Guid.NewGuid();
+            using AppDbContext dbContext = BuildDbContext();
+            SeedDocument(dbContext, documentId);
+            SeedSynopsis(dbContext, documentId);
+
+            ExportService exportService = BuildExportService();
+            IConfiguration config = BuildConfig(("Exports:DocxEnabled", "true"));
+            DocumentExportController controller = BuildController(dbContext, exportService, config);
+
+            IActionResult result = await controller.ExportDocument(
+                documentId,
+                "synopsis",
+                "docx",
+                null,
+                CancellationToken.None);
+
+            FileContentResult file = Assert.IsType<FileContentResult>(result);
+            Assert.Equal("application/vnd.openxmlformats-officedocument.wordprocessingml.document", file.ContentType);
+            Assert.Contains("Synopsis.docx", file.FileDownloadName, StringComparison.OrdinalIgnoreCase);
+            Assert.NotEmpty(file.FileContents);
+        }
+
+        [Fact]
         public async Task ExportDocumentPost_Epub_ReturnsFile()
         {
             Guid documentId = Guid.NewGuid();
@@ -150,6 +175,27 @@ namespace WriterApp.Tests
             context.SaveChanges();
         }
 
+        private static void SeedSynopsis(AppDbContext context, Guid documentId)
+        {
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            context.DocumentSynopses.Add(new DocumentSynopsisRecord
+            {
+                DocumentId = documentId,
+                Logline = "A synopsis logline.",
+                Premise = "A synopsis premise.",
+                Theme = "A synopsis theme.",
+                ProtagonistArc = "A synopsis arc.",
+                CentralConflict = "A synopsis conflict.",
+                Stakes = "A synopsis stakes.",
+                Setting = "A synopsis setting.",
+                EndingIntent = "A synopsis ending intent.",
+                OpenQuestions = "A synopsis open question.",
+                Notes = "A synopsis note.",
+                UpdatedAt = now
+            });
+            context.SaveChanges();
+        }
+
         private static void SeedManuscriptWithEmptyPageAndSceneContent(
             AppDbContext context,
             Guid documentId,
@@ -233,6 +279,7 @@ namespace WriterApp.Tests
                     NullLogger<DocxExportRenderer>.Instance,
                     BuildConfig(("Exports:DocxFetchRemoteImages", "false")),
                     new StubHttpClientFactory()),
+                new SynopsisDocxExportRenderer(),
                 new EpubExportRenderer()
             };
             return new ExportService(renderers, new StubExportTemplateResolver());

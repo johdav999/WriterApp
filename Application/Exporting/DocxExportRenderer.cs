@@ -202,8 +202,45 @@ namespace WriterApp.Application.Exporting
             normal.StyleRunProperties = runProps;
             normal.StyleParagraphProperties = paraProps;
 
+            EnsureHeadingStyle(styles, "Heading1", "Heading 1", "32", 0);
+            EnsureHeadingStyle(styles, "Heading2", "Heading 2", "28", 1);
+            EnsureHeadingStyle(styles, "Heading3", "Heading 3", "24", 2);
+
             stylePart.Styles = styles;
             stylePart.Styles.Save();
+        }
+
+        private static void EnsureHeadingStyle(Styles styles, string styleId, string styleName, string fontSize, int outlineLevel)
+        {
+            Style? style = styles.Elements<Style>()
+                .FirstOrDefault(candidate => string.Equals(candidate.StyleId?.Value, styleId, StringComparison.OrdinalIgnoreCase));
+            if (style is null)
+            {
+                style = new Style
+                {
+                    Type = StyleValues.Paragraph,
+                    StyleId = styleId
+                };
+                style.Append(new StyleName { Val = styleName });
+                style.Append(new BasedOn { Val = "Normal" });
+                style.Append(new NextParagraphStyle { Val = "Normal" });
+                style.Append(new UIPriority { Val = 9 });
+                style.Append(new PrimaryStyle());
+                style.Append(new UnhideWhenUsed());
+                style.Append(new Rsid { Val = "00000000" });
+                styles.Append(style);
+            }
+
+            style.StyleRunProperties = new StyleRunProperties(
+                new Bold(),
+                new FontSize { Val = fontSize },
+                new FontSizeComplexScript { Val = fontSize });
+
+            style.StyleParagraphProperties = new StyleParagraphProperties(
+                new KeepNext(),
+                new KeepLines(),
+                new SpacingBetweenLines { Before = "200", After = "120" },
+                new OutlineLevel { Val = outlineLevel });
         }
 
         private static void EnsureSectionProperties(Body body, MainDocumentPart mainPart, string documentTitle)
@@ -267,6 +304,7 @@ namespace WriterApp.Application.Exporting
 
         private static void AppendTocField(Body body)
         {
+            // Word renders and updates this TOC field from Heading1-Heading3 paragraphs.
             Paragraph titleParagraph = new();
             Run titleRun = new(new Text("Table of Contents"));
             titleRun.RunProperties = new RunProperties(new Bold());

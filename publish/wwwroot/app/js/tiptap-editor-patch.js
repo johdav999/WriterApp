@@ -3,7 +3,7 @@
   if (!api) {
     return;
   }
-  console.info("[tiptap-patch] loaded", { version: 10 });
+  console.info("[tiptap-patch] loaded", { version: 11 });
 
   const getIssueKey = (issue) => issue?.issueKey ?? issue?.id ?? null;
 
@@ -1451,13 +1451,1213 @@
     console.info("[editor-debug] layout diagnostics", diagnostics);
   };
 
+  const applyShortcut = (editor, command, ...args) => {
+    if (!editor?.commands || typeof editor.commands[command] !== "function") {
+      return false;
+    }
+
+    try {
+      editor.chain().focus()[command](...args).run();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const handleEditorShortcut = (event, editor) => {
+    if (!event || !editor || !(event.ctrlKey || event.metaKey)) {
+      return false;
+    }
+
+    const key = String(event.key || "").toLowerCase();
+    if (!key) {
+      return false;
+    }
+
+    if (key === "b") {
+      event.preventDefault();
+      return applyShortcut(editor, "toggleBold");
+    }
+
+    if (key === "i") {
+      event.preventDefault();
+      return applyShortcut(editor, "toggleItalic");
+    }
+
+    if (key === "u" && editor?.commands && typeof editor.commands.toggleUnderline === "function") {
+      event.preventDefault();
+      return applyShortcut(editor, "toggleUnderline");
+    }
+
+    if (key === "k") {
+      event.preventDefault();
+      safeInvoke(editor.__dotNetRef, editor.__interopState || createInteropState(editor.__dotNetRef), "OnEditorLinkShortcut");
+      return true;
+    }
+
+    if (key === "z" && !event.shiftKey) {
+      event.preventDefault();
+      return applyShortcut(editor, "undo");
+    }
+
+    if (key === "y" || (key === "z" && event.shiftKey)) {
+      event.preventDefault();
+      return applyShortcut(editor, "redo");
+    }
+
+    if (key === "x" && event.shiftKey) {
+      event.preventDefault();
+      return applyShortcut(editor, "toggleStrike");
+    }
+
+    return false;
+  };
+
+  const attachEditorShortcuts = (editor) => {
+    const root = editor?.view?.dom;
+    if (!root || root.__writerShortcutHandler) {
+      return;
+    }
+
+    const handler = (event) => {
+      if (event?.key === "Backspace") {
+        const state = getPatchedPaginationState(editor);
+        if (state) {
+          state.lastUserInputAt = Date.now();
+          const boundaryPos = getNearestBreakPosForSelection(editor);
+          if (Number.isFinite(boundaryPos)) {
+            state.boundaryStableBreakPos = Number(boundaryPos);
+          }
+        }
+      }
+      handleEditorShortcut(event, editor);
+    };
+    root.addEventListener("keydown", handler, true);
+    root.__writerShortcutHandler = handler;
+  };
+
+  const openInNewTab = (href) => {
+    if (!href || typeof href !== "string") {
+      return;
+    }
+
+    window.open(href, "_blank", "noopener,noreferrer");
+  };
+
+  api.openInNewTab = openInNewTab;
+
+  const attachLinkInteractions = (editor) => {
+    const root = editor?.view?.dom;
+    if (!root || root.__writerLinkClickHandler) {
+      return;
+    }
+
+    const clickHandler = (event) => {
+      if (!event?.ctrlKey || event.button !== 0) {
+        return;
+      }
+
+      const target = event.target instanceof Element ? event.target : null;
+      const link = target?.closest?.("a[href]");
+      if (!link || !root.contains(link)) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      openInNewTab(link.getAttribute("href"));
+    };
+
+    root.addEventListener("click", clickHandler, true);
+    root.__writerLinkClickHandler = clickHandler;
+  };
+
+  const createDebounced = (fn, waitMs) => {
+    let timer = null;
+    return () => {
+      if (timer) {
+        window.clearTimeout(timer);
+      }
+
+      timer = window.setTimeout(() => {
+        timer = null;
+        fn();
+      }, waitMs);
+    };
+  };
+
+  const PAGINATION_META_KEY = "writerPagination";
+  const PAGINATION_MAX_PASSES = 10;
+  const PAGINATION_IDLE_RESET_MS = 260;
+  const PAGINATION_COOLDOWN_MS = 650;
+  const PAGINATION_INPUT_IDLE_MS = 500;
+  const PAGINATION_VIEWPORT_DELTA_PX = 2;
+  const PAGINATION_OBSERVER_SUPPRESS_MS = 80;
+
+  const normalizePageBreakOptions = (options) => ({
+    pageHeightPx: Number(options?.pageHeightPx) || 980,
+    showHorizontalRule: options?.showHorizontalRule !== false,
+    gutterOffsetPx: Number(options?.gutterOffsetPx) || 28,
+    pageGapPx: Number(options?.pageGapPx) || 32,
+    layoutMode: options?.layoutMode || "simple",
+    debug: options?.debug === true
+  });
+
+  const pageBreakOptionsKey = (enabled, options) => {
+    const normalized = normalizePageBreakOptions(options);
+    return [
+      enabled ? "1" : "0",
+      normalized.pageHeightPx,
+      normalized.showHorizontalRule ? "1" : "0",
+      normalized.gutterOffsetPx,
+      normalized.pageGapPx,
+      normalized.layoutMode,
+      normalized.debug ? "1" : "0"
+    ].join("|");
+  };
+
+  const getPatchedPaginationState = (editor) => {
+    if (!editor) {
+      return null;
+    }
+
+    if (!editor.__writerPaginationPatchState) {
+      editor.__writerPaginationPatchState = {
+        appliedKey: null,
+        desiredKey: null,
+        desiredEnabled: false,
+        desiredOptions: null,
+        rafId: 0,
+        isRunning: false,
+        pending: false,
+        force: false,
+        observerAttached: false,
+        run: null,
+        reentrancyLogged: false,
+        cooldownUntil: 0,
+        lastStopReason: null,
+        lastStopTimestamp: 0,
+        lastStopSignature: null,
+        lastStopDocSignature: null,
+        lastStopViewport: null,
+        cooldownSkipLoggedAt: 0,
+        suppressObserverEventsUntil: 0,
+        idleTimer: 0,
+        lastUserInputAt: 0,
+        lastKnownDocSignature: null,
+        lastKnownViewport: null,
+        pendingReason: null,
+        boundaryStableBreakPos: null,
+        lastDocSize: 0,
+        lastBreakSignature: null,
+        mergeUpPending: false
+      };
+    }
+
+    return editor.__writerPaginationPatchState;
+  };
+
+  const startPaginationRun = (state, reason) => {
+    state.run = {
+      reason,
+      passCount: 0,
+      lastSignature: null,
+      beforeLastSignature: null,
+      stopped: false,
+      stopReason: null,
+      warningLogged: false,
+      startedAt: Date.now(),
+      lastActivityAt: Date.now(),
+      tallBlock: null,
+      lastBreakSet: new Set(),
+      breakInfoByPos: new Map(),
+      breakToggleCount: new Map(),
+      frozenBreaks: new Set(),
+      rebuildAttempted: false,
+      mergeUpBaselineBreakPos: null
+    };
+  };
+
+  const getDocSignature = (editor) => {
+    const state = editor?.view?.state;
+    const doc = state?.doc;
+    if (!doc || !state?.selection) {
+      return "none";
+    }
+
+    const selection = state.selection;
+    const size = Number(doc.content?.size ?? doc.nodeSize ?? 0);
+    const childCount = Number(doc.childCount ?? 0);
+    return `${size}:${childCount}:${selection.from}:${selection.to}`;
+  };
+
+  const getDocSize = (editor) => {
+    const doc = editor?.view?.state?.doc;
+    return Number(doc?.content?.size ?? doc?.nodeSize ?? 0);
+  };
+
+  const getViewportMetrics = (editor) => {
+    const ctx = getEditorContext(editor);
+    const root = editor?.view?.dom;
+    const target = ctx?.viewport || ctx?.content || root;
+    if (!(target instanceof Element)) {
+      return {
+        width: 0,
+        height: 0,
+        dpr: Math.round(Number(window.devicePixelRatio || 1) * 100) / 100
+      };
+    }
+
+    const rect = target.getBoundingClientRect();
+    return {
+      width: Math.round(rect.width || 0),
+      height: Math.round(rect.height || 0),
+      dpr: Math.round(Number(window.devicePixelRatio || 1) * 100) / 100
+    };
+  };
+
+  const hasMeaningfulViewportChange = (previous, next) => {
+    if (!previous || !next) {
+      return true;
+    }
+
+    if (Math.abs(Number(next.dpr || 0) - Number(previous.dpr || 0)) > 0.001) {
+      return true;
+    }
+
+    return Math.abs(Number(next.width || 0) - Number(previous.width || 0)) > PAGINATION_VIEWPORT_DELTA_PX
+      || Math.abs(Number(next.height || 0) - Number(previous.height || 0)) > PAGINATION_VIEWPORT_DELTA_PX;
+  };
+
+  const isNearEqualSignature = (left, right) => {
+    if (!left || !right) {
+      return false;
+    }
+
+    if (left === right) {
+      return true;
+    }
+
+    const normalizePart = (part) => {
+      const [rawPos, rawPx] = String(part || "").split(":");
+      const pos = Number(rawPos);
+      const px = Number(rawPx);
+      if (!Number.isFinite(pos) || !Number.isFinite(px)) {
+        return null;
+      }
+
+      return {
+        pos: Math.round(pos),
+        px: Math.round(px)
+      };
+    };
+
+    const normalize = (signature) => String(signature)
+      .split("|")
+      .map((item) => normalizePart(item))
+      .filter(Boolean)
+      .sort((a, b) => a.pos - b.pos);
+
+    const a = normalize(left);
+    const b = normalize(right);
+    if (a.length === 0 || b.length === 0 || a.length !== b.length) {
+      return false;
+    }
+
+    for (let index = 0; index < a.length; index += 1) {
+      if (a[index].pos !== b[index].pos) {
+        return false;
+      }
+
+      if (Math.abs(a[index].px - b[index].px) > 1) {
+        return false;
+      }
+    }
+
+    return true;
+  };
+
+  const getNearestBreakPosForSelection = (editor) => {
+    const selectionFrom = Number(editor?.view?.state?.selection?.from ?? -1);
+    if (!Number.isFinite(selectionFrom) || selectionFrom < 0) {
+      return null;
+    }
+
+    const breakMap = getCurrentBreakInfoMap(editor);
+    let nearest = null;
+    breakMap.forEach((_value, pos) => {
+      if (Math.abs(pos - selectionFrom) <= 2 || Math.abs((pos + 1) - selectionFrom) <= 2) {
+        nearest = pos;
+      }
+    });
+
+    return nearest;
+  };
+
+  const getCurrentBreakSignature = (editor) => {
+    const gap = editor?.__pageGapState;
+    const last = gap?.lastGapInfo;
+    const breaks = Array.isArray(last?.breaks)
+      ? last.breaks
+      : Array.isArray(gap?.breaks)
+        ? gap.breaks
+        : [];
+    if (breaks.length > 0) {
+      return breaks
+        .map((entry) => ({
+          pos: Number(entry?.pos ?? entry?.from ?? entry?.to ?? -1),
+          spacerPx: Math.round(Number(entry?.spacerPx ?? entry?.height ?? 0))
+        }))
+        .filter((entry) => Number.isFinite(entry.pos) && entry.pos >= 0)
+        .sort((left, right) => left.pos - right.pos)
+        .map((entry) => {
+          return `${entry.pos}:${entry.spacerPx}`;
+        })
+        .join("|");
+    }
+
+    const gapCount = Number(gap?.gapCount ?? 0);
+    const pageCount = Number(gap?.pageCount ?? 1);
+    return `${gapCount}|${pageCount}`;
+  };
+
+  const getCurrentBreakInfoMap = (editor) => {
+    const gap = editor?.__pageGapState;
+    const last = gap?.lastGapInfo;
+    const breaks = Array.isArray(last?.breaks)
+      ? last.breaks
+      : Array.isArray(gap?.breaks)
+        ? gap.breaks
+        : [];
+    const map = new Map();
+    breaks.forEach((entry) => {
+      const pos = Number(entry?.pos ?? entry?.from ?? entry?.to ?? -1);
+      if (!Number.isFinite(pos) || pos < 0) {
+        return;
+      }
+
+      const spacerPx = Math.max(1, Math.round(Number(entry?.spacerPx ?? entry?.height ?? 0) || 1));
+      map.set(Math.round(pos), {
+        pos: Math.round(pos),
+        spacerPx,
+        pageIndex: Number(entry?.pageIndex ?? 0) || 0
+      });
+    });
+    return map;
+  };
+
+  const getFirstBreakPos = (editor) => {
+    const map = getCurrentBreakInfoMap(editor);
+    let first = null;
+    map.forEach((_value, pos) => {
+      if (!Number.isFinite(pos)) {
+        return;
+      }
+      if (first === null || pos < first) {
+        first = pos;
+      }
+    });
+    return first;
+  };
+
+  const clearPaginationCaches = (editor, ranges = null) => {
+    const pageGapState = editor?.__pageGapState;
+    const cacheKeys = [
+      "heightCache",
+      "blockHeightCache",
+      "measurementCache",
+      "nodeRectCache",
+      "coordsCache",
+      "blockCache"
+    ];
+
+    const intersects = (key, range) => {
+      if (!Number.isFinite(key)) {
+        return false;
+      }
+      return key >= range.from && key <= range.to;
+    };
+
+    cacheKeys.forEach((cacheKey) => {
+      const cache = pageGapState?.[cacheKey];
+      if (cache instanceof Map) {
+        if (Array.isArray(ranges) && ranges.length > 0) {
+          Array.from(cache.keys()).forEach((entryKey) => {
+            if (ranges.some((range) => intersects(Number(entryKey), range))) {
+              cache.delete(entryKey);
+            }
+          });
+        } else {
+          cache.clear();
+        }
+      } else if (cache && typeof cache === "object") {
+        pageGapState[cacheKey] = {};
+      }
+    });
+
+    if (!pageGapState) {
+      return;
+    }
+
+    if (!Array.isArray(ranges) || ranges.length === 0) {
+      pageGapState.lastGapInfo = null;
+      pageGapState.breaks = [];
+      pageGapState.gapCount = 0;
+    }
+  };
+
+  const collectChangedRanges = (tr) => {
+    const ranges = [];
+    if (!tr?.mapping?.maps?.length) {
+      return ranges;
+    }
+
+    tr.mapping.maps.forEach((map) => {
+      map.forEach((_oldFrom, _oldTo, newFrom, newTo) => {
+        ranges.push({
+          from: Math.max(0, Math.min(newFrom, newTo)),
+          to: Math.max(newFrom, newTo)
+        });
+      });
+    });
+    return ranges;
+  };
+
+  const resetPaginationArtifacts = (editor, state, reason) => {
+    if (!editor || !state || typeof state.__originalSetPageBreaksEnabled !== "function") {
+      return;
+    }
+
+    state.suppressObserverEventsUntil = Date.now() + PAGINATION_OBSERVER_SUPPRESS_MS;
+    state.__originalSetPageBreaksEnabled(editor, false, state.desiredOptions);
+    clearPaginationCaches(editor);
+
+    const gapState = editor.__pageGapState || {};
+    editor.__pageGapState = {
+      ...gapState,
+      breaks: [],
+      gapCount: 0,
+      lastGapInfo: null,
+      breakMap: new Map(),
+      freezeUntil: 0
+    };
+
+    if (state.desiredOptions?.debug) {
+      console.info("[pagination] rebuild-from-scratch triggered", { reason });
+    }
+  };
+
+  const findTallBlockInfo = (editor, options) => {
+    const view = editor?.view;
+    const doc = view?.state?.doc;
+    if (!view || !doc) {
+      return null;
+    }
+
+    const pageHeight = Math.max(1, Number(options?.pageHeightPx) || 980);
+    const safetyMargin = 24;
+    const threshold = Math.max(1, pageHeight - safetyMargin);
+    let found = null;
+    doc.descendants((node, pos) => {
+      if (found || !node?.isBlock) {
+        return false;
+      }
+
+      if (node.type?.name === "paragraph" || node.type?.name === "heading") {
+        return;
+      }
+
+      let domNode = null;
+      try {
+        domNode = view.nodeDOM(pos);
+      } catch {
+        domNode = null;
+      }
+
+      const element = domNode instanceof Element ? domNode : null;
+      if (!element) {
+        return;
+      }
+
+      const height = Math.round(element.getBoundingClientRect().height || 0);
+      if (height > threshold) {
+        found = {
+          type: node.type?.name || "unknown",
+          pos,
+          height,
+          pageHeight
+        };
+      }
+    });
+
+    return found;
+  };
+
+  const logPaginationStopWarning = (editor, run, stopReason) => {
+    if (run.warningLogged) {
+      return;
+    }
+
+    run.warningLogged = true;
+    const gapState = editor?.__pageGapState;
+    const sigA = run.beforeLastSignature;
+    const sigB = run.lastSignature;
+    const gapCount = Number(gapState?.gapCount ?? 0);
+    console.warn("[pagination] run halted", {
+      stopReason,
+      passCount: run.passCount,
+      gapCount,
+      lastSignatures: [sigA, sigB],
+      tallBlock: run.tallBlock
+    });
+  };
+
+  const queuePaginationRun = (editor, reason, force = false) => {
+    const state = getPatchedPaginationState(editor);
+    if (!state) {
+      return;
+    }
+
+    const now = Date.now();
+    const docSignature = getDocSignature(editor);
+    const viewport = getViewportMetrics(editor);
+    const stoppedRecently = state.lastStopReason === "maxPasses" || state.lastStopReason === "oscillation";
+    const withinCooldown = now < Number(state.cooldownUntil || 0);
+    const docChangedSinceStop = state.lastStopDocSignature !== docSignature;
+    const viewportChangedSinceStop = hasMeaningfulViewportChange(state.lastStopViewport, viewport);
+    const inputIdleReached = state.lastUserInputAt > 0 && (now - state.lastUserInputAt) >= PAGINATION_INPUT_IDLE_MS;
+
+    state.lastKnownDocSignature = docSignature;
+    state.lastKnownViewport = viewport;
+    state.pendingReason = reason || "update";
+
+    if (Number(state.suppressObserverEventsUntil || 0) > now && !force) {
+      return;
+    }
+
+    if (!force && stoppedRecently && !docChangedSinceStop && !viewportChangedSinceStop) {
+      if (withinCooldown || !inputIdleReached) {
+        if (!withinCooldown && !inputIdleReached && !state.idleTimer) {
+          const wait = Math.max(32, PAGINATION_INPUT_IDLE_MS - (now - state.lastUserInputAt));
+          state.idleTimer = window.setTimeout(() => {
+            state.idleTimer = 0;
+            queuePaginationRun(editor, "idleRetry", true);
+          }, wait);
+        }
+
+        if ((now - Number(state.cooldownSkipLoggedAt || 0)) > 400) {
+          state.cooldownSkipLoggedAt = now;
+          console.info("[pagination] skipped due to cooldown", {
+            reason,
+            stopReason: state.lastStopReason,
+            withinCooldown,
+            inputIdleReached
+          });
+        }
+        return;
+      }
+    }
+
+    if (state.idleTimer) {
+      window.clearTimeout(state.idleTimer);
+      state.idleTimer = 0;
+    }
+
+    if (stoppedRecently && (force || docChangedSinceStop || viewportChangedSinceStop || inputIdleReached)) {
+      state.lastStopReason = null;
+      state.lastStopTimestamp = 0;
+      state.lastStopSignature = null;
+      state.cooldownUntil = 0;
+    }
+
+    if (!state.run || (now - state.run.lastActivityAt) > PAGINATION_IDLE_RESET_MS || state.run.stopped) {
+      startPaginationRun(state, reason);
+      if (Number.isFinite(state.boundaryStableBreakPos)) {
+        state.run.frozenBreaks.add(Number(state.boundaryStableBreakPos));
+        const boundaryInfo = getCurrentBreakInfoMap(editor).get(Number(state.boundaryStableBreakPos));
+        if (boundaryInfo) {
+          state.run.breakInfoByPos.set(Number(state.boundaryStableBreakPos), boundaryInfo);
+        }
+        state.boundaryStableBreakPos = null;
+      }
+    }
+    state.run.lastActivityAt = now;
+    state.pending = true;
+    state.force = state.force || !!force;
+
+    if (state.rafId) {
+      window.cancelAnimationFrame(state.rafId);
+    }
+
+    state.rafId = window.requestAnimationFrame(() => {
+      state.rafId = 0;
+      runPaginationUpdate(editor);
+    });
+  };
+
+  const applyFrozenBreakHints = (editor, run, options) => {
+    if (!editor || !run || !(run.frozenBreaks instanceof Set) || run.frozenBreaks.size === 0) {
+      return;
+    }
+
+    const gapState = editor.__pageGapState || {};
+    const breakMap = gapState.breakMap instanceof Map ? gapState.breakMap : new Map();
+    run.frozenBreaks.forEach((pos) => {
+      const info = run.breakInfoByPos.get(pos);
+      if (!info) {
+        return;
+      }
+
+      breakMap.set(pos, {
+        height: Math.max(1, Math.round(Number(info.spacerPx || options?.pageGapPx || 1))),
+        pos,
+        pageIndex: Number(info.pageIndex || 0),
+        stableBoundary: true
+      });
+    });
+
+    editor.__pageGapState = {
+      ...gapState,
+      breakMap,
+      freezeUntil: Date.now() + 400
+    };
+  };
+
+  const updateBoundaryStabilization = (run, editor) => {
+    if (!run) {
+      return;
+    }
+
+    const currentBreakInfo = getCurrentBreakInfoMap(editor);
+    const nextSet = new Set(currentBreakInfo.keys());
+    const previousSet = run.lastBreakSet instanceof Set ? run.lastBreakSet : new Set();
+    const toggled = new Set();
+
+    previousSet.forEach((pos) => {
+      if (!nextSet.has(pos)) {
+        toggled.add(pos);
+      }
+    });
+    nextSet.forEach((pos) => {
+      if (!previousSet.has(pos)) {
+        toggled.add(pos);
+      }
+    });
+
+    toggled.forEach((pos) => {
+      const nextCount = Number(run.breakToggleCount.get(pos) || 0) + 1;
+      run.breakToggleCount.set(pos, nextCount);
+      if (nextCount >= 2) {
+        run.frozenBreaks.add(pos);
+      }
+    });
+
+    currentBreakInfo.forEach((info, pos) => run.breakInfoByPos.set(pos, info));
+    run.lastBreakSet = nextSet;
+  };
+
+  const performFullRebuild = (editor, state, run, stopReason) => {
+    if (!editor || !state || !run || run.rebuildAttempted || typeof state.__originalSetPageBreaksEnabled !== "function") {
+      return false;
+    }
+
+    run.rebuildAttempted = true;
+    resetPaginationArtifacts(editor, state, stopReason || "nonConvergent");
+    if (run.tallBlock && state.desiredOptions?.debug) {
+      console.info("[pagination] tall-block fallback used during rebuild", {
+        nodeType: run.tallBlock.type,
+        pos: run.tallBlock.pos,
+        height: run.tallBlock.height,
+        pageHeight: run.tallBlock.pageHeight
+      });
+    }
+
+    state.suppressObserverEventsUntil = Date.now() + PAGINATION_OBSERVER_SUPPRESS_MS;
+    const rebuiltCount = state.__originalSetPageBreaksEnabled(editor, true, state.desiredOptions);
+    state.suppressObserverEventsUntil = Date.now() + PAGINATION_OBSERVER_SUPPRESS_MS;
+    if (typeof rebuiltCount === "number" && Number.isFinite(rebuiltCount) && rebuiltCount > 0) {
+      editor.__pageGapState = {
+        ...(editor.__pageGapState || {}),
+        pageCount: rebuiltCount
+      };
+    }
+
+    run.beforeLastSignature = run.lastSignature;
+    run.lastSignature = getCurrentBreakSignature(editor);
+    run.stopReason = "rebuild";
+    run.stopped = true;
+    return true;
+  };
+
+  const runPaginationUpdate = (editor) => {
+    const state = getPatchedPaginationState(editor);
+    if (!state || !state.desiredEnabled || !state.desiredOptions || typeof state.__originalSetPageBreaksEnabled !== "function") {
+      return;
+    }
+
+    if (state.isRunning) {
+      state.pending = true;
+      if (!state.reentrancyLogged) {
+        state.reentrancyLogged = true;
+        console.info("[pagination] re-entrancy guard: run already active, coalescing.");
+      }
+      return;
+    }
+
+    if (!state.run) {
+      startPaginationRun(state, "update");
+    }
+
+    if (state.run?.stopped) {
+      return;
+    }
+
+    const run = state.run;
+    state.isRunning = true;
+    state.pending = false;
+    state.reentrancyLogged = false;
+    const forceThisRun = state.force;
+    state.force = false;
+
+    try {
+      const nextKey = pageBreakOptionsKey(state.desiredEnabled, state.desiredOptions);
+      if (!forceThisRun && state.appliedKey === nextKey) {
+        state.isRunning = false;
+        return;
+      }
+
+      run.passCount += 1;
+      if (run.passCount === 1) {
+        run.mergeUpBaselineBreakPos = getFirstBreakPos(editor);
+        resetPaginationArtifacts(editor, state, state.mergeUpPending ? "mergeUp" : "freshRun");
+      }
+
+      run.tallBlock = findTallBlockInfo(editor, state.desiredOptions);
+      if (run.tallBlock && editor?.__pageGapState) {
+        const breakMap = editor.__pageGapState.breakMap instanceof Map
+          ? editor.__pageGapState.breakMap
+          : new Map();
+        if (!breakMap.has(run.tallBlock.pos)) {
+          breakMap.set(run.tallBlock.pos, {
+            height: Math.max(1, Math.round(state.desiredOptions.pageGapPx || 1)),
+            pos: run.tallBlock.pos,
+            pageIndex: 1,
+            tallBlock: true
+          });
+        }
+        editor.__pageGapState.breakMap = breakMap;
+        editor.__pageGapState.freezeUntil = Date.now() + 300;
+      }
+
+      applyFrozenBreakHints(editor, run, state.desiredOptions);
+      state.suppressObserverEventsUntil = Date.now() + PAGINATION_OBSERVER_SUPPRESS_MS;
+      const count = state.__originalSetPageBreaksEnabled(editor, true, state.desiredOptions);
+      state.suppressObserverEventsUntil = Date.now() + PAGINATION_OBSERVER_SUPPRESS_MS;
+      state.appliedKey = nextKey;
+      if (typeof count === "number" && Number.isFinite(count) && count > 0) {
+        editor.__pageGapState = {
+          ...(editor.__pageGapState || {}),
+          pageCount: count
+        };
+      }
+
+      updateBoundaryStabilization(run, editor);
+
+      const signature = getCurrentBreakSignature(editor);
+      const oscillating = run.beforeLastSignature
+        && run.lastSignature
+        && run.beforeLastSignature === signature
+        && run.lastSignature !== signature;
+      const nearEqualStable = isNearEqualSignature(run.lastSignature, signature);
+
+      run.beforeLastSignature = run.lastSignature;
+      run.lastSignature = signature;
+
+      if (nearEqualStable) {
+        run.stopped = true;
+        run.stopReason = "acceptedNearEqual";
+      } else if (oscillating) {
+        if (!performFullRebuild(editor, state, run, "oscillation")) {
+          run.stopped = true;
+          run.stopReason = "oscillation";
+          logPaginationStopWarning(editor, run, "oscillation");
+        }
+      } else if (run.passCount >= PAGINATION_MAX_PASSES) {
+        if (!performFullRebuild(editor, state, run, "maxPasses")) {
+          run.stopped = true;
+          run.stopReason = "maxPasses";
+          logPaginationStopWarning(editor, run, "maxPasses");
+        }
+      }
+
+      if (state.mergeUpPending && run.stopped) {
+        const nextBreakPos = getFirstBreakPos(editor);
+        const baseline = Number(run.mergeUpBaselineBreakPos);
+        if (Number.isFinite(baseline)
+          && Number.isFinite(nextBreakPos)
+          && nextBreakPos > baseline
+          && state.desiredOptions?.debug) {
+          console.info("[pagination] merge-up moved block", {
+            fromBreakPos: baseline,
+            toBreakPos: nextBreakPos
+          });
+        }
+        state.mergeUpPending = false;
+      }
+
+      if (run.stopReason === "oscillation" || run.stopReason === "maxPasses") {
+        const stoppedAt = Date.now();
+        state.lastStopReason = run.stopReason;
+        state.lastStopTimestamp = stoppedAt;
+        state.lastStopSignature = run.lastSignature;
+        state.lastStopDocSignature = getDocSignature(editor);
+        state.lastStopViewport = getViewportMetrics(editor);
+        state.cooldownUntil = stoppedAt + PAGINATION_COOLDOWN_MS;
+      }
+      state.lastBreakSignature = run.lastSignature;
+    } finally {
+      state.isRunning = false;
+    }
+
+    if (state.pending && !state.run?.stopped) {
+      queuePaginationRun(editor, "coalesced");
+    }
+  };
+
+  if (!api.__writerPaginationWrapped && typeof api.setPageBreaksEnabled === "function") {
+    const originalSetPageBreaksEnabled = api.setPageBreaksEnabled.bind(api);
+    const originalRegisterPageBreakObserver = typeof api.registerPageBreakObserver === "function"
+      ? api.registerPageBreakObserver.bind(api)
+      : null;
+
+    api.setPageBreaksEnabled = function (editor, enabled, options) {
+      if (!editor) {
+        return 1;
+      }
+
+      const state = getPatchedPaginationState(editor);
+      if (!state) {
+        return originalSetPageBreaksEnabled(editor, enabled, options);
+      }
+
+      state.__originalSetPageBreaksEnabled = originalSetPageBreaksEnabled;
+      state.desiredEnabled = !!enabled;
+      state.desiredOptions = normalizePageBreakOptions(options);
+      state.desiredKey = pageBreakOptionsKey(state.desiredEnabled, state.desiredOptions);
+      if (!Number.isFinite(state.lastDocSize) || state.lastDocSize <= 0) {
+        state.lastDocSize = getDocSize(editor);
+      }
+
+      if (!state.desiredEnabled) {
+        if (state.rafId) {
+          window.cancelAnimationFrame(state.rafId);
+          state.rafId = 0;
+        }
+        if (state.idleTimer) {
+          window.clearTimeout(state.idleTimer);
+          state.idleTimer = 0;
+        }
+
+        state.pending = false;
+        state.force = false;
+        state.run = null;
+
+        if (state.appliedKey === state.desiredKey) {
+          return Number(editor?.__pageGapState?.pageCount ?? 1);
+        }
+
+        const count = originalSetPageBreaksEnabled(editor, false, state.desiredOptions);
+        state.appliedKey = state.desiredKey;
+        return count;
+      }
+
+      if (state.appliedKey === state.desiredKey && !state.pending && !state.isRunning) {
+        return Number(editor?.__pageGapState?.pageCount ?? 1);
+      }
+
+      queuePaginationRun(editor, "setPageBreaksEnabled");
+      return Number(editor?.__pageGapState?.pageCount ?? 1);
+    };
+
+    if (originalRegisterPageBreakObserver) {
+      api.registerPageBreakObserver = function (editor, dotNetRef, options) {
+        if (!editor) {
+          return;
+        }
+
+        const state = getPatchedPaginationState(editor);
+        if (!state) {
+          originalRegisterPageBreakObserver(editor, dotNetRef, options);
+          return;
+        }
+
+        state.desiredOptions = normalizePageBreakOptions(options);
+        state.desiredEnabled = true;
+        state.desiredKey = pageBreakOptionsKey(true, state.desiredOptions);
+
+        if (!state.observerAttached) {
+          originalRegisterPageBreakObserver(editor, dotNetRef, options);
+          state.observerAttached = true;
+        } else {
+          editor.__pageBreakState = editor.__pageBreakState || {};
+          editor.__pageBreakState.dotNetRef = dotNetRef;
+          editor.__pageBreakState.interopState = createInteropState(dotNetRef);
+          editor.__pageBreakState.options = state.desiredOptions;
+          editor.__pageBreakState.enabled = true;
+        }
+
+        queuePaginationRun(editor, "registerObserver", true);
+      };
+    }
+
+    api.requestPaginationReflow = function (editor, reason) {
+      if (!editor) {
+        return;
+      }
+
+      const state = getPatchedPaginationState(editor);
+      if (!state || !state.desiredEnabled) {
+        return;
+      }
+
+      queuePaginationRun(editor, reason || "reflow");
+    };
+
+    api.__writerPaginationWrapped = true;
+  }
+
+  const attachPaginationReflowObservers = (editor) => {
+    if (!editor || editor.__writerReflowAttached) {
+      return;
+    }
+
+    // Loop sources for non-convergent cases:
+    // ResizeObserver/window resize -> notifyLayoutChanged/requestPaginationReflow -> pagination apply
+    // -> spacer DOM/layout mutation -> observer callback again.
+    let lastObservedViewport = getViewportMetrics(editor);
+    const trigger = createDebounced(() => {
+      const state = getPatchedPaginationState(editor);
+      if (!state) {
+        return;
+      }
+
+      const now = Date.now();
+      if (Number(state.suppressObserverEventsUntil || 0) > now) {
+        return;
+      }
+
+      const nextViewport = getViewportMetrics(editor);
+      const viewportChanged = hasMeaningfulViewportChange(lastObservedViewport, nextViewport);
+      if (!viewportChanged) {
+        return;
+      }
+
+      lastObservedViewport = nextViewport;
+      try {
+        api.notifyLayoutChanged?.();
+        api.requestPaginationReflow?.(editor, "resize");
+      } catch {
+      }
+    }, 120);
+
+    const root = editor?.view?.dom;
+    const ctx = getEditorContext(editor);
+    const observed = [root, ctx?.viewport, ctx?.content, ctx?.lane].filter(Boolean);
+    const resizeObserver = typeof ResizeObserver === "function"
+      ? new ResizeObserver(() => trigger())
+      : null;
+
+    if (resizeObserver) {
+      observed.forEach((element) => resizeObserver.observe(element));
+    }
+
+    const onWindowResize = () => trigger();
+    let lastDpr = Number(window.devicePixelRatio || 1);
+    const onDprChange = () => {
+      const next = Number(window.devicePixelRatio || 1);
+      if (Math.abs(next - lastDpr) < 0.001) {
+        return;
+      }
+
+      lastDpr = next;
+      trigger();
+    };
+
+    window.addEventListener("resize", onWindowResize, { passive: true });
+    window.addEventListener("resize", onDprChange, { passive: true });
+
+    editor.__writerReflowAttached = true;
+    editor.__writerReflowCleanup = () => {
+      try {
+        resizeObserver?.disconnect();
+      } catch {
+      }
+      window.removeEventListener("resize", onWindowResize);
+      window.removeEventListener("resize", onDprChange);
+      editor.__writerReflowAttached = false;
+    };
+  };
+
+  const ensureTooltips = () => {
+    const roots = document.querySelectorAll(".editor-shell, .projects-page, .landing");
+    roots.forEach((root) => {
+      const candidates = root.querySelectorAll("button, [role='tab'], a, .project-overflow-toggle");
+      candidates.forEach((element) => {
+        if (element.hasAttribute("title")) {
+          return;
+        }
+
+        const fromAria = element.getAttribute("aria-label");
+        const text = (fromAria || element.textContent || "").trim();
+        if (!text) {
+          return;
+        }
+
+        element.setAttribute("title", text);
+      });
+    });
+  };
+
+  if (!api.__writerTooltipsInstalled) {
+    ensureTooltips();
+    const observer = new MutationObserver(() => ensureTooltips());
+    observer.observe(document.body, { childList: true, subtree: true });
+    api.__writerTooltipsInstalled = true;
+  }
+
+  if (!api.__writerContextMenuWrapped && typeof api.attachContextMenu === "function") {
+    api.attachContextMenu = function (elementId, dotNetRef) {
+      const element = document.getElementById(elementId);
+      if (!element) {
+        return;
+      }
+
+      if (element.__contextMenuHandler) {
+        element.removeEventListener("contextmenu", element.__contextMenuHandler);
+      }
+
+      const interopState = createInteropState(dotNetRef);
+      const handler = (event) => {
+        const target = event?.target instanceof Element ? event.target : null;
+        const link = target?.closest?.("a[href]");
+        if (link && element.contains(link)) {
+          event.preventDefault();
+          safeInvoke(dotNetRef, interopState, "OnEditorLinkContextMenu", event.clientX, event.clientY, link.getAttribute("href"));
+          return;
+        }
+
+        event.preventDefault();
+        safeInvoke(dotNetRef, interopState, "OnEditorContextMenu", event.clientX, event.clientY);
+      };
+
+      element.addEventListener("contextmenu", handler);
+      element.__contextMenuHandler = handler;
+      element.__contextMenuInteropState = interopState;
+    };
+
+    api.__writerContextMenuWrapped = true;
+  }
+
+  api.openFilePicker = function (elementId) {
+    const input = document.getElementById(elementId);
+    if (!input || input.tagName.toLowerCase() !== "input") {
+      return;
+    }
+
+    input.click();
+  };
+
+  api.getBrowserUserAgent = function () {
+    try {
+      return navigator?.userAgent || "";
+    } catch {
+      return "";
+    }
+  };
+
   if (!api.__waDebugWrapped && typeof api.create === "function") {
     const originalCreate = api.create.bind(api);
     api.create = function (...args) {
       const editor = originalCreate(...args);
+      editor.__dotNetRef = args[2] || null;
+      if (editor?.view && !editor.__writerPaginationDispatchWrapped) {
+        const originalDispatch = editor.view.dispatch.bind(editor.view);
+        editor.view.dispatch = (tr) => {
+          const patchState = editor.__writerPaginationPatchState;
+          const shouldMarkInternal = !!(tr?.setMeta && patchState?.isRunning);
+          if (shouldMarkInternal) {
+            tr.setMeta(PAGINATION_META_KEY, { internal: true });
+          }
+
+          const result = originalDispatch(tr);
+          const meta = tr?.getMeta ? tr.getMeta(PAGINATION_META_KEY) : null;
+          const isInternal = !!meta?.internal;
+          if (patchState) {
+            if (isInternal || shouldMarkInternal) {
+              patchState.suppressObserverEventsUntil = Date.now() + PAGINATION_OBSERVER_SUPPRESS_MS;
+            } else if (tr?.docChanged) {
+              const previousDocSize = Number(patchState.lastDocSize || 0);
+              const nextDocSize = getDocSize(editor);
+              const changedRanges = collectChangedRanges(tr);
+              clearPaginationCaches(editor, changedRanges);
+              patchState.lastUserInputAt = Date.now();
+              patchState.lastKnownDocSignature = getDocSignature(editor);
+              patchState.lastDocSize = nextDocSize;
+              if (previousDocSize > 0 && nextDocSize < previousDocSize) {
+                patchState.mergeUpPending = true;
+                if (patchState.desiredOptions?.debug) {
+                  console.info("[pagination] merge-up requested", {
+                    previousDocSize,
+                    nextDocSize
+                  });
+                }
+              }
+              patchState.cooldownUntil = 0;
+            }
+          }
+
+          return result;
+        };
+        editor.__writerOriginalDispatch = originalDispatch;
+        editor.__writerPaginationDispatchWrapped = true;
+      }
       maybeDebugEditorLayout(editor);
+      attachEditorShortcuts(editor);
+      attachLinkInteractions(editor);
+      attachPaginationReflowObservers(editor);
       return editor;
     };
     api.__waDebugWrapped = true;
+  }
+
+  if (!api.__writerDestroyWrapped && typeof api.destroy === "function") {
+    const originalDestroy = api.destroy.bind(api);
+    api.destroy = function (editor) {
+      const root = editor?.view?.dom;
+      if (root?.__writerShortcutHandler) {
+        root.removeEventListener("keydown", root.__writerShortcutHandler, true);
+        root.__writerShortcutHandler = null;
+      }
+      if (root?.__writerLinkClickHandler) {
+        root.removeEventListener("click", root.__writerLinkClickHandler, true);
+        root.__writerLinkClickHandler = null;
+      }
+      if (editor?.__writerReflowCleanup) {
+        editor.__writerReflowCleanup();
+        editor.__writerReflowCleanup = null;
+      }
+      const paginationState = editor?.__writerPaginationPatchState;
+      if (paginationState?.idleTimer) {
+        window.clearTimeout(paginationState.idleTimer);
+        paginationState.idleTimer = 0;
+      }
+      if (editor?.view && editor.__writerPaginationDispatchWrapped && editor.__writerOriginalDispatch) {
+        editor.view.dispatch = editor.__writerOriginalDispatch;
+        editor.__writerOriginalDispatch = null;
+        editor.__writerPaginationDispatchWrapped = false;
+      }
+      originalDestroy(editor);
+    };
+    api.__writerDestroyWrapped = true;
   }
 })();

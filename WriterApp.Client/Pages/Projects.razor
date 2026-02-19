@@ -84,11 +84,12 @@ else
                 <p class="projects-subtitle">Manuscript-level structure with Parts, Chapters, and Scenes.</p>
             </div>
             <div class="projects-actions">
-                <button type="button" class="primary" @onclick="CreateProjectAsync" disabled="@_creatingProject">
+                <button type="button" class="primary" title="Create a new project." @onclick="CreateProjectAsync" disabled="@_creatingProject">
                     @(_creatingProject ? "Creating..." : "New project")
                 </button>
                 <button type="button"
                         class="secondary"
+                        title="Create a project from your current document."
                         @onclick="CreateFromDocumentAsync"
                         disabled="@(_creatingFromDocument || !CurrentDocumentStateService.DocumentId.HasValue)">
                     @(_creatingFromDocument ? "Creating..." : "From current document")
@@ -117,6 +118,48 @@ else
         </div>
         @if (_activeProject is not null)
         {
+            <div class="project-name-inline">
+                <span class="project-name-label">Project name</span>
+                @if (_isProjectNameEditing)
+                {
+                    <input class="project-name-input"
+                           value="@_projectNameDraft"
+                           @oninput="OnProjectNameInput"
+                           @onkeydown="OnProjectNameKeyDown"
+                           @onblur="SaveProjectNameAsync" />
+                    <button type="button"
+                            class="secondary"
+                            title="Save project name."
+                            @onclick="SaveProjectNameAsync"
+                            disabled="@_isProjectNameSaving">
+                        @(_isProjectNameSaving ? "Saving..." : "Save")
+                    </button>
+                    <button type="button"
+                            class="secondary"
+                            title="Cancel rename."
+                            @onclick="CancelProjectNameEdit"
+                            disabled="@_isProjectNameSaving">
+                        Cancel
+                    </button>
+                }
+                else
+                {
+                    <span class="project-name-value">@_activeProject.Title</span>
+                    <button type="button"
+                            class="secondary"
+                            title="Edit project name."
+                            @onclick="BeginProjectNameEdit">
+                        Edit name
+                    </button>
+                }
+            </div>
+            @if (!string.IsNullOrWhiteSpace(_projectNameStatus))
+            {
+                <div class="projects-status">@_projectNameStatus</div>
+            }
+        }
+        @if (_activeProject is not null)
+        {
             <div class="project-entry-points">
                 <button type="button"
                         class="primary"
@@ -141,6 +184,7 @@ else
             <div class="projects-tabs" role="tablist" aria-label="Project workspace tabs">
                 <button type="button"
                         class="@GetTabClass("structure")"
+                        title="Open structure workspace."
                         @onclick='() => SelectTab("structure")'>
                     Structure
                 </button>
@@ -148,6 +192,7 @@ else
                 {
                     <button type="button"
                             class="@GetTabClass("progress")"
+                            title="Open project progress and goals."
                             @onclick='() => SelectTab("progress")'>
                         Progress
                     </button>
@@ -596,6 +641,11 @@ else
     private double _openNodeMenuY;
     private bool _shouldFocusNodeMenu;
     private string _renameDraft = string.Empty;
+    private bool _isProjectNameEditing;
+    private bool _isProjectNameSaving;
+    private string _projectNameDraft = string.Empty;
+    private string _projectNameOriginal = string.Empty;
+    private string? _projectNameStatus;
     private Guid? _dragNodeId;
     private bool _pointerDragActive;
     private Guid? _pointerDragHoverNodeId;
@@ -740,6 +790,11 @@ else
         }
 
         _activeProject = tree.Project;
+        _projectNameDraft = _activeProject.Title;
+        _projectNameOriginal = _activeProject.Title;
+        _projectNameStatus = null;
+        _isProjectNameEditing = false;
+        _isProjectNameSaving = false;
         _nodes.Clear();
         _nodes.AddRange(tree.Nodes.OrderBy(node => node.ParentId).ThenBy(node => node.OrderIndex));
         if (_selectedNodeId.HasValue && _nodes.All(node => node.Id != _selectedNodeId.Value))
@@ -1605,6 +1660,119 @@ else
         _selectedProjectId = projectId;
         await LoadTreeAsync(projectId);
         Navigation.NavigateTo($"projects/{projectId}", replace: true);
+    }
+
+    private void BeginProjectNameEdit()
+    {
+        if (_activeProject is null)
+        {
+            return;
+        }
+
+        _projectNameDraft = _activeProject.Title;
+        _projectNameOriginal = _activeProject.Title;
+        _projectNameStatus = null;
+        _isProjectNameEditing = true;
+    }
+
+    private void CancelProjectNameEdit()
+    {
+        _projectNameDraft = _projectNameOriginal;
+        _projectNameStatus = null;
+        _isProjectNameEditing = false;
+    }
+
+    private void OnProjectNameInput(ChangeEventArgs args)
+    {
+        _projectNameDraft = args.Value?.ToString() ?? string.Empty;
+        _projectNameStatus = null;
+    }
+
+    private async Task OnProjectNameKeyDown(KeyboardEventArgs args)
+    {
+        if (string.Equals(args.Key, "Enter", StringComparison.Ordinal))
+        {
+            await SaveProjectNameAsync();
+            return;
+        }
+
+        if (string.Equals(args.Key, "Escape", StringComparison.Ordinal))
+        {
+            CancelProjectNameEdit();
+        }
+    }
+
+    private async Task SaveProjectNameAsync()
+    {
+        if (_activeProject is null || _isProjectNameSaving)
+        {
+            return;
+        }
+
+        string next = (_projectNameDraft ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(next))
+        {
+            _projectNameStatus = "Project name is required.";
+            return;
+        }
+
+        if (string.Equals(next, _projectNameOriginal, StringComparison.Ordinal))
+        {
+            _isProjectNameEditing = false;
+            _projectNameStatus = null;
+            return;
+        }
+
+        ProjectDto snapshot = _activeProject;
+        int projectIndex = _projects.FindIndex(item => item.Id == snapshot.Id);
+        _isProjectNameSaving = true;
+        _projectNameStatus = null;
+
+        ProjectDto optimistic = snapshot with
+        {
+            Title = next,
+            UpdatedUtc = DateTimeOffset.UtcNow
+        };
+        _activeProject = optimistic;
+        if (projectIndex >= 0)
+        {
+            _projects[projectIndex] = optimistic;
+        }
+
+        try
+        {
+            ProjectUpdateRequest payload = new(next, null, null, null, null, null);
+            using HttpResponseMessage response = await Http.PatchAsJsonAsync($"api/projects/{snapshot.Id:D}", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                _activeProject = snapshot;
+                if (projectIndex >= 0)
+                {
+                    _projects[projectIndex] = snapshot;
+                }
+
+                _projectNameStatus = $"Rename failed: {(int)response.StatusCode}";
+                return;
+            }
+
+            _projectNameOriginal = next;
+            _projectNameDraft = next;
+            _isProjectNameEditing = false;
+        }
+        catch (Exception ex)
+        {
+            _activeProject = snapshot;
+            if (projectIndex >= 0)
+            {
+                _projects[projectIndex] = snapshot;
+            }
+
+            _projectNameStatus = $"Rename failed: {ex.Message}";
+        }
+        finally
+        {
+            _isProjectNameSaving = false;
+        }
     }
 
     private async Task CreateProjectAsync()

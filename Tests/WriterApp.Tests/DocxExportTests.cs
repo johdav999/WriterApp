@@ -183,6 +183,16 @@ namespace WriterApp.Tests
             Assert.NotNull(normal!.StyleRunProperties?.RunFonts);
             Assert.NotNull(normal.StyleRunProperties?.FontSize);
             Assert.NotNull(normal.StyleParagraphProperties?.SpacingBetweenLines);
+
+            Style? heading1 = stylesPart.Styles?.Elements<Style>()
+                .FirstOrDefault(style => string.Equals(style.StyleId?.Value, "Heading1", StringComparison.OrdinalIgnoreCase));
+            Style? heading2 = stylesPart.Styles?.Elements<Style>()
+                .FirstOrDefault(style => string.Equals(style.StyleId?.Value, "Heading2", StringComparison.OrdinalIgnoreCase));
+            Style? heading3 = stylesPart.Styles?.Elements<Style>()
+                .FirstOrDefault(style => string.Equals(style.StyleId?.Value, "Heading3", StringComparison.OrdinalIgnoreCase));
+            Assert.NotNull(heading1);
+            Assert.NotNull(heading2);
+            Assert.NotNull(heading3);
         }
 
         [Fact]

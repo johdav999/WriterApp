@@ -80,7 +80,13 @@ else
                         <button type="button" disabled="@(!_formattingState.CanDeleteTable)" title='@GetTooltip("Delete current table.")' @onclick="OnDeleteTableRequested">Del table</button>
                     </div>
                     <div class="editor-toolbar-group" aria-label="Image">
-                        <label for="editor-image-upload" class="editor-toolbar-upload-button">Image</label>
+                        <button type="button"
+                                class="editor-toolbar-upload-button"
+                                disabled="@(!_formattingState.CanInsertImage)"
+                                title='@GetTooltip("Insert image from your device.")'
+                                @onclick="OnInsertImageRequested">
+                            Image
+                        </button>
                         <InputFile @key="_imageUploadInputKey"
                                    id="editor-image-upload"
                                    class="editor-image-upload-input"
@@ -131,6 +137,7 @@ else
                 <div class="editor-actions">
                     <button type="button" title='@GetTooltip("Undo last change.")' @onclick="OnUndoRequested">Undo</button>
                     <button type="button" title='@GetTooltip("Redo last change.")' @onclick="OnRedoRequested">Redo</button>
+                    <button type="button" title='@GetTooltip("User feedback: Report a bug or request an enhancement.")' @onclick="OpenFeedbackDialog">User Feedback</button>
                     @if (CanShowPromptLibrary && PinnedPromptPresets.Count > 0)
                     {
                         <div class="revise-tools">
@@ -152,14 +159,16 @@ else
                                 <button type="button" @onclick="OnSaveNow">Save now</button>
                                 <button type="button" @onclick="PromptImportCurrentSection">Import...</button>
                                 <button type="button" @onclick="OnExportDialogOpenAsync">Export...</button>
-                                <button type="button" @onclick='@(() => OnExportRequested("synopsis", "markdown"))'>Export Synopsis (Markdown)</button>
-                                <button type="button" @onclick='@(() => OnExportRequested("synopsis", "html"))'>Export Synopsis (HTML)</button>
                             </div>
                         }
                     </div>
                     @if (IsAiQuotaExceeded)
                     {
                         <span class="ai-quota-message">You've reached your monthly AI limit.</span>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(_feedbackBannerMessage))
+                    {
+                        <span class="version-status" title="Feedback delivery status.">@_feedbackBannerMessage</span>
                     }
                 </div>
 
@@ -452,7 +461,9 @@ else
                                             SearchHighlightQuery="@SearchQuery"
                                             FormattingChanged="OnFormattingChanged"
                                             SelectionChanged="OnSelectionChanged"
+                                            LinkShortcutRequested="OnLinkShortcutRequested"
                                             ContextMenuRequested="OnEditorContextMenuRequested"
+                                            LinkContextMenuRequested="OnEditorLinkContextMenuRequested"
                                             SelectionBubbleChanged="OnSelectionBubbleChanged" />
                                 @if (_selectionBubbleVisible)
                                 {
@@ -515,6 +526,7 @@ else
                                                 role="tab"
                                                 tabindex="@(_activePanelCategory == category ? 0 : -1)"
                                                 aria-selected="@(_activePanelCategory == category)"
+                                                title='@GetPanelCategoryTooltip(category)'
                                                 @onkeydown="(args) => OnPrimaryTabsKeyDown(args, category)"
                                                 @onclick="() => SetPanelCategoryAsync(category)">
                                             @GetPanelCategoryLabel(category)
@@ -531,6 +543,7 @@ else
                                                     role="tab"
                                                     tabindex="@(_activeContextTab == tab ? 0 : -1)"
                                                     aria-selected="@(_activeContextTab == tab)"
+                                                    title='@GetContextTabTooltip(tab)'
                                                     @onkeydown="(args) => OnSecondaryTabsKeyDown(args, tab)"
                                                     @onclick="() => SetContextTabAsync(tab)">
                                                 @GetContextTabLabel(tab)
@@ -566,12 +579,12 @@ else
                             }
                             else if (_activeContextTab == ContextTab.Ai)
                             {
-                                <div class="rp-title">AI tools</div>
+                                <div class="rp-title">Writing tools</div>
                                 <div class="rp-subtitle">Run a command on the page or selection.</div>
                             }
                             else if (_activeContextTab == ContextTab.Continuity)
                             {
-                                <div class="rp-title">Continuity coach</div>
+                                <div class="rp-title">Consistency</div>
                                 <div class="rp-subtitle">Check character/place/timeline consistency.</div>
                             }
                             else if (_activeContextTab == ContextTab.PromptLibrary)
@@ -609,7 +622,7 @@ else
                             }
                             else if (_activeContextTab == ContextTab.Quality)
                             {
-                                <div class="rp-title">Quality checks</div>
+                                <div class="rp-title">Style & quality</div>
                                 <div class="quality-toolbar">
                                     <div class="quality-filter">
                                         <label class="quality-filter-label">Scope</label>
@@ -643,6 +656,7 @@ else
                                     <button type="button"
                                             class="quality-refresh primary"
                                             disabled="@_qualityLoading"
+                                            title='@GetTooltip("Quality check: Analyze the current scope and list style issues.")'
                                             @onclick="RunQualityChecksAsync">
                                         @(_qualityLoading ? "Scanning..." : GetQualityRunButtonLabel())
                                     </button>
@@ -667,10 +681,10 @@ else
                         }
                     </Header>
                     <Body>
-                        @if (ShowSceneCoachCard)
+                        @if (ShowContextCoachCard)
                         {
-                            var coach = BuildSceneCoachRecommendation();
-                            <CoachCard Recommendation="coach" OnPrimaryAction="OnSceneCoachPrimaryActionAsync" />
+                            var coach = BuildContextCoachRecommendation();
+                            <CoachCard Recommendation="coach" OnPrimaryAction="OnContextCoachPrimaryActionAsync" />
                         }
                         @if (_isDiffMode)
                         {
@@ -920,7 +934,7 @@ else
                                             <div class="ai-action-group-title">Selection actions</div>
                                             @if (!SelectionAiActions.Any())
                                             {
-                                                <div class="ai-action-description">Select text to enable.</div>
+                                                <div class="ai-selection-hint">Select text to enable selection actions.</div>
                                             }
                                             else
                                             {
@@ -929,14 +943,11 @@ else
                                                     <div class="ai-action-item">
                                                         <button type="button"
                                                                 disabled="@(_currentSelectionRange is null || IsAiQuotaExceeded)"
+                                                                title='@GetAiActionTooltip(action)'
                                                                 @onmousedown:preventDefault="true"
                                                                 @onclick="() => OnAiActionSelected(action)">
                                                             @action.Label
                                                         </button>
-                                                        @if (!string.IsNullOrWhiteSpace(action.Description))
-                                                        {
-                                                            <div class="ai-action-description">@action.Description</div>
-                                                        }
                                                     </div>
                                                 }
                                             }
@@ -948,13 +959,10 @@ else
                                                 <div class="ai-action-item">
                                                     <button type="button"
                                                             disabled="@IsAiQuotaExceeded"
+                                                            title='@GetAiActionTooltip(action)'
                                                             @onclick="() => OnAiActionSelected(action)">
                                                         @action.Label
                                                     </button>
-                                                    @if (!string.IsNullOrWhiteSpace(action.Description))
-                                                    {
-                                                        <div class="ai-action-description">@action.Description</div>
-                                                    }
                                                 </div>
                                             }
                                         </div>
@@ -964,6 +972,7 @@ else
                                 <div class="ai-history-toolbar">
                                     <button type="button"
                                             class="ai-history-button"
+                                            title='@GetTooltip("History: Reload AI command history for this document.")'
                                             @onclick="LoadAiHistoryAsync">
                                         Refresh history
                                     </button>
@@ -1045,7 +1054,7 @@ else
                             <div class="drawer-panel ai-panel">
                                 @if (!CanShowContinuityCoach)
                                 {
-                                    <div class="drawer-empty">Continuity Coach is disabled.</div>
+                                    <div class="drawer-empty">Consistency checks are disabled.</div>
                                 }
                                 else
                                 {
@@ -1935,6 +1944,13 @@ else
                 </div>
             }
             <div class="export-panel-row">
+                <label class="export-panel-label" for="export-content">Content</label>
+                <select id="export-content" class="export-panel-select" @bind="_exportContentSelection" @bind:after="MarkPresetAsCustom">
+                    <option value="document">Document</option>
+                    <option value="synopsis">Synopsis</option>
+                </select>
+            </div>
+            <div class="export-panel-row">
                 <label class="export-panel-label" for="export-format">Format</label>
                 <select id="export-format" class="export-panel-select" @bind="_exportFormatSelection" @bind:after="MarkPresetAsCustom">
                     <option value="html">HTML</option>
@@ -1943,11 +1959,14 @@ else
                     {
                         <option value="docx">DOCX</option>
                     }
-                    @if (_epubExportEnabled)
+                    @if (_epubExportEnabled && string.Equals(_exportContentSelection, "document", StringComparison.OrdinalIgnoreCase))
                     {
                         <option value="epub">EPUB</option>
                     }
-                    <option value="pdf">PDF (print)</option>
+                    @if (string.Equals(_exportContentSelection, "document", StringComparison.OrdinalIgnoreCase))
+                    {
+                        <option value="pdf">PDF (print)</option>
+                    }
                 </select>
             </div>
             <div class="export-panel-row">
@@ -1972,6 +1991,8 @@ else
                     </select>
                 }
             </div>
+            @if (string.Equals(_exportContentSelection, "document", StringComparison.OrdinalIgnoreCase))
+            {
             <div class="export-panel-row">
                 <label class="export-panel-label" for="preview-scope">Scope</label>
                 <select id="preview-scope" class="export-panel-select" @bind="_exportScopeType" @bind:after="MarkPresetAsCustom">
@@ -2087,6 +2108,7 @@ else
                 <button type="button" class="link-button" @onclick="OpenTemplateManagerAsync">Manage templates...</button>
                 <span class="export-panel-hint">Templates apply to HTML/PDF/DOCX exports.</span>
             </div>
+            }
             @if (!string.IsNullOrWhiteSpace(_templateLoadError))
             {
                 <div class="modal-error">@_templateLoadError</div>
@@ -2105,8 +2127,14 @@ else
             }
             </div>
             <div class="modal-footer">
-                <button type="button" @onclick="OpenPreviewAsync" disabled="@_isTemplatesLoading">Preview</button>
-                <button type="button" @onclick="ExecuteExportSelectionAsync" disabled="@_isTemplatesLoading">Export</button>
+                <button type="button"
+                        title="@GetExportPreviewButtonTooltip()"
+                        @onclick="OpenPreviewAsync"
+                        disabled="@_isTemplatesLoading">@GetExportPreviewButtonLabel()</button>
+                <button type="button"
+                        title="@GetExportSubmitButtonTooltip()"
+                        @onclick="ExecuteExportSelectionAsync"
+                        disabled="@_isTemplatesLoading">Export</button>
                 <button type="button" @onclick="CloseExportDialog">Cancel</button>
             </div>
         </div>
@@ -2247,7 +2275,7 @@ else
         @* Standard modal layout *@
         <div class="modal export-preview modal-panel" role="dialog" aria-modal="true" style="@GetPreviewStyle()" @onclick:stopPropagation="true">
             <div class="modal-header">
-                <div class="modal-title">Export preview</div>
+                <div class="modal-title">@GetExportPreviewTitle()</div>
             </div>
             <div class="modal-body">
                 <div class="preview-layout">
@@ -2419,5 +2447,67 @@ else
                 }
             </div>
         }
+    </div>
+}
+
+@if (_isLinkContextMenuOpen)
+{
+    <div class="editor-context-menu-backdrop" @onclick="CloseLinkContextMenu"></div>
+    <div class="editor-context-menu"
+         style="@GetLinkContextMenuStyle()"
+         tabindex="-1"
+         role="menu"
+         @onclick:stopPropagation="true"
+         @onkeydown="OnLinkContextMenuKeyDown">
+        <div class="editor-context-menu-group">
+            <div class="editor-context-menu-label">Link</div>
+            <button type="button" @onclick="OpenLinkFromContextMenu">Open link</button>
+            <button type="button" @onclick="EditLinkFromContextMenu">Edit link</button>
+            <button type="button" @onclick="RemoveLinkFromContextMenu">Remove link</button>
+        </div>
+    </div>
+}
+
+@if (_isFeedbackDialogOpen)
+{
+    <div class="modal-backdrop" @onclick="CloseFeedbackDialog"></div>
+    <div class="modal feedback-dialog" role="dialog" aria-modal="true" aria-labelledby="feedbackDialogTitle">
+        <header>
+            <h2 id="feedbackDialogTitle">User feedback</h2>
+            <button type="button" @onclick="CloseFeedbackDialog">Close</button>
+        </header>
+        <div class="modal-body feedback-form">
+            <label class="export-panel-label" for="feedback-type">Type</label>
+            <select id="feedback-type" class="export-panel-select" @bind="_feedbackType">
+                <option value="bug">Bug</option>
+                <option value="enhancement">Enhancement</option>
+            </select>
+
+            <label class="export-panel-label" for="feedback-subject">Title</label>
+            <input id="feedback-subject" class="export-panel-input" maxlength="120" @bind="_feedbackSubject" />
+
+            <label class="export-panel-label" for="feedback-description">Description</label>
+            <textarea id="feedback-description"
+                      class="notes-input scene-card-input"
+                      rows="6"
+                      maxlength="4000"
+                      @bind="_feedbackDescription"></textarea>
+
+            <label class="export-panel-checkbox">
+                <input type="checkbox" @bind="_feedbackIncludeDiagnostics" />
+                <span>Include page URL, app version, and browser details</span>
+            </label>
+
+            @if (!string.IsNullOrWhiteSpace(_feedbackErrorMessage))
+            {
+                <div class="modal-error">@_feedbackErrorMessage</div>
+            }
+        </div>
+        <footer>
+            <button type="button" class="btn btn-ghost" @onclick="CloseFeedbackDialog">Cancel</button>
+            <button type="button" class="btn btn-primary" disabled="@_feedbackSubmitting" @onclick="SubmitFeedbackAsync">
+                @(_feedbackSubmitting ? "Sending..." : "OK")
+            </button>
+        </footer>
     </div>
 }
