@@ -2780,11 +2780,21 @@
 
 .feedback-dialog {
     width: min(700px, 94vw);
+    z-index: 2;
 }
 
 .feedback-form {
     display: grid;
     gap: 10px;
+}
+
+.focus-sentinel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
 }
 
 .ai-quota-message {
@@ -3171,6 +3181,7 @@
     padding: 18px 24px;
     display: grid;
     gap: 12px;
+    background: #ffffff;
 }
 
 .diff-empty {
@@ -3224,6 +3235,7 @@
     gap: 8px;
     font-size: 1rem;
     line-height: 1.6;
+    background: #ffffff;
 }
 
 .diff-line {
@@ -3304,6 +3316,7 @@
     gap: 8px;
     font-size: 0.95rem;
     line-height: 1.6;
+    background: #ffffff;
 }
 
 .diff-panel {

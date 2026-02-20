@@ -895,6 +895,12 @@ else
         return UpdatePageBreaksAsync(force: true);
     }
 
+    public Task SchedulePageBreakRefreshAsync()
+    {
+        SchedulePageBreakUpdate();
+        return Task.CompletedTask;
+    }
+
     private void SchedulePageBreakUpdate()
     {
         _pageBreakCts?.Cancel();

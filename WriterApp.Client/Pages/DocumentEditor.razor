@@ -66,6 +66,7 @@ else
                             <option value="paragraph">Paragraph</option>
                             <option value="heading:1">Heading 1</option>
                             <option value="heading:2">Heading 2</option>
+                            <option value="heading:3">Heading 3</option>
                         </select>
                         <button type="button" disabled="@(!_formattingState.CanToggleList)" title='@GetTooltip("Create a bulleted list.")' @onclick="OnBulletListRequested">Bulleted list</button>
                         <button type="button" disabled="@(!_formattingState.CanToggleList)" title='@GetTooltip("Create a numbered list.")' @onclick="OnOrderedListRequested">Numbered list</button>
@@ -90,6 +91,7 @@ else
                         <InputFile @key="_imageUploadInputKey"
                                    id="editor-image-upload"
                                    class="editor-image-upload-input"
+                                   style="display:none"
                                    accept="image/png,image/jpeg,image/gif,image/webp"
                                    OnChange="OnImageFileSelected" />
                         <button type="button" disabled="@(!_formattingState.CanInsertImage)" title='@GetTooltip("Insert image from URL.")' @onclick="OnInsertImageFromUrlRequested">Image URL</button>
@@ -2470,15 +2472,25 @@ else
 
 @if (_isFeedbackDialogOpen)
 {
-    <div class="modal-backdrop" @onclick="CloseFeedbackDialog"></div>
-    <div class="modal feedback-dialog" role="dialog" aria-modal="true" aria-labelledby="feedbackDialogTitle">
+    <div class="modal-overlay modal-overlay-dimmed" @onclick="CloseFeedbackDialog">
+    <div class="modal-backdrop"></div>
+    <div class="modal feedback-dialog modal-panel"
+         role="dialog"
+         aria-modal="true"
+         aria-labelledby="feedbackDialogTitle"
+         @onkeydown="OnFeedbackDialogKeyDown"
+         @onclick:stopPropagation="true">
+        <span class="focus-sentinel" tabindex="0" @onfocus="FocusFeedbackLastAsync"></span>
         <header>
             <h2 id="feedbackDialogTitle">User feedback</h2>
             <button type="button" @onclick="CloseFeedbackDialog">Close</button>
         </header>
         <div class="modal-body feedback-form">
             <label class="export-panel-label" for="feedback-type">Type</label>
-            <select id="feedback-type" class="export-panel-select" @bind="_feedbackType">
+            <select id="feedback-type"
+                    class="export-panel-select"
+                    @bind="_feedbackType"
+                    @ref="_feedbackTypeSelectRef">
                 <option value="bug">Bug</option>
                 <option value="enhancement">Enhancement</option>
             </select>
@@ -2505,9 +2517,15 @@ else
         </div>
         <footer>
             <button type="button" class="btn btn-ghost" @onclick="CloseFeedbackDialog">Cancel</button>
-            <button type="button" class="btn btn-primary" disabled="@_feedbackSubmitting" @onclick="SubmitFeedbackAsync">
+            <button type="button"
+                    class="btn btn-primary"
+                    disabled="@_feedbackSubmitting"
+                    @ref="_feedbackSubmitButtonRef"
+                    @onclick="SubmitFeedbackAsync">
                 @(_feedbackSubmitting ? "Sending..." : "OK")
             </button>
         </footer>
+        <span class="focus-sentinel" tabindex="0" @onfocus="FocusFeedbackFirstAsync"></span>
+    </div>
     </div>
 }

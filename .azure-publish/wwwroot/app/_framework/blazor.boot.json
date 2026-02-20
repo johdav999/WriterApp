@@ -1,7 +1,7 @@
 {
   "mainAssemblyName": "WriterApp.Client",
   "resources": {
-    "hash": "sha256-2bJIP95TQsc6xMCWHSIPf+OFXSimOdHUXm3Fw0FpR28=",
+    "hash": "sha256-A0toksVQ6g9p7n3r5oFXptxKsE7XMYmCZEv2AgizkiE=",
     "fingerprinting": {
       "Microsoft.AspNetCore.Components.sesh4h41uk.wasm": "Microsoft.AspNetCore.Components.wasm",
       "Microsoft.AspNetCore.Components.Web.rx3l6ug63j.wasm": "Microsoft.AspNetCore.Components.Web.wasm",
@@ -45,8 +45,8 @@
       "System.Text.RegularExpressions.pk7hijtxzi.wasm": "System.Text.RegularExpressions.wasm",
       "System.Threading.n5ppejuuhz.wasm": "System.Threading.wasm",
       "System.7mkjnfwul0.wasm": "System.wasm",
-      "WriterApp.Client.bavt8ue2k1.wasm": "WriterApp.Client.wasm",
-      "WriterApp.Shared.db94iq4wm7.wasm": "WriterApp.Shared.wasm",
+      "WriterApp.Client.2lr0aw98ap.wasm": "WriterApp.Client.wasm",
+      "WriterApp.Shared.yxn19yz4hc.wasm": "WriterApp.Shared.wasm",
       "dotnet.native.p1cagcp2co.js": "dotnet.native.js",
       "dotnet.native.pa6hdg5vfb.wasm": "dotnet.native.wasm",
       "dotnet.js": "dotnet.js",
@@ -114,8 +114,8 @@
       "System.Text.RegularExpressions.pk7hijtxzi.wasm": "sha256-ZzF2u+aZHzeF5TXDOoaAveth2Oo7g29HrwhUVu++8aU=",
       "System.Threading.n5ppejuuhz.wasm": "sha256-ZVqAdmVQkqedPOVid8yORJq6/P4I+NlvR19QR4PIQfY=",
       "System.7mkjnfwul0.wasm": "sha256-H4K9w0OHWwZCaMDfVwQjW0dSqnnS/iuCkysBB+Q2c3A=",
-      "WriterApp.Client.bavt8ue2k1.wasm": "sha256-XRyHuE+CSFqylSc3aJ8AJA9ctJI8AtQWcp3QM79nkjQ=",
-      "WriterApp.Shared.db94iq4wm7.wasm": "sha256-170UuyX8GH3Qy/4MGkE4Jy9GwtYxiHapy/dfqoQuShE="
+      "WriterApp.Client.2lr0aw98ap.wasm": "sha256-WhrzEiPAfeHa10EMwETro3DDJATa+DIV4PGtGJ8o74M=",
+      "WriterApp.Shared.yxn19yz4hc.wasm": "sha256-dtDq0HxUG1M3D5bdP9QS/yJpV5PVoQgAPe+pRkJID+c="
     }
   },
   "cacheBootResources": true,
