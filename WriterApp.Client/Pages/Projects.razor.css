@@ -334,7 +334,7 @@
 }
 
 .tree-row {
-    --depth-step: 18px;
+    --depth-step: 12px;
     display: grid;
     /* indent | disclosure | drag | badge | title (only flexible) | menu */
     grid-template-columns: calc(var(--depth) * var(--depth-step)) 24px 28px max-content minmax(0, 1fr) 28px;

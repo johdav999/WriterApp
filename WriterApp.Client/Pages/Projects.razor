@@ -1104,6 +1104,7 @@ else
         builder.OpenElement(seq++, "div");
         builder.AddAttribute(seq++, "class", isSelected ? "tree-row is-selected" : "tree-row");
         builder.AddAttribute(seq++, "style", $"--depth:{depth}");
+        builder.AddAttribute(seq++, "title", displayTitle);
         builder.AddAttribute(seq++, "tabindex", "0");
         builder.AddAttribute(seq++, "role", "treeitem");
         builder.AddAttribute(seq++, "aria-selected", isSelected ? "true" : "false");
@@ -1146,6 +1147,7 @@ else
 
         builder.OpenElement(seq++, "span");
         builder.AddAttribute(seq++, "class", $"tree-node-badge {GetNodeBadgeClass(node.NodeType)}");
+        builder.AddAttribute(seq++, "title", displayTitle);
         builder.AddContent(seq++, GetNodeTypeLabel(node.NodeType));
         builder.CloseElement();
 
@@ -1168,6 +1170,7 @@ else
         {
             builder.OpenElement(seq++, "div");
             builder.AddAttribute(seq++, "class", "tree-select");
+            builder.AddAttribute(seq++, "title", displayTitle);
             builder.OpenElement(seq++, "span");
             builder.AddAttribute(seq++, "class", "tree-select-title");
             builder.AddAttribute(seq++, "title", displayTitle);

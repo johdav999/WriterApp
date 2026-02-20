@@ -158,6 +158,9 @@ namespace WriterApp.Client.Pages
         private bool _feedbackIncludeDiagnostics = true;
         private string? _feedbackErrorMessage;
         private string? _feedbackBannerMessage;
+        private bool _focusFeedbackDialogOnRender;
+        private ElementReference _feedbackTypeSelectRef;
+        private ElementReference _feedbackSubmitButtonRef;
         private string? _imageUploadError;
         private bool _isExportDialogOpen;
         private bool _isTemplateManagerOpen;
@@ -422,7 +425,7 @@ namespace WriterApp.Client.Pages
         private bool _diffLoading;
         private string? _diffError;
         private string _diffGranularity = "word";
-        private string _diffViewMode = "inline";
+        private string _diffViewMode = "side";
         private bool _isDiffMode;
         private bool _diffShowDeletions;
         private bool _diffSyncScroll = true;
@@ -650,6 +653,12 @@ namespace WriterApp.Client.Pages
             {
                 _pendingContinuityHighlights = false;
                 await ApplyContinuityHighlightsAsync();
+            }
+
+            if (_focusFeedbackDialogOnRender && _isFeedbackDialogOpen)
+            {
+                _focusFeedbackDialogOnRender = false;
+                await _feedbackTypeSelectRef.FocusAsync();
             }
         }
 
@@ -1986,6 +1995,7 @@ namespace WriterApp.Client.Pages
             _isFeedbackDialogOpen = true;
             _feedbackErrorMessage = null;
             _feedbackBannerMessage = null;
+            _focusFeedbackDialogOnRender = true;
         }
 
         private void CloseFeedbackDialog()
@@ -1997,6 +2007,25 @@ namespace WriterApp.Client.Pages
 
             _isFeedbackDialogOpen = false;
             _feedbackErrorMessage = null;
+            _focusFeedbackDialogOnRender = false;
+        }
+
+        private void OnFeedbackDialogKeyDown(KeyboardEventArgs args)
+        {
+            if (string.Equals(args.Key, "Escape", StringComparison.Ordinal))
+            {
+                CloseFeedbackDialog();
+            }
+        }
+
+        private async Task FocusFeedbackFirstAsync(FocusEventArgs _)
+        {
+            await _feedbackTypeSelectRef.FocusAsync();
+        }
+
+        private async Task FocusFeedbackLastAsync(FocusEventArgs _)
+        {
+            await _feedbackSubmitButtonRef.FocusAsync();
         }
 
         private async Task SubmitFeedbackAsync()
@@ -10459,7 +10488,7 @@ private const string PreviewBootstrapScript = @"
 
         private async Task OnDiffViewModeChanged(ChangeEventArgs args)
         {
-            _diffViewMode = args.Value?.ToString() ?? "inline";
+            _diffViewMode = args.Value?.ToString() ?? "side";
             await InvokeAsync(StateHasChanged);
         }
 
@@ -11230,6 +11259,7 @@ private const string PreviewBootstrapScript = @"
                 }
 
                 await _pageEditor.SetContentAsync(payload.Content, markDirty: true);
+                await _pageEditor.SchedulePageBreakRefreshAsync();
                 await _pageEditor.SaveNowAsync();
                 await LoadAiHistoryAsync();
             }
@@ -11273,6 +11303,7 @@ private const string PreviewBootstrapScript = @"
                 }
 
                 await _pageEditor.SetContentAsync(payload.Content, markDirty: true);
+                await _pageEditor.SchedulePageBreakRefreshAsync();
                 await _pageEditor.SaveNowAsync();
                 await LoadAiHistoryAsync();
             }

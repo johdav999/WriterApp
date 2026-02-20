@@ -1474,40 +1474,65 @@
       return false;
     }
 
+    if ((key === "c" || key === "x" || key === "v") && !event.shiftKey && !event.altKey) {
+      return false;
+    }
+
     if (key === "b") {
-      event.preventDefault();
-      return applyShortcut(editor, "toggleBold");
+      const handled = applyShortcut(editor, "toggleBold");
+      if (handled) {
+        event.preventDefault();
+      }
+      return handled;
     }
 
     if (key === "i") {
-      event.preventDefault();
-      return applyShortcut(editor, "toggleItalic");
+      const handled = applyShortcut(editor, "toggleItalic");
+      if (handled) {
+        event.preventDefault();
+      }
+      return handled;
     }
 
     if (key === "u" && editor?.commands && typeof editor.commands.toggleUnderline === "function") {
-      event.preventDefault();
-      return applyShortcut(editor, "toggleUnderline");
+      const handled = applyShortcut(editor, "toggleUnderline");
+      if (handled) {
+        event.preventDefault();
+      }
+      return handled;
     }
 
     if (key === "k") {
+      if (!editor.__dotNetRef) {
+        return false;
+      }
       event.preventDefault();
       safeInvoke(editor.__dotNetRef, editor.__interopState || createInteropState(editor.__dotNetRef), "OnEditorLinkShortcut");
       return true;
     }
 
     if (key === "z" && !event.shiftKey) {
-      event.preventDefault();
-      return applyShortcut(editor, "undo");
+      const handled = applyShortcut(editor, "undo");
+      if (handled) {
+        event.preventDefault();
+      }
+      return handled;
     }
 
     if (key === "y" || (key === "z" && event.shiftKey)) {
-      event.preventDefault();
-      return applyShortcut(editor, "redo");
+      const handled = applyShortcut(editor, "redo");
+      if (handled) {
+        event.preventDefault();
+      }
+      return handled;
     }
 
     if (key === "x" && event.shiftKey) {
-      event.preventDefault();
-      return applyShortcut(editor, "toggleStrike");
+      const handled = applyShortcut(editor, "toggleStrike");
+      if (handled) {
+        event.preventDefault();
+      }
+      return handled;
     }
 
     return false;
