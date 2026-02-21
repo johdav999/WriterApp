@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { ProductMock } from "@/components/product-mock"
+import { APP_LINKS } from "@/lib/app-links"
 
 const benefitChips = [
   "Scene-based writing",
@@ -37,7 +38,7 @@ export function Hero() {
             </p>
             <div className="flex flex-wrap gap-3 pt-2">
               <Button size="lg" asChild>
-                <a href="#start-free">Start free</a>
+                <a href={APP_LINKS.startFree}>Start free</a>
               </Button>
               <Button variant="outline" size="lg" asChild>
                 <a href="#pricing">Explore pricing</a>

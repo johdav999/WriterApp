@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button"
+import { APP_LINKS } from "@/lib/app-links"
 
 export function FinalCta() {
   return (
@@ -13,7 +14,7 @@ export function FinalCta() {
         </p>
         <div className="mt-8 flex flex-wrap justify-center gap-3">
           <Button size="lg" asChild>
-            <a href="#start-free">Start free</a>
+            <a href={APP_LINKS.startFree}>Start free</a>
           </Button>
           <Button variant="outline" size="lg" asChild>
             <a href="#pricing">See pricing</a>
