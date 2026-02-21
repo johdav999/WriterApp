@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
+import { APP_LINKS } from "@/lib/app-links"
 import { Menu, X } from "lucide-react"
 
 const navLinks = [
@@ -38,10 +39,10 @@ export function Navbar() {
         {/* Desktop CTAs */}
         <div className="hidden items-center gap-3 md:flex">
           <Button variant="ghost" size="sm" asChild>
-            <a href="#sign-in">Sign in</a>
+            <a href={APP_LINKS.login}>Sign in</a>
           </Button>
           <Button size="sm" asChild>
-            <a href="#start-free">Start free</a>
+            <a href={APP_LINKS.startFree}>Start free</a>
           </Button>
         </div>
 
@@ -73,10 +74,10 @@ export function Navbar() {
           </ul>
           <div className="mt-4 flex flex-col gap-2">
             <Button variant="outline" size="sm" asChild>
-              <a href="#sign-in">Sign in</a>
+              <a href={APP_LINKS.login}>Sign in</a>
             </Button>
             <Button size="sm" asChild>
-              <a href="#start-free">Start free</a>
+              <a href={APP_LINKS.startFree}>Start free</a>
             </Button>
           </div>
         </div>

@@ -143,7 +143,14 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
     options.KnownProxies.Clear();
 });
 
-builder.Services.AddHttpsRedirection(options => options.HttpsPort = 443);
+if (builder.Environment.IsDevelopment())
+{
+    builder.Services.AddHttpsRedirection(_ => { });
+}
+else
+{
+    builder.Services.AddHttpsRedirection(options => options.HttpsPort = 443);
+}
 
 // Domain services
 builder.Services.AddScoped<IPlanRepository, PlanRepository>();
@@ -393,7 +400,17 @@ using (IServiceScope scope = app.Services.CreateScope())
     }
     catch (Exception ex)
     {
-        logger.LogWarning(ex, "Startup trash cleanup failed.");
+        try
+        {
+            logger.LogWarning(ex, "Startup trash cleanup failed.");
+        }
+        catch (Exception logEx)
+        {
+            Console.Error.WriteLine(
+                $"Startup trash cleanup failed and could not be logged via ILogger. " +
+                $"CleanupError: {ex.GetType().Name}: {ex.Message}; " +
+                $"LoggingError: {logEx.GetType().Name}: {logEx.Message}");
+        }
     }
 
     ApplySqlitePragmas(dbContext, logger);
@@ -456,7 +473,10 @@ if (openAiOptions.Enabled && !openAiKeyProvider.HasKey)
 // --------------------
 
 app.UseForwardedHeaders();
-app.UseHttpsRedirection();
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
 
 if (!app.Environment.IsDevelopment())
 {
@@ -649,6 +669,27 @@ app.MapGet("/projects/{*path}", (HttpContext context, string? path) =>
         ? context.Request.QueryString.Value ?? string.Empty
         : string.Empty;
     return Results.Redirect($"/app/projects{suffix}{query}");
+});
+app.MapGet("/login", (HttpContext context) =>
+{
+    string query = context.Request.QueryString.HasValue
+        ? context.Request.QueryString.Value ?? string.Empty
+        : string.Empty;
+    return Results.Redirect($"/app/login{query}", permanent: false);
+});
+app.MapGet("/start", (HttpContext context) =>
+{
+    string query = context.Request.QueryString.HasValue
+        ? context.Request.QueryString.Value ?? string.Empty
+        : string.Empty;
+    return Results.Redirect($"/app/start{query}", permanent: false);
+});
+app.MapGet("/billing/checkout", (HttpContext context) =>
+{
+    string query = context.Request.QueryString.HasValue
+        ? context.Request.QueryString.Value ?? string.Empty
+        : string.Empty;
+    return Results.Redirect($"/app/billing/checkout{query}", permanent: false);
 });
 
 app.MapGet("/__ping", () => Results.Ok("pong"));

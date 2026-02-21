@@ -1,0 +1,69 @@
+@page "/login"
+@page "/app/login"
+@using Microsoft.AspNetCore.Components.WebAssembly.Hosting
+@using WriterApp.Client.Utilities
+@inject NavigationManager Navigation
+@inject IWebAssemblyHostEnvironment HostEnvironment
+
+<PageTitle>Sign in</PageTitle>
+
+<p>@_statusMessage</p>
+
+@code {
+    private const string DefaultReturnUrl = "/projects";
+    private string _statusMessage = "Redirecting to sign in...";
+
+    protected override void OnInitialized()
+    {
+        Uri currentUri = Navigation.ToAbsoluteUri(Navigation.Uri);
+        string returnUrl = ResolveReturnUrl(currentUri.Query);
+
+        if (HostEnvironment.IsDevelopment() || currentUri.IsLoopback)
+        {
+            _statusMessage = "Signed in (dev). Redirecting...";
+            Navigation.NavigateTo(returnUrl, forceLoad: true);
+            return;
+        }
+
+        Uri absoluteReturnUri = Navigation.ToAbsoluteUri(returnUrl);
+        string encodedReturnUri = Uri.EscapeDataString(absoluteReturnUri.ToString());
+        string loginUrl = $"/.auth/login/aad?post_login_redirect_uri={encodedReturnUri}";
+        Navigation.NavigateTo(loginUrl, forceLoad: true);
+    }
+
+    private static string ResolveReturnUrl(string queryString)
+    {
+        if (string.IsNullOrWhiteSpace(queryString))
+        {
+            return DefaultReturnUrl;
+        }
+
+        Dictionary<string, string> query = QueryStringParser.Parse(queryString);
+        if (!query.TryGetValue("returnUrl", out string? candidate))
+        {
+            return DefaultReturnUrl;
+        }
+
+        if (string.IsNullOrWhiteSpace(candidate))
+        {
+            return DefaultReturnUrl;
+        }
+
+        if (!candidate.StartsWith("/", StringComparison.Ordinal))
+        {
+            return DefaultReturnUrl;
+        }
+
+        if (candidate.StartsWith("//", StringComparison.Ordinal))
+        {
+            return DefaultReturnUrl;
+        }
+
+        if (candidate.Contains("://", StringComparison.Ordinal))
+        {
+            return DefaultReturnUrl;
+        }
+
+        return candidate;
+    }
+}

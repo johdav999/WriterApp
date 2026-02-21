@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { APP_LINKS } from "@/lib/app-links"
 import { Check } from "lucide-react"
 
 interface PricingTier {
@@ -9,6 +10,7 @@ interface PricingTier {
   description: string
   features: string[]
   cta: string
+  ctaHref: string
   highlighted: boolean
   badge?: string
 }
@@ -27,6 +29,7 @@ const tiers: PricingTier[] = [
       "No AI tools",
     ],
     cta: "Start free",
+    ctaHref: APP_LINKS.startFree,
     highlighted: false,
   },
   {
@@ -43,6 +46,7 @@ const tiers: PricingTier[] = [
       "Import from .docx/.rtf/.txt",
     ],
     cta: "Start Standard",
+    ctaHref: APP_LINKS.startStandard,
     highlighted: false,
   },
   {
@@ -60,6 +64,7 @@ const tiers: PricingTier[] = [
       "Goals & writing sessions",
     ],
     cta: "Go Professional",
+    ctaHref: APP_LINKS.startPro,
     highlighted: true,
     badge: "Best for power users",
   },
@@ -133,7 +138,7 @@ export function Pricing() {
                 className="w-full"
                 asChild
               >
-                <a href="#start-free">{tier.cta}</a>
+                <a href={tier.ctaHref}>{tier.cta}</a>
               </Button>
             </div>
           ))}
