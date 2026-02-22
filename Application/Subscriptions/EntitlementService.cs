@@ -28,6 +28,8 @@ namespace WriterApp.Application.Subscriptions
                 {
                     UserId = userId,
                     PlanKey = normalizedPlan,
+                    SubscriptionStatus = UserEntitlementDefaults.ActiveSubscriptionStatus,
+                    CreatedAt = DateTimeOffset.UtcNow,
                     AiMonthlyTokenBudget = UserEntitlementDefaults.ResolveMonthlyTokenBudget(normalizedPlan),
                     AiTokensUsedThisPeriod = 0,
                     PeriodStartUtc = DateTimeOffset.UtcNow,

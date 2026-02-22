@@ -7,6 +7,7 @@ namespace WriterApp.Application.Subscriptions
         public const string FreePlanKey = "Free";
         public const string StandardPlanKey = "Standard";
         public const string ProfessionalPlanKey = "Professional";
+        public const string ActiveSubscriptionStatus = "Active";
 
         public const int FreeMonthlyTokenBudget = 0;
         public const int StandardMonthlyTokenBudget = 200000;
@@ -51,6 +52,18 @@ namespace WriterApp.Application.Subscriptions
                 ProfessionalPlanKey => ProfessionalMonthlyTokenBudget,
                 _ => FreeMonthlyTokenBudget
             };
+        }
+
+        public static string NormalizeSubscriptionStatus(string? rawStatus)
+        {
+            if (string.IsNullOrWhiteSpace(rawStatus))
+            {
+                return ActiveSubscriptionStatus;
+            }
+
+            return string.Equals(rawStatus, ActiveSubscriptionStatus, StringComparison.OrdinalIgnoreCase)
+                ? ActiveSubscriptionStatus
+                : rawStatus.Trim();
         }
 
         public static string ToPlanLookupKey(string planKey)

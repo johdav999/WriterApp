@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using WriterApp.Application.Usage;
 using WriterApp.Data;
@@ -37,6 +38,8 @@ namespace WriterApp.Application.Subscriptions
                 {
                     UserId = userId,
                     PlanKey = planKey,
+                    SubscriptionStatus = UserEntitlementDefaults.ActiveSubscriptionStatus,
+                    CreatedAt = now,
                     AiMonthlyTokenBudget = UserEntitlementDefaults.ResolveMonthlyTokenBudget(planKey),
                     AiTokensUsedThisPeriod = 0,
                     PeriodStartUtc = now,
@@ -44,8 +47,22 @@ namespace WriterApp.Application.Subscriptions
                 };
 
                 _dbContext.UserEntitlements.Add(entitlement);
-                await _dbContext.SaveChangesAsync(cancellationToken);
-                return entitlement;
+
+                try
+                {
+                    await _dbContext.SaveChangesAsync(cancellationToken);
+                    return entitlement;
+                }
+                catch (DbUpdateException ex) when (IsUniqueViolation(ex))
+                {
+                    _dbContext.Entry(entitlement).State = EntityState.Detached;
+                    entitlement = await _dbContext.UserEntitlements
+                        .FirstOrDefaultAsync(item => item.UserId == userId, cancellationToken);
+                    if (entitlement is null)
+                    {
+                        throw;
+                    }
+                }
             }
 
             bool dirty = false;
@@ -71,6 +88,21 @@ namespace WriterApp.Application.Subscriptions
                 dirty = true;
             }
 
+            string normalizedStatus = UserEntitlementDefaults.NormalizeSubscriptionStatus(entitlement.SubscriptionStatus);
+            if (!string.Equals(entitlement.SubscriptionStatus, normalizedStatus, StringComparison.Ordinal))
+            {
+                entitlement.SubscriptionStatus = normalizedStatus;
+                dirty = true;
+            }
+
+            if (entitlement.CreatedAt == default)
+            {
+                entitlement.CreatedAt = entitlement.PeriodStartUtc == default
+                    ? _clock.UtcNow
+                    : entitlement.PeriodStartUtc;
+                dirty = true;
+            }
+
             if (dirty)
             {
                 entitlement.UpdatedUtc = _clock.UtcNow;
@@ -93,6 +125,17 @@ namespace WriterApp.Application.Subscriptions
                 .FirstOrDefaultAsync(cancellationToken);
 
             return UserEntitlementDefaults.NormalizePlanKey(assignedKey);
+        }
+
+        private static bool IsUniqueViolation(DbUpdateException ex)
+        {
+            if (ex.InnerException is SqliteException sqliteEx)
+            {
+                return sqliteEx.SqliteErrorCode == 19
+                    || sqliteEx.Message.Contains("UNIQUE constraint failed", StringComparison.OrdinalIgnoreCase);
+            }
+
+            return ex.InnerException?.Message.Contains("duplicate", StringComparison.OrdinalIgnoreCase) == true;
         }
     }
 }

@@ -12,6 +12,9 @@ export function FinalCta() {
           Create your first project, draft a scene, and keep your story
           consistent from page one.
         </p>
+        <p className="mx-auto mt-2 max-w-lg text-sm text-muted-foreground">
+          Create account or sign in with Google.
+        </p>
         <div className="mt-8 flex flex-wrap justify-center gap-3">
           <Button size="lg" asChild>
             <a href={APP_LINKS.startFree}>Start free</a>
