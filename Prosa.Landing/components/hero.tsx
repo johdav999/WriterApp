@@ -44,6 +44,9 @@ export function Hero() {
                 <a href="#pricing">Explore pricing</a>
               </Button>
             </div>
+            <p className="text-sm text-muted-foreground">
+              Create account or sign in with Google.
+            </p>
           </div>
 
           {/* Product mock */}

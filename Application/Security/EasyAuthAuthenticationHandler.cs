@@ -71,6 +71,24 @@ namespace WriterApp.Application.Security
                     }
                 }
 
+                string? oid = ExternalIdentityClaims.ResolveOid(claims);
+                if (!string.IsNullOrWhiteSpace(oid))
+                {
+                    claims.Add(new Claim(ClaimTypes.NameIdentifier, oid));
+                }
+
+                string? email = ExternalIdentityClaims.ResolveEmail(claims);
+                if (!string.IsNullOrWhiteSpace(email))
+                {
+                    claims.Add(new Claim(ClaimTypes.Email, email));
+                }
+
+                string displayName = ExternalIdentityClaims.ResolveDisplayName(claims, oid ?? "unknown");
+                if (!string.IsNullOrWhiteSpace(displayName))
+                {
+                    claims.Add(new Claim(ClaimTypes.Name, displayName));
+                }
+
                 ClaimsIdentity identity = new(claims, SchemeName);
                 ClaimsPrincipal principal = new(identity);
                 AuthenticationTicket ticket = new(principal, SchemeName);

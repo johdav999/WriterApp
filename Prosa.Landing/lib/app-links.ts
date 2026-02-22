@@ -110,7 +110,7 @@ function logResolvedAppUrlOnce(): void {
   console.info("[prosa-landing] APP_URL diagnostics", appUrlResolution.diagnostics)
   console.info("[prosa-landing] APP_LINKS preview", {
     login: `${APP_URL}/login?returnUrl=/projects`,
-    startFree: `${APP_URL}/start?plan=free`,
+    startFree: `${APP_URL}/login?returnUrl=/start?plan=free`,
     startStandard: `${APP_URL}/start?plan=standard`,
     startPro: `${APP_URL}/start?plan=pro`,
   })
@@ -120,7 +120,7 @@ logResolvedAppUrlOnce()
 
 export const APP_LINKS = {
   login: `${APP_URL}/login?returnUrl=/projects`,
-  startFree: `${APP_URL}/start?plan=free`,
+  startFree: `${APP_URL}/login?returnUrl=/start?plan=free`,
   startStandard: `${APP_URL}/start?plan=standard`,
   startPro: `${APP_URL}/start?plan=pro`,
 } as const

@@ -45,10 +45,13 @@ namespace WriterApp.Controllers
 
             if (profile is null)
             {
+                ExternalIdentityClaims.UserProfileIdentity identity =
+                    ExternalIdentityClaims.MapToUserProfileIdentity(User.Claims, userId);
+
                 profile = new UserProfile
                 {
                     UserId = userId,
-                    DisplayName = User.Identity?.Name,
+                    DisplayName = identity.DisplayName,
                     CreatedUtc = now,
                     HasOnboarded = true,
                     UpdatedUtc = now

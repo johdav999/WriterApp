@@ -55,6 +55,33 @@ builder.Logging.AddFilter(
     "Microsoft.AspNetCore.SignalR",
     builder.Environment.IsDevelopment() ? LogLevel.Debug : LogLevel.Information);
 
+// Auth mode configuration:
+// - Local Development always uses FakeAuth (DEV_AUTH_* claims), regardless of UseExternalIdAuth.
+// - Staging/Production use External ID via EasyAuth when UseExternalIdAuth=true.
+// Required when UseExternalIdAuth=true:
+// - ExternalIdTenantId (tenant guid)
+// - ExternalIdClientId (app registration client id for the current slot/environment)
+bool useExternalIdAuthConfigured =
+    builder.Configuration.GetValue<bool?>("UseExternalIdAuth")
+    ?? builder.Configuration.GetValue<bool?>("WriterApp:Auth:UseExternalIdAuth")
+    ?? true;
+bool useExternalIdAuth = !builder.Environment.IsDevelopment() && useExternalIdAuthConfigured;
+string externalIdTenantId =
+    builder.Configuration["ExternalIdTenantId"]
+    ?? builder.Configuration["WriterApp:Auth:ExternalIdTenantId"]
+    ?? string.Empty;
+string externalIdClientId =
+    builder.Configuration["ExternalIdClientId"]
+    ?? builder.Configuration["WriterApp:Auth:ExternalIdClientId"]
+    ?? string.Empty;
+
+if (useExternalIdAuth
+    && (string.IsNullOrWhiteSpace(externalIdTenantId) || string.IsNullOrWhiteSpace(externalIdClientId)))
+{
+    throw new InvalidOperationException(
+        "External ID auth is enabled, but ExternalIdTenantId and/or ExternalIdClientId is missing.");
+}
+
 // --------------------
 // Services
 // --------------------
@@ -70,24 +97,19 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 
 builder.Services.AddAuthentication(options =>
     {
-        options.DefaultAuthenticateScheme = builder.Environment.IsDevelopment()
-            ? FakeAuthAuthenticationHandler.SchemeName
-            : EasyAuthAuthenticationHandler.SchemeName;
-        options.DefaultChallengeScheme = builder.Environment.IsDevelopment()
-            ? FakeAuthAuthenticationHandler.SchemeName
-            : EasyAuthAuthenticationHandler.SchemeName;
+        options.DefaultAuthenticateScheme = useExternalIdAuth
+            ? EasyAuthAuthenticationHandler.SchemeName
+            : FakeAuthAuthenticationHandler.SchemeName;
+        options.DefaultChallengeScheme = useExternalIdAuth
+            ? EasyAuthAuthenticationHandler.SchemeName
+            : FakeAuthAuthenticationHandler.SchemeName;
     })
     .AddScheme<AuthenticationSchemeOptions, EasyAuthAuthenticationHandler>(
         EasyAuthAuthenticationHandler.SchemeName,
+        _ => { })
+    .AddScheme<AuthenticationSchemeOptions, FakeAuthAuthenticationHandler>(
+        FakeAuthAuthenticationHandler.SchemeName,
         _ => { });
-
-if (builder.Environment.IsDevelopment())
-{
-    builder.Services.AddAuthentication()
-        .AddScheme<AuthenticationSchemeOptions, FakeAuthAuthenticationHandler>(
-            FakeAuthAuthenticationHandler.SchemeName,
-            _ => { });
-}
 builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy("AdminOnly", policy =>
@@ -462,9 +484,17 @@ if (app.Environment.IsDevelopment())
 {
     var logger = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
     AuthenticationOptions authOptions = app.Services.GetRequiredService<IOptions<AuthenticationOptions>>().Value;
+    string slotName = Environment.GetEnvironmentVariable("WEBSITE_SLOT_NAME") ?? "production";
     logger.LogInformation(
         "Authentication schemes registered: {Schemes}",
         string.Join(", ", authOptions.Schemes.Select(s => s.Name)));
+    logger.LogInformation(
+        "Authentication mode: Environment={Environment} Slot={Slot} UseExternalIdAuth={UseExternalIdAuth} ExternalIdTenantIdSet={TenantSet} ExternalIdClientIdSet={ClientSet}",
+        app.Environment.EnvironmentName,
+        slotName,
+        useExternalIdAuth,
+        !string.IsNullOrWhiteSpace(externalIdTenantId),
+        !string.IsNullOrWhiteSpace(externalIdClientId));
 }
 
 if (openAiOptions.Enabled && !openAiKeyProvider.HasKey)
@@ -882,8 +912,18 @@ app.MapPost("/api/admin/db/migrate", async (
 })
 .RequireAuthorization("AdminOnly");
 
-app.MapGet("/api/debug/auth", (HttpContext context, ILoggerFactory loggerFactory) =>
+app.MapGet("/api/auth/debug", (HttpContext context, ILoggerFactory loggerFactory, IWebHostEnvironment environment) =>
 {
+    string slotName = Environment.GetEnvironmentVariable("WEBSITE_SLOT_NAME") ?? string.Empty;
+    bool isStagingSlot = !string.IsNullOrWhiteSpace(slotName)
+        && !string.Equals(slotName, "production", StringComparison.OrdinalIgnoreCase);
+    bool authDebugEnabled = environment.IsDevelopment() || isStagingSlot;
+
+    if (!authDebugEnabled)
+    {
+        return Results.NotFound();
+    }
+
     ILogger logger = loggerFactory.CreateLogger("AuthDebug");
     ClaimsPrincipal user = context.User;
 
@@ -909,10 +949,13 @@ app.MapGet("/api/debug/auth", (HttpContext context, ILoggerFactory loggerFactory
 
 app.MapGet("/api/auth/me", async (
     HttpContext context,
+    AppDbContext dbContext,
     IUserIdResolver userIdResolver,
     IUserEntitlementStore userEntitlementStore,
+    ILoggerFactory loggerFactory,
     CancellationToken ct) =>
 {
+    ILogger logger = loggerFactory.CreateLogger("AuthMe");
     ClaimsPrincipal user = context.User;
 
     if (user.Identity?.IsAuthenticated != true)
@@ -930,6 +973,43 @@ app.MapGet("/api/auth/me", async (
         return Results.Unauthorized();
     }
 
+    ExternalIdentityClaims.UserProfileIdentity profileIdentity =
+        ExternalIdentityClaims.MapToUserProfileIdentity(user.Claims, userId);
+
+    UserProfile? userProfile = await dbContext.UserProfiles
+        .FirstOrDefaultAsync(item => item.UserId == userId, ct);
+    bool createdProfile = false;
+    if (userProfile is null)
+    {
+        DateTime now = DateTime.UtcNow;
+        userProfile = new UserProfile
+        {
+            UserId = userId,
+            DisplayName = profileIdentity.DisplayName,
+            HasOnboarded = false,
+            CreatedUtc = now,
+            UpdatedUtc = now
+        };
+
+        dbContext.UserProfiles.Add(userProfile);
+        try
+        {
+            await dbContext.SaveChangesAsync(ct);
+            createdProfile = true;
+        }
+        catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
+        {
+            dbContext.Entry(userProfile).State = EntityState.Detached;
+            userProfile = await dbContext.UserProfiles
+                .FirstOrDefaultAsync(item => item.UserId == userId, ct);
+            createdProfile = false;
+        }
+    }
+
+    bool hadEntitlement = await dbContext.UserEntitlements
+        .AsNoTracking()
+        .AnyAsync(item => item.UserId == userId, ct);
+
     List<string> roles = user.FindAll(ClaimTypes.Role)
         .Select(c => c.Value)
         .Concat(user.FindAll("roles").Select(c => c.Value))
@@ -938,10 +1018,32 @@ app.MapGet("/api/auth/me", async (
 
     UserEntitlement entitlement = await userEntitlementStore.GetOrCreateAsync(userId, ct);
 
+    if (createdProfile || !hadEntitlement)
+    {
+        logger.LogInformation(
+            "Created new user records. UserId={UserId}, CreatedProfile={CreatedProfile}, CreatedEntitlement={CreatedEntitlement}, Email={Email}, DisplayName={DisplayName}, PlanKey={PlanKey}",
+            userId,
+            createdProfile,
+            !hadEntitlement,
+            profileIdentity.Email ?? string.Empty,
+            profileIdentity.DisplayName,
+            entitlement.PlanKey);
+    }
+    else
+    {
+        logger.LogInformation(
+            "Existing user login. UserId={UserId}, Email={Email}, DisplayName={DisplayName}, PlanKey={PlanKey}",
+            userId,
+            profileIdentity.Email ?? string.Empty,
+            profileIdentity.DisplayName,
+            entitlement.PlanKey);
+    }
+
     return Results.Ok(new WriterApp.Application.Security.AuthMeDto
     {
         IsAuthenticated = true,
-        Name = user.Identity?.Name,
+        Name = profileIdentity.DisplayName,
+        Email = profileIdentity.Email,
         UserId = userId,
         Roles = roles,
         PlanKey = entitlement.PlanKey,
@@ -1567,6 +1669,18 @@ static bool IsSqliteBusyException(Exception ex)
     }
 
     return false;
+}
+
+static bool IsUniqueConstraintViolation(DbUpdateException ex)
+{
+    if (ex.InnerException is SqliteException sqliteEx)
+    {
+        return sqliteEx.SqliteErrorCode == 19
+               || sqliteEx.Message.Contains("UNIQUE constraint failed", StringComparison.OrdinalIgnoreCase);
+    }
+
+    return ex.InnerException?.Message.Contains("duplicate", StringComparison.OrdinalIgnoreCase) == true
+           || ex.Message.Contains("duplicate", StringComparison.OrdinalIgnoreCase);
 }
 
 static async Task WriteApiProblemDetailsAsync(

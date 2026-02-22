@@ -99,6 +99,8 @@ namespace WriterApp.Data
             {
                 entity.HasKey(entitlement => entitlement.UserId);
                 entity.Property(entitlement => entitlement.PlanKey).IsRequired();
+                entity.Property(entitlement => entitlement.SubscriptionStatus).IsRequired();
+                entity.Property(entitlement => entitlement.CreatedAt).IsRequired();
                 entity.Property(entitlement => entitlement.AiMonthlyTokenBudget).IsRequired();
                 entity.Property(entitlement => entitlement.AiTokensUsedThisPeriod).IsRequired();
                 entity.Property(entitlement => entitlement.PeriodStartUtc).IsRequired();

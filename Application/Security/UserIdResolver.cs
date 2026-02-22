@@ -24,8 +24,7 @@ namespace WriterApp.Application.Security
             }
 
             string userId =
-                user.FindFirstValue("oid") ??
-                user.FindFirstValue("http://schemas.microsoft.com/identity/claims/objectidentifier") ??
+                ExternalIdentityClaims.ResolveOid(user.Claims) ??
                 string.Empty;
             _logger.LogInformation(
                 "Server Auth: IsAuthenticated={Auth}, Name={Name}",

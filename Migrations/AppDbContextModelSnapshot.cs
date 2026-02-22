@@ -1639,10 +1639,16 @@ namespace BlazorApp.Migrations
                     b.Property<int>("AiTokensUsedThisPeriod")
                         .HasColumnType("INTEGER");
 
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTimeOffset>("PeriodStartUtc")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("PlanKey")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SubscriptionStatus")
                         .HasColumnType("TEXT");
 
                     b.Property<DateTimeOffset>("UpdatedUtc")
