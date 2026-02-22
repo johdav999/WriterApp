@@ -6,12 +6,15 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Server.Circuits;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.StaticFiles;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Primitives;
 using Microsoft.Data.Sqlite;
 using System.IO;
 using System.Security;
@@ -44,6 +47,7 @@ using WriterApp.Application.Search;
 using WriterApp.Application.Continuity;
 using WriterApp.Data;
 using WriterApp.Data.Subscriptions;
+using WriterApp.Shared;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.AddFilter("Microsoft.AspNetCore.Components.Server.Circuits", LogLevel.Information);
@@ -154,11 +158,13 @@ else
 
 // Domain services
 builder.Services.AddScoped<IPlanRepository, PlanRepository>();
+builder.Services.AddScoped<IUserEntitlementStore, UserEntitlementStore>();
 builder.Services.AddScoped<IEntitlementService, EntitlementService>();
 builder.Services.AddScoped<IUserIdResolver, UserIdResolver>();
 builder.Services.AddScoped<IPlanAssignmentService, PlanAssignmentService>();
 builder.Services.AddScoped<IUsageMeter, UsageMeter>();
 builder.Services.AddSingleton<IClock, WriterApp.Application.Usage.SystemClock>();
+builder.Services.AddScoped<IAiQuotaService, AiQuotaService>();
 builder.Services.AddScoped<IAiUsageStatusService, AiUsageStatusService>();
 builder.Services.AddScoped<IAiUsagePolicy, AiUsagePolicy>();
 builder.Services.AddSingleton<ISectionImportService, SectionImportService>();
@@ -672,24 +678,23 @@ app.MapGet("/projects/{*path}", (HttpContext context, string? path) =>
 });
 app.MapGet("/login", (HttpContext context) =>
 {
-    string query = context.Request.QueryString.HasValue
-        ? context.Request.QueryString.Value ?? string.Empty
-        : string.Empty;
+    string query = BuildRedirectQueryWithSafeReturnUrl(context, ReturnUrlSafety.DefaultProjectsPath);
     return Results.Redirect($"/app/login{query}", permanent: false);
 });
 app.MapGet("/start", (HttpContext context) =>
 {
-    string query = context.Request.QueryString.HasValue
-        ? context.Request.QueryString.Value ?? string.Empty
-        : string.Empty;
+    string query = BuildRedirectQueryWithSafeReturnUrl(context, ReturnUrlSafety.DefaultProjectsPath);
     return Results.Redirect($"/app/start{query}", permanent: false);
 });
 app.MapGet("/billing/checkout", (HttpContext context) =>
 {
-    string query = context.Request.QueryString.HasValue
-        ? context.Request.QueryString.Value ?? string.Empty
-        : string.Empty;
+    string query = BuildRedirectQueryWithSafeReturnUrl(context, ReturnUrlSafety.DefaultProjectsPath);
     return Results.Redirect($"/app/billing/checkout{query}", permanent: false);
+});
+app.MapGet("/logout", (HttpContext context) =>
+{
+    string query = BuildRedirectQueryWithSafeReturnUrl(context, ReturnUrlSafety.DefaultHomePath);
+    return Results.Redirect($"/app/logout{query}", permanent: false);
 });
 
 app.MapGet("/__ping", () => Results.Ok("pong"));
@@ -766,7 +771,9 @@ app.MapPost("/api/admin/users/{userId}/plan/{planKey}", async (
         HttpContext context,
         string userId,
         string planKey,
-        IPlanAssignmentService planAssignmentService,
+        IUserEntitlementStore userEntitlementStore,
+        IEntitlementService entitlementService,
+        AppDbContext dbContext,
         IUserIdResolver userIdResolver,
         ILoggerFactory loggerFactory) =>
 {
@@ -780,38 +787,60 @@ app.MapPost("/api/admin/users/{userId}/plan/{planKey}", async (
         return Results.BadRequest(new { message = "planKey is required." });
     }
 
+    if (!TryParseAdminPlanKey(planKey, out string normalizedPlanKey))
+    {
+        return Results.BadRequest(new
+        {
+            message = "planKey must be one of: free, standard, pro, professional.",
+            code = "INVALID_PLAN_KEY",
+            received = planKey,
+            allowed = new[] { "free", "standard", "pro", "professional" }
+        });
+    }
+
+    bool resetUsage = IsResetUsageRequested(context.Request.Query);
+
     ILogger logger = loggerFactory.CreateLogger("AdminPlanAssignments");
     string assignedBy = ResolveAssignedBy(context.User, userIdResolver, logger, out string? callerName);
 
-    try
+    UserEntitlement entitlement = await userEntitlementStore.GetOrCreateAsync(userId, context.RequestAborted);
+    DateTimeOffset now = DateTimeOffset.UtcNow;
+    entitlement.PlanKey = normalizedPlanKey;
+    entitlement.AiMonthlyTokenBudget = normalizedPlanKey switch
     {
-        PlanAssignmentResult result = await planAssignmentService.AssignPlanAsync(
-            userId,
-            planKey,
-            assignedBy,
-            callerName,
-            context.RequestAborted);
+        UserEntitlementDefaults.StandardPlanKey => UserEntitlementDefaults.STANDARD_MONTHLY_TOKEN_BUDGET,
+        UserEntitlementDefaults.ProfessionalPlanKey => UserEntitlementDefaults.PROFESSIONAL_MONTHLY_TOKEN_BUDGET,
+        _ => UserEntitlementDefaults.FREE_MONTHLY_TOKEN_BUDGET
+    };
 
-        return Results.Ok(new
-        {
-            userId = result.UserId,
-            planKey = result.PlanKey,
-            planName = result.PlanName,
-            assignedUtc = result.AssignedUtc
-        });
-    }
-    catch (PlanAssignmentException ex)
+    if (resetUsage)
     {
-        return ex.Code switch
-        {
-            PlanAssignmentErrorCode.PlanNotFound => Results.NotFound(new { message = ex.Message }),
-            PlanAssignmentErrorCode.PlanInactive => Results.BadRequest(new { message = ex.Message }),
-            PlanAssignmentErrorCode.InvalidUserId => Results.BadRequest(new { message = ex.Message }),
-            PlanAssignmentErrorCode.InvalidPlanKey => Results.BadRequest(new { message = ex.Message }),
-            PlanAssignmentErrorCode.AssignmentExists => Results.Conflict(new { message = ex.Message }),
-            _ => Results.BadRequest(new { message = ex.Message })
-        };
+        entitlement.AiTokensUsedThisPeriod = 0;
+        entitlement.PeriodStartUtc = now;
     }
+
+    entitlement.UpdatedUtc = now;
+    await dbContext.SaveChangesAsync(context.RequestAborted);
+    entitlementService.InvalidateForUser(userId);
+
+    logger.LogInformation(
+        "Admin entitlement updated: userId={UserId} planKey={PlanKey} budget={Budget} used={Used} resetUsage={ResetUsage} assignedBy={AssignedBy} callerName={CallerName}",
+        userId,
+        entitlement.PlanKey,
+        entitlement.AiMonthlyTokenBudget,
+        entitlement.AiTokensUsedThisPeriod,
+        resetUsage,
+        assignedBy,
+        callerName ?? string.Empty);
+
+    return Results.Ok(new
+    {
+        userId = entitlement.UserId,
+        planKey = entitlement.PlanKey,
+        aiMonthlyTokenBudget = entitlement.AiMonthlyTokenBudget,
+        aiTokensUsedThisPeriod = entitlement.AiTokensUsedThisPeriod,
+        periodStartUtc = entitlement.PeriodStartUtc
+    });
 })
 .RequireAuthorization("AdminOnly");
 
@@ -878,7 +907,11 @@ app.MapGet("/api/debug/auth", (HttpContext context, ILoggerFactory loggerFactory
 })
 .RequireAuthorization();
 
-app.MapGet("/api/auth/me", (HttpContext context, IUserIdResolver userIdResolver) =>
+app.MapGet("/api/auth/me", async (
+    HttpContext context,
+    IUserIdResolver userIdResolver,
+    IUserEntitlementStore userEntitlementStore,
+    CancellationToken ct) =>
 {
     ClaimsPrincipal user = context.User;
 
@@ -903,12 +936,18 @@ app.MapGet("/api/auth/me", (HttpContext context, IUserIdResolver userIdResolver)
         .Distinct(StringComparer.OrdinalIgnoreCase)
         .ToList();
 
+    UserEntitlement entitlement = await userEntitlementStore.GetOrCreateAsync(userId, ct);
+
     return Results.Ok(new WriterApp.Application.Security.AuthMeDto
     {
         IsAuthenticated = true,
         Name = user.Identity?.Name,
         UserId = userId,
-        Roles = roles
+        Roles = roles,
+        PlanKey = entitlement.PlanKey,
+        AiMonthlyTokenBudget = entitlement.AiMonthlyTokenBudget,
+        AiTokensUsedThisPeriod = entitlement.AiTokensUsedThisPeriod,
+        PeriodStartUtc = entitlement.PeriodStartUtc
     });
 })
 .RequireAuthorization();
@@ -1007,6 +1046,94 @@ static string ResolveAssignedBy(
         logger.LogWarning(ex, "Admin assignment missing oid claim.");
         return callerName ?? "admin";
     }
+}
+
+static bool TryParseAdminPlanKey(string input, out string normalizedPlanKey)
+{
+    normalizedPlanKey = UserEntitlementDefaults.FreePlanKey;
+    if (string.IsNullOrWhiteSpace(input))
+    {
+        return false;
+    }
+
+    string value = input.Trim();
+    if (value.Equals("free", StringComparison.OrdinalIgnoreCase))
+    {
+        normalizedPlanKey = UserEntitlementDefaults.FreePlanKey;
+        return true;
+    }
+
+    if (value.Equals("standard", StringComparison.OrdinalIgnoreCase))
+    {
+        normalizedPlanKey = UserEntitlementDefaults.StandardPlanKey;
+        return true;
+    }
+
+    if (value.Equals("pro", StringComparison.OrdinalIgnoreCase)
+        || value.Equals("professional", StringComparison.OrdinalIgnoreCase))
+    {
+        normalizedPlanKey = UserEntitlementDefaults.ProfessionalPlanKey;
+        return true;
+    }
+
+    return false;
+}
+
+static bool IsResetUsageRequested(IQueryCollection query)
+{
+    if (!query.TryGetValue("resetUsage", out StringValues resetUsageValues))
+    {
+        return false;
+    }
+
+    string raw = resetUsageValues.ToString();
+    if (bool.TryParse(raw, out bool parsed))
+    {
+        return parsed;
+    }
+
+    return string.Equals(raw, "1", StringComparison.OrdinalIgnoreCase);
+}
+
+static string BuildRedirectQueryWithSafeReturnUrl(HttpContext context, string fallback)
+{
+    QueryString queryString = context.Request.QueryString;
+    if (!queryString.HasValue)
+    {
+        return string.Empty;
+    }
+
+    Dictionary<string, StringValues> parsed = QueryHelpers.ParseQuery(queryString.Value ?? string.Empty)
+        .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+
+    if (!parsed.TryGetValue(ReturnUrlSafety.ReturnUrlKey, out StringValues rawReturnUrl))
+    {
+        return queryString.Value ?? string.Empty;
+    }
+
+    string safeReturnUrl = ReturnUrlSafety.NormalizeOrFallback(rawReturnUrl.FirstOrDefault(), fallback);
+    QueryBuilder builder = new();
+    foreach ((string key, StringValues values) in parsed)
+    {
+        if (string.Equals(key, ReturnUrlSafety.ReturnUrlKey, StringComparison.OrdinalIgnoreCase))
+        {
+            continue;
+        }
+
+        if (values.Count == 0)
+        {
+            builder.Add(key, string.Empty);
+            continue;
+        }
+
+        foreach (string? value in values)
+        {
+            builder.Add(key, value ?? string.Empty);
+        }
+    }
+
+    builder.Add(ReturnUrlSafety.ReturnUrlKey, safeReturnUrl);
+    return builder.ToQueryString().Value ?? string.Empty;
 }
 
 static void LogRuntimeProbe(ILogger logger)

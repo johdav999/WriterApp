@@ -570,7 +570,7 @@ namespace WriterApp.Controllers
                     sectionId,
                     request.PageId,
                     actionTimer.ElapsedMilliseconds);
-                return CreateAiProblem(statusCode, "AI request blocked", message, errorCode);
+                return CreateAiProblem(statusCode, "AI request blocked", message, errorCode, result.ErrorDetails);
             }
 
             AiProposal proposal = result.Proposal;
@@ -688,9 +688,10 @@ namespace WriterApp.Controllers
             int statusCode,
             string title,
             string detail,
-            string code)
+            string code,
+            IReadOnlyDictionary<string, object?>? extra = null)
         {
-            ProblemDetails problem = BuildProblemDetails(statusCode, title, detail, code);
+            ProblemDetails problem = BuildProblemDetails(statusCode, title, detail, code, extra);
 
             return new ObjectResult(problem)
             {
@@ -698,7 +699,12 @@ namespace WriterApp.Controllers
             };
         }
 
-        private ProblemDetails BuildProblemDetails(int statusCode, string title, string detail, string code)
+        private ProblemDetails BuildProblemDetails(
+            int statusCode,
+            string title,
+            string detail,
+            string code,
+            IReadOnlyDictionary<string, object?>? extra = null)
         {
             ProblemDetails problem = new()
             {
@@ -709,6 +715,13 @@ namespace WriterApp.Controllers
             problem.Extensions["code"] = code;
             problem.Extensions["traceId"] = HttpContext.TraceIdentifier;
             problem.Extensions["correlationId"] = Request.Headers["X-Correlation-ID"].FirstOrDefault() ?? HttpContext.TraceIdentifier;
+            if (extra is not null)
+            {
+                foreach ((string key, object? value) in extra)
+                {
+                    problem.Extensions[key] = value;
+                }
+            }
             return problem;
         }
 
@@ -723,6 +736,7 @@ namespace WriterApp.Controllers
             {
                 "ai.rate_limited" => StatusCodes.Status429TooManyRequests,
                 "ai.quota_exceeded" => StatusCodes.Status429TooManyRequests,
+                "AI_QUOTA_EXCEEDED" => StatusCodes.Status402PaymentRequired,
                 "ai.provider_unavailable" => StatusCodes.Status503ServiceUnavailable,
                 "ai.provider_missing" => StatusCodes.Status503ServiceUnavailable,
                 "ai.action_missing" => StatusCodes.Status400BadRequest,

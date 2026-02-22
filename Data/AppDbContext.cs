@@ -19,6 +19,7 @@ namespace WriterApp.Data
         }
 
         public DbSet<UserProfile> UserProfiles => Set<UserProfile>();
+        public DbSet<UserEntitlement> UserEntitlements => Set<UserEntitlement>();
         public DbSet<Plan> Plans => Set<Plan>();
         public DbSet<PlanEntitlement> PlanEntitlements => Set<PlanEntitlement>();
         public DbSet<UserPlanAssignment> UserPlanAssignments => Set<UserPlanAssignment>();
@@ -90,6 +91,18 @@ namespace WriterApp.Data
             {
                 entity.HasKey(profile => profile.UserId);
                 entity.Property(profile => profile.CreatedUtc).IsRequired();
+                entity.Property(profile => profile.HasOnboarded).IsRequired();
+                entity.Property(profile => profile.UpdatedUtc).IsRequired();
+            });
+
+            builder.Entity<UserEntitlement>(entity =>
+            {
+                entity.HasKey(entitlement => entitlement.UserId);
+                entity.Property(entitlement => entitlement.PlanKey).IsRequired();
+                entity.Property(entitlement => entitlement.AiMonthlyTokenBudget).IsRequired();
+                entity.Property(entitlement => entitlement.AiTokensUsedThisPeriod).IsRequired();
+                entity.Property(entitlement => entitlement.PeriodStartUtc).IsRequired();
+                entity.Property(entitlement => entitlement.UpdatedUtc).IsRequired();
             });
 
             builder.Entity<Plan>(entity =>
@@ -818,7 +831,9 @@ namespace WriterApp.Data
                 {
                     UserId = "seed-system",
                     DisplayName = "System",
-                    CreatedUtc = seededUtc
+                    CreatedUtc = seededUtc,
+                    HasOnboarded = true,
+                    UpdatedUtc = seededUtc
                 }
             );
         }

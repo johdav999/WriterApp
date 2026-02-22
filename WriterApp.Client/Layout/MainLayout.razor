@@ -9,6 +9,7 @@
 @inject CurrentSceneStateService CurrentSceneStateService
 @inject CurrentProjectStateService CurrentProjectStateService
 @inject LastOpenedDocumentStateService LastOpenedDocumentStateService
+@inject AuthMeStateService AuthMeStateService
 @inject HttpClient Http
 @inject NavigationManager Navigation
 
@@ -56,6 +57,7 @@
                    href="documents"
                    @onclick="OnDocumentsNavClicked"
                    @onclick:preventDefault="true">Projects</a>
+                <NavLink class="app-nav-link" href="account" Match="NavLinkMatch.Prefix">Account</NavLink>
             </nav>
             <article class="content">
                 @Body
@@ -80,6 +82,7 @@
         Navigation.LocationChanged += HandleLocationChanged;
         await LayoutStateService.InitializeAsync();
         await LastOpenedDocumentStateService.LoadAsync();
+        await AuthMeStateService.RefreshAsync();
         await RefreshProjectBreadcrumbAsync();
     }
 

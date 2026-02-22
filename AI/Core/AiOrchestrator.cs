@@ -15,10 +15,26 @@ namespace WriterApp.AI.Core
 {
     public sealed class AiOrchestrator : IAiOrchestrator
     {
+        private sealed class PassThroughAiQuotaService : IAiQuotaService
+        {
+            public Task<AiQuotaDecision> CheckAsync(string userId, CancellationToken ct)
+            {
+                AiQuotaSnapshot snapshot = new("Free", int.MaxValue, 0, DateTimeOffset.UtcNow);
+                return Task.FromResult(new AiQuotaDecision(true, null, null, snapshot));
+            }
+
+            public Task<AiQuotaChargeResult> ChargeAsync(string userId, AiRequest request, AiResult result, CancellationToken ct)
+            {
+                AiQuotaSnapshot snapshot = new("Free", int.MaxValue, 0, DateTimeOffset.UtcNow);
+                return Task.FromResult(new AiQuotaChargeResult(true, 0, snapshot, null, null));
+            }
+        }
+
         private readonly IAiActionExecutor _executor;
         private readonly IAiProviderRegistry _providerRegistry;
         private readonly IAiRouter _router;
         private readonly IAiUsagePolicy _usagePolicy;
+        private readonly IAiQuotaService _quotaService;
         private readonly IUsageMeter _usageMeter;
         private readonly WriterAiOptions _options;
         private readonly IReadOnlyList<IAiAction> _actions;
@@ -32,11 +48,33 @@ namespace WriterApp.AI.Core
             IUsageMeter usageMeter,
             IOptions<WriterAiOptions> options,
             IEnumerable<IAiAction> actions)
+            : this(
+                executor,
+                providerRegistry,
+                router,
+                usagePolicy,
+                new PassThroughAiQuotaService(),
+                usageMeter,
+                options,
+                actions)
+        {
+        }
+
+        public AiOrchestrator(
+            IAiActionExecutor executor,
+            IAiProviderRegistry providerRegistry,
+            IAiRouter router,
+            IAiUsagePolicy usagePolicy,
+            IAiQuotaService quotaService,
+            IUsageMeter usageMeter,
+            IOptions<WriterAiOptions> options,
+            IEnumerable<IAiAction> actions)
         {
             _executor = executor ?? throw new ArgumentNullException(nameof(executor));
             _providerRegistry = providerRegistry ?? throw new ArgumentNullException(nameof(providerRegistry));
             _router = router ?? throw new ArgumentNullException(nameof(router));
             _usagePolicy = usagePolicy ?? throw new ArgumentNullException(nameof(usagePolicy));
+            _quotaService = quotaService ?? throw new ArgumentNullException(nameof(quotaService));
             _usageMeter = usageMeter ?? throw new ArgumentNullException(nameof(usageMeter));
             _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
             if (actions is null)
@@ -165,7 +203,35 @@ namespace WriterApp.AI.Core
                 return AiExecutionResult.Blocked(decision.ErrorCode ?? "ai.blocked", decision.ErrorMessage ?? "AI usage is not permitted.");
             }
 
+            bool billable = provider is IAiBillingProvider billingProvider
+                && billingProvider.RequiresEntitlement
+                && billingProvider.IsBillable
+                && !string.IsNullOrWhiteSpace(decision.UserId);
+            if (billable)
+            {
+                AiQuotaDecision quotaDecision = await _quotaService.CheckAsync(decision.UserId, ct);
+                if (!quotaDecision.Allowed)
+                {
+                    return AiExecutionResult.Blocked(
+                        quotaDecision.ErrorCode ?? "AI_QUOTA_EXCEEDED",
+                        quotaDecision.ErrorMessage ?? "AI quota exceeded. Upgrade to continue.",
+                        quotaDecision.ToErrorDetails());
+                }
+            }
+
             AiExecutionOutcome outcome = await _executor.ExecuteAsync(action, input, ct);
+
+            if (billable && outcome.Proposal is not null)
+            {
+                AiQuotaChargeResult chargeResult = await _quotaService.ChargeAsync(decision.UserId, request, outcome.Result, ct);
+                if (!chargeResult.Applied)
+                {
+                    return AiExecutionResult.Blocked(
+                        chargeResult.ErrorCode ?? "AI_QUOTA_EXCEEDED",
+                        chargeResult.ErrorMessage ?? "AI quota exceeded. Upgrade to continue.",
+                        chargeResult.ToErrorDetails());
+                }
+            }
 
             await RecordUsageAsync(
                 decision.UserId,

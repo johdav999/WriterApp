@@ -500,6 +500,12 @@ else
                             <span title="Total words in this section.">@_editorStatus.WordCount words</span>
                             <span title="Estimated page count.">Page @_editorStatus.CurrentPageIndex / @_editorStatus.PageCount</span>
                             <span class="@_editorStatus.SaveStatusClass" title="Your work is saved automatically.">@_editorStatus.SaveStatusLabel</span>
+                            <span title="Current subscription plan.">@PlanStatusLabel</span>
+                            <span title="Current monthly AI token usage.">@AiUsageStatusLabel</span>
+                            @if (ShowPlanUpgrade)
+                            {
+                                <button type="button" class="panel-toggle" @onclick="NavigateToPlanUpgrade">@GetPlanUpgradeLabel()</button>
+                            }
                             @if (!string.IsNullOrWhiteSpace(_editorStatus.VersionStatusMessage))
                             {
                                 <span class="version-status" title="A version snapshot was saved.">@_editorStatus.VersionStatusMessage</span>
@@ -2527,5 +2533,29 @@ else
         </footer>
         <span class="focus-sentinel" tabindex="0" @onfocus="FocusFeedbackFirstAsync"></span>
     </div>
+    </div>
+}
+
+@if (_isAiQuotaDialogOpen)
+{
+    <div class="modal-overlay modal-overlay-dimmed" role="presentation" @onclick="CloseAiQuotaDialog">
+        <div class="modal-backdrop"></div>
+        <div class="modal modal-panel" role="dialog" aria-modal="true" aria-labelledby="aiQuotaDialogTitle" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <div class="modal-title" id="aiQuotaDialogTitle">AI quota reached</div>
+            </div>
+            <div class="modal-body">
+                <p>@_aiQuotaMessage</p>
+                <div class="ai-quota-details">
+                    <div><strong>Plan:</strong> @_aiQuotaPlanName</div>
+                    <div><strong>Used:</strong> @_aiQuotaUsed</div>
+                    <div><strong>Monthly budget:</strong> @_aiQuotaBudget</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-primary" @onclick="NavigateToUpgradeFromQuotaDialog">Upgrade</button>
+                <button type="button" class="btn btn-ghost" @onclick="CloseAiQuotaDialog">Close</button>
+            </div>
+        </div>
     </div>
 }
