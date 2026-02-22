@@ -1,0 +1,156 @@
+@page "/app/onboarding"
+@using System.Net.Http.Json
+@using WriterApp.Application.Documents
+@inject HttpClient Http
+@inject NavigationManager Navigation
+
+<PageTitle>Welcome</PageTitle>
+
+<section class="onboarding-shell">
+    <header class="onboarding-header">
+        <h1>Create your first project</h1>
+        <p>Set up your workspace and start writing right away.</p>
+    </header>
+
+    <div class="onboarding-card">
+        <div class="onboarding-field">
+            <label for="onboarding-project-name">Project name</label>
+            <input id="onboarding-project-name"
+                   class="onboarding-input"
+                   @bind="_projectName"
+                   @bind:event="oninput"
+                   placeholder="My first novel" />
+        </div>
+
+        <div class="onboarding-field">
+            <label for="onboarding-template">Create from template (optional)</label>
+            <select id="onboarding-template" class="onboarding-select" @bind="_template">
+                <option value="none">None</option>
+                <option value="3-act">3-Act</option>
+                <option value="hero-journey">Hero's Journey</option>
+            </select>
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(_status))
+        {
+            <div class="onboarding-status">@_status</div>
+        }
+
+        <div class="onboarding-actions">
+            <button type="button"
+                    class="primary"
+                    @onclick="CreateProjectAsync"
+                    disabled="@_creatingProject">
+                @(_creatingProject ? "Creating..." : "Create project")
+            </button>
+            <button type="button" class="secondary" @onclick="SkipAsync" disabled="@_creatingProject">
+                Skip
+            </button>
+        </div>
+    </div>
+</section>
+
+@code {
+    private string _projectName = "Untitled project";
+    private string _template = "none";
+    private bool _creatingProject;
+    private string? _status;
+
+    private async Task CreateProjectAsync()
+    {
+        if (_creatingProject)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_projectName))
+        {
+            _status = "Project name is required.";
+            return;
+        }
+
+        string projectName = _projectName.Trim();
+
+        _creatingProject = true;
+        _status = null;
+        try
+        {
+            ProjectCreateRequest request = new(projectName, null, null, null, null, null);
+            using HttpResponseMessage response = await Http.PostAsJsonAsync("/api/projects", request);
+            response.EnsureSuccessStatusCode();
+
+            ProjectDto? created = await response.Content.ReadFromJsonAsync<ProjectDto>();
+            if (created is null)
+            {
+                _status = "Create project failed.";
+                return;
+            }
+
+            await CompleteOnboardingAsync();
+
+            Guid? firstSceneId = await TryGetFirstSceneIdAsync(created.Id);
+            if (firstSceneId.HasValue)
+            {
+                Navigation.NavigateTo($"projects/{created.Id}/scenes/{firstSceneId.Value}", replace: true);
+                return;
+            }
+
+            Navigation.NavigateTo($"projects/{created.Id}", replace: true);
+        }
+        catch (Exception ex)
+        {
+            _status = ex.Message;
+        }
+        finally
+        {
+            _creatingProject = false;
+        }
+    }
+
+    private async Task SkipAsync()
+    {
+        await CompleteOnboardingAsync();
+        Navigation.NavigateTo("/projects");
+    }
+
+    private async Task<Guid?> TryGetFirstSceneIdAsync(Guid projectId)
+    {
+        try
+        {
+            using HttpResponseMessage response = await Http.GetAsync($"/api/projects/{projectId}/tree");
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            ProjectTreeDto? tree = await response.Content.ReadFromJsonAsync<ProjectTreeDto>();
+            ProjectNodeDto? firstScene = tree is null ? null : FindFirstScene(tree.Nodes);
+            return firstScene?.Id;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static ProjectNodeDto? FindFirstScene(IReadOnlyList<ProjectNodeDto> nodes)
+    {
+        return nodes
+            .Where(node => string.Equals(node.NodeType, "scene", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(node => node.OrderIndex)
+            .FirstOrDefault();
+    }
+
+    private async Task CompleteOnboardingAsync()
+    {
+        try
+        {
+            using HttpResponseMessage response = await Http.PostAsync("/api/user/profile/complete-onboarding", null);
+            response.EnsureSuccessStatusCode();
+        }
+        catch
+        {
+            // onboarding completion should not block navigation in v1
+        }
+    }
+}

@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using WriterApp.AI.Abstractions;
@@ -242,7 +243,26 @@ namespace WriterApp.Controllers
             if (!result.Succeeded || result.Proposal is null)
             {
                 string message = result.ErrorMessage ?? "AI action failed.";
-                return BadRequest(new { message });
+                string code = string.IsNullOrWhiteSpace(result.ErrorCode) ? "ai.blocked" : result.ErrorCode!;
+                int statusCode = string.Equals(code, "AI_QUOTA_EXCEEDED", StringComparison.Ordinal)
+                    ? StatusCodes.Status402PaymentRequired
+                    : StatusCodes.Status400BadRequest;
+                ProblemDetails problem = new()
+                {
+                    Status = statusCode,
+                    Title = "AI request blocked",
+                    Detail = message
+                };
+                problem.Extensions["code"] = code;
+                if (result.ErrorDetails is not null)
+                {
+                    foreach ((string key, object? value) in result.ErrorDetails)
+                    {
+                        problem.Extensions[key] = value;
+                    }
+                }
+
+                return StatusCode(statusCode, problem);
             }
 
             AiProposal proposal = result.Proposal;

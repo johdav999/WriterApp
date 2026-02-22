@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Caching.Memory;
 using WriterApp.Data.Subscriptions;
@@ -8,20 +10,62 @@ namespace WriterApp.Application.Subscriptions
 {
     public sealed class EntitlementService : IEntitlementService
     {
+        private sealed class PlanRepositoryBackedUserEntitlementStore : IUserEntitlementStore
+        {
+            private readonly IPlanRepository _planRepository;
+
+            public PlanRepositoryBackedUserEntitlementStore(IPlanRepository planRepository)
+            {
+                _planRepository = planRepository ?? throw new ArgumentNullException(nameof(planRepository));
+            }
+
+            public async Task<UserEntitlement> GetOrCreateAsync(string userId, CancellationToken cancellationToken = default)
+            {
+                Plan? plan = await _planRepository.GetPlanForUserAsync(userId)
+                    ?? await _planRepository.GetPlanByKeyAsync("free");
+                string normalizedPlan = UserEntitlementDefaults.NormalizePlanKey(plan?.Key);
+                return new UserEntitlement
+                {
+                    UserId = userId,
+                    PlanKey = normalizedPlan,
+                    AiMonthlyTokenBudget = UserEntitlementDefaults.ResolveMonthlyTokenBudget(normalizedPlan),
+                    AiTokensUsedThisPeriod = 0,
+                    PeriodStartUtc = DateTimeOffset.UtcNow,
+                    UpdatedUtc = DateTimeOffset.UtcNow
+                };
+            }
+        }
+
+        private const string DefaultPlanName = "Free";
         private readonly IPlanRepository _planRepository;
+        private readonly IUserEntitlementStore _userEntitlementStore;
         private readonly IMemoryCache _cache;
 
-        public EntitlementService(IPlanRepository planRepository, IMemoryCache cache)
+        public EntitlementService(
+            IPlanRepository planRepository,
+            IUserEntitlementStore userEntitlementStore,
+            IMemoryCache cache)
         {
             _planRepository = planRepository ?? throw new ArgumentNullException(nameof(planRepository));
+            _userEntitlementStore = userEntitlementStore ?? throw new ArgumentNullException(nameof(userEntitlementStore));
             _cache = cache ?? throw new ArgumentNullException(nameof(cache));
+        }
+
+        public EntitlementService(
+            IPlanRepository planRepository,
+            IMemoryCache cache)
+            : this(
+                planRepository,
+                new PlanRepositoryBackedUserEntitlementStore(planRepository),
+                cache)
+        {
         }
 
         public async Task<UserEntitlements> GetEntitlementsAsync(string userId)
         {
             if (string.IsNullOrWhiteSpace(userId))
             {
-                return new UserEntitlements(string.Empty, "free", "Free", new Dictionary<string, string>());
+                return new UserEntitlements(string.Empty, "free", DefaultPlanName, new Dictionary<string, string>());
             }
 
             string cacheKey = $"entitlements:{userId}";
@@ -30,11 +74,12 @@ namespace WriterApp.Application.Subscriptions
                 return cached;
             }
 
-            Plan? plan = await _planRepository.GetPlanForUserAsync(userId)
-                ?? await _planRepository.GetPlanByKeyAsync("free");
+            UserEntitlement userEntitlement = await _userEntitlementStore.GetOrCreateAsync(userId);
+            string planLookupKey = UserEntitlementDefaults.ToPlanLookupKey(userEntitlement.PlanKey);
+            Plan? plan = await _planRepository.GetPlanByKeyAsync(planLookupKey);
 
-            string planKey = plan?.Key ?? "free";
-            string planName = plan?.Name ?? "Free";
+            string planKey = plan?.Key ?? planLookupKey;
+            string planName = plan?.Name ?? UserEntitlementDefaults.NormalizePlanKey(userEntitlement.PlanKey);
             Dictionary<string, string> entitlements = new(StringComparer.OrdinalIgnoreCase);
 
             if (plan?.Entitlements is not null)
@@ -44,6 +89,10 @@ namespace WriterApp.Application.Subscriptions
                     entitlements[entitlement.Key] = entitlement.Value;
                 }
             }
+
+            entitlements["ai.monthly_tokens"] = userEntitlement.AiMonthlyTokenBudget.ToString(CultureInfo.InvariantCulture);
+            entitlements["ai.enabled"] = userEntitlement.AiMonthlyTokenBudget > 0 ? "true" : "false";
+            entitlements["ai.tokens_used_this_period"] = userEntitlement.AiTokensUsedThisPeriod.ToString(CultureInfo.InvariantCulture);
 
             UserEntitlements result = new(userId, planKey, planName, entitlements);
             _cache.Set(cacheKey, result, TimeSpan.FromMinutes(1));

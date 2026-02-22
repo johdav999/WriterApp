@@ -39,7 +39,7 @@
 @code {
     private string _planKey = "standard";
     private string _planDisplayName = "Standard";
-    private string _returnUrl = "/projects";
+    private string _returnUrl = SafeReturnUrl.DefaultProjectsPath;
     private string? _message;
     private bool _showSimulateUpgrade;
     private bool _simulateInFlight;
@@ -178,32 +178,7 @@
 
     private static string ResolveReturnUrl(Dictionary<string, string> query)
     {
-        if (!query.TryGetValue("returnUrl", out string? candidate))
-        {
-            return "/projects";
-        }
-
-        if (string.IsNullOrWhiteSpace(candidate))
-        {
-            return "/projects";
-        }
-
-        if (!candidate.StartsWith("/", StringComparison.Ordinal))
-        {
-            return "/projects";
-        }
-
-        if (candidate.StartsWith("//", StringComparison.Ordinal))
-        {
-            return "/projects";
-        }
-
-        if (candidate.Contains("://", StringComparison.Ordinal))
-        {
-            return "/projects";
-        }
-
-        return candidate;
+        return SafeReturnUrl.ResolveFromQuery(query, fallback: SafeReturnUrl.DefaultProjectsPath);
     }
 
     private sealed class AuthMeResponse

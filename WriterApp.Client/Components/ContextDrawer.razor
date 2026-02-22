@@ -1,5 +1,10 @@
 @using System.Net
+@using System.Globalization
+@using System.Text.Json
+@using WriterApp.Client.State
 @inject HttpClient Http
+@inject NavigationManager Navigation
+@inject AuthMeStateService AuthMeStateService
 
 <div class="context-drawer">
     <div class="context-tabs">
@@ -40,6 +45,15 @@
             @if (_aiLoading)
             {
                 <p>Loading AI actions...</p>
+            }
+            else if (_aiQuotaExceeded)
+            {
+                <div>
+                    <p><strong>AI quota reached</strong></p>
+                    <p>Plan: @_aiQuotaPlanName</p>
+                    <p>Used @_aiQuotaUsed of @_aiQuotaBudget tokens.</p>
+                    <button type="button" @onclick="NavigateToUpgrade">Upgrade</button>
+                </div>
             }
             else if (!string.IsNullOrWhiteSpace(_aiError))
             {
@@ -131,6 +145,10 @@
     private AiActionExecuteResponseDto? _proposal;
     private List<AiActionHistoryEntryDto> _history = new();
     private Guid? _expandedHistoryId;
+    private bool _aiQuotaExceeded;
+    private string _aiQuotaPlanName = "Free";
+    private int _aiQuotaBudget;
+    private int _aiQuotaUsed;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -245,6 +263,7 @@
     private async Task ExecuteAiAsync(AiActionDescriptorDto action)
     {
         _proposal = null;
+        _aiQuotaExceeded = false;
         try
         {
             AiActionExecuteRequestDto payload = new(
@@ -265,6 +284,12 @@
                 return;
             }
 
+            if (await TryHandleAiQuotaExceededAsync(response))
+            {
+                _aiError = null;
+                return;
+            }
+
             response.EnsureSuccessStatusCode();
             _proposal = await response.Content.ReadFromJsonAsync<AiActionExecuteResponseDto>();
             await LoadHistoryAsync();
@@ -272,6 +297,10 @@
         catch (Exception ex)
         {
             _aiError = $"AI execute failed: {ex.Message}";
+        }
+        finally
+        {
+            await AuthMeStateService.RefreshAsync(force: true);
         }
     }
 
@@ -303,6 +332,102 @@
     private void ToggleHistory(Guid proposalId)
     {
         _expandedHistoryId = _expandedHistoryId == proposalId ? null : proposalId;
+    }
+
+    private void NavigateToUpgrade()
+    {
+        Navigation.NavigateTo("/start?plan=pro", forceLoad: true);
+    }
+
+    private async Task<bool> TryHandleAiQuotaExceededAsync(HttpResponseMessage response)
+    {
+        int statusCode = (int)response.StatusCode;
+        if (statusCode != 402
+            && statusCode != 429)
+        {
+            return false;
+        }
+
+        try
+        {
+            string payload = await response.Content.ReadAsStringAsync();
+            if (string.IsNullOrWhiteSpace(payload))
+            {
+                return false;
+            }
+
+            using JsonDocument doc = JsonDocument.Parse(payload);
+            JsonElement root = doc.RootElement;
+            string? code = GetJsonString(root, "code");
+            if (!string.Equals(code, "AI_QUOTA_EXCEEDED", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            _aiQuotaExceeded = true;
+            _aiQuotaPlanName = GetJsonString(root, "planKey") ?? "Free";
+            _aiQuotaBudget = GetJsonInt(root, "budget") ?? 0;
+            _aiQuotaUsed = GetJsonInt(root, "used") ?? _aiQuotaBudget;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string? GetJsonString(JsonElement root, string name)
+    {
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        foreach (JsonProperty property in root.EnumerateObject())
+        {
+            if (!string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            return property.Value.ValueKind == JsonValueKind.String
+                ? property.Value.GetString()
+                : property.Value.GetRawText();
+        }
+
+        return null;
+    }
+
+    private static int? GetJsonInt(JsonElement root, string name)
+    {
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        foreach (JsonProperty property in root.EnumerateObject())
+        {
+            if (!string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (property.Value.ValueKind == JsonValueKind.Number
+                && property.Value.TryGetInt32(out int intValue))
+            {
+                return intValue;
+            }
+
+            if (property.Value.ValueKind == JsonValueKind.String
+                && int.TryParse(property.Value.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed))
+            {
+                return parsed;
+            }
+
+            return null;
+        }
+
+        return null;
     }
 
     private enum ContextTab

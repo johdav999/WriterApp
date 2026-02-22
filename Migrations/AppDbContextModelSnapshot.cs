@@ -1628,6 +1628,31 @@ namespace BlazorApp.Migrations
                     b.ToTable("UserPlanAssignments");
                 });
 
+            modelBuilder.Entity("WriterApp.Data.Subscriptions.UserEntitlement", b =>
+                {
+                    b.Property<string>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("AiMonthlyTokenBudget")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("AiTokensUsedThisPeriod")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset>("PeriodStartUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PlanKey")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("UpdatedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("UserId");
+
+                    b.ToTable("UserEntitlements");
+                });
+
             modelBuilder.Entity("WriterApp.Data.Subscriptions.UserProfile", b =>
                 {
                     b.Property<string>("UserId")
@@ -1639,6 +1664,12 @@ namespace BlazorApp.Migrations
                     b.Property<string>("DisplayName")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("HasOnboarded")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .HasColumnType("TEXT");
+
                     b.HasKey("UserId");
 
                     b.ToTable("UserProfiles");
@@ -1648,7 +1679,9 @@ namespace BlazorApp.Migrations
                         {
                             UserId = "seed-system",
                             CreatedUtc = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
-                            DisplayName = "System"
+                            DisplayName = "System",
+                            HasOnboarded = true,
+                            UpdatedUtc = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)
                         });
                 });
 

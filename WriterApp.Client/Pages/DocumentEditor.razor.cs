@@ -69,6 +69,9 @@ namespace WriterApp.Client.Pages
         public CurrentSceneStateService CurrentSceneStateService { get; set; } = default!;
 
         [Inject]
+        public AuthMeStateService AuthMeStateService { get; set; } = default!;
+
+        [Inject]
         public LastOpenedDocumentStateService LastOpenedDocumentStateService { get; set; } = default!;
 
         [Inject]
@@ -507,6 +510,11 @@ namespace WriterApp.Client.Pages
         private bool _aiUndoRedoInFlight;
         private bool _canAiUndo;
         private bool _canAiRedo;
+        private bool _isAiQuotaDialogOpen;
+        private string _aiQuotaPlanName = "Free";
+        private int _aiQuotaBudget;
+        private int _aiQuotaUsed;
+        private string _aiQuotaMessage = "AI quota exceeded. Upgrade to continue.";
         private string? _lastReorderStatus;
         private int _lastReorderCount;
         private string? _lastReorderCorrelationId;
@@ -582,6 +590,8 @@ namespace WriterApp.Client.Pages
 
         protected override async Task OnInitializedAsync()
         {
+            AuthMeStateService.Changed += OnAuthMeStateChanged;
+            await AuthMeStateService.RefreshAsync();
             await LoadAiUsageStatusAsync();
             await LoadAiActionsAsync();
             _sectionReorderDiagnosticsEnabled = SectionReorderDiagnostics.IsEnabled(Configuration);
@@ -2113,6 +2123,7 @@ namespace WriterApp.Client.Pages
         public void Dispose()
         {
             LayoutStateService.Changed -= OnLayoutStateChanged;
+            AuthMeStateService.Changed -= OnAuthMeStateChanged;
             _notesAutosaveCts?.Cancel();
             _notesAutosaveCts?.Dispose();
             _notesAutosaveCts = null;
@@ -2220,6 +2231,11 @@ namespace WriterApp.Client.Pages
             _isContextMenuOpen = true;
             _shouldFocusContextMenu = true;
             return InvokeAsync(StateHasChanged);
+        }
+
+        private void OnAuthMeStateChanged()
+        {
+            InvokeAsync(StateHasChanged);
         }
 
         private Task OnEditorLinkContextMenuRequested(SectionEditor.EditorLinkContextMenuRequest request)
@@ -3714,6 +3730,12 @@ namespace WriterApp.Client.Pages
                 using HttpResponseMessage result = await Http.PostAsJsonAsync($"api/ai/actions/{actionKey}/execute", request);
                 if (!result.IsSuccessStatusCode)
                 {
+                    if (await TryHandleAiQuotaExceededAsync(result))
+                    {
+                        _continuityStatus = _aiQuotaMessage;
+                        return null;
+                    }
+
                     _continuityStatus = "Continuity action failed.";
                     return null;
                 }
@@ -3763,6 +3785,7 @@ namespace WriterApp.Client.Pages
             }
             finally
             {
+                await RefreshPlanUsageAsync();
                 _continuityBusy = false;
                 await InvokeAsync(StateHasChanged);
             }
@@ -4109,6 +4132,7 @@ namespace WriterApp.Client.Pages
                 using HttpResponseMessage result = await Http.PostAsJsonAsync("api/ai/actions/rewrite.selection/execute", request);
                 if (!result.IsSuccessStatusCode)
                 {
+                    await TryHandleAiQuotaExceededAsync(result);
                     Logger.LogWarning(
                         "Continuity rewrite retry request failed. DocumentId={DocumentId}, SectionId={SectionId}, PageId={PageId}, Strict={Strict}, StatusCode={StatusCode}, IssueKey={IssueKey}",
                         DocumentId,
@@ -4169,6 +4193,10 @@ namespace WriterApp.Client.Pages
                     strictMode,
                     GetContinuityIssueKey(issue));
                 return string.Empty;
+            }
+            finally
+            {
+                await RefreshPlanUsageAsync();
             }
         }
 
@@ -5416,6 +5444,12 @@ namespace WriterApp.Client.Pages
                     await Http.PostAsJsonAsync($"api/ai/actions/{actionKey}/execute", payload);
                 if (!response.IsSuccessStatusCode)
                 {
+                    if (await TryHandleAiQuotaExceededAsync(response))
+                    {
+                        _sceneAiError = _aiQuotaMessage;
+                        return;
+                    }
+
                     _sceneAiError = await ReadApiErrorMessageAsync(response, "AI action failed.");
                     return;
                 }
@@ -5439,6 +5473,7 @@ namespace WriterApp.Client.Pages
             }
             finally
             {
+                await RefreshPlanUsageAsync();
                 _sceneAiInFlight = false;
             }
         }
@@ -7382,6 +7417,13 @@ private const string PreviewBootstrapScript = @"
                     request);
                 if (!result.IsSuccessStatusCode)
                 {
+                    if (await TryHandleAiQuotaExceededAsync(result))
+                    {
+                        ShowAiMessage(_aiQuotaMessage);
+                        await InvokeAsync(StateHasChanged);
+                        return;
+                    }
+
                     string errorMessage = await ReadApiErrorMessageAsync(result, "AI action failed.");
                     ShowAiMessage(errorMessage);
                     await InvokeAsync(StateHasChanged);
@@ -7402,6 +7444,10 @@ private const string PreviewBootstrapScript = @"
                 ShowAiMessage("AI action failed.");
                 await InvokeAsync(StateHasChanged);
                 return;
+            }
+            finally
+            {
+                await RefreshPlanUsageAsync();
             }
 
             string? proposedText = response.ProposedText;
@@ -7468,6 +7514,7 @@ private const string PreviewBootstrapScript = @"
                     retryRequest);
                 if (!retryResult.IsSuccessStatusCode)
                 {
+                    await TryHandleAiQuotaExceededAsync(retryResult);
                     return proposedText;
                 }
 
@@ -7484,6 +7531,10 @@ private const string PreviewBootstrapScript = @"
             {
                 Logger.LogDebug(ex, "Tighten retry failed.");
                 return proposedText;
+            }
+            finally
+            {
+                await RefreshPlanUsageAsync();
             }
         }
 
@@ -7579,6 +7630,13 @@ private const string PreviewBootstrapScript = @"
                     request);
                 if (!result.IsSuccessStatusCode)
                 {
+                    if (await TryHandleAiQuotaExceededAsync(result))
+                    {
+                        ShowAiMessage(_aiQuotaMessage);
+                        await InvokeAsync(StateHasChanged);
+                        return;
+                    }
+
                     string errorMessage = await ReadApiErrorMessageAsync(result, "AI translation failed.");
                     ShowAiMessage(errorMessage);
                     await InvokeAsync(StateHasChanged);
@@ -7599,6 +7657,10 @@ private const string PreviewBootstrapScript = @"
                 ShowAiMessage("AI translation failed.");
                 await InvokeAsync(StateHasChanged);
                 return;
+            }
+            finally
+            {
+                await RefreshPlanUsageAsync();
             }
 
             _pendingAiProposal = new PendingAiProposal(
@@ -7761,6 +7823,108 @@ private const string PreviewBootstrapScript = @"
             }
 
             return null;
+        }
+
+        private async Task<bool> TryHandleAiQuotaExceededAsync(HttpResponseMessage response)
+        {
+            if (response is null)
+            {
+                return false;
+            }
+
+            int statusCode = (int)response.StatusCode;
+            if (statusCode != 402
+                && statusCode != 429)
+            {
+                return false;
+            }
+
+            try
+            {
+                string payload = await response.Content.ReadAsStringAsync();
+                if (string.IsNullOrWhiteSpace(payload))
+                {
+                    return false;
+                }
+
+                using JsonDocument doc = JsonDocument.Parse(payload);
+                JsonElement root = doc.RootElement;
+                string? code = GetJsonString(root, "code");
+                if (!string.Equals(code, "AI_QUOTA_EXCEEDED", StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+
+                string planName = GetJsonString(root, "planKey") ?? "Free";
+                int budget = GetJsonInt(root, "budget") ?? 0;
+                int used = GetJsonInt(root, "used") ?? budget;
+                string message = GetJsonString(root, "detail")
+                    ?? GetJsonString(root, "message")
+                    ?? "AI quota exceeded. Upgrade to continue.";
+
+                _aiQuotaPlanName = planName;
+                _aiQuotaBudget = Math.Max(0, budget);
+                _aiQuotaUsed = Math.Max(0, used);
+                _aiQuotaMessage = message;
+                _isAiQuotaDialogOpen = true;
+                _aiUsageStatus = new AiUsageStatusDto
+                {
+                    Plan = _aiQuotaPlanName,
+                    AiEnabled = _aiUsageStatus?.AiEnabled ?? true,
+                    UiEnabled = _aiUsageStatus?.UiEnabled ?? true,
+                    QuotaTotal = _aiQuotaBudget,
+                    QuotaRemaining = Math.Max(0, _aiQuotaBudget - _aiQuotaUsed)
+                };
+                await InvokeAsync(StateHasChanged);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static int? GetJsonInt(JsonElement root, string name)
+        {
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            foreach (JsonProperty property in root.EnumerateObject())
+            {
+                if (!string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (property.Value.ValueKind == JsonValueKind.Number
+                    && property.Value.TryGetInt32(out int intValue))
+                {
+                    return intValue;
+                }
+
+                if (property.Value.ValueKind == JsonValueKind.String
+                    && int.TryParse(property.Value.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed))
+                {
+                    return parsed;
+                }
+
+                return null;
+            }
+
+            return null;
+        }
+
+        private void CloseAiQuotaDialog()
+        {
+            _isAiQuotaDialogOpen = false;
+        }
+
+        private void NavigateToUpgradeFromQuotaDialog()
+        {
+            _isAiQuotaDialogOpen = false;
+            Navigation.NavigateTo("/start?plan=pro", forceLoad: true);
         }
 
         private void ShowAiMessage(string message)
@@ -8134,6 +8298,15 @@ private const string PreviewBootstrapScript = @"
         private bool IsAiEntitled => _aiUsageStatus?.AiEnabled == true;
 
         private bool IsAiQuotaExceeded => _aiUsageStatus is not null && _aiUsageStatus.QuotaRemaining <= 0;
+
+        private string PlanStatusLabel => $"Plan: {AuthMeStateService.PlanKey}";
+
+        private string AiUsageStatusLabel =>
+            AuthMeStateService.AiMonthlyTokenBudget <= 0
+                ? "AI: not included"
+                : $"AI: {AuthMeStateService.AiTokensUsedThisPeriod} / {AuthMeStateService.AiMonthlyTokenBudget} tokens";
+
+        private bool ShowPlanUpgrade => GetPlanUpgradeHref() is not null;
 
         private void TogglePendingDetails()
         {
@@ -8611,6 +8784,50 @@ private const string PreviewBootstrapScript = @"
             }
 
             return "AI usage is not available.";
+        }
+
+        private string? GetPlanUpgradeHref()
+        {
+            if (string.Equals(AuthMeStateService.PlanKey, "Free", StringComparison.OrdinalIgnoreCase))
+            {
+                return "/start?plan=standard";
+            }
+
+            if (string.Equals(AuthMeStateService.PlanKey, "Standard", StringComparison.OrdinalIgnoreCase))
+            {
+                return "/start?plan=pro";
+            }
+
+            return null;
+        }
+
+        private string GetPlanUpgradeLabel()
+        {
+            return string.Equals(AuthMeStateService.PlanKey, "Free", StringComparison.OrdinalIgnoreCase)
+                ? "Upgrade to Standard"
+                : "Upgrade to Professional";
+        }
+
+        private void NavigateToPlanUpgrade()
+        {
+            string? href = GetPlanUpgradeHref();
+            if (string.IsNullOrWhiteSpace(href))
+            {
+                return;
+            }
+
+            Navigation.NavigateTo(href, forceLoad: true);
+        }
+
+        private async Task RefreshPlanUsageAsync()
+        {
+            try
+            {
+                await AuthMeStateService.RefreshAsync(force: true);
+            }
+            catch
+            {
+            }
         }
 
         private async Task LoadAiUsageStatusAsync()
@@ -9645,6 +9862,7 @@ private const string PreviewBootstrapScript = @"
                 using HttpResponseMessage result = await Http.PostAsJsonAsync("api/ai/actions/rewrite.selection/execute", request);
                 if (!result.IsSuccessStatusCode)
                 {
+                    await TryHandleAiQuotaExceededAsync(result);
                     return string.Empty;
                 }
 
@@ -9654,6 +9872,10 @@ private const string PreviewBootstrapScript = @"
             catch
             {
                 return string.Empty;
+            }
+            finally
+            {
+                await RefreshPlanUsageAsync();
             }
         }
 
@@ -9705,6 +9927,7 @@ private const string PreviewBootstrapScript = @"
                 using HttpResponseMessage result = await Http.PostAsJsonAsync("api/ai/actions/rewrite.selection/execute", request);
                 if (!result.IsSuccessStatusCode)
                 {
+                    await TryHandleAiQuotaExceededAsync(result);
                     return string.Empty;
                 }
 
@@ -9714,6 +9937,10 @@ private const string PreviewBootstrapScript = @"
             catch
             {
                 return string.Empty;
+            }
+            finally
+            {
+                await RefreshPlanUsageAsync();
             }
         }
 

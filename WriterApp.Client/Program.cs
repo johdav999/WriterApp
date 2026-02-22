@@ -20,6 +20,7 @@ builder.Services.AddScoped<WriterApp.Client.State.LayoutStateService>();
 builder.Services.AddScoped<WriterApp.Client.State.CurrentDocumentStateService>();
 builder.Services.AddScoped<WriterApp.Client.State.CurrentSceneStateService>();
 builder.Services.AddScoped<WriterApp.Client.State.CurrentProjectStateService>();
+builder.Services.AddScoped<WriterApp.Client.State.AuthMeStateService>();
 builder.Services.AddSingleton<WriterApp.Client.State.LastOpenedDocumentStateService>();
 builder.Services.AddScoped<WriterApp.Client.Services.CoachRecommendationService>();
 

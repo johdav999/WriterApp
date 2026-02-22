@@ -19,15 +19,14 @@ namespace WriterApp.Application.Security
         public EasyAuthAuthenticationHandler(
             IOptionsMonitor<AuthenticationSchemeOptions> options,
             ILoggerFactory logger,
-            UrlEncoder encoder,
-            ISystemClock clock)
-            : base(options, logger, encoder, clock)
+            UrlEncoder encoder)
+            : base(options, logger, encoder)
         {
         }
 
         protected override Task<AuthenticateResult> HandleAuthenticateAsync()
         {
-            string headerValue = Request.Headers[HeaderName];
+            string headerValue = Request.Headers[HeaderName].ToString();
             if (string.IsNullOrWhiteSpace(headerValue))
             {
                 return Task.FromResult(AuthenticateResult.NoResult());

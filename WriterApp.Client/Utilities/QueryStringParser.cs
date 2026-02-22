@@ -48,7 +48,14 @@ namespace WriterApp.Client.Utilities
                 return string.Empty;
             }
 
-            return Uri.UnescapeDataString(value.Replace('+', ' '));
+            try
+            {
+                return Uri.UnescapeDataString(value.Replace('+', ' '));
+            }
+            catch
+            {
+                return value;
+            }
         }
     }
 }

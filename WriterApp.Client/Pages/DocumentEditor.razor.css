@@ -2802,6 +2802,12 @@
     font-size: 0.85rem;
 }
 
+.ai-quota-details {
+    display: grid;
+    gap: 0.35rem;
+    margin-top: 0.65rem;
+}
+
 .selection-bubble {
     position: fixed;
     z-index: 45;
