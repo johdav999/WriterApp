@@ -1,0 +1,190 @@
+@page "/billing/checkout"
+@page "/app/billing/checkout"
+@using System.Net
+@using System.Net.Http.Json
+@using Microsoft.AspNetCore.Components.WebAssembly.Hosting
+@using WriterApp.Client.Utilities
+@inject NavigationManager Navigation
+@inject HttpClient Http
+@inject IWebAssemblyHostEnvironment HostEnvironment
+
+<PageTitle>Billing Checkout</PageTitle>
+
+<div class="projects-page">
+    <header class="projects-header">
+        <div>
+            <h1>Upgrade to @_planDisplayName</h1>
+            <p class="projects-subtitle">Billing is not configured yet. This page is the integration point for Stripe (or other) checkout.</p>
+        </div>
+    </header>
+
+    @if (!string.IsNullOrWhiteSpace(_message))
+    {
+        <div class="projects-error">@_message</div>
+    }
+
+    <div class="projects-actions">
+        <button type="button" class="secondary" @onclick="GoBack">Back</button>
+        <button type="button" class="primary" @onclick="GoToProjects">Go to projects</button>
+
+        @if (_showSimulateUpgrade)
+        {
+            <button type="button" class="secondary" @onclick="SimulateUpgradeAsync" disabled="@_simulateInFlight">
+                @(_simulateInFlight ? "Simulating..." : "Simulate upgrade")
+            </button>
+        }
+    </div>
+</div>
+
+@code {
+    private string _planKey = "standard";
+    private string _planDisplayName = "Standard";
+    private string _returnUrl = SafeReturnUrl.DefaultProjectsPath;
+    private string? _message;
+    private bool _showSimulateUpgrade;
+    private bool _simulateInFlight;
+    private string? _userId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        ApplyQueryState();
+        await TryEnableDevSimulationAsync();
+    }
+
+    private void ApplyQueryState()
+    {
+        Uri current = Navigation.ToAbsoluteUri(Navigation.Uri);
+        Dictionary<string, string> query = QueryStringParser.Parse(current.Query);
+
+        _planKey = ParsePlan(query);
+        _planDisplayName = _planKey == "pro" ? "Professional" : "Standard";
+        _returnUrl = ResolveReturnUrl(query);
+    }
+
+    private async Task TryEnableDevSimulationAsync()
+    {
+        _showSimulateUpgrade = false;
+        _userId = null;
+
+        if (!HostEnvironment.IsDevelopment())
+        {
+            return;
+        }
+
+        try
+        {
+            using HttpResponseMessage response = await Http.GetAsync("/api/auth/me");
+            if (!response.IsSuccessStatusCode)
+            {
+                return;
+            }
+
+            AuthMeResponse? auth = await response.Content.ReadFromJsonAsync<AuthMeResponse>();
+            if (auth is null || auth.IsAuthenticated != true || string.IsNullOrWhiteSpace(auth.UserId))
+            {
+                return;
+            }
+
+            bool isAdmin = (auth.Roles ?? Array.Empty<string>()).Any(role => string.Equals(role, "Admin", StringComparison.OrdinalIgnoreCase));
+            if (!isAdmin)
+            {
+                _message = "Simulate upgrade is available for admin users only.";
+                return;
+            }
+
+            _userId = auth.UserId;
+            _showSimulateUpgrade = true;
+        }
+        catch
+        {
+            _message = "Could not load current user for simulation.";
+        }
+    }
+
+    private async Task SimulateUpgradeAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_userId))
+        {
+            _message = "Current user id is not available for simulation.";
+            return;
+        }
+
+        _simulateInFlight = true;
+        _message = null;
+        try
+        {
+            string userId = Uri.EscapeDataString(_userId);
+            string endpoint = $"/api/admin/users/{userId}/plan/{_planKey}";
+            using HttpResponseMessage response = await Http.PostAsync(endpoint, content: null);
+            if (response.IsSuccessStatusCode)
+            {
+                _message = $"Simulated upgrade to {_planDisplayName}.";
+                return;
+            }
+
+            if (response.StatusCode == HttpStatusCode.Forbidden)
+            {
+                _message = "Simulation failed: forbidden. Admin access is required.";
+                return;
+            }
+
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                _message = "Simulation failed: unauthorized.";
+                return;
+            }
+
+            string body = await response.Content.ReadAsStringAsync();
+            _message = string.IsNullOrWhiteSpace(body)
+                ? $"Simulation failed: {(int)response.StatusCode}."
+                : $"Simulation failed: {(int)response.StatusCode} {body}";
+        }
+        catch
+        {
+            _message = "Simulation failed due to a network error.";
+        }
+        finally
+        {
+            _simulateInFlight = false;
+        }
+    }
+
+    private void GoBack()
+    {
+        Navigation.NavigateTo(_returnUrl);
+    }
+
+    private void GoToProjects()
+    {
+        Navigation.NavigateTo("/projects");
+    }
+
+    private static string ParsePlan(Dictionary<string, string> query)
+    {
+        if (!query.TryGetValue("plan", out string? candidate))
+        {
+            return "standard";
+        }
+
+        if (string.IsNullOrWhiteSpace(candidate))
+        {
+            return "standard";
+        }
+
+        return string.Equals(candidate, "pro", StringComparison.OrdinalIgnoreCase)
+            ? "pro"
+            : "standard";
+    }
+
+    private static string ResolveReturnUrl(Dictionary<string, string> query)
+    {
+        return SafeReturnUrl.ResolveFromQuery(query, fallback: SafeReturnUrl.DefaultProjectsPath);
+    }
+
+    private sealed class AuthMeResponse
+    {
+        public bool IsAuthenticated { get; init; }
+        public string? UserId { get; init; }
+        public IReadOnlyList<string> Roles { get; init; } = Array.Empty<string>();
+    }
+}

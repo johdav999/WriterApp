@@ -1,0 +1,2561 @@
+@page "/documents/{DocumentId:guid}/sections/{SectionId:guid}"
+@page "/projects/{ProjectId:guid}/scenes/{SceneNodeId:guid}"
+@using WriterApp.Application.Documents
+@using WriterApp.Application.AI
+@using WriterApp.Application.Exporting
+@using WriterApp.Client.Components.Editor
+@using WriterApp.Client.Components.AI
+@using WriterApp.Client.Components
+@using WriterApp.Client.Pages
+
+<PageTitle>@GetPageTitle()</PageTitle>
+
+@if (_isLoading)
+{
+    <div class="landing-loading">Loading document...</div>
+}
+else if (_loadError is not null)
+{
+    <div class="landing-empty">@_loadError</div>
+}
+else if (_activeSection is null || _activePage is null)
+{
+    <div class="landing-empty">No pages available.</div>
+}
+else
+{
+    <div class="editor-shell @GetLayoutStateClass()" style="@GetLayoutStyle()">
+        <div class="editor-workspace @GetWorkspaceClass()">
+
+            <section class="editor-main">
+                <div class="editor-main-header">
+                    <div class="editor-section-info">
+                        <div class="editor-section-label">Section</div>
+                        <div class="editor-section-title">@_activeSection.Title</div>
+                    </div>
+                    @if (ShowTranslationSwitcher)
+                    {
+                        <div class="translation-switcher">
+                            <div class="translation-switcher-label">Translation</div>
+                            <div class="translation-switcher-links">
+                                @foreach (TranslationLinkItem item in GetTranslationLinks())
+                                {
+                                    <button type="button"
+                                            class="translation-switcher-link @(item.IsActive ? "is-active" : string.Empty)"
+                                            title='@GetTooltip(item.Title)'
+                                            @onclick="() => NavigateToTranslation(item)">
+                                        @item.Label
+                                    </button>
+                                }
+                            </div>
+                        </div>
+                    }
+                    <button type="button" class="panel-toggle" title='@GetTooltip("Hide panels and focus on writing.")' @onclick="ToggleFocusMode">
+                        @(LayoutStateService.State.FocusMode ? "Exit focus" : "Focus mode")
+                    </button>
+                    <button type="button" class="panel-toggle" title='@GetTooltip("Toggle the right-hand panel.")' @onclick="ToggleContextPanel">
+                        @(IsContextPanelCollapsed() ? "Show panel" : "Hide panel")
+                    </button>
+                </div>
+
+                <div class="editor-toolbar" role="toolbar" aria-label="Editor formatting">
+                    <div class="editor-toolbar-group" aria-label="Essentials" data-compact="true">
+                        <button type="button" class="@GetActiveClass(_formattingState.IsBold)" disabled="@(!_formattingState.CanBold)" title='@GetTooltip("Make selected text bold.")' @onclick="OnBoldRequested">Bold</button>
+                        <button type="button" class="@GetActiveClass(_formattingState.IsItalic)" disabled="@(!_formattingState.CanItalic)" title='@GetTooltip("Italicize selected text.")' @onclick="OnItalicRequested">Italic</button>
+                        <select class="editor-toolbar-select" value="@GetBlockTypeValue()" title='@GetTooltip("Change text style.")' @onchange="OnBlockTypeChanged" disabled="@(!_formattingState.CanApplyHeading)">
+                            <option value="paragraph">Paragraph</option>
+                            <option value="heading:1">Heading 1</option>
+                            <option value="heading:2">Heading 2</option>
+                            <option value="heading:3">Heading 3</option>
+                        </select>
+                        <button type="button" disabled="@(!_formattingState.CanToggleList)" title='@GetTooltip("Create a bulleted list.")' @onclick="OnBulletListRequested">Bulleted list</button>
+                        <button type="button" disabled="@(!_formattingState.CanToggleList)" title='@GetTooltip("Create a numbered list.")' @onclick="OnOrderedListRequested">Numbered list</button>
+                        <button type="button" disabled="@(!_formattingState.CanBlockquote)" title='@GetTooltip("Format text as a quotation.")' @onclick="OnBlockquoteRequested">Blockquote</button>
+                        <button type="button" class="@GetActiveClass(_formattingState.IsLink)" title='@GetTooltip("Insert or edit a link.")' @onclick="OnLinkRequested">Link</button>
+                    </div>
+                    <div class="editor-toolbar-group" aria-label="Table">
+                        <button type="button" disabled="@(!_formattingState.CanInsertTable)" title='@GetTooltip("Insert a 3x3 table.")' @onclick="OnInsertTableRequested">Table</button>
+                        <button type="button" disabled="@(!_formattingState.CanAddTableRowAfter)" title='@GetTooltip("Add row below.")' @onclick="OnAddTableRowAfterRequested">+Row</button>
+                        <button type="button" disabled="@(!_formattingState.CanAddTableColumnAfter)" title='@GetTooltip("Add column to the right.")' @onclick="OnAddTableColumnAfterRequested">+Col</button>
+                        <button type="button" class="@GetActiveClass(_formattingState.IsHeaderCell)" disabled="@(!_formattingState.CanToggleTableHeaderRow)" title='@GetTooltip("Toggle header row.")' @onclick="OnToggleTableHeaderRowRequested">Header</button>
+                        <button type="button" disabled="@(!_formattingState.CanDeleteTable)" title='@GetTooltip("Delete current table.")' @onclick="OnDeleteTableRequested">Del table</button>
+                    </div>
+                    <div class="editor-toolbar-group" aria-label="Image">
+                        <button type="button"
+                                class="editor-toolbar-upload-button"
+                                disabled="@(!_formattingState.CanInsertImage)"
+                                title='@GetTooltip("Insert image from your device.")'
+                                @onclick="OnInsertImageRequested">
+                            Image
+                        </button>
+                        <InputFile @key="_imageUploadInputKey"
+                                   id="editor-image-upload"
+                                   class="editor-image-upload-input"
+                                   style="display:none"
+                                   accept="image/png,image/jpeg,image/gif,image/webp"
+                                   OnChange="OnImageFileSelected" />
+                        <button type="button" disabled="@(!_formattingState.CanInsertImage)" title='@GetTooltip("Insert image from URL.")' @onclick="OnInsertImageFromUrlRequested">Image URL</button>
+                        <button type="button" disabled="@(!_formattingState.CanRemoveImage)" title='@GetTooltip("Remove selected image.")' @onclick="OnRemoveImageRequested">Remove image</button>
+                    </div>
+                    <div class="editor-toolbar-group" aria-label="Zoom">
+                        <button type="button" title='@GetTooltip("Decrease text size.")' @onclick="OnZoomOutRequested">A-</button>
+                        <span class="editor-zoom-label">@GetZoomLabel()</span>
+                        <button type="button" title='@GetTooltip("Increase text size.")' @onclick="OnZoomInRequested">A+</button>
+                    </div>
+                    <div class="editor-toolbar-group editor-toolbar-overflow" aria-label="More">
+                        <button type="button" title='@GetTooltip("More formatting options.")' @onclick="ToggleToolbarOverflow">...</button>
+                        @if (_isToolbarOverflowOpen)
+                        {
+                            <div class="editor-toolbar-overflow-panel">
+                                <button type="button" class="@GetActiveClass(_formattingState.IsStrike)" disabled="@(!_formattingState.CanStrike)" @onclick="OnStrikeRequested">Strike</button>
+                                <button type="button" class="@GetActiveClass(_formattingState.IsCode)" disabled="@(!_formattingState.CanCode)" @onclick="OnCodeRequested">Code</button>
+                                <button type="button" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnHeadingRequested(3)">Heading 3</button>
+                                <button type="button" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnHeadingRequested(4)">Heading 4</button>
+                                <button type="button" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnHeadingRequested(5)">Heading 5</button>
+                                <button type="button" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnHeadingRequested(6)">Heading 6</button>
+                                <button type="button" disabled="@(!_formattingState.CanHorizontalRule)" @onclick="OnHorizontalRuleRequested">Horizontal rule</button>
+                                <button type="button" class='@GetActiveClass(_formattingState.TextAlign == "left")' @onclick='@(() => OnAlignRequested("left"))'>Align left</button>
+                                <button type="button" class='@GetActiveClass(_formattingState.TextAlign == "center")' @onclick='@(() => OnAlignRequested("center"))'>Align center</button>
+                                <button type="button" class='@GetActiveClass(_formattingState.TextAlign == "right")' @onclick='@(() => OnAlignRequested("right"))'>Align right</button>
+                                <button type="button" @onclick="OnIndentDecreaseRequested">Indent -</button>
+                                <button type="button" @onclick="OnIndentIncreaseRequested">Indent +</button>
+                                <button type="button" disabled="@(!_formattingState.CanAddTableRowBefore)" @onclick="OnAddTableRowBeforeRequested">Row above</button>
+                                <button type="button" disabled="@(!_formattingState.CanAddTableRowAfter)" @onclick="OnAddTableRowAfterRequested">Row below</button>
+                                <button type="button" disabled="@(!_formattingState.CanDeleteTableRow)" @onclick="OnDeleteTableRowRequested">Delete row</button>
+                                <button type="button" disabled="@(!_formattingState.CanAddTableColumnBefore)" @onclick="OnAddTableColumnBeforeRequested">Col left</button>
+                                <button type="button" disabled="@(!_formattingState.CanAddTableColumnAfter)" @onclick="OnAddTableColumnAfterRequested">Col right</button>
+                                <button type="button" disabled="@(!_formattingState.CanDeleteTableColumn)" @onclick="OnDeleteTableColumnRequested">Delete col</button>
+                                <button type="button" disabled="@(!_formattingState.CanToggleTableHeaderColumn)" @onclick="OnToggleTableHeaderColumnRequested">Header col</button>
+                                <button type="button" disabled="@(!_formattingState.CanMergeTableCells)" @onclick="OnMergeTableCellsRequested">Merge cells</button>
+                                <button type="button" disabled="@(!_formattingState.CanSplitTableCell)" @onclick="OnSplitTableCellRequested">Split cell</button>
+                            </div>
+                        }
+                    </div>
+                </div>
+                @if (!string.IsNullOrWhiteSpace(_imageUploadError))
+                {
+                    <div class="editor-image-error">@_imageUploadError</div>
+                }
+                <div class="editor-actions">
+                    <button type="button" title='@GetTooltip("Undo last change.")' @onclick="OnUndoRequested">Undo</button>
+                    <button type="button" title='@GetTooltip("Redo last change.")' @onclick="OnRedoRequested">Redo</button>
+                    <button type="button" title='@GetTooltip("User feedback: Report a bug or request an enhancement.")' @onclick="OpenFeedbackDialog">User Feedback</button>
+                    @if (CanShowPromptLibrary && PinnedPromptPresets.Count > 0)
+                    {
+                        <div class="revise-tools">
+                            @foreach (PromptPresetDto preset in PinnedPromptPresets)
+                            {
+                                <button type="button" disabled="@IsAiQuotaExceeded" @onclick="() => RunPromptPresetAsync(preset)">
+                                    @preset.Name
+                                </button>
+                            }
+                        </div>
+                    }
+                    <div class="document-menu">
+                        <button type="button" title='@GetTooltip("Document-level actions.")' @onclick="ToggleDocumentMenu">Document</button>
+                        @if (_isDocumentMenuOpen)
+                        {
+                            <div class="document-menu-panel">
+                                <button type="button" @onclick="OnToggleEditorWidthMode">@GetEditorWidthLabel()</button>
+                                <button type="button" @onclick="OnTogglePrintLayout">@GetPrintLayoutLabel()</button>
+                                <button type="button" @onclick="OnSaveNow">Save now</button>
+                                <button type="button" @onclick="PromptImportCurrentSection">Import...</button>
+                                <button type="button" @onclick="OnExportDialogOpenAsync">Export...</button>
+                            </div>
+                        }
+                    </div>
+                    @if (IsAiQuotaExceeded)
+                    {
+                        <span class="ai-quota-message">You've reached your monthly AI limit.</span>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(_feedbackBannerMessage))
+                    {
+                        <span class="version-status" title="Feedback delivery status.">@_feedbackBannerMessage</span>
+                    }
+                </div>
+
+                @if (_isDiffMode)
+                {
+                    <div class="diff-header-bar" @onkeydown="OnDiffKeyDown" tabindex="0" @ref="_diffHeaderRef">
+                        <div class="diff-header-group">
+                            <label class="diff-header-label">Base</label>
+                            <select value="@_diffBaseVersionId"
+                                    @onchange="OnDiffBaseChanged">
+                                <option value="">Select version</option>
+                                @foreach (PageVersionListItemDto version in _pageVersions)
+                                {
+                                    <option value="@version.Id">@FormatVersionLabel(version)</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="diff-header-group">
+                            <label class="diff-header-label">Compare</label>
+                            <select value="@_diffCompareVersionId"
+                                    @onchange="OnDiffCompareChanged">
+                                <option value="">Current</option>
+                                @foreach (PageVersionListItemDto version in _pageVersions)
+                                {
+                                    <option value="@version.Id">@FormatVersionLabel(version)</option>
+                                }
+                            </select>
+                        </div>
+                        <button type="button"
+                                class="diff-header-button"
+                                title="Swap base and compare"
+                                @onclick="SwapDiffVersionsAsync"
+                                disabled="@(!_diffBaseVersionId.HasValue)">
+                            Swap
+                        </button>
+                        <div class="diff-header-group">
+                            <label class="diff-header-label">View</label>
+                            <select value="@_diffViewMode"
+                                    @onchange="OnDiffViewModeChanged">
+                                <option value="inline">Inline</option>
+                                <option value="side">Side-by-side</option>
+                            </select>
+                        </div>
+                        <div class="diff-header-group">
+                            <label class="diff-header-label">Granularity</label>
+                            <select value="@_diffGranularity"
+                                    @onchange="OnDiffGranularityChanged">
+                                <option value="word">Word</option>
+                                <option value="sentence">Sentence</option>
+                            </select>
+                        </div>
+                        @if (string.Equals(_diffViewMode, "inline", StringComparison.OrdinalIgnoreCase))
+                        {
+                            <label class="diff-toggle">
+                                <input type="checkbox" checked="@_diffShowDeletions" @onchange="OnDiffShowDeletionsChanged" />
+                                Show deletions
+                            </label>
+                        }
+                        else
+                        {
+                            <label class="diff-toggle">
+                                <input type="checkbox" checked="@_diffSyncScroll" @onchange="OnDiffSyncScrollChanged" />
+                                Sync scroll
+                            </label>
+                        }
+                        <button type="button"
+                                class="diff-header-button primary"
+                                disabled="@(!_canCompareVersions)"
+                                @onclick="LoadVersionDiffAsync">
+                            Compare
+                        </button>
+                        <button type="button"
+                                class="diff-header-button"
+                                title="Exit diff mode"
+                                @onclick="CloseDiffMode">
+                            Close diff
+                        </button>
+                    </div>
+                }
+
+                @if (_pendingAiProposal is not null)
+                {
+                    <div class="ai-preview">
+                        <div class="ai-preview-header">
+                            <strong>AI suggestion</strong>
+                            <span>@_pendingAiProposal.ActionLabel</span>
+                            @if (!string.IsNullOrWhiteSpace(_pendingAiProposal.ErrorMessage))
+                            {
+                                <span class="ai-preview-status error">@_pendingAiProposal.ErrorMessage</span>
+                            }
+                        </div>
+                        @if (IsTranslationProposal)
+                        {
+                            <TranslationProposalPanel SourceText="@_pendingAiProposal.OriginalText"
+                                                      TranslatedText="@_pendingAiProposal.ProposedText"
+                                                      AlignmentMode="@_translationAlignmentMode"
+                                                      AlignmentModeChanged="OnTranslationAlignmentChanged"
+                                                      OnCopyTranslated="CopyTranslatedTextAsync"
+                                                      OnChangeLanguage="OpenTranslateModalFromProposal" />
+                            <div class="translation-apply">
+                                <div class="translation-apply-mode">
+                                    <label for="translation-apply-mode">Apply</label>
+                                    <select id="translation-apply-mode" @bind="_translationApplyMode">
+                                        @foreach (TranslationApplyOption option in GetTranslationApplyOptions())
+                                        {
+                                            <option value="@option.Value">@option.Label</option>
+                                        }
+                                    </select>
+                                </div>
+                                <div class="translation-apply-actions">
+                                    <button type="button" @onclick="OnApplyPendingAiProposal">Apply</button>
+                                    <button type="button" class="btn btn-ghost" @onclick="OnDiscardPendingAiProposal">Discard</button>
+                                </div>
+                            </div>
+                        }
+                        else if (!string.IsNullOrWhiteSpace(_pendingAiProposal.OriginalText))
+                        {
+                            <div class="ai-preview-columns">
+                                <div class="ai-preview-pane">
+                                    <div class="ai-preview-label">Original</div>
+                                    <div class="ai-preview-text">@_pendingAiProposal.OriginalText</div>
+                                </div>
+                                <div class="ai-preview-pane">
+                                    <div class="ai-preview-label">Proposed</div>
+                                    <div class="ai-preview-text">@_pendingAiProposal.ProposedText</div>
+                                </div>
+                            </div>
+                            @if (ShouldShowTightenMetrics())
+                            {
+                                <div class="ai-history-details-sub">
+                                    <span>Words: @GetPendingOriginalWordCount() -> @GetPendingProposedWordCount() (@GetPendingTightenDeltaLabel())</span>
+                                </div>
+                            }
+                            @if (ShouldShowTightenLowImpactWarning())
+                            {
+                                <div class="quality-cache-note">No meaningful tightening was produced. Try selecting a longer passage.</div>
+                            }
+                        }
+                        @if (!IsTranslationProposal)
+                        {
+                            <div class="ai-preview-actions">
+                                <button type="button" @onclick="OnApplyPendingAiProposal">Apply</button>
+                                <button type="button" @onclick="OnDiscardPendingAiProposal">Discard</button>
+                                <button type="button"
+                                        class="ai-details-toggle"
+                                        aria-expanded="@_pendingDetailsExpanded"
+                                        aria-controls="ai-pending-details"
+                                        @onclick="TogglePendingDetails">
+                                    @(_pendingDetailsExpanded ? "Hide details" : "Change details")
+                                </button>
+                            </div>
+                        }
+                        @if (_pendingDetailsExpanded)
+                        {
+                            <div id="ai-pending-details" class="ai-history-details">
+                                <div class="ai-history-details-header">
+                                    <div class="ai-history-details-summary">@GetPendingSummary()</div>
+                                    <div class="ai-history-details-sub">
+                                        <span>Preview</span>
+                                        <span>@_pendingAiProposal.CreatedUtc.ToLocalTime().ToString("g")</span>
+                                    </div>
+                                </div>
+                                @if (!string.IsNullOrWhiteSpace(_pendingAiProposal.ActionLabel))
+                                {
+                                    <div class="ai-history-details-intent">
+                                        <div class="ai-history-details-label">Intent</div>
+                                        <div class="ai-history-details-text">@_pendingAiProposal.ActionLabel</div>
+                                    </div>
+                                }
+                                <div class="ai-history-details-compare">
+                                    <div class="ai-history-details-block">
+                                        <div class="ai-history-details-label">Before</div>
+                                        <pre>@FormatHistoryText(_pendingAiProposal.OriginalText)</pre>
+                                    </div>
+                                    <div class="ai-history-details-block">
+                                        <div class="ai-history-details-label">After</div>
+                                        <pre>@FormatHistoryText(_pendingAiProposal.ProposedText)</pre>
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+
+                <div class="editor-surface">
+                    <div class="editor-viewport">
+                        <div class="editor-content">
+                            @if (_isDiffMode)
+                            {
+                                <div class="diff-canvas">
+                                    @if (_diffLoading)
+                                    {
+                                        <div class="diff-empty">Building diff...</div>
+                                    }
+                                    else if (!string.IsNullOrWhiteSpace(_diffError))
+                                    {
+                                        <div class="diff-empty">@_diffError</div>
+                                    }
+                                    else if (_diffResult is null)
+                                    {
+                                        <div class="diff-empty">Select versions to compare.</div>
+                                    }
+                                    else
+                                    {
+                                        <div class="diff-legend">
+                                            <span class="diff-legend-item added">Added</span>
+                                            <span class="diff-legend-item removed">Removed</span>
+                                            <span class="diff-legend-item changed">Changed</span>
+                                        </div>
+                                        @if (_diffResult.Truncated)
+                                        {
+                                            <div class="diff-note">Diff truncated to first @_diffResult.MaxBlocks blocks.</div>
+                                        }
+                                        @if (string.Equals(_diffViewMode, "side", StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            <div class="diff-side-by-side" @onkeydown="OnDiffKeyDown" tabindex="0" @ref="_diffCanvasRef">
+                                                <div class="diff-pane">
+                                                    <div class="diff-pane-header">
+                                                        <div class="diff-pane-title">Base</div>
+                                                        <div class="diff-pane-sub">@GetDiffPaneSubtitle(_diffBaseVersionId)</div>
+                                                    </div>
+                                                    <div class="diff-pane-body" id="diff-pane-left" @onscroll='() => OnDiffPaneScrolled("diff-pane-left")'>
+                                                        @foreach (PageVersionDiffBlockDto block in _diffResult.Blocks)
+                                                        {
+                                                            <div class="diff-line @GetDiffClass(block.Status)"
+                                                                 id="@GetDiffAnchorId(block.Id)">
+                                                                @RenderDiffSegments(GetBaseSegments(block))
+                                                            </div>
+                                                        }
+                                                    </div>
+                                                </div>
+                                                <div class="diff-pane">
+                                                    <div class="diff-pane-header">
+                                                        <div class="diff-pane-title">Compare</div>
+                                                        <div class="diff-pane-sub">@GetDiffPaneSubtitle(_diffCompareVersionId)</div>
+                                                    </div>
+                                                    <div class="diff-pane-body" id="diff-pane-right" @onscroll='() => OnDiffPaneScrolled("diff-pane-right")'>
+                                                        @foreach (PageVersionDiffBlockDto block in _diffResult.Blocks)
+                                                        {
+                                                            <div class="diff-line @GetDiffClass(block.Status)">
+                                                                @RenderDiffSegments(GetCompareSegments(block))
+                                                            </div>
+                                                        }
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        }
+                                        else
+                                        {
+                                            <div class="diff-inline" @onkeydown="OnDiffKeyDown" tabindex="0" @ref="_diffCanvasRef">
+                                                @foreach (PageVersionDiffBlockDto block in _diffResult.Blocks)
+                                                {
+                                                    if (!_diffShowDeletions && string.Equals(block.Status, "removed", StringComparison.OrdinalIgnoreCase))
+                                                    {
+                                                        continue;
+                                                    }
+                                                    <div class="diff-line @GetDiffClass(block.Status)"
+                                                         id="@GetDiffAnchorId(block.Id)">
+                                                        @RenderDiffSegments(GetInlineSegments(block), hideRemoved: !_diffShowDeletions)
+                                                    </div>
+                                                }
+                                            </div>
+                                        }
+                                    }
+                                </div>
+                            }
+                            else
+                            {
+                                @* Pages are derived from continuous section content; breaks are visual only. *@
+                                <PageEditor @ref="_pageEditor"
+                                            @key="_activePage.Id"
+                                            Page="_activePage"
+                                            UseSceneContentPersistence="@IsSceneRoute"
+                                            SceneProjectId="@(IsSceneRoute ? ProjectId : null)"
+                                            SceneNodeId="@(IsSceneRoute ? SceneNodeId : null)"
+                                            OnPageSaved="OnPageSaved"
+                                            ShowStatusBar="false"
+                                            StatusChanged="OnEditorStatusChanged"
+                                            Annotations="_annotations"
+                                            QualityIssues="_qualityIssues"
+                                            QualityHighlightsEnabled="@_isStyleQualityTabActive"
+                                            ActiveQualityIssueKey="@(_isStyleQualityTabActive ? _selectedQualityIssueKey : null)"
+                                            VersionStatusMessage="@_versionStatusMessage"
+                                            AnnotationClicked="OnAnnotationClickedAsync"
+                                            PageBreaks="PageBreaks"
+                                            HeadingNumberingEnabled="@LayoutStateService.State.HeadingNumberingEnabled"
+                                            HeadingNumberingScope="@GetHeadingNumberingScope()"
+                                            HeadingNumberingPrefix="@_headingPrefixCounters"
+                                            HeadingNumberingTraceId="@_headingTraceId"
+                                            SearchHighlightQuery="@SearchQuery"
+                                            FormattingChanged="OnFormattingChanged"
+                                            SelectionChanged="OnSelectionChanged"
+                                            LinkShortcutRequested="OnLinkShortcutRequested"
+                                            ContextMenuRequested="OnEditorContextMenuRequested"
+                                            LinkContextMenuRequested="OnEditorLinkContextMenuRequested"
+                                            SelectionBubbleChanged="OnSelectionBubbleChanged" />
+                                @if (_selectionBubbleVisible)
+                                {
+                                    <div class="selection-bubble" style="@GetSelectionBubbleStyle()">
+                                        <button type="button"
+                                                class="@GetActiveClass(_formattingState.IsBold)"
+                                                disabled="@(!_formattingState.CanBold)"
+                                                @onclick="OnBoldRequested">Bold</button>
+                                        <button type="button"
+                                                class="@GetActiveClass(_formattingState.IsItalic)"
+                                                disabled="@(!_formattingState.CanItalic)"
+                                                @onclick="OnItalicRequested">Italic</button>
+                                        <button type="button"
+                                                class="@GetActiveClass(_formattingState.IsStrike)"
+                                                disabled="@(!_formattingState.CanStrike)"
+                                                @onclick="OnStrikeRequested">Strike</button>
+                                        <button type="button"
+                                                class="@GetActiveClass(_formattingState.IsCode)"
+                                                disabled="@(!_formattingState.CanCode)"
+                                                @onclick="OnCodeRequested">Code</button>
+                                        <button type="button"
+                                                class="@GetActiveClass(_formattingState.IsLink)"
+                                                @onclick="OnLinkRequested">Link</button>
+                                    </div>
+                                }
+                            }
+                        </div>
+                    </div>
+                    @if (!_isDiffMode)
+                    {
+                        <div class="editor-status-bar">
+                            <span title="Total words in this section.">@_editorStatus.WordCount words</span>
+                            <span title="Estimated page count.">Page @_editorStatus.CurrentPageIndex / @_editorStatus.PageCount</span>
+                            <span class="@_editorStatus.SaveStatusClass" title="Your work is saved automatically.">@_editorStatus.SaveStatusLabel</span>
+                            <span title="Current subscription plan.">@PlanStatusLabel</span>
+                            <span title="Current monthly AI token usage.">@AiUsageStatusLabel</span>
+                            @if (ShowPlanUpgrade)
+                            {
+                                <button type="button" class="panel-toggle" @onclick="NavigateToPlanUpgrade">@GetPlanUpgradeLabel()</button>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(_editorStatus.VersionStatusMessage))
+                            {
+                                <span class="version-status" title="A version snapshot was saved.">@_editorStatus.VersionStatusMessage</span>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(_continuityStatus))
+                            {
+                                <span class="version-status" title="Continuity status.">@_continuityStatus</span>
+                            }
+                        </div>
+                    }
+                </div>
+            </section>
+
+
+            <aside class="context-drawer @(GetContextPanelClass())">
+                <RightPanelShell>
+                    <Tabs>
+                        @if (!_isDiffMode)
+                        {
+                            <div class="context-drawer-tabs">
+                                <div class="context-category-tabs tabs-primary" role="tablist" aria-label="Right panel categories">
+                                    @foreach (var category in GetAvailablePanelCategories())
+                                    {
+                                        <button type="button"
+                                                class="context-tab context-tab-category context-tab-primary @GetPanelCategoryClass(category)"
+                                                role="tab"
+                                                tabindex="@(_activePanelCategory == category ? 0 : -1)"
+                                                aria-selected="@(_activePanelCategory == category)"
+                                                title='@GetPanelCategoryTooltip(category)'
+                                                @onkeydown="(args) => OnPrimaryTabsKeyDown(args, category)"
+                                                @onclick="() => SetPanelCategoryAsync(category)">
+                                            @GetPanelCategoryLabel(category)
+                                        </button>
+                                    }
+                                </div>
+                                <div class="context-subtabs-shell">
+                                    <div class="context-subtabs-label">@GetSecondaryTabsHeading(_activePanelCategory)</div>
+                                    <div class="context-subtabs tabs-secondary" role="tablist" aria-label="Right panel subviews">
+                                        @foreach (var tab in GetTabsForActiveCategory())
+                                        {
+                                            <button type="button"
+                                                    class="context-tab context-tab-subview context-tab-secondary @GetContextTabClass(tab)"
+                                                    role="tab"
+                                                    tabindex="@(_activeContextTab == tab ? 0 : -1)"
+                                                    aria-selected="@(_activeContextTab == tab)"
+                                                    title='@GetContextTabTooltip(tab)'
+                                                    @onkeydown="(args) => OnSecondaryTabsKeyDown(args, tab)"
+                                                    @onclick="() => SetContextTabAsync(tab)">
+                                                @GetContextTabLabel(tab)
+                                            </button>
+                                        }
+                                    </div>
+                                    @if (!string.IsNullOrWhiteSpace(GetSecondaryTabHelperText(_activeContextTab)))
+                                    {
+                                        <div class="context-subtabs-helper">@GetSecondaryTabHelperText(_activeContextTab)</div>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    </Tabs>
+                    <Header>
+                        @if (_isDiffMode)
+                        {
+                            <div class="rp-title">Diff</div>
+                        }
+                        else
+                        {
+                            <div class="rp-context-label">@GetPanelCategoryLabel(_activePanelCategory)</div>
+                        }
+                        @if (!_isDiffMode)
+                        {
+                            @if (_activeContextTab == ContextTab.Notes)
+                            {
+                                <div class="rp-title">Notes</div>
+                            }
+                            else if (_activeContextTab == ContextTab.Scene)
+                            {
+                                <div class="rp-title">Scene card</div>
+                            }
+                            else if (_activeContextTab == ContextTab.Ai)
+                            {
+                                <div class="rp-title">Writing tools</div>
+                                <div class="rp-subtitle">Run a command on the page or selection.</div>
+                            }
+                            else if (_activeContextTab == ContextTab.Continuity)
+                            {
+                                <div class="rp-title">Consistency</div>
+                                <div class="rp-subtitle">Check character/place/timeline consistency.</div>
+                            }
+                            else if (_activeContextTab == ContextTab.PromptLibrary)
+                            {
+                                <div class="rp-title">Prompt library</div>
+                                <div class="rp-subtitle">Reusable prompts for selection or section edits.</div>
+                            }
+                            else if (_activeContextTab == ContextTab.Annotations)
+                            {
+                                <div class="rp-title">Annotations</div>
+                                <div class="annotations-toolbar">
+                                    <div class="annotations-filter">
+                                        <label class="annotations-filter-label">Status</label>
+                                        <select class="annotations-filter-select"
+                                                value="@_annotationFilterStatus"
+                                                @onchange="OnAnnotationStatusFilterChanged">
+                                            <option value="open">Open</option>
+                                            <option value="resolved">Resolved</option>
+                                            <option value="all">All</option>
+                                        </select>
+                                    </div>
+                                    <div class="annotations-filter">
+                                        <label class="annotations-filter-label">Type</label>
+                                        <select class="annotations-filter-select"
+                                                value="@_annotationFilterKind"
+                                                @onchange="OnAnnotationKindFilterChanged">
+                                            <option value="all">All</option>
+                                            <option value="comment">Comment</option>
+                                            <option value="todo">TODO</option>
+                                            <option value="highlight">Highlight</option>
+                                        </select>
+                                    </div>
+                                    <button type="button" class="annotations-refresh" @onclick="LoadAnnotationsAsync">Refresh</button>
+                                </div>
+                            }
+                            else if (_activeContextTab == ContextTab.Quality)
+                            {
+                                <div class="rp-title">Style & quality</div>
+                                <div class="quality-toolbar">
+                                    <div class="quality-filter">
+                                        <label class="quality-filter-label">Scope</label>
+                                        <select class="quality-filter-select" value="@_qualityScope" @onchange="OnQualityScopeChanged">
+                                            <option value="page">Page</option>
+                                            <option value="selection">Selection</option>
+                                        </select>
+                                    </div>
+                                    <div class="quality-filter">
+                                        <label class="quality-filter-label">Severity</label>
+                                        <select class="quality-filter-select" value="@_qualityFilterSeverity" @onchange="OnQualitySeverityChanged">
+                                            <option value="all">All</option>
+                                            <option value="warning">Warning</option>
+                                            <option value="info">Info</option>
+                                        </select>
+                                    </div>
+                                    <div class="quality-filter">
+                                        <label class="quality-filter-label">Type</label>
+                                        <select class="quality-filter-select" value="@_qualityFilterKind" @onchange="OnQualityKindChanged">
+                                            <option value="all">All</option>
+                                            <option value="readability">Readability</option>
+                                            <option value="sentence-length">Sentence length</option>
+                                            <option value="paragraph-length">Paragraph length</option>
+                                            <option value="repeated-word">Repeated words</option>
+                                            <option value="passive-voice">Passive voice</option>
+                                            <option value="name-consistency">Name consistency</option>
+                                            <option value="timeline">Timeline hints</option>
+                                            <option value="glossary">Glossary</option>
+                                        </select>
+                                    </div>
+                                    <button type="button"
+                                            class="quality-refresh primary"
+                                            disabled="@_qualityLoading"
+                                            title='@GetTooltip("Quality check: Analyze the current scope and list style issues.")'
+                                            @onclick="RunQualityChecksAsync">
+                                        @(_qualityLoading ? "Scanning..." : GetQualityRunButtonLabel())
+                                    </button>
+                                </div>
+                                @if (_qualityFromCache)
+                                {
+                                    <div class="quality-cache-note">Showing cached results for this version.</div>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(_qualityStatus))
+                                {
+                                    <div class="quality-cache-note">@_qualityStatus</div>
+                                }
+                            }
+                            else if (_activeContextTab == ContextTab.History)
+                            {
+                                <div class="rp-title">History</div>
+                            }
+                            else if (_activeContextTab == ContextTab.Navigator)
+                            {
+                                <div class="rp-title">Navigator</div>
+                            }
+                        }
+                    </Header>
+                    <Body>
+                        @if (ShowContextCoachCard)
+                        {
+                            var coach = BuildContextCoachRecommendation();
+                            <CoachCard Recommendation="coach" OnPrimaryAction="OnContextCoachPrimaryActionAsync" />
+                        }
+                        @if (_isDiffMode)
+                        {
+                            <div class="drawer-panel diff-panel">
+                                <div class="diff-summary">
+                                    <div><strong>+@_diffSummary.AddedWords</strong> words</div>
+                                    <div><strong>-@_diffSummary.RemovedWords</strong> words</div>
+                                    <div><strong>@_diffSummary.ChangedBlocks</strong> changed</div>
+                                    <div><strong>@_diffSummary.AddedBlocks</strong> added</div>
+                                    <div><strong>@_diffSummary.RemovedBlocks</strong> removed</div>
+                                </div>
+                                @if (_diffChangeBlocks.Count == 0)
+                                {
+                                    <div class="drawer-empty">No changes detected.</div>
+                                }
+                                else
+                                {
+                                    <ul class="diff-change-list">
+                                        @foreach (DiffChangeBlock block in _diffChangeBlocks)
+                                        {
+                                            <li class="diff-change-item @GetDiffChangeClass(block)"
+                                                @onclick="() => JumpToChange(block)">
+                                                <span class="diff-change-kind">@block.KindLabel</span>
+                                                <span class="diff-change-preview">@block.Preview</span>
+                                            </li>
+                                        }
+                                    </ul>
+                                }
+                            </div>
+                        }
+                        else if (_activeContextTab == ContextTab.Notes)
+                        {
+                            <div class="notes-panel">
+                                <textarea class="notes-input"
+                                          value="@_notesDraft"
+                                          @oninput="OnNotesInput"
+                                          placeholder="Add notes for this section..."></textarea>
+                                @if (!string.IsNullOrWhiteSpace(_notesError))
+                                {
+                                    <div class="notes-error">@_notesError</div>
+                                }
+                            </div>
+                        }
+                        else if (_activeContextTab == ContextTab.Scene)
+                        {
+                            <div class="drawer-panel scene-card-panel">
+                                <div class="drawer-panel-subtitle">Capture metadata for this section.</div>
+                                <div class="scene-card-actions">
+                                    <button type="button"
+                                            class="btn btn-secondary"
+                                            disabled="@_sceneAiInFlight"
+                                            title='@GetTooltip("Generate scene details from the current text.")'
+                                            @onclick="@(() => RunSceneAiAsync("scene.suggest", "Suggest scene card fields based on the section text."))">
+                                        Suggest from text
+                                    </button>
+                                    <button type="button"
+                                            class="btn btn-secondary"
+                                            disabled="@_sceneAiInFlight"
+                                            title='@GetTooltip("Improve or clarify this scene card.")'
+                                            @onclick="@(() => RunSceneAiAsync("scene.refine", "Refine the scene card fields while keeping intent."))">
+                                        Refine
+                                    </button>
+                                    <button type="button"
+                                            class="btn btn-secondary"
+                                            disabled="@_sceneAiInFlight"
+                                            title='@GetTooltip("Identify unresolved story questions.")'
+                                            @onclick="@(() => RunSceneAiAsync("scene.find-open-questions", "Find open questions in this section."))">
+                                        Find open questions
+                                    </button>
+                                </div>
+                                @if (!string.IsNullOrWhiteSpace(_sceneAiError))
+                                {
+                                    <div class="drawer-empty">@_sceneAiError</div>
+                                }
+                                @if (_sceneAiProposal is not null)
+                                {
+                                    <div class="scene-card-preview">
+                                        <div class="scene-card-preview-header">AI suggestion</div>
+                                        @if (!string.IsNullOrWhiteSpace(_sceneAiExplanation))
+                                        {
+                                            <div class="scene-card-preview-explanation">@_sceneAiExplanation</div>
+                                        }
+                                        <div class="scene-card-preview-grid">
+                                            <div class="scene-card-preview-col">
+                                                <div class="scene-card-preview-label">Current</div>
+                                                <div class="scene-card-preview-field">
+                                                    <strong>Narrative purpose</strong>
+                                                    <div>@_sceneNarrativePurpose</div>
+                                                </div>
+                                                <div class="scene-card-preview-field">
+                                                    <strong>Emotional beat</strong>
+                                                    <div>@_sceneEmotionalBeat</div>
+                                                </div>
+                                                <div class="scene-card-preview-field">
+                                                    <strong>Key events</strong>
+                                                    <div>@_sceneKeyEvents</div>
+                                                </div>
+                                                <div class="scene-card-preview-field">
+                                                    <strong>Open questions</strong>
+                                                    <div>@_sceneOpenQuestions</div>
+                                                </div>
+                                                <div class="scene-card-preview-field">
+                                                    <strong>POV character</strong>
+                                                    <div>@(string.IsNullOrWhiteSpace(_scenePovCharacterId) ? "(not provided)" : _scenePovCharacterId)</div>
+                                                </div>
+                                                <div class="scene-card-preview-field">
+                                                    <strong>Setting / place</strong>
+                                                    <div>@(string.IsNullOrWhiteSpace(_scenePlaceId) ? "(not provided)" : _scenePlaceId)</div>
+                                                </div>
+                                                <div class="scene-card-preview-field">
+                                                    <strong>Timeline marker</strong>
+                                                    <div>@(string.IsNullOrWhiteSpace(_sceneTimeRef) ? "(not provided)" : _sceneTimeRef)</div>
+                                                </div>
+                                                <div class="scene-card-preview-field">
+                                                    <strong>Tags</strong>
+                                                    <div>@(string.IsNullOrWhiteSpace(_sceneTagsText) ? "(not provided)" : _sceneTagsText)</div>
+                                                </div>
+                                            </div>
+                                            <div class="scene-card-preview-col">
+                                                <div class="scene-card-preview-label">Proposed</div>
+                                                <div class="scene-card-preview-field">
+                                                    <strong>Narrative purpose</strong>
+                                                    <div>@_sceneAiProposal.NarrativePurpose</div>
+                                                </div>
+                                                <div class="scene-card-preview-field">
+                                                    <strong>Emotional beat</strong>
+                                                    <div>@_sceneAiProposal.EmotionalBeat</div>
+                                                </div>
+                                                <div class="scene-card-preview-field">
+                                                    <strong>Key events</strong>
+                                                    <div>@_sceneAiProposal.KeyEvents</div>
+                                                </div>
+                                                <div class="scene-card-preview-field">
+                                                    <strong>Open questions</strong>
+                                                    <div>@_sceneAiProposal.OpenQuestions</div>
+                                                </div>
+                                                <div class="scene-card-preview-field">
+                                                    <strong>POV character</strong>
+                                                    <div>@(string.IsNullOrWhiteSpace(_sceneAiProposal.PovCharacterId) ? "(not provided)" : _sceneAiProposal.PovCharacterId)</div>
+                                                </div>
+                                                <div class="scene-card-preview-field">
+                                                    <strong>Setting / place</strong>
+                                                    <div>@(string.IsNullOrWhiteSpace(_sceneAiProposal.PlaceId) ? "(not provided)" : _sceneAiProposal.PlaceId)</div>
+                                                </div>
+                                                <div class="scene-card-preview-field">
+                                                    <strong>Timeline marker</strong>
+                                                    <div>@(string.IsNullOrWhiteSpace(_sceneAiProposal.TimeRef) ? "(not provided)" : _sceneAiProposal.TimeRef)</div>
+                                                </div>
+                                                <div class="scene-card-preview-field">
+                                                    <strong>Tags</strong>
+                                                    <div>@GetSceneProposalTagsDisplay(_sceneAiProposal.Tags)</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="scene-card-preview-actions">
+                                            <button type="button" class="btn btn-primary" @onclick="ApplySceneAiProposalAsync">Apply</button>
+                                            <button type="button" class="btn btn-ghost" @onclick="DiscardSceneAiProposal">Discard</button>
+                                        </div>
+                                    </div>
+                                }
+                                <label class="scene-card-label" for="scene-narrative-purpose" title='@GetTooltip("Why this scene exists in the story.")'>Narrative purpose</label>
+                                <textarea id="scene-narrative-purpose"
+                                          class="notes-input scene-card-input"
+                                          value="@_sceneNarrativePurpose"
+                                          @oninput="OnSceneNarrativePurposeInput"
+                                          title='@GetTooltip("Why this scene exists in the story.")'
+                                          placeholder="Why this scene exists in the story..."></textarea>
+                                <label class="scene-card-label" for="scene-emotional-beat" title='@GetTooltip("How the emotion changes in this scene.")'>Emotional beat</label>
+                                <textarea id="scene-emotional-beat"
+                                          class="notes-input scene-card-input"
+                                          value="@_sceneEmotionalBeat"
+                                          @oninput="OnSceneEmotionalBeatInput"
+                                          title='@GetTooltip("How the emotion changes in this scene.")'
+                                          placeholder="How the emotional tone shifts..."></textarea>
+                                <label class="scene-card-label" for="scene-key-events" title='@GetTooltip("The main things that happen.")'>Key events</label>
+                                <textarea id="scene-key-events"
+                                          class="notes-input scene-card-input"
+                                          value="@_sceneKeyEvents"
+                                          @oninput="OnSceneKeyEventsInput"
+                                          title='@GetTooltip("The main things that happen.")'
+                                          placeholder="- Bullet your key events..."></textarea>
+                                <label class="scene-card-label" for="scene-open-questions" title='@GetTooltip("Loose ends to resolve later.")'>Open questions</label>
+                                <textarea id="scene-open-questions"
+                                          class="notes-input scene-card-input"
+                                          value="@_sceneOpenQuestions"
+                                          @oninput="OnSceneOpenQuestionsInput"
+                                          title='@GetTooltip("Loose ends to resolve later.")'
+                                          placeholder="Loose ends or questions to answer later..."></textarea>
+                                <label class="scene-card-label" for="scene-pov">POV character</label>
+                                <input id="scene-pov"
+                                       class="notes-input scene-card-input"
+                                       value="@_scenePovCharacterId"
+                                       @oninput="OnScenePovInput"
+                                       title='@GetTooltip("The viewpoint character for this scene. Leave empty if omniscient or shifting POV.")'
+                                       placeholder="e.g., Klara" />
+                                <div class="scene-card-help">The viewpoint character for this scene. Leave empty if omniscient or shifting POV.</div>
+                                <label class="scene-card-label" for="scene-place">Setting / place</label>
+                                <input id="scene-place"
+                                       class="notes-input scene-card-input"
+                                       value="@_scenePlaceId"
+                                       @oninput="OnScenePlaceInput"
+                                       title='@GetTooltip("Location of the scene: place, room, or broader setting.")'
+                                       placeholder="e.g., Old town cafe, Goteborg" />
+                                <div class="scene-card-help">Location of the scene: place, room, or broader setting. Can include time-of-day if useful.</div>
+                                <label class="scene-card-label" for="scene-time-ref">Timeline marker</label>
+                                <input id="scene-time-ref"
+                                       class="notes-input scene-card-input"
+                                       value="@_sceneTimeRef"
+                                       @oninput="OnSceneTimeRefInput"
+                                       placeholder="Day 3 / two weeks later" />
+                                <label class="scene-card-label" for="scene-tags">Tags (comma separated)</label>
+                                <input id="scene-tags"
+                                       class="notes-input scene-card-input"
+                                       value="@_sceneTagsText"
+                                       @oninput="OnSceneTagsInput"
+                                       placeholder="reveal, fight, romance" />
+                                @if (!string.IsNullOrWhiteSpace(_sceneStatus))
+                                {
+                                    <div class="drawer-empty">@_sceneStatus</div>
+                                }
+                            </div>
+                        }
+                        else if (_activeContextTab == ContextTab.Navigator)
+                        {
+                            <div class="editor-navigator-host">
+                                <Projects ProjectId="@GetNavigatorProjectId()"
+                                          EmbedNavigator="true"
+                                          @ref="_navigatorPanel"
+                                          SceneOpenRequested="OpenSceneFromNavigatorAsync" />
+                            </div>
+                        }
+                        else if (_activeContextTab == ContextTab.Ai)
+                        {
+                            <div class="drawer-panel ai-panel continuity-panel">
+                                @if (!IsAiAvailable)
+                                {
+                                    <div class="drawer-empty">@GetAiBlockedMessage()</div>
+                                }
+                                else if (_aiActions.Count == 0)
+                                {
+                                    <div class="drawer-empty">No AI commands available.</div>
+                                }
+                                else
+                                {
+                                    <div class="ai-actions-list">
+                                        <div class="ai-action-group">
+                                            <div class="ai-action-group-title">Selection actions</div>
+                                            @if (!SelectionAiActions.Any())
+                                            {
+                                                <div class="ai-selection-hint">Select text to enable selection actions.</div>
+                                            }
+                                            else
+                                            {
+                                                @foreach (AiActionOption action in SelectionAiActions)
+                                                {
+                                                    <div class="ai-action-item">
+                                                        <button type="button"
+                                                                disabled="@(_currentSelectionRange is null || IsAiQuotaExceeded)"
+                                                                title='@GetAiActionTooltip(action)'
+                                                                @onmousedown:preventDefault="true"
+                                                                @onclick="() => OnAiActionSelected(action)">
+                                                            @action.Label
+                                                        </button>
+                                                    </div>
+                                                }
+                                            }
+                                        </div>
+                                        <div class="ai-action-group">
+                                            <div class="ai-action-group-title">Section actions</div>
+                                            @foreach (AiActionOption action in SectionAiActions)
+                                            {
+                                                <div class="ai-action-item">
+                                                    <button type="button"
+                                                            disabled="@IsAiQuotaExceeded"
+                                                            title='@GetAiActionTooltip(action)'
+                                                            @onclick="() => OnAiActionSelected(action)">
+                                                        @action.Label
+                                                    </button>
+                                                </div>
+                                            }
+                                        </div>
+                                    </div>
+                                }
+
+                                <div class="ai-history-toolbar">
+                                    <button type="button"
+                                            class="ai-history-button"
+                                            title='@GetTooltip("History: Reload AI command history for this document.")'
+                                            @onclick="LoadAiHistoryAsync">
+                                        Refresh history
+                                    </button>
+                                    <span class="ai-history-count-pill">@_aiHistoryEntries.Count</span>
+                                </div>
+                                @if (_aiHistoryEntries.Count == 0)
+                                {
+                                    <div class="drawer-empty">No AI history yet.</div>
+                                }
+                                else
+                                {
+                                    <ul class="ai-history-list">
+                                    @foreach (AiHistoryEntry entry in _aiHistoryEntries)
+                                    {
+                                        bool showDetails = _expandedAiHistoryId == entry.Id;
+                                        <li class="ai-history-item">
+                                            <div class="ai-history-meta">
+                                                <span class="ai-history-badge">AI</span>
+                                                <span class="ai-history-summary">@entry.Label</span>
+                                            </div>
+                                            <div class="ai-history-sub">
+                                                <span>@entry.Timestamp.ToLocalTime().ToString("g")</span>
+                                                @if (entry.IsApplied)
+                                                {
+                                                    <span class="ai-history-status is-applied">Applied</span>
+                                                    @if (entry.AppliedCount > 1)
+                                                    {
+                                                        <span class="ai-history-status-count">x@entry.AppliedCount</span>
+                                                    }
+                                                }
+                                                else
+                                                {
+                                                    <span class="ai-history-status is-pending">Pending</span>
+                                                }
+                                            </div>
+                                            <div class="ai-history-actions">
+                                                <button type="button"
+                                                        class="ai-details-toggle"
+                                                        aria-expanded="@showDetails"
+                                                        aria-controls="@GetAiHistoryDetailsId(entry)"
+                                                        @onclick="() => OnToggleAiHistoryDetails(entry)">
+                                                    @(showDetails ? "Hide details" : "Details")
+                                                </button>
+                                            </div>
+                                            @if (showDetails)
+                                            {
+                                                <div id="@GetAiHistoryDetailsId(entry)" class="ai-history-details">
+                                                    <div class="ai-history-details-header">
+                                                        <div class="ai-history-details-summary">@(entry.Summary ?? entry.Label)</div>
+                                                        <div class="ai-history-details-sub">
+                                                            <span>@(entry.IsApplied ? "Applied" : "Pending")</span>
+                                                            @if (entry.LastAppliedAt.HasValue)
+                                                            {
+                                                                <span>@entry.LastAppliedAt.Value.ToLocalTime().ToString("g")</span>
+                                                            }
+                                                            <span>@entry.Timestamp.ToLocalTime().ToString("g")</span>
+                                                        </div>
+                                                    </div>
+                                                    <div class="ai-history-details-compare">
+                                                        <div class="ai-history-details-block">
+                                                            <div class="ai-history-details-label">Before</div>
+                                                            <pre>@FormatHistoryText(entry.BeforeText)</pre>
+                                                        </div>
+                                                        <div class="ai-history-details-block">
+                                                            <div class="ai-history-details-label">After</div>
+                                                            <pre>@FormatHistoryText(entry.AfterText)</pre>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            }
+                                        </li>
+                                    }
+                                </ul>
+                                }
+                            </div>
+                        }
+                        else if (_activeContextTab == ContextTab.Continuity)
+                        {
+                            <div class="drawer-panel ai-panel">
+                                @if (!CanShowContinuityCoach)
+                                {
+                                    <div class="drawer-empty">Consistency checks are disabled.</div>
+                                }
+                                else
+                                {
+                                    <div class="ai-actions-list">
+                                        <button type="button"
+                                                class="quality-refresh primary"
+                                                disabled="@(_continuityBusy || !CanRunBibleUpdate)"
+                                                @onclick="OnUpdateAllBiblesAsync">
+                                            @(_continuityBusy ? "Updating bibles..." : "Update Bible")
+                                        </button>
+                                        <button type="button"
+                                                disabled="@(_continuityBusy || !CanRunContinuityCheck)"
+                                                @onclick="OnCheckContinuityAsync">
+                                            Check current section
+                                        </button>
+                                        <button type="button"
+                                                disabled="@_continuityBusy"
+                                                @onclick="OnClearContinuityHighlightsAsync">
+                                            Clear highlight
+                                        </button>
+                                    </div>
+                                    @if (!string.IsNullOrWhiteSpace(_continuityStatus))
+                                    {
+                                        <div class="drawer-empty">@_continuityStatus</div>
+                                    }
+                                    <div class="drawer-empty">
+                                        Character: @GetBibleStatusLabel(_characterBibleSnapshot)
+                                    </div>
+                                    <div class="drawer-empty">
+                                        Place: @GetBibleStatusLabel(_placeBibleSnapshot)
+                                    </div>
+                                    <div class="drawer-empty">
+                                        Timeline: @GetBibleStatusLabel(_timelineBibleSnapshot)
+                                    </div>
+                                    <div class="ai-history-toolbar">
+                                        <label for="continuity-severity">Severity</label>
+                                        <select id="continuity-severity"
+                                                value="@_continuitySeverityFilter"
+                                                @onchange="OnContinuitySeverityChanged">
+                                            <option value="all">All</option>
+                                            <option value="critical">Critical</option>
+                                            <option value="high">High</option>
+                                            <option value="medium">Medium</option>
+                                            <option value="low">Low</option>
+                                        </select>
+                                    </div>
+                                    <div class="continuity-results">
+                                        @if (!FilteredContinuityIssues.Any())
+                                        {
+                                            <div class="drawer-empty">No issues in current report.</div>
+                                        }
+                                        else
+                                        {
+                                            <ul class="ai-history-list">
+                                                @foreach (ContinuityIssue issue in FilteredContinuityIssues)
+                                                {
+                                                    <li class="ai-history-item">
+                                                        <div class="ai-history-meta">
+                                                            <span class="ai-history-badge">@issue.Severity.ToUpperInvariant()</span>
+                                                            <span class="ai-history-summary">@issue.Type: @issue.Message</span>
+                                                        </div>
+                                                        <div class="ai-history-sub">
+                                                            <span>@issue.Evidence.Quote</span>
+                                                        </div>
+                                                        <div class="ai-history-actions">
+                                                            <button type="button" @onclick="() => OnJumpToContinuityIssueAsync(issue)">Jump</button>
+                                                            @if (CanShowContinuityCoachFixes)
+                                                            {
+                                                                <button type="button"
+                                                                        disabled="@(_continuityBusy || string.IsNullOrWhiteSpace(issue.SuggestedFix))"
+                                                                        @onclick="() => OpenContinuityProposalAsync(issue)">
+                                                                    Apply suggested fix
+                                                                </button>
+                                                            }
+                                                        </div>
+                                                    </li>
+                                                }
+                                            </ul>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        }
+                        else if (_activeContextTab == ContextTab.PromptLibrary)
+                        {
+                            <div class="drawer-panel ai-panel">
+                                @if (!CanShowPromptLibrary)
+                                {
+                                    <div class="drawer-empty">Prompt Library is disabled.</div>
+                                }
+                                else
+                                {
+                                    <div class="ai-history-toolbar">
+                                        <label for="prompt-run-scope">Run scope</label>
+                                        <select id="prompt-run-scope" @bind="_promptRunScope">
+                                            <option value="selection">Selection</option>
+                                            <option value="section">Section</option>
+                                        </select>
+                                    </div>
+                                    <div class="ai-actions-list">
+                                        <button type="button" @onclick="BeginCreatePromptPreset">New preset</button>
+                                        <button type="button" @onclick="SavePromptPresetAsync">Save preset</button>
+                                    </div>
+                                    <div class="template-grid">
+                                        <label class="export-panel-label" for="prompt-name">Name</label>
+                                        <input id="prompt-name" class="export-panel-input" @bind="_promptNameDraft" />
+                                        <label class="export-panel-label" for="prompt-category">Category</label>
+                                        <input id="prompt-category" class="export-panel-input" @bind="_promptCategoryDraft" />
+                                        <label class="export-panel-label" for="prompt-kind">Kind</label>
+                                        <select id="prompt-kind" class="export-panel-select" @bind="_promptKindDraft">
+                                            <option value="builtin">Builtin action</option>
+                                            <option value="custom">Custom template</option>
+                                        </select>
+                                        @if (_promptKindDraft == "builtin")
+                                        {
+                                            <label class="export-panel-label" for="prompt-action-id">Action Id</label>
+                                            <input id="prompt-action-id" class="export-panel-input" @bind="_promptBuiltinActionIdDraft" />
+                                        }
+                                        else
+                                        {
+                                            <label class="export-panel-label" for="prompt-template">Template</label>
+                                            <textarea id="prompt-template" class="notes-input scene-card-input" @bind="_promptTemplateDraft"></textarea>
+                                            <div class="drawer-empty">Tokens: <code>{token}</code>, <code>{{token}}</code>, <code>${token}</code>. Names must use letters, digits, or underscore.</div>
+                                        }
+                                        <label class="export-panel-label" for="prompt-params">Parameters (JSON)</label>
+                                        <textarea id="prompt-params" class="notes-input scene-card-input" @bind="_promptParametersDraft"></textarea>
+                                    </div>
+                                    @if (!string.IsNullOrWhiteSpace(_promptStatus))
+                                    {
+                                        <div class="drawer-empty">@_promptStatus</div>
+                                    }
+                                    @if (_promptPresets.Count == 0)
+                                    {
+                                        <div class="drawer-empty">No presets yet.</div>
+                                    }
+                                    else
+                                    {
+                                        <ul class="ai-history-list">
+                                            @foreach (PromptPresetDto preset in _promptPresets)
+                                            {
+                                                <li class="ai-history-item">
+                                                    <div class="ai-history-meta">
+                                                        <span class="ai-history-badge">P</span>
+                                                        <span class="ai-history-summary">@preset.Name</span>
+                                                    </div>
+                                                    <div class="ai-history-sub">
+                                                        <span>@(preset.Category ?? preset.Kind)</span>
+                                                    </div>
+                                                    <div class="ai-history-actions">
+                                                        <button type="button" @onclick="() => RunPromptPresetAsync(preset)">Run</button>
+                                                        <button type="button" @onclick="() => BeginEditPromptPreset(preset)">Edit</button>
+                                                        <button type="button" @onclick="() => TogglePinPromptPreset(preset.Id)">
+                                                            @(IsPromptPresetPinned(preset.Id) ? "Unpin" : "Pin")
+                                                        </button>
+                                                        <button type="button" class="danger" @onclick="() => DeletePromptPresetAsync(preset.Id)">Delete</button>
+                                                    </div>
+                                                </li>
+                                            }
+                                        </ul>
+                                    }
+                                }
+                            </div>
+                        }
+                        else if (_activeContextTab == ContextTab.Annotations)
+                        {
+                            <div class="drawer-panel annotations-panel">
+                                @if (_annotationsLoading)
+                                {
+                                    <div class="drawer-empty">Loading annotations...</div>
+                                }
+                                else if (!string.IsNullOrWhiteSpace(_annotationsError))
+                                {
+                                    <div class="drawer-empty">@_annotationsError</div>
+                                }
+                                else if (_annotations.Count == 0)
+                                {
+                                    <div class="drawer-empty">No annotations yet.</div>
+                                }
+                                else
+                                {
+                                    <ul class="annotations-list">
+                                        @foreach (PageAnnotationDto annotation in _annotations)
+                                        {
+                                            <li class="annotation-item @GetAnnotationItemClass(annotation) @GetAnnotationFocusClass(annotation)"
+                                                id="@GetAnnotationElementId(annotation)"
+                                                @onclick="() => OnAnnotationCardClickedAsync(annotation)">
+                                                <div class="annotation-meta">
+                                                    <span class="annotation-kind">@GetAnnotationKindLabel(annotation.Kind)</span>
+                                                    <span class="annotation-time">@annotation.CreatedAt.ToLocalTime().ToString("g")</span>
+                                                    @if (string.Equals(annotation.Status, "resolved", StringComparison.OrdinalIgnoreCase))
+                                                    {
+                                                        <span class="annotation-status">Resolved</span>
+                                                    }
+                                                </div>
+                                                @if (!string.IsNullOrWhiteSpace(annotation.Content))
+                                                {
+                                                    <div class="annotation-content">@annotation.Content</div>
+                                                }
+                                                <div class="annotation-actions">
+                                                    @if (string.Equals(annotation.Status, "resolved", StringComparison.OrdinalIgnoreCase))
+                                                    {
+                                                        <button type="button"
+                                                                @onclick="() => ReopenAnnotationAsync(annotation)"
+                                                                @onclick:stopPropagation="true">Reopen</button>
+                                                    }
+                                                    else
+                                                    {
+                                                        <button type="button"
+                                                                class="danger"
+                                                                @onclick="() => ResolveAnnotationAsync(annotation)"
+                                                                @onclick:stopPropagation="true">Resolve</button>
+                                                    }
+                                                </div>
+                                            </li>
+                                        }
+                                    </ul>
+                                }
+                            </div>
+                        }
+                        else if (_activeContextTab == ContextTab.Quality)
+                        {
+                            <div class="drawer-panel quality-panel">
+                                @if (_qualityLoading)
+                                {
+                                    <div class="drawer-empty">Checking quality...</div>
+                                }
+                                else if (!string.IsNullOrWhiteSpace(_qualityError))
+                                {
+                                    <div class="drawer-empty">@_qualityError</div>
+                                }
+                                else if (!_qualityHasRunOnce && _qualityIssues.Count == 0)
+                                {
+                                    <div class="drawer-empty quality-precheck-hint">Run quality check to find repetition, clarity issues, and pacing friction.</div>
+                                }
+                                else if (_qualityIssues.Count == 0)
+                                {
+                                    <div class="drawer-empty">No quality issues found.</div>
+                                }
+                                else
+                                {
+                                    <ul class="quality-list">
+                                        @foreach (PageQualityIssueDto issue in FilterQualityIssues())
+                                        {
+                                            <li class="quality-item @GetQualityIssueClass(issue) @(IsQualityIssueSelected(issue) ? "quality-item--selected" : string.Empty)"
+                                                @onclick="() => ShowQualityIssueInTextAsync(issue)">
+                                                <div class="quality-meta">
+                                                    <span class="quality-kind">@issue.Kind</span>
+                                                    <span class="quality-severity">@issue.Severity</span>
+                                                </div>
+                                                <div class="quality-message">@issue.Message</div>
+                                                @if (!string.IsNullOrWhiteSpace(issue.Suggestion))
+                                                {
+                                                    <div class="quality-suggestion">@issue.Suggestion</div>
+                                                }
+                                                @if (!string.IsNullOrWhiteSpace(issue.AnchorText))
+                                                {
+                                                    <div class="quality-anchor">"@issue.AnchorText"</div>
+                                                }
+                                                <div class="quality-actions">
+                                                    <button type="button"
+                                                            @onclick="() => ShowQualityIssueInTextAsync(issue)"
+                                                            @onclick:stopPropagation="true">
+                                                        Scroll to
+                                                    </button>
+                                                    <button type="button"
+                                                            class="primary"
+                                                            disabled="@(!CanApplyQualityIssue(issue))"
+                                                            title="@GetQualityIssueApplyButtonTitle(issue)"
+                                                            @onclick="() => OpenQualityProposalAsync(issue)"
+                                                            @onclick:stopPropagation="true">
+                                                        Apply changes
+                                                    </button>
+                                                    <button type="button"
+                                                            class="danger"
+                                                            @onclick="() => DismissQualityIssueAsync(issue)"
+                                                            @onclick:stopPropagation="true">
+                                                        Dismiss
+                                                    </button>
+                                                </div>
+                                                @if (IsQualityIssueApplied(issue))
+                                                {
+                                                    <div class="quality-applied">Applied.</div>
+                                                }
+                                                @if (!string.IsNullOrWhiteSpace(GetQualityIssueActionError(issue)))
+                                                {
+                                                    <div class="quality-error">@GetQualityIssueActionError(issue)</div>
+                                                }
+                                            </li>
+                                        }
+                                    </ul>
+                                }
+                            </div>
+                        }
+                        else if (_activeContextTab == ContextTab.History)
+                        {
+                            <div class="drawer-panel version-history-panel">
+                                <div class="history-filter-bar" role="tablist" aria-label="History filter">
+                                    <button type="button"
+                                            class="history-filter-button @GetHistoryFilterClass(HistoryFilter.All)"
+                                            role="tab"
+                                            aria-selected="@(_historyFilter == HistoryFilter.All)"
+                                            @onclick="() => SetHistoryFilter(HistoryFilter.All)">
+                                        All
+                                    </button>
+                                    <button type="button"
+                                            class="history-filter-button @GetHistoryFilterClass(HistoryFilter.Snapshots)"
+                                            role="tab"
+                                            aria-selected="@(_historyFilter == HistoryFilter.Snapshots)"
+                                            @onclick="() => SetHistoryFilter(HistoryFilter.Snapshots)">
+                                        Snapshots
+                                    </button>
+                                    <button type="button"
+                                            class="history-filter-button @GetHistoryFilterClass(HistoryFilter.Commands)"
+                                            role="tab"
+                                            aria-selected="@(_historyFilter == HistoryFilter.Commands)"
+                                            @onclick="() => SetHistoryFilter(HistoryFilter.Commands)">
+                                        AI Commands
+                                    </button>
+                                </div>
+                                <div class="ai-history-toolbar">
+                                    <button type="button"
+                                            class="ai-history-button"
+                                            @onclick="LoadAiHistoryAsync">
+                                        Refresh history
+                                    </button>
+                                    <button type="button"
+                                            class="ai-history-button"
+                                            @onclick="OnAiUndoRequested"
+                                            disabled="@(!_canAiUndo || _aiUndoRedoInFlight)">
+                                        AI Undo
+                                    </button>
+                                    <button type="button"
+                                            class="ai-history-button"
+                                            @onclick="OnAiRedoRequested"
+                                            disabled="@(!_canAiRedo || _aiUndoRedoInFlight)">
+                                        AI Redo
+                                    </button>
+                                    <span class="ai-history-count-pill">@_aiHistoryEntries.Count</span>
+                                </div>
+                                @if (_versionsLoading)
+                                {
+                                    <div class="drawer-empty">Loading versions...</div>
+                                }
+                                else if (!string.IsNullOrWhiteSpace(_versionsError))
+                                {
+                                    <div class="drawer-empty">@_versionsError</div>
+                                }
+                                else if (GetFilteredHistoryItems().Count == 0)
+                                {
+                                    <div class="drawer-empty">No history items for this filter.</div>
+                                }
+                                else
+                                {
+                                    <ul class="version-history-list">
+                                        @foreach (CombinedHistoryItem item in GetFilteredHistoryItems())
+                                        {
+                                            if (item.Type == HistoryItemType.Snapshot && item.Version is not null)
+                                            {
+                                                PageVersionListItemDto version = item.Version;
+                                                <li class="version-history-item history-item-card history-item-card--snapshot">
+                                                    <div class="version-history-meta">
+                                                        <span class="version-history-badge history-type-badge history-type-badge--snapshot">@GetSnapshotDisplayLabel(version.Reason)</span>
+                                                        <span class="version-history-time">@version.CreatedAt.ToLocalTime().ToString("g")</span>
+                                                    </div>
+                                                    <div class="version-history-sub">Words: @version.WordCount</div>
+                                                    <div class="history-item-helper">Restores the document to this checkpoint.</div>
+                                                    <div class="version-history-actions">
+                                                        <button type="button" @onclick="() => SelectDiffBaseAsync(version)">
+                                                            Compare
+                                                        </button>
+                                                        <button type="button" class="danger" @onclick="() => PromptRestoreVersion(version)">
+                                                            Restore
+                                                        </button>
+                                                    </div>
+                                                </li>
+                                            }
+                                            else if (item.Type == HistoryItemType.Command && item.Command is not null)
+                                            {
+                                                AiHistoryEntry entry = item.Command;
+                                                bool showDetails = _expandedAiHistoryId == entry.Id;
+                                                <li class="version-history-item history-item-card history-item-card--command">
+                                                    <div class="version-history-meta">
+                                                        <span class="version-history-badge history-type-badge history-type-badge--command">AI Command</span>
+                                                        <span class="version-history-time">@entry.Timestamp.ToLocalTime().ToString("g")</span>
+                                                    </div>
+                                                    <div class="history-command-summary">@entry.Label</div>
+                                                    <div class="version-history-sub">
+                                                        <span>Scope: @GetCommandScopeLabel(entry.ActionKey)</span>
+                                                        <span class="history-command-status @GetCommandStatusClass(entry)">@GetCommandStatusLabel(entry)</span>
+                                                    </div>
+                                                    <div class="version-history-actions">
+                                                        <button type="button"
+                                                                class="ai-details-toggle"
+                                                                aria-expanded="@showDetails"
+                                                                aria-controls="@GetAiHistoryDetailsId(entry)"
+                                                                @onclick="() => OnToggleAiHistoryDetails(entry)">
+                                                            @(showDetails ? "Hide details" : "Details")
+                                                        </button>
+                                                    </div>
+                                                    @if (showDetails)
+                                                    {
+                                                        <div id="@GetAiHistoryDetailsId(entry)" class="ai-history-details">
+                                                            <div class="ai-history-details-header">
+                                                                <div class="ai-history-details-summary">@(entry.Summary ?? entry.Label)</div>
+                                                                <div class="ai-history-details-sub">
+                                                                    <span>@entry.Timestamp.ToLocalTime().ToString("g")</span>
+                                                                    <span>@entry.ActionKey</span>
+                                                                    @if (entry.LastAppliedAt is not null)
+                                                                    {
+                                                                        <span>Last applied @entry.LastAppliedAt.Value.ToLocalTime().ToString("g")</span>
+                                                                    }
+                                                                    @if (entry.AppliedCount > 0)
+                                                                    {
+                                                                        <span>Applied @entry.AppliedCount time(s)</span>
+                                                                    }
+                                                                </div>
+                                                            </div>
+                                                            <div class="ai-history-details-compare">
+                                                                <div class="ai-history-details-block">
+                                                                    <div class="ai-history-details-label">Before</div>
+                                                                    <pre>@FormatHistoryText(entry.BeforeText)</pre>
+                                                                </div>
+                                                                <div class="ai-history-details-block">
+                                                                    <div class="ai-history-details-label">After</div>
+                                                                    <pre>@FormatHistoryText(entry.AfterText)</pre>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    }
+                                                </li>
+                                            }
+                                        }
+                                    </ul>
+                                }
+                            </div>
+                        }
+                    </Body>
+                    <Footer>
+                        @if (_isDiffMode)
+                        {
+                            <div class="rp-footer-actions">
+                                <button type="button" @onclick="GoToPreviousChange" disabled="@(!_diffChangeBlocks.Any())">Prev</button>
+                                <button type="button" @onclick="GoToNextChange" disabled="@(!_diffChangeBlocks.Any())">Next</button>
+                                @if (_diffCompareVersionId.HasValue)
+                                {
+                                    <button type="button" class="danger" @onclick="() => PromptRestoreVersionById(_diffCompareVersionId.Value)">
+                                        Restore compare
+                                    </button>
+                                }
+                            </div>
+                        }
+                        else if (_activeContextTab == ContextTab.Notes)
+                        {
+                            <div class="rp-footer-actions">
+                                @if (!string.IsNullOrWhiteSpace(_notesStatus))
+                                {
+                                    <span class="rp-status">@_notesStatus</span>
+                                }
+                                <button type="button" @onclick="OnNotesSave">Save now</button>
+                            </div>
+                        }
+                        else if (_activeContextTab == ContextTab.Scene)
+                        {
+                            <div class="rp-footer-actions">
+                                @if (!string.IsNullOrWhiteSpace(_sceneStatus))
+                                {
+                                    <span class="rp-status">@_sceneStatus</span>
+                                }
+                                <button type="button" title='@GetTooltip("Save scene metadata.")' @onclick="OnSceneCardSave">Save scene card</button>
+                            </div>
+                        }
+                        else if (_activeContextTab == ContextTab.Annotations)
+                        {
+                            <div class="annotations-create">
+                                <div class="annotations-selection">@GetAnnotationSelectionLabel()</div>
+                                <textarea class="annotations-input"
+                                          value="@_annotationDraftContent"
+                                          @oninput="OnAnnotationDraftInput"
+                                          placeholder="Add a comment or TODO..."></textarea>
+                                <div class="annotations-create-actions">
+                                    <button type="button"
+                                            class="annotations-action"
+                                            disabled="@(!_canCreateAnnotation)"
+                                            @onclick='@(() => CreateAnnotationAsync("comment"))'>
+                                        Add comment
+                                    </button>
+                                    <button type="button"
+                                            class="annotations-action"
+                                            disabled="@(!_canCreateAnnotation)"
+                                            @onclick='@(() => CreateAnnotationAsync("todo"))'>
+                                        Add TODO
+                                    </button>
+                                    <button type="button"
+                                            class="annotations-action"
+                                            disabled="@(!_canCreateAnnotation)"
+                                            @onclick='@(() => CreateAnnotationAsync("highlight"))'>
+                                        Add highlight
+                                    </button>
+                                </div>
+                                @if (!string.IsNullOrWhiteSpace(_annotationActionError))
+                                {
+                                    <div class="annotations-error">@_annotationActionError</div>
+                                }
+                            </div>
+                        }
+                    </Footer>
+                </RightPanelShell>
+            </aside>
+
+        </div>
+    </div>
+}
+
+@if (_isRestoreDialogOpen)
+{
+    <div class="modal-overlay" role="presentation">
+        <div class="modal-backdrop" @onclick="CancelRestoreVersion"></div>
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="restoreVersionTitle">
+            <div class="modal-title" id="restoreVersionTitle">Restore this version?</div>
+            <div class="modal-body">
+                This will replace the current page content. A pre-restore snapshot will be created automatically.
+                @if (_pendingRestoreVersion is not null)
+                {
+                    <div class="version-restore-meta">
+                        Version: @_pendingRestoreVersion.CreatedAt.ToLocalTime().ToString("g")
+                    </div>
+                }
+            </div>
+            @if (!string.IsNullOrWhiteSpace(_restoreError))
+            {
+                <div class="modal-error">@_restoreError</div>
+            }
+            <div class="modal-actions">
+                <button type="button"
+                        class="danger"
+                        @onclick="ConfirmRestoreVersionAsync"
+                        disabled="@_restoreInFlight">
+                    Restore
+                </button>
+                <button type="button"
+                        @onclick="CancelRestoreVersion"
+                        disabled="@_restoreInFlight">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_isDeleteDialogOpen)
+{
+    <div class="modal-overlay" role="presentation">
+        <div class="modal-backdrop" @onclick="CancelDeleteSection"></div>
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="deleteSectionTitle">
+            <div class="modal-title" id="deleteSectionTitle">Delete '@_pendingDeleteSectionTitle'?</div>
+            <div class="modal-body">This removes its pages. Cannot be undone.</div>
+            @if (!string.IsNullOrWhiteSpace(_sectionDeleteError))
+            {
+                <div class="modal-error">@_sectionDeleteError</div>
+            }
+            <div class="modal-actions">
+                <button type="button"
+                        class="danger"
+                        @onclick="ConfirmDeleteSectionAsync"
+                        disabled="@_isDeletingSection">
+                    Delete
+                </button>
+                <button type="button"
+                        @onclick="CancelDeleteSection"
+                        disabled="@_isDeletingSection">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_isQualityProposalOpen && _proposalIssue is not null)
+{
+    <div class="modal-overlay" role="presentation">
+        <div class="modal-backdrop" @onclick="CancelQualityProposal"></div>
+        <div class="modal quality-proposal-dialog" role="dialog" aria-modal="true" aria-labelledby="qualityProposalTitle">
+            <div class="modal-title" id="qualityProposalTitle">Apply suggested change?</div>
+            <div class="modal-body">
+                <div class="quality-proposal-meta">
+                    <span>@_proposalIssue.Kind</span>
+                    <span>@_proposalIssue.Severity</span>
+                    @if (!string.IsNullOrWhiteSpace(_proposalIssue.RuleId))
+                    {
+                        <span>@_proposalIssue.RuleId</span>
+                    }
+                </div>
+                <div class="quality-proposal-message">@_proposalIssue.Message</div>
+                @if (!string.IsNullOrWhiteSpace(_proposalIssue.Suggestion))
+                {
+                    <div class="quality-proposal-suggestion">@_proposalIssue.Suggestion</div>
+                }
+                @if (_proposalPreview is not null)
+                {
+                    <div class="quality-proposal-preview">
+                        <div class="quality-proposal-label">Before</div>
+                        <pre>@_proposalPreview.Before</pre>
+                        <div class="quality-proposal-label">After</div>
+                        <pre>@_proposalPreview.After</pre>
+                    </div>
+                    @if (!string.IsNullOrEmpty(_proposalPreview.Prefix) || !string.IsNullOrEmpty(_proposalPreview.Suffix))
+                    {
+                        <div class="quality-proposal-context">
+                            <div class="quality-proposal-label">Context</div>
+                            <div class="quality-proposal-context-line">
+                                <span>@_proposalPreview.Prefix</span><span class="quality-proposal-token quality-proposal-token--before">@_proposalPreview.Before</span><span>@_proposalPreview.Suffix</span>
+                            </div>
+                            <div class="quality-proposal-context-line">
+                                <span>@_proposalPreview.Prefix</span><span class="quality-proposal-token quality-proposal-token--after">@_proposalPreview.After</span><span>@_proposalPreview.Suffix</span>
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+            @if (!string.IsNullOrWhiteSpace(_proposalError))
+            {
+                <div class="modal-error">@_proposalError</div>
+            }
+            <div class="modal-actions">
+                <button type="button"
+                        class="primary"
+                        @onclick="ConfirmQualityProposalApplyAsync"
+                        disabled="@_isProposalApplying">
+                    @(_isProposalApplying ? "Applying..." : "Accept change")
+                </button>
+                <button type="button"
+                        @onclick="CancelQualityProposal"
+                        disabled="@_isProposalApplying">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_isContinuityProposalOpen && _pendingContinuityIssue is not null)
+{
+    <div class="modal-overlay" role="presentation">
+        <div class="modal-backdrop" @onclick="CancelContinuityProposal"></div>
+        <div class="modal quality-proposal-dialog"
+             role="dialog"
+             aria-modal="true"
+             aria-labelledby="continuityProposalTitle"
+             tabindex="0"
+             @onkeydown="OnContinuityProposalKeyDown">
+            <div class="modal-title" id="continuityProposalTitle">Apply suggested fix?</div>
+            <div class="modal-body">
+                <div class="quality-proposal-meta">
+                    <span>@_pendingContinuityIssue.Type</span>
+                    <span>@_pendingContinuityIssue.Severity</span>
+                </div>
+                <div class="quality-proposal-message">@_pendingContinuityIssue.Message</div>
+                @if (!string.IsNullOrWhiteSpace(_pendingContinuityIssue.Evidence.Quote))
+                {
+                    <div class="quality-proposal-suggestion">"@_pendingContinuityIssue.Evidence.Quote"</div>
+                }
+                @if (_continuityProposalPreview is not null)
+                {
+                    <div class="quality-proposal-preview">
+                        <div class="quality-proposal-label">Before</div>
+                        <pre>@_continuityProposalPreview.Before</pre>
+                        @if (_continuityProposalPreview.IsDeletion)
+                        {
+                            <div class="quality-proposal-label">Change</div>
+                            <div class="quality-proposal-suggestion">Remove highlighted text</div>
+                            <pre>@_continuityProposalPreview.DeletionText</pre>
+                        }
+                        else
+                        {
+                            <div class="quality-proposal-label">After</div>
+                            <pre>@_continuityProposalPreview.After</pre>
+                        }
+                    </div>
+                    @if (!string.IsNullOrEmpty(_continuityProposalPreview.Prefix) || !string.IsNullOrEmpty(_continuityProposalPreview.Suffix))
+                    {
+                        <div class="quality-proposal-context">
+                            <div class="quality-proposal-label">Context</div>
+                            <div class="quality-proposal-context-line">
+                                <span>@_continuityProposalPreview.Prefix</span><span class="quality-proposal-token quality-proposal-token--before">@_continuityProposalPreview.Before</span><span>@_continuityProposalPreview.Suffix</span>
+                            </div>
+                            @if (!_continuityProposalPreview.IsDeletion)
+                            {
+                                <div class="quality-proposal-context-line">
+                                    <span>@_continuityProposalPreview.Prefix</span><span class="quality-proposal-token quality-proposal-token--after">@_continuityProposalPreview.After</span><span>@_continuityProposalPreview.Suffix</span>
+                                </div>
+                            }
+                        </div>
+                    }
+                }
+            </div>
+            @if (!string.IsNullOrWhiteSpace(_continuityProposalError))
+            {
+                <div class="modal-error">@_continuityProposalError</div>
+                <div class="modal-actions">
+                    <button type="button"
+                            @onclick="ShowPendingContinuityIssueInTextAsync"
+                            disabled="@_isApplyingContinuityProposal">
+                        Show in text
+                    </button>
+                    <button type="button"
+                            @onclick="RecomputeContinuityRangeAsync"
+                            disabled="@_isApplyingContinuityProposal">
+                        Recompute range
+                    </button>
+                </div>
+            }
+            <div class="modal-actions">
+                <button type="button"
+                        class="primary"
+                        @onclick="ConfirmContinuityProposalApplyAsync"
+                        disabled="@_isApplyingContinuityProposal">
+                    @(_isApplyingContinuityProposal ? "Applying..." : "Apply")
+                </button>
+                <button type="button"
+                        @onclick="CancelContinuityProposal"
+                        disabled="@_isApplyingContinuityProposal">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_isImportDialogOpen)
+{
+    <div class="modal-overlay" role="presentation" @onclick="CancelImportSection">
+        <div class="modal-backdrop"></div>
+        <div class="modal import-dialog"
+             role="dialog"
+             aria-modal="true"
+             aria-labelledby="importSectionTitle"
+             @onclick:stopPropagation="true">
+            <div class="modal-title" id="importSectionTitle">Import into section</div>
+            <div class="modal-body">
+                <div class="import-form">
+                    <label for="import-target-section">Target section</label>
+                    <select id="import-target-section" @bind="_importTargetSectionId">
+                        @foreach (SectionDto targetSection in _sections)
+                        {
+                            <option value="@targetSection.Id">@targetSection.Title</option>
+                        }
+                    </select>
+
+                    <label for="import-mode">Mode</label>
+                    <select id="import-mode" @bind="_importMode">
+                        <option value="replace">Replace content</option>
+                        <option value="append">Append at end</option>
+                    </select>
+
+                    <label for="import-file">File (.txt, .docx)</label>
+                    <InputFile id="import-file"
+                               accept=".txt,.docx"
+                               OnChange="OnImportFileSelected" />
+                    @if (!string.IsNullOrWhiteSpace(_importFileName))
+                    {
+                        <div class="import-file-name">@_importFileName</div>
+                    }
+
+                    <label><input type="checkbox" @bind="_importNormalizeWhitespace" /> Normalize whitespace</label>
+                    <label><input type="checkbox" @bind="_importPreserveTxtLineBreaks" /> Preserve TXT line breaks</label>
+                </div>
+            </div>
+            @if (!string.IsNullOrWhiteSpace(_importError))
+            {
+                <div class="modal-error">@_importError</div>
+            }
+            <div class="modal-actions">
+                <button type="button"
+                        class="danger"
+                        @onclick="ConfirmImportSectionAsync"
+                        disabled="@_isImporting">
+                    @(_isImporting ? "Importing..." : "Import")
+                </button>
+                <button type="button"
+                        @onclick="CancelImportSection"
+                        disabled="@_isImporting">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_isTranslateModalOpen)
+{
+    <div class="modal-overlay modal-overlay-dimmed" @onclick="CloseTranslateModal">
+        <div class="modal translate-dialog modal-panel" role="dialog" aria-modal="true" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <div class="modal-title">Translate</div>
+            </div>
+            <div class="modal-body">
+                <div class="translate-form">
+                    <label for="translate-source-language">Source language</label>
+                    <select id="translate-source-language" @bind="_translateSourceLanguage">
+                        <option value="auto">Auto-detect</option>
+                        <option value="en">English</option>
+                        <option value="sv">Swedish</option>
+                        <option value="de">German</option>
+                        <option value="fr">French</option>
+                        <option value="es">Spanish</option>
+                        <option value="it">Italian</option>
+                        <option value="nl">Dutch</option>
+                        <option value="no">Norwegian</option>
+                        <option value="da">Danish</option>
+                    </select>
+
+                    <label for="translate-target-language">Target language</label>
+                    <select id="translate-target-language" @bind="_translateTargetLanguage">
+                        <option value="en">English</option>
+                        <option value="sv">Swedish</option>
+                        <option value="de">German</option>
+                        <option value="fr">French</option>
+                        <option value="es">Spanish</option>
+                        <option value="it">Italian</option>
+                        <option value="nl">Dutch</option>
+                        <option value="no">Norwegian</option>
+                        <option value="da">Danish</option>
+                    </select>
+
+                    <label for="translate-style">Style</label>
+                    <select id="translate-style" @bind="_translateStyle">
+                        <option value="literal">Literal</option>
+                        <option value="natural">Natural</option>
+                        <option value="formal">Formal</option>
+                        <option value="informal">Informal</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" @onclick="CloseTranslateModal">Cancel</button>
+                <button type="button" class="btn btn-primary" @onclick="ConfirmTranslateAsync">Translate</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_isExportDialogOpen)
+{
+    <div class="modal-overlay" @onclick="CloseExportDialog">
+        @* Standard modal layout *@
+        <div class="modal export-dialog modal-panel" role="dialog" aria-modal="true" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <div class="modal-title">Export document</div>
+            </div>
+            <div class="modal-body">
+            <div class="export-panel-row">
+                <label class="export-panel-label" for="export-preset">Preset</label>
+                <select id="export-preset" class="export-panel-select" @bind="SelectedPresetIdValue">
+                    <option value="">Custom</option>
+                    @foreach (ExportPresetDto preset in _exportPresets)
+                    {
+                        <option value="@preset.Id">@($"{preset.Name}{(preset.IsGlobalDefault ? " (Default)" : string.Empty)}")</option>
+                    }
+                </select>
+            </div>
+            <div class="export-panel-row export-panel-actions">
+                <div class="export-panel-action-group">
+                    <button type="button" class="link-button" @onclick="OpenPresetSave">Save as preset...</button>
+                    <button type="button" class="link-button" @onclick="UpdateSelectedPresetAsync" disabled="@(_selectedExportPresetId is null)">Update preset</button>
+                </div>
+                <button type="button" class="link-button" @onclick="SetProjectDefaultPresetAsync" disabled="@(_selectedExportPresetId is null)">Set as project default</button>
+            </div>
+            @if (_isPresetSaveOpen)
+            {
+                <div class="export-panel-row">
+                    <label class="export-panel-label" for="preset-name">Preset name</label>
+                    <input id="preset-name" class="export-panel-input" @bind="_presetNameDraft" />
+                </div>
+                <div class="export-panel-row">
+                    <label class="export-panel-label" for="preset-global-default">Default</label>
+                    <div class="export-panel-checkbox">
+                        <input id="preset-global-default" type="checkbox" @bind="_presetMakeGlobalDefault" />
+                        <span>Make this my global default</span>
+                    </div>
+                </div>
+                <div class="export-panel-row export-panel-actions">
+                    <span></span>
+                    <div class="export-panel-action-group">
+                        <button type="button" @onclick="SavePresetAsync">Save preset</button>
+                        <button type="button" @onclick="ClosePresetSave">Cancel</button>
+                    </div>
+                </div>
+            }
+            <div class="export-panel-row">
+                <label class="export-panel-label" for="export-content">Content</label>
+                <select id="export-content" class="export-panel-select" @bind="_exportContentSelection" @bind:after="MarkPresetAsCustom">
+                    <option value="document">Document</option>
+                    <option value="synopsis">Synopsis</option>
+                </select>
+            </div>
+            <div class="export-panel-row">
+                <label class="export-panel-label" for="export-format">Format</label>
+                <select id="export-format" class="export-panel-select" @bind="_exportFormatSelection" @bind:after="MarkPresetAsCustom">
+                    <option value="html">HTML</option>
+                    <option value="markdown">Markdown</option>
+                    @if (_docxExportEnabled)
+                    {
+                        <option value="docx">DOCX</option>
+                    }
+                    @if (_epubExportEnabled && string.Equals(_exportContentSelection, "document", StringComparison.OrdinalIgnoreCase))
+                    {
+                        <option value="epub">EPUB</option>
+                    }
+                    @if (string.Equals(_exportContentSelection, "document", StringComparison.OrdinalIgnoreCase))
+                    {
+                        <option value="pdf">PDF (print)</option>
+                    }
+                </select>
+            </div>
+            <div class="export-panel-row">
+                <label class="export-panel-label" for="export-template">Template</label>
+                @if (_isTemplatesLoading)
+                {
+                    <div class="export-panel-note">Loading templates...</div>
+                }
+                else
+                {
+                    <select id="export-template"
+                            class="export-panel-select"
+                            @bind="SelectedTemplateIdValue"
+                            @bind:after="MarkPresetAsCustom"
+                            disabled="@(!string.Equals(_exportFormatSelection, "html", StringComparison.OrdinalIgnoreCase) &&
+                                        !string.Equals(_exportFormatSelection, "pdf", StringComparison.OrdinalIgnoreCase) &&
+                                        !string.Equals(_exportFormatSelection, "docx", StringComparison.OrdinalIgnoreCase))">
+                        @foreach (ExportTemplateDto template in _exportTemplates)
+                        {
+                            <option value="@template.Id">@template.Name @GetPresetTag(template.PresetKey)</option>
+                        }
+                    </select>
+                }
+            </div>
+            @if (string.Equals(_exportContentSelection, "document", StringComparison.OrdinalIgnoreCase))
+            {
+            <div class="export-panel-row">
+                <label class="export-panel-label" for="preview-scope">Scope</label>
+                <select id="preview-scope" class="export-panel-select" @bind="_exportScopeType" @bind:after="MarkPresetAsCustom">
+                    <option value="document">Whole manuscript</option>
+                    <option value="section">Current section</option>
+                    <option value="page">Current page</option>
+                    <option value="sections">Selected sections</option>
+                    <option value="selection">Selection</option>
+                </select>
+            </div>
+            @if (string.Equals(_exportScopeType, "sections", StringComparison.OrdinalIgnoreCase))
+            {
+                <div class="export-panel-row export-panel-sections">
+                    <label class="export-panel-label" for="scope-search">Sections</label>
+                    <div class="export-panel-section-list">
+                        <div class="export-panel-section-actions">
+                            <input id="scope-search"
+                                   class="export-panel-input"
+                                   placeholder="Search sections..."
+                                   @bind="_exportScopeSearch" />
+                            <button type="button" class="link-button" @onclick="ToggleSelectAllSections">Select all</button>
+                        </div>
+                        <div class="export-panel-section-items">
+                            @foreach (SectionDto scopeItem in FilteredScopeSections)
+                            {
+                                <label class="export-panel-section-item">
+                                    <input type="checkbox"
+                                           checked="@IsSectionSelected(scopeItem.Id)"
+                                           @onchange="(args => ToggleSectionSelection(scopeItem.Id, args))" />
+                                    <span>@(scopeItem.Title)</span>
+                                </label>
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+            @if (string.Equals(_exportScopeType, "selection", StringComparison.OrdinalIgnoreCase))
+            {
+                <div class="export-panel-row export-panel-selection">
+                    <label class="export-panel-label">Selection</label>
+                    <div class="export-panel-selection-body">
+                        <button type="button" @onclick="CaptureSelectionAsync">Use current editor selection</button>
+                        <div class="export-panel-hint">@ExportSelectionSummary</div>
+                    </div>
+                </div>
+            }
+            <div class="export-panel-row">
+                <label class="export-panel-label">Title page</label>
+                <div class="export-panel-checkbox">
+                    <input type="checkbox" @bind="_exportIncludeTitlePage" @bind:after="MarkPresetAsCustom" />
+                    <span>Include title page</span>
+                </div>
+            </div>
+            @if (_exportIncludeTitlePage)
+            {
+                <div class="export-panel-row">
+                    <label class="export-panel-label" for="title-page-title">Title</label>
+                    <input id="title-page-title" class="export-panel-input" @bind="_titlePageTitle" @bind:after="MarkPresetAsCustom" />
+                </div>
+                <div class="export-panel-row">
+                    <label class="export-panel-label" for="title-page-subtitle">Subtitle</label>
+                    <input id="title-page-subtitle" class="export-panel-input" @bind="_titlePageSubtitle" @bind:after="MarkPresetAsCustom" />
+                </div>
+                <div class="export-panel-row">
+                    <label class="export-panel-label" for="title-page-author">Author</label>
+                    <input id="title-page-author" class="export-panel-input" @bind="_titlePageAuthor" @bind:after="MarkPresetAsCustom" />
+                </div>
+                <div class="export-panel-row">
+                    <label class="export-panel-label" for="title-page-draft">Draft label</label>
+                    <input id="title-page-draft" class="export-panel-input" @bind="_titlePageDraftLabel" @bind:after="MarkPresetAsCustom" />
+                </div>
+                <div class="export-panel-row">
+                    <label class="export-panel-label" for="title-page-date">Date</label>
+                    <input id="title-page-date" class="export-panel-input" @bind="_titlePageDate" @bind:after="MarkPresetAsCustom" />
+                </div>
+            }
+            <div class="export-panel-row">
+                <label class="export-panel-label">Table of contents</label>
+                <div class="export-panel-checkbox">
+                    <input type="checkbox" @bind="_exportIncludeToc" @bind:after="MarkPresetAsCustom" />
+                    <span>Include TOC</span>
+                </div>
+            </div>
+            @if (_exportIncludeToc)
+            {
+                <div class="export-panel-row">
+                    <label class="export-panel-label" for="toc-depth">TOC depth</label>
+                    <select id="toc-depth" class="export-panel-select" @bind="_exportTocDepth" @bind:after="MarkPresetAsCustom">
+                        <option value="1">H1</option>
+                        <option value="2">H1-H2</option>
+                        <option value="3">H1-H3</option>
+                    </select>
+                </div>
+            }
+            <div class="export-panel-row">
+                <label class="export-panel-label">Chapter breaks</label>
+                <div class="export-panel-checkbox-group">
+                    <label>
+                        <input type="checkbox"
+                               checked='@IsChapterBreakRuleEnabled("h1")'
+                               @onchange='@(args => ToggleChapterBreakRule("h1", args))' />
+                        Start each H1 on new page
+                    </label>
+                    <label>
+                        <input type="checkbox"
+                               checked='@IsChapterBreakRuleEnabled("section")'
+                               @onchange='@(args => ToggleChapterBreakRule("section", args))' />
+                        Start each section on new page
+                    </label>
+                </div>
+            </div>
+            <div class="export-panel-row export-panel-actions">
+                <button type="button" class="link-button" @onclick="OpenTemplateManagerAsync">Manage templates...</button>
+                <span class="export-panel-hint">Templates apply to HTML/PDF/DOCX exports.</span>
+            </div>
+            }
+            @if (!string.IsNullOrWhiteSpace(_templateLoadError))
+            {
+                <div class="modal-error">@_templateLoadError</div>
+            }
+            @if (!string.IsNullOrWhiteSpace(_templateActionError))
+            {
+                <div class="modal-error">@_templateActionError</div>
+            }
+            @if (!string.IsNullOrWhiteSpace(_presetLoadError))
+            {
+                <div class="modal-error">@_presetLoadError</div>
+            }
+            @if (!string.IsNullOrWhiteSpace(_presetActionError))
+            {
+                <div class="modal-error">@_presetActionError</div>
+            }
+            </div>
+            <div class="modal-footer">
+                <button type="button"
+                        title="@GetExportPreviewButtonTooltip()"
+                        @onclick="OpenPreviewAsync"
+                        disabled="@_isTemplatesLoading">@GetExportPreviewButtonLabel()</button>
+                <button type="button"
+                        title="@GetExportSubmitButtonTooltip()"
+                        @onclick="ExecuteExportSelectionAsync"
+                        disabled="@_isTemplatesLoading">Export</button>
+                <button type="button" @onclick="CloseExportDialog">Cancel</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_isTemplateManagerOpen)
+{
+    <div class="modal-overlay" @onclick="CloseTemplateManager">
+        @* Standard modal layout *@
+        <div class="modal export-dialog template-manager modal-panel" role="dialog" aria-modal="true" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <div class="modal-title">Export templates</div>
+            </div>
+            <div class="modal-body">
+            <div class="template-manager-row">
+                <label class="export-panel-label" for="template-preset-create">New template</label>
+                <div class="template-manager-create">
+                    <select id="template-preset-create" class="export-panel-select" @bind="_createPresetKey">
+                        @foreach (ExportTemplatePresetDefinition preset in PresetOptions)
+                        {
+                            <option value="@preset.Key">@preset.Name</option>
+                        }
+                    </select>
+                    <button type="button" @onclick="CreateTemplateFromPresetAsync">Create</button>
+                </div>
+            </div>
+
+            <div class="template-manager-list">
+                @foreach (ExportTemplateDto template in _exportTemplates.OrderBy(item => item.Name))
+                {
+                    <div class="template-card">
+                        <div class="template-card-main">
+                            <div class="template-name">@template.Name</div>
+                            <div class="template-tag">@GetPresetTag(template.PresetKey)</div>
+                        </div>
+                        <div class="template-card-actions">
+                            <button type="button" @onclick="() => DuplicateTemplateAsync(template)">Duplicate</button>
+                            <button type="button" @onclick="() => StartEditTemplate(template)">Edit</button>
+                            <button type="button" class="danger" disabled="@_isTemplateDeleting" @onclick="() => DeleteTemplateAsync(template)">Delete</button>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            @if (_isTemplateEditorOpen && _templateEditor is not null)
+            {
+                <div class="template-editor">
+                    <h3>Edit template</h3>
+                    <div class="template-grid">
+                        <label class="export-panel-label" for="template-name">Name</label>
+                        <input id="template-name" class="export-panel-input" @bind="_templateEditor.Name" />
+
+                        <label class="export-panel-label" for="template-page-size">Page size</label>
+                        <select id="template-page-size" class="export-panel-select" value="@_templateEditorPagePreset" @onchange="OnTemplatePresetChanged">
+                            @foreach (ExportTemplatePresetDefinition preset in PresetOptions)
+                            {
+                                <option value="@preset.Key">@preset.Name (@preset.PageWidthMm x @preset.PageHeightMm)</option>
+                            }
+                            <option value="custom">Custom</option>
+                        </select>
+
+                        <label class="export-panel-label">Width/Height (mm)</label>
+                        <div class="template-inline-inputs">
+                            <input type="number" class="export-panel-input" @bind="_templateEditor.PageWidthMm" />
+                            <input type="number" class="export-panel-input" @bind="_templateEditor.PageHeightMm" />
+                        </div>
+
+                        <label class="export-panel-label">Margins (mm)</label>
+                        <div class="template-inline-inputs">
+                            <input type="number" class="export-panel-input" @bind="_templateEditor.MarginTopMm" placeholder="Top" />
+                            <input type="number" class="export-panel-input" @bind="_templateEditor.MarginRightMm" placeholder="Right" />
+                            <input type="number" class="export-panel-input" @bind="_templateEditor.MarginBottomMm" placeholder="Bottom" />
+                            <input type="number" class="export-panel-input" @bind="_templateEditor.MarginLeftMm" placeholder="Left" />
+                        </div>
+
+                        <label class="export-panel-label">Typography</label>
+                        <div class="template-inline-inputs">
+                            <input class="export-panel-input" @bind="_templateEditor.FontFamily" placeholder="Font family" />
+                            <input type="number" class="export-panel-input" @bind="_templateEditor.BodyFontSizePt" placeholder="Font size (pt)" />
+                            <input type="number" step="0.1" class="export-panel-input" @bind="_templateEditor.LineHeight" placeholder="Line height" />
+                        </div>
+
+                        <label class="export-panel-label">Header</label>
+                        <div class="template-section">
+                            <label><input type="checkbox" @bind="_templateEditor.HeaderEnabled" /> Enabled</label>
+                            <div class="template-inline-inputs">
+                                <input class="export-panel-input" @bind="_templateEditor.HeaderLeft" placeholder="Left" title="Tokens: {DocumentTitle}, {SectionTitle}, {Date}, {PageNumber}, {TotalPages}" />
+                                <input class="export-panel-input" @bind="_templateEditor.HeaderCenter" placeholder="Center" title="Tokens: {DocumentTitle}, {SectionTitle}, {Date}, {PageNumber}, {TotalPages}" />
+                                <input class="export-panel-input" @bind="_templateEditor.HeaderRight" placeholder="Right" title="Tokens: {DocumentTitle}, {SectionTitle}, {Date}, {PageNumber}, {TotalPages}" />
+                            </div>
+                        </div>
+
+                        <label class="export-panel-label">Footer</label>
+                        <div class="template-section">
+                            <label><input type="checkbox" @bind="_templateEditor.FooterEnabled" /> Enabled</label>
+                            <div class="template-inline-inputs">
+                                <input class="export-panel-input" @bind="_templateEditor.FooterLeft" placeholder="Left" title="Tokens: {DocumentTitle}, {SectionTitle}, {Date}, {PageNumber}, {TotalPages}" />
+                                <input class="export-panel-input" @bind="_templateEditor.FooterCenter" placeholder="Center" title="Tokens: {DocumentTitle}, {SectionTitle}, {Date}, {PageNumber}, {TotalPages}" />
+                                <input class="export-panel-input" @bind="_templateEditor.FooterRight" placeholder="Right" title="Tokens: {DocumentTitle}, {SectionTitle}, {Date}, {PageNumber}, {TotalPages}" />
+                            </div>
+                        </div>
+
+                        <label class="export-panel-label">TOC</label>
+                        <div class="template-inline-inputs">
+                            <label><input type="checkbox" @bind="_templateEditor.TocEnabled" /> Enabled</label>
+                            <input type="number" class="export-panel-input" @bind="_templateEditor.TocDepth" placeholder="Depth" />
+                        </div>
+
+                        <label class="export-panel-label">Page numbers</label>
+                        <div class="template-inline-inputs">
+                            <label><input type="checkbox" @bind="_templateEditor.PageNumbersEnabled" /> Enabled</label>
+                            <input type="number" class="export-panel-input" @bind="_templateEditor.PageNumberStart" placeholder="Start" />
+                        </div>
+                    </div>
+                    <div class="modal-actions">
+                        <button type="button" @onclick="SaveTemplateAsync" disabled="@_isTemplateSaving">Save</button>
+                        <button type="button" @onclick="CancelTemplateEdit">Cancel</button>
+                    </div>
+                </div>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(_templateActionError))
+            {
+                <div class="modal-error">@_templateActionError</div>
+            }
+            </div>
+            <div class="modal-footer">
+                <button type="button" @onclick="CloseTemplateManager">Close</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_isExportPreviewOpen)
+{
+    <div class="modal-overlay" @onclick="ClosePreview">
+        @* Standard modal layout *@
+        <div class="modal export-preview modal-panel" role="dialog" aria-modal="true" style="@GetPreviewStyle()" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <div class="modal-title">@GetExportPreviewTitle()</div>
+            </div>
+            <div class="modal-body">
+                <div class="preview-layout">
+                    <aside class="preview-sidebar @( _previewSidebarOpen ? "is-open" : "is-collapsed")">
+                        <div class="preview-sidebar-header">
+                            <span>Pages</span>
+                            <button type="button" class="link-button" @onclick="TogglePreviewSidebar">
+                                @(_previewSidebarOpen ? "Hide" : "Show")
+                            </button>
+                        </div>
+                        @if (_previewSidebarOpen)
+                        {
+                            <div class="preview-sidebar-search">
+                                <input type="search"
+                                       placeholder="Find in preview"
+                                       @bind="_previewSearchTerm"
+                                       @bind:after="RunPreviewSearchAsync" />
+                                <button type="button" class="link-button" @onclick="ClearPreviewSearch">Clear</button>
+                            </div>
+                            <div class="preview-sidebar-toggle">
+                                <label>
+                                    <input type="checkbox" @bind="_previewShowPageBreaks" @bind:after="TogglePreviewPageBreaksAsync" />
+                                    Show page breaks
+                                </label>
+                            </div>
+                            <div class="preview-page-list">
+                                @if (_previewHasFrontMatter)
+                                {
+                                    <button type="button"
+                                            class="preview-page-item @( _previewCurrentPage == 0 ? "is-active" : string.Empty)"
+                                            @onclick="JumpToFrontMatterAsync">
+                                        Front matter
+                                    </button>
+                                }
+                                @for (int pageIndex = 1; pageIndex <= _previewPageCount; pageIndex++)
+                                {
+                                    <button type="button"
+                                            class="preview-page-item @(pageIndex == _previewCurrentPage ? "is-active" : string.Empty)"
+                                            @onclick="() => JumpToPreviewPageAsync(pageIndex)">
+                                        Page @pageIndex
+                                    </button>
+                                }
+                            </div>
+                        }
+                    </aside>
+                    <section class="preview-main">
+                        <div class="preview-toolbar">
+                            <div class="preview-zoom">
+                                <span>Zoom</span>
+                                <button type="button" class="link-button" @onclick="SetFitWidthAsync">Fit width</button>
+                                <button type="button" class="link-button" @onclick="SetFitPageAsync">Fit page</button>
+                                <button type="button" @onclick="() => AdjustPreviewZoom(-0.1)">-</button>
+                                <span class="preview-zoom-value">@PreviewZoomPercent</span>
+                                <button type="button" @onclick="() => AdjustPreviewZoom(0.1)">+</button>
+                                <button type="button" @onclick="() => SetPreviewZoom(1.0)">100%</button>
+                                <button type="button" @onclick="() => SetPreviewZoom(1.25)">125%</button>
+                                <button type="button" @onclick="() => SetPreviewZoom(1.5)">150%</button>
+                            </div>
+                            <div class="preview-toolbar-actions">
+                                <button type="button" @onclick="PrintPreviewAsync">Print</button>
+                            </div>
+                        </div>
+                        @if (_isPreviewLoading)
+                        {
+                            <div class="export-panel-note">Rendering preview...</div>
+                        }
+                        else if (!string.IsNullOrWhiteSpace(_previewError))
+                        {
+                            <div class="modal-error">@_previewError</div>
+                        }
+                        else
+                        {
+                            <div class="preview-frame-wrap">
+                                <iframe id="export-preview-frame"
+                                        class="export-preview-frame"
+                                        srcdoc="@_previewHtml"
+                                        @onload="OnPreviewFrameLoadedAsync"
+                                        sandbox="allow-same-origin allow-scripts allow-modals"></iframe>
+                            </div>
+                        }
+                    </section>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" @onclick="ClosePreview">Close</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_isContextMenuOpen)
+{
+    <div class="editor-context-menu-backdrop" @onclick="CloseContextMenu"></div>
+    <div class="editor-context-menu"
+         style="@GetContextMenuStyle()"
+         tabindex="-1"
+         role="menu"
+         @ref="_contextMenuRef"
+         @onclick:stopPropagation="true"
+         @onkeydown="OnContextMenuKeyDown">
+        <div class="editor-context-menu-group">
+            <div class="editor-context-menu-label">Text emphasis</div>
+            <button type="button"
+                    class="@GetActiveClass(_formattingState.IsBold)"
+                    disabled="@(!_formattingState.CanBold)"
+                    @onclick="() => OnContextMenuCommand(OnBoldRequested)">Bold</button>
+            <button type="button"
+                    class="@GetActiveClass(_formattingState.IsItalic)"
+                    disabled="@(!_formattingState.CanItalic)"
+                    @onclick="() => OnContextMenuCommand(OnItalicRequested)">Italic</button>
+            <button type="button"
+                    class="@GetActiveClass(_formattingState.IsStrike)"
+                    disabled="@(!_formattingState.CanStrike)"
+                    @onclick="() => OnContextMenuCommand(OnStrikeRequested)">Strike</button>
+            <button type="button"
+                    class="@GetActiveClass(_formattingState.IsCode)"
+                    disabled="@(!_formattingState.CanCode)"
+                    @onclick="() => OnContextMenuCommand(OnCodeRequested)">Code</button>
+        </div>
+        <div class="editor-context-menu-group">
+            <div class="editor-context-menu-label">Structure</div>
+            <button type="button"
+                    class='@GetActiveClass(_formattingState.BlockType == "paragraph")'
+                    disabled="@(!_formattingState.CanApplyHeading)"
+                    @onclick="() => OnContextMenuCommand(OnParagraphRequested)">Paragraph</button>
+            <button type="button"
+                    class='@GetActiveClass(_formattingState.BlockType == "heading:1")'
+                    disabled="@(!_formattingState.CanApplyHeading)"
+                    @onclick="() => OnContextMenuCommand(() => OnHeadingRequested(1))">Heading 1</button>
+            <button type="button"
+                    class='@GetActiveClass(_formattingState.BlockType == "heading:2")'
+                    disabled="@(!_formattingState.CanApplyHeading)"
+                    @onclick="() => OnContextMenuCommand(() => OnHeadingRequested(2))">Heading 2</button>
+            <button type="button"
+                    class='@GetActiveClass(_formattingState.BlockType == "heading:3")'
+                    disabled="@(!_formattingState.CanApplyHeading)"
+                    @onclick="() => OnContextMenuCommand(() => OnHeadingRequested(3))">Heading 3</button>
+        </div>
+        <div class="editor-context-menu-group">
+            <div class="editor-context-menu-label">Lists</div>
+            <button type="button" disabled="@(!_formattingState.CanToggleList)" @onclick="() => OnContextMenuCommand(OnBulletListRequested)">Bullet list</button>
+            <button type="button" disabled="@(!_formattingState.CanToggleList)" @onclick="() => OnContextMenuCommand(OnOrderedListRequested)">Ordered list</button>
+        </div>
+        <div class="editor-context-menu-group">
+            <div class="editor-context-menu-label">Table</div>
+            <button type="button" disabled="@(!_formattingState.CanInsertTable)" @onclick="() => OnContextMenuCommand(OnInsertTableRequested)">Insert 3x3</button>
+            <button type="button" disabled="@(!_formattingState.CanAddTableRowAfter)" @onclick="() => OnContextMenuCommand(OnAddTableRowAfterRequested)">Add row</button>
+            <button type="button" disabled="@(!_formattingState.CanAddTableColumnAfter)" @onclick="() => OnContextMenuCommand(OnAddTableColumnAfterRequested)">Add col</button>
+            <button type="button" disabled="@(!_formattingState.CanToggleTableHeaderRow)" @onclick="() => OnContextMenuCommand(OnToggleTableHeaderRowRequested)">Toggle header row</button>
+            <button type="button" disabled="@(!_formattingState.CanDeleteTable)" @onclick="() => OnContextMenuCommand(OnDeleteTableRequested)">Delete table</button>
+        </div>
+        <div class="editor-context-menu-group">
+            <div class="editor-context-menu-label">Image</div>
+            <button type="button" disabled="@(!_formattingState.CanInsertImage)" @onclick="() => OnContextMenuCommand(OnInsertImageFromUrlRequested)">Insert from URL</button>
+            <button type="button" disabled="@(!_formattingState.CanRemoveImage)" @onclick="() => OnContextMenuCommand(OnRemoveImageRequested)">Remove image</button>
+        </div>
+        <div class="editor-context-menu-group">
+            <div class="editor-context-menu-label">Other</div>
+            <button type="button" disabled="@(!_formattingState.CanBlockquote)" @onclick="() => OnContextMenuCommand(OnBlockquoteRequested)">Blockquote</button>
+            <button type="button" class="@GetActiveClass(_formattingState.IsLink)" @onclick="() => OnContextMenuCommand(OnLinkRequested)">Link</button>
+        </div>
+        @if (_currentSelectionRange is not null && CanShowAiMenu && SelectionAiActions.Any())
+        {
+            <div class="editor-context-menu-group">
+                <div class="editor-context-menu-label">AI</div>
+                @foreach (AiActionOption action in SelectionAiActions)
+                {
+                    <button type="button" disabled="@IsAiQuotaExceeded" @onclick="() => OnContextMenuCommand(() => OnAiActionSelected(action))">@action.Label</button>
+                }
+            </div>
+        }
+    </div>
+}
+
+@if (_isLinkContextMenuOpen)
+{
+    <div class="editor-context-menu-backdrop" @onclick="CloseLinkContextMenu"></div>
+    <div class="editor-context-menu"
+         style="@GetLinkContextMenuStyle()"
+         tabindex="-1"
+         role="menu"
+         @onclick:stopPropagation="true"
+         @onkeydown="OnLinkContextMenuKeyDown">
+        <div class="editor-context-menu-group">
+            <div class="editor-context-menu-label">Link</div>
+            <button type="button" @onclick="OpenLinkFromContextMenu">Open link</button>
+            <button type="button" @onclick="EditLinkFromContextMenu">Edit link</button>
+            <button type="button" @onclick="RemoveLinkFromContextMenu">Remove link</button>
+        </div>
+    </div>
+}
+
+@if (_isFeedbackDialogOpen)
+{
+    <div class="modal-overlay modal-overlay-dimmed" @onclick="CloseFeedbackDialog">
+    <div class="modal-backdrop"></div>
+    <div class="modal feedback-dialog modal-panel"
+         role="dialog"
+         aria-modal="true"
+         aria-labelledby="feedbackDialogTitle"
+         @onkeydown="OnFeedbackDialogKeyDown"
+         @onclick:stopPropagation="true">
+        <span class="focus-sentinel" tabindex="0" @onfocus="FocusFeedbackLastAsync"></span>
+        <header>
+            <h2 id="feedbackDialogTitle">User feedback</h2>
+            <button type="button" @onclick="CloseFeedbackDialog">Close</button>
+        </header>
+        <div class="modal-body feedback-form">
+            <label class="export-panel-label" for="feedback-type">Type</label>
+            <select id="feedback-type"
+                    class="export-panel-select"
+                    @bind="_feedbackType"
+                    @ref="_feedbackTypeSelectRef">
+                <option value="bug">Bug</option>
+                <option value="enhancement">Enhancement</option>
+            </select>
+
+            <label class="export-panel-label" for="feedback-subject">Title</label>
+            <input id="feedback-subject" class="export-panel-input" maxlength="120" @bind="_feedbackSubject" />
+
+            <label class="export-panel-label" for="feedback-description">Description</label>
+            <textarea id="feedback-description"
+                      class="notes-input scene-card-input"
+                      rows="6"
+                      maxlength="4000"
+                      @bind="_feedbackDescription"></textarea>
+
+            <label class="export-panel-checkbox">
+                <input type="checkbox" @bind="_feedbackIncludeDiagnostics" />
+                <span>Include page URL, app version, and browser details</span>
+            </label>
+
+            @if (!string.IsNullOrWhiteSpace(_feedbackErrorMessage))
+            {
+                <div class="modal-error">@_feedbackErrorMessage</div>
+            }
+        </div>
+        <footer>
+            <button type="button" class="btn btn-ghost" @onclick="CloseFeedbackDialog">Cancel</button>
+            <button type="button"
+                    class="btn btn-primary"
+                    disabled="@_feedbackSubmitting"
+                    @ref="_feedbackSubmitButtonRef"
+                    @onclick="SubmitFeedbackAsync">
+                @(_feedbackSubmitting ? "Sending..." : "OK")
+            </button>
+        </footer>
+        <span class="focus-sentinel" tabindex="0" @onfocus="FocusFeedbackFirstAsync"></span>
+    </div>
+    </div>
+}
+
+@if (_isAiQuotaDialogOpen)
+{
+    <div class="modal-overlay modal-overlay-dimmed" role="presentation" @onclick="CloseAiQuotaDialog">
+        <div class="modal-backdrop"></div>
+        <div class="modal modal-panel" role="dialog" aria-modal="true" aria-labelledby="aiQuotaDialogTitle" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <div class="modal-title" id="aiQuotaDialogTitle">AI quota reached</div>
+            </div>
+            <div class="modal-body">
+                <p>@_aiQuotaMessage</p>
+                <div class="ai-quota-details">
+                    <div><strong>Plan:</strong> @_aiQuotaPlanName</div>
+                    <div><strong>Used:</strong> @_aiQuotaUsed</div>
+                    <div><strong>Monthly budget:</strong> @_aiQuotaBudget</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-primary" @onclick="NavigateToUpgradeFromQuotaDialog">Upgrade</button>
+                <button type="button" class="btn btn-ghost" @onclick="CloseAiQuotaDialog">Close</button>
+            </div>
+        </div>
+    </div>
+}

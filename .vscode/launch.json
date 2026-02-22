@@ -1,8 +1,18 @@
 {
   "version": "0.2.0",
+  "compounds": [
+    {
+      "name": "Server + WASM",
+      "configurations": [
+        "BlazorApp (Server)",
+        "WriterApp.Client (WASM)"
+      ],
+      "stopAll": true
+    }
+  ],
   "configurations": [
     {
-      "name": "BlazorApp (.NET)",
+      "name": "BlazorApp (Server)",
       "type": "coreclr",
       "request": "launch",
       "preLaunchTask": "build",
@@ -17,6 +27,34 @@
         "ASPNETCORE_ENVIRONMENT": "Development",
         "DEV_AUTH_ADMIN": "true"
       }
+    },
+    {
+      "name": "WriterApp.Client (WASM)",
+      "type": "blazorwasm",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "url": "https://localhost:7384/app/documents",
+      "webRoot": "${workspaceFolder}/WriterApp.Client/wwwroot",
+      "inspectUri": "{wsProtocol}://{url.hostname}:{url.port}/app/_framework/debug/ws-proxy?browser={browserInspectUri}",
+      "timeout": 30000
+    },
+    {
+      "name": "WriterApp.Client (WASM only)",
+      "type": "blazorwasm",
+      "request": "launch",
+      "url": "https://localhost:7384/app/documents",
+      "webRoot": "${workspaceFolder}/WriterApp.Client/wwwroot",
+      "inspectUri": "{wsProtocol}://{url.hostname}:{url.port}/app/_framework/debug/ws-proxy?browser={browserInspectUri}",
+      "timeout": 30000
+    },
+    {
+      "name": "WriterApp.Client (WASM attach)",
+      "type": "blazorwasm",
+      "request": "attach",
+      "url": "https://localhost:7384/app/documents",
+      "webRoot": "${workspaceFolder}/WriterApp.Client/wwwroot",
+      "inspectUri": "{wsProtocol}://{url.hostname}:{url.port}/app/_framework/debug/ws-proxy?browser={browserInspectUri}",
+      "timeout": 30000
     }
   ]
 }

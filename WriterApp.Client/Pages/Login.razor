@@ -1,0 +1,40 @@
+@page "/login"
+@page "/app/login"
+@using Microsoft.AspNetCore.Components.WebAssembly.Hosting
+@using WriterApp.Client.Utilities
+@inject NavigationManager Navigation
+@inject IWebAssemblyHostEnvironment HostEnvironment
+
+<PageTitle>Sign in</PageTitle>
+
+<p>@_statusMessage</p>
+
+@code {
+    private const string DefaultReturnUrl = SafeReturnUrl.DefaultProjectsPath;
+    private string _statusMessage = "Redirecting to sign in...";
+
+    protected override void OnInitialized()
+    {
+        Uri currentUri = Navigation.ToAbsoluteUri(Navigation.Uri);
+        string returnUrl = ResolveReturnUrl(currentUri.Query);
+
+        if (HostEnvironment.IsDevelopment() || currentUri.IsLoopback)
+        {
+            _statusMessage = "Signed in (dev). Redirecting...";
+            Navigation.NavigateTo(returnUrl, forceLoad: true);
+            return;
+        }
+
+        string origin = currentUri.GetLeftPart(UriPartial.Authority);
+        Uri absoluteReturnUri = new(new Uri(origin, UriKind.Absolute), returnUrl);
+        string encodedReturnUri = Uri.EscapeDataString(absoluteReturnUri.ToString());
+        string loginUrl = $"/.auth/login/aad?post_login_redirect_uri={encodedReturnUri}";
+        Navigation.NavigateTo(loginUrl, forceLoad: true);
+    }
+
+    private static string ResolveReturnUrl(string queryString)
+    {
+        Dictionary<string, string> query = QueryStringParser.Parse(queryString);
+        return SafeReturnUrl.ResolveFromQuery(query, fallback: DefaultReturnUrl);
+    }
+}

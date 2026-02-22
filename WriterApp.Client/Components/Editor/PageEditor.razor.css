@@ -1,0 +1,65 @@
+.editor-status {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.85rem;
+    color: #6b7280;
+    padding: 10px 2px 0;
+    border-top: 1px solid #e5e7eb;
+    margin-top: 12px;
+    gap: 12px;
+    background: var(--surface);
+    position: relative;
+    z-index: 5;
+}
+
+.saving-indicator {
+    color: #d97706;
+}
+
+.dirty-indicator {
+    color: #b91c1c;
+}
+
+.clean-indicator {
+    color: #059669;
+}
+
+.page-editor-empty {
+    color: #6b7280;
+    font-size: 0.9rem;
+    padding: 12px;
+}
+
+.version-status {
+    color: #0f766e;
+    font-weight: 600;
+}
+
+::deep .quality-issue {
+    border-bottom: 2px solid rgba(251, 146, 60, 0.75);
+    background: rgba(251, 146, 60, 0.12);
+}
+
+::deep .quality-issue--info {
+    border-bottom-color: rgba(59, 130, 246, 0.75);
+    background: rgba(59, 130, 246, 0.12);
+}
+
+::deep .quality-issue--warning {
+    border-bottom-color: rgba(245, 158, 11, 0.75);
+    background: rgba(245, 158, 11, 0.12);
+}
+
+::deep .quality-issue--repeated-word {
+    border-bottom-style: dotted;
+}
+
+::deep .quality-issue--passive-voice {
+    border-bottom-style: dashed;
+}
+
+::deep .quality-issue--active {
+    outline: 2px solid rgba(37, 99, 235, 0.7);
+    outline-offset: 1px;
+    background: rgba(37, 99, 235, 0.18);
+}

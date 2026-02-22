@@ -1,0 +1,192 @@
+@using System.Net.Http.Json
+@using WriterApp.Application.Documents
+@inject HttpClient Http
+@inject NavigationManager Navigation
+
+<div class="global-search">
+    <div class="global-search-field">
+        <input class="global-search-input"
+               type="search"
+               placeholder="Search documents, pages, notes..."
+               value="@_query"
+               @oninput="OnQueryInput"
+               @onfocus="OpenResults" />
+        <button type="button" class="global-search-clear" @onclick="ClearQuery" disabled="@string.IsNullOrWhiteSpace(_query)">
+            Clear
+        </button>
+    </div>
+    <div class="global-search-toggle">
+        <input id="global-search-meta"
+               type="checkbox"
+               checked="@_includeMeta"
+               @onchange="OnIncludeMetaChanged" />
+        <label for="global-search-meta">Include outline &amp; scene cards</label>
+    </div>
+
+    @if (_isOpen && (!string.IsNullOrWhiteSpace(_query) || _isLoading))
+    {
+        <div class="global-search-results">
+            @if (_isLoading)
+            {
+                <div class="global-search-status">Searching...</div>
+            }
+            else if (_results.Count == 0)
+            {
+                <div class="global-search-status">No results.</div>
+            }
+            else
+            {
+                @foreach (IGrouping<Guid, SearchResultDto> group in _results.GroupBy(item => item.DocumentId))
+                {
+                    <div class="global-search-group">
+                        <div class="global-search-group-title">@group.FirstOrDefault()?.DocumentTitle</div>
+                        <ul>
+                            @foreach (SearchResultDto item in group)
+                            {
+                                <li>
+                                    <button type="button" class="global-search-result" @onclick="() => OnResultClickedAsync(item)">
+                                        <span class="global-search-type">@GetEntityLabel(item.EntityType)</span>
+                                        <span class="global-search-title">@item.Title</span>
+                                        @if (!string.IsNullOrWhiteSpace(item.Snippet))
+                                        {
+                                            <span class="global-search-snippet">@((MarkupString)item.Snippet)</span>
+                                        }
+                                    </button>
+                                </li>
+                            }
+                        </ul>
+                    </div>
+                }
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private const int DebounceMs = 300;
+    private CancellationTokenSource? _searchCts;
+    private string _query = string.Empty;
+    private bool _includeMeta = true;
+    private bool _isLoading;
+    private bool _isOpen;
+    private List<SearchResultDto> _results = new();
+
+    private void OpenResults()
+    {
+        _isOpen = true;
+    }
+
+    private void ClearQuery()
+    {
+        _query = string.Empty;
+        _results.Clear();
+        _isOpen = false;
+        _searchCts?.Cancel();
+        _searchCts?.Dispose();
+        _searchCts = null;
+    }
+
+    private void OnIncludeMetaChanged(ChangeEventArgs args)
+    {
+        _includeMeta = args.Value is bool value && value;
+        ScheduleSearch();
+    }
+
+    private void OnQueryInput(ChangeEventArgs args)
+    {
+        _query = args.Value?.ToString() ?? string.Empty;
+        _isOpen = true;
+        ScheduleSearch();
+    }
+
+    private void ScheduleSearch()
+    {
+        _searchCts?.Cancel();
+        _searchCts?.Dispose();
+        _searchCts = new CancellationTokenSource();
+        _ = DebouncedSearchAsync(_searchCts);
+    }
+
+    private async Task DebouncedSearchAsync(CancellationTokenSource cts)
+    {
+        try
+        {
+            await Task.Delay(DebounceMs, cts.Token);
+        }
+        catch (TaskCanceledException)
+        {
+            return;
+        }
+
+        await PerformSearchAsync(cts.Token);
+    }
+
+    private async Task PerformSearchAsync(CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(_query))
+        {
+            _results.Clear();
+            _isLoading = false;
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        _isLoading = true;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            string url = $"api/search?q={Uri.EscapeDataString(_query)}&includeMeta={_includeMeta.ToString().ToLowerInvariant()}&limit=100";
+            List<SearchResultDto>? results = await Http.GetFromJsonAsync<List<SearchResultDto>>(url, ct);
+            _results = results ?? new List<SearchResultDto>();
+        }
+        catch
+        {
+            _results.Clear();
+        }
+        finally
+        {
+            _isLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task OnResultClickedAsync(SearchResultDto item)
+    {
+        Guid? sectionId = item.SectionId ?? await ResolveSectionIdAsync(item.DocumentId);
+        if (sectionId is null)
+        {
+            return;
+        }
+
+        string query = Uri.EscapeDataString(_query ?? string.Empty);
+        string pageQuery = item.PageId.HasValue ? $"&pageId={item.PageId}" : string.Empty;
+        Navigation.NavigateTo($"documents/{item.DocumentId}/sections/{sectionId}?search={query}{pageQuery}");
+        _isOpen = false;
+    }
+
+    private async Task<Guid?> ResolveSectionIdAsync(Guid documentId)
+    {
+        try
+        {
+            List<SectionDto>? sections = await Http.GetFromJsonAsync<List<SectionDto>>(
+                $"api/documents/{documentId}/sections");
+            return sections?.OrderBy(section => section.OrderIndex).FirstOrDefault()?.Id;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string GetEntityLabel(string entityType) => entityType switch
+    {
+        "page" => "Page",
+        "section" => "Section",
+        "document" => "Document",
+        "note" => "Note",
+        "scenecard" => "Scene",
+        "outline" => "Outline",
+        _ => "Match"
+    };
+}

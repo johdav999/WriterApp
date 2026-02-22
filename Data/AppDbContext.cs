@@ -1,5 +1,11 @@
+using System;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
+using WriterApp.Data.AI;
+using WriterApp.Data.Continuity;
 using WriterApp.Data.Documents;
+using WriterApp.Data.Exporting;
 using WriterApp.Data.Subscriptions;
 using WriterApp.Data.Usage;
 
@@ -13,6 +19,7 @@ namespace WriterApp.Data
         }
 
         public DbSet<UserProfile> UserProfiles => Set<UserProfile>();
+        public DbSet<UserEntitlement> UserEntitlements => Set<UserEntitlement>();
         public DbSet<Plan> Plans => Set<Plan>();
         public DbSet<PlanEntitlement> PlanEntitlements => Set<PlanEntitlement>();
         public DbSet<UserPlanAssignment> UserPlanAssignments => Set<UserPlanAssignment>();
@@ -21,6 +28,62 @@ namespace WriterApp.Data
         public DbSet<DocumentRecord> Documents => Set<DocumentRecord>();
         public DbSet<SectionRecord> Sections => Set<SectionRecord>();
         public DbSet<PageRecord> Pages => Set<PageRecord>();
+        public DbSet<PageAnnotationRecord> PageAnnotations => Set<PageAnnotationRecord>();
+        public DbSet<PageQualityIssueRecord> PageQualityIssues => Set<PageQualityIssueRecord>();
+        public DbSet<PageQualityIssueDismissalRecord> PageQualityIssueDismissals => Set<PageQualityIssueDismissalRecord>();
+        public DbSet<PageVersionRecord> PageVersions => Set<PageVersionRecord>();
+        public DbSet<DocumentOutlineNodeRecord> DocumentOutlineNodes => Set<DocumentOutlineNodeRecord>();
+        public DbSet<PageNoteRecord> PageNotes => Set<PageNoteRecord>();
+        public DbSet<SectionNoteRecord> SectionNotes => Set<SectionNoteRecord>();
+        public DbSet<SectionSceneCardRecord> SectionSceneCards => Set<SectionSceneCardRecord>();
+        public DbSet<SceneContentRecord> SceneContents => Set<SceneContentRecord>();
+        public DbSet<SceneNoteRecord> SceneNotes => Set<SceneNoteRecord>();
+        public DbSet<SceneCardRecord> SceneCards => Set<SceneCardRecord>();
+        public DbSet<SceneAnnotationRecord> SceneAnnotations => Set<SceneAnnotationRecord>();
+        public DbSet<SceneQualityIssueRecord> SceneQualityIssues => Set<SceneQualityIssueRecord>();
+        public DbSet<SceneVersionRecord> SceneVersions => Set<SceneVersionRecord>();
+        public DbSet<OutlineTemplateRecord> OutlineTemplates => Set<OutlineTemplateRecord>();
+        public DbSet<ProjectRecord> Projects => Set<ProjectRecord>();
+        public DbSet<ProjectNodeRecord> ProjectNodes => Set<ProjectNodeRecord>();
+        public DbSet<ProjectGoalRecord> ProjectGoals => Set<ProjectGoalRecord>();
+        public DbSet<ProjectProgressDailyRecord> ProjectProgressDaily => Set<ProjectProgressDailyRecord>();
+        public DbSet<ProjectProgressEventRecord> ProjectProgressEvents => Set<ProjectProgressEventRecord>();
+        public DbSet<ProjectMilestoneRecord> ProjectMilestones => Set<ProjectMilestoneRecord>();
+        public DbSet<WritingSessionRecord> WritingSessions => Set<WritingSessionRecord>();
+        public DbSet<DocumentOutlineRecord> DocumentOutlines => Set<DocumentOutlineRecord>();
+        public DbSet<DocumentSynopsisRecord> DocumentSynopses => Set<DocumentSynopsisRecord>();
+        public DbSet<DocumentGlossaryEntryRecord> DocumentGlossaryEntries => Set<DocumentGlossaryEntryRecord>();
+        public DbSet<AiActionHistoryEntryRecord> AiActionHistoryEntries => Set<AiActionHistoryEntryRecord>();
+        public DbSet<AiActionAppliedEventRecord> AiActionAppliedEvents => Set<AiActionAppliedEventRecord>();
+        public DbSet<PromptPresetRecord> PromptPresets => Set<PromptPresetRecord>();
+        public DbSet<BibleSnapshotRecord> BibleSnapshots => Set<BibleSnapshotRecord>();
+        public DbSet<ExportTemplate> ExportTemplates => Set<ExportTemplate>();
+        public DbSet<ExportPreset> ExportPresets => Set<ExportPreset>();
+        public DbSet<ProjectExportSettings> ProjectExportSettings => Set<ProjectExportSettings>();
+
+        public override int SaveChanges()
+        {
+            SyncDocumentUnixTimestamps();
+            return base.SaveChanges();
+        }
+
+        public override int SaveChanges(bool acceptAllChangesOnSuccess)
+        {
+            SyncDocumentUnixTimestamps();
+            return base.SaveChanges(acceptAllChangesOnSuccess);
+        }
+
+        public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+        {
+            SyncDocumentUnixTimestamps();
+            return base.SaveChangesAsync(cancellationToken);
+        }
+
+        public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+        {
+            SyncDocumentUnixTimestamps();
+            return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        }
 
         protected override void OnModelCreating(ModelBuilder builder)
         {
@@ -28,6 +91,20 @@ namespace WriterApp.Data
             {
                 entity.HasKey(profile => profile.UserId);
                 entity.Property(profile => profile.CreatedUtc).IsRequired();
+                entity.Property(profile => profile.HasOnboarded).IsRequired();
+                entity.Property(profile => profile.UpdatedUtc).IsRequired();
+            });
+
+            builder.Entity<UserEntitlement>(entity =>
+            {
+                entity.HasKey(entitlement => entitlement.UserId);
+                entity.Property(entitlement => entitlement.PlanKey).IsRequired();
+                entity.Property(entitlement => entitlement.SubscriptionStatus).IsRequired();
+                entity.Property(entitlement => entitlement.CreatedAt).IsRequired();
+                entity.Property(entitlement => entitlement.AiMonthlyTokenBudget).IsRequired();
+                entity.Property(entitlement => entitlement.AiTokensUsedThisPeriod).IsRequired();
+                entity.Property(entitlement => entitlement.PeriodStartUtc).IsRequired();
+                entity.Property(entitlement => entitlement.UpdatedUtc).IsRequired();
             });
 
             builder.Entity<Plan>(entity =>
@@ -81,14 +158,173 @@ namespace WriterApp.Data
             builder.Entity<DocumentRecord>(entity =>
             {
                 entity.HasKey(document => document.Id);
+                entity.Property(document => document.ProjectId).IsRequired();
                 entity.Property(document => document.OwnerUserId).IsRequired();
                 entity.Property(document => document.Title).IsRequired();
+                entity.Property(document => document.DocumentKind).IsRequired();
                 entity.Property(document => document.CreatedAt).IsRequired();
                 entity.Property(document => document.UpdatedAt).IsRequired();
+                entity.Property(document => document.CreatedAtUnixSeconds).IsRequired();
+                entity.Property(document => document.UpdatedAtUnixSeconds).IsRequired();
+                entity.Property(document => document.IsArchived).IsRequired();
+                entity.Property(document => document.ArchivedAt);
+                entity.Property(document => document.DeletedAt);
+                entity.HasIndex(document => document.ProjectId);
+                entity.HasIndex(document => new { document.ProjectId, document.UpdatedAtUnixSeconds });
+                entity.HasIndex(document => document.DocumentKind);
+                entity.HasIndex(document => new { document.ProjectId, document.DocumentKind })
+                    .IsUnique()
+                    .HasFilter($"\"DocumentKind\" = {(int)DocumentKind.Manuscript}");
+                entity.HasIndex(document => document.DeletedAt);
+                entity.HasIndex(document => document.IsArchived);
+                entity.HasOne(document => document.Project)
+                    .WithMany(project => project.Documents)
+                    .HasForeignKey(document => document.ProjectId)
+                    .OnDelete(DeleteBehavior.Cascade);
                 entity.HasMany(document => document.Sections)
                     .WithOne(section => section.Document)
                     .HasForeignKey(section => section.DocumentId)
                     .OnDelete(DeleteBehavior.Cascade);
+                entity.HasMany(document => document.OutlineNodes)
+                    .WithOne(node => node.Document)
+                    .HasForeignKey(node => node.DocumentId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<ProjectRecord>(entity =>
+            {
+                entity.HasKey(project => project.Id);
+                entity.Property(project => project.OwnerUserId).IsRequired();
+                entity.Property(project => project.Title).IsRequired();
+                entity.Property(project => project.CreatedUtc).IsRequired();
+                entity.Property(project => project.UpdatedUtc).IsRequired();
+                entity.HasIndex(project => project.OwnerUserId);
+                entity.HasIndex(project => project.UpdatedUtc);
+                entity.HasMany(project => project.Documents)
+                    .WithOne(document => document.Project)
+                    .HasForeignKey(document => document.ProjectId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                entity.HasMany(project => project.Nodes)
+                    .WithOne(node => node.Project)
+                    .HasForeignKey(node => node.ProjectId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<ProjectNodeRecord>(entity =>
+            {
+                entity.HasKey(node => node.Id);
+                entity.Property(node => node.ProjectId).IsRequired();
+                entity.Property(node => node.NodeType).IsRequired();
+                entity.Property(node => node.Title).IsRequired();
+                entity.Property(node => node.OrderIndex).IsRequired();
+                entity.Property(node => node.WordCountCache).IsRequired();
+                entity.Property(node => node.UpdatedUtc).IsRequired();
+                entity.HasIndex(node => new { node.ProjectId, node.ParentId, node.OrderIndex });
+                entity.HasIndex(node => node.LinkedSectionId);
+                entity.HasOne(node => node.Parent)
+                    .WithMany(node => node.Children)
+                    .HasForeignKey(node => node.ParentId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                entity.HasOne(node => node.LinkedSection)
+                    .WithMany()
+                    .HasForeignKey(node => node.LinkedSectionId)
+                    .OnDelete(DeleteBehavior.SetNull);
+            });
+
+            builder.Entity<ProjectGoalRecord>(entity =>
+            {
+                entity.HasKey(goal => goal.ProjectId);
+                entity.Property(goal => goal.DailyTargetWords).IsRequired();
+                entity.Property(goal => goal.WeeklyTargetWords).IsRequired();
+                entity.Property(goal => goal.Timezone).IsRequired();
+                entity.Property(goal => goal.UpdatedUtc).IsRequired();
+                entity.HasOne(goal => goal.Project)
+                    .WithOne(project => project.Goal)
+                    .HasForeignKey<ProjectGoalRecord>(goal => goal.ProjectId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<ProjectProgressDailyRecord>(entity =>
+            {
+                entity.HasKey(day => new { day.ProjectId, day.Date });
+                entity.Property(day => day.Date).HasMaxLength(10).IsRequired();
+                entity.Property(day => day.WordsDelta).IsRequired();
+                entity.Property(day => day.UpdatedUtc).IsRequired();
+                entity.HasOne(day => day.Project)
+                    .WithMany(project => project.ProgressDays)
+                    .HasForeignKey(day => day.ProjectId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<ProjectProgressEventRecord>(entity =>
+            {
+                entity.HasKey(item => item.Id);
+                entity.Property(item => item.EventKey).IsRequired();
+                entity.Property(item => item.Date).HasMaxLength(10).IsRequired();
+                entity.Property(item => item.WordsDelta).IsRequired();
+                entity.Property(item => item.CreatedUtc).IsRequired();
+                entity.HasIndex(item => new { item.ProjectId, item.EventKey }).IsUnique();
+                entity.HasIndex(item => item.ProjectId);
+                entity.HasOne(item => item.Project)
+                    .WithMany()
+                    .HasForeignKey(item => item.ProjectId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<ProjectMilestoneRecord>(entity =>
+            {
+                entity.HasKey(milestone => milestone.Id);
+                entity.Property(milestone => milestone.Title).IsRequired();
+                entity.Property(milestone => milestone.Status).IsRequired();
+                entity.Property(milestone => milestone.UpdatedUtc).IsRequired();
+                entity.HasIndex(milestone => milestone.ProjectId);
+                entity.HasIndex(milestone => milestone.Status);
+                entity.HasOne(milestone => milestone.Project)
+                    .WithMany(project => project.Milestones)
+                    .HasForeignKey(milestone => milestone.ProjectId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<WritingSessionRecord>(entity =>
+            {
+                entity.HasKey(session => session.Id);
+                entity.Property(session => session.StartedUtc)
+                    .HasConversion(
+                        value => value,
+                        value => DateTime.SpecifyKind(value, DateTimeKind.Utc))
+                    .IsRequired();
+                entity.Property(session => session.EndedUtc)
+                    .HasConversion(
+                        value => value,
+                        value => value.HasValue
+                            ? DateTime.SpecifyKind(value.Value, DateTimeKind.Utc)
+                            : (DateTime?)null);
+                entity.Property(session => session.DurationSeconds).IsRequired();
+                entity.Property(session => session.WordsDelta).IsRequired();
+                entity.Property(session => session.StartWordCount).IsRequired();
+                entity.HasIndex(session => new { session.ProjectId, session.StartedUtc });
+                entity.HasOne(session => session.Project)
+                    .WithMany(project => project.Sessions)
+                    .HasForeignKey(session => session.ProjectId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<DocumentOutlineNodeRecord>(entity =>
+            {
+                entity.HasKey(node => node.Id);
+                entity.Property(node => node.DocumentId).IsRequired();
+                entity.Property(node => node.Title).IsRequired();
+                entity.Property(node => node.Order).IsRequired();
+                entity.HasIndex(node => new { node.DocumentId, node.ParentId, node.Order });
+                entity.Property(node => node.MetadataJson);
+                entity.HasOne(node => node.Parent)
+                    .WithMany(node => node.Children)
+                    .HasForeignKey(node => node.ParentId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                entity.HasOne(node => node.LinkedSection)
+                    .WithMany()
+                    .HasForeignKey(node => node.LinkedSectionId)
+                    .OnDelete(DeleteBehavior.SetNull);
             });
 
             builder.Entity<SectionRecord>(entity =>
@@ -124,7 +360,420 @@ namespace WriterApp.Data
                     .OnDelete(DeleteBehavior.Cascade);
             });
 
+            builder.Entity<PageAnnotationRecord>(entity =>
+            {
+                entity.HasKey(annotation => annotation.Id);
+                entity.Property(annotation => annotation.DocumentId).IsRequired();
+                entity.Property(annotation => annotation.PageId).IsRequired();
+                entity.Property(annotation => annotation.Kind).IsRequired();
+                entity.Property(annotation => annotation.Status).IsRequired();
+                entity.Property(annotation => annotation.AnchorFrom).IsRequired();
+                entity.Property(annotation => annotation.AnchorTo).IsRequired();
+                entity.Property(annotation => annotation.AnchorText).IsRequired();
+                entity.Property(annotation => annotation.Content).IsRequired();
+                entity.Property(annotation => annotation.AuthorUserId).IsRequired();
+                entity.Property(annotation => annotation.CreatedAt).IsRequired();
+                entity.Property(annotation => annotation.ResolvedAt);
+                entity.HasIndex(annotation => annotation.PageId);
+                entity.HasIndex(annotation => annotation.DocumentId);
+                entity.HasIndex(annotation => annotation.Status);
+                entity.HasIndex(annotation => annotation.Kind);
+                entity.HasIndex(annotation => annotation.CreatedAt);
+                entity.HasOne(annotation => annotation.Page)
+                    .WithMany()
+                    .HasForeignKey(annotation => annotation.PageId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                entity.HasOne(annotation => annotation.Document)
+                    .WithMany()
+                    .HasForeignKey(annotation => annotation.DocumentId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<PageQualityIssueRecord>(entity =>
+            {
+                entity.HasKey(issue => issue.Id);
+                entity.Property(issue => issue.DocumentId).IsRequired();
+                entity.Property(issue => issue.PageId).IsRequired();
+                entity.Property(issue => issue.Scope).IsRequired();
+                entity.Property(issue => issue.IssueKey).IsRequired();
+                entity.Property(issue => issue.RuleId).IsRequired();
+                entity.Property(issue => issue.Kind).IsRequired();
+                entity.Property(issue => issue.Severity).IsRequired();
+                entity.Property(issue => issue.Message).IsRequired();
+                entity.Property(issue => issue.ContentHash).IsRequired();
+                entity.Property(issue => issue.CreatedAt).IsRequired();
+                entity.HasIndex(issue => issue.PageId);
+                entity.HasIndex(issue => issue.DocumentId);
+                entity.HasIndex(issue => issue.Scope);
+                entity.HasIndex(issue => issue.ContentHash);
+                entity.HasIndex(issue => issue.IssueKey);
+                entity.HasOne(issue => issue.Page)
+                    .WithMany()
+                    .HasForeignKey(issue => issue.PageId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                entity.HasOne(issue => issue.Document)
+                    .WithMany()
+                    .HasForeignKey(issue => issue.DocumentId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<PageQualityIssueDismissalRecord>(entity =>
+            {
+                entity.HasKey(dismissal => new { dismissal.UserId, dismissal.PageId, dismissal.IssueKey });
+                entity.Property(dismissal => dismissal.UserId).IsRequired();
+                entity.Property(dismissal => dismissal.PageId).IsRequired();
+                entity.Property(dismissal => dismissal.IssueKey).IsRequired();
+                entity.Property(dismissal => dismissal.DismissedAt).IsRequired();
+                entity.HasIndex(dismissal => dismissal.PageId);
+                entity.HasOne(dismissal => dismissal.Page)
+                    .WithMany()
+                    .HasForeignKey(dismissal => dismissal.PageId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<PageVersionRecord>(entity =>
+            {
+                entity.HasKey(version => version.Id);
+                entity.Property(version => version.PageId).IsRequired();
+                entity.Property(version => version.DocumentId).IsRequired();
+                entity.Property(version => version.CreatedAt).IsRequired();
+                entity.Property(version => version.Reason).IsRequired();
+                entity.Property(version => version.ContentCompressed).IsRequired();
+                entity.Property(version => version.ContentTextHash).IsRequired();
+                entity.Property(version => version.SizeBytes).IsRequired();
+                entity.Property(version => version.WordCount).IsRequired();
+                entity.HasIndex(version => version.PageId);
+                entity.HasIndex(version => version.DocumentId);
+                entity.HasIndex(version => version.CreatedAt);
+                entity.HasOne(version => version.Page)
+                    .WithMany()
+                    .HasForeignKey(version => version.PageId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<PageNoteRecord>(entity =>
+            {
+                entity.HasKey(note => note.PageId);
+                entity.Property(note => note.Notes).IsRequired();
+                entity.Property(note => note.UpdatedAt).IsRequired();
+                entity.HasOne(note => note.Page)
+                    .WithOne()
+                    .HasForeignKey<PageNoteRecord>(note => note.PageId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<SectionNoteRecord>(entity =>
+            {
+                entity.HasKey(note => note.SectionId);
+                entity.Property(note => note.NotesText).IsRequired();
+                entity.Property(note => note.UpdatedAtUtc).IsRequired();
+                entity.HasOne(note => note.Section)
+                    .WithOne()
+                    .HasForeignKey<SectionNoteRecord>(note => note.SectionId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<SectionSceneCardRecord>(entity =>
+            {
+                entity.HasKey(card => card.SectionId);
+                entity.Property(card => card.UpdatedUtc).IsRequired();
+                entity.Property(card => card.TimeRef).HasMaxLength(120);
+                entity.HasOne(card => card.Section)
+                    .WithOne(section => section.SceneCard)
+                    .HasForeignKey<SectionSceneCardRecord>(card => card.SectionId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<SceneContentRecord>(entity =>
+            {
+                entity.HasKey(item => item.SceneNodeId);
+                entity.Property(item => item.ContentJson).IsRequired();
+                entity.Property(item => item.UpdatedAtUtc).IsRequired();
+                entity.HasOne(item => item.SceneNode)
+                    .WithOne()
+                    .HasForeignKey<SceneContentRecord>(item => item.SceneNodeId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<SceneNoteRecord>(entity =>
+            {
+                entity.HasKey(item => item.SceneNodeId);
+                entity.Property(item => item.NotesText).IsRequired();
+                entity.Property(item => item.UpdatedAtUtc).IsRequired();
+                entity.HasOne(item => item.SceneNode)
+                    .WithOne()
+                    .HasForeignKey<SceneNoteRecord>(item => item.SceneNodeId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<SceneCardRecord>(entity =>
+            {
+                entity.HasKey(item => item.SceneNodeId);
+                entity.Property(item => item.UpdatedAtUtc).IsRequired();
+                entity.Property(item => item.TimeRef).HasMaxLength(120);
+                entity.HasOne(item => item.SceneNode)
+                    .WithOne()
+                    .HasForeignKey<SceneCardRecord>(item => item.SceneNodeId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<SceneAnnotationRecord>(entity =>
+            {
+                entity.HasKey(item => item.Id);
+                entity.Property(item => item.SceneNodeId).IsRequired();
+                entity.Property(item => item.Kind).IsRequired();
+                entity.Property(item => item.Status).IsRequired();
+                entity.Property(item => item.AnchorFrom).IsRequired();
+                entity.Property(item => item.AnchorTo).IsRequired();
+                entity.Property(item => item.AnchorText).IsRequired();
+                entity.Property(item => item.Content).IsRequired();
+                entity.Property(item => item.AuthorUserId).IsRequired();
+                entity.Property(item => item.CreatedAt).IsRequired();
+                entity.Property(item => item.ResolvedAt);
+                entity.HasIndex(item => item.SceneNodeId);
+                entity.HasIndex(item => item.Status);
+                entity.HasIndex(item => item.Kind);
+                entity.HasIndex(item => item.CreatedAt);
+                entity.HasOne(item => item.SceneNode)
+                    .WithMany()
+                    .HasForeignKey(item => item.SceneNodeId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<SceneQualityIssueRecord>(entity =>
+            {
+                entity.HasKey(item => item.Id);
+                entity.Property(item => item.SceneNodeId).IsRequired();
+                entity.Property(item => item.Scope).IsRequired();
+                entity.Property(item => item.IssueKey).IsRequired();
+                entity.Property(item => item.RuleId).IsRequired();
+                entity.Property(item => item.Kind).IsRequired();
+                entity.Property(item => item.Severity).IsRequired();
+                entity.Property(item => item.Message).IsRequired();
+                entity.Property(item => item.ContentHash).IsRequired();
+                entity.Property(item => item.CreatedAt).IsRequired();
+                entity.HasIndex(item => item.SceneNodeId);
+                entity.HasIndex(item => item.Scope);
+                entity.HasIndex(item => item.ContentHash);
+                entity.HasIndex(item => item.IssueKey);
+                entity.HasOne(item => item.SceneNode)
+                    .WithMany()
+                    .HasForeignKey(item => item.SceneNodeId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<SceneVersionRecord>(entity =>
+            {
+                entity.HasKey(item => item.Id);
+                entity.Property(item => item.SceneNodeId).IsRequired();
+                entity.Property(item => item.CreatedAt).IsRequired();
+                entity.Property(item => item.Reason).IsRequired();
+                entity.Property(item => item.ContentCompressed).IsRequired();
+                entity.Property(item => item.ContentTextHash).IsRequired();
+                entity.Property(item => item.SizeBytes).IsRequired();
+                entity.Property(item => item.WordCount).IsRequired();
+                entity.HasIndex(item => item.SceneNodeId);
+                entity.HasIndex(item => item.CreatedAt);
+                entity.HasOne(item => item.SceneNode)
+                    .WithMany()
+                    .HasForeignKey(item => item.SceneNodeId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<OutlineTemplateRecord>(entity =>
+            {
+                entity.HasKey(template => template.Id);
+                entity.Property(template => template.OwnerUserId).IsRequired();
+                entity.Property(template => template.Name).IsRequired();
+                entity.Property(template => template.TemplateJson).IsRequired();
+                entity.Property(template => template.CreatedUtc).IsRequired();
+                entity.Property(template => template.UpdatedUtc).IsRequired();
+                entity.HasIndex(template => template.OwnerUserId);
+                entity.HasIndex(template => template.UpdatedUtc);
+            });
+
+            builder.Entity<DocumentOutlineRecord>(entity =>
+            {
+                entity.HasKey(outline => outline.DocumentId);
+                entity.Property(outline => outline.Outline).IsRequired();
+                entity.Property(outline => outline.UpdatedAt).IsRequired();
+                entity.HasOne(outline => outline.Document)
+                    .WithOne()
+                    .HasForeignKey<DocumentOutlineRecord>(outline => outline.DocumentId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<DocumentSynopsisRecord>(entity =>
+            {
+                entity.HasKey(synopsis => synopsis.DocumentId);
+                entity.Property(synopsis => synopsis.Logline).IsRequired();
+                entity.Property(synopsis => synopsis.Premise).IsRequired();
+                entity.Property(synopsis => synopsis.Theme).IsRequired();
+                entity.Property(synopsis => synopsis.ProtagonistArc).IsRequired();
+                entity.Property(synopsis => synopsis.CentralConflict).IsRequired();
+                entity.Property(synopsis => synopsis.Stakes).IsRequired();
+                entity.Property(synopsis => synopsis.Setting).IsRequired();
+                entity.Property(synopsis => synopsis.EndingIntent).IsRequired();
+                entity.Property(synopsis => synopsis.OpenQuestions).IsRequired();
+                entity.Property(synopsis => synopsis.Notes).IsRequired();
+                entity.Property(synopsis => synopsis.UpdatedAt).IsRequired();
+                entity.HasOne(synopsis => synopsis.Document)
+                    .WithOne()
+                    .HasForeignKey<DocumentSynopsisRecord>(synopsis => synopsis.DocumentId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                entity.HasIndex(synopsis => synopsis.UpdatedAt);
+            });
+
+            builder.Entity<DocumentGlossaryEntryRecord>(entity =>
+            {
+                entity.HasKey(entry => entry.Id);
+                entity.Property(entry => entry.DocumentId).IsRequired();
+                entity.Property(entry => entry.Term).IsRequired();
+                entity.Property(entry => entry.NormalizedTerm).IsRequired();
+                entity.Property(entry => entry.CreatedAt).IsRequired();
+                entity.Property(entry => entry.UpdatedAt).IsRequired();
+                entity.HasIndex(entry => entry.DocumentId);
+                entity.HasIndex(entry => entry.NormalizedTerm);
+                entity.HasOne(entry => entry.Document)
+                    .WithMany()
+                    .HasForeignKey(entry => entry.DocumentId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<AiActionHistoryEntryRecord>(entity =>
+            {
+                entity.HasKey(entry => entry.Id);
+                entity.Property(entry => entry.OwnerUserId).IsRequired();
+                entity.Property(entry => entry.ActionKey).IsRequired();
+                entity.Property(entry => entry.RequestJson).IsRequired();
+                entity.Property(entry => entry.ResultJson).IsRequired();
+                entity.Property(entry => entry.CreatedAt).IsRequired();
+                entity.HasIndex(entry => entry.OwnerUserId);
+                entity.HasIndex(entry => entry.DocumentId);
+                entity.HasIndex(entry => entry.ActionKey);
+                entity.HasIndex(entry => entry.CreatedAt);
+            });
+
+            builder.Entity<AiActionAppliedEventRecord>(entity =>
+            {
+                entity.HasKey(applied => applied.Id);
+                entity.Property(applied => applied.OwnerUserId).IsRequired();
+                entity.Property(applied => applied.AppliedAt).IsRequired();
+                entity.Property(applied => applied.BeforeContent);
+                entity.Property(applied => applied.AfterContent);
+                entity.HasIndex(applied => applied.OwnerUserId);
+                entity.HasIndex(applied => applied.HistoryEntryId);
+                entity.HasIndex(applied => applied.AppliedAt);
+                entity.HasIndex(applied => applied.UndoneAt);
+                entity.HasOne(applied => applied.HistoryEntry)
+                    .WithMany()
+                    .HasForeignKey(applied => applied.HistoryEntryId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<PromptPresetRecord>(entity =>
+            {
+                entity.HasKey(preset => preset.Id);
+                entity.Property(preset => preset.OwnerUserId).IsRequired();
+                entity.Property(preset => preset.Name).IsRequired();
+                entity.Property(preset => preset.Kind).IsRequired();
+                entity.Property(preset => preset.ParametersJson).IsRequired();
+                entity.Property(preset => preset.CreatedUtc).IsRequired();
+                entity.Property(preset => preset.UpdatedUtc).IsRequired();
+                entity.HasIndex(preset => preset.OwnerUserId);
+                entity.HasIndex(preset => new { preset.OwnerUserId, preset.ProjectId });
+                entity.HasIndex(preset => new { preset.OwnerUserId, preset.Kind });
+                entity.HasIndex(preset => preset.UpdatedUtc);
+            });
+
+            builder.Entity<BibleSnapshotRecord>(entity =>
+            {
+                entity.HasKey(snapshot => snapshot.Id);
+                entity.Property(snapshot => snapshot.DocumentId).IsRequired();
+                entity.Property(snapshot => snapshot.BibleType).IsRequired();
+                entity.Property(snapshot => snapshot.SchemaVersion).IsRequired();
+                entity.Property(snapshot => snapshot.ContentJson).IsRequired();
+                entity.Property(snapshot => snapshot.CreatedUtc).IsRequired();
+                entity.Property(snapshot => snapshot.UpdatedUtc).IsRequired();
+                entity.Property(snapshot => snapshot.LastRefreshSourceHash).IsRequired();
+                entity.Property(snapshot => snapshot.LastRefreshStatsJson).IsRequired();
+                entity.Property(snapshot => snapshot.LastRefreshCursorJson).IsRequired();
+                entity.HasIndex(snapshot => new { snapshot.DocumentId, snapshot.BibleType }).IsUnique();
+                entity.HasIndex(snapshot => snapshot.LastRefreshUtc);
+                entity.HasOne<DocumentRecord>()
+                    .WithMany()
+                    .HasForeignKey(snapshot => snapshot.DocumentId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<ExportTemplate>(entity =>
+            {
+                entity.HasKey(template => template.Id);
+                entity.Property(template => template.OwnerUserId).IsRequired();
+                entity.Property(template => template.Name).IsRequired();
+                entity.Property(template => template.FontFamily).IsRequired();
+                entity.Property(template => template.CreatedAt).IsRequired();
+                entity.Property(template => template.UpdatedAt).IsRequired();
+                entity.HasIndex(template => template.OwnerUserId);
+                entity.HasIndex(template => new { template.OwnerUserId, template.PresetKey });
+            });
+
+            builder.Entity<ExportPreset>(entity =>
+            {
+                entity.HasKey(preset => preset.Id);
+                entity.Property(preset => preset.OwnerUserId).IsRequired();
+                entity.Property(preset => preset.Name).IsRequired();
+                entity.Property(preset => preset.SettingsJson).IsRequired();
+                entity.Property(preset => preset.CreatedAt).IsRequired();
+                entity.Property(preset => preset.UpdatedAt).IsRequired();
+                entity.HasIndex(preset => preset.OwnerUserId);
+                entity.HasIndex(preset => new { preset.OwnerUserId, preset.IsGlobalDefault });
+                entity.HasIndex(preset => preset.UpdatedAt);
+            });
+
+            builder.Entity<ProjectExportSettings>(entity =>
+            {
+                entity.HasKey(settings => new { settings.DocumentId, settings.UserId });
+                entity.Property(settings => settings.UserId).IsRequired();
+                entity.Property(settings => settings.UpdatedAt).IsRequired();
+                entity.HasIndex(settings => settings.UserId);
+                entity.HasOne<DocumentRecord>()
+                    .WithMany()
+                    .HasForeignKey(settings => settings.DocumentId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                entity.HasOne<ExportPreset>()
+                    .WithMany()
+                    .HasForeignKey(settings => settings.DefaultPresetId)
+                    .OnDelete(DeleteBehavior.SetNull);
+            });
+
             SeedSubscriptionData(builder);
+        }
+
+        private void SyncDocumentUnixTimestamps()
+        {
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            foreach (Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry<DocumentRecord> entry in ChangeTracker.Entries<DocumentRecord>())
+            {
+                if (entry.State == EntityState.Added)
+                {
+                    if (entry.Entity.CreatedAt == default)
+                    {
+                        entry.Entity.CreatedAt = now;
+                    }
+
+                    if (entry.Entity.UpdatedAt == default)
+                    {
+                        entry.Entity.UpdatedAt = entry.Entity.CreatedAt;
+                    }
+                }
+
+                if (entry.State == EntityState.Added || entry.State == EntityState.Modified)
+                {
+                    entry.Entity.CreatedAtUnixSeconds = entry.Entity.CreatedAt.ToUnixTimeSeconds();
+                    entry.Entity.UpdatedAtUnixSeconds = entry.Entity.UpdatedAt.ToUnixTimeSeconds();
+                }
+            }
         }
 
         private static void SeedSubscriptionData(ModelBuilder builder)
@@ -170,7 +819,13 @@ namespace WriterApp.Data
                 new PlanEntitlement { PlanId = professionalPlanId, Key = "export.pdf", Value = "true" },
                 new PlanEntitlement { PlanId = freePlanId, Key = "ai.images.cover", Value = "false" },
                 new PlanEntitlement { PlanId = standardPlanId, Key = "ai.images.cover", Value = "false" },
-                new PlanEntitlement { PlanId = professionalPlanId, Key = "ai.images.cover", Value = "true" }
+                new PlanEntitlement { PlanId = professionalPlanId, Key = "ai.images.cover", Value = "true" },
+                new PlanEntitlement { PlanId = freePlanId, Key = "history.enabled", Value = "true" },
+                new PlanEntitlement { PlanId = standardPlanId, Key = "history.enabled", Value = "true" },
+                new PlanEntitlement { PlanId = professionalPlanId, Key = "history.enabled", Value = "true" },
+                new PlanEntitlement { PlanId = freePlanId, Key = "history.max_versions", Value = "5" },
+                new PlanEntitlement { PlanId = standardPlanId, Key = "history.retention_days", Value = "30" },
+                new PlanEntitlement { PlanId = professionalPlanId, Key = "history.retention_days", Value = "30" }
             );
 
             builder.Entity<UserProfile>().HasData(
@@ -178,7 +833,9 @@ namespace WriterApp.Data
                 {
                     UserId = "seed-system",
                     DisplayName = "System",
-                    CreatedUtc = seededUtc
+                    CreatedUtc = seededUtc,
+                    HasOnboarded = true,
+                    UpdatedUtc = seededUtc
                 }
             );
         }

@@ -1,0 +1,94 @@
+@page "/account"
+@page "/app/account"
+@implements IDisposable
+@using WriterApp.Client.State
+@inject AuthMeStateService AuthMeStateService
+@inject NavigationManager Navigation
+
+<PageTitle>Account</PageTitle>
+
+<div class="account-shell">
+    <header class="account-header">
+        <h1>Account</h1>
+        <button type="button" class="secondary" @onclick="RefreshAsync">Refresh</button>
+    </header>
+
+    <section class="account-card">
+        <div class="account-row"><strong>Plan:</strong> @AuthMeStateService.PlanKey</div>
+        @if (AuthMeStateService.AiMonthlyTokenBudget > 0)
+        {
+            <div class="account-row"><strong>AI usage:</strong> @AuthMeStateService.AiTokensUsedThisPeriod / @AuthMeStateService.AiMonthlyTokenBudget tokens</div>
+        }
+        else
+        {
+            <div class="account-row"><strong>AI:</strong> not included</div>
+        }
+        <div class="account-row"><strong>Period start:</strong> @FormatPeriodStart()</div>
+
+        @if (TryGetUpgradeHref(out string upgradeHref, out string upgradeLabel))
+        {
+            <div class="account-actions">
+                <button type="button" class="primary" @onclick="() => NavigateToUpgrade(upgradeHref)">@upgradeLabel</button>
+            </div>
+        }
+    </section>
+</div>
+
+@code {
+    protected override async Task OnInitializedAsync()
+    {
+        AuthMeStateService.Changed += OnAuthStateChanged;
+        await AuthMeStateService.RefreshAsync();
+    }
+
+    public void Dispose()
+    {
+        AuthMeStateService.Changed -= OnAuthStateChanged;
+    }
+
+    private void OnAuthStateChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task RefreshAsync()
+    {
+        await AuthMeStateService.RefreshAsync(force: true);
+    }
+
+    private string FormatPeriodStart()
+    {
+        if (AuthMeStateService.PeriodStartUtc == DateTimeOffset.MinValue)
+        {
+            return "-";
+        }
+
+        return AuthMeStateService.PeriodStartUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+    }
+
+    private bool TryGetUpgradeHref(out string href, out string label)
+    {
+        if (string.Equals(AuthMeStateService.PlanKey, "Free", StringComparison.OrdinalIgnoreCase))
+        {
+            href = "/start?plan=standard";
+            label = "Upgrade to Standard";
+            return true;
+        }
+
+        if (string.Equals(AuthMeStateService.PlanKey, "Standard", StringComparison.OrdinalIgnoreCase))
+        {
+            href = "/start?plan=pro";
+            label = "Upgrade to Professional";
+            return true;
+        }
+
+        href = string.Empty;
+        label = string.Empty;
+        return false;
+    }
+
+    private void NavigateToUpgrade(string href)
+    {
+        Navigation.NavigateTo(href, forceLoad: true);
+    }
+}

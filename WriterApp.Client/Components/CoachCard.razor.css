@@ -1,0 +1,59 @@
+.coach-card {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface-2);
+    padding: var(--space-3);
+    box-shadow: var(--shadow-sm);
+    display: grid;
+    gap: var(--space-2);
+}
+
+.coach-card-header {
+    display: grid;
+    gap: 4px;
+}
+
+.coach-card-header h3 {
+    margin: 0;
+    font-size: var(--font-size-section-title);
+    line-height: 1.2;
+}
+
+.coach-card-kicker {
+    font-size: var(--font-size-caption);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--color-text-muted);
+    font-weight: 700;
+}
+
+.coach-card-observations {
+    margin: 0;
+    padding-left: 18px;
+    display: grid;
+    gap: 4px;
+    font-size: var(--font-size-helper);
+    color: var(--color-text);
+}
+
+.coach-card-empty {
+    font-size: var(--font-size-helper);
+    color: var(--color-text-muted);
+}
+
+.coach-card-next {
+    display: grid;
+    gap: 6px;
+}
+
+.coach-card-next-label {
+    font-size: var(--font-size-caption);
+    color: var(--color-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.coach-card-why {
+    font-size: var(--font-size-helper);
+    color: var(--color-text-muted);
+}

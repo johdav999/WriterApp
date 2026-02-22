@@ -14,6 +14,8 @@ namespace WriterApp.Application.State
         public bool LeftNavCollapsed { get; init; }
         public bool SectionsCollapsed { get; init; }
         public bool ContextCollapsed { get; init; }
+        public bool PrintLayoutEnabled { get; init; } = true;
+        public bool HeadingNumberingEnabled { get; init; } = true;
         public ManuscriptWidthMode ManuscriptWidthMode { get; init; } = ManuscriptWidthMode.Manuscript;
         public int EditorZoomPercent { get; init; } = 100;
 

@@ -19,7 +19,7 @@ namespace WriterApp.Tests
             DocumentStorageService storage = new(jsRuntime, new LoggerFactory().CreateLogger<DocumentStorageService>());
             Document document = DocumentFactory.CreateNewDocument();
             document.Synopsis.Premise = "Premise value";
-            document.Synopsis.Protagonist = "Protagonist value";
+            document.Synopsis.ProtagonistArc = "Protagonist value";
 
             await storage.SaveDocumentAsync(document);
 
@@ -27,7 +27,7 @@ namespace WriterApp.Tests
 
             Assert.NotNull(loaded);
             Assert.Equal("Premise value", loaded!.Synopsis.Premise);
-            Assert.Equal("Protagonist value", loaded.Synopsis.Protagonist);
+            Assert.Equal("Protagonist value", loaded.Synopsis.ProtagonistArc);
         }
 
         [Fact]

@@ -70,7 +70,7 @@ namespace WriterApp.Tests
         {
             Document document = DocumentFactory.CreateNewDocument();
             document.Synopsis.Premise = "Premise text";
-            document.Synopsis.Protagonist = "Hero";
+            document.Synopsis.ProtagonistArc = "Hero";
             document.Synopsis.ModifiedUtc = new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
             string json = JsonSerializer.Serialize(document);
@@ -79,7 +79,7 @@ namespace WriterApp.Tests
             Assert.NotNull(deserialized);
             Assert.NotNull(deserialized!.Synopsis);
             Assert.Equal("Premise text", deserialized.Synopsis.Premise);
-            Assert.Equal("Hero", deserialized.Synopsis.Protagonist);
+            Assert.Equal("Hero", deserialized.Synopsis.ProtagonistArc);
         }
     }
 }

@@ -19,15 +19,14 @@ namespace WriterApp.Application.Security
         public EasyAuthAuthenticationHandler(
             IOptionsMonitor<AuthenticationSchemeOptions> options,
             ILoggerFactory logger,
-            UrlEncoder encoder,
-            ISystemClock clock)
-            : base(options, logger, encoder, clock)
+            UrlEncoder encoder)
+            : base(options, logger, encoder)
         {
         }
 
         protected override Task<AuthenticateResult> HandleAuthenticateAsync()
         {
-            string headerValue = Request.Headers[HeaderName];
+            string headerValue = Request.Headers[HeaderName].ToString();
             if (string.IsNullOrWhiteSpace(headerValue))
             {
                 return Task.FromResult(AuthenticateResult.NoResult());
@@ -70,6 +69,24 @@ namespace WriterApp.Application.Security
                     {
                         claims.Add(new Claim(ClaimTypes.Name, name));
                     }
+                }
+
+                string? oid = ExternalIdentityClaims.ResolveOid(claims);
+                if (!string.IsNullOrWhiteSpace(oid))
+                {
+                    claims.Add(new Claim(ClaimTypes.NameIdentifier, oid));
+                }
+
+                string? email = ExternalIdentityClaims.ResolveEmail(claims);
+                if (!string.IsNullOrWhiteSpace(email))
+                {
+                    claims.Add(new Claim(ClaimTypes.Email, email));
+                }
+
+                string displayName = ExternalIdentityClaims.ResolveDisplayName(claims, oid ?? "unknown");
+                if (!string.IsNullOrWhiteSpace(displayName))
+                {
+                    claims.Add(new Claim(ClaimTypes.Name, displayName));
                 }
 
                 ClaimsIdentity identity = new(claims, SchemeName);

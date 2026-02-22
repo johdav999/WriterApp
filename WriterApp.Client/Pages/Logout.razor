@@ -1,0 +1,36 @@
+@page "/logout"
+@page "/app/logout"
+@using Microsoft.AspNetCore.Components.WebAssembly.Hosting
+@using WriterApp.Client.Utilities
+@inject NavigationManager Navigation
+@inject IWebAssemblyHostEnvironment HostEnvironment
+
+<PageTitle>Sign out</PageTitle>
+
+<p>@_statusMessage</p>
+
+@code {
+    private string _statusMessage = "Signing out...";
+
+    protected override void OnInitialized()
+    {
+        Uri currentUri = Navigation.ToAbsoluteUri(Navigation.Uri);
+        Dictionary<string, string> query = QueryStringParser.Parse(currentUri.Query);
+        string returnUrl = SafeReturnUrl.ResolveFromQuery(
+            query,
+            fallback: SafeReturnUrl.DefaultHomePath);
+
+        if (HostEnvironment.IsDevelopment() || currentUri.IsLoopback)
+        {
+            _statusMessage = "Signed out (dev). Redirecting...";
+            Navigation.NavigateTo(returnUrl, forceLoad: true);
+            return;
+        }
+
+        string origin = currentUri.GetLeftPart(UriPartial.Authority);
+        Uri absoluteReturnUri = new(new Uri(origin, UriKind.Absolute), returnUrl);
+        string encodedReturnUri = Uri.EscapeDataString(absoluteReturnUri.ToString());
+        string logoutUrl = $"/.auth/logout?post_logout_redirect_uri={encodedReturnUri}";
+        Navigation.NavigateTo(logoutUrl, forceLoad: true);
+    }
+}

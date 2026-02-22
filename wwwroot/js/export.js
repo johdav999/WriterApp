@@ -45,3 +45,18 @@ export function printHtmlAsPdf(html) {
     }, 1000);
 }
 
+export function printIframe(frameId) {
+    const frame = document.getElementById(frameId);
+    if (!frame) {
+        return;
+    }
+
+    const targetWindow = frame.contentWindow;
+    if (!targetWindow) {
+        return;
+    }
+
+    targetWindow.focus();
+    targetWindow.print();
+}
+

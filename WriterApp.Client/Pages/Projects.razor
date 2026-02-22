@@ -1,0 +1,3120 @@
+@page "/projects"
+@page "/projects/{ProjectId:guid}"
+@using System.Net
+@using System.Net.Http.Json
+@using System.Globalization
+@using System.Text.Json
+@using Microsoft.AspNetCore.Components
+@using WriterApp.Application.Documents
+@using WriterApp.Client.Services
+@inject HttpClient Http
+@inject NavigationManager Navigation
+@inject IConfiguration Configuration
+@inject IJSRuntime JS
+@inject ILogger<Projects> Logger
+@inject OutlineTemplatesClient OutlineTemplatesClient
+@inject WriterApp.Client.State.CurrentDocumentStateService CurrentDocumentStateService
+@inject WriterApp.Client.Services.CoachRecommendationService CoachRecommendationService
+@implements IAsyncDisposable
+
+<PageTitle>Projects</PageTitle>
+
+@if (EmbedNavigator)
+{
+    @if (!_projectsEnabled)
+    {
+        <div class="projects-empty">Projects workflow is disabled by configuration.</div>
+    }
+    else if (_loading)
+    {
+        <div class="projects-loading">Loading projects...</div>
+    }
+    else if (_activeProject is null)
+    {
+        <div class="projects-empty">Open a project scene to use Navigator.</div>
+    }
+    else
+    {
+        <aside class="projects-tree"
+               aria-label="Navigator"
+               @onmouseup="OnPointerDragCancel"
+               @onmouseleave="OnPointerDragCancel">
+            <div class="panel-header">
+                <h2>Navigator</h2>
+                <p>Parts, chapters, and scenes in manuscript order.</p>
+            </div>
+            <div class="tree-actions">
+                <label for="add-node-type">Add...</label>
+                <select id="add-node-type" @bind="_addNodeType">
+                    <option value="part">Part</option>
+                    <option value="chapter">Chapter</option>
+                    <option value="scene">Scene</option>
+                </select>
+                <button type="button"
+                        class="secondary"
+                        @onclick="AddSelectedNodeTypeAsync"
+                        disabled="@(!CanAddSelectedNodeType())">
+                    Add
+                </button>
+                @if (_outlineTemplatesEnabled)
+                {
+                    <button type="button"
+                            class="secondary"
+                            @onclick="OpenOutlineTemplatesModalAsync"
+                            disabled="@_isOutlineTemplateActionInFlight">
+                        Templates...
+                    </button>
+                }
+            </div>
+            <ul class="tree-list">
+                @foreach (ProjectNodeDto root in GetChildren(null))
+                {
+                    @RenderNode(root, 0)
+                }
+            </ul>
+        </aside>
+    }
+}
+else
+{
+    <div class="projects-page">
+        <header class="projects-header">
+            <div>
+                <h1>Projects</h1>
+                <p class="projects-subtitle">Manuscript-level structure with Parts, Chapters, and Scenes.</p>
+            </div>
+            <div class="projects-actions">
+                <button type="button" class="primary" title="Create a new project." @onclick="CreateProjectAsync" disabled="@_creatingProject">
+                    @(_creatingProject ? "Creating..." : "New project")
+                </button>
+                <button type="button"
+                        class="secondary"
+                        title="Create a project from your current document."
+                        @onclick="CreateFromDocumentAsync"
+                        disabled="@(_creatingFromDocument || !CurrentDocumentStateService.DocumentId.HasValue)">
+                    @(_creatingFromDocument ? "Creating..." : "From current document")
+                </button>
+            </div>
+        </header>
+
+        @if (!string.IsNullOrWhiteSpace(_error))
+        {
+            <div class="projects-error">@_error</div>
+        }
+
+        <div class="projects-toolbar">
+            <label for="project-switcher">Project</label>
+            <select id="project-switcher" @onchange="OnProjectSelectionChanged" value="@(_selectedProjectId?.ToString() ?? string.Empty)">
+                <option value="">Select a project</option>
+                @foreach (ProjectDto project in _projects)
+                {
+                    <option value="@project.Id">@project.Title</option>
+                }
+            </select>
+            @if (_activeProject is not null)
+            {
+                <span class="projects-total">@_activeProject.TotalWordCount words</span>
+            }
+        </div>
+        @if (_activeProject is not null)
+        {
+            <div class="project-name-inline">
+                <span class="project-name-label">Project name</span>
+                @if (_isProjectNameEditing)
+                {
+                    <input class="project-name-input"
+                           value="@_projectNameDraft"
+                           @oninput="OnProjectNameInput"
+                           @onkeydown="OnProjectNameKeyDown"
+                           @onblur="SaveProjectNameAsync" />
+                    <button type="button"
+                            class="secondary"
+                            title="Save project name."
+                            @onclick="SaveProjectNameAsync"
+                            disabled="@_isProjectNameSaving">
+                        @(_isProjectNameSaving ? "Saving..." : "Save")
+                    </button>
+                    <button type="button"
+                            class="secondary"
+                            title="Cancel rename."
+                            @onclick="CancelProjectNameEdit"
+                            disabled="@_isProjectNameSaving">
+                        Cancel
+                    </button>
+                }
+                else
+                {
+                    <span class="project-name-value">@_activeProject.Title</span>
+                    <button type="button"
+                            class="secondary"
+                            title="Edit project name."
+                            @onclick="BeginProjectNameEdit">
+                        Edit name
+                    </button>
+                }
+            </div>
+            @if (!string.IsNullOrWhiteSpace(_projectNameStatus))
+            {
+                <div class="projects-status">@_projectNameStatus</div>
+            }
+        }
+        @if (_activeProject is not null)
+        {
+            <div class="project-entry-points">
+                <button type="button"
+                        class="primary"
+                        title="Resume your last writing context for this project."
+                        @onclick="ResumeActiveProjectAsync">
+                    Resume
+                </button>
+                <button type="button"
+                        class="secondary"
+                        title="Open manuscript editor flow."
+                        @onclick="OpenActiveManuscriptAsync">
+                    Open manuscript
+                </button>
+                <button type="button"
+                        class="secondary"
+                        title="You are currently in the project workspace."
+                        disabled>
+                    Open project
+                </button>
+                <span class="entry-help">Resume = last writing context. Open manuscript = manuscript editor. Open project = workspace.</span>
+            </div>
+            <div class="projects-tabs" role="tablist" aria-label="Project workspace tabs">
+                <button type="button"
+                        class="@GetTabClass("structure")"
+                        title="Open structure workspace."
+                        @onclick='() => SelectTab("structure")'>
+                    Structure
+                </button>
+                @if (_goalsEnabled)
+                {
+                    <button type="button"
+                            class="@GetTabClass("progress")"
+                            title="Open project progress and goals."
+                            @onclick='() => SelectTab("progress")'>
+                        Progress
+                    </button>
+                }
+            </div>
+        }
+
+        @if (_loading)
+        {
+            <div class="projects-loading">Loading projects...</div>
+        }
+        else if (_activeProject is null)
+        {
+            <div class="projects-empty">Create a project to begin structuring your manuscript.</div>
+        }
+        else
+        {
+            @if (_activeTab == "progress" && _goalsEnabled)
+            {
+                <div class="projects-progress">
+                    @if (_progress is null)
+                    {
+                        <div class="projects-loading">Loading progress...</div>
+                    }
+                    else
+                    {
+                        <CoachCard Recommendation="BuildProjectCoachRecommendation()" OnPrimaryAction="OnProjectCoachPrimaryActionAsync" />
+
+                        ProgressCoachModel coach = BuildProgressCoach();
+                        <section class="progress-card progress-overview">
+                            <h3>Project overview</h3>
+                            <div class="progress-grid">
+                                <div><strong>Total words:</strong> @_progress.TotalWordCount</div>
+                                <div><strong>Last edited:</strong> @FormatRelativeTime(_activeProject.UpdatedUtc)</div>
+                                <div><strong>Streak:</strong> @_progress.StreakCount day(s)</div>
+                                <div><strong>Today:</strong> @_progress.TodayWords / @_progress.Goal.DailyTargetWords</div>
+                            </div>
+                            <div class="coach-primary">
+                                @if (coach.PrimaryCtaSceneNodeId.HasValue)
+                                {
+                                    <button type="button"
+                                            class="primary"
+                                            @onclick="() => OpenSceneFromProgressAsync(coach.PrimaryCtaSceneNodeId.Value)">
+                                        @coach.PrimaryCtaLabel
+                                    </button>
+                                }
+                                else
+                                {
+                                    <button type="button"
+                                            class="primary"
+                                            @onclick="OpenActiveManuscriptAsync">
+                                        @coach.PrimaryCtaLabel
+                                    </button>
+                                }
+                                <span class="entry-help">@coach.PrimaryCtaHint</span>
+                            </div>
+                        </section>
+
+                        <section class="progress-card">
+                            <h3>Structural progress</h3>
+                            <div class="progress-grid">
+                                <div><strong>Parts:</strong> @coach.PartsCount</div>
+                                <div><strong>Chapters:</strong> @coach.ChaptersCount</div>
+                                <div><strong>Scenes:</strong> @coach.ScenesCount</div>
+                                <div><strong>Drafted scenes:</strong> @coach.DraftedScenesCount / @coach.ScenesCount</div>
+                                <div><strong>Planned scenes:</strong> @coach.PlannedScenesCount</div>
+                                <div><strong>Needs draft:</strong> @coach.NeedsDraftScenesCount</div>
+                            </div>
+                        </section>
+
+                        <section class="progress-card">
+                            <h3>Coach suggestions</h3>
+                            @if (coach.Suggestions.Count == 0)
+                            {
+                                <div class="projects-empty">Nice shape. No immediate structural issues found.</div>
+                            }
+                            else
+                            {
+                                <ul class="coach-suggestion-list">
+                                    @foreach (CoachSuggestion suggestion in coach.Suggestions)
+                                    {
+                                        <li>
+                                            <span>@suggestion.Message</span>
+                                            @if (suggestion.SceneNodeId.HasValue)
+                                            {
+                                                <button type="button"
+                                                        class="secondary"
+                                                        @onclick="() => OpenSceneFromProgressAsync(suggestion.SceneNodeId.Value)">
+                                                    Review scene
+                                                </button>
+                                            }
+                                        </li>
+                                    }
+                                </ul>
+                            }
+                        </section>
+
+                        <section class="progress-card">
+                            <h3>Targets</h3>
+                            <div class="progress-targets">
+                                <label>Daily target</label>
+                                <input type="number" min="0" @bind="_dailyTargetDraft" />
+                                <label>Weekly target</label>
+                                <input type="number" min="0" @bind="_weeklyTargetDraft" />
+                                <label>Timezone</label>
+                                <input @bind="_timezoneDraft" />
+                                <button type="button" class="primary" @onclick="SaveGoalsAsync">Save targets</button>
+                            </div>
+                        </section>
+
+                        <section class="progress-card">
+                            <h3>Milestones</h3>
+                            <div class="milestone-create">
+                                <input placeholder="Title" @bind="_milestoneTitleDraft" />
+                                <input type="number" min="0" placeholder="Target words" @bind="_milestoneTargetWordsDraft" />
+                                <button type="button" class="secondary" @onclick="CreateMilestoneAsync">Add milestone</button>
+                            </div>
+                            <ul class="milestone-list">
+                                @foreach (ProjectMilestoneDto milestone in _progress.Milestones)
+                                {
+                                    <li>
+                                        <span>@milestone.Title</span>
+                                        <span>@(milestone.TargetWords?.ToString() ?? "-") words</span>
+                                        <span>@milestone.Status</span>
+                                        @if (string.Equals(milestone.Status, "pending", StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            <button type="button" class="secondary" @onclick="() => CompleteMilestoneAsync(milestone.Id)">Complete</button>
+                                        }
+                                        <button type="button" class="secondary" @onclick="() => DeleteMilestoneAsync(milestone.Id)">Delete</button>
+                                    </li>
+                                }
+                            </ul>
+                        </section>
+
+                        <section class="progress-card">
+                            <h3>Writing session</h3>
+                            @if (_progress.ActiveSession is null)
+                            {
+                                <button type="button" class="primary" @onclick="StartSessionAsync">Start session</button>
+                            }
+                            else
+                            {
+                                <div class="session-live">
+                                    <div><strong>Duration:</strong> @FormatDuration(_sessionElapsedSeconds)</div>
+                                    <div><strong>Words:</strong> @_sessionLiveDelta</div>
+                                </div>
+                                <input placeholder="Session notes (optional)" @bind="_sessionNotesDraft" />
+                                <button type="button" class="primary" @onclick="StopSessionAsync">Stop session</button>
+                            }
+
+                            <ul class="session-list">
+                                @foreach (WritingSessionDto session in _progress.RecentSessions)
+                                {
+                                    <li>
+                                        <span>@session.StartedUtc.LocalDateTime:g</span>
+                                        <span>@FormatDuration(session.DurationSeconds)</span>
+                                        <span>@session.WordsDelta words</span>
+                                        <span>@(session.IsActive ? "active" : "done")</span>
+                                    </li>
+                                }
+                            </ul>
+                        </section>
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="projects-workspace">
+                    <aside class="projects-tree"
+                           aria-label="Navigator"
+                           @onmouseup="OnPointerDragCancel"
+                           @onmouseleave="OnPointerDragCancel">
+                        <div class="panel-header">
+                            <h2>Navigator</h2>
+                            <p>Parts, chapters, and scenes in manuscript order.</p>
+                        </div>
+                        <div class="tree-actions">
+                            <label for="add-node-type">Add...</label>
+                            <select id="add-node-type" @bind="_addNodeType">
+                                <option value="part">Part</option>
+                                <option value="chapter">Chapter</option>
+                                <option value="scene">Scene</option>
+                            </select>
+                            <button type="button"
+                                    class="secondary"
+                                    @onclick="AddSelectedNodeTypeAsync"
+                                    disabled="@(!CanAddSelectedNodeType())">
+                                Add
+                            </button>
+                            @if (_outlineTemplatesEnabled)
+                            {
+                                <button type="button"
+                                        class="secondary"
+                                        @onclick="OpenOutlineTemplatesModalAsync"
+                                        disabled="@_isOutlineTemplateActionInFlight">
+                                    Templates...
+                                </button>
+                            }
+                        </div>
+                        <ul class="tree-list">
+                            @foreach (ProjectNodeDto root in GetChildren(null))
+                            {
+                                @RenderNode(root, 0)
+                            }
+                        </ul>
+                    </aside>
+
+                    <section class="projects-main" aria-label="Inspector">
+                        <div class="panel-header">
+                            <h2>Inspector</h2>
+                            <p>Details for the selected node.</p>
+                        </div>
+                        <CoachCard Recommendation="BuildProjectCoachRecommendation()" OnPrimaryAction="OnProjectCoachPrimaryActionAsync" />
+                        @if (_selectedNode is null)
+                        {
+                            <div class="projects-empty">Select a node to edit details.</div>
+                        }
+                        else
+                        {
+                            <div class="inspector-grid">
+                                <div class="inspector-field">
+                                    <label for="node-title-input">Name</label>
+                                    <div class="inspector-name-row">
+                                        <input id="node-title-input"
+                                               class="node-title-input"
+                                               value="@_renameDraft"
+                                               @oninput="OnRenameInput"
+                                               @onblur="SaveRenameAsync" />
+                                        <button type="button" class="secondary" @onclick="SaveRenameAsync">Save</button>
+                                    </div>
+                                    <div class="inspector-help">Autosaves on blur. Use Save to commit immediately.</div>
+                                </div>
+                                <div class="inspector-field">
+                                    <label>Type</label>
+                                    <div class="inspector-readonly">
+                                        <span class='tree-node-badge @GetNodeBadgeClass(_selectedNode.NodeType)'>@GetNodeTypeLabel(_selectedNode.NodeType)</span>
+                                    </div>
+                                </div>
+                                <div class="inspector-field">
+                                    <label>Word count</label>
+                                    <div class="inspector-readonly">@FormatWordCount(_selectedNode.WordCountCache) words</div>
+                                </div>
+                                @if (IsScene(_selectedNode))
+                                {
+                                    <div class="inspector-field">
+                                        <label>Linked section</label>
+                                        <div class="inspector-readonly">
+                                            @(_selectedNode.LinkedSectionId.HasValue ? _selectedNode.LinkedSectionId.Value.ToString() : "Not linked yet")
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+
+                            <div class="node-actions">
+                                @if (IsChapter(_selectedNode))
+                                {
+                                    <button type="button" class="secondary" @onclick="() => AddSceneUnderAsync(_selectedNode.Id)">Add scene under chapter</button>
+                                }
+                                @if (IsScene(_selectedNode))
+                                {
+                                    <button type="button" class="primary" @onclick="OpenSceneInEditorAsync">
+                                        Open scene in editor
+                                    </button>
+                                }
+                            </div>
+
+                            @if (IsScene(_selectedNode) && !_selectedNode.LinkedSectionId.HasValue)
+                            {
+                                <div class="projects-empty">This scene will create and link a section the first time you open it.</div>
+                            }
+                        }
+                    </section>
+                </div>
+            }
+        }
+    </div>
+}
+
+@if (_openNodeMenuId.HasValue && OpenNodeMenuNode is not null)
+{
+    <div class="tree-menu-overlay" role="presentation">
+        <button type="button"
+                class="tree-menu-overlay-backdrop"
+                style="position:fixed;inset:0;border:0;margin:0;padding:0;background:transparent;"
+                aria-label="Close node menu"
+                @onclick="CloseNodeMenu"></button>
+        <div class="tree-menu-popover"
+             role="menu"
+             style="@GetNodeMenuStyle()"
+             tabindex="0"
+             @ref="_nodeMenuRef"
+             @onkeydown="OnNodeMenuKeyDown"
+             @onclick:stopPropagation="true">
+            <button type="button" role="menuitem" @onclick="OnNodeMenuRenameAsync" disabled="@_duplicateNodeInFlight">Rename</button>
+            <button type="button" role="menuitem" @onclick="OnNodeMenuDuplicateAsync" disabled="@_duplicateNodeInFlight">
+                @(_duplicateNodeInFlight ? "Duplicating..." : "Duplicate")
+            </button>
+            @if (IsPart(OpenNodeMenuNode))
+            {
+                <button type="button" role="menuitem" @onclick="OnNodeMenuAddChapterAsync" disabled="@_duplicateNodeInFlight">Add chapter</button>
+            }
+            else if (IsChapter(OpenNodeMenuNode))
+            {
+                <button type="button" role="menuitem" @onclick="OnNodeMenuAddSceneAsync" disabled="@_duplicateNodeInFlight">Add scene</button>
+            }
+            else if (IsScene(OpenNodeMenuNode))
+            {
+                <button type="button" role="menuitem" @onclick="OnNodeMenuOpenSceneAsync" disabled="@_duplicateNodeInFlight">Open scene</button>
+            }
+            @if (_outlineTemplatesEnabled)
+            {
+                <button type="button" role="menuitem" @onclick="OnNodeMenuTemplatesAsync" disabled="@_duplicateNodeInFlight">Templates...</button>
+            }
+            <button type="button" role="menuitem" class="danger" @onclick="OnNodeMenuDeleteAsync" disabled="@_duplicateNodeInFlight">Delete</button>
+        </div>
+    </div>
+}
+
+@if (_outlineTemplatesEnabled && _isOutlineTemplatesModalOpen)
+{
+    <div class="projects-templates-overlay" @onclick="CloseOutlineTemplatesModal">
+        <div class="projects-templates-dialog" role="dialog" aria-modal="true" @onclick:stopPropagation="true">
+            <div class="projects-templates-header">
+                <h3>Outline templates</h3>
+            </div>
+            <div class="projects-templates-body">
+                <div class="projects-templates-row">
+                    <label for="project-outline-template-name">Create from current navigator</label>
+                    <div class="projects-templates-create">
+                        <input id="project-outline-template-name"
+                               placeholder="Template name"
+                               @bind="_outlineTemplateName" />
+                        <button type="button"
+                                class="secondary"
+                                @onclick="CreateTemplateFromCurrentProjectAsync"
+                                disabled="@(_nodes.Count == 0 || _isOutlineTemplateActionInFlight)">
+                            Create
+                        </button>
+                    </div>
+                </div>
+
+                <div class="projects-templates-row">
+                    <label for="project-outline-template-select">Saved templates</label>
+                    @if (_isOutlineTemplatesLoading)
+                    {
+                        <div class="projects-empty">Loading templates...</div>
+                    }
+                    else if (_outlineTemplates.Count == 0)
+                    {
+                        <div class="projects-empty">No templates yet.</div>
+                    }
+                    else
+                    {
+                        <select id="project-outline-template-select"
+                                @bind="_selectedOutlineTemplateId"
+                                disabled="@_isOutlineTemplateActionInFlight">
+                            @foreach (OutlineTemplateDto template in _outlineTemplates)
+                            {
+                                <option value="@template.Id">@template.Name (@template.NodeCount nodes)</option>
+                            }
+                        </select>
+                    }
+                </div>
+
+                <div class="projects-templates-row">
+                    <label>Apply options</label>
+                    <div class="projects-templates-options">
+                        <label>
+                            <input type="checkbox"
+                                   @bind="_applyTemplateUnderSelectedProjectNode"
+                                   disabled="@(!_selectedNodeId.HasValue || _isOutlineTemplateActionInFlight)" />
+                            Insert under selected node
+                        </label>
+                        <label>
+                            <input type="checkbox"
+                                   @bind="_applyTemplateCreateLinkedSections"
+                                   disabled="@_isOutlineTemplateActionInFlight" />
+                            Create linked sections/pages
+                        </label>
+                        <label for="project-outline-template-link-strategy">Link strategy</label>
+                        <select id="project-outline-template-link-strategy"
+                                @bind="_applyTemplateLinkStrategy"
+                                disabled="@_isOutlineTemplateActionInFlight">
+                            <option value="none">No linking</option>
+                            <option value="by-title">Link by title</option>
+                            <option value="create">Create new sections</option>
+                        </select>
+                    </div>
+                </div>
+
+                @if (!string.IsNullOrWhiteSpace(_outlineTemplateStatus))
+                {
+                    <div class='projects-templates-status @(string.Equals(_outlineTemplateStatus, "Template applied.", StringComparison.Ordinal) || string.Equals(_outlineTemplateStatus, "Template created.", StringComparison.Ordinal) || string.Equals(_outlineTemplateStatus, "Template deleted.", StringComparison.Ordinal) ? string.Empty : "is-error")'>
+                        @_outlineTemplateStatus
+                    </div>
+                }
+            </div>
+            <div class="projects-templates-footer">
+                <button type="button"
+                        class="secondary"
+                        @onclick="ApplySelectedOutlineTemplateAsync"
+                        disabled="@(!_selectedOutlineTemplateId.HasValue || _isOutlineTemplateActionInFlight)">
+                    @(_isOutlineTemplateActionInFlight ? "Applying..." : "Apply")
+                </button>
+                <button type="button"
+                        class="secondary"
+                        @onclick="DeleteSelectedOutlineTemplateAsync"
+                        disabled="@(!_selectedOutlineTemplateId.HasValue || _isOutlineTemplateActionInFlight)">
+                    Delete
+                </button>
+                <button type="button" @onclick="CloseOutlineTemplatesModal">Close</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    // Temporary toggle: set to true to show navigator row word counts again.
+    private bool _showNavigatorTreeWordCount = false;
+
+    private bool _projectsEnabled;
+    private bool _loading = true;
+    private bool _creatingProject;
+    private bool _creatingFromDocument;
+    private bool _goalsEnabled;
+    private bool _outlineTemplatesEnabled;
+    private bool _isOutlineTemplatesModalOpen;
+    private bool _isOutlineTemplatesLoading;
+    private bool _isOutlineTemplateActionInFlight;
+    private string _activeTab = "structure";
+    private string? _error;
+    private string? _outlineTemplateStatus;
+    private readonly List<ProjectDto> _projects = new();
+    private readonly List<ProjectNodeDto> _nodes = new();
+    private readonly List<OutlineTemplateDto> _outlineTemplates = new();
+    private ProjectDto? _activeProject;
+    private ProjectProgressDashboardDto? _progress;
+    private Guid? _selectedProjectId;
+    private Guid? _selectedNodeId;
+    private Guid? _selectedOutlineTemplateId;
+    private Guid? _renamingNodeId;
+    private Guid? _openNodeMenuId;
+    private readonly Dictionary<Guid, ElementReference> _nodeMenuButtons = new();
+    private ElementReference _nodeMenuRef;
+    private double _openNodeMenuX;
+    private double _openNodeMenuY;
+    private bool _shouldFocusNodeMenu;
+    private string _renameDraft = string.Empty;
+    private bool _isProjectNameEditing;
+    private bool _isProjectNameSaving;
+    private string _projectNameDraft = string.Empty;
+    private string _projectNameOriginal = string.Empty;
+    private string? _projectNameStatus;
+    private Guid? _dragNodeId;
+    private bool _pointerDragActive;
+    private Guid? _pointerDragHoverNodeId;
+    private bool _duplicateNodeInFlight;
+    private int _dailyTargetDraft;
+    private int _weeklyTargetDraft;
+    private string _timezoneDraft = "UTC";
+    private string _milestoneTitleDraft = string.Empty;
+    private int? _milestoneTargetWordsDraft;
+    private string _sessionNotesDraft = string.Empty;
+    private string _outlineTemplateName = string.Empty;
+    private string _addNodeType = "part";
+    private string _applyTemplateLinkStrategy = "none";
+    private bool _applyTemplateUnderSelectedProjectNode;
+    private bool _applyTemplateCreateLinkedSections;
+    private bool _dndDiagnosticsEnabled;
+    private DateTimeOffset _lastDndDragOverLogUtc = DateTimeOffset.MinValue;
+    private readonly HashSet<Guid> _collapsedNodeIds = new();
+    private CancellationTokenSource? _sessionTickerCts;
+    private int _sessionElapsedSeconds;
+    private int _sessionLiveDelta;
+
+    private ProjectNodeDto? _selectedNode =>
+        _selectedNodeId.HasValue ? _nodes.FirstOrDefault(node => node.Id == _selectedNodeId.Value) : null;
+    private ProjectNodeDto? OpenNodeMenuNode =>
+        _openNodeMenuId.HasValue ? _nodes.FirstOrDefault(node => node.Id == _openNodeMenuId.Value) : null;
+
+    [Parameter]
+    public Guid? ProjectId { get; set; }
+
+    [Parameter]
+    public bool EmbedNavigator { get; set; }
+
+    [Parameter]
+    public EventCallback<Guid> SceneOpenRequested { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _projectsEnabled = Configuration.GetValue<bool?>("Workflow:ProjectsEnabled")
+            ?? Configuration.GetValue<bool?>("WriterApp:Workflow:ProjectsEnabled")
+            ?? false;
+        _goalsEnabled = Configuration.GetValue<bool?>("Workflow:GoalsEnabled")
+            ?? Configuration.GetValue<bool?>("WriterApp:Workflow:GoalsEnabled")
+            ?? false;
+        _outlineTemplatesEnabled = Configuration.GetValue<bool?>("Workflow:OutlineTemplatesEnabled")
+            ?? Configuration.GetValue<bool?>("WriterApp:Workflow:OutlineTemplatesEnabled")
+            ?? false;
+        _dndDiagnosticsEnabled = Configuration.GetValue<bool?>("Diagnostics:NavigatorDndEnabled")
+            ?? Configuration.GetValue<bool?>("WriterApp:Diagnostics:NavigatorDndEnabled")
+            ?? false;
+
+        if (!_projectsEnabled)
+        {
+            _loading = false;
+            return;
+        }
+
+        if (_outlineTemplatesEnabled)
+        {
+            await RefreshOutlineTemplatesAvailabilityAsync();
+        }
+
+        await LoadProjectsAsync();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!_projectsEnabled || !_selectedProjectId.HasValue || !ProjectId.HasValue || ProjectId.Value == _selectedProjectId.Value)
+        {
+            return;
+        }
+
+        if (_projects.Any(project => project.Id == ProjectId.Value))
+        {
+            _selectedProjectId = ProjectId.Value;
+            await LoadTreeAsync(ProjectId.Value);
+        }
+    }
+
+    private async Task LoadProjectsAsync()
+    {
+        _loading = true;
+        _error = null;
+        try
+        {
+            using HttpResponseMessage response = await Http.GetAsync("api/projects");
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                _projectsEnabled = false;
+                return;
+            }
+
+            response.EnsureSuccessStatusCode();
+            List<ProjectDto>? projects = await response.Content.ReadFromJsonAsync<List<ProjectDto>>();
+            _projects.Clear();
+            _projects.AddRange((projects ?? new List<ProjectDto>()).OrderByDescending(project => project.UpdatedUtc));
+
+            if (_projects.Count > 0)
+            {
+                if (ProjectId.HasValue && _projects.Any(project => project.Id == ProjectId.Value))
+                {
+                    _selectedProjectId = ProjectId.Value;
+                }
+
+                _selectedProjectId ??= _projects[0].Id;
+                await LoadTreeAsync(_selectedProjectId.Value);
+            }
+            else
+            {
+                _activeProject = null;
+                _nodes.Clear();
+                _selectedNodeId = null;
+                _progress = null;
+                RestartSessionTicker();
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task LoadTreeAsync(Guid projectId)
+    {
+        _error = null;
+        using HttpResponseMessage response = await Http.GetAsync($"api/projects/{projectId}/tree");
+        if (!response.IsSuccessStatusCode)
+        {
+            _error = "Failed to load project tree.";
+            return;
+        }
+
+        ProjectTreeDto? tree = await response.Content.ReadFromJsonAsync<ProjectTreeDto>();
+        if (tree is null)
+        {
+            _error = "Failed to load project tree.";
+            return;
+        }
+
+        _activeProject = tree.Project;
+        _projectNameDraft = _activeProject.Title;
+        _projectNameOriginal = _activeProject.Title;
+        _projectNameStatus = null;
+        _isProjectNameEditing = false;
+        _isProjectNameSaving = false;
+        _nodes.Clear();
+        _nodes.AddRange(tree.Nodes.OrderBy(node => node.ParentId).ThenBy(node => node.OrderIndex));
+        if (_selectedNodeId.HasValue && _nodes.All(node => node.Id != _selectedNodeId.Value))
+        {
+            _selectedNodeId = null;
+        }
+
+        if (!_selectedNodeId.HasValue && _nodes.Count > 0)
+        {
+            _selectedNodeId = _nodes[0].Id;
+        }
+
+        if (_selectedNode is not null)
+        {
+            _renameDraft = _selectedNode.Title;
+        }
+
+        if (_goalsEnabled)
+        {
+            await LoadProgressAsync(projectId);
+        }
+    }
+
+    private IEnumerable<ProjectNodeDto> GetChildren(Guid? parentId)
+    {
+        return _nodes
+            .Where(node => node.ParentId == parentId)
+            .OrderBy(node => node.OrderIndex);
+    }
+
+    private string GetTabClass(string tab)
+    {
+        return string.Equals(_activeTab, tab, StringComparison.Ordinal) ? "tab-button is-active" : "tab-button";
+    }
+
+    private async Task SelectTab(string tab)
+    {
+        _activeTab = tab;
+        if (_activeTab == "progress" && _goalsEnabled && _activeProject is not null)
+        {
+            await LoadProgressAsync(_activeProject.Id);
+        }
+    }
+
+    private async Task LoadProgressAsync(Guid projectId)
+    {
+        _error = null;
+        using HttpResponseMessage response = await Http.GetAsync($"api/projects/{projectId}/progress");
+        if (!response.IsSuccessStatusCode)
+        {
+            _progress = null;
+            return;
+        }
+
+        _progress = await response.Content.ReadFromJsonAsync<ProjectProgressDashboardDto>();
+        if (_progress is null)
+        {
+            return;
+        }
+
+        _dailyTargetDraft = _progress.Goal.DailyTargetWords;
+        _weeklyTargetDraft = _progress.Goal.WeeklyTargetWords;
+        _timezoneDraft = string.IsNullOrWhiteSpace(_progress.Goal.Timezone) ? "UTC" : _progress.Goal.Timezone;
+        UpdateSessionTelemetry();
+        RestartSessionTicker();
+    }
+
+    private async Task SaveGoalsAsync()
+    {
+        if (_activeProject is null)
+        {
+            return;
+        }
+
+        ProjectGoalUpdateRequest request = new(
+            Math.Max(0, _dailyTargetDraft),
+            Math.Max(0, _weeklyTargetDraft),
+            _timezoneDraft);
+
+        using HttpResponseMessage response = await Http.PutAsJsonAsync(
+            $"api/projects/{_activeProject.Id}/goals",
+            request);
+        if (!response.IsSuccessStatusCode)
+        {
+            _error = "Saving goals failed.";
+            return;
+        }
+
+        await LoadProgressAsync(_activeProject.Id);
+    }
+
+    private async Task CreateMilestoneAsync()
+    {
+        if (_activeProject is null || string.IsNullOrWhiteSpace(_milestoneTitleDraft))
+        {
+            return;
+        }
+
+        ProjectMilestoneCreateRequest request = new(
+            _milestoneTitleDraft.Trim(),
+            _milestoneTargetWordsDraft,
+            null);
+        using HttpResponseMessage response = await Http.PostAsJsonAsync(
+            $"api/projects/{_activeProject.Id}/milestones",
+            request);
+        if (!response.IsSuccessStatusCode)
+        {
+            _error = "Creating milestone failed.";
+            return;
+        }
+
+        _milestoneTitleDraft = string.Empty;
+        _milestoneTargetWordsDraft = null;
+        await LoadProgressAsync(_activeProject.Id);
+    }
+
+    private async Task CompleteMilestoneAsync(Guid milestoneId)
+    {
+        if (_activeProject is null)
+        {
+            return;
+        }
+
+        ProjectMilestoneUpdateRequest request = new(null, null, null, "completed");
+        using HttpResponseMessage response = await Http.PatchAsJsonAsync(
+            $"api/projects/{_activeProject.Id}/milestones/{milestoneId}",
+            request);
+        if (!response.IsSuccessStatusCode)
+        {
+            _error = "Updating milestone failed.";
+            return;
+        }
+
+        await LoadProgressAsync(_activeProject.Id);
+    }
+
+    private async Task DeleteMilestoneAsync(Guid milestoneId)
+    {
+        if (_activeProject is null)
+        {
+            return;
+        }
+
+        using HttpResponseMessage response = await Http.DeleteAsync($"api/projects/{_activeProject.Id}/milestones/{milestoneId}");
+        if (!response.IsSuccessStatusCode)
+        {
+            _error = "Deleting milestone failed.";
+            return;
+        }
+
+        await LoadProgressAsync(_activeProject.Id);
+    }
+
+    private async Task StartSessionAsync()
+    {
+        if (_activeProject is null)
+        {
+            return;
+        }
+
+        using HttpResponseMessage response = await Http.PostAsync($"api/projects/{_activeProject.Id}/sessions/start", null);
+        if (!response.IsSuccessStatusCode)
+        {
+            _error = "Starting session failed.";
+            return;
+        }
+
+        _sessionNotesDraft = string.Empty;
+        await LoadProgressAsync(_activeProject.Id);
+    }
+
+    private async Task StopSessionAsync()
+    {
+        if (_activeProject is null || _progress?.ActiveSession is null)
+        {
+            return;
+        }
+
+        WritingSessionStopRequest request = new(_sessionNotesDraft);
+        using HttpResponseMessage response = await Http.PostAsJsonAsync(
+            $"api/projects/{_activeProject.Id}/sessions/{_progress.ActiveSession.Id}/stop",
+            request);
+        if (!response.IsSuccessStatusCode)
+        {
+            _error = "Stopping session failed.";
+            return;
+        }
+
+        _sessionNotesDraft = string.Empty;
+        await LoadProgressAsync(_activeProject.Id);
+    }
+
+    private void RestartSessionTicker()
+    {
+        _sessionTickerCts?.Cancel();
+        _sessionTickerCts?.Dispose();
+        _sessionTickerCts = null;
+
+        if (_progress?.ActiveSession is null)
+        {
+            _sessionElapsedSeconds = 0;
+            _sessionLiveDelta = 0;
+            return;
+        }
+
+        _sessionTickerCts = new CancellationTokenSource();
+        CancellationToken token = _sessionTickerCts.Token;
+        _ = Task.Run(async () =>
+        {
+            int tick = 0;
+            while (!token.IsCancellationRequested)
+            {
+                await InvokeAsync(async () =>
+                {
+                    tick++;
+                    if (tick % 15 == 0)
+                    {
+                        await RefreshLiveProgressAsync();
+                    }
+
+                    UpdateSessionTelemetry();
+                    StateHasChanged();
+                });
+
+                try
+                {
+                    await Task.Delay(1000, token);
+                }
+                catch (TaskCanceledException)
+                {
+                    break;
+                }
+            }
+        }, token);
+    }
+
+    private async Task RefreshLiveProgressAsync()
+    {
+        if (_activeProject is null || _progress?.ActiveSession is null)
+        {
+            return;
+        }
+
+        using HttpResponseMessage response = await Http.GetAsync($"api/projects/{_activeProject.Id}/progress");
+        if (!response.IsSuccessStatusCode)
+        {
+            return;
+        }
+
+        ProjectProgressDashboardDto? latest = await response.Content.ReadFromJsonAsync<ProjectProgressDashboardDto>();
+        if (latest is null)
+        {
+            return;
+        }
+
+        _progress = latest;
+    }
+
+    private void UpdateSessionTelemetry()
+    {
+        if (_progress?.ActiveSession is null)
+        {
+            _sessionElapsedSeconds = 0;
+            _sessionLiveDelta = 0;
+            return;
+        }
+
+        _sessionElapsedSeconds = Math.Max(0, (int)(DateTimeOffset.UtcNow - _progress.ActiveSession.StartedUtc).TotalSeconds);
+        _sessionLiveDelta = _progress.ActiveSession.WordsDelta;
+    }
+
+    private static string FormatDuration(int totalSeconds)
+    {
+        int safe = Math.Max(0, totalSeconds);
+        TimeSpan span = TimeSpan.FromSeconds(safe);
+        return $"{(int)span.TotalHours:00}:{span.Minutes:00}:{span.Seconds:00}";
+    }
+
+    private static string FormatWordCount(int value)
+    {
+        return Math.Max(0, value).ToString("N0");
+    }
+
+    private RenderFragment RenderNode(ProjectNodeDto node, int depth) => builder =>
+    {
+        int seq = 0;
+        bool isSelected = _selectedNodeId == node.Id;
+        bool isRenaming = _renamingNodeId == node.Id;
+        bool isMenuOpen = _openNodeMenuId == node.Id;
+        bool isPointerDropTarget = _pointerDragActive
+            && _dragNodeId.HasValue
+            && _dragNodeId.Value != node.Id
+            && _pointerDragHoverNodeId == node.Id;
+        List<ProjectNodeDto> children = GetChildren(node.Id).ToList();
+        bool hasChildren = children.Count > 0;
+        bool isCollapsed = hasChildren && _collapsedNodeIds.Contains(node.Id);
+        string displayTitle = GetDisplayNodeTitle(node.Title, node.NodeType);
+
+        builder.OpenElement(seq++, "li");
+        builder.AddAttribute(seq++, "class", isPointerDropTarget ? "tree-node is-drop-target" : "tree-node");
+        builder.AddAttribute(seq++, "onmouseenter", EventCallback.Factory.Create<MouseEventArgs>(this, () => OnNodePointerEnter(node.Id)));
+        builder.AddAttribute(seq++, "onmouseup", EventCallback.Factory.Create<MouseEventArgs>(this, () => OnNodePointerDropAsync(node.Id)));
+        builder.AddAttribute(seq++, "ondragover", EventCallback.Factory.Create<DragEventArgs>(this, OnNodeDragOver));
+        builder.AddEventPreventDefaultAttribute(seq++, "ondragover", true);
+        builder.AddAttribute(seq++, "ondrop", EventCallback.Factory.Create<DragEventArgs>(this, (args) => OnNodeDropAsync(node.Id, args)));
+
+        builder.OpenElement(seq++, "div");
+        builder.AddAttribute(seq++, "class", isSelected ? "tree-row is-selected" : "tree-row");
+        builder.AddAttribute(seq++, "style", $"--depth:{depth}");
+        builder.AddAttribute(seq++, "title", displayTitle);
+        builder.AddAttribute(seq++, "tabindex", "0");
+        builder.AddAttribute(seq++, "role", "treeitem");
+        builder.AddAttribute(seq++, "aria-selected", isSelected ? "true" : "false");
+        builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => OnNodeSelected(node.Id)));
+        builder.AddAttribute(seq++, "onkeydown", EventCallback.Factory.Create<KeyboardEventArgs>(this, (args) => OnNodeRowKeyDown(args, node.Id)));
+
+        builder.OpenElement(seq++, "span");
+        builder.AddAttribute(seq++, "class", "tree-indent");
+        builder.AddAttribute(seq++, "aria-hidden", "true");
+        builder.CloseElement();
+
+        builder.OpenElement(seq++, "button");
+        builder.AddAttribute(seq++, "type", "button");
+        builder.AddAttribute(seq++, "class", hasChildren
+            ? (isCollapsed ? "tree-disclosure" : "tree-disclosure is-expanded")
+            : "tree-disclosure is-empty");
+        builder.AddAttribute(seq++, "disabled", !hasChildren);
+        builder.AddAttribute(seq++, "aria-label", hasChildren ? "Toggle branch" : "No children");
+        builder.AddEventStopPropagationAttribute(seq++, "onclick", true);
+        if (hasChildren)
+        {
+            builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => ToggleCollapsed(node.Id)));
+        }
+
+        builder.AddContent(seq++, "▸");
+        builder.CloseElement();
+
+        builder.OpenElement(seq++, "span");
+        builder.AddAttribute(seq++, "class", "tree-drag");
+        builder.AddAttribute(seq++, "draggable", true);
+        builder.AddAttribute(seq++, "role", "button");
+        builder.AddAttribute(seq++, "tabindex", "0");
+        builder.AddAttribute(seq++, "aria-label", "Drag to reorder");
+        builder.AddEventStopPropagationAttribute(seq++, "onmousedown", true);
+        builder.AddAttribute(seq++, "onmousedown", EventCallback.Factory.Create<MouseEventArgs>(this, () => OnNodeDragHandleMouseDown(node.Id)));
+        builder.AddAttribute(seq++, "ondragstart", EventCallback.Factory.Create<DragEventArgs>(this, (args) => OnNodeDragStart(node.Id, args)));
+        builder.AddAttribute(seq++, "ondragend", EventCallback.Factory.Create<DragEventArgs>(this, (args) => OnNodeDragEnd(node.Id, args)));
+        builder.AddContent(seq++, "::");
+        builder.CloseElement();
+
+        builder.OpenElement(seq++, "span");
+        builder.AddAttribute(seq++, "class", $"tree-node-badge {GetNodeBadgeClass(node.NodeType)}");
+        builder.AddAttribute(seq++, "title", displayTitle);
+        builder.AddContent(seq++, GetNodeTypeLabel(node.NodeType));
+        builder.CloseElement();
+
+        if (isRenaming)
+        {
+            builder.OpenElement(seq++, "div");
+            builder.AddAttribute(seq++, "class", "tree-rename");
+            builder.OpenElement(seq++, "input");
+            builder.AddAttribute(seq++, "class", "tree-rename-input");
+            builder.AddAttribute(seq++, "value", _renameDraft);
+            builder.AddAttribute(seq++, "autofocus", "autofocus");
+            builder.AddAttribute(seq++, "oninput", EventCallback.Factory.Create<ChangeEventArgs>(this, OnRenameInput));
+            builder.AddAttribute(seq++, "onkeydown", EventCallback.Factory.Create<KeyboardEventArgs>(this, (args) => OnTreeRenameKeyDown(args, node.Id)));
+            builder.AddAttribute(seq++, "onblur", EventCallback.Factory.Create<FocusEventArgs>(this, async (_) => await SaveRenameForNodeAsync(node.Id)));
+            builder.AddEventStopPropagationAttribute(seq++, "onclick", true);
+            builder.CloseElement();
+            builder.CloseElement();
+        }
+        else
+        {
+            builder.OpenElement(seq++, "div");
+            builder.AddAttribute(seq++, "class", "tree-select");
+            builder.AddAttribute(seq++, "title", displayTitle);
+            builder.OpenElement(seq++, "span");
+            builder.AddAttribute(seq++, "class", "tree-select-title");
+            builder.AddAttribute(seq++, "title", displayTitle);
+            builder.AddAttribute(seq++, "tabindex", "0");
+            builder.AddContent(seq++, displayTitle);
+            builder.CloseElement();
+            builder.CloseElement();
+        }
+
+        if (_showNavigatorTreeWordCount)
+        {
+            builder.OpenElement(seq++, "span");
+            builder.AddAttribute(seq++, "class", "tree-meta");
+            builder.AddContent(seq++, $"{FormatWordCount(node.WordCountCache)} words");
+            builder.CloseElement();
+        }
+
+        builder.OpenElement(seq++, "div");
+        builder.AddAttribute(seq++, "class", "tree-row-actions");
+
+        builder.OpenElement(seq++, "button");
+        builder.AddAttribute(seq++, "type", "button");
+        builder.AddAttribute(seq++, "class", "tree-row-menu-toggle");
+        builder.AddAttribute(seq++, "aria-label", "Node actions");
+        builder.AddAttribute(seq++, "aria-haspopup", "menu");
+        builder.AddAttribute(seq++, "aria-expanded", isMenuOpen ? "true" : "false");
+        builder.AddEventStopPropagationAttribute(seq++, "onclick", true);
+        builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create<MouseEventArgs>(this, async args => await ToggleNodeMenuAsync(node.Id, args)));
+        builder.AddElementReferenceCapture(seq++, elementReference => _nodeMenuButtons[node.Id] = elementReference);
+        builder.AddContent(seq++, "⋯");
+        builder.CloseElement();
+
+        builder.CloseElement();
+        builder.CloseElement();
+
+        if (hasChildren && !isCollapsed)
+        {
+            builder.OpenElement(seq++, "ul");
+            builder.AddAttribute(seq++, "class", "tree-list");
+            foreach (ProjectNodeDto child in children)
+            {
+                builder.AddContent(seq++, RenderNode(child, depth + 1));
+            }
+
+            builder.CloseElement();
+        }
+
+        builder.CloseElement();
+    };
+
+    private void OnNodeSelected(Guid nodeId)
+    {
+        _selectedNodeId = nodeId;
+        _renamingNodeId = null;
+        CloseNodeMenu();
+        ProjectNodeDto? node = _selectedNode;
+        _renameDraft = node?.Title ?? string.Empty;
+    }
+
+    private void OnNodeRowKeyDown(KeyboardEventArgs args, Guid nodeId)
+    {
+        if (string.Equals(args.Key, "Enter", StringComparison.Ordinal)
+            || string.Equals(args.Key, " ", StringComparison.Ordinal))
+        {
+            OnNodeSelected(nodeId);
+        }
+        else if (string.Equals(args.Key, "Escape", StringComparison.Ordinal))
+        {
+            CloseNodeMenu();
+        }
+    }
+
+    private void OnRenameInput(ChangeEventArgs args)
+    {
+        _renameDraft = args.Value?.ToString() ?? string.Empty;
+    }
+
+    private void StartInlineRename(Guid nodeId)
+    {
+        CloseNodeMenu();
+        _selectedNodeId = nodeId;
+        _renamingNodeId = nodeId;
+        ProjectNodeDto? node = _nodes.FirstOrDefault(item => item.Id == nodeId);
+        _renameDraft = node?.Title ?? string.Empty;
+    }
+
+    private async Task SaveRenameAsync()
+    {
+        if (_selectedNode is null)
+        {
+            return;
+        }
+
+        await SaveRenameForNodeAsync(_selectedNode.Id);
+    }
+
+    private async Task SaveRenameForNodeAsync(Guid nodeId)
+    {
+        if (_activeProject is null)
+        {
+            return;
+        }
+
+        ProjectNodeDto? node = _nodes.FirstOrDefault(item => item.Id == nodeId);
+        if (node is null)
+        {
+            return;
+        }
+
+        string next = _renameDraft.Trim();
+        if (string.IsNullOrWhiteSpace(next) || string.Equals(next, node.Title, StringComparison.Ordinal))
+        {
+            _renamingNodeId = null;
+            return;
+        }
+
+        ProjectNodePatchRequest payload = new(
+            next,
+            node.ParentId,
+            node.LinkedSectionId,
+            node.MetadataJson,
+            node.NodeType);
+        using HttpResponseMessage response = await Http.PatchAsJsonAsync(
+            $"api/projects/{_activeProject.Id}/nodes/{node.Id}",
+            payload);
+        if (!response.IsSuccessStatusCode)
+        {
+            _error = "Rename failed.";
+            return;
+        }
+
+        _renamingNodeId = null;
+        await RefreshProjectAsync(_activeProject.Id);
+    }
+
+    private async Task OnTreeRenameKeyDown(KeyboardEventArgs args, Guid nodeId)
+    {
+        if (string.Equals(args.Key, "Enter", StringComparison.Ordinal))
+        {
+            await SaveRenameForNodeAsync(nodeId);
+        }
+        else if (string.Equals(args.Key, "Escape", StringComparison.Ordinal))
+        {
+            CancelInlineRename(nodeId);
+        }
+    }
+
+    private void CancelInlineRename(Guid nodeId)
+    {
+        _renamingNodeId = null;
+        ProjectNodeDto? node = _nodes.FirstOrDefault(item => item.Id == nodeId);
+        _renameDraft = node?.Title ?? string.Empty;
+    }
+
+    private async Task ToggleNodeMenuAsync(Guid nodeId, MouseEventArgs args)
+    {
+        if (_openNodeMenuId == nodeId)
+        {
+            CloseNodeMenu();
+            return;
+        }
+
+        NodeMenuAnchorLayout? anchor = null;
+        if (_nodeMenuButtons.TryGetValue(nodeId, out ElementReference buttonRef))
+        {
+            try
+            {
+                anchor = await JS.InvokeAsync<NodeMenuAnchorLayout?>("writerProjectsMenu.getAnchorLayout", buttonRef);
+            }
+            catch
+            {
+                anchor = null;
+            }
+        }
+
+        if (anchor is null)
+        {
+            double viewportWidth = 0;
+            double viewportHeight = 0;
+            try
+            {
+                NodeMenuViewport? viewport = await JS.InvokeAsync<NodeMenuViewport?>("writerProjectsMenu.getViewport");
+                if (viewport is not null)
+                {
+                    viewportWidth = viewport.Width;
+                    viewportHeight = viewport.Height;
+                }
+            }
+            catch
+            {
+                // ignore and fallback defaults below
+            }
+
+            anchor = new NodeMenuAnchorLayout
+            {
+                Left = args.ClientX,
+                Top = args.ClientY,
+                Right = args.ClientX,
+                Bottom = args.ClientY,
+                Width = 0,
+                Height = 0,
+                ViewportWidth = viewportWidth <= 0 ? 1280 : viewportWidth,
+                ViewportHeight = viewportHeight <= 0 ? 720 : viewportHeight
+            };
+        }
+
+        const double menuWidth = 184;
+        const double menuHeight = 196;
+        const double gap = 6;
+        const double viewportPadding = 8;
+
+        double x = anchor.Right - menuWidth;
+        double maxX = Math.Max(viewportPadding, anchor.ViewportWidth - menuWidth - viewportPadding);
+        x = Math.Max(viewportPadding, Math.Min(maxX, x));
+
+        double y = anchor.Bottom + gap;
+        bool shouldFlipUp = y + menuHeight > anchor.ViewportHeight - viewportPadding;
+        if (shouldFlipUp)
+        {
+            y = anchor.Top - gap - menuHeight;
+        }
+
+        double maxY = Math.Max(viewportPadding, anchor.ViewportHeight - menuHeight - viewportPadding);
+        y = Math.Max(viewportPadding, Math.Min(maxY, y));
+
+        _openNodeMenuX = x;
+        _openNodeMenuY = y;
+        _openNodeMenuId = nodeId;
+        _shouldFocusNodeMenu = true;
+    }
+
+    private void CloseNodeMenu()
+    {
+        _openNodeMenuId = null;
+        _shouldFocusNodeMenu = false;
+    }
+
+    private string GetNodeMenuStyle()
+    {
+        string left = Math.Round(_openNodeMenuX).ToString(CultureInfo.InvariantCulture);
+        string top = Math.Round(_openNodeMenuY).ToString(CultureInfo.InvariantCulture);
+        return $"position:fixed;left:{left}px;top:{top}px;z-index:1201;";
+    }
+
+    private Task OnNodeMenuKeyDown(KeyboardEventArgs args)
+    {
+        if (string.Equals(args.Key, "Escape", StringComparison.Ordinal))
+        {
+            CloseNodeMenu();
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private async Task OnNodeMenuRenameAsync()
+    {
+        Guid? nodeId = _openNodeMenuId;
+        CloseNodeMenu();
+        if (nodeId.HasValue)
+        {
+            StartInlineRename(nodeId.Value);
+        }
+
+        await Task.CompletedTask;
+    }
+
+    private async Task OnNodeMenuAddChapterAsync()
+    {
+        Guid? nodeId = _openNodeMenuId;
+        CloseNodeMenu();
+        if (nodeId.HasValue)
+        {
+            await AddNodeUnderNodeAsync(nodeId.Value, "chapter", "New Chapter");
+        }
+    }
+
+    private async Task OnNodeMenuAddSceneAsync()
+    {
+        Guid? nodeId = _openNodeMenuId;
+        CloseNodeMenu();
+        if (nodeId.HasValue)
+        {
+            await AddSceneUnderAsync(nodeId.Value);
+        }
+    }
+
+    private async Task OnNodeMenuOpenSceneAsync()
+    {
+        Guid? nodeId = _openNodeMenuId;
+        CloseNodeMenu();
+        if (nodeId.HasValue)
+        {
+            await OpenSpecificSceneInEditorAsync(nodeId.Value);
+        }
+    }
+
+    private async Task OnNodeMenuDuplicateAsync()
+    {
+        Guid? nodeId = _openNodeMenuId;
+        CloseNodeMenu();
+        if (nodeId.HasValue)
+        {
+            await DuplicateNodeAsync(nodeId.Value);
+        }
+    }
+
+    private async Task OnNodeMenuTemplatesAsync()
+    {
+        Guid? nodeId = _openNodeMenuId;
+        CloseNodeMenu();
+        if (nodeId.HasValue)
+        {
+            _selectedNodeId = nodeId.Value;
+        }
+
+        await OpenOutlineTemplatesModalAsync();
+    }
+
+    private async Task OnNodeMenuDeleteAsync()
+    {
+        Guid? nodeId = _openNodeMenuId;
+        CloseNodeMenu();
+        if (nodeId.HasValue)
+        {
+            await DeleteNodeAsync(nodeId.Value);
+        }
+    }
+
+    private async Task AddNodeUnderNodeAsync(Guid parentId, string nodeType, string title)
+    {
+        CloseNodeMenu();
+        await AddNodeInternalAsync(parentId, nodeType, title);
+    }
+
+    private async Task DeleteNodeAsync(Guid nodeId)
+    {
+        if (_activeProject is null)
+        {
+            return;
+        }
+
+        ProjectNodeDto? node = _nodes.FirstOrDefault(item => item.Id == nodeId);
+        if (node is null)
+        {
+            return;
+        }
+
+        bool confirmed;
+        try
+        {
+            string label = GetDisplayNodeTitle(node.Title, node.NodeType);
+            confirmed = await JS.InvokeAsync<bool>("confirm", $"Delete '{label}' and its child nodes?");
+        }
+        catch
+        {
+            confirmed = false;
+        }
+
+        if (!confirmed)
+        {
+            return;
+        }
+
+        CloseNodeMenu();
+        using HttpResponseMessage response = await Http.DeleteAsync($"api/projects/{_activeProject.Id}/nodes/{nodeId}");
+        if (!response.IsSuccessStatusCode)
+        {
+            _error = "Delete node failed.";
+            return;
+        }
+
+        _collapsedNodeIds.Remove(nodeId);
+        await RefreshProjectAsync(_activeProject.Id);
+    }
+
+    private async Task DuplicateNodeAsync(Guid nodeId)
+    {
+        if (_activeProject is null || _duplicateNodeInFlight)
+        {
+            return;
+        }
+
+        _duplicateNodeInFlight = true;
+        _error = null;
+
+        try
+        {
+            ProjectNodeDto? source = _nodes.FirstOrDefault(item => item.Id == nodeId);
+            bool? deep = source is null
+                ? null
+                : IsScene(source)
+                    ? false
+                    : true;
+
+            ProjectNodeDuplicateRequest payload = new(deep);
+            using HttpResponseMessage response = await Http.PostAsJsonAsync(
+                $"api/projects/{_activeProject.Id}/nodes/{nodeId}/duplicate",
+                payload);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _error = "Duplicate node failed.";
+                return;
+            }
+
+            ProjectNodeDuplicateResponse? result = await response.Content.ReadFromJsonAsync<ProjectNodeDuplicateResponse>();
+            if (result is null)
+            {
+                _error = "Duplicate node failed.";
+                return;
+            }
+
+            foreach (ProjectNodeDto updated in result.UpdatedNodes)
+            {
+                int existingIndex = _nodes.FindIndex(item => item.Id == updated.Id);
+                if (existingIndex >= 0)
+                {
+                    _nodes[existingIndex] = updated;
+                }
+            }
+
+            foreach (ProjectNodeDto created in result.CreatedNodes)
+            {
+                if (_nodes.All(item => item.Id != created.Id))
+                {
+                    _nodes.Add(created);
+                }
+            }
+
+            ProjectNodeDto? duplicatedRoot = _nodes.FirstOrDefault(item => item.Id == result.RootNodeId);
+            if (duplicatedRoot?.ParentId.HasValue == true)
+            {
+                _collapsedNodeIds.Remove(duplicatedRoot.ParentId.Value);
+            }
+
+            _selectedNodeId = result.RootNodeId;
+            if (_selectedNode is not null)
+            {
+                _renameDraft = _selectedNode.Title;
+            }
+
+            int totalWords = _nodes.Where(item => item.ParentId is null).Sum(item => item.WordCountCache);
+            _activeProject = _activeProject with
+            {
+                TotalWordCount = totalWords,
+                UpdatedUtc = DateTimeOffset.UtcNow
+            };
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Duplicate node failed.");
+            _error = ex is HttpRequestException
+                ? "Duplicate node failed (request timed out or server unreachable)."
+                : "Duplicate node failed.";
+        }
+        finally
+        {
+            _duplicateNodeInFlight = false;
+        }
+    }
+
+    private async Task RefreshProjectAsync(Guid projectId)
+    {
+        await LoadTreeAsync(projectId);
+
+        using HttpResponseMessage projectsResponse = await Http.GetAsync("api/projects");
+        if (projectsResponse.IsSuccessStatusCode)
+        {
+            List<ProjectDto>? projects = await projectsResponse.Content.ReadFromJsonAsync<List<ProjectDto>>();
+            _projects.Clear();
+            _projects.AddRange((projects ?? new List<ProjectDto>()).OrderByDescending(project => project.UpdatedUtc));
+            _activeProject = _projects.FirstOrDefault(project => project.Id == projectId) ?? _activeProject;
+        }
+    }
+
+    private async Task OnProjectSelectionChanged(ChangeEventArgs args)
+    {
+        string raw = args.Value?.ToString() ?? string.Empty;
+        if (!Guid.TryParse(raw, out Guid projectId))
+        {
+            _selectedProjectId = null;
+            _activeProject = null;
+            _nodes.Clear();
+            _selectedNodeId = null;
+            _progress = null;
+            RestartSessionTicker();
+            return;
+        }
+
+        _selectedProjectId = projectId;
+        await LoadTreeAsync(projectId);
+        Navigation.NavigateTo($"projects/{projectId}", replace: true);
+    }
+
+    private void BeginProjectNameEdit()
+    {
+        if (_activeProject is null)
+        {
+            return;
+        }
+
+        _projectNameDraft = _activeProject.Title;
+        _projectNameOriginal = _activeProject.Title;
+        _projectNameStatus = null;
+        _isProjectNameEditing = true;
+    }
+
+    private void CancelProjectNameEdit()
+    {
+        _projectNameDraft = _projectNameOriginal;
+        _projectNameStatus = null;
+        _isProjectNameEditing = false;
+    }
+
+    private void OnProjectNameInput(ChangeEventArgs args)
+    {
+        _projectNameDraft = args.Value?.ToString() ?? string.Empty;
+        _projectNameStatus = null;
+    }
+
+    private async Task OnProjectNameKeyDown(KeyboardEventArgs args)
+    {
+        if (string.Equals(args.Key, "Enter", StringComparison.Ordinal))
+        {
+            await SaveProjectNameAsync();
+            return;
+        }
+
+        if (string.Equals(args.Key, "Escape", StringComparison.Ordinal))
+        {
+            CancelProjectNameEdit();
+        }
+    }
+
+    private async Task SaveProjectNameAsync()
+    {
+        if (_activeProject is null || _isProjectNameSaving)
+        {
+            return;
+        }
+
+        string next = (_projectNameDraft ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(next))
+        {
+            _projectNameStatus = "Project name is required.";
+            return;
+        }
+
+        if (string.Equals(next, _projectNameOriginal, StringComparison.Ordinal))
+        {
+            _isProjectNameEditing = false;
+            _projectNameStatus = null;
+            return;
+        }
+
+        ProjectDto snapshot = _activeProject;
+        int projectIndex = _projects.FindIndex(item => item.Id == snapshot.Id);
+        _isProjectNameSaving = true;
+        _projectNameStatus = null;
+
+        ProjectDto optimistic = snapshot with
+        {
+            Title = next,
+            UpdatedUtc = DateTimeOffset.UtcNow
+        };
+        _activeProject = optimistic;
+        if (projectIndex >= 0)
+        {
+            _projects[projectIndex] = optimistic;
+        }
+
+        try
+        {
+            ProjectUpdateRequest payload = new(next, null, null, null, null, null);
+            using HttpResponseMessage response = await Http.PatchAsJsonAsync($"api/projects/{snapshot.Id:D}", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                _activeProject = snapshot;
+                if (projectIndex >= 0)
+                {
+                    _projects[projectIndex] = snapshot;
+                }
+
+                _projectNameStatus = $"Rename failed: {(int)response.StatusCode}";
+                return;
+            }
+
+            _projectNameOriginal = next;
+            _projectNameDraft = next;
+            _isProjectNameEditing = false;
+        }
+        catch (Exception ex)
+        {
+            _activeProject = snapshot;
+            if (projectIndex >= 0)
+            {
+                _projects[projectIndex] = snapshot;
+            }
+
+            _projectNameStatus = $"Rename failed: {ex.Message}";
+        }
+        finally
+        {
+            _isProjectNameSaving = false;
+        }
+    }
+
+    private async Task CreateProjectAsync()
+    {
+        _creatingProject = true;
+        _error = null;
+        try
+        {
+            ProjectCreateRequest request = new("Untitled project", null, null, null, null, null);
+            using HttpResponseMessage response = await Http.PostAsJsonAsync("api/projects", request);
+            response.EnsureSuccessStatusCode();
+            ProjectDto? created = await response.Content.ReadFromJsonAsync<ProjectDto>();
+            if (created is null)
+            {
+                _error = "Create project failed.";
+                return;
+            }
+
+            await LoadProjectsAsync();
+            _selectedProjectId = created.Id;
+            await LoadTreeAsync(created.Id);
+            Navigation.NavigateTo($"projects/{created.Id}", replace: true);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _creatingProject = false;
+        }
+    }
+
+    private async Task CreateFromDocumentAsync()
+    {
+        Guid? documentId = CurrentDocumentStateService.DocumentId;
+        if (!documentId.HasValue)
+        {
+            return;
+        }
+
+        _creatingFromDocument = true;
+        _error = null;
+        try
+        {
+            using HttpResponseMessage response = await Http.PostAsync($"api/projects/from-document/{documentId.Value}", null);
+            response.EnsureSuccessStatusCode();
+            ProjectTreeDto? tree = await response.Content.ReadFromJsonAsync<ProjectTreeDto>();
+            if (tree is null)
+            {
+                _error = "Create from document failed.";
+                return;
+            }
+
+            await LoadProjectsAsync();
+            _selectedProjectId = tree.Project.Id;
+            await LoadTreeAsync(tree.Project.Id);
+            Navigation.NavigateTo($"projects/{tree.Project.Id}", replace: true);
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _creatingFromDocument = false;
+        }
+    }
+
+    private async Task AddPartAsync()
+    {
+        await AddNodeInternalAsync(null, "part", "New Part");
+    }
+
+    private async Task AddChapterAsync()
+    {
+        Guid? parent = _selectedNode is not null && IsPart(_selectedNode) ? _selectedNode.Id : null;
+        await AddNodeInternalAsync(parent, "chapter", "New Chapter");
+    }
+
+    private async Task AddSceneAsync()
+    {
+        if (_selectedNode is null)
+        {
+            return;
+        }
+
+        Guid? parent = null;
+        if (IsChapter(_selectedNode))
+        {
+            parent = _selectedNode.Id;
+        }
+        else if (IsScene(_selectedNode))
+        {
+            parent = _selectedNode.ParentId;
+        }
+
+        await AddNodeInternalAsync(parent, "scene", "New Scene");
+    }
+
+    private async Task AddSceneUnderAsync(Guid chapterId)
+    {
+        await AddNodeInternalAsync(chapterId, "scene", "New Scene");
+    }
+
+    private async Task AddSelectedNodeTypeAsync()
+    {
+        switch (_addNodeType)
+        {
+            case "chapter":
+                await AddChapterAsync();
+                break;
+            case "scene":
+                await AddSceneAsync();
+                break;
+            default:
+                await AddPartAsync();
+                break;
+        }
+    }
+
+    private bool CanAddSelectedNodeType()
+    {
+        if (string.Equals(_addNodeType, "scene", StringComparison.OrdinalIgnoreCase))
+        {
+            return _selectedNode is not null;
+        }
+
+        return true;
+    }
+
+    private async Task RefreshOutlineTemplatesAvailabilityAsync()
+    {
+        if (!_outlineTemplatesEnabled)
+        {
+            return;
+        }
+
+        try
+        {
+            using HttpResponseMessage response = await Http.GetAsync("api/outline-templates");
+            if (response.StatusCode == HttpStatusCode.NotFound || response.StatusCode == HttpStatusCode.Forbidden)
+            {
+                _outlineTemplatesEnabled = false;
+                return;
+            }
+
+            if (response.IsSuccessStatusCode)
+            {
+                _outlineTemplatesEnabled = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogDebug(ex, "Unable to probe outline template availability. Using configured value.");
+        }
+    }
+
+    public async Task RefreshActiveProjectTreeAsync()
+    {
+        if (!_projectsEnabled)
+        {
+            return;
+        }
+
+        Guid? projectId = _activeProject?.Id ?? _selectedProjectId;
+        if (!projectId.HasValue || projectId.Value == Guid.Empty)
+        {
+            return;
+        }
+
+        await LoadTreeAsync(projectId.Value);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadOutlineTemplatesAsync(bool preserveSelection = true)
+    {
+        _isOutlineTemplatesLoading = true;
+        try
+        {
+            IReadOnlyList<OutlineTemplateDto> templates = await OutlineTemplatesClient.GetTemplatesAsync();
+            Guid? previousSelection = preserveSelection ? _selectedOutlineTemplateId : null;
+
+            _outlineTemplates.Clear();
+            _outlineTemplates.AddRange(templates.OrderBy(template => template.Name));
+
+            if (previousSelection.HasValue && _outlineTemplates.Any(template => template.Id == previousSelection.Value))
+            {
+                _selectedOutlineTemplateId = previousSelection.Value;
+            }
+            else
+            {
+                _selectedOutlineTemplateId = _outlineTemplates.FirstOrDefault()?.Id;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to load outline templates in Projects.");
+            _outlineTemplateStatus = "Unable to load templates.";
+        }
+        finally
+        {
+            _isOutlineTemplatesLoading = false;
+        }
+    }
+
+    private async Task OpenOutlineTemplatesModalAsync()
+    {
+        if (!_outlineTemplatesEnabled)
+        {
+            return;
+        }
+
+        _isOutlineTemplatesModalOpen = true;
+        _outlineTemplateStatus = null;
+        _outlineTemplateName = string.Empty;
+        _applyTemplateUnderSelectedProjectNode = _selectedNodeId.HasValue;
+        _applyTemplateCreateLinkedSections = false;
+        _applyTemplateLinkStrategy = "none";
+        await LoadOutlineTemplatesAsync();
+    }
+
+    private void CloseOutlineTemplatesModal()
+    {
+        _isOutlineTemplatesModalOpen = false;
+        _isOutlineTemplateActionInFlight = false;
+        _outlineTemplateStatus = null;
+    }
+
+    private async Task CreateTemplateFromCurrentProjectAsync()
+    {
+        if (!_outlineTemplatesEnabled || _nodes.Count == 0 || _isOutlineTemplateActionInFlight)
+        {
+            return;
+        }
+
+        _isOutlineTemplateActionInFlight = true;
+        _outlineTemplateStatus = null;
+        try
+        {
+            string name = string.IsNullOrWhiteSpace(_outlineTemplateName)
+                ? "Untitled template"
+                : _outlineTemplateName.Trim();
+
+            List<OutlineTemplateNodeDto> nodes = BuildTemplateNodesFromCurrentProject();
+            OutlineTemplateCreateRequest request = new(name, nodes);
+            using HttpResponseMessage response = await OutlineTemplatesClient.CreateTemplateAsync(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                string? message = await OutlineTemplatesClient.ReadErrorMessageAsync(response);
+                _outlineTemplateStatus = string.IsNullOrWhiteSpace(message)
+                    ? "Failed to create template."
+                    : message;
+                return;
+            }
+
+            _outlineTemplateName = string.Empty;
+            _outlineTemplateStatus = "Template created.";
+            await LoadOutlineTemplatesAsync(preserveSelection: false);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to create outline template from project.");
+            _outlineTemplateStatus = "Failed to create template.";
+        }
+        finally
+        {
+            _isOutlineTemplateActionInFlight = false;
+        }
+    }
+
+    private List<OutlineTemplateNodeDto> BuildTemplateNodesFromCurrentProject()
+    {
+        return _nodes
+            .OrderBy(node => node.ParentId)
+            .ThenBy(node => node.OrderIndex)
+            .Select(node => new OutlineTemplateNodeDto(
+                node.Id,
+                node.ParentId,
+                node.NodeType,
+                node.Title,
+                node.OrderIndex,
+                null,
+                node.MetadataJson,
+                node.LinkedSectionId))
+            .ToList();
+    }
+
+    private async Task ApplySelectedOutlineTemplateAsync()
+    {
+        if (!_outlineTemplatesEnabled || !_selectedOutlineTemplateId.HasValue || _activeProject is null || _isOutlineTemplateActionInFlight)
+        {
+            return;
+        }
+
+        _isOutlineTemplateActionInFlight = true;
+        _outlineTemplateStatus = null;
+        try
+        {
+            Guid? manuscriptDocumentId = await EnsureManuscriptDocumentIdAsync(_activeProject!.Id);
+            if (!manuscriptDocumentId.HasValue)
+            {
+                _outlineTemplateStatus = "Unable to resolve manuscript document for this project.";
+                return;
+            }
+
+            List<DocumentOutlineNodeDto> beforeNodes = await Http.GetFromJsonAsync<List<DocumentOutlineNodeDto>>(
+                    $"api/documents/{manuscriptDocumentId.Value}/outline/nodes")
+                ?? new List<DocumentOutlineNodeDto>();
+            HashSet<Guid> existingIds = beforeNodes.Select(node => node.Id).ToHashSet();
+
+            OutlineTemplateApplyOptionsDto options = new(
+                ParentNodeId: null,
+                CreateLinkedSections: _applyTemplateCreateLinkedSections,
+                LinkStrategy: _applyTemplateLinkStrategy);
+
+            using HttpResponseMessage response = await OutlineTemplatesClient.ApplyTemplateAsync(
+                manuscriptDocumentId.Value,
+                _selectedOutlineTemplateId.Value,
+                options);
+            if (!response.IsSuccessStatusCode)
+            {
+                string? message = await OutlineTemplatesClient.ReadErrorMessageAsync(response);
+                _outlineTemplateStatus = string.IsNullOrWhiteSpace(message)
+                    ? "Failed to apply template."
+                    : message;
+                return;
+            }
+
+            List<DocumentOutlineNodeDto>? updated = await response.Content.ReadFromJsonAsync<List<DocumentOutlineNodeDto>>();
+            if (updated is null)
+            {
+                _outlineTemplateStatus = "Template applied, but no outline data was returned.";
+                return;
+            }
+
+            List<DocumentOutlineNodeDto> inserted = updated
+                .Where(node => !existingIds.Contains(node.Id))
+                .OrderBy(node => node.ParentId)
+                .ThenBy(node => node.Order)
+                .ToList();
+
+            Guid? targetProjectParent = _applyTemplateUnderSelectedProjectNode ? _selectedNodeId : null;
+            int mirroredCount = await MirrorInsertedOutlineNodesToProjectAsync(inserted, targetProjectParent);
+            await RefreshProjectAsync(_activeProject.Id);
+
+            _outlineTemplateStatus = mirroredCount > 0
+                ? "Template applied."
+                : "Template applied, but no new project nodes were added.";
+            _isOutlineTemplatesModalOpen = false;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to apply outline template from project.");
+            _outlineTemplateStatus = "Failed to apply template.";
+        }
+        finally
+        {
+            _isOutlineTemplateActionInFlight = false;
+        }
+    }
+
+    private async Task<int> MirrorInsertedOutlineNodesToProjectAsync(
+        IReadOnlyList<DocumentOutlineNodeDto> insertedNodes,
+        Guid? targetParentProjectNodeId)
+    {
+        if (_activeProject is null || insertedNodes.Count == 0)
+        {
+            return 0;
+        }
+
+        HashSet<Guid> insertedIds = insertedNodes.Select(node => node.Id).ToHashSet();
+        Dictionary<Guid, List<DocumentOutlineNodeDto>> childrenByParent = insertedNodes
+            .Where(node => node.ParentId.HasValue && insertedIds.Contains(node.ParentId.Value))
+            .GroupBy(node => node.ParentId!.Value)
+            .ToDictionary(
+                group => group.Key,
+                group => group.OrderBy(node => node.Order).ToList());
+
+        List<DocumentOutlineNodeDto> roots = insertedNodes
+            .Where(node => !node.ParentId.HasValue || !insertedIds.Contains(node.ParentId.Value))
+            .OrderBy(node => node.Order)
+            .ToList();
+
+        int mirrored = 0;
+
+        async Task MirrorSubtreeAsync(DocumentOutlineNodeDto source, Guid? parentProjectNodeId, int depth)
+        {
+            string nodeType = InferProjectNodeType(source, depth);
+            ProjectNodeDto? created = await CreateProjectNodeFromTemplateAsync(
+                parentProjectNodeId,
+                nodeType,
+                source.Title,
+                source.LinkedSectionId,
+                source.MetadataJson);
+            if (created is null)
+            {
+                return;
+            }
+
+            mirrored++;
+            if (!childrenByParent.TryGetValue(source.Id, out List<DocumentOutlineNodeDto>? children))
+            {
+                return;
+            }
+
+            foreach (DocumentOutlineNodeDto child in children)
+            {
+                await MirrorSubtreeAsync(child, created.Id, depth + 1);
+            }
+        }
+
+        foreach (DocumentOutlineNodeDto root in roots)
+        {
+            await MirrorSubtreeAsync(root, targetParentProjectNodeId, 0);
+        }
+
+        return mirrored;
+    }
+
+    private async Task<ProjectNodeDto?> CreateProjectNodeFromTemplateAsync(
+        Guid? parentId,
+        string nodeType,
+        string title,
+        Guid? linkedSectionId,
+        string? metadataJson)
+    {
+        if (_activeProject is null)
+        {
+            return null;
+        }
+
+        string safeTitle = string.IsNullOrWhiteSpace(title)
+            ? $"New {GetNodeTypeLabel(nodeType)}"
+            : title.Trim();
+
+        ProjectNodeCreateRequest request = new(parentId, nodeType, safeTitle, null, linkedSectionId, metadataJson);
+        using HttpResponseMessage response = await Http.PostAsJsonAsync($"api/projects/{_activeProject.Id}/nodes", request);
+        if (!response.IsSuccessStatusCode)
+        {
+            string? message = await OutlineTemplatesClient.ReadErrorMessageAsync(response);
+            _outlineTemplateStatus = string.IsNullOrWhiteSpace(message)
+                ? "Failed to mirror template nodes into project tree."
+                : message;
+            return null;
+        }
+
+        return await response.Content.ReadFromJsonAsync<ProjectNodeDto>();
+    }
+
+    private static string InferProjectNodeType(DocumentOutlineNodeDto node, int depth)
+    {
+        if (TryGetNodeTypeFromMetadata(node.MetadataJson, out string metadataType))
+        {
+            return metadataType;
+        }
+
+        if (node.LinkedSectionId.HasValue)
+        {
+            return "scene";
+        }
+
+        string title = node.Title?.Trim() ?? string.Empty;
+        if (title.StartsWith("scene", StringComparison.OrdinalIgnoreCase))
+        {
+            return "scene";
+        }
+
+        if (title.StartsWith("chapter", StringComparison.OrdinalIgnoreCase))
+        {
+            return "chapter";
+        }
+
+        if (title.StartsWith("part", StringComparison.OrdinalIgnoreCase))
+        {
+            return "part";
+        }
+
+        return depth switch
+        {
+            <= 0 => "part",
+            1 => "chapter",
+            _ => "scene"
+        };
+    }
+
+    private static bool TryGetNodeTypeFromMetadata(string? metadataJson, out string nodeType)
+    {
+        nodeType = string.Empty;
+        if (string.IsNullOrWhiteSpace(metadataJson))
+        {
+            return false;
+        }
+
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(metadataJson);
+            JsonElement root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return false;
+            }
+
+            if (!root.TryGetProperty("nodeType", out JsonElement value)
+                && !root.TryGetProperty("type", out value))
+            {
+                return false;
+            }
+
+            string? raw = value.GetString();
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return false;
+            }
+
+            string normalized = raw.Trim().ToLowerInvariant();
+            if (normalized is not ("part" or "chapter" or "scene"))
+            {
+                return false;
+            }
+
+            nodeType = normalized;
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private async Task<Guid?> EnsureManuscriptDocumentIdAsync(Guid projectId)
+    {
+        using HttpResponseMessage docsResponse = await Http.GetAsync($"api/projects/{projectId}/documents");
+        if (!docsResponse.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        List<ProjectDocumentDto>? docs = await docsResponse.Content.ReadFromJsonAsync<List<ProjectDocumentDto>>();
+        ProjectDocumentDto? manuscript = docs?
+            .Where(item => item.DeletedAt is null && string.Equals(item.Kind, "manuscript", StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(item => item.UpdatedAt)
+            .FirstOrDefault();
+        if (manuscript is not null)
+        {
+            return manuscript.Id;
+        }
+
+        ProjectDocumentCreateRequest createRequest = new(
+            Id: null,
+            Title: "Manuscript",
+            Kind: "manuscript",
+            CreateDefaultStructure: false);
+        using HttpResponseMessage createResponse = await Http.PostAsJsonAsync($"api/projects/{projectId}/documents", createRequest);
+        if (!createResponse.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        DocumentCreateResponse? created = await createResponse.Content.ReadFromJsonAsync<DocumentCreateResponse>();
+        return created?.Document.Id;
+    }
+
+    private async Task DeleteSelectedOutlineTemplateAsync()
+    {
+        if (!_outlineTemplatesEnabled || !_selectedOutlineTemplateId.HasValue || _isOutlineTemplateActionInFlight)
+        {
+            return;
+        }
+
+        _isOutlineTemplateActionInFlight = true;
+        _outlineTemplateStatus = null;
+        try
+        {
+            using HttpResponseMessage response = await OutlineTemplatesClient.DeleteTemplateAsync(_selectedOutlineTemplateId.Value);
+            if (!response.IsSuccessStatusCode)
+            {
+                string? message = await OutlineTemplatesClient.ReadErrorMessageAsync(response);
+                _outlineTemplateStatus = string.IsNullOrWhiteSpace(message)
+                    ? "Failed to delete template."
+                    : message;
+                return;
+            }
+
+            _outlineTemplateStatus = "Template deleted.";
+            _selectedOutlineTemplateId = null;
+            await LoadOutlineTemplatesAsync(preserveSelection: false);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to delete outline template from project modal.");
+            _outlineTemplateStatus = "Failed to delete template.";
+        }
+        finally
+        {
+            _isOutlineTemplateActionInFlight = false;
+        }
+    }
+
+    private async Task AddNodeInternalAsync(Guid? parentId, string nodeType, string title)
+    {
+        if (_activeProject is null)
+        {
+            return;
+        }
+
+        ProjectNodeCreateRequest request = new(parentId, nodeType, title, null, null, null);
+        using HttpResponseMessage response = await Http.PostAsJsonAsync($"api/projects/{_activeProject.Id}/nodes", request);
+        if (!response.IsSuccessStatusCode)
+        {
+            _error = "Add node failed.";
+            return;
+        }
+
+        ProjectNodeDto? created = await response.Content.ReadFromJsonAsync<ProjectNodeDto>();
+        if (parentId.HasValue)
+        {
+            _collapsedNodeIds.Remove(parentId.Value);
+        }
+
+        await RefreshProjectAsync(_activeProject.Id);
+        Guid? createdId = created?.Id;
+        if (!createdId.HasValue)
+        {
+            createdId = _nodes
+                .Where(node => node.ParentId == parentId && string.Equals(node.NodeType, nodeType, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(node => node.OrderIndex)
+                .Select(node => (Guid?)node.Id)
+                .FirstOrDefault();
+        }
+
+        if (createdId.HasValue)
+        {
+            _selectedNodeId = createdId.Value;
+            ProjectNodeDto? selected = _nodes.FirstOrDefault(node => node.Id == createdId.Value);
+            _renameDraft = selected?.Title ?? title;
+            _renamingNodeId = createdId.Value;
+        }
+    }
+
+    private void OnNodeDragStart(Guid nodeId, DragEventArgs args)
+    {
+        _dragNodeId = nodeId;
+        _pointerDragActive = false;
+        _pointerDragHoverNodeId = null;
+        if (args.DataTransfer is not null)
+        {
+            args.DataTransfer.DropEffect = "move";
+            args.DataTransfer.EffectAllowed = "move";
+        }
+        LogDnd($"dragstart node={nodeId}");
+    }
+
+    private void OnNodeDragHandleMouseDown(Guid nodeId)
+    {
+        _dragNodeId = nodeId;
+        _pointerDragActive = true;
+        _pointerDragHoverNodeId = null;
+        LogDnd($"handle mousedown node={nodeId}");
+    }
+
+    private void OnNodeDragEnd(Guid nodeId, DragEventArgs _)
+    {
+        LogDnd($"dragend node={nodeId} activeDrag={_dragNodeId?.ToString() ?? "<null>"}");
+        _dragNodeId = null;
+        _pointerDragActive = false;
+        _pointerDragHoverNodeId = null;
+    }
+
+    private void OnNodePointerEnter(Guid nodeId)
+    {
+        if (!_pointerDragActive || !_dragNodeId.HasValue || _dragNodeId.Value == nodeId)
+        {
+            return;
+        }
+
+        _pointerDragHoverNodeId = nodeId;
+        LogDnd($"pointer enter target={nodeId} dragNode={_dragNodeId.Value}");
+        StateHasChanged();
+    }
+
+    private async Task OnNodePointerDropAsync(Guid targetNodeId)
+    {
+        if (!_pointerDragActive || !_dragNodeId.HasValue)
+        {
+            return;
+        }
+
+        LogDnd($"pointer drop target={targetNodeId} dragNode={_dragNodeId.Value}");
+        _pointerDragActive = false;
+        _pointerDragHoverNodeId = null;
+        await OnNodeDropAsync(targetNodeId, new DragEventArgs());
+    }
+
+    private void OnPointerDragCancel(MouseEventArgs _)
+    {
+        if (!_pointerDragActive)
+        {
+            return;
+        }
+
+        LogDnd($"pointer drag cancel dragNode={_dragNodeId?.ToString() ?? "<null>"}");
+        _pointerDragActive = false;
+        _pointerDragHoverNodeId = null;
+        _dragNodeId = null;
+    }
+
+    private Task OnNodeDragOver(DragEventArgs args)
+    {
+        if (_dragNodeId.HasValue && args.DataTransfer is not null)
+        {
+            args.DataTransfer.DropEffect = "move";
+        }
+
+        string active = _dragNodeId?.ToString() ?? "<null>";
+        LogDnd($"dragover activeDrag={active} dropEffect={args.DataTransfer?.DropEffect ?? "<null>"}");
+        return Task.CompletedTask;
+    }
+
+    private async Task OnNodeDropAsync(Guid targetNodeId, DragEventArgs _)
+    {
+        if (_activeProject is null || !_dragNodeId.HasValue || _dragNodeId == targetNodeId)
+        {
+            LogDnd($"drop ignored target={targetNodeId} activeProject={_activeProject is not null} dragNode={_dragNodeId?.ToString() ?? "<null>"}");
+            return;
+        }
+
+        ProjectNodeDto? dragged = _nodes.FirstOrDefault(node => node.Id == _dragNodeId.Value);
+        ProjectNodeDto? target = _nodes.FirstOrDefault(node => node.Id == targetNodeId);
+        if (dragged is null || target is null)
+        {
+            LogDnd($"drop aborted target={targetNodeId} draggedFound={dragged is not null} targetFound={target is not null}");
+            _dragNodeId = null;
+            return;
+        }
+
+        LogDnd($"drop begin dragged={dragged.Id} target={target.Id} sameParent={dragged.ParentId == target.ParentId}");
+
+        if (dragged.ParentId == target.ParentId)
+        {
+            Guid? parentId = target.ParentId;
+            List<ProjectNodeDto> siblings = GetChildren(parentId).ToList();
+            int from = siblings.FindIndex(node => node.Id == dragged.Id);
+            int to = siblings.FindIndex(node => node.Id == target.Id);
+            if (from >= 0 && to >= 0 && from != to)
+            {
+                LogDnd($"drop reorder siblings parent={parentId?.ToString() ?? "<root>"} from={from} to={to}");
+                ProjectNodeDto moved = siblings[from];
+                siblings.RemoveAt(from);
+                siblings.Insert(to, moved);
+                await SaveSiblingOrderAsync(parentId, siblings.Select(node => node.Id).ToList());
+            }
+            else
+            {
+                LogDnd($"drop no-op siblings from={from} to={to}");
+            }
+        }
+        else if (IsScene(dragged) && IsChapter(target))
+        {
+            LogDnd($"drop move scene->chapter scene={dragged.Id} chapter={target.Id}");
+            ProjectNodePatchRequest patch = new(
+                dragged.Title,
+                target.Id,
+                dragged.LinkedSectionId,
+                dragged.MetadataJson,
+                dragged.NodeType);
+            using HttpResponseMessage patchResponse = await Http.PatchAsJsonAsync(
+                $"api/projects/{_activeProject.Id}/nodes/{dragged.Id}",
+                patch);
+            if (!patchResponse.IsSuccessStatusCode)
+            {
+                LogDnd($"drop patch failed status={(int)patchResponse.StatusCode}");
+                string? message = await OutlineTemplatesClient.ReadErrorMessageAsync(patchResponse);
+                _error = string.IsNullOrWhiteSpace(message) ? "Move node failed." : message;
+                _dragNodeId = null;
+                return;
+            }
+        }
+        else
+        {
+            LogDnd($"drop unsupported move draggedType={dragged.NodeType} targetType={target.NodeType}");
+        }
+
+        _dragNodeId = null;
+        LogDnd($"drop complete target={targetNodeId}");
+        await RefreshProjectAsync(_activeProject.Id);
+    }
+
+    private async Task SaveSiblingOrderAsync(Guid? parentId, List<Guid> order)
+    {
+        if (_activeProject is null)
+        {
+            return;
+        }
+
+        Guid parentRoute = parentId ?? Guid.Empty;
+        ProjectNodeReorderRequest request = new(order);
+        using HttpResponseMessage response = await Http.PostAsJsonAsync(
+            $"api/projects/{_activeProject.Id}/nodes/{parentRoute}/reorder",
+            request);
+        if (!response.IsSuccessStatusCode)
+        {
+            string? message = await OutlineTemplatesClient.ReadErrorMessageAsync(response);
+            LogDnd($"reorder failed parent={parentRoute} status={(int)response.StatusCode} detail={message}");
+            _error = string.IsNullOrWhiteSpace(message) ? "Reorder failed." : message;
+        }
+        else
+        {
+            LogDnd($"reorder saved parent={parentRoute} count={order.Count}");
+        }
+    }
+
+    private void LogDnd(string message)
+    {
+        bool isDragOver = message.StartsWith("dragover", StringComparison.OrdinalIgnoreCase);
+        if (isDragOver)
+        {
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            if (!_dndDiagnosticsEnabled || now - _lastDndDragOverLogUtc < TimeSpan.FromMilliseconds(500))
+            {
+                return;
+            }
+
+            _lastDndDragOverLogUtc = now;
+        }
+
+        if (_dndDiagnosticsEnabled)
+        {
+            Logger.LogInformation("Navigator DnD: {Message}", message);
+            Console.WriteLine($"Navigator DnD: {message}");
+            return;
+        }
+
+        Logger.LogDebug("Navigator DnD: {Message}", message);
+    }
+
+    private async Task OpenSceneFromProgressAsync(Guid sceneNodeId)
+    {
+        if (_activeProject is null)
+        {
+            return;
+        }
+
+        _selectedNodeId = sceneNodeId;
+        await OpenSceneInEditorAsync();
+    }
+
+    private async Task OpenSpecificSceneInEditorAsync(Guid sceneNodeId)
+    {
+        if (_activeProject is null)
+        {
+            return;
+        }
+
+        _selectedNodeId = sceneNodeId;
+        CloseNodeMenu();
+        await OpenSceneInEditorAsync();
+    }
+
+    private async Task OpenSceneInEditorAsync()
+    {
+        if (_activeProject is null || _selectedNode is null)
+        {
+            return;
+        }
+
+        if (SceneOpenRequested.HasDelegate)
+        {
+            await SceneOpenRequested.InvokeAsync(_selectedNode.Id);
+            return;
+        }
+
+        string target = $"projects/{_activeProject.Id}/scenes/{_selectedNode.Id}";
+        await SaveResumeTargetAsync(_activeProject.Id, target);
+        Navigation.NavigateTo(target);
+        await Task.CompletedTask;
+    }
+
+    private async Task ResumeActiveProjectAsync()
+    {
+        if (_activeProject is null)
+        {
+            return;
+        }
+
+        await ResumeProjectAsync(_activeProject.Id);
+    }
+
+    private async Task OpenActiveManuscriptAsync()
+    {
+        if (_activeProject is null)
+        {
+            return;
+        }
+
+        await OpenManuscriptAsync(_activeProject.Id);
+    }
+
+    private async Task ResumeProjectAsync(Guid projectId)
+    {
+        string fallback = $"projects/{projectId}/manuscript";
+        string target = fallback;
+        try
+        {
+            string? savedTarget = await JS.InvokeAsync<string?>("localStorage.getItem", GetProjectResumeStorageKey(projectId));
+            if (!string.IsNullOrWhiteSpace(savedTarget))
+            {
+                target = savedTarget;
+            }
+        }
+        catch
+        {
+            target = fallback;
+        }
+
+        Navigation.NavigateTo(target);
+    }
+
+    private async Task OpenManuscriptAsync(Guid projectId)
+    {
+        string target = $"projects/{projectId}/manuscript";
+        await SaveResumeTargetAsync(projectId, target);
+        Navigation.NavigateTo(target);
+    }
+
+    private async Task SaveResumeTargetAsync(Guid projectId, string target)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("localStorage.setItem", GetProjectResumeStorageKey(projectId), target);
+        }
+        catch
+        {
+            // ignore localStorage failures
+        }
+    }
+
+    private static string GetProjectResumeStorageKey(Guid projectId)
+    {
+        return $"writerapp.project.resume.{projectId:D}";
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_shouldFocusNodeMenu && _openNodeMenuId.HasValue)
+        {
+            _shouldFocusNodeMenu = false;
+            await _nodeMenuRef.FocusAsync();
+        }
+
+        await base.OnAfterRenderAsync(firstRender);
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        _sessionTickerCts?.Cancel();
+        _sessionTickerCts?.Dispose();
+        _sessionTickerCts = null;
+        return ValueTask.CompletedTask;
+    }
+
+    private sealed class NodeMenuAnchorLayout
+    {
+        public double Left { get; set; }
+
+        public double Top { get; set; }
+
+        public double Right { get; set; }
+
+        public double Bottom { get; set; }
+
+        public double Width { get; set; }
+
+        public double Height { get; set; }
+
+        public double ViewportWidth { get; set; }
+
+        public double ViewportHeight { get; set; }
+    }
+
+    private sealed class NodeMenuViewport
+    {
+        public double Width { get; set; }
+
+        public double Height { get; set; }
+    }
+
+    private static bool IsPart(ProjectNodeDto node)
+    {
+        return string.Equals(node.NodeType, "part", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsChapter(ProjectNodeDto node)
+    {
+        return string.Equals(node.NodeType, "chapter", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsScene(ProjectNodeDto node)
+    {
+        return string.Equals(node.NodeType, "scene", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private CoachCardRecommendation BuildProjectCoachRecommendation()
+    {
+        List<ProjectNodeDto> parts = _nodes.Where(IsPart).ToList();
+        List<ProjectNodeDto> chapters = _nodes.Where(IsChapter).ToList();
+        List<ProjectNodeDto> scenes = _nodes.Where(IsScene).OrderBy(node => node.OrderIndex).ToList();
+        List<ProjectNodeDto> placeholderNodes = _nodes
+            .Where(node => CoachRecommendationService.IsPlaceholderTitle(node.Title))
+            .OrderBy(node => node.OrderIndex)
+            .ToList();
+        List<ProjectNodeDto> unlinkedScenes = scenes
+            .Where(node => !node.LinkedSectionId.HasValue)
+            .OrderBy(node => node.OrderIndex)
+            .ToList();
+        List<ProjectNodeDto> draftedScenes = scenes
+            .Where(node => node.WordCountCache > 0)
+            .OrderBy(node => node.OrderIndex)
+            .ToList();
+        Guid? nextSceneNodeId = scenes
+            .Where(node => node.WordCountCache <= 0)
+            .Select(node => (Guid?)node.Id)
+            .FirstOrDefault()
+            ?? scenes.Select(node => (Guid?)node.Id).FirstOrDefault();
+
+        ProjectCoachInput input = new(
+            parts.Count,
+            chapters.Count,
+            scenes.Count,
+            draftedScenes.Count,
+            placeholderNodes.Count,
+            unlinkedScenes.Count,
+            _goalsEnabled,
+            string.Equals(_activeTab, "progress", StringComparison.Ordinal),
+            placeholderNodes.Select(node => (Guid?)node.Id).FirstOrDefault(),
+            nextSceneNodeId);
+
+        return CoachRecommendationService.BuildProjectRecommendation(input);
+    }
+
+    private async Task OnProjectCoachPrimaryActionAsync()
+    {
+        CoachCardRecommendation recommendation = BuildProjectCoachRecommendation();
+        switch (recommendation.PrimaryAction)
+        {
+            case CoachPrimaryAction.AddFirstScene:
+                await CreateFirstSceneScaffoldAsync();
+                break;
+
+            case CoachPrimaryAction.RenamePlaceholderNode:
+                await FocusNodeForRenameAsync(recommendation.TargetNodeId);
+                break;
+
+            case CoachPrimaryAction.ReviewProgress:
+                await SelectTab("progress");
+                break;
+
+            case CoachPrimaryAction.OpenNextScene:
+                if (recommendation.NextSceneNodeId.HasValue)
+                {
+                    await OpenSceneFromProgressAsync(recommendation.NextSceneNodeId.Value);
+                }
+                else
+                {
+                    await OpenActiveManuscriptAsync();
+                }
+
+                break;
+        }
+    }
+
+    private async Task FocusNodeForRenameAsync(Guid? nodeId)
+    {
+        if (!nodeId.HasValue)
+        {
+            return;
+        }
+
+        _selectedNodeId = nodeId.Value;
+        if (_selectedNode is not null)
+        {
+            _renameDraft = _selectedNode.Title;
+        }
+
+        await SelectTab("structure");
+        StateHasChanged();
+    }
+
+    private async Task CreateFirstSceneScaffoldAsync()
+    {
+        if (_activeProject is null)
+        {
+            return;
+        }
+
+        ProjectNodeDto? part = _nodes.Where(IsPart).OrderBy(node => node.OrderIndex).FirstOrDefault();
+        if (part is null)
+        {
+            await AddNodeInternalAsync(null, "part", "Part 1");
+            await RefreshProjectAsync(_activeProject.Id);
+            part = _nodes.Where(IsPart).OrderBy(node => node.OrderIndex).FirstOrDefault();
+        }
+
+        ProjectNodeDto? chapter = _nodes
+            .Where(node => IsChapter(node) && node.ParentId == part?.Id)
+            .OrderBy(node => node.OrderIndex)
+            .FirstOrDefault();
+        if (chapter is null)
+        {
+            await AddNodeInternalAsync(part?.Id, "chapter", "Chapter 1");
+            await RefreshProjectAsync(_activeProject.Id);
+            chapter = _nodes
+                .Where(node => IsChapter(node) && node.ParentId == part?.Id)
+                .OrderBy(node => node.OrderIndex)
+                .FirstOrDefault();
+        }
+
+        if (chapter is not null)
+        {
+            await AddNodeInternalAsync(chapter.Id, "scene", "Scene 1");
+            await RefreshProjectAsync(_activeProject.Id);
+            _selectedNodeId = _nodes
+                .Where(node => IsScene(node) && node.ParentId == chapter.Id)
+                .OrderByDescending(node => node.OrderIndex)
+                .Select(node => (Guid?)node.Id)
+                .FirstOrDefault();
+
+            if (_selectedNode is not null)
+            {
+                _renameDraft = _selectedNode.Title;
+            }
+        }
+    }
+
+    private ProgressCoachModel BuildProgressCoach()
+    {
+        List<ProjectNodeDto> parts = _nodes.Where(IsPart).ToList();
+        List<ProjectNodeDto> chapters = _nodes.Where(IsChapter).ToList();
+        List<ProjectNodeDto> scenes = _nodes.Where(IsScene).OrderBy(node => node.OrderIndex).ToList();
+        List<CoachSuggestion> suggestions = new();
+
+        if (parts.Count == 0)
+        {
+            suggestions.Add(new CoachSuggestion("Add at least one part to frame your manuscript.", null));
+        }
+
+        if (chapters.Count == 0)
+        {
+            suggestions.Add(new CoachSuggestion("Add chapters so scenes have clear buckets.", null));
+        }
+
+        if (scenes.Count == 0)
+        {
+            suggestions.Add(new CoachSuggestion("Add your first scene to start drafting.", null));
+        }
+
+        List<ProjectNodeDto> untitledScenes = scenes
+            .Where(node => string.IsNullOrWhiteSpace(node.Title) || node.Title.Trim().Equals("New scene", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (untitledScenes.Count > 0)
+        {
+            suggestions.Add(new CoachSuggestion($"{untitledScenes.Count} scene(s) still have placeholder titles.", untitledScenes[0].Id));
+        }
+
+        List<ProjectNodeDto> unlinkedScenes = scenes.Where(node => !node.LinkedSectionId.HasValue).ToList();
+        if (unlinkedScenes.Count > 0)
+        {
+            suggestions.Add(new CoachSuggestion($"{unlinkedScenes.Count} scene(s) are not linked to section text yet.", unlinkedScenes[0].Id));
+        }
+
+        List<Guid> chaptersWithoutScenes = chapters
+            .Where(chapter => _nodes.All(node => node.ParentId != chapter.Id || !IsScene(node)))
+            .Select(chapter => chapter.Id)
+            .ToList();
+        if (chaptersWithoutScenes.Count > 0)
+        {
+            suggestions.Add(new CoachSuggestion($"{chaptersWithoutScenes.Count} chapter(s) have no scenes yet.", null));
+        }
+
+        List<ProjectNodeDto> zeroWordScenes = scenes.Where(node => node.WordCountCache <= 0).ToList();
+        List<ProjectNodeDto> draftedScenes = scenes.Where(node => node.WordCountCache > 0).ToList();
+        List<ProjectNodeDto> plannedScenes = scenes.Where(node => node.WordCountCache <= 0 && !string.IsNullOrWhiteSpace(node.Title)).ToList();
+
+        List<int> draftedWordCounts = draftedScenes.Select(node => node.WordCountCache).OrderBy(value => value).ToList();
+        if (draftedWordCounts.Count >= 4)
+        {
+            int median = draftedWordCounts[draftedWordCounts.Count / 2];
+            int max = draftedWordCounts[^1];
+            if (median > 0 && max >= median * 3)
+            {
+                ProjectNodeDto? maxScene = draftedScenes.OrderByDescending(node => node.WordCountCache).FirstOrDefault();
+                suggestions.Add(new CoachSuggestion("Scene length variance is high; review pacing across long and short scenes.", maxScene?.Id));
+            }
+        }
+
+        Guid? reviewSceneId = untitledScenes.FirstOrDefault()?.Id
+            ?? zeroWordScenes.FirstOrDefault()?.Id
+            ?? unlinkedScenes.FirstOrDefault()?.Id;
+        Guid? continueSceneId = zeroWordScenes.FirstOrDefault()?.Id
+            ?? scenes.FirstOrDefault()?.Id;
+
+        string ctaLabel = reviewSceneId.HasValue ? "Review scenes needing work" : "Continue in next scene";
+        string ctaHint = reviewSceneId.HasValue
+            ? "Jump to the highest-priority scene issue."
+            : "Jump into drafting in manuscript order.";
+        Guid? ctaSceneId = reviewSceneId ?? continueSceneId;
+
+        return new ProgressCoachModel(
+            parts.Count,
+            chapters.Count,
+            scenes.Count,
+            draftedScenes.Count,
+            plannedScenes.Count,
+            zeroWordScenes.Count,
+            ctaLabel,
+            ctaHint,
+            ctaSceneId,
+            suggestions);
+    }
+
+    private static string FormatRelativeTime(DateTimeOffset timestampUtc)
+    {
+        DateTime utc = timestampUtc.UtcDateTime;
+        TimeSpan delta = DateTime.UtcNow - utc;
+        if (delta < TimeSpan.Zero)
+        {
+            delta = TimeSpan.Zero;
+        }
+
+        if (delta < TimeSpan.FromMinutes(1))
+        {
+            return "just now";
+        }
+
+        if (delta < TimeSpan.FromHours(1))
+        {
+            int minutes = Math.Max(1, (int)delta.TotalMinutes);
+            return minutes == 1 ? "1 min ago" : $"{minutes} min ago";
+        }
+
+        if (delta < TimeSpan.FromDays(1))
+        {
+            int hours = Math.Max(1, (int)delta.TotalHours);
+            return hours == 1 ? "1 hr ago" : $"{hours} hr ago";
+        }
+
+        int days = Math.Max(1, (int)delta.TotalDays);
+        if (days < 7)
+        {
+            return days == 1 ? "1 day ago" : $"{days} days ago";
+        }
+
+        return utc.ToString("yyyy-MM-dd");
+    }
+
+    private static string GetNodeTypeLabel(string nodeType)
+    {
+        if (string.Equals(nodeType, "part", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Part";
+        }
+
+        if (string.Equals(nodeType, "chapter", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Chapter";
+        }
+
+        if (string.Equals(nodeType, "scene", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Scene";
+        }
+
+        return nodeType;
+    }
+
+    private static string GetDisplayNodeTitle(string? title, string nodeType)
+    {
+        string trimmed = title?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return $"New {GetNodeTypeLabel(nodeType)}";
+        }
+
+        string lower = trimmed.ToLowerInvariant();
+        if (lower.StartsWith("part") || lower.StartsWith("chapter") || lower.StartsWith("scene"))
+        {
+            bool suffixLooksAuto = lower.SkipWhile(c => !char.IsDigit(c)).Any(char.IsDigit)
+                || lower.EndsWith("0", StringComparison.Ordinal)
+                || string.Equals(lower, "new part", StringComparison.Ordinal)
+                || string.Equals(lower, "new chapter", StringComparison.Ordinal)
+                || string.Equals(lower, "new scene", StringComparison.Ordinal);
+            if (suffixLooksAuto && lower.Count(char.IsLetter) <= 7)
+            {
+                return $"New {GetNodeTypeLabel(nodeType)}";
+            }
+        }
+
+        return trimmed;
+    }
+
+    private static string GetNodeBadgeClass(string nodeType)
+    {
+        if (string.Equals(nodeType, "part", StringComparison.OrdinalIgnoreCase))
+        {
+            return "is-part";
+        }
+
+        if (string.Equals(nodeType, "chapter", StringComparison.OrdinalIgnoreCase))
+        {
+            return "is-chapter";
+        }
+
+        if (string.Equals(nodeType, "scene", StringComparison.OrdinalIgnoreCase))
+        {
+            return "is-scene";
+        }
+
+        return string.Empty;
+    }
+
+    private void ToggleCollapsed(Guid nodeId)
+    {
+        if (!_collapsedNodeIds.Add(nodeId))
+        {
+            _collapsedNodeIds.Remove(nodeId);
+        }
+    }
+
+    private sealed record CoachSuggestion(string Message, Guid? SceneNodeId);
+
+    private sealed record ProgressCoachModel(
+        int PartsCount,
+        int ChaptersCount,
+        int ScenesCount,
+        int DraftedScenesCount,
+        int PlannedScenesCount,
+        int NeedsDraftScenesCount,
+        string PrimaryCtaLabel,
+        string PrimaryCtaHint,
+        Guid? PrimaryCtaSceneNodeId,
+        List<CoachSuggestion> Suggestions);
+}

@@ -1,17 +1,15 @@
 @inject NavigationManager Navigation
+@using WriterApp.Shared
 
 @code {
+    private const string DefaultReturnUrl = ReturnUrlSafety.DefaultProjectsPath;
+
     protected override void OnInitialized()
     {
-        string returnUrl = Navigation.ToBaseRelativePath(Navigation.Uri);
-        if (!string.IsNullOrWhiteSpace(returnUrl) && !returnUrl.StartsWith("/", StringComparison.Ordinal))
-        {
-            returnUrl = "/" + returnUrl;
-        }
+        Uri current = Navigation.ToAbsoluteUri(Navigation.Uri);
+        string returnUrl = ReturnUrlSafety.NormalizeOrFallback(current.PathAndQuery, DefaultReturnUrl);
 
-        string target = string.IsNullOrWhiteSpace(returnUrl)
-            ? "/account/login"
-            : $"/account/login?returnUrl={Uri.EscapeDataString(returnUrl)}";
+        string target = $"/app/login?returnUrl={Uri.EscapeDataString(returnUrl)}";
 
         Navigation.NavigateTo(target, forceLoad: true);
     }

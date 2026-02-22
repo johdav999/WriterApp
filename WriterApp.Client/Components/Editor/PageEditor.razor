@@ -1,0 +1,1686 @@
+@using System.Net.Http
+@using System.Net.Http.Json
+@using System.Text.RegularExpressions
+@using System.Linq
+@using System.Globalization
+@using Microsoft.JSInterop
+@using WriterApp.Application.Documents
+@using WriterApp.Client.State
+@inject HttpClient Http
+@inject NavigationManager Navigation
+@inject IJSRuntime JSRuntime
+@inject ILogger<PageEditor> Logger
+@implements IDisposable
+
+@if (Page is null)
+{
+    <div class="page-editor-empty">Select a page to start writing.</div>
+}
+else
+{
+    <SectionEditor @ref="_editorRef"
+                   Content="@_content"
+                   ContentChanged="OnContentChanged"
+                   EditorReady="OnEditorReady"
+                   FormattingChanged="FormattingChanged"
+                   SelectionChanged="SelectionChanged"
+                   LinkShortcutRequested="OnLinkShortcutRequested"
+                   ContextMenuRequested="ContextMenuRequested"
+                   LinkContextMenuRequested="OnLinkContextMenuRequested"
+                   SelectionBubbleChanged="SelectionBubbleChanged" />
+    @if (ShowStatusBar)
+    {
+        <div class="editor-status">
+            <span title="Total words in this section.">@_wordCount words</span>
+            <span title="Estimated page count.">Page @_currentPageIndex / @_pageCount</span>
+            <span class="@GetSaveStatusClass()" title="Your work is saved automatically.">@GetSaveStatusLabel()</span>
+            @if (!string.IsNullOrWhiteSpace(VersionStatusMessage))
+            {
+                <span class="version-status" title="A version snapshot was saved.">@VersionStatusMessage</span>
+            }
+        </div>
+    }
+}
+
+@code {
+    private const int AutosaveDebounceMs = 800;
+    private const string CommandsModuleVersion = "20260216.1";
+    private SectionEditor? _editorRef;
+    private CancellationTokenSource? _autosaveCts;
+    private PageDto? _currentPage;
+    private string _content = string.Empty;
+    private SaveState _saveState = SaveState.Idle;
+    private bool _isDirty;
+    private int _wordCount;
+    private bool _isLoadingPage;
+    private bool _hasUserEditedSinceLoad;
+    private string _lastLoadedHash = "0";
+    private Guid? _pendingAutosavePageId;
+    private bool _pendingSetContent;
+    private IJSObjectReference? _editorInstance;
+    private IJSObjectReference? _commandsModule;
+    private CancellationTokenSource? _pageBreakCts;
+    private DotNetObjectReference<PageEditor>? _dotNetRef;
+    private bool _pageBreakObserverAttached;
+    private string? _lastAppliedPageBreakModeKey;
+    private int _pageCount = 1;
+    private int _currentPageIndex = 1;
+    private string? _lastSearchHighlightQuery;
+    private string? _pendingSearchHighlightQuery;
+    private bool _searchHighlightActive;
+    private IReadOnlyList<AiDecorationRange>? _pendingAiDecorations;
+    private string? _lastAnnotationsFingerprint;
+    private string? _lastQualityIssuesFingerprint;
+    private EditorStatusSnapshot _lastStatusSnapshot = EditorStatusSnapshot.Empty;
+    private string? _lastQualityFixFailureReason;
+    private string? _lastQualityFixFailureSource;
+
+    [Parameter]
+    public PageDto? Page { get; set; }
+
+    [Parameter]
+    public bool UseSceneContentPersistence { get; set; }
+
+    [Parameter]
+    public Guid? SceneProjectId { get; set; }
+
+    [Parameter]
+    public Guid? SceneNodeId { get; set; }
+
+    [Parameter]
+    public EventCallback<PageDto> OnPageSaved { get; set; }
+
+    [Parameter]
+    public EventCallback<EditorFormattingState> FormattingChanged { get; set; }
+
+    [Parameter]
+    public EventCallback<SectionEditor.EditorSelectionRange> SelectionChanged { get; set; }
+
+    [Parameter]
+    public EventCallback<SectionEditor.EditorContextMenuRequest> ContextMenuRequested { get; set; }
+
+    [Parameter]
+    public EventCallback<SectionEditor.EditorLinkContextMenuRequest> LinkContextMenuRequested { get; set; }
+
+    [Parameter]
+    public EventCallback LinkShortcutRequested { get; set; }
+
+    [Parameter]
+    public EventCallback<SectionEditor.EditorSelectionBubble> SelectionBubbleChanged { get; set; }
+
+    private async Task OnLinkContextMenuRequested(SectionEditor.EditorLinkContextMenuRequest request)
+    {
+        if (LinkContextMenuRequested.HasDelegate)
+        {
+            await LinkContextMenuRequested.InvokeAsync(request);
+        }
+    }
+
+    private async Task OnLinkShortcutRequested()
+    {
+        if (LinkShortcutRequested.HasDelegate)
+        {
+            await LinkShortcutRequested.InvokeAsync();
+        }
+    }
+
+    [Parameter]
+    public PageBreakOptions PageBreaks { get; set; } = new();
+
+    [Parameter]
+    public EventCallback<int> PageCountChanged { get; set; }
+
+    [Parameter]
+    public bool HeadingNumberingEnabled { get; set; } = true;
+
+    [Parameter]
+    public string HeadingNumberingScope { get; set; } = "document";
+
+    [Parameter]
+    public IReadOnlyList<int>? HeadingNumberingPrefix { get; set; }
+
+    [Parameter]
+    public string HeadingNumberingTraceId { get; set; } = string.Empty;
+
+    [Parameter]
+    public string? SearchHighlightQuery { get; set; }
+
+    [Parameter]
+    public IReadOnlyList<PageAnnotationDto>? Annotations { get; set; }
+
+    [Parameter]
+    public EventCallback<Guid> AnnotationClicked { get; set; }
+
+    [Parameter]
+    public IReadOnlyList<PageQualityIssueDto>? QualityIssues { get; set; }
+
+    [Parameter]
+    public bool QualityHighlightsEnabled { get; set; }
+
+    [Parameter]
+    public string? ActiveQualityIssueKey { get; set; }
+
+    [Parameter]
+    public string? VersionStatusMessage { get; set; }
+
+    [Parameter]
+    public bool ShowStatusBar { get; set; } = true;
+
+    [Parameter]
+    public EventCallback<EditorStatusSnapshot> StatusChanged { get; set; }
+
+    private bool _lastHeadingNumberingEnabled = true;
+    private string _lastHeadingNumberingScope = "document";
+    private IReadOnlyList<int>? _lastHeadingNumberingPrefix;
+    private string _lastHeadingTraceId = string.Empty;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Page is null)
+        {
+            return;
+        }
+
+        if (_currentPage?.Id != Page.Id)
+        {
+            _currentPage = Page;
+            _isLoadingPage = true;
+            _hasUserEditedSinceLoad = false;
+            _content = Page.Content ?? string.Empty;
+            _isDirty = false;
+            _saveState = SaveState.Idle;
+            _wordCount = CountWords(_content);
+            _lastLoadedHash = ComputeShortHash(_content);
+            _pendingSetContent = true;
+            await DebugLogAsync("PAGE_FETCH_SUCCESS", new
+            {
+                traceId = HeadingNumberingTraceId,
+                pageId = Page.Id,
+                fingerprint = BuildFingerprint(_content)
+            });
+            if (_editorRef is not null)
+            {
+                await ApplyContentToEditorAsync("pageChange");
+            }
+            SchedulePageBreakUpdate();
+            _isLoadingPage = false;
+            await NotifyStatusChangedAsync();
+        }
+
+        if (_lastHeadingNumberingEnabled != HeadingNumberingEnabled)
+        {
+            _lastHeadingNumberingEnabled = HeadingNumberingEnabled;
+            await SetHeadingNumberingEnabledAsync(HeadingNumberingEnabled);
+            await SetHeadingNumberingContextAsync();
+        }
+
+        if (!string.Equals(_lastHeadingNumberingScope, HeadingNumberingScope, StringComparison.OrdinalIgnoreCase))
+        {
+            _lastHeadingNumberingScope = HeadingNumberingScope;
+            await SetHeadingNumberingContextAsync();
+        }
+
+        if (!ReferenceEquals(_lastHeadingNumberingPrefix, HeadingNumberingPrefix))
+        {
+            _lastHeadingNumberingPrefix = HeadingNumberingPrefix;
+            await SetHeadingNumberingPrefixAsync(HeadingNumberingPrefix);
+            await SetHeadingNumberingContextAsync();
+        }
+
+        if (!string.Equals(_lastHeadingTraceId, HeadingNumberingTraceId, StringComparison.Ordinal))
+        {
+            _lastHeadingTraceId = HeadingNumberingTraceId;
+            await SetHeadingNumberingContextAsync();
+        }
+
+        if (!string.Equals(_lastSearchHighlightQuery, SearchHighlightQuery, StringComparison.Ordinal))
+        {
+            _lastSearchHighlightQuery = SearchHighlightQuery;
+            await ApplySearchHighlightAsync(SearchHighlightQuery);
+        }
+
+        string desiredPageBreakModeKey = BuildPageBreakModeKey(PageBreaks);
+        if (!string.Equals(_lastAppliedPageBreakModeKey, desiredPageBreakModeKey, StringComparison.Ordinal))
+        {
+            SchedulePageBreakUpdate();
+        }
+
+        await ApplyAnnotationsAsync();
+        await ApplyQualityIssuesAsync();
+        await NotifyStatusChangedAsync();
+    }
+
+    protected override Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _dotNetRef = DotNetObjectReference.Create(this);
+            if (_editorInstance is not null)
+            {
+                _ = AttachAnnotationClicksAsync();
+            }
+        }
+
+        if (_pendingSetContent && _editorRef is not null)
+        {
+            _ = ApplyContentToEditorAsync("afterRender");
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private Task OnEditorReady(IJSObjectReference editor)
+    {
+        _editorInstance = editor;
+        _lastAnnotationsFingerprint = null;
+        _lastQualityIssuesFingerprint = null;
+        _ = UpdatePageBreaksAsync();
+        _ = SetHeadingNumberingEnabledAsync(HeadingNumberingEnabled);
+        _ = SetHeadingNumberingPrefixAsync(HeadingNumberingPrefix);
+        _ = SetHeadingNumberingContextAsync();
+        _ = ForceHeadingNumberingRebuildAsync("editorReady");
+        _ = ApplySearchHighlightAsync(_pendingSearchHighlightQuery ?? SearchHighlightQuery);
+        _ = ApplyAiDecorationsAsync();
+        _ = ApplyAnnotationsAsync();
+        _ = ApplyQualityIssuesAsync();
+        _ = AttachAnnotationClicksAsync();
+        if (_pendingSetContent && _editorRef is not null)
+        {
+            _ = ApplyContentToEditorAsync("editorReady");
+        }
+        return Task.CompletedTask;
+    }
+
+    private async Task ApplyContentToEditorAsync(string reason)
+    {
+        if (_editorRef is null || _currentPage is null)
+        {
+            return;
+        }
+
+        _pendingSetContent = false;
+        _isLoadingPage = true;
+        await SetHeadingNumberingTraceIdAsync();
+        await _editorRef.SetContentAsync(_content);
+        await DebugLogAsync("SET_CONTENT_DONE", new
+        {
+            traceId = HeadingNumberingTraceId,
+            pageId = _currentPage.Id,
+            reason,
+            fingerprint = BuildFingerprint(_content)
+        });
+        await SetHeadingNumberingContextAsync();
+        await ForceHeadingNumberingRebuildAsync("afterSetContent");
+        await ApplySearchHighlightAsync(_pendingSearchHighlightQuery ?? SearchHighlightQuery);
+        _isLoadingPage = false;
+    }
+
+    private async Task OnContentChanged(string html)
+    {
+        _content = html ?? string.Empty;
+        if (_isLoadingPage)
+        {
+            _wordCount = CountWords(_content);
+            await DebugLogAsync("CONTENT_CHANGE_IGNORED_LOADING", new
+            {
+                traceId = HeadingNumberingTraceId,
+                pageId = _currentPage?.Id,
+                fingerprint = BuildFingerprint(_content)
+            });
+            return;
+        }
+
+        _isDirty = true;
+        _hasUserEditedSinceLoad = true;
+        _wordCount = CountWords(_content);
+        if (_searchHighlightActive)
+        {
+            await ClearSearchHighlightAsync();
+        }
+        ScheduleAutosave();
+        await NotifyStatusChangedAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task ApplySearchHighlightAsync(string? query)
+    {
+        string normalized = query?.Trim() ?? string.Empty;
+        if (_editorInstance is null)
+        {
+            _pendingSearchHighlightQuery = normalized;
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            await ClearSearchHighlightAsync();
+            return;
+        }
+
+        _pendingSearchHighlightQuery = null;
+        _searchHighlightActive = true;
+        await InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync("tiptapEditor.setSearchHighlights", _editorInstance, normalized));
+    }
+
+    private async Task ClearSearchHighlightAsync()
+    {
+        if (_editorInstance is null)
+        {
+            _searchHighlightActive = false;
+            _pendingSearchHighlightQuery = null;
+            return;
+        }
+
+        _searchHighlightActive = false;
+        _pendingSearchHighlightQuery = null;
+        await InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync("tiptapEditor.clearSearchHighlights", _editorInstance));
+    }
+
+    private async Task ApplyAiDecorationsAsync()
+    {
+        if (_editorInstance is null || _pendingAiDecorations is null)
+        {
+            return;
+        }
+
+        await InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync("tiptapEditor.setAiDecorations", _editorInstance, _pendingAiDecorations));
+    }
+
+    private async Task ApplyAnnotationsAsync()
+    {
+        if (_editorInstance is null)
+        {
+            return;
+        }
+
+        string fingerprint = BuildAnnotationsFingerprint(Annotations);
+        if (string.Equals(fingerprint, _lastAnnotationsFingerprint, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _lastAnnotationsFingerprint = fingerprint;
+
+        if (Annotations is null || Annotations.Count == 0)
+        {
+            await InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync("tiptapEditor.clearAnnotations", _editorInstance));
+            return;
+        }
+
+        var payload = Annotations.Select(annotation => new
+        {
+            id = annotation.Id.ToString(),
+            from = annotation.AnchorFrom,
+            to = annotation.AnchorTo,
+            kind = annotation.Kind,
+            status = annotation.Status
+        }).ToList();
+
+        await InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync("tiptapEditor.setAnnotations", _editorInstance, payload));
+    }
+
+    private async Task ApplyQualityIssuesAsync()
+    {
+        if (_editorInstance is null)
+        {
+            return;
+        }
+
+        if (!QualityHighlightsEnabled)
+        {
+            if (!string.Equals(_lastQualityIssuesFingerprint, "__disabled__", StringComparison.Ordinal))
+            {
+                await InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync("tiptapEditor.clearQualityIssues", _editorInstance));
+            }
+
+            _lastQualityIssuesFingerprint = "__disabled__";
+            return;
+        }
+
+        string fingerprint = BuildQualityIssuesFingerprint(QualityIssues);
+        if (!string.Equals(fingerprint, _lastQualityIssuesFingerprint, StringComparison.Ordinal))
+        {
+            _lastQualityIssuesFingerprint = fingerprint;
+
+            if (QualityIssues is null || QualityIssues.Count == 0)
+            {
+                await InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync("tiptapEditor.clearQualityIssues", _editorInstance));
+            }
+            else
+            {
+                var payload = QualityIssues.Select(issue => new
+                {
+                    issueKey = issue.IssueKey,
+                    id = issue.IssueKey,
+                    from = issue.StartOffset,
+                    to = issue.EndOffset,
+                    kind = NormalizeQualityIssueKind(issue.Kind),
+                    severity = NormalizeQualityIssueSeverity(issue.Severity),
+                    anchorText = issue.AnchorText,
+                    ruleId = issue.RuleId
+                }).ToList();
+
+                await InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync("tiptapEditor.setQualityIssues", _editorInstance, payload));
+            }
+        }
+
+        await InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync(
+            "tiptapEditor.setQualityIssuesActive",
+            _editorInstance,
+            string.IsNullOrWhiteSpace(ActiveQualityIssueKey) ? null : ActiveQualityIssueKey));
+    }
+
+    private static string NormalizeQualityIssueSeverity(string? severity)
+    {
+        string normalized = (severity ?? "info").Trim().ToLowerInvariant();
+        if (normalized is "high" or "critical" or "error")
+        {
+            return "severity-high";
+        }
+
+        if (normalized is "warning" or "warn" or "medium")
+        {
+            return "severity-warning";
+        }
+
+        return "severity-info";
+    }
+
+    private static string NormalizeQualityIssueKind(string? kind)
+    {
+        string raw = string.IsNullOrWhiteSpace(kind) ? "general" : kind.Trim().ToLowerInvariant();
+        if (raw.Contains("passive", StringComparison.Ordinal))
+        {
+            return "passive";
+        }
+
+        if (raw.Contains("repeat", StringComparison.Ordinal) || raw.Contains("duplicate", StringComparison.Ordinal))
+        {
+            return "repeated";
+        }
+
+        if (raw.Contains("clarity", StringComparison.Ordinal))
+        {
+            return "clarity";
+        }
+
+        if (raw.Contains("consisten", StringComparison.Ordinal))
+        {
+            return "consistency";
+        }
+
+        return Regex.Replace(raw, "[^a-z0-9]+", "-").Trim('-');
+    }
+
+    private async Task AttachAnnotationClicksAsync()
+    {
+        if (_editorInstance is null || _dotNetRef is null)
+        {
+            return;
+        }
+
+        await JSRuntime.InvokeVoidAsync("tiptapEditor.attachAnnotationClicks", _editorInstance, _dotNetRef);
+    }
+
+    [JSInvokable]
+    public async Task OnAnnotationClicked(string id)
+    {
+        if (!Guid.TryParse(id, out Guid annotationId))
+        {
+            return;
+        }
+
+        if (AnnotationClicked.HasDelegate)
+        {
+            await AnnotationClicked.InvokeAsync(annotationId);
+        }
+    }
+
+    private void ScheduleAutosave()
+    {
+        _autosaveCts?.Cancel();
+        _autosaveCts?.Dispose();
+        _autosaveCts = new CancellationTokenSource();
+        _pendingAutosavePageId = _currentPage?.Id;
+        _ = DebouncedAutosaveAsync(_autosaveCts);
+    }
+
+    private async Task DebouncedAutosaveAsync(CancellationTokenSource cts)
+    {
+        try
+        {
+            await Task.Delay(AutosaveDebounceMs, cts.Token);
+        }
+        catch (TaskCanceledException)
+        {
+            return;
+        }
+
+        if (cts.IsCancellationRequested)
+        {
+            return;
+        }
+
+        if (_isLoadingPage)
+        {
+            await DebugLogAsync("AUTOSAVE_SKIPPED", new { traceId = HeadingNumberingTraceId, reason = "loading" });
+            return;
+        }
+
+        if (_pendingAutosavePageId != _currentPage?.Id)
+        {
+            await DebugLogAsync("AUTOSAVE_SKIPPED", new { traceId = HeadingNumberingTraceId, reason = "pageChanged" });
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_content)
+            && !string.Equals(_lastLoadedHash, "0", StringComparison.Ordinal)
+            && !_hasUserEditedSinceLoad)
+        {
+            await DebugLogAsync("AUTOSAVE_SKIPPED", new { traceId = HeadingNumberingTraceId, reason = "emptyGuard" });
+            return;
+        }
+
+        await SaveAsync();
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_currentPage is null)
+        {
+            return;
+        }
+
+        _saveState = SaveState.Saving;
+        await NotifyStatusChangedAsync();
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            await DebugLogAsync("AUTOSAVE_START", new
+            {
+                traceId = HeadingNumberingTraceId,
+                pageId = _currentPage.Id,
+                fingerprint = BuildFingerprint(_content)
+            });
+
+            HttpResponseMessage response;
+            if (UseSceneContentPersistence
+                && SceneProjectId.HasValue
+                && SceneProjectId.Value != Guid.Empty
+                && SceneNodeId.HasValue
+                && SceneNodeId.Value != Guid.Empty)
+            {
+                SceneContentUpdateRequest request = new(_content, null);
+                response = await Http.PutAsJsonAsync(
+                    $"api/projects/{SceneProjectId.Value}/scenes/{SceneNodeId.Value}/content",
+                    request);
+            }
+            else
+            {
+                PageUpdateRequest request = new(null, _content);
+                using HttpRequestMessage message = new(
+                    HttpMethod.Put,
+                    $"api/pages/{_currentPage.Id}")
+                {
+                    Content = JsonContent.Create(request)
+                };
+                if (!string.IsNullOrWhiteSpace(HeadingNumberingTraceId))
+                {
+                    message.Headers.Add("X-Trace-Id", HeadingNumberingTraceId);
+                }
+
+                response = await Http.SendAsync(message);
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _saveState = SaveState.Failed;
+                await InvokeAsync(StateHasChanged);
+                await DebugLogAsync("AUTOSAVE_FAIL", new
+                {
+                    traceId = HeadingNumberingTraceId,
+                    pageId = _currentPage.Id,
+                    status = (int)response.StatusCode
+                });
+                return;
+            }
+
+            PageDto updated;
+            if (UseSceneContentPersistence)
+            {
+                SceneContentDto? sceneUpdated = await response.Content.ReadFromJsonAsync<SceneContentDto>();
+                string updatedContent = sceneUpdated?.ContentJson ?? _content;
+                DateTimeOffset updatedAt = sceneUpdated?.UpdatedAtUtc ?? DateTimeOffset.UtcNow;
+                updated = _currentPage with { Content = updatedContent, UpdatedAt = updatedAt };
+            }
+            else
+            {
+                PageDto? pageUpdated = await response.Content.ReadFromJsonAsync<PageDto>();
+                if (pageUpdated is null)
+                {
+                    _saveState = SaveState.Failed;
+                    await InvokeAsync(StateHasChanged);
+                    await DebugLogAsync("AUTOSAVE_FAIL", new
+                    {
+                        traceId = HeadingNumberingTraceId,
+                        pageId = _currentPage.Id,
+                        status = "null"
+                    });
+                    return;
+                }
+
+                updated = pageUpdated;
+            }
+
+            _currentPage = updated;
+            _isDirty = false;
+            _saveState = SaveState.Idle;
+            _lastLoadedHash = ComputeShortHash(updated.Content ?? string.Empty);
+            await OnPageSaved.InvokeAsync(updated);
+            await NotifyStatusChangedAsync();
+            await DebugLogAsync("AUTOSAVE_SUCCESS", new
+            {
+                traceId = HeadingNumberingTraceId,
+                pageId = _currentPage.Id,
+                fingerprint = BuildFingerprint(updated.Content ?? string.Empty)
+            });
+            await SaveDebugBackupAsync(updated.Id, updated.Content ?? string.Empty);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Page save failed.");
+            _saveState = SaveState.Failed;
+            await NotifyStatusChangedAsync();
+            await DebugLogAsync("AUTOSAVE_FAIL", new
+            {
+                traceId = HeadingNumberingTraceId,
+                pageId = _currentPage.Id,
+                error = ex.Message
+            });
+        }
+        finally
+        {
+            await NotifyStatusChangedAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private string GetSaveStatusLabel()
+    {
+        return _saveState switch
+        {
+            SaveState.Saving => "Saving...",
+            SaveState.Failed => "Autosave failed",
+            _ when _isDirty => "Unsaved changes",
+            _ => "All changes saved"
+        };
+    }
+
+    private string GetSaveStatusClass()
+    {
+        return _saveState switch
+        {
+            SaveState.Saving => "saving-indicator",
+            SaveState.Failed => "dirty-indicator",
+            _ when _isDirty => "dirty-indicator",
+            _ => "clean-indicator"
+        };
+    }
+
+    private static int CountWords(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html))
+        {
+            return 0;
+        }
+
+        string decoded = PlainTextMapper.ToPlainText(html);
+        MatchCollection matches = Regex.Matches(decoded, @"\b[\p{L}\p{N}']+\b");
+        return matches.Count;
+    }
+
+    public void Dispose()
+    {
+        _autosaveCts?.Cancel();
+        _autosaveCts?.Dispose();
+        _autosaveCts = null;
+
+        _pageBreakCts?.Cancel();
+        _pageBreakCts?.Dispose();
+        _pageBreakCts = null;
+
+        if (_editorInstance is not null)
+        {
+            _ = InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync("tiptapEditor.detachAnnotationClicks", _editorInstance));
+        }
+
+        _dotNetRef?.Dispose();
+        _dotNetRef = null;
+
+        if (_commandsModule is not null)
+        {
+            try
+            {
+                _ = _commandsModule.DisposeAsync();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+            finally
+            {
+                _commandsModule = null;
+            }
+        }
+    }
+
+    private enum SaveState
+    {
+        Idle,
+        Saving,
+        Failed
+    }
+
+    public sealed record PageBreakOptions(
+        int PageHeightPx = 980,
+        bool ShowHorizontalRule = true,
+        int GutterOffsetPx = 28,
+        int PageGapPx = 32,
+        string LayoutMode = "simple",
+        bool Debug = false);
+
+    public Task SaveNowAsync()
+    {
+        if (_isDirty)
+        {
+            return SaveAsync();
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public async Task ForceSaveIfDifferentAsync(string reason)
+    {
+        if (_currentPage is null || _isLoadingPage)
+        {
+            return;
+        }
+
+        string html = await GetContentAsync();
+        string hash = ComputeShortHash(html);
+        if (string.Equals(hash, _lastLoadedHash, StringComparison.Ordinal))
+        {
+            await DebugLogAsync("AUTOSAVE_SKIPPED", new
+            {
+                traceId = HeadingNumberingTraceId,
+                pageId = _currentPage.Id,
+                reason = $"noChange:{reason}"
+            });
+            return;
+        }
+
+        _content = html ?? string.Empty;
+        _hasUserEditedSinceLoad = true;
+        _isDirty = true;
+        await DebugLogAsync("AUTOSAVE_START", new
+        {
+            traceId = HeadingNumberingTraceId,
+            pageId = _currentPage.Id,
+            reason = $"force:{reason}",
+            fingerprint = BuildFingerprint(_content)
+        });
+        await SaveAsync();
+    }
+
+    public string GetContent()
+    {
+        return _content;
+    }
+
+    public async Task<string> GetContentAsync()
+    {
+        if (_editorRef is null)
+        {
+            return _content;
+        }
+
+        string html = await _editorRef.GetContentAsync();
+        _content = html ?? string.Empty;
+        return _content;
+    }
+
+    public async Task SetContentAsync(string html, bool markDirty = true)
+    {
+        string next = html ?? string.Empty;
+        _content = next;
+        _wordCount = CountWords(_content);
+        _isDirty = markDirty;
+        _saveState = SaveState.Idle;
+
+        if (_editorRef is not null)
+        {
+            await _editorRef.SetContentAsync(_content);
+            await SetHeadingNumberingContextAsync();
+            await ForceHeadingNumberingRebuildAsync("afterSetContent");
+        }
+
+        if (markDirty)
+        {
+            ScheduleAutosave();
+        }
+
+        await NotifyStatusChangedAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public Task ScrollToPageAsync(int pageIndex)
+    {
+        if (_editorInstance is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        return JSRuntime.InvokeVoidAsync(
+            "tiptapEditor.scrollToPage",
+            _editorInstance,
+            pageIndex,
+            PageBreaks).AsTask();
+    }
+
+    public Task RefreshPageBreaksAsync()
+    {
+        return UpdatePageBreaksAsync(force: true);
+    }
+
+    public Task SchedulePageBreakRefreshAsync()
+    {
+        SchedulePageBreakUpdate();
+        return Task.CompletedTask;
+    }
+
+    private void SchedulePageBreakUpdate()
+    {
+        _pageBreakCts?.Cancel();
+        _pageBreakCts?.Dispose();
+        _pageBreakCts = new CancellationTokenSource();
+        _ = DebouncedPageBreakUpdateAsync(_pageBreakCts);
+    }
+
+    private async Task DebouncedPageBreakUpdateAsync(CancellationTokenSource cts)
+    {
+        try
+        {
+            await Task.Delay(300, cts.Token);
+        }
+        catch (TaskCanceledException)
+        {
+            return;
+        }
+
+        if (cts.IsCancellationRequested)
+        {
+            return;
+        }
+
+        await UpdatePageBreaksAsync();
+    }
+
+    private async Task UpdatePageBreaksAsync(bool force = false)
+    {
+        if (_editorInstance is null)
+        {
+            return;
+        }
+
+        string requestedModeKey = BuildPageBreakModeKey(PageBreaks);
+        bool shouldApplyMode = force || !string.Equals(_lastAppliedPageBreakModeKey, requestedModeKey, StringComparison.Ordinal);
+        int count;
+        if (shouldApplyMode)
+        {
+            count = await JSRuntime.InvokeAsync<int>(
+                "tiptapEditor.setPageBreaksEnabled",
+                _editorInstance,
+                true,
+                PageBreaks);
+            _lastAppliedPageBreakModeKey = requestedModeKey;
+        }
+        else
+        {
+            count = _pageCount;
+        }
+
+        if (!_pageBreakObserverAttached && _dotNetRef is not null)
+        {
+            await JSRuntime.InvokeVoidAsync(
+                "tiptapEditor.registerPageBreakObserver",
+                _editorInstance,
+                _dotNetRef,
+                PageBreaks);
+            _pageBreakObserverAttached = true;
+        }
+
+        if (PageCountChanged.HasDelegate)
+        {
+            await PageCountChanged.InvokeAsync(count);
+        }
+    }
+
+    private static string BuildPageBreakModeKey(PageBreakOptions options)
+    {
+        return string.Join("|",
+            options.PageHeightPx.ToString(CultureInfo.InvariantCulture),
+            options.ShowHorizontalRule ? "1" : "0",
+            options.GutterOffsetPx.ToString(CultureInfo.InvariantCulture),
+            options.PageGapPx.ToString(CultureInfo.InvariantCulture),
+            options.LayoutMode ?? "simple",
+            options.Debug ? "1" : "0");
+    }
+
+    public Task SetHeadingNumberingEnabledAsync(bool enabled)
+    {
+        if (_editorInstance is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        return InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync(
+            "tiptapEditor.setHeadingNumberingEnabled",
+            _editorInstance,
+            enabled));
+    }
+
+    public Task SetHeadingNumberingPrefixAsync(IReadOnlyList<int>? counters)
+    {
+        if (_editorInstance is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        int[] payload = counters?.ToArray() ?? Array.Empty<int>();
+        return InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync(
+            "tiptapEditor.setHeadingNumberingPrefix",
+            _editorInstance,
+            payload));
+    }
+
+    public Task SetHeadingNumberingContextAsync()
+    {
+        if (_editorInstance is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        int[] payload = HeadingNumberingPrefix?.ToArray() ?? Array.Empty<int>();
+        return InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync(
+            "tiptapEditor.setHeadingNumberingContext",
+            _editorInstance,
+            new
+            {
+                enabled = HeadingNumberingEnabled,
+                traceId = HeadingNumberingTraceId,
+                scope = HeadingNumberingScope,
+                pageId = Page?.Id,
+                prefixCounters = payload,
+                scheme = "v1"
+            }));
+    }
+
+    public Task ForceHeadingNumberingRebuildAsync(string reason)
+    {
+        if (_editorInstance is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        return InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync(
+            "tiptapEditor.forceHeadingNumberingRebuild",
+            _editorInstance,
+            HeadingNumberingTraceId,
+            reason));
+    }
+
+    private Task DebugLogAsync(string stage, object payload)
+    {
+        return InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync("tiptapEditor.debugLog", stage, payload));
+    }
+
+    private Task SetHeadingNumberingTraceIdAsync()
+    {
+        if (_editorInstance is null || string.IsNullOrWhiteSpace(HeadingNumberingTraceId))
+        {
+            return Task.CompletedTask;
+        }
+
+        return InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync(
+            "tiptapEditor.setHeadingNumberingTraceId",
+            _editorInstance,
+            HeadingNumberingTraceId));
+    }
+
+    private async Task SaveDebugBackupAsync(Guid pageId, string content)
+    {
+        await InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync(
+            "tiptapEditor.saveDebugPageBackup",
+            pageId.ToString(),
+            content,
+            ComputeShortHash(content)));
+    }
+
+    private static string ComputeShortHash(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return "0";
+        }
+
+        using var sha = System.Security.Cryptography.SHA256.Create();
+        byte[] bytes = System.Text.Encoding.UTF8.GetBytes(value);
+        byte[] hash = sha.ComputeHash(bytes);
+        return Convert.ToHexString(hash.AsSpan(0, 4));
+    }
+
+    private static object BuildFingerprint(string? content)
+    {
+        string value = content ?? string.Empty;
+        string plain = PlainTextMapper.ToPlainText(value);
+        return new
+        {
+            jsonLength = value.Length,
+            textLength = plain.Length,
+            hash = ComputeShortHash(value)
+        };
+    }
+
+    private static string BuildAnnotationsFingerprint(IReadOnlyList<PageAnnotationDto>? annotations)
+    {
+        if (annotations is null || annotations.Count == 0)
+        {
+            return "none";
+        }
+
+        return string.Join("|", annotations
+            .OrderBy(item => item.Id)
+            .Select(item => $"{item.Id}:{item.AnchorFrom}:{item.AnchorTo}:{item.Kind}:{item.Status}"));
+    }
+
+    private static string BuildQualityIssuesFingerprint(IReadOnlyList<PageQualityIssueDto>? issues)
+    {
+        if (issues is null || issues.Count == 0)
+        {
+            return "none";
+        }
+
+        return string.Join("|", issues
+            .OrderBy(item => item.IssueKey)
+            .Select(item => $"{item.IssueKey}:{item.StartOffset}:{item.EndOffset}:{item.Kind}:{item.Severity}:{item.Fix?.Kind}:{item.Fix?.From}:{item.Fix?.To}:{item.Fix?.Text}"));
+    }
+
+    public async Task<IReadOnlyList<PageAnnotationAnchorUpdateRequest>> GetAnnotationAnchorsAsync()
+    {
+        if (_editorInstance is null)
+        {
+            return Array.Empty<PageAnnotationAnchorUpdateRequest>();
+        }
+
+        List<AnnotationAnchorPayload>? payload = await JSRuntime.InvokeAsync<List<AnnotationAnchorPayload>>(
+            "tiptapEditor.getAnnotations",
+            _editorInstance);
+
+        if (payload is null || payload.Count == 0)
+        {
+            return Array.Empty<PageAnnotationAnchorUpdateRequest>();
+        }
+
+        List<PageAnnotationAnchorUpdateRequest> result = new(payload.Count);
+        foreach (AnnotationAnchorPayload item in payload)
+        {
+            if (!Guid.TryParse(item.Id, out Guid id))
+            {
+                continue;
+            }
+
+            result.Add(new PageAnnotationAnchorUpdateRequest(
+                id,
+                item.From,
+                item.To,
+                item.Text));
+        }
+
+        return result;
+    }
+
+    public async Task<SelectionDocRange?> GetSelectionDocRangeAsync()
+    {
+        if (_editorInstance is null)
+        {
+            return null;
+        }
+
+        return await JSRuntime.InvokeAsync<SelectionDocRange?>("tiptapEditor.getSelectionDocRange", _editorInstance);
+    }
+
+    public async Task<string?> GetSelectionTextAsync()
+    {
+        if (_editorInstance is null)
+        {
+            return null;
+        }
+
+        return await JSRuntime.InvokeAsync<string?>("tiptapEditor.getSelectionText", _editorInstance);
+    }
+
+    public async Task<string?> GetPlainTextAsync()
+    {
+        if (_editorInstance is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await JSRuntime.InvokeAsync<string?>("tiptapEditor.getPlainText", _editorInstance);
+        }
+        catch (JSException)
+        {
+            return null;
+        }
+    }
+
+    public async Task SetAiDecorationsAsync(IReadOnlyList<AiDecorationRange>? ranges)
+    {
+        _pendingAiDecorations = ranges ?? Array.Empty<AiDecorationRange>();
+        if (_editorInstance is null)
+        {
+            return;
+        }
+
+        await InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync("tiptapEditor.setAiDecorations", _editorInstance, _pendingAiDecorations));
+    }
+
+    public Task ClearAiDecorationsAsync()
+    {
+        return SetAiDecorationsAsync(Array.Empty<AiDecorationRange>());
+    }
+
+    public async Task<bool> HighlightQualityIssueAsync(string issueKey, int from, int to, string? anchorText = null)
+    {
+        if (_editorInstance is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            return await JSRuntime.InvokeAsync<bool>(
+                "tiptapEditor.highlightQualityIssue",
+                _editorInstance,
+                from,
+                to,
+                issueKey,
+                anchorText);
+        }
+        catch (JSException)
+        {
+            return false;
+        }
+    }
+
+    public Task ClearQualityIssueHighlightAsync(string issueId)
+    {
+        if (_editorInstance is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        return InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync(
+            "tiptapEditor.clearQualityIssueHighlight",
+            _editorInstance,
+            issueId));
+    }
+
+    public Task ClearAllQualityIssueHighlightsAsync()
+    {
+        if (_editorInstance is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        return InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync(
+            "tiptapEditor.clearQualityIssues",
+            _editorInstance));
+    }
+
+    public Task SetActiveQualityIssueAsync(string? issueKey)
+    {
+        if (_editorInstance is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        return InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync(
+            "tiptapEditor.setQualityIssuesActive",
+            _editorInstance,
+            string.IsNullOrWhiteSpace(issueKey) ? null : issueKey));
+    }
+
+    public async Task<bool> ScrollToQualityIssueAsync(string issueKey)
+    {
+        if (_editorInstance is null || string.IsNullOrWhiteSpace(issueKey))
+        {
+            return false;
+        }
+
+        try
+        {
+            return await JSRuntime.InvokeAsync<bool>(
+                "tiptapEditor.scrollToQualityIssue",
+                _editorInstance,
+                issueKey);
+        }
+        catch (JSException)
+        {
+            return false;
+        }
+    }
+
+    public async Task<bool> ScrollToAnnotationAsync(string annotationId, int from, int to)
+    {
+        if (_editorInstance is null || string.IsNullOrWhiteSpace(annotationId))
+        {
+            return false;
+        }
+
+        try
+        {
+            return await JSRuntime.InvokeAsync<bool>(
+                "tiptapEditor.scrollToAnnotation",
+                _editorInstance,
+                new
+                {
+                    id = annotationId,
+                    from,
+                    to
+                });
+        }
+        catch (JSException)
+        {
+            return false;
+        }
+    }
+
+    public async Task<bool> ApplyQualityIssueFixAsync(QualityIssueFixDto fix, string? issueAnchorText = null, string? issueKey = null)
+    {
+        if (_editorInstance is null)
+        {
+            return false;
+        }
+
+        string? anchorText = string.IsNullOrWhiteSpace(fix.AnchorText) ? issueAnchorText : fix.AnchorText;
+        string? resolvedIssueKey = string.IsNullOrWhiteSpace(fix.IssueKey) ? issueKey : fix.IssueKey;
+        string effectiveKind = string.Equals(fix.Kind, "rewrite", StringComparison.OrdinalIgnoreCase)
+            ? "replace"
+            : fix.Kind;
+        _lastQualityFixFailureReason = null;
+        _lastQualityFixFailureSource = null;
+
+        try
+        {
+            async Task<QualityIssueFixApplyResult?> ApplyOnceAsync(object payload)
+            {
+                return await JSRuntime.InvokeAsync<QualityIssueFixApplyResult>(
+                    "tiptapEditor.applyQualityIssueFixDetailed",
+                    _editorInstance,
+                    payload);
+            }
+
+            object basePayload = new
+            {
+                kind = effectiveKind,
+                from = fix.From,
+                to = fix.To,
+                text = fix.Text,
+                anchorText,
+                issueKey = resolvedIssueKey,
+                docFrom = fix.DocFrom,
+                docTo = fix.DocTo,
+                expectedText = fix.ExpectedText,
+                beforeAnchor = fix.BeforeAnchor,
+                afterAnchor = fix.AfterAnchor,
+                needleText = fix.NeedleText
+            };
+
+            QualityIssueFixApplyResult? result = await ApplyOnceAsync(basePayload);
+
+            if (result is null)
+            {
+                Logger.LogWarning(
+                    "Quality fix interop returned null. IssueKey={IssueKey}, Kind={Kind}, From={From}, To={To}",
+                    resolvedIssueKey,
+                    fix.Kind,
+                    fix.From,
+                    fix.To);
+                return false;
+            }
+
+            bool shouldRetry = (!result.Applied || !result.Changed)
+                && (string.Equals(result.Reason, "doc_expected_text_mismatch", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(result.Reason, "could_not_resolve_range", StringComparison.OrdinalIgnoreCase));
+            if (shouldRetry)
+            {
+                Logger.LogWarning(
+                    "Quality fix apply retry requested. PageId={PageId}, IssueKey={IssueKey}, Reason={Reason}",
+                    Page?.Id,
+                    resolvedIssueKey,
+                    result.Reason);
+
+                QualityIssueRangeResolution? resolution = await ResolvePlainRangeAsync(fix.From, fix.To, anchorText);
+                object retryPayload = new
+                {
+                    kind = effectiveKind,
+                    from = fix.From,
+                    to = fix.To,
+                    text = fix.Text,
+                    anchorText,
+                    issueKey = resolvedIssueKey,
+                    docFrom = resolution?.DocFrom,
+                    docTo = resolution?.DocTo,
+                    expectedText = resolution?.ExpectedText ?? fix.ExpectedText,
+                    beforeAnchor = fix.BeforeAnchor,
+                    afterAnchor = fix.AfterAnchor,
+                    needleText = fix.NeedleText
+                };
+
+                QualityIssueFixApplyResult? retryResult = await ApplyOnceAsync(retryPayload);
+                if (retryResult is not null)
+                {
+                    result = retryResult;
+                }
+            }
+
+            if (!result.Applied || !result.Changed)
+            {
+                _lastQualityFixFailureReason = result.Reason;
+                _lastQualityFixFailureSource = result.Source;
+                Logger.LogWarning(
+                    "Quality fix apply failed/no-op. PageId={PageId}, IssueKey={IssueKey}, Kind={Kind}, From={From}, To={To}, Applied={Applied}, Changed={Changed}, Reason={Reason}, Source={Source}, DocFrom={DocFrom}, DocTo={DocTo}",
+                    Page?.Id,
+                    resolvedIssueKey,
+                    effectiveKind,
+                    fix.From,
+                    fix.To,
+                    result.Applied,
+                    result.Changed,
+                    result.Reason,
+                    result.Source,
+                    result.DocFrom,
+                    result.DocTo);
+            }
+            else
+            {
+                _lastQualityFixFailureReason = null;
+                _lastQualityFixFailureSource = null;
+                Logger.LogInformation(
+                    "Quality fix applied. PageId={PageId}, IssueKey={IssueKey}, Kind={Kind}, From={From}, To={To}, Source={Source}, DocFrom={DocFrom}, DocTo={DocTo}",
+                    Page?.Id,
+                    resolvedIssueKey,
+                    effectiveKind,
+                    fix.From,
+                    fix.To,
+                    result.Source,
+                    result.DocFrom,
+                    result.DocTo);
+            }
+
+            return result.Applied && result.Changed;
+        }
+        catch (JSException)
+        {
+            _lastQualityFixFailureReason = "js_exception";
+            _lastQualityFixFailureSource = null;
+            try
+            {
+                return await JSRuntime.InvokeAsync<bool>(
+                    "tiptapEditor.applyQualityIssueFix",
+                    _editorInstance,
+                    new
+                    {
+                        kind = effectiveKind,
+                        from = fix.From,
+                        to = fix.To,
+                        text = fix.Text,
+                        anchorText,
+                        issueKey = resolvedIssueKey
+                    });
+            }
+            catch (JSException)
+            {
+                _lastQualityFixFailureReason = "js_exception";
+                _lastQualityFixFailureSource = null;
+                return false;
+            }
+        }
+    }
+
+    public string? LastQualityFixFailureReason => _lastQualityFixFailureReason;
+    public string? LastQualityFixFailureSource => _lastQualityFixFailureSource;
+
+    public async Task<QualityIssueRangeResolution?> ResolvePlainRangeAsync(int from, int to, string? anchorText = null)
+    {
+        if (_editorInstance is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await JSRuntime.InvokeAsync<QualityIssueRangeResolution>(
+                "tiptapEditor.resolvePlainRangeDetailed",
+                _editorInstance,
+                new
+                {
+                    from,
+                    to,
+                    anchorText
+                });
+        }
+        catch (JSException)
+        {
+            return null;
+        }
+    }
+
+    private async Task InvokeJsSafeAsync(Func<ValueTask> action)
+    {
+        try
+        {
+            await action();
+        }
+        catch (JSDisconnectedException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (JSException ex) when (IsDisposedJsObjectException(ex))
+        {
+            _editorInstance = null;
+            _lastAnnotationsFingerprint = null;
+            _lastQualityIssuesFingerprint = null;
+            _searchHighlightActive = false;
+            _pendingSearchHighlightQuery = SearchHighlightQuery?.Trim() ?? string.Empty;
+        }
+    }
+
+    private static bool IsDisposedJsObjectException(JSException ex)
+    {
+        string? message = ex.Message;
+        return !string.IsNullOrWhiteSpace(message)
+            && message.Contains("does not exist", StringComparison.OrdinalIgnoreCase)
+            && message.Contains("disposed", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public async Task InvokeCommandAsync(string command, params object?[] extraArgs)
+    {
+        if (_editorInstance is null)
+        {
+            return;
+        }
+
+        await EnsureCommandsModuleAsync();
+        if (_commandsModule is null)
+        {
+            return;
+        }
+
+        object?[] args = new object?[1 + extraArgs.Length];
+        args[0] = _editorInstance;
+        for (int i = 0; i < extraArgs.Length; i++)
+        {
+            args[i + 1] = extraArgs[i];
+        }
+
+        try
+        {
+            await _commandsModule.InvokeVoidAsync(command, args);
+        }
+        catch (JSException ex) when (IsMissingCommandException(ex, command))
+        {
+            if (string.Equals(command, "replaceTextRange", StringComparison.Ordinal)
+                && extraArgs.Length >= 3
+                && extraArgs[2] is string fallbackText)
+            {
+                Logger.LogWarning(
+                    ex,
+                    "Editor command {Command} was unavailable in the loaded JS module. Falling back to replaceSelection.",
+                    command);
+                await _commandsModule.InvokeVoidAsync("replaceSelection", _editorInstance, fallbackText);
+            }
+            else
+            {
+                Logger.LogWarning(
+                    ex,
+                    "Editor command {Command} was unavailable in the loaded JS module.",
+                    command);
+                return;
+            }
+        }
+        catch (JSException ex)
+        {
+            Logger.LogWarning(ex, "Editor command {Command} failed.", command);
+            return;
+        }
+
+        if (!string.Equals(command, "focusEditor", StringComparison.Ordinal))
+        {
+            await _commandsModule.InvokeVoidAsync("focusEditor", _editorInstance);
+        }
+    }
+
+    private async Task EnsureCommandsModuleAsync()
+    {
+        if (_commandsModule is null)
+        {
+            _commandsModule = await JSRuntime.InvokeAsync<IJSObjectReference>(
+                "import",
+                $"{Navigation.BaseUri}js/tiptap-commands.js?v={CommandsModuleVersion}");
+        }
+    }
+
+    private static bool IsMissingCommandException(JSException exception, string command)
+    {
+        string message = exception.Message ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return false;
+        }
+
+        return message.Contains(command, StringComparison.OrdinalIgnoreCase)
+            && message.Contains("undefined", StringComparison.OrdinalIgnoreCase);
+    }
+
+    [JSInvokable]
+    public async Task OnPageBreakStatusChanged(int pageCount, int currentPage)
+    {
+        _pageCount = Math.Max(1, pageCount);
+        _currentPageIndex = Math.Clamp(currentPage, 1, _pageCount);
+
+        if (PageCountChanged.HasDelegate)
+        {
+            await PageCountChanged.InvokeAsync(_pageCount);
+        }
+
+        await NotifyStatusChangedAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public EditorStatusSnapshot CurrentStatus => new(
+        _wordCount,
+        _currentPageIndex,
+        _pageCount,
+        GetSaveStatusLabel(),
+        GetSaveStatusClass(),
+        VersionStatusMessage);
+
+    private async Task NotifyStatusChangedAsync()
+    {
+        EditorStatusSnapshot snapshot = CurrentStatus;
+        if (Equals(snapshot, _lastStatusSnapshot))
+        {
+            return;
+        }
+
+        _lastStatusSnapshot = snapshot;
+        if (StatusChanged.HasDelegate)
+        {
+            await StatusChanged.InvokeAsync(snapshot);
+        }
+    }
+
+    private sealed record AnnotationAnchorPayload
+    {
+        public string Id { get; init; } = string.Empty;
+        public int From { get; init; }
+        public int To { get; init; }
+        public string? Text { get; init; }
+    }
+
+    public sealed record SelectionDocRange(int From, int To);
+
+    public sealed record AiDecorationRange(int Start, int End, string? ClassName = null, bool IsActive = false);
+
+    public sealed record EditorStatusSnapshot(
+        int WordCount,
+        int CurrentPageIndex,
+        int PageCount,
+        string SaveStatusLabel,
+        string SaveStatusClass,
+        string? VersionStatusMessage)
+    {
+        public static EditorStatusSnapshot Empty { get; } = new(0, 1, 1, "All changes saved", "clean-indicator", null);
+    }
+
+    private sealed record QualityIssueFixApplyResult
+    {
+        public bool Applied { get; init; }
+        public bool Changed { get; init; }
+        public string? Reason { get; init; }
+        public string? Source { get; init; }
+        public int? DocFrom { get; init; }
+        public int? DocTo { get; init; }
+    }
+
+    public sealed record QualityIssueRangeResolution
+    {
+        public bool Resolved { get; init; }
+        public string? Reason { get; init; }
+        public string? Source { get; init; }
+        public int? From { get; init; }
+        public int? To { get; init; }
+        public int? DocFrom { get; init; }
+        public int? DocTo { get; init; }
+        public string? ExpectedText { get; init; }
+    }
+}

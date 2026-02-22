@@ -7,20 +7,34 @@ namespace WriterApp.Application.Documents
         string Title,
         DateTimeOffset CreatedAt,
         DateTimeOffset UpdatedAt,
-        int WordCount);
+        int WordCount,
+        bool IsArchived,
+        DateTimeOffset? ArchivedAt,
+        DateTimeOffset? DeletedAt,
+        Guid ProjectId = default,
+        string Kind = "manuscript");
 
     public sealed record DocumentDetailDto(
         Guid Id,
         string Title,
         DateTimeOffset CreatedAt,
-        DateTimeOffset UpdatedAt);
+        DateTimeOffset UpdatedAt,
+        string? LanguageCode,
+        Guid? TranslationGroupId,
+        bool IsArchived,
+        DateTimeOffset? ArchivedAt,
+        DateTimeOffset? DeletedAt,
+        Guid ProjectId = default,
+        string Kind = "manuscript");
 
     public sealed record DocumentCreateRequest(
         Guid? Id,
         string? Title,
         DateTimeOffset? CreatedAt,
         DateTimeOffset? UpdatedAt,
-        bool CreateDefaultStructure = true);
+        bool CreateDefaultStructure = true,
+        Guid? ProjectId = null,
+        string? Kind = null);
 
     public sealed record DocumentCreateResponse(
         DocumentDetailDto Document,
@@ -36,7 +50,9 @@ namespace WriterApp.Application.Documents
         string? NarrativePurpose,
         int OrderIndex,
         DateTimeOffset CreatedAt,
-        DateTimeOffset UpdatedAt);
+        DateTimeOffset UpdatedAt,
+        string? LanguageCode,
+        Guid? TranslationGroupId);
 
     public sealed record SectionCreateRequest(
         Guid? Id,
@@ -49,6 +65,9 @@ namespace WriterApp.Application.Documents
     public sealed record SectionUpdateRequest(
         string? Title,
         string? NarrativePurpose);
+
+    public sealed record SectionReorderRequest(
+        IReadOnlyList<Guid> OrderedSectionIds);
 
     public sealed record PageDto(
         Guid Id,

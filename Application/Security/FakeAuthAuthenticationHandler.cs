@@ -20,9 +20,8 @@ namespace WriterApp.Application.Security
             IOptionsMonitor<AuthenticationSchemeOptions> options,
             ILoggerFactory logger,
             UrlEncoder encoder,
-            ISystemClock clock,
             IConfiguration configuration)
-            : base(options, logger, encoder, clock)
+            : base(options, logger, encoder)
         {
             _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         }
@@ -31,6 +30,8 @@ namespace WriterApp.Application.Security
         {
             string oid = _configuration["DEV_AUTH_OID"] ?? DefaultOid;
             string name = _configuration["DEV_AUTH_NAME"] ?? "dev@local";
+            string email = _configuration["DEV_AUTH_EMAIL"]
+                ?? (name.Contains('@', StringComparison.Ordinal) ? name : $"{name}@local.test");
             bool isAdmin = string.Equals(
                 _configuration["DEV_AUTH_ADMIN"],
                 "true",
@@ -40,7 +41,10 @@ namespace WriterApp.Application.Security
             {
                 new Claim("oid", oid),
                 new Claim("http://schemas.microsoft.com/identity/claims/objectidentifier", oid),
-                new Claim(ClaimTypes.Name, name)
+                new Claim(ClaimTypes.NameIdentifier, oid),
+                new Claim(ClaimTypes.Name, name),
+                new Claim(ClaimTypes.Email, email),
+                new Claim("email", email)
             };
 
             if (isAdmin)

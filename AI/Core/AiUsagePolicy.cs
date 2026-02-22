@@ -95,34 +95,6 @@ namespace WriterApp.AI.Core
                 return new AiUsageDecision(false, userId, "ai.rate_limited", "Too many AI requests. Try again in a minute.");
             }
 
-            int? monthlyTokens = await _entitlementService.GetIntAsync(userId, "ai.monthly_tokens");
-            int limit = monthlyTokens ?? 0;
-            if (limit <= 0)
-            {
-                return new AiUsageDecision(false, userId, "ai.quota_exceeded", "AI usage quota is exhausted.");
-            }
-
-            UsageSnapshot snapshot = await _usageMeter.GetCurrentPeriodAsync(userId, TotalKind);
-            int used = snapshot.TotalInputTokens + snapshot.TotalOutputTokens;
-            if (used >= limit)
-            {
-                return new AiUsageDecision(false, userId, "ai.quota_exceeded", "AI usage quota is exhausted.");
-            }
-
-            int? dailyCap = await _entitlementService.GetIntAsync(userId, "ai.daily_tokens_cap");
-            if (dailyCap is > 0)
-            {
-                DateTime now = _clock.UtcNow;
-                DateTime dayStart = new(now.Year, now.Month, now.Day, 0, 0, 0, DateTimeKind.Utc);
-                DateTime dayEnd = dayStart.AddDays(1);
-                UsageSnapshot dailySnapshot = await _usageMeter.GetRangeAsync(userId, TotalKind, dayStart, dayEnd);
-                int dailyUsed = dailySnapshot.TotalInputTokens + dailySnapshot.TotalOutputTokens;
-                if (dailyUsed >= dailyCap.Value)
-                {
-                    return new AiUsageDecision(false, userId, "ai.quota_exceeded", "Daily AI usage cap reached.");
-                }
-            }
-
             return new AiUsageDecision(true, userId, null, null);
         }
 
