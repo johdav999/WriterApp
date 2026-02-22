@@ -24,9 +24,9 @@ else
                    ContextMenuRequested="ContextMenuRequested"
                    SelectionBubbleChanged="SelectionBubbleChanged" />
     <div class="editor-status">
-        <span>@_wordCount words</span>
-        <span>Page @_currentPageIndex / @_pageCount</span>
-        <span class="@GetSaveStatusClass()">@GetSaveStatusLabel()</span>
+        <span title="Total words in this section.">@_wordCount words</span>
+        <span title="Estimated page count.">Page @_currentPageIndex / @_pageCount</span>
+        <span class="@GetSaveStatusClass()" title="Your work is saved automatically.">@GetSaveStatusLabel()</span>
     </div>
 }
 
@@ -271,7 +271,10 @@ else
     public sealed record PageBreakOptions(
         int PageHeightPx = 980,
         bool ShowHorizontalRule = true,
-        int GutterOffsetPx = 28);
+        int GutterOffsetPx = 28,
+        int PageGapPx = 32,
+        string LayoutMode = "simple",
+        bool Debug = false);
 
     public Task SaveNowAsync()
     {
@@ -286,6 +289,39 @@ else
     public string GetContent()
     {
         return _content;
+    }
+
+    public async Task<string> GetContentAsync()
+    {
+        if (_editorRef is null)
+        {
+            return _content;
+        }
+
+        string html = await _editorRef.GetContentAsync();
+        _content = html ?? string.Empty;
+        return _content;
+    }
+
+    public async Task SetContentAsync(string html, bool markDirty = true)
+    {
+        string next = html ?? string.Empty;
+        _content = next;
+        _wordCount = CountWords(_content);
+        _isDirty = markDirty;
+        _saveState = SaveState.Idle;
+
+        if (_editorRef is not null)
+        {
+            await _editorRef.SetContentAsync(_content);
+        }
+
+        if (markDirty)
+        {
+            ScheduleAutosave();
+        }
+
+        await InvokeAsync(StateHasChanged);
     }
 
     public Task ScrollToPageAsync(int pageIndex)
@@ -305,6 +341,33 @@ else
     public Task RefreshPageBreaksAsync()
     {
         return UpdatePageBreaksAsync();
+    }
+
+    public Task HighlightAnalysisRangeAsync(int start, int length)
+    {
+        if (_editorInstance is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        int safeStart = Math.Max(0, start);
+        int safeEnd = Math.Max(safeStart, safeStart + Math.Max(0, length));
+        object[] ranges =
+        {
+            new { start = safeStart, end = safeEnd, isActive = true }
+        };
+
+        return JSRuntime.InvokeVoidAsync("tiptapEditor.setAiDecorations", _editorInstance, ranges).AsTask();
+    }
+
+    public Task ClearAnalysisHighlightsAsync()
+    {
+        if (_editorInstance is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        return JSRuntime.InvokeVoidAsync("tiptapEditor.setAiDecorations", _editorInstance, Array.Empty<object>()).AsTask();
     }
 
     private void SchedulePageBreakUpdate()

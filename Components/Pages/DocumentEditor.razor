@@ -4,6 +4,8 @@
 @using WriterApp.AI.Abstractions
 @using WriterApp.AI.Actions
 @using WriterApp.Application.Exporting
+@using WriterApp.Application.Continuity
+@using WriterApp.Controllers
 
 <PageTitle>@GetPageTitle()</PageTitle>
 
@@ -28,23 +30,6 @@ else
 
     <div class="editor-shell @GetLayoutStateClass()" style="@GetLayoutStyle()">
         <div class="editor-workspace @GetWorkspaceClass()">
-            <aside class="section-panel @GetSectionsPanelClass()">
-                <div class="section-panel-header">
-                    <h2>Sections</h2>
-                </div>
-                <ul class="section-nav-list">
-                    @foreach (SectionDto item in _sections)
-                    {
-                        <li class="section-nav-row">
-                            <button type="button"
-                                    class="section-nav-item @(item.Id == _activeSection.Id ? "is-active" : string.Empty)"
-                                    @onclick="() => OnSectionSelected(item.Id)">
-                                <span class="section-title">@item.Title</span>
-                            </button>
-                        </li>
-                    }
-                </ul>
-            </aside>
 
             <section class="editor-main">
                 <div class="editor-main-header">
@@ -52,35 +37,35 @@ else
                         <div class="editor-section-label">Section</div>
                         <div class="editor-section-title">@_activeSection.Title</div>
                     </div>
-                    <button type="button" class="panel-toggle" @onclick="ToggleFocusMode">
+                    <button type="button" class="panel-toggle" title='@GetTooltip("Hide panels and focus on writing.")' @onclick="ToggleFocusMode">
                         @(LayoutStateService.State.FocusMode ? "Exit focus" : "Focus mode")
                     </button>
-                    <button type="button" class="panel-toggle" @onclick="ToggleContextPanel">
+                    <button type="button" class="panel-toggle" title='@GetTooltip("Toggle the right-hand panel.")' @onclick="ToggleContextPanel">
                         @(IsContextPanelCollapsed() ? "Show panel" : "Hide panel")
                     </button>
                 </div>
 
                 <div class="editor-toolbar" role="toolbar" aria-label="Editor formatting">
                     <div class="editor-toolbar-group" aria-label="Essentials" data-compact="true">
-                        <button type="button" class="@GetActiveClass(_formattingState.IsBold)" disabled="@(!_formattingState.CanBold)" @onclick="OnBoldRequested">Bold</button>
-                        <button type="button" class="@GetActiveClass(_formattingState.IsItalic)" disabled="@(!_formattingState.CanItalic)" @onclick="OnItalicRequested">Italic</button>
-                        <select class="editor-toolbar-select" value="@GetBlockTypeValue()" @onchange="OnBlockTypeChanged" disabled="@(!_formattingState.CanApplyHeading)">
+                        <button type="button" class="@GetActiveClass(_formattingState.IsBold)" disabled="@(!_formattingState.CanBold)" title='@GetTooltip("Make selected text bold.")' @onclick="OnBoldRequested">Bold</button>
+                        <button type="button" class="@GetActiveClass(_formattingState.IsItalic)" disabled="@(!_formattingState.CanItalic)" title='@GetTooltip("Italicize selected text.")' @onclick="OnItalicRequested">Italic</button>
+                        <select class="editor-toolbar-select" value="@GetBlockTypeValue()" title='@GetTooltip("Change text style.")' @onchange="OnBlockTypeChanged" disabled="@(!_formattingState.CanApplyHeading)">
                             <option value="paragraph">Paragraph</option>
                             <option value="heading:1">Heading 1</option>
                             <option value="heading:2">Heading 2</option>
                         </select>
-                        <button type="button" disabled="@(!_formattingState.CanToggleList)" @onclick="OnBulletListRequested">Bulleted list</button>
-                        <button type="button" disabled="@(!_formattingState.CanToggleList)" @onclick="OnOrderedListRequested">Numbered list</button>
-                        <button type="button" disabled="@(!_formattingState.CanBlockquote)" @onclick="OnBlockquoteRequested">Blockquote</button>
-                        <button type="button" class="@GetActiveClass(_formattingState.IsLink)" @onclick="OnLinkRequested">Link</button>
+                        <button type="button" disabled="@(!_formattingState.CanToggleList)" title='@GetTooltip("Create a bulleted list.")' @onclick="OnBulletListRequested">Bulleted list</button>
+                        <button type="button" disabled="@(!_formattingState.CanToggleList)" title='@GetTooltip("Create a numbered list.")' @onclick="OnOrderedListRequested">Numbered list</button>
+                        <button type="button" disabled="@(!_formattingState.CanBlockquote)" title='@GetTooltip("Format text as a quotation.")' @onclick="OnBlockquoteRequested">Blockquote</button>
+                        <button type="button" class="@GetActiveClass(_formattingState.IsLink)" title='@GetTooltip("Insert or edit a link.")' @onclick="OnLinkRequested">Link</button>
                     </div>
                     <div class="editor-toolbar-group" aria-label="Zoom">
-                        <button type="button" @onclick="OnZoomOutRequested">A-</button>
+                        <button type="button" title='@GetTooltip("Decrease text size.")' @onclick="OnZoomOutRequested">A-</button>
                         <span class="editor-zoom-label">@GetZoomLabel()</span>
-                        <button type="button" @onclick="OnZoomInRequested">A+</button>
+                        <button type="button" title='@GetTooltip("Increase text size.")' @onclick="OnZoomInRequested">A+</button>
                     </div>
                     <div class="editor-toolbar-group editor-toolbar-overflow" aria-label="More">
-                        <button type="button" @onclick="ToggleToolbarOverflow">...</button>
+                        <button type="button" title='@GetTooltip("More formatting options.")' @onclick="ToggleToolbarOverflow">...</button>
                         @if (_isToolbarOverflowOpen)
                         {
                             <div class="editor-toolbar-overflow-panel">
@@ -96,23 +81,56 @@ else
                                 <button type="button" class="@GetActiveClass(_formattingState.TextAlign == "right")" @onclick='@(() => OnAlignRequested("right"))'>Align right</button>
                                 <button type="button" @onclick="OnIndentDecreaseRequested">Indent -</button>
                                 <button type="button" @onclick="OnIndentIncreaseRequested">Indent +</button>
+                                @if (CanShowAiMenu && SelectionAiActions.Any())
+                                {
+                                    <div class="editor-toolbar-divider"></div>
+                                    <div class="editor-toolbar-subtitle">AI</div>
+                                    @foreach (AiActionOption action in SelectionAiActions)
+                                    {
+                                        <button type="button" disabled="@IsAiQuotaExceeded" @onclick="() => OnAiActionSelected(action)">
+                                            @action.Label
+                                        </button>
+                                    }
+                                }
                             </div>
                         }
                     </div>
                 </div>
                 <div class="editor-actions">
-                    <button type="button" @onclick="OnUndoRequested">Undo</button>
-                    <button type="button" @onclick="OnRedoRequested">Redo</button>
+                    <button type="button" title='@GetTooltip("Undo last change.")' @onclick="OnUndoRequested">Undo</button>
+                    <button type="button" title='@GetTooltip("Redo last change.")' @onclick="OnRedoRequested">Redo</button>
+                    @if (CanShowReviseTools)
+                    {
+                        <div class="revise-tools">
+                            <select value="@_selectedReviseTool" @onchange="OnReviseToolChanged">
+                                <option value="tighten">Tighten</option>
+                                <option value="expand">Expand</option>
+                                <option value="change_tone">Change tone</option>
+                                <option value="show_dont_tell">Show, don't tell</option>
+                            </select>
+                            <button type="button" disabled="@IsAiQuotaExceeded" @onclick="OnReviseRequested">Revise</button>
+                        </div>
+                    }
+                    @if (CanShowPromptLibrary && PinnedPromptPresets.Count > 0)
+                    {
+                        <div class="revise-tools">
+                            @foreach (PromptPresetDto preset in PinnedPromptPresets)
+                            {
+                                <button type="button" disabled="@IsAiQuotaExceeded" @onclick="() => RunPromptPresetAsync(preset)">
+                                    @preset.Name
+                                </button>
+                            }
+                        </div>
+                    }
                     <div class="document-menu">
-                        <button type="button" @onclick="ToggleDocumentMenu">Document</button>
+                        <button type="button" title='@GetTooltip("Document-level actions.")' @onclick="ToggleDocumentMenu">Document</button>
                         @if (_isDocumentMenuOpen)
                         {
                             <div class="document-menu-panel">
                                 <button type="button" @onclick="OnToggleEditorWidthMode">@GetEditorWidthLabel()</button>
+                                <button type="button" @onclick="OnTogglePrintLayout">@GetPrintLayoutLabel()</button>
                                 <button type="button" @onclick="OnSaveNow">Save now</button>
-                                <button type="button" @onclick="() => OnExportRequested(ExportKind.Document, ExportFormat.Markdown)">Export Document (Markdown)</button>
-                                <button type="button" @onclick="() => OnExportRequested(ExportKind.Document, ExportFormat.Html)">Export Document (HTML)</button>
-                                <button type="button" @onclick="OnExportPdfRequested">Export Document (PDF)</button>
+                                <button type="button" @onclick="OnExportDialogOpenAsync">Export...</button>
                                 <button type="button" @onclick="() => OnExportRequested(ExportKind.Synopsis, ExportFormat.Markdown)">Export Synopsis (Markdown)</button>
                                 <button type="button" @onclick="() => OnExportRequested(ExportKind.Synopsis, ExportFormat.Html)">Export Synopsis (HTML)</button>
                                 @if (CanShowAiMenu && AiOrchestrator.CanRunAction(GenerateCoverImageAction.ActionIdValue))
@@ -151,6 +169,13 @@ else
                                     <div class="ai-preview-text">@_pendingAiProposal.ProposedText</div>
                                 </div>
                             </div>
+                            @if (!string.IsNullOrWhiteSpace(_pendingAiProposal.ProposedText))
+                            {
+                                <div class="ai-preview-pane">
+                                    <div class="ai-preview-label">Diff (line)</div>
+                                    <pre class="ai-preview-text">@BuildPendingLineDiff(_pendingAiProposal.OriginalText, _pendingAiProposal.ProposedText)</pre>
+                                </div>
+                            }
                         }
                         @if (!string.IsNullOrWhiteSpace(_pendingAiProposal.ImageDataUrl))
                         {
@@ -262,21 +287,51 @@ else
                         <button type="button"
                                 class="context-tab @GetContextTabClass(ContextTab.Notes)"
                                 aria-selected="@(_activeContextTab == ContextTab.Notes)"
+                                title='@GetTooltip("Personal notes for this section.")'
                                 @onclick="() => SetContextTab(ContextTab.Notes)">
                             Notes
                         </button>
                         <button type="button"
+                                class="context-tab @GetContextTabClass(ContextTab.Scene)"
+                                aria-selected="@(_activeContextTab == ContextTab.Scene)"
+                                title='@GetTooltip("Structure and plan this scene.")'
+                                @onclick="() => SetContextTab(ContextTab.Scene)">
+                            Scene
+                        </button>
+                        <button type="button"
                                 class="context-tab @GetContextTabClass(ContextTab.Outline)"
                                 aria-selected="@(_activeContextTab == ContextTab.Outline)"
+                                title='@GetTooltip("View and edit the document outline.")'
                                 @onclick="() => SetContextTab(ContextTab.Outline)">
                             Outline
                         </button>
                         <button type="button"
                                 class="context-tab @GetContextTabClass(ContextTab.Ai)"
                                 aria-selected="@(_activeContextTab == ContextTab.Ai)"
+                                title='@GetTooltip("AI tools for writing and planning.")'
                                 @onclick="() => SetContextTab(ContextTab.Ai)">
                             AI
                         </button>
+                        @if (CanShowContinuityCoach)
+                        {
+                            <button type="button"
+                                    class="context-tab @GetContextTabClass(ContextTab.Continuity)"
+                                    aria-selected="@(_activeContextTab == ContextTab.Continuity)"
+                                    title='@GetTooltip("Continuity checks and bibles.")'
+                                    @onclick="() => SetContextTab(ContextTab.Continuity)">
+                                Continuity
+                            </button>
+                        }
+                        @if (CanShowPromptLibrary)
+                        {
+                            <button type="button"
+                                    class="context-tab @GetContextTabClass(ContextTab.PromptLibrary)"
+                                    aria-selected="@(_activeContextTab == ContextTab.PromptLibrary)"
+                                    title='@GetTooltip("Reusable AI prompt presets.")'
+                                    @onclick="() => SetContextTab(ContextTab.PromptLibrary)">
+                                Prompt Library
+                            </button>
+                        }
                     </div>
                 </div>
                 <div class="context-drawer-body">
@@ -295,24 +350,256 @@ else
                             }
                         </div>
                     }
+                    else if (_activeContextTab == ContextTab.Scene)
+                    {
+                        <div class="drawer-panel scene-card-panel">
+                            <div class="drawer-panel-title">Scene card</div>
+                            <div class="drawer-panel-subtitle">Capture metadata for this section.</div>
+                            <div class="scene-card-actions">
+                                <button type="button"
+                                        class="btn btn-secondary"
+                                        disabled="@_sceneAiInFlight"
+                                        title='@GetTooltip("Generate scene details from the current text.")'
+                                        @onclick='() => RunSceneAiAsync("scene.suggest", "Suggest scene card fields based on the section text.")'>
+                                    Suggest from text
+                                </button>
+                                <button type="button"
+                                        class="btn btn-secondary"
+                                        disabled="@_sceneAiInFlight"
+                                        title='@GetTooltip("Improve or clarify this scene card.")'
+                                        @onclick='() => RunSceneAiAsync("scene.refine", "Refine the scene card fields while keeping intent.")'>
+                                    Refine
+                                </button>
+                                <button type="button"
+                                        class="btn btn-secondary"
+                                        disabled="@_sceneAiInFlight"
+                                        title='@GetTooltip("Identify unresolved story questions.")'
+                                        @onclick='() => RunSceneAiAsync("scene.find-open-questions", "Find open questions in this section.")'>
+                                    Find open questions
+                                </button>
+                            </div>
+                            @if (!string.IsNullOrWhiteSpace(_sceneAiError))
+                            {
+                                <div class="drawer-empty">@_sceneAiError</div>
+                            }
+                            @if (_sceneAiProposal is not null)
+                            {
+                                <div class="scene-card-preview">
+                                    <div class="scene-card-preview-header">AI suggestion</div>
+                                    @if (!string.IsNullOrWhiteSpace(_sceneAiExplanation))
+                                    {
+                                        <div class="scene-card-preview-explanation">@_sceneAiExplanation</div>
+                                    }
+                                    <div class="scene-card-preview-grid">
+                                        <div class="scene-card-preview-col">
+                                            <div class="scene-card-preview-label">Current</div>
+                                            <div class="scene-card-preview-field">
+                                                <strong>Narrative purpose</strong>
+                                                <div>@_sceneNarrativePurpose</div>
+                                            </div>
+                                            <div class="scene-card-preview-field">
+                                                <strong>Emotional beat</strong>
+                                                <div>@_sceneEmotionalBeat</div>
+                                            </div>
+                                            <div class="scene-card-preview-field">
+                                                <strong>Key events</strong>
+                                                <div>@_sceneKeyEvents</div>
+                                            </div>
+                                            <div class="scene-card-preview-field">
+                                                <strong>Open questions</strong>
+                                                <div>@_sceneOpenQuestions</div>
+                                            </div>
+                                        </div>
+                                        <div class="scene-card-preview-col">
+                                            <div class="scene-card-preview-label">Proposed</div>
+                                            <div class="scene-card-preview-field">
+                                                <strong>Narrative purpose</strong>
+                                                <div>@_sceneAiProposal.NarrativePurpose</div>
+                                            </div>
+                                            <div class="scene-card-preview-field">
+                                                <strong>Emotional beat</strong>
+                                                <div>@_sceneAiProposal.EmotionalBeat</div>
+                                            </div>
+                                            <div class="scene-card-preview-field">
+                                                <strong>Key events</strong>
+                                                <div>@_sceneAiProposal.KeyEvents</div>
+                                            </div>
+                                            <div class="scene-card-preview-field">
+                                                <strong>Open questions</strong>
+                                                <div>@_sceneAiProposal.OpenQuestions</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="scene-card-preview-actions">
+                                        <button type="button" class="btn btn-primary" @onclick="ApplySceneAiProposalAsync">Apply</button>
+                                        <button type="button" class="btn btn-ghost" @onclick="DiscardSceneAiProposal">Discard</button>
+                                    </div>
+                                </div>
+                            }
+                            <label class="scene-card-label" for="scene-narrative-purpose" title='@GetTooltip("Why this scene exists in the story.")'>Narrative purpose</label>
+                            <textarea id="scene-narrative-purpose"
+                                      class="notes-input scene-card-input"
+                                      value="@_sceneNarrativePurpose"
+                                      @oninput="OnSceneNarrativePurposeInput"
+                                      title='@GetTooltip("Why this scene exists in the story.")'
+                                      placeholder="Why this scene exists in the story..."></textarea>
+                            <label class="scene-card-label" for="scene-emotional-beat" title='@GetTooltip("How the emotion changes in this scene.")'>Emotional beat</label>
+                            <textarea id="scene-emotional-beat"
+                                      class="notes-input scene-card-input"
+                                      value="@_sceneEmotionalBeat"
+                                      @oninput="OnSceneEmotionalBeatInput"
+                                      title='@GetTooltip("How the emotion changes in this scene.")'
+                                      placeholder="How the emotional tone shifts..."></textarea>
+                            <label class="scene-card-label" for="scene-key-events" title='@GetTooltip("The main things that happen.")'>Key events</label>
+                            <textarea id="scene-key-events"
+                                      class="notes-input scene-card-input"
+                                      value="@_sceneKeyEvents"
+                                      @oninput="OnSceneKeyEventsInput"
+                                      title='@GetTooltip("The main things that happen.")'
+                                      placeholder="- Bullet your key events..."></textarea>
+                            <label class="scene-card-label" for="scene-open-questions" title='@GetTooltip("Loose ends to resolve later.")'>Open questions</label>
+                            <textarea id="scene-open-questions"
+                                      class="notes-input scene-card-input"
+                                      value="@_sceneOpenQuestions"
+                                      @oninput="OnSceneOpenQuestionsInput"
+                                      title='@GetTooltip("Loose ends to resolve later.")'
+                                      placeholder="Loose ends or questions to answer later..."></textarea>
+                            <button type="button" title='@GetTooltip("Save scene metadata.")' @onclick="OnSceneCardSave">Save scene card</button>
+                            @if (!string.IsNullOrWhiteSpace(_sceneStatus))
+                            {
+                                <div class="drawer-empty">@_sceneStatus</div>
+                            }
+                        </div>
+                    }
                     else if (_activeContextTab == ContextTab.Outline)
                     {
-                        <div class="drawer-panel">
-                            <div class="drawer-panel-title">Outline</div>
-                            <ul class="outline-list">
-                                @foreach (SectionDto section in _sections)
+                        <div class="drawer-panel outline-panel">
+                            <div class="outline-panel-header">
+                                <div class="outline-panel-heading">
+                                    <div class="drawer-panel-title">Outline</div>
+                                    <div class="outline-panel-subtitle">Organize chapters, scenes, and beats.</div>
+                                    <div class="outline-panel-note">
+                                        Connect outline items to sections for navigation and Apply Outline operations.
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="outline-tree">
+                                @if (_outlineNodes.Count == 0)
                                 {
-                                    <li class="outline-section">
-                                        <div class="outline-section-title">@(section.Title)</div>
-                                        <ul class="outline-pages">
-                                            @foreach (PageDto page in GetPages(section.Id))
-                                            {
-                                                <li class="outline-page">@(page.Title)</li>
-                                            }
-                                        </ul>
-                                    </li>
+                                    <div class="drawer-empty">No outline nodes yet.</div>
                                 }
-                            </ul>
+                                else
+                                {
+                                    <ul class="outline-tree-list">
+                                        @foreach (DocumentOutlineNodeDto node in GetOutlineChildren(null))
+                                        {
+                                            @RenderOutlineNode(node, 0)
+                                        }
+                                    </ul>
+                                }
+                            </div>
+                            <div class="outline-controls">
+                                <div class="outline-action-bar">
+                                    <div class="outline-action-bar__hint">
+                                        @if (SelectedOutlineNode is null)
+                                        {
+                                            <span>Select an outline item to edit.</span>
+                                        }
+                                    </div>
+                                    <div class="outline-action-bar__buttons">
+                                        <button type="button"
+                                                class="outline-btn outline-btn--ghost"
+                                                disabled="@(SelectedOutlineNode is null)"
+                                                @onclick="() => AddSiblingNodeAsync(SelectedOutlineNode!.Id)">
+                                            Add sibling
+                                        </button>
+                                        <button type="button"
+                                                class="outline-btn outline-btn--ghost"
+                                                disabled="@(SelectedOutlineNode is null)"
+                                                @onclick="() => AddChildNodeAsync(SelectedOutlineNode!.Id)">
+                                            Add child
+                                        </button>
+                                        <button type="button"
+                                                class="outline-btn outline-btn--ghost"
+                                                disabled="@(SelectedOutlineNode is null)"
+                                                @onclick="() => StartRenameNode(SelectedOutlineNode!.Id)">
+                                            Rename
+                                        </button>
+                                        <button type="button"
+                                                class="outline-btn outline-btn--ghost outline-btn--danger"
+                                                disabled="@(SelectedOutlineNode is null)"
+                                                @onclick="() => DeleteNodeAsync(SelectedOutlineNode!.Id)">
+                                            Delete
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="outline-apply-options">
+                                    <label><input type="checkbox" @bind="_outlineApplyCreateMissing" /> Create missing sections</label>
+                                    <label><input type="checkbox" @bind="_outlineApplyReorder" /> Reorder sections</label>
+                                    <label><input type="checkbox" @bind="_outlineApplyRename" /> Rename sections to match outline</label>
+                                    <label><input type="checkbox" @bind="_outlineApplyLinkNodes" /> Link nodes to sections</label>
+                                </div>
+                                <div class="outline-actions">
+                                    <button type="button"
+                                            class="outline-btn outline-btn--ghost"
+                                            @onclick="AddRootNodeAsync">
+                                        Add top-level
+                                    </button>
+                                    <button type="button"
+                                            class="outline-btn outline-btn--secondary"
+                                            @onclick="GenerateOutlineAsync"
+                                            disabled="@_outlineGenerateInFlight">
+                                        @(_outlineGenerateInFlight ? "Generating..." : "Generate from content")
+                                    </button>
+                                    <button type="button"
+                                            class="outline-btn outline-btn--primary"
+                                            @onclick="ApplyOutlineToSectionsAsync"
+                                        disabled="@_outlineApplyInFlight">
+                                        @(_outlineApplyInFlight ? "Applying..." : "Apply outline to sections")
+                                    </button>
+                                    @if (_outlineTemplatesEnabled)
+                                    {
+                                        <button type="button"
+                                                class="outline-btn outline-btn--ghost"
+                                                @onclick="OpenOutlineTemplatesModalAsync">
+                                            Templates...
+                                        </button>
+                                    }
+                                </div>
+                            </div>
+                            @if (_outlineProposalPreview is not null)
+                            {
+                                <div class="outline-proposal">
+                                    <div class="outline-proposal-title">Proposed outline</div>
+                                    <pre class="outline-proposal-preview">@_outlineProposalPreview</pre>
+                                    @if (_outlineProposalTruncated)
+                                    {
+                                        <div class="outline-proposal-note">Some section content was truncated for generation.</div>
+                                    }
+                                    <div class="outline-proposal-actions">
+                                        <button type="button" @onclick="ApplyOutlineProposalAsync">Apply outline</button>
+                                        <button type="button" @onclick="DiscardOutlineProposal">Discard</button>
+                                    </div>
+                                </div>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(_outlineGenerateError))
+                            {
+                                <div class="outline-status outline-status--error">@_outlineGenerateError</div>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(_outlineApplyError))
+                            {
+                                <div class="outline-status outline-status--error">@_outlineApplyError</div>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(_outlineStatus))
+                            {
+                                <div class="outline-status">@_outlineStatus</div>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(_outlineTemplateStatus))
+                            {
+                                <div class='outline-status @(string.Equals(_outlineTemplateStatus, "Template applied.", StringComparison.Ordinal) || string.Equals(_outlineTemplateStatus, "Template created.", StringComparison.Ordinal) || string.Equals(_outlineTemplateStatus, "Template deleted.", StringComparison.Ordinal) ? string.Empty : "outline-status--error")'>
+                                    @_outlineTemplateStatus
+                                </div>
+                            }
                         </div>
                     }
                     else if (_activeContextTab == ContextTab.Ai)
@@ -323,30 +610,86 @@ else
                             {
                                 <div class="drawer-empty">AI is disabled for this account.</div>
                             }
-                            else if (_currentSelectionRange is null)
-                            {
-                                <div class="drawer-empty">Select text in the editor to enable AI actions.</div>
-                            }
-                            else if (!AiOrchestrator.CanRunAction(RewriteSelectionAction.ActionIdValue) || _aiActions.Count == 0)
-                            {
-                                <div class="drawer-empty">No actions available for this selection.</div>
-                            }
                             else
                             {
-                                <div class="ai-actions-list">
-                                    @foreach (AiActionOption action in _aiActions)
+                                bool hasSelectionActions = SelectionAiActions.Any(action => AiOrchestrator.CanRunAction(action.ActionKey));
+                                bool hasSectionActions = SectionAiActions.Any(action => AiOrchestrator.CanRunAction(action.ActionKey));
+                                @if (!hasSelectionActions && !hasSectionActions)
+                                {
+                                    <div class="drawer-empty">No AI actions available right now.</div>
+                                }
+                                else
+                                {
+                                    @if (hasSectionActions)
                                     {
-                                        <button type="button" disabled="@IsAiQuotaExceeded" @onclick="() => OnAiActionSelected(action)">
-                                            @action.Label
-                                        </button>
+                                        <div class="ai-action-group">
+                                            <div class="ai-action-group-title">Section</div>
+                                            <div class="ai-actions-list">
+                                                @foreach (AiActionOption action in SectionAiActions)
+                                                {
+                                                    if (!AiOrchestrator.CanRunAction(action.ActionKey))
+                                                    {
+                                                        continue;
+                                                    }
+                                                    <div class="ai-action-item">
+                                                        <button type="button" disabled="@IsAiQuotaExceeded" @onclick="() => OnAiActionSelected(action)">
+                                                            @action.Label
+                                                        </button>
+                                                        @if (!string.IsNullOrWhiteSpace(action.Description))
+                                                        {
+                                                            <div class="ai-action-description">@action.Description</div>
+                                                        }
+                                                    </div>
+                                                }
+                                            </div>
+                                        </div>
                                     }
-                                </div>
+                                    @if (_currentSelectionRange is null)
+                                    {
+                                        @if (hasSelectionActions)
+                                        {
+                                            <div class="drawer-empty">Select text in the editor to enable selection actions.</div>
+                                        }
+                                    }
+                                    else if (hasSelectionActions)
+                                    {
+                                        <div class="ai-action-group">
+                                            <div class="ai-action-group-title">Selection</div>
+                                            <div class="ai-actions-list">
+                                                @foreach (AiActionOption action in SelectionAiActions)
+                                                {
+                                                    if (!AiOrchestrator.CanRunAction(action.ActionKey))
+                                                    {
+                                                        continue;
+                                                    }
+                                                    <button type="button" disabled="@IsAiQuotaExceeded" @onclick="() => OnAiActionSelected(action)">
+                                                        @action.Label
+                                                    </button>
+                                                }
+                                            </div>
+                                        </div>
+                                    }
+                                }
                             }
                         </div>
                         <div class="drawer-panel">
                             <div class="drawer-panel-title">
                                 AI history
                                 <span class="ai-history-count-pill">@_aiHistoryEntries.Count</span>
+                            </div>
+                            <div class="ai-history-toolbar">
+                                <button type="button"
+                                        class="ai-history-button"
+                                        @onclick="OnAiUndoRequested"
+                                        disabled="@(!_canAiUndo || _aiUndoRedoInFlight)">
+                                    AI Undo
+                                </button>
+                                <button type="button"
+                                        class="ai-history-button"
+                                        @onclick="OnAiRedoRequested"
+                                        disabled="@(!_canAiRedo || _aiUndoRedoInFlight)">
+                                    AI Redo
+                                </button>
                             </div>
                             @if (_aiHistoryEntries.Count == 0)
                             {
@@ -365,7 +708,18 @@ else
                                         </div>
                                         <div class="ai-history-sub">
                                             <span>@entry.Timestamp.ToLocalTime().ToString("g")</span>
-                                            <span class="ai-history-status">Applied</span>
+                                            @if (entry.IsApplied)
+                                            {
+                                                <span class="ai-history-status is-applied">Applied</span>
+                                                @if (entry.AppliedCount > 1)
+                                                {
+                                                    <span class="ai-history-status-count">x@entry.AppliedCount</span>
+                                                }
+                                            }
+                                            else
+                                            {
+                                                <span class="ai-history-status is-pending">Pending</span>
+                                            }
                                         </div>
                                         <div class="ai-history-actions">
                                             <button type="button"
@@ -382,7 +736,7 @@ else
                                                 <div class="ai-history-details-header">
                                                     <div class="ai-history-details-summary">@(entry.Summary ?? entry.Label)</div>
                                                     <div class="ai-history-details-sub">
-                                                        <span>Applied</span>
+                                                        <span>@(entry.IsApplied ? "Applied" : "Pending")</span>
                                                         @if (!string.IsNullOrWhiteSpace(entry.ProviderId))
                                                         {
                                                             <span class="ai-history-provider">@entry.ProviderId</span>
@@ -390,6 +744,10 @@ else
                                                         @if (!string.IsNullOrWhiteSpace(entry.TargetScope))
                                                         {
                                                             <span>@entry.TargetScope</span>
+                                                        }
+                                                        @if (entry.LastAppliedAt.HasValue)
+                                                        {
+                                                            <span>@entry.LastAppliedAt.Value.ToLocalTime().ToString("g")</span>
                                                         }
                                                         <span>@entry.Timestamp.ToLocalTime().ToString("g")</span>
                                                     </div>
@@ -426,8 +784,548 @@ else
                         }
                         </div>
                     }
+                    else if (_activeContextTab == ContextTab.Continuity)
+                    {
+                        <div class="drawer-panel">
+                            <div class="drawer-panel-title">Continuity coach</div>
+                            @if (!CanShowContinuityCoach)
+                            {
+                                <div class="drawer-empty">Continuity Coach is disabled.</div>
+                            }
+                            else
+                            {
+                                <div class="ai-actions-list">
+                                    <button type="button"
+                                            disabled="@(_continuityBusy || !AiOrchestrator.CanRunAction(ExtractCharacterBibleAction.ActionIdValue))"
+                                            @onclick="OnBuildCharacterBibleAsync">
+                                        Build character bible
+                                    </button>
+                                    <button type="button"
+                                            disabled="@(_continuityBusy || !AiOrchestrator.CanRunAction(ExtractPlaceBibleAction.ActionIdValue))"
+                                            @onclick="OnBuildPlaceBibleAsync">
+                                        Build place bible
+                                    </button>
+                                    <button type="button"
+                                            disabled="@(_continuityBusy || !AiOrchestrator.CanRunAction(ContinuityCheckAction.ActionIdValue))"
+                                            @onclick="OnCheckContinuityAsync">
+                                        Check current section
+                                    </button>
+                                    <button type="button"
+                                            disabled="@_continuityBusy"
+                                            @onclick="OnClearContinuityHighlightsAsync">
+                                        Clear highlight
+                                    </button>
+                                </div>
+                                @if (!string.IsNullOrWhiteSpace(_continuityStatus))
+                                {
+                                    <div class="drawer-empty">@_continuityStatus</div>
+                                }
+                                <div class="drawer-panel-subtitle">
+                                    Character bible: @(_characterBible?.Characters.Count ?? 0) entries.
+                                    Place bible: @(_placeBible?.Places.Count ?? 0) entries.
+                                </div>
+                                <div class="ai-history-toolbar">
+                                    <label for="continuity-severity">Severity</label>
+                                    <select id="continuity-severity"
+                                            value="@_continuitySeverityFilter"
+                                            @onchange="OnContinuitySeverityChanged">
+                                        <option value="all">All</option>
+                                        <option value="critical">Critical</option>
+                                        <option value="high">High</option>
+                                        <option value="medium">Medium</option>
+                                        <option value="low">Low</option>
+                                    </select>
+                                </div>
+                                @if (!FilteredContinuityIssues.Any())
+                                {
+                                    <div class="drawer-empty">No issues in current report.</div>
+                                }
+                                else
+                                {
+                                    <ul class="ai-history-list">
+                                        @foreach (ContinuityIssue issue in FilteredContinuityIssues)
+                                        {
+                                            <li class="ai-history-item">
+                                                <div class="ai-history-meta">
+                                                    <span class="ai-history-badge">@issue.Severity.ToUpperInvariant()</span>
+                                                    <span class="ai-history-summary">@issue.Type: @issue.Message</span>
+                                                </div>
+                                                <div class="ai-history-sub">
+                                                    <span>@issue.Evidence.Quote</span>
+                                                </div>
+                                                <div class="ai-history-actions">
+                                                    <button type="button" @onclick="() => OnJumpToContinuityIssueAsync(issue)">Jump + highlight</button>
+                                                    @if (CanShowContinuityCoachFixes)
+                                                    {
+                                                        <button type="button"
+                                                                disabled="@(_continuityBusy || string.IsNullOrWhiteSpace(issue.SuggestedFix) || !AiOrchestrator.CanRunAction(ApplyContinuityFixAction.ActionIdValue))"
+                                                                @onclick="() => OnApplyContinuityFixAsync(issue)">
+                                                            Apply suggested fix
+                                                        </button>
+                                                    }
+                                                </div>
+                                            </li>
+                                        }
+                                    </ul>
+                                }
+                            }
+                        </div>
+                    }
+                    else if (_activeContextTab == ContextTab.PromptLibrary)
+                    {
+                        <div class="drawer-panel">
+                            <div class="drawer-panel-title">Prompt library</div>
+                            @if (!CanShowPromptLibrary)
+                            {
+                                <div class="drawer-empty">Prompt Library is disabled.</div>
+                            }
+                            else
+                            {
+                                <div class="ai-history-toolbar">
+                                    <label for="prompt-run-scope">Run scope</label>
+                                    <select id="prompt-run-scope" @bind="_promptRunScope">
+                                        <option value="selection">Selection</option>
+                                        <option value="section">Section</option>
+                                    </select>
+                                </div>
+                                <div class="ai-actions-list">
+                                    <button type="button" @onclick="BeginCreatePromptPreset">New preset</button>
+                                    <button type="button" @onclick="SavePromptPresetAsync">Save preset</button>
+                                </div>
+                                <div class="template-grid">
+                                    <label class="export-panel-label" for="prompt-name">Name</label>
+                                    <input id="prompt-name" class="export-panel-input" @bind="_promptNameDraft" />
+                                    <label class="export-panel-label" for="prompt-category">Category</label>
+                                    <input id="prompt-category" class="export-panel-input" @bind="_promptCategoryDraft" />
+                                    <label class="export-panel-label" for="prompt-kind">Kind</label>
+                                    <select id="prompt-kind" class="export-panel-select" @bind="_promptKindDraft">
+                                        <option value="builtin">Builtin action</option>
+                                        <option value="custom">Custom template</option>
+                                    </select>
+                                    @if (_promptKindDraft == "builtin")
+                                    {
+                                        <label class="export-panel-label" for="prompt-action-id">Action Id</label>
+                                        <input id="prompt-action-id" class="export-panel-input" @bind="_promptBuiltinActionIdDraft" />
+                                    }
+                                    else
+                                    {
+                                        <label class="export-panel-label" for="prompt-template">Template</label>
+                                        <textarea id="prompt-template" class="notes-input scene-card-input" @bind="_promptTemplateDraft"></textarea>
+                                    }
+                                    <label class="export-panel-label" for="prompt-params">Parameters JSON</label>
+                                    <textarea id="prompt-params" class="notes-input scene-card-input" @bind="_promptParametersDraft"></textarea>
+                                </div>
+                                @if (!string.IsNullOrWhiteSpace(_promptStatus))
+                                {
+                                    <div class="drawer-empty">@_promptStatus</div>
+                                }
+                                @if (_promptPresets.Count == 0)
+                                {
+                                    <div class="drawer-empty">No presets yet.</div>
+                                }
+                                else
+                                {
+                                    <ul class="ai-history-list">
+                                        @foreach (PromptPresetDto preset in _promptPresets)
+                                        {
+                                            <li class="ai-history-item">
+                                                <div class="ai-history-meta">
+                                                    <span class="ai-history-badge">@preset.Kind.ToUpperInvariant()</span>
+                                                    <span class="ai-history-summary">@preset.Name</span>
+                                                </div>
+                                                <div class="ai-history-sub">
+                                                    <span>@(string.IsNullOrWhiteSpace(preset.Category) ? "Uncategorized" : preset.Category)</span>
+                                                    <span>@(preset.BuiltinActionId ?? "custom_transform")</span>
+                                                </div>
+                                                <div class="ai-history-actions">
+                                                    <button type="button" disabled="@IsAiQuotaExceeded" @onclick="() => RunPromptPresetAsync(preset)">Run</button>
+                                                    <button type="button" @onclick="() => BeginEditPromptPreset(preset)">Edit</button>
+                                                    <button type="button" @onclick="() => TogglePinPromptPreset(preset.Id)">
+                                                        @(IsPromptPresetPinned(preset.Id) ? "Unpin" : "Pin")
+                                                    </button>
+                                                    <button type="button" class="danger" @onclick="() => DeletePromptPresetAsync(preset.Id)">Delete</button>
+                                                </div>
+                                            </li>
+                                        }
+                                    </ul>
+                                }
+                            }
+                        </div>
+                    }
                 </div>
             </aside>
+        </div>
+    </div>
+}
+
+@if (_isDeleteDialogOpen)
+{
+    <div class="modal-overlay" role="presentation">
+        <div class="modal-backdrop" @onclick="CancelDeleteSection"></div>
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="deleteSectionTitle">
+            <div class="modal-title" id="deleteSectionTitle">Delete '@_pendingDeleteSectionTitle'?</div>
+            <div class="modal-body">This removes its pages. Cannot be undone.</div>
+            @if (!string.IsNullOrWhiteSpace(_sectionDeleteError))
+            {
+                <div class="modal-error">@_sectionDeleteError</div>
+            }
+            <div class="modal-actions">
+                <button type="button"
+                        class="danger"
+                        @onclick="ConfirmDeleteSectionAsync"
+                        disabled="@_isDeletingSection">
+                    Delete
+                </button>
+                <button type="button"
+                        @onclick="CancelDeleteSection"
+                        disabled="@_isDeletingSection">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_outlineTemplatesEnabled && _isOutlineTemplatesModalOpen)
+{
+    <div class="modal-overlay" @onclick="CloseOutlineTemplatesModal">
+        <div class="modal outline-templates-dialog modal-panel" role="dialog" aria-modal="true" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <div class="modal-title">Outline templates</div>
+            </div>
+            <div class="modal-body">
+                <div class="template-manager-row">
+                    <label class="export-panel-label" for="outline-template-name">Create from current outline</label>
+                    <div class="template-manager-create">
+                        <input id="outline-template-name"
+                               class="export-panel-input"
+                               placeholder="Template name"
+                               @bind="_outlineTemplateName" />
+                        <button type="button"
+                                @onclick="CreateTemplateFromCurrentOutlineAsync"
+                                disabled="@(_outlineNodes.Count == 0 || _isOutlineTemplateActionInFlight)">
+                            Create
+                        </button>
+                    </div>
+                </div>
+
+                <div class="template-manager-row">
+                    <label class="export-panel-label" for="outline-template-select">Saved templates</label>
+                    @if (_isOutlineTemplatesLoading)
+                    {
+                        <div class="export-panel-note">Loading templates...</div>
+                    }
+                    else if (_outlineTemplates.Count == 0)
+                    {
+                        <div class="export-panel-note">No templates yet.</div>
+                    }
+                    else
+                    {
+                        <select id="outline-template-select"
+                                class="outline-link-select"
+                                @bind="_selectedOutlineTemplateId"
+                                disabled="@_isOutlineTemplateActionInFlight">
+                            @foreach (OutlineTemplateDto template in _outlineTemplates)
+                            {
+                                <option value="@template.Id">@template.Name (@template.NodeCount nodes)</option>
+                            }
+                        </select>
+                    }
+                </div>
+
+                <div class="template-manager-row">
+                    <label class="export-panel-label">Apply options</label>
+                    <div class="outline-template-options">
+                        <label>
+                            <input type="checkbox"
+                                   @bind="_applyTemplateAtSelectedNode"
+                                   disabled="@(!_selectedOutlineNodeId.HasValue || _isOutlineTemplateActionInFlight)" />
+                            Insert under selected node
+                        </label>
+                        <label>
+                            <input type="checkbox"
+                                   @bind="_applyTemplateCreateLinkedSections"
+                                   disabled="@_isOutlineTemplateActionInFlight" />
+                            Create linked sections/pages
+                        </label>
+                        <label for="outline-template-link-strategy">Link strategy</label>
+                        <select id="outline-template-link-strategy"
+                                class="outline-link-select"
+                                @bind="_applyTemplateLinkStrategy"
+                                disabled="@_isOutlineTemplateActionInFlight">
+                            <option value="none">No linking</option>
+                            <option value="by-title">Link by title</option>
+                            <option value="create">Create new sections</option>
+                        </select>
+                    </div>
+                </div>
+
+                @if (!string.IsNullOrWhiteSpace(_outlineTemplateStatus))
+                {
+                    <div class='outline-status @(string.Equals(_outlineTemplateStatus, "Template applied.", StringComparison.Ordinal) || string.Equals(_outlineTemplateStatus, "Template created.", StringComparison.Ordinal) || string.Equals(_outlineTemplateStatus, "Template deleted.", StringComparison.Ordinal) ? string.Empty : "outline-status--error")'>
+                        @_outlineTemplateStatus
+                    </div>
+                }
+            </div>
+            <div class="modal-footer">
+                <button type="button"
+                        class="outline-btn outline-btn--secondary"
+                        @onclick="ApplySelectedOutlineTemplateAsync"
+                        disabled="@(!_selectedOutlineTemplateId.HasValue || _isOutlineTemplateActionInFlight)">
+                    @(_isOutlineTemplateActionInFlight ? "Applying..." : "Apply template")
+                </button>
+                <button type="button"
+                        class="outline-btn outline-btn--ghost outline-btn--danger"
+                        @onclick="DeleteSelectedOutlineTemplateAsync"
+                        disabled="@(!_selectedOutlineTemplateId.HasValue || _isOutlineTemplateActionInFlight)">
+                    Delete
+                </button>
+                <button type="button" @onclick="CloseOutlineTemplatesModal">Close</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_isExportDialogOpen)
+{
+    <div class="modal-overlay" @onclick="CloseExportDialog">
+        @* Standard modal layout *@
+        <div class="modal export-dialog modal-panel" role="dialog" aria-modal="true" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <div class="modal-title">Export document</div>
+            </div>
+            <div class="modal-body">
+            <div class="export-panel-row">
+                <label class="export-panel-label" for="export-format">Format</label>
+                <select id="export-format" class="export-panel-select" @bind="_exportFormatSelection">
+                    <option value="html">HTML</option>
+                    <option value="markdown">Markdown</option>
+                    @if (_docxExportEnabled)
+                    {
+                        <option value="docx">DOCX</option>
+                    }
+                    @if (_epubExportEnabled)
+                    {
+                        <option value="epub">EPUB</option>
+                    }
+                    <option value="pdf">PDF (print)</option>
+                </select>
+            </div>
+            <div class="export-panel-row">
+                <label class="export-panel-label" for="export-template">Template</label>
+                @if (_isTemplatesLoading)
+                {
+                    <div class="export-panel-note">Loading templates...</div>
+                }
+                else
+                {
+                    <select id="export-template"
+                            class="export-panel-select"
+                            @bind="SelectedTemplateIdValue"
+                            disabled="@(!string.Equals(_exportFormatSelection, "html", StringComparison.OrdinalIgnoreCase))">
+                        @foreach (ExportTemplateDto template in _exportTemplates)
+                        {
+                            <option value="@template.Id">@template.Name @GetPresetTag(template.PresetKey)</option>
+                        }
+                    </select>
+                }
+            </div>
+            <div class="export-panel-row">
+                <label class="export-panel-label" for="preview-scope">Preview scope</label>
+                <select id="preview-scope" class="export-panel-select" @bind="_previewScope">
+                    <option value="document">Document</option>
+                    <option value="section">Current section</option>
+                </select>
+            </div>
+            <div class="export-panel-row export-panel-actions">
+                <button type="button" class="link-button" @onclick="OpenTemplateManagerAsync">Manage templates...</button>
+                <span class="export-panel-hint">Templates apply to HTML/PDF exports.</span>
+            </div>
+            @if (!string.IsNullOrWhiteSpace(_templateLoadError))
+            {
+                <div class="modal-error">@_templateLoadError</div>
+            }
+            @if (!string.IsNullOrWhiteSpace(_templateActionError))
+            {
+                <div class="modal-error">@_templateActionError</div>
+            }
+            </div>
+            <div class="modal-footer">
+                <button type="button" @onclick="OpenPreviewAsync" disabled="@_isTemplatesLoading">Preview</button>
+                <button type="button" @onclick="ExecuteExportSelectionAsync" disabled="@_isTemplatesLoading">Export</button>
+                <button type="button" @onclick="CloseExportDialog">Cancel</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_isTemplateManagerOpen)
+{
+    <div class="modal-overlay" @onclick="CloseTemplateManager">
+        @* Standard modal layout *@
+        <div class="modal export-dialog template-manager modal-panel" role="dialog" aria-modal="true" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <div class="modal-title">Export templates</div>
+            </div>
+            <div class="modal-body">
+            <div class="template-manager-row">
+                <label class="export-panel-label" for="template-preset-create">New template</label>
+                <div class="template-manager-create">
+                    <select id="template-preset-create" class="export-panel-select" @bind="_createPresetKey">
+                        @foreach (ExportTemplatePresetDefinition preset in PresetOptions)
+                        {
+                            <option value="@preset.Key">@preset.Name</option>
+                        }
+                    </select>
+                    <button type="button" @onclick="CreateTemplateFromPresetAsync">Create</button>
+                </div>
+            </div>
+
+            <div class="template-manager-list">
+                @foreach (ExportTemplateDto template in _exportTemplates.OrderBy(item => item.Name))
+                {
+                    <div class="template-card">
+                        <div class="template-card-main">
+                            <div class="template-name">@template.Name</div>
+                            <div class="template-tag">@GetPresetTag(template.PresetKey)</div>
+                        </div>
+                        <div class="template-card-actions">
+                            <button type="button" @onclick="() => DuplicateTemplateAsync(template)">Duplicate</button>
+                            <button type="button" @onclick="() => StartEditTemplate(template)">Edit</button>
+                            <button type="button" class="danger" disabled="@_isTemplateDeleting" @onclick="() => DeleteTemplateAsync(template)">Delete</button>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            @if (_isTemplateEditorOpen && _templateEditor is not null)
+            {
+                <div class="template-editor">
+                    <h3>Edit template</h3>
+                    <div class="template-grid">
+                        <label class="export-panel-label" for="template-name">Name</label>
+                        <input id="template-name" class="export-panel-input" @bind="_templateEditor.Name" />
+
+                        <label class="export-panel-label" for="template-page-size">Page size</label>
+                        <select id="template-page-size" class="export-panel-select" value="@_templateEditorPagePreset" @onchange="OnTemplatePresetChanged">
+                            @foreach (ExportTemplatePresetDefinition preset in PresetOptions)
+                            {
+                                <option value="@preset.Key">@preset.Name (@preset.PageWidthMm x @preset.PageHeightMm)</option>
+                            }
+                            <option value="custom">Custom</option>
+                        </select>
+
+                        <label class="export-panel-label">Width/Height (mm)</label>
+                        <div class="template-inline-inputs">
+                            <input type="number" class="export-panel-input" @bind="_templateEditor.PageWidthMm" />
+                            <input type="number" class="export-panel-input" @bind="_templateEditor.PageHeightMm" />
+                        </div>
+
+                        <label class="export-panel-label">Margins (mm)</label>
+                        <div class="template-inline-inputs">
+                            <input type="number" class="export-panel-input" @bind="_templateEditor.MarginTopMm" placeholder="Top" />
+                            <input type="number" class="export-panel-input" @bind="_templateEditor.MarginRightMm" placeholder="Right" />
+                            <input type="number" class="export-panel-input" @bind="_templateEditor.MarginBottomMm" placeholder="Bottom" />
+                            <input type="number" class="export-panel-input" @bind="_templateEditor.MarginLeftMm" placeholder="Left" />
+                        </div>
+
+                        <label class="export-panel-label">Typography</label>
+                        <div class="template-inline-inputs">
+                            <input class="export-panel-input" @bind="_templateEditor.FontFamily" placeholder="Font family" />
+                            <input type="number" class="export-panel-input" @bind="_templateEditor.BodyFontSizePt" placeholder="Font size (pt)" />
+                            <input type="number" step="0.1" class="export-panel-input" @bind="_templateEditor.LineHeight" placeholder="Line height" />
+                        </div>
+
+                        <label class="export-panel-label">Header</label>
+                        <div class="template-section">
+                            <label><input type="checkbox" @bind="_templateEditor.HeaderEnabled" /> Enabled</label>
+                            <div class="template-inline-inputs">
+                                <input class="export-panel-input" @bind="_templateEditor.HeaderLeft" placeholder="Left" title="Tokens: {DocumentTitle}, {SectionTitle}, {Date}, {PageNumber}, {TotalPages}" />
+                                <input class="export-panel-input" @bind="_templateEditor.HeaderCenter" placeholder="Center" title="Tokens: {DocumentTitle}, {SectionTitle}, {Date}, {PageNumber}, {TotalPages}" />
+                                <input class="export-panel-input" @bind="_templateEditor.HeaderRight" placeholder="Right" title="Tokens: {DocumentTitle}, {SectionTitle}, {Date}, {PageNumber}, {TotalPages}" />
+                            </div>
+                        </div>
+
+                        <label class="export-panel-label">Footer</label>
+                        <div class="template-section">
+                            <label><input type="checkbox" @bind="_templateEditor.FooterEnabled" /> Enabled</label>
+                            <div class="template-inline-inputs">
+                                <input class="export-panel-input" @bind="_templateEditor.FooterLeft" placeholder="Left" title="Tokens: {DocumentTitle}, {SectionTitle}, {Date}, {PageNumber}, {TotalPages}" />
+                                <input class="export-panel-input" @bind="_templateEditor.FooterCenter" placeholder="Center" title="Tokens: {DocumentTitle}, {SectionTitle}, {Date}, {PageNumber}, {TotalPages}" />
+                                <input class="export-panel-input" @bind="_templateEditor.FooterRight" placeholder="Right" title="Tokens: {DocumentTitle}, {SectionTitle}, {Date}, {PageNumber}, {TotalPages}" />
+                            </div>
+                        </div>
+
+                        <label class="export-panel-label">TOC</label>
+                        <div class="template-inline-inputs">
+                            <label><input type="checkbox" @bind="_templateEditor.TocEnabled" /> Enabled</label>
+                            <input type="number" class="export-panel-input" @bind="_templateEditor.TocDepth" placeholder="Depth" />
+                        </div>
+
+                        <label class="export-panel-label">Page numbers</label>
+                        <div class="template-inline-inputs">
+                            <label><input type="checkbox" @bind="_templateEditor.PageNumbersEnabled" /> Enabled</label>
+                            <input type="number" class="export-panel-input" @bind="_templateEditor.PageNumberStart" placeholder="Start" />
+                        </div>
+                    </div>
+                    <div class="modal-actions">
+                        <button type="button" @onclick="SaveTemplateAsync" disabled="@_isTemplateSaving">Save</button>
+                        <button type="button" @onclick="CancelTemplateEdit">Cancel</button>
+                    </div>
+                </div>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(_templateActionError))
+            {
+                <div class="modal-error">@_templateActionError</div>
+            }
+            </div>
+            <div class="modal-footer">
+                <button type="button" @onclick="CloseTemplateManager">Close</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_isExportPreviewOpen)
+{
+    <div class="modal-overlay" @onclick="ClosePreview">
+        @* Standard modal layout *@
+        <div class="modal export-preview modal-panel" role="dialog" aria-modal="true" style="@GetPreviewStyle()" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <div class="modal-title">Export preview</div>
+            </div>
+            <div class="modal-body">
+            <div class="preview-toolbar">
+                <div class="preview-zoom">
+                    <span>Zoom</span>
+                    <button type="button" @onclick="() => SetPreviewZoom(1.0)">100%</button>
+                    <button type="button" @onclick="() => SetPreviewZoom(1.25)">125%</button>
+                    <button type="button" @onclick="() => SetPreviewZoom(1.5)">150%</button>
+                </div>
+                <button type="button" @onclick="PrintPreviewAsync">Print</button>
+            </div>
+            @if (_isPreviewLoading)
+            {
+                <div class="export-panel-note">Rendering preview...</div>
+            }
+            else if (!string.IsNullOrWhiteSpace(_previewError))
+            {
+                <div class="modal-error">@_previewError</div>
+            }
+            else
+            {
+                <div class="preview-frame-wrap">
+                    <iframe id="export-preview-frame"
+                            class="export-preview-frame"
+                            srcdoc="@_previewHtml"
+                            sandbox="allow-same-origin allow-scripts allow-modals"></iframe>
+                </div>
+            }
+            </div>
+            <div class="modal-footer">
+                <button type="button" @onclick="ClosePreview">Close</button>
+            </div>
         </div>
     </div>
 }
@@ -494,7 +1392,7 @@ else
         {
             <div class="editor-context-menu-group">
                 <div class="editor-context-menu-label">AI</div>
-                @foreach (AiActionOption action in _aiActions)
+                @foreach (AiActionOption action in SelectionAiActions)
                 {
                     <button type="button" disabled="@IsAiQuotaExceeded" @onclick="() => OnContextMenuCommand(() => OnAiActionSelected(action))">@action.Label</button>
                 }

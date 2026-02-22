@@ -1,0 +1,1027 @@
+@page "/documents"
+@using System.Globalization
+@using System.Net
+@using Microsoft.AspNetCore.Components.Web
+@using WriterApp.Application.Documents
+@inject HttpClient Http
+@inject NavigationManager Navigation
+@inject IConfiguration Configuration
+@inject IJSRuntime JS
+@inject WriterApp.Client.State.CurrentDocumentStateService CurrentDocumentStateService
+
+<PageTitle>Projects</PageTitle>
+
+<div class="landing">
+    <header class="landing-header">
+        <div>
+            <h1>@(_view == "projects" ? "Projects" : "Documents")</h1>
+            <p class="landing-subtitle">Start with a project, then open its manuscript or workspace.</p>
+        </div>
+        @if (_view == "projects")
+        {
+            <button type="button" class="primary" @onclick="CreateProjectAsync" disabled="@_creatingProject">
+                @(_creatingProject ? "Creating..." : "New project")
+            </button>
+        }
+        else
+        {
+            <button type="button" class="primary" @onclick="CreateDocumentAsync" disabled="@_creating">
+                @(_creating ? "Creating..." : "Create new document")
+            </button>
+        }
+    </header>
+
+    @if (_projectsEnabled)
+    {
+        <div class="landing-tabs" role="tablist" aria-label="Start page view">
+            <button type="button"
+                    class='landing-tab @GetStartTabClass("projects")'
+                    @onclick='() => SetStartViewAsync("projects")'>
+                Projects
+            </button>
+            <button type="button"
+                    class='landing-tab @GetStartTabClass("documents")'
+                    @onclick='() => SetStartViewAsync("documents")'>
+                Documents
+            </button>
+        </div>
+        <div class="landing-view-hint" aria-live="polite">
+            @if (_view == "projects")
+            {
+                <span>Projects: manuscript structure (Parts, Chapters, Scenes).</span>
+            }
+            else
+            {
+                <span>Documents: freeform drafts and notes.</span>
+            }
+        </div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(_projectErrorMessage))
+    {
+        <div class="landing-error">@_projectErrorMessage</div>
+    }
+    @if (!string.IsNullOrWhiteSpace(_loadErrorMessage))
+    {
+        <div class="landing-error">@_loadErrorMessage</div>
+    }
+    @if (!string.IsNullOrWhiteSpace(_createErrorMessage))
+    {
+        <div class="landing-error">@_createErrorMessage</div>
+    }
+    @if (!string.IsNullOrWhiteSpace(_renameErrorMessage))
+    {
+        <div class="landing-error">@_renameErrorMessage</div>
+    }
+
+    @if (_view == "projects")
+    {
+        @if (_projectsLoading)
+        {
+            <div class="landing-loading">Loading projects...</div>
+        }
+        else if (_projectItems.Count == 0)
+        {
+            <div class="landing-empty">
+                <p>Create your first project to begin writing.</p>
+                <button type="button" class="primary" @onclick="CreateProjectAsync" disabled="@_creatingProject">Create your first project</button>
+            </div>
+        }
+        else
+        {
+            @if (_continueProject is not null)
+            {
+                <section class="continue-strip" aria-label="Continue writing">
+                    <div class="continue-meta">
+                        <div class="continue-label">Continue writing</div>
+                        <div class="continue-title">@_continueProject.Title</div>
+                        <div class="landing-time">Last edited @FormatRelativeTime(_continueProject.LastEditedUtc)</div>
+                        <div class="project-action-help">Resume opens your last writing context.</div>
+                    </div>
+                    <div class="continue-actions">
+                        <button type="button"
+                                class="primary"
+                                title="Resume your last writing context for this project."
+                                @onclick="() => ResumeProjectAsync(_continueProject.ProjectId)">
+                            Resume
+                        </button>
+                    </div>
+                </section>
+            }
+            @if (_openProjectMenuId.HasValue)
+            {
+                <button type="button"
+                        class="project-overflow-backdrop"
+                        aria-hidden="true"
+                        tabindex="-1"
+                        @onclick="CloseProjectMenu">
+                </button>
+            }
+
+            <div class="landing-list">
+                @foreach (ProjectListItemDto item in _projectItems)
+                {
+                    Guid rowProjectId = item.ProjectId;
+                    Guid? rowPrimaryDocumentId = item.PrimaryDocumentId;
+                    bool menuOpen = _openProjectMenuId == rowProjectId;
+                    <article class="landing-card project-card">
+                        <div class="landing-meta">
+                            <div class="landing-title">@item.Title</div>
+                            <div class="landing-time">Last edited @FormatRelativeTime(item.LastEditedUtc)</div>
+                            <div class="project-metrics">@item.TotalWords words</div>
+                            <div class="project-action-help">Resume: last writing context. Open manuscript: manuscript editor. Open project: workspace.</div>
+                            @if (item.TodayWords.HasValue && item.ThisWeekWords.HasValue && item.StreakCount.HasValue)
+                            {
+                                <div class="project-progress-snippet">
+                                    <span class="metric-item">Today @item.TodayWords.Value</span>
+                                    <span class="metric-separator" aria-hidden="true">|</span>
+                                    <span class="metric-item">Week @item.ThisWeekWords.Value</span>
+                                    <span class="metric-separator" aria-hidden="true">|</span>
+                                    <span class="metric-item">Streak @item.StreakCount.Value</span>
+                                </div>
+                            }
+                        </div>
+                        <div class="landing-actions">
+                            <button type="button"
+                                    class="primary"
+                                    title="Resume your last writing context for this project."
+                                    @onclick="() => ResumeProjectAsync(rowProjectId)">
+                                Resume
+                            </button>
+                            <div class="project-overflow">
+                                <button type="button"
+                                        class="secondary project-overflow-toggle"
+                                        aria-label="Project actions"
+                                        aria-haspopup="menu"
+                                        aria-expanded="@menuOpen"
+                                        @onkeydown="OnProjectMenuKeyDown"
+                                        @onclick="() => ToggleProjectMenu(rowProjectId)">
+                                    ...
+                                </button>
+                                @if (menuOpen)
+                                {
+                                    <div class="project-overflow-menu"
+                                         role="menu"
+                                         tabindex="-1"
+                                         @onclick:stopPropagation="true"
+                                         @onkeydown="OnProjectMenuKeyDown">
+                                        <button type="button"
+                                                role="menuitem"
+                                                @onclick:stopPropagation="true"
+                                                @onclick="() => OpenProject(rowProjectId)">
+                                            Open project
+                                        </button>
+                                        <button type="button"
+                                                role="menuitem"
+                                                @onclick:stopPropagation="true"
+                                                @onclick="() => OpenManuscriptFromMenuAsync(rowProjectId, rowPrimaryDocumentId)">
+                                            Open manuscript
+                                        </button>
+                                        <button type="button"
+                                                role="menuitem"
+                                                @onclick:stopPropagation="true"
+                                                @onclick="() => RenameProjectFromMenu(item)">
+                                            Rename
+                                        </button>
+                                        <button type="button"
+                                                class="danger"
+                                                role="menuitem"
+                                                @onclick:stopPropagation="true"
+                                                @onclick="() => DeleteProjectFromMenu(rowProjectId)">
+                                            Delete
+                                        </button>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    </article>
+                }
+            </div>
+        }
+    }
+    else
+    {
+        <div class="landing-tabs">
+            <button type="button"
+                    class='landing-tab @GetDocumentTabClass("active")'
+                    @onclick='() => SetDocumentViewAsync("active")'>
+                Active
+            </button>
+            <button type="button"
+                    class='landing-tab @GetDocumentTabClass("archived")'
+                    @onclick='() => SetDocumentViewAsync("archived")'>
+                Archived
+            </button>
+            <button type="button"
+                    class='landing-tab @GetDocumentTabClass("trash")'
+                    @onclick='() => SetDocumentViewAsync("trash")'>
+                Trash
+            </button>
+        </div>
+        @if (_projectsEnabled)
+        {
+            <div class="landing-status">Manuscripts are managed from Projects.</div>
+        }
+
+        @if (_loading)
+        {
+            <div class="landing-loading">Loading documents...</div>
+        }
+        else if (_unauthorized)
+        {
+            <div class="landing-error">Not authenticated.</div>
+        }
+        else if (_documents.Count == 0)
+        {
+            <div class="landing-empty">
+                <p>@GetEmptyMessage()</p>
+                @if (_activeDocumentView == "active")
+                {
+                    <button type="button" class="primary" @onclick="CreateDocumentAsync" disabled="@_creating">Create new document</button>
+                }
+            </div>
+        }
+        else
+        {
+            <div class="landing-list">
+                @foreach (DocumentListItemDto entry in _documents)
+                {
+                    <div class="landing-card">
+                        <div class="landing-meta">
+                            @if (_editingDocumentId == entry.Id)
+                            {
+                                <div class="landing-title-edit">
+                                    <input class="landing-title-input"
+                                           value="@_titleDraft"
+                                           @oninput="OnTitleInput"
+                                           @onkeydown="OnTitleKeyDown"
+                                           aria-label="Document title"
+                                           autofocus />
+                                    <div class="landing-title-actions">
+                                        <button type="button"
+                                                class="secondary"
+                                                @onclick="SaveRenameAsync"
+                                                disabled="@(_renamingDocumentId is not null)">
+                                            Save
+                                        </button>
+                                        <button type="button" class="secondary" @onclick="CancelRename">Cancel</button>
+                                    </div>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="landing-title">@entry.Title</div>
+                            }
+                            <div class="landing-time">Last modified @FormatRelativeTime(entry.UpdatedAt)</div>
+                            @if (entry.DeletedAt is not null)
+                            {
+                                <div class="landing-status">Trashed @FormatRelativeTime(entry.DeletedAt.Value)</div>
+                            }
+                            else if (entry.IsArchived && entry.ArchivedAt is not null)
+                            {
+                                <div class="landing-status">Archived @FormatRelativeTime(entry.ArchivedAt.Value)</div>
+                            }
+                            @if (entry.WordCount > 0)
+                            {
+                                <div class="landing-words">@entry.WordCount words</div>
+                            }
+                        </div>
+                        <div class="landing-actions">
+                            @if (_activeDocumentView != "trash")
+                            {
+                                <button type="button"
+                                        class="secondary"
+                                        @onclick="() => StartRename(entry)"
+                                        disabled="@(_renamingDocumentId is not null)">
+                                    Rename
+                                </button>
+                                <button type="button" class="secondary" @onclick="() => OpenDocumentAsync(entry.Id)">Open</button>
+                            }
+
+                            @if (_activeDocumentView == "active")
+                            {
+                                <button type="button" class="secondary" @onclick="() => ArchiveDocumentAsync(entry.Id)">Archive</button>
+                                <button type="button" class="secondary" @onclick="() => MoveToTrashAsync(entry.Id)">Move to trash</button>
+                            }
+                            else if (_activeDocumentView == "archived")
+                            {
+                                <button type="button" class="secondary" @onclick="() => UnarchiveDocumentAsync(entry.Id)">Unarchive</button>
+                                <button type="button" class="secondary" @onclick="() => MoveToTrashAsync(entry.Id)">Move to trash</button>
+                            }
+                            else
+                            {
+                                <button type="button" class="secondary" @onclick="() => RestoreDocumentAsync(entry.Id)">Restore</button>
+                                <button type="button" class="secondary danger" @onclick="() => PromptPermanentDelete(entry)">Delete permanently</button>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    }
+</div>
+
+@if (_permanentDeleteDialogOpen)
+{
+    <div class="modal-backdrop" @onclick="CancelPermanentDelete"></div>
+    <div class="modal" role="dialog" aria-modal="true">
+        <div class="modal-title">Delete permanently?</div>
+        <div class="modal-body">
+            This permanently removes the document and all its content.
+            @if (_pendingPermanentDelete is not null)
+            {
+                <div class="landing-status">Document: @_pendingPermanentDelete.Title</div>
+            }
+        </div>
+        @if (!string.IsNullOrWhiteSpace(_permanentDeleteError))
+        {
+            <div class="modal-error">@_permanentDeleteError</div>
+        }
+        <div class="modal-actions">
+            <button type="button"
+                    class="danger"
+                    @onclick="ConfirmPermanentDeleteAsync"
+                    disabled="@_permanentDeleteInFlight">
+                Delete
+            </button>
+            <button type="button"
+                    @onclick="CancelPermanentDelete"
+                    disabled="@_permanentDeleteInFlight">
+                Cancel
+            </button>
+        </div>
+    </div>
+}
+
+@code {
+    private bool _loading;
+    private bool _projectsLoading;
+    private bool _unauthorized;
+    private bool _creating;
+    private bool _creatingProject;
+    private bool _projectsEnabled;
+    private string _view = "projects";
+    private string _activeDocumentView = "active";
+    private Guid? _editingDocumentId;
+    private Guid? _renamingDocumentId;
+    private string? _loadErrorMessage;
+    private string? _projectErrorMessage;
+    private string? _createErrorMessage;
+    private string? _renameErrorMessage;
+    private string? _permanentDeleteError;
+    private string _titleDraft = string.Empty;
+    private string _originalTitle = string.Empty;
+    private DateTimeOffset _originalUpdatedAt;
+    private List<DocumentListItemDto> _documents = new();
+    private readonly List<ProjectListItemDto> _projectItems = new();
+    private ProjectListItemDto? _continueProject;
+    private Guid? _openProjectMenuId;
+    private bool _permanentDeleteDialogOpen;
+    private bool _permanentDeleteInFlight;
+    private DocumentListItemDto? _pendingPermanentDelete;
+
+    protected override async Task OnInitializedAsync()
+    {
+        CurrentDocumentStateService.Clear();
+        _projectsEnabled = Configuration.GetValue<bool?>("Workflow:ProjectsEnabled")
+            ?? Configuration.GetValue<bool?>("WriterApp:Workflow:ProjectsEnabled")
+            ?? false;
+        _view = _projectsEnabled ? "projects" : "documents";
+
+        if (_projectsEnabled)
+        {
+            await LoadProjectItemsAsync();
+        }
+
+        if (!_projectsEnabled)
+        {
+            await LoadDocumentsAsync();
+        }
+    }
+
+    private async Task SetStartViewAsync(string view)
+    {
+        if (string.Equals(_view, view, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        _view = view;
+        if (_view == "projects")
+        {
+            await LoadProjectItemsAsync();
+        }
+        else if (_documents.Count == 0)
+        {
+            await LoadDocumentsAsync();
+        }
+    }
+
+    private string GetStartTabClass(string view)
+    {
+        return string.Equals(_view, view, StringComparison.OrdinalIgnoreCase) ? "is-active" : string.Empty;
+    }
+
+    private async Task LoadProjectItemsAsync()
+    {
+        _projectsLoading = true;
+        _projectErrorMessage = null;
+        try
+        {
+            using HttpResponseMessage response = await Http.GetAsync("/api/projects/list-items");
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                _projectsEnabled = false;
+                _view = "documents";
+                await LoadDocumentsAsync();
+                return;
+            }
+
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                _unauthorized = true;
+                return;
+            }
+
+            response.EnsureSuccessStatusCode();
+            List<ProjectListItemDto>? items = await response.Content.ReadFromJsonAsync<List<ProjectListItemDto>>();
+            _projectItems.Clear();
+            _projectItems.AddRange((items ?? new List<ProjectListItemDto>()).OrderByDescending(item => item.LastEditedUtc));
+            _continueProject = _projectItems.FirstOrDefault();
+        }
+        catch (Exception ex)
+        {
+            _projectErrorMessage = ex.Message;
+        }
+        finally
+        {
+            _projectsLoading = false;
+        }
+    }
+
+    private async Task CreateProjectAsync()
+    {
+        if (_creatingProject)
+        {
+            return;
+        }
+
+        _creatingProject = true;
+        _projectErrorMessage = null;
+        try
+        {
+            ProjectCreateRequest request = new("Untitled project", null, null, null, null, null);
+            using HttpResponseMessage response = await Http.PostAsJsonAsync("/api/projects", request);
+            response.EnsureSuccessStatusCode();
+            ProjectDto? created = await response.Content.ReadFromJsonAsync<ProjectDto>();
+            if (created is null)
+            {
+                _projectErrorMessage = "Failed to create project.";
+                return;
+            }
+
+            await LoadProjectItemsAsync();
+            Navigation.NavigateTo($"projects/{created.Id}");
+        }
+        catch (Exception ex)
+        {
+            _projectErrorMessage = ex.Message;
+        }
+        finally
+        {
+            _creatingProject = false;
+        }
+    }
+
+    private void OpenProject(Guid projectId)
+    {
+        CloseProjectMenu();
+        Navigation.NavigateTo($"projects/{projectId}");
+    }
+
+    private async Task ResumeProjectAsync(Guid projectId)
+    {
+        CloseProjectMenu();
+        string fallback = $"projects/{projectId}/manuscript";
+        string target = fallback;
+
+        try
+        {
+            string? savedTarget = await JS.InvokeAsync<string?>("localStorage.getItem", GetProjectResumeStorageKey(projectId));
+            if (!string.IsNullOrWhiteSpace(savedTarget))
+            {
+                target = savedTarget;
+            }
+        }
+        catch
+        {
+            target = fallback;
+        }
+
+        Navigation.NavigateTo(target);
+    }
+
+    private void ToggleProjectMenu(Guid projectId)
+    {
+        _openProjectMenuId = _openProjectMenuId == projectId ? null : projectId;
+    }
+
+    private void CloseProjectMenu()
+    {
+        _openProjectMenuId = null;
+    }
+
+    private async Task RenameProjectFromMenu(ProjectListItemDto item)
+    {
+        CloseProjectMenu();
+        await PromptRenameProject(item);
+    }
+
+    private async Task DeleteProjectFromMenu(Guid projectId)
+    {
+        CloseProjectMenu();
+        await DeleteProjectAsync(projectId);
+    }
+
+    private async Task OpenManuscriptFromMenuAsync(Guid projectId, Guid? primaryDocumentId)
+    {
+        if (projectId == Guid.Empty || _projectItems.All(item => item.ProjectId != projectId))
+        {
+            _projectErrorMessage = "Project not found.";
+            CloseProjectMenu();
+            return;
+        }
+
+        CloseProjectMenu();
+        _ = primaryDocumentId;
+        await OpenManuscriptInternalAsync(projectId);
+    }
+
+    private async Task OpenManuscriptInternalAsync(Guid projectId)
+    {
+        string target = $"projects/{projectId}/manuscript";
+        try
+        {
+            await JS.InvokeVoidAsync("localStorage.setItem", GetProjectResumeStorageKey(projectId), target);
+        }
+        catch
+        {
+            // ignore localStorage failures
+        }
+
+        Navigation.NavigateTo(target);
+    }
+
+    private async Task PromptRenameProject(ProjectListItemDto item)
+    {
+        string? nextTitle = await JS.InvokeAsync<string?>("prompt", "Rename project", item.Title);
+        if (string.IsNullOrWhiteSpace(nextTitle))
+        {
+            return;
+        }
+
+        ProjectUpdateRequest payload = new(nextTitle.Trim(), null, null, null, null, null);
+        using HttpResponseMessage response = await Http.PatchAsJsonAsync($"/api/projects/{item.ProjectId:D}", payload);
+        if (!response.IsSuccessStatusCode)
+        {
+            _projectErrorMessage = $"Rename failed: {(int)response.StatusCode}";
+            return;
+        }
+
+        await LoadProjectItemsAsync();
+    }
+
+    private async Task DeleteProjectAsync(Guid projectId)
+    {
+        bool confirmed = await JS.InvokeAsync<bool>("confirm", "Delete this project and its documents?");
+        if (!confirmed)
+        {
+            return;
+        }
+
+        using HttpResponseMessage response = await Http.DeleteAsync($"/api/projects/{projectId:D}");
+        using (response)
+        {
+            if (!response.IsSuccessStatusCode)
+            {
+                string detail = (await response.Content.ReadAsStringAsync()).Trim();
+                _projectErrorMessage = string.IsNullOrWhiteSpace(detail)
+                    ? $"Delete failed: {(int)response.StatusCode}"
+                    : $"Delete failed: {(int)response.StatusCode} {detail}";
+                return;
+            }
+
+            RemoveProjectFromList(projectId);
+            await LoadProjectItemsAsync();
+        }
+    }
+
+    private void RemoveProjectFromList(Guid projectId)
+    {
+        if (projectId == Guid.Empty)
+        {
+            return;
+        }
+
+        _projectItems.RemoveAll(item => item.ProjectId == projectId);
+        if (_continueProject?.ProjectId == projectId)
+        {
+            _continueProject = _projectItems.FirstOrDefault();
+        }
+
+        if (_openProjectMenuId == projectId)
+        {
+            _openProjectMenuId = null;
+        }
+    }
+
+    private async Task LoadDocumentsAsync()
+    {
+        _loading = true;
+        _loadErrorMessage = null;
+        _unauthorized = false;
+
+        try
+        {
+            using HttpResponseMessage response = await Http.GetAsync($"api/documents?view={_activeDocumentView}");
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                _unauthorized = true;
+                return;
+            }
+
+            response.EnsureSuccessStatusCode();
+            List<DocumentListItemDto>? docs = await response.Content.ReadFromJsonAsync<List<DocumentListItemDto>>();
+            _documents = (docs ?? new List<DocumentListItemDto>())
+                .Where(item => !_projectsEnabled || !IsManuscriptKind(item.Kind))
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            _loadErrorMessage = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task SetDocumentViewAsync(string view)
+    {
+        if (string.Equals(_activeDocumentView, view, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        _activeDocumentView = view;
+        CancelRename();
+        await LoadDocumentsAsync();
+    }
+
+    private string GetDocumentTabClass(string view)
+    {
+        return string.Equals(_activeDocumentView, view, StringComparison.OrdinalIgnoreCase) ? "is-active" : string.Empty;
+    }
+
+    private string GetEmptyMessage()
+    {
+        return _activeDocumentView switch
+        {
+            "archived" => "No archived documents.",
+            "trash" => "Trash is empty.",
+            _ => _projectsEnabled ? "No non-manuscript documents yet." : "No documents yet."
+        };
+    }
+
+    private async Task CreateDocumentAsync()
+    {
+        if (_creating)
+        {
+            return;
+        }
+
+        _creating = true;
+        _createErrorMessage = null;
+
+        try
+        {
+            DocumentCreateRequest request = new(
+                Id: null,
+                Title: null,
+                CreatedAt: null,
+                UpdatedAt: null,
+                CreateDefaultStructure: true,
+                ProjectId: null,
+                Kind: _projectsEnabled ? "other" : null);
+
+            using HttpResponseMessage response = await Http.PostAsJsonAsync("api/documents", request);
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                _unauthorized = true;
+                return;
+            }
+
+            response.EnsureSuccessStatusCode();
+            DocumentCreateResponse? created = await response.Content.ReadFromJsonAsync<DocumentCreateResponse>();
+            if (created is null)
+            {
+                _createErrorMessage = "Failed to create document.";
+                return;
+            }
+
+            Guid? sectionId = created.DefaultSectionId;
+            if (sectionId is null)
+            {
+                sectionId = await GetFirstSectionIdAsync(created.Document.Id);
+            }
+
+            if (sectionId is null)
+            {
+                _createErrorMessage = "Create succeeded, but no section was found.";
+                return;
+            }
+
+            Navigation.NavigateTo($"documents/{created.Document.Id}/sections/{sectionId}");
+        }
+        catch (Exception ex)
+        {
+            _createErrorMessage = ex.Message;
+        }
+        finally
+        {
+            _creating = false;
+        }
+    }
+
+    private async Task OpenDocumentAsync(Guid documentId)
+    {
+        try
+        {
+            Guid? sectionId = await GetFirstSectionIdAsync(documentId);
+            if (sectionId is null)
+            {
+                _loadErrorMessage = "No sections found for this document.";
+                return;
+            }
+
+            Navigation.NavigateTo($"documents/{documentId}/sections/{sectionId}");
+        }
+        catch (Exception ex)
+        {
+            _loadErrorMessage = $"Open failed: {ex.Message}";
+        }
+    }
+
+    private async Task ArchiveDocumentAsync(Guid documentId)
+    {
+        await PostLifecycleActionAsync($"api/documents/{documentId}/archive");
+    }
+
+    private async Task UnarchiveDocumentAsync(Guid documentId)
+    {
+        await PostLifecycleActionAsync($"api/documents/{documentId}/unarchive");
+    }
+
+    private async Task MoveToTrashAsync(Guid documentId)
+    {
+        await PostLifecycleActionAsync($"api/documents/{documentId}/trash");
+    }
+
+    private async Task RestoreDocumentAsync(Guid documentId)
+    {
+        await PostLifecycleActionAsync($"api/documents/{documentId}/restore");
+    }
+
+    private async Task PostLifecycleActionAsync(string url)
+    {
+        try
+        {
+            using HttpResponseMessage response = await Http.PostAsync(url, null);
+            if (!response.IsSuccessStatusCode)
+            {
+                _loadErrorMessage = $"Action failed: {(int)response.StatusCode}";
+                return;
+            }
+
+            await LoadDocumentsAsync();
+        }
+        catch (Exception ex)
+        {
+            _loadErrorMessage = $"Action failed: {ex.Message}";
+        }
+    }
+
+    private void PromptPermanentDelete(DocumentListItemDto entry)
+    {
+        _pendingPermanentDelete = entry;
+        _permanentDeleteError = null;
+        _permanentDeleteDialogOpen = true;
+    }
+
+    private void CancelPermanentDelete()
+    {
+        _pendingPermanentDelete = null;
+        _permanentDeleteError = null;
+        _permanentDeleteDialogOpen = false;
+    }
+
+    private async Task ConfirmPermanentDeleteAsync()
+    {
+        if (_pendingPermanentDelete is null || _permanentDeleteInFlight)
+        {
+            CancelPermanentDelete();
+            return;
+        }
+
+        _permanentDeleteInFlight = true;
+        _permanentDeleteError = null;
+
+        try
+        {
+            using HttpResponseMessage response = await Http.DeleteAsync($"api/documents/{_pendingPermanentDelete.Id}");
+            if (!response.IsSuccessStatusCode)
+            {
+                _permanentDeleteError = $"Delete failed: {(int)response.StatusCode}";
+                return;
+            }
+
+            CancelPermanentDelete();
+            await LoadDocumentsAsync();
+        }
+        catch (Exception ex)
+        {
+            _permanentDeleteError = $"Delete failed: {ex.Message}";
+        }
+        finally
+        {
+            _permanentDeleteInFlight = false;
+        }
+    }
+
+    private async Task<Guid?> GetFirstSectionIdAsync(Guid documentId)
+    {
+        List<SectionDto>? sections = await Http.GetFromJsonAsync<List<SectionDto>>($"api/documents/{documentId}/sections");
+        SectionDto? first = sections?
+            .OrderBy(section => section.OrderIndex)
+            .FirstOrDefault();
+        return first?.Id;
+    }
+
+    private static string FormatRelativeTime(DateTimeOffset timestampUtc)
+    {
+        DateTime utc = timestampUtc.UtcDateTime;
+        TimeSpan delta = DateTime.UtcNow - utc;
+        if (delta < TimeSpan.Zero)
+        {
+            delta = TimeSpan.Zero;
+        }
+
+        if (delta < TimeSpan.FromMinutes(1))
+        {
+            return "just now";
+        }
+
+        if (delta < TimeSpan.FromHours(1))
+        {
+            int minutes = Math.Max(1, (int)delta.TotalMinutes);
+            return minutes == 1 ? "1 min ago" : $"{minutes} min ago";
+        }
+
+        if (delta < TimeSpan.FromDays(1))
+        {
+            int hours = Math.Max(1, (int)delta.TotalHours);
+            return hours == 1 ? "1 hr ago" : $"{hours} hr ago";
+        }
+
+        int days = Math.Max(1, (int)delta.TotalDays);
+        if (days < 7)
+        {
+            return days == 1 ? "1 day ago" : $"{days} days ago";
+        }
+
+        return utc.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+    }
+
+    private void StartRename(DocumentListItemDto entry)
+    {
+        if (_renamingDocumentId is not null)
+        {
+            return;
+        }
+
+        _renameErrorMessage = null;
+        _editingDocumentId = entry.Id;
+        _titleDraft = entry.Title;
+        _originalTitle = entry.Title;
+        _originalUpdatedAt = entry.UpdatedAt;
+    }
+
+    private void CancelRename()
+    {
+        _editingDocumentId = null;
+        _titleDraft = string.Empty;
+        _originalTitle = string.Empty;
+        _renameErrorMessage = null;
+    }
+
+    private void OnTitleInput(ChangeEventArgs args)
+    {
+        _titleDraft = args.Value?.ToString() ?? string.Empty;
+    }
+
+    private async Task SaveRenameAsync()
+    {
+        if (_editingDocumentId is null || _renamingDocumentId is not null)
+        {
+            return;
+        }
+
+        string nextTitle = (_titleDraft ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(nextTitle))
+        {
+            _renameErrorMessage = "Title is required.";
+            return;
+        }
+
+        Guid documentId = _editingDocumentId.Value;
+        int index = _documents.FindIndex(doc => doc.Id == documentId);
+        if (index < 0)
+        {
+            _renameErrorMessage = "Document not found.";
+            return;
+        }
+
+        _renameErrorMessage = null;
+        _renamingDocumentId = documentId;
+
+        DocumentListItemDto current = _documents[index];
+        _documents[index] = current with { Title = nextTitle, UpdatedAt = DateTimeOffset.UtcNow };
+        _editingDocumentId = null;
+
+        try
+        {
+            DocumentUpdateRequest payload = new(nextTitle);
+            using HttpResponseMessage response = await Http.PutAsJsonAsync($"api/documents/{documentId}", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new HttpRequestException($"Rename failed: {(int)response.StatusCode}");
+            }
+
+            DocumentDetailDto? updated = await response.Content.ReadFromJsonAsync<DocumentDetailDto>();
+            if (updated is not null)
+            {
+                _documents[index] = current with { Title = updated.Title, UpdatedAt = updated.UpdatedAt };
+            }
+        }
+        catch (Exception ex)
+        {
+            _documents[index] = current with { Title = _originalTitle, UpdatedAt = _originalUpdatedAt };
+            _renameErrorMessage = $"Rename failed: {ex.Message}";
+        }
+        finally
+        {
+            _renamingDocumentId = null;
+        }
+    }
+
+    private async Task OnTitleKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter")
+        {
+            await SaveRenameAsync();
+        }
+        else if (args.Key == "Escape")
+        {
+            CancelRename();
+        }
+    }
+
+    private void OnProjectKeyDown(KeyboardEventArgs args, Guid projectId)
+    {
+        if (args.Key == "Enter" || args.Key == " ")
+        {
+            OpenProject(projectId);
+        }
+    }
+
+    private void OnProjectMenuKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Escape")
+        {
+            CloseProjectMenu();
+        }
+    }
+
+    private static string GetProjectResumeStorageKey(Guid projectId)
+    {
+        return $"writerapp.project.resume.{projectId:D}";
+    }
+
+    private static bool IsManuscriptKind(string? kind)
+    {
+        return string.Equals(kind, "manuscript", StringComparison.OrdinalIgnoreCase);
+    }
+}
+
+
+

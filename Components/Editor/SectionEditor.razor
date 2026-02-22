@@ -97,6 +97,23 @@
         await JSRuntime.InvokeVoidAsync("tiptapEditor.setContent", _editor, content);
     }
 
+    public async Task<string> GetContentAsync()
+    {
+        if (_editor is null)
+        {
+            return Content ?? string.Empty;
+        }
+
+        try
+        {
+            return await JSRuntime.InvokeAsync<string>("tiptapEditor.getContent", _editor);
+        }
+        catch (JSException)
+        {
+            return Content ?? string.Empty;
+        }
+    }
+
     [JSInvokable]
     public async Task OnEditorContentChanged(string html)
     {

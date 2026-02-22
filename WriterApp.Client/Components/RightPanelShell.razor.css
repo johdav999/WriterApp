@@ -1,0 +1,86 @@
+.rp-shell {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.rp-sticky-header {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: var(--panel-bg, var(--color-surface-2));
+}
+
+.rp-tabs {
+    padding: var(--space-3);
+    border-bottom: 1px solid var(--panel-border, var(--color-border));
+    background: var(--color-surface-3, var(--color-surface-2));
+}
+
+.rp-header {
+    padding: var(--space-3);
+    border-bottom: 1px solid var(--panel-border, var(--color-border));
+    display: grid;
+    gap: 8px;
+    background: var(--panel-bg, var(--color-surface-2));
+}
+
+.rp-scroll {
+    flex: 1 1 auto;
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-gutter: stable;
+    scrollbar-width: auto;
+    padding-right: 2px;
+    display: flex;
+    flex-direction: column;
+    overscroll-behavior: contain;
+}
+
+.rp-content {
+    flex: 0 0 auto;
+    padding: var(--space-3);
+    display: grid;
+    gap: 12px;
+    min-height: 0;
+}
+
+.rp-footer {
+    padding: var(--space-3);
+    border-top: 1px solid var(--panel-border, var(--color-border));
+    background: var(--panel-bg, var(--color-surface-2));
+}
+
+.rp-scroll::-webkit-scrollbar {
+    width: 10px;
+}
+
+.rp-scroll::-webkit-scrollbar-thumb {
+    background: rgba(107, 114, 128, 0.55);
+    border-radius: 999px;
+}
+
+.rp-scroll::-webkit-scrollbar-track {
+    background: rgba(229, 231, 235, 0.45);
+}
+
+@media (max-width: 880px) {
+    .rp-shell {
+        height: auto;
+        min-height: 0;
+    }
+
+    .rp-scroll {
+        overflow: visible;
+        padding-right: 0;
+    }
+
+    .rp-sticky-header {
+        position: static;
+    }
+}

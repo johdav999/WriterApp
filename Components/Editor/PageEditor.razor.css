@@ -3,6 +3,13 @@
     justify-content: space-between;
     font-size: 0.85rem;
     color: #6b7280;
+    padding: 10px 2px 0;
+    border-top: 1px solid #e5e7eb;
+    margin-top: 12px;
+    gap: 12px;
+    background: var(--surface);
+    position: relative;
+    z-index: 5;
 }
 
 .saving-indicator {

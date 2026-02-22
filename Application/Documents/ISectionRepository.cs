@@ -13,6 +13,7 @@ namespace WriterApp.Application.Documents
         Task<SectionRecord> CreateAsync(SectionRecord section, CancellationToken ct);
         Task<bool> ExistsAsync(Guid sectionId, string ownerUserId, CancellationToken ct);
         Task<SectionRecord?> UpdateAsync(Guid sectionId, string ownerUserId, SectionUpdate update, CancellationToken ct);
+        Task<SectionRecord?> DeleteAsync(Guid sectionId, string ownerUserId, CancellationToken ct);
     }
 
     public sealed record SectionUpdate(string? Title, string? NarrativePurpose);

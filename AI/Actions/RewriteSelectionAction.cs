@@ -26,9 +26,11 @@ namespace WriterApp.AI.Actions
                 throw new ArgumentNullException(nameof(input));
             }
 
-            string sectionPlainText = ResolveSectionText(input.Document, input.ActiveSectionId);
+            string sectionPlainText = ResolveSectionText(input.Document, input.ActiveSectionId, input.Options);
             TextRange normalizedRange = NormalizeRange(input.SelectionRange, sectionPlainText.Length);
-            string selectionText = ExtractRange(sectionPlainText, normalizedRange);
+            string selectionText = string.IsNullOrWhiteSpace(input.SelectedText)
+                ? ExtractRange(sectionPlainText, normalizedRange)
+                : input.SelectedText;
 
             string? languageHint = string.IsNullOrWhiteSpace(input.Document.Metadata.Language)
                 ? "en"
@@ -68,8 +70,14 @@ namespace WriterApp.AI.Actions
                 new Dictionary<string, object>());
         }
 
-        private static string ResolveSectionText(Document document, Guid sectionId)
+        private static string ResolveSectionText(Document document, Guid sectionId, Dictionary<string, object?>? options)
         {
+            string? overrideText = GetOption(options, "section_text_override");
+            if (!string.IsNullOrWhiteSpace(overrideText))
+            {
+                return overrideText;
+            }
+
             for (int chapterIndex = 0; chapterIndex < document.Chapters.Count; chapterIndex++)
             {
                 Chapter chapter = document.Chapters[chapterIndex];
@@ -84,6 +92,16 @@ namespace WriterApp.AI.Actions
             }
 
             return string.Empty;
+        }
+
+        private static string? GetOption(Dictionary<string, object?>? options, string key)
+        {
+            if (options is null || !options.TryGetValue(key, out object? value) || value is null)
+            {
+                return null;
+            }
+
+            return value.ToString();
         }
 
         private static TextRange NormalizeRange(TextRange range, int maxLength)

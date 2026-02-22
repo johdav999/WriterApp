@@ -28,7 +28,7 @@
       "problemMatcher": "$msCompile"
     },
     {
-      "label": "publish-azure-linux",
+      "label": "publish-no-rid",
       "type": "process",
       "command": "dotnet",
       "args": [
@@ -36,13 +36,8 @@
         "${workspaceFolder}/BlazorApp.csproj",
         "--configuration",
         "Release",
-        "--runtime",
-        "linux-x64",
-        "--self-contained",
-        "false",
         "-o",
-        "${workspaceFolder}/.azure-publish",
-        "/p:UseAppHost=false"
+        "${workspaceFolder}/.azure-publish"
       ],
       "problemMatcher": "$msCompile",
       "dependsOn": "clean"

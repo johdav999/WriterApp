@@ -1,0 +1,48 @@
+@using WriterApp.Client.Services
+
+<section class="coach-card" aria-label="@Recommendation.ContextTitle">
+    <div class="coach-card-header">
+        <div class="coach-card-kicker">@Recommendation.ContextTitle</div>
+        <h3>What I&apos;m seeing</h3>
+    </div>
+
+    @if (Recommendation.Observations.Count == 0)
+    {
+        <div class="coach-card-empty">Start by taking one concrete step in this workspace.</div>
+    }
+    else
+    {
+        <ul class="coach-card-observations">
+            @foreach (string item in Recommendation.Observations)
+            {
+                <li>@item</li>
+            }
+        </ul>
+    }
+
+    <div class="coach-card-next">
+        <div class="coach-card-next-label">Suggested next step</div>
+        <button type="button" class="primary" @onclick="OnPrimaryAction">
+            @Recommendation.PrimaryActionLabel
+        </button>
+    </div>
+
+    <div class="coach-card-why">
+        <strong>Why:</strong> @Recommendation.Why
+    </div>
+</section>
+
+@code {
+    [Parameter]
+    public CoachCardRecommendation Recommendation { get; set; } = new(
+        "Coach",
+        Array.Empty<string>(),
+        "Continue",
+        "The next small step keeps momentum.",
+        CoachPrimaryAction.None,
+        null,
+        null);
+
+    [Parameter]
+    public EventCallback OnPrimaryAction { get; set; }
+}

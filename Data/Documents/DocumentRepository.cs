@@ -28,15 +28,26 @@ namespace WriterApp.Data.Documents
                     document.Id == documentId && document.OwnerUserId == ownerUserId, ct);
         }
 
-        public async Task<IReadOnlyList<DocumentRecord>> ListAsync(string ownerUserId, CancellationToken ct)
+        public async Task<IReadOnlyList<DocumentRecord>> ListAsync(
+            string ownerUserId,
+            DocumentListView view,
+            CancellationToken ct)
         {
-            List<DocumentRecord> documents = await _dbContext.Documents
+            IQueryable<DocumentRecord> query = _dbContext.Documents
                 .AsNoTracking()
-                .Where(document => document.OwnerUserId == ownerUserId)
-                .ToListAsync(ct);
+                .Where(document => document.OwnerUserId == ownerUserId);
+
+            query = view switch
+            {
+                DocumentListView.Archived => query.Where(document => document.DeletedAt == null && document.IsArchived),
+                DocumentListView.Trash => query.Where(document => document.DeletedAt != null),
+                _ => query.Where(document => document.DeletedAt == null && !document.IsArchived)
+            };
+
+            List<DocumentRecord> documents = await query.ToListAsync(ct);
 
             documents = documents
-                .OrderByDescending(document => document.UpdatedAt)
+                .OrderByDescending(document => document.UpdatedAtUnixSeconds)
                 .ToList();
 
             if (documents.Count == 0)
@@ -74,6 +85,7 @@ namespace WriterApp.Data.Documents
 
             document.Title = nextTitle;
             document.UpdatedAt = DateTimeOffset.UtcNow;
+            document.UpdatedAtUnixSeconds = document.UpdatedAt.ToUnixTimeSeconds();
             await SqliteRetryHelper.ExecuteAsync(() => _dbContext.SaveChangesAsync(ct), ct);
             return document;
         }

@@ -1,0 +1,219 @@
+@using WriterApp.Client.State
+@using System.Net.Http.Json
+@using WriterApp.Application.Documents
+@implements IDisposable
+@inject CurrentDocumentStateService CurrentDocumentStateService
+@inject CurrentSceneStateService CurrentSceneStateService
+@inject LastOpenedDocumentStateService LastOpenedDocumentStateService
+@inject HttpClient Http
+@inject NavigationManager Navigation
+@inject IConfiguration Configuration
+
+<div class="top-row ps-3 navbar navbar-dark">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="documents">WriterApp</a>
+        <button title="Navigation menu" class="navbar-toggler" @onclick="ToggleNavMenu">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+    </div>
+</div>
+
+<div class="@NavMenuCssClass nav-scrollable" @onclick="ToggleNavMenu">
+    <nav class="nav flex-column">
+        <div class="nav-item px-3">
+            @if (HasCurrentEditorLink)
+            {
+                <NavLink class="nav-link" href="@GetEditorLink()" Match="NavLinkMatch.Prefix" title="Write and edit your document.">
+                    <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> Editor
+                </NavLink>
+            }
+            else
+            {
+                <a class="nav-link" href="documents" title="Write and edit your document.">
+                    <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> Editor
+                </a>
+            }
+        </div>
+        <div class="nav-item px-3">
+            @if (HasCurrentSynopsisLink)
+            {
+                <NavLink class="nav-link" href="@GetSynopsisLink()" Match="NavLinkMatch.Prefix" title="Summarize the story at a high level.">
+                    <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Synopsis
+                </NavLink>
+            }
+            else
+            {
+                <a class="nav-link" href="documents" title="Summarize the story at a high level.">
+                    <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Synopsis
+                </a>
+            }
+        </div>
+        <div class="nav-item px-3">
+            <a class="nav-link @GetDocumentsActiveClass()"
+               href="documents"
+               title="Open the Projects hub."
+               @onclick="OnDocumentsNavClicked"
+               @onclick:preventDefault="true">
+                <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Projects
+            </a>
+        </div>
+        @if (_projectsEnabled)
+        {
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="projects" Match="NavLinkMatch.Prefix" title="Plan structure in Projects view.">
+                    <span class="bi bi-diagram-nav-menu" aria-hidden="true"></span> Projects
+                </NavLink>
+            </div>
+        }
+        <div class="nav-item px-3">
+            <NavLink class="nav-link" href="account" Match="NavLinkMatch.Prefix" title="Account and plan details.">
+                <span class="bi bi-person-nav-menu" aria-hidden="true"></span> Account
+            </NavLink>
+        </div>
+    </nav>
+</div>
+
+@code {
+    private bool collapseNavMenu = true;
+    private bool _projectsEnabled;
+
+    private string? NavMenuCssClass => collapseNavMenu ? "collapse" : null;
+
+    private void ToggleNavMenu()
+    {
+        collapseNavMenu = !collapseNavMenu;
+    }
+
+    protected override void OnInitialized()
+    {
+        _projectsEnabled = true;
+        CurrentDocumentStateService.Changed += HandleDocumentStateChange;
+        CurrentSceneStateService.Changed += HandleDocumentStateChange;
+    }
+
+    public void Dispose()
+    {
+        CurrentDocumentStateService.Changed -= HandleDocumentStateChange;
+        CurrentSceneStateService.Changed -= HandleDocumentStateChange;
+    }
+
+    private void HandleDocumentStateChange()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private bool HasCurrentEditorLink =>
+        CurrentSceneStateService.ProjectId is Guid projectId &&
+        CurrentSceneStateService.SceneNodeId is Guid sceneNodeId &&
+        projectId != Guid.Empty &&
+        sceneNodeId != Guid.Empty;
+
+    private bool HasCurrentSynopsisLink =>
+        CurrentDocumentStateService.DocumentId is Guid documentId &&
+        documentId != Guid.Empty;
+
+    private string GetEditorLink()
+    {
+        if (!HasCurrentEditorLink)
+        {
+            return "documents";
+        }
+
+        Guid projectId = CurrentSceneStateService.ProjectId!.Value;
+        Guid sceneNodeId = CurrentSceneStateService.SceneNodeId!.Value;
+        return $"projects/{projectId}/scenes/{sceneNodeId}";
+    }
+
+    private string GetSynopsisLink()
+    {
+        if (!HasCurrentSynopsisLink)
+        {
+            return "documents";
+        }
+
+        Guid documentId = CurrentDocumentStateService.DocumentId!.Value;
+        return $"synopsis/{documentId}";
+    }
+
+    private string GetDocumentsActiveClass()
+    {
+        return IsDocumentsRoute() ? "active" : string.Empty;
+    }
+
+    private async Task OnDocumentsNavClicked()
+    {
+        await NavigateProjectsHubAsync();
+    }
+
+    private Task NavigateProjectsHubAsync()
+    {
+        Navigation.NavigateTo("documents");
+        return Task.CompletedTask;
+    }
+
+    private async Task<(Guid? SectionId, bool ShouldClear)> TryResolveSectionAsync(LastOpenedDocumentState state)
+    {
+        try
+        {
+            using HttpResponseMessage response =
+                await Http.GetAsync($"api/documents/{state.DocumentId}/sections");
+            if (!response.IsSuccessStatusCode)
+            {
+                bool clear = response.StatusCode is System.Net.HttpStatusCode.NotFound
+                    or System.Net.HttpStatusCode.Unauthorized;
+                return (null, clear);
+            }
+
+            List<SectionDto>? sections = await response.Content.ReadFromJsonAsync<List<SectionDto>>();
+            if (sections is null || sections.Count == 0)
+            {
+                return (null, true);
+            }
+
+            if (state.SectionId is Guid sectionId)
+            {
+                SectionDto? match = sections.FirstOrDefault(section => section.Id == sectionId);
+                if (match is not null)
+                {
+                    return (match.Id, false);
+                }
+            }
+
+            Guid? firstId = sections
+                .OrderBy(section => section.OrderIndex)
+                .FirstOrDefault()
+                ?.Id;
+            return (firstId, firstId is null);
+        }
+        catch
+        {
+            return (null, false);
+        }
+    }
+
+    private bool IsDocumentsRoute()
+    {
+        string[] segments = GetRouteSegments();
+        return segments.Length > 0 && string.Equals(segments[0], "documents", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool IsDocumentsListRoute()
+    {
+        string[] segments = GetRouteSegments();
+        return segments.Length == 1 && string.Equals(segments[0], "documents", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string[] GetRouteSegments()
+    {
+        string relative = Navigation.ToBaseRelativePath(Navigation.Uri);
+        int queryStart = relative.IndexOfAny(['?', '#']);
+        if (queryStart >= 0)
+        {
+            relative = relative[..queryStart];
+        }
+
+        return string.IsNullOrWhiteSpace(relative)
+            ? Array.Empty<string>()
+            : relative.Split('/', StringSplitOptions.RemoveEmptyEntries);
+    }
+}

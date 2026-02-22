@@ -65,36 +65,6 @@
 
 <div class="editor-shell @GetLayoutStateClass()" style="@GetLayoutStateStyle()">
     <div class="editor-workspace @GetWorkspaceClass()">
-        <aside class="section-panel @GetSectionsPanelClass()">
-            <div class="section-panel-header">
-                <h2>Sections</h2>
-                <div class="section-panel-actions">
-                    <button type="button" @onclick="() => OnCreateSection(SectionKind.Chapter)">Add chapter</button>
-                    <button type="button" @onclick="() => OnCreateSection(SectionKind.Section)">Add section</button>
-                </div>
-            </div>
-            <ul class="section-nav-list">
-                    @foreach (Section section in _orderedSections)
-                    {
-                        <li class="drop-zone @(GetDropZoneClass(section.SectionId, DropPosition.Before))" @ondragover="OnDragOver" @ondragover:preventDefault @ondragenter="() => OnDragEnter(section.SectionId, DropPosition.Before)" @ondrop="() => OnDrop(section.SectionId, DropPosition.Before)"></li>
-                        <li class="section-nav-row @GetDraggingClass(section.SectionId)" draggable="@(_orderedSections.Count > 1 ? "true" : "false")" @ondragstart="(args) => OnDragStart(section.SectionId, args)" @ondragend="OnDragEnd">
-                            <button type="button"
-                                    class="section-nav-item @GetActiveSectionClass(section.SectionId)"
-                                    @onclick="() => OnSectionSelected(section.SectionId)">
-                                <span class="section-order">@GetSectionOrderLabel(section)</span>
-                                <span class="section-title">@GetSectionTitle(section)</span>
-                            </button>
-                            <div class="section-nav-actions">
-                                <span class="drag-handle" aria-hidden="true">:::</span>
-                                <button type="button" class="section-action" @onclick="() => OnRenameSection(section.SectionId)">Rename</button>
-                                <button type="button" class="section-action" @onclick="() => OnDuplicateSection(section.SectionId)">Duplicate</button>
-                                <button type="button" class="section-action" @onclick="() => OnDeleteSection(section.SectionId)" disabled="@(_orderedSections.Count <= 1)">Delete</button>
-                            </div>
-                        </li>
-                        <li class="drop-zone @(GetDropZoneClass(section.SectionId, DropPosition.After))" @ondragover="OnDragOver" @ondragover:preventDefault @ondragenter="() => OnDragEnter(section.SectionId, DropPosition.After)" @ondrop="() => OnDrop(section.SectionId, DropPosition.After)"></li>
-                    }
-            </ul>
-        </aside>
 
         <div class="editor-split @GetPreviewSplitClass()">
             <section class="editor-main">
@@ -593,7 +563,7 @@
 
     .editor-workspace {
         display: grid;
-        grid-template-columns: var(--section-panel-width) minmax(0, 1fr) var(--context-panel-width);
+        grid-template-columns: minmax(0, 1fr) var(--context-panel-width);
         gap: 24px;
         align-items: start;
     }
@@ -1135,7 +1105,7 @@
     }
 
     .editor-workspace.is-context-collapsed {
-        grid-template-columns: var(--section-panel-width) minmax(0, 1fr);
+        grid-template-columns: minmax(0, 1fr);
     }
 
     .editor-workspace.is-sections-collapsed {
@@ -1632,7 +1602,6 @@
     private Guid? _aiRollbackGroupId;
     private bool _isAiHistoryRollback;
     private Guid? _aiHistoryDetailsId;
-    private bool _isReordering;
     private PendingAiProposal? _pendingAiProposal;
     private CancellationTokenSource? _aiStreamCts;
     private bool _isAiStreaming;
@@ -1643,9 +1612,6 @@
     private bool _pendingDocumentLoad;
     private AiUsageStatusDto? _aiUsageStatus;
     private readonly List<Plan> _planCatalog = new();
-    private bool _showPlansPanel;
-    private bool _isPlansLoading;
-    private string? _plansError;
     private CancellationTokenSource? _aiUsageRefreshCts;
     private bool _aiUsageRefreshInProgress;
     private Task? _aiUsageRefreshTask;
@@ -2469,7 +2435,7 @@
         for (int i = 0; i < chapter.Sections.Count; i++)
         {
             Section section = chapter.Sections[i];
-            if (updates.TryGetValue(section.SectionId, out Section updated))
+            if (updates.TryGetValue(section.SectionId, out Section? updated))
             {
                 chapter.Sections[i] = updated;
             }
@@ -2486,7 +2452,7 @@
 
     private string GetSectionOrderLabel(Section section)
     {
-        if (_sectionNumbering.TryGetValue(section.SectionId, out SectionNumberingInfo info) && info.IsNumbered)
+        if (_sectionNumbering.TryGetValue(section.SectionId, out SectionNumberingInfo? info) && info.IsNumbered)
         {
             return section.Kind == SectionKind.Chapter
                 ? $"Chapter {info.Number}"
@@ -2516,7 +2482,7 @@
     private string GetActiveSectionNumberLabel()
     {
         Section activeSection = FindSection(_state.Document, _activeSectionId);
-        if (_sectionNumbering.TryGetValue(activeSection.SectionId, out SectionNumberingInfo info) && info.IsNumbered)
+        if (_sectionNumbering.TryGetValue(activeSection.SectionId, out SectionNumberingInfo? info) && info.IsNumbered)
         {
             return activeSection.Kind == SectionKind.Chapter
                 ? $"Chapter {info.Number}"
@@ -3362,15 +3328,11 @@
 
     private async Task OnViewPlansAsync()
     {
-        _showPlansPanel = true;
-        _plansError = null;
-
         if (_planCatalog.Count > 0)
         {
             return;
         }
 
-        _isPlansLoading = true;
         try
         {
             List<Plan> plans = await DbContext.Plans
@@ -3385,17 +3347,11 @@
         catch (Exception ex)
         {
             Logger.LogError(ex, "Plan catalog load failed.");
-            _plansError = "Plans could not be loaded.";
-        }
-        finally
-        {
-            _isPlansLoading = false;
         }
     }
 
     private void ClosePlansPanel()
     {
-        _showPlansPanel = false;
     }
 
     private static string GetEntitlementValue(Plan plan, string key)
@@ -3681,7 +3637,7 @@
     private string BuildPreviewSectionHtml(Section section)
     {
         string title = GetSectionTitle(section);
-        SectionNumberingInfo? info = _sectionNumbering.TryGetValue(section.SectionId, out SectionNumberingInfo entry)
+        SectionNumberingInfo? info = _sectionNumbering.TryGetValue(section.SectionId, out SectionNumberingInfo? entry)
             ? entry
             : null;
         string heading = _numberingService.BuildHeading(section, title, info);
@@ -3856,6 +3812,11 @@
         }
 
         if (!TryGetSection(_state.Document, entry.AffectedSectionId, out Section? section))
+        {
+            return false;
+        }
+
+        if (section is null)
         {
             return false;
         }
@@ -4322,7 +4283,15 @@
                 return;
             }
 
-            ExportResult result = await ExportService.ExportAsync(saved, kind, format, new ExportOptions());
+            string userId = await ResolveCurrentUserIdAsync();
+            ExportResult result = await ExportService.ExportAsync(
+                saved,
+                kind,
+                format,
+                new ExportOptions(),
+                userId,
+                null,
+                CancellationToken.None);
             await DownloadExportAsync(result);
         });
     }
@@ -4341,7 +4310,14 @@
                 return;
             }
 
-            string bodyHtml = await ExportService.ExportHtmlBodyAsync(saved, ExportKind.Document, new ExportOptions());
+            string userId = await ResolveCurrentUserIdAsync();
+            string bodyHtml = await ExportService.ExportHtmlBodyAsync(
+                saved,
+                ExportKind.Document,
+                new ExportOptions(),
+                userId,
+                null,
+                CancellationToken.None);
             string printShell = BuildPrintShell(bodyHtml, saved.Metadata.Title);
             await PrintExportAsync(printShell);
         });
@@ -4353,6 +4329,12 @@
         string normalizedBody = ExportHelpers.NormalizeLineEndings(bodyHtml ?? string.Empty);
 
         return $"<!DOCTYPE html>\n<html>\n<head>\n  <title>{safeTitle}</title>\n  <link rel=\"stylesheet\" href=\"/css/print.css\">\n</head>\n<body class=\"print\">\n{normalizedBody}\n</body>\n</html>\n";
+    }
+
+    private async Task<string> ResolveCurrentUserIdAsync()
+    {
+        AuthenticationState authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        return UserIdResolver.ResolveUserId(authState.User);
     }
 
 
