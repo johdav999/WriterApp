@@ -68,3 +68,54 @@
   - development defaults to local host URL with port
   - production defaults to Azure host URL
 - Restart `npm run dev` in `Prosa.Landing` after env var changes.
+
+## Stripe configuration contract
+- The server reads Stripe config from one logical options source: `StripeOptions`.
+- Preferred Azure App Settings names (recommended):
+  - `Stripe__Mode` (`test` or `live`)
+  - `Stripe__SecretKey`
+  - `Stripe__WebhookSecret`
+  - `Stripe__PriceStandard`
+  - `Stripe__PricePro`
+  - `Stripe__SuccessUrl` (optional, default `/app/account?billing=success`)
+  - `Stripe__CancelUrl` (optional, default `/app/account?billing=cancel`)
+  - `Stripe__BillingPortalReturnUrl`
+- Also supported (fallback) for compatibility:
+  - `WriterApp__Stripe__*`
+  - flat env vars like `STRIPE_MODE`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_STANDARD`, `STRIPE_PRICE_PRO`, `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL`, `STRIPE_BILLING_PORTAL_RETURN_URL`
+
+### Startup validation behavior
+- Development:
+  - if `Stripe__SecretKey` is missing, Stripe is disabled and startup continues.
+- Non-development:
+  - missing required Stripe values causes startup failure with clear error messages.
+- When Stripe is enabled, required values are:
+  - `Mode` (`test|live`)
+  - `SecretKey`
+  - `WebhookSecret`
+  - `PriceStandard`
+  - `PricePro`
+  - `BillingPortalReturnUrl`
+
+### Setup steps (test mode)
+1. In Azure App Service (or local environment), set:
+   - `Stripe__Mode=test`
+   - `Stripe__SecretKey=<your test secret key>`
+   - `Stripe__WebhookSecret=<your test webhook signing secret>`
+   - `Stripe__PriceStandard=<test price id>`
+   - `Stripe__PricePro=<test price id>`
+   - `Stripe__BillingPortalReturnUrl=/app/account`
+2. Optionally set:
+   - `Stripe__SuccessUrl=/app/account?billing=success`
+   - `Stripe__CancelUrl=/app/account?billing=cancel`
+3. Restart the app and verify startup logs show `Enabled=true` and `Mode=test`.
+
+### Setup steps (live mode)
+1. Replace test values with live Stripe values:
+   - `Stripe__Mode=live`
+   - live secret key, live webhook secret, live price IDs
+2. Confirm `Stripe__BillingPortalReturnUrl` points to your production return path.
+3. Restart and verify startup logs show `Enabled=true` and `Mode=live`.
+
+Security note:
+- Do not commit Stripe keys or webhook secrets to source control.

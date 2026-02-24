@@ -1,5 +1,8 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Data;
+using System.Data.Common;
 using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
@@ -24,6 +27,7 @@ namespace WriterApp.Controllers
     [Authorize]
     public sealed class ProjectsController : ControllerBase
     {
+        private static readonly ConcurrentDictionary<string, bool> SqliteTableExistsCache = new(StringComparer.Ordinal);
         private readonly AppDbContext _dbContext;
         private readonly IUserIdResolver _userIdResolver;
         private readonly IProjectWordCountService _wordCounts;
@@ -127,6 +131,11 @@ namespace WriterApp.Controllers
             Dictionary<Guid, ProjectGoalRecord> goalsByProject = new();
             Dictionary<Guid, List<ProjectProgressDailyRecord>> progressByProject = new();
             bool includeProgress = IsGoalsEnabled();
+            if (includeProgress)
+            {
+                includeProgress = await GoalsTablesExistAsync(ct);
+            }
+
             if (includeProgress)
             {
                 List<ProjectGoalRecord> goalRows = await _dbContext.ProjectGoals
@@ -1803,6 +1812,65 @@ namespace WriterApp.Controllers
             return _configuration.GetValue<bool?>("Workflow:GoalsEnabled")
                 ?? _configuration.GetValue<bool?>("WriterApp:Workflow:GoalsEnabled")
                 ?? false;
+        }
+
+        private async Task<bool> GoalsTablesExistAsync(CancellationToken ct)
+        {
+            bool hasGoalsTable = await DbTableExistsAsync("ProjectGoals", ct);
+            bool hasProgressDailyTable = await DbTableExistsAsync("ProjectProgressDaily", ct);
+            if (hasGoalsTable && hasProgressDailyTable)
+            {
+                return true;
+            }
+
+            _logger.LogWarning(
+                "Goals feature is enabled, but required tables are missing. ProjectGoalsExists={ProjectGoalsExists}, ProjectProgressDailyExists={ProjectProgressDailyExists}.",
+                hasGoalsTable,
+                hasProgressDailyTable);
+            return false;
+        }
+
+        private async Task<bool> DbTableExistsAsync(string tableName, CancellationToken ct)
+        {
+            if (!_dbContext.Database.IsSqlite())
+            {
+                return true;
+            }
+
+            if (SqliteTableExistsCache.TryGetValue(tableName, out bool cachedExists))
+            {
+                return cachedExists;
+            }
+
+            DbConnection connection = _dbContext.Database.GetDbConnection();
+            bool openedHere = false;
+            try
+            {
+                if (connection.State != ConnectionState.Open)
+                {
+                    await connection.OpenAsync(ct);
+                    openedHere = true;
+                }
+
+                await using DbCommand command = connection.CreateCommand();
+                command.CommandText = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = $tableName LIMIT 1;";
+                DbParameter parameter = command.CreateParameter();
+                parameter.ParameterName = "$tableName";
+                parameter.Value = tableName;
+                command.Parameters.Add(parameter);
+
+                object? result = await command.ExecuteScalarAsync(ct);
+                bool exists = result is not null;
+                SqliteTableExistsCache[tableName] = exists;
+                return exists;
+            }
+            finally
+            {
+                if (openedHere)
+                {
+                    await connection.CloseAsync();
+                }
+            }
         }
 
         private async Task<bool> IsOwnedSectionAsync(string userId, Guid sectionId, CancellationToken ct)
