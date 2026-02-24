@@ -27,3 +27,5 @@ obj/
 TestResults/
 appsettings.Development.json
 
+.dll
+

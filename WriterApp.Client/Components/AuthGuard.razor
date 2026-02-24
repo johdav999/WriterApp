@@ -1,0 +1,127 @@
+@using WriterApp.Client.Services
+@using WriterApp.Client.Utilities
+@using Microsoft.Extensions.Logging
+@inject NavigationManager Navigation
+@inject AuthStateService AuthState
+@inject ILogger<AuthGuard> Logger
+
+@if (_showContent)
+{
+    @ChildContent
+}
+else
+{
+    @if (_isChecking)
+    {
+        <p>Checking sign-in...</p>
+    }
+    else
+    {
+        <div>
+            <p>@_message</p>
+            <a href="@_signInUrl">Sign in</a>
+        </div>
+    }
+}
+
+@code {
+    [Parameter]
+    public RenderFragment ChildContent { get; set; } = default!;
+
+    [Parameter]
+    public string? DefaultReturnPath { get; set; }
+
+    [Parameter]
+    public string LandingPath { get; set; } = EasyAuthUrlBuilder.DefaultPostAuthPath;
+
+    [Parameter]
+    public bool RequireAuth { get; set; } = true;
+
+    private bool _showContent;
+    private bool _isChecking = true;
+    private bool _probeCompleted;
+    private AuthState? _probeState;
+    private string _message = "You are not signed in. Please refresh or use the sign-in link.";
+    private string _signInUrl = "/.auth/login/aad";
+
+    protected override async Task OnInitializedAsync()
+    {
+        string currentPath = BuildCurrentPathAndQuery();
+
+        if (!RequireAuth)
+        {
+            _showContent = true;
+            _isChecking = false;
+            return;
+        }
+
+        if (AuthFlowRoute.IsAuthFlowPath(currentPath))
+        {
+            _showContent = true;
+            _isChecking = false;
+            return;
+        }
+
+        _isChecking = true;
+        Logger.LogInformation("AuthGuard starting auth probe. Path={Path}", currentPath);
+        AuthState state = await AuthState.GetAsync();
+        _probeState = state;
+        _probeCompleted = true;
+        Logger.LogInformation(
+            "AuthGuard completed auth probe. Path={Path} IsAuthenticated={IsAuthenticated} HasResolvedState={HasResolvedState}",
+            currentPath,
+            state.IsAuthenticated,
+            AuthState.HasResolvedState);
+
+        if (_probeState.IsAuthenticated)
+        {
+            _showContent = true;
+            _isChecking = false;
+            return;
+        }
+
+        string returnPath = ResolveReturnPath();
+        _signInUrl = EasyAuthUrlBuilder.BuildLoginUrl(Navigation.BaseUri, returnPath, LandingPath);
+
+        if (!AuthState.HasResolvedState || !_probeCompleted)
+        {
+            _showContent = false;
+            _isChecking = false;
+            _message = "We could not verify sign-in right now. Please refresh or use the sign-in link.";
+            Logger.LogWarning(
+                "AuthGuard probe did not resolve auth state. Rendering manual sign-in fallback. Path={Path}",
+                currentPath);
+            return;
+        }
+
+        _showContent = false;
+        _isChecking = false;
+        _message = "You are not signed in. Please refresh or use the sign-in link.";
+        Logger.LogInformation(
+            "AuthGuard resolved anonymous state. Rendering manual sign-in link. ReturnPath={ReturnPath}",
+            returnPath);
+    }
+
+    private string ResolveReturnPath()
+    {
+        if (!string.IsNullOrWhiteSpace(DefaultReturnPath))
+        {
+            return DefaultReturnPath!;
+        }
+
+        Uri current = Navigation.ToAbsoluteUri(Navigation.Uri);
+        string pathAndQuery = current.PathAndQuery + current.Fragment;
+        return string.IsNullOrWhiteSpace(pathAndQuery)
+            ? LandingPath
+            : pathAndQuery;
+    }
+
+    private string BuildCurrentPathAndQuery()
+    {
+        Uri current = Navigation.ToAbsoluteUri(Navigation.Uri);
+        string pathAndQuery = current.PathAndQuery + current.Fragment;
+        return string.IsNullOrWhiteSpace(pathAndQuery)
+            ? "/"
+            : pathAndQuery;
+    }
+}

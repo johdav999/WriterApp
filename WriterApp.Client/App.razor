@@ -1,6 +1,18 @@
-﻿<Router AppAssembly="@typeof(App).Assembly">
+@using WriterApp.Client.Components
+@using WriterApp.Client.Utilities
+
+<Router AppAssembly="@typeof(App).Assembly">
     <Found Context="routeData">
-        <RouteView RouteData="@routeData" DefaultLayout="@typeof(MainLayout)" />
+        @if (IsProtectedRoute(routeData.PageType))
+        {
+            <AuthGuard LandingPath="@EasyAuthUrlBuilder.DefaultPostAuthPath">
+                <RouteView RouteData="@routeData" DefaultLayout="@typeof(MainLayout)" />
+            </AuthGuard>
+        }
+        else
+        {
+            <RouteView RouteData="@routeData" DefaultLayout="@typeof(MainLayout)" />
+        }
         <FocusOnNavigate RouteData="@routeData" Selector="h1" />
     </Found>
     <NotFound>
@@ -9,3 +21,43 @@
         </LayoutView>
     </NotFound>
 </Router>
+
+@code {
+    private static bool IsProtectedRoute(Type pageType)
+    {
+        object[] attributes = pageType.GetCustomAttributes(typeof(Microsoft.AspNetCore.Components.RouteAttribute), inherit: true);
+        foreach (object attribute in attributes)
+        {
+            if (attribute is not Microsoft.AspNetCore.Components.RouteAttribute route)
+            {
+                continue;
+            }
+
+            if (IsPublicTemplate(route.Template))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsPublicTemplate(string? template)
+    {
+        if (string.IsNullOrWhiteSpace(template))
+        {
+            return false;
+        }
+
+        string normalized = template.StartsWith("/", StringComparison.Ordinal)
+            ? template
+            : "/" + template;
+
+        return normalized.StartsWith("/login", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("/logout", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("/start", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("/app/login", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("/app/logout", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("/app/start", StringComparison.OrdinalIgnoreCase);
+    }
+}

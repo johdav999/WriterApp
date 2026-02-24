@@ -6,6 +6,7 @@ namespace WriterApp.Client.Utilities
 {
     internal static class SafeReturnUrl
     {
+        public const string DefaultDocumentsPath = EasyAuthUrlBuilder.DefaultPostAuthPath;
         public const string DefaultProjectsPath = ReturnUrlSafety.DefaultProjectsPath;
         public const string DefaultHomePath = ReturnUrlSafety.DefaultHomePath;
 

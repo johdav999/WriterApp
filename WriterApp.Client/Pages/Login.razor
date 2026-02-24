@@ -8,12 +8,18 @@
 <PageTitle>Sign in</PageTitle>
 
 <p>@_statusMessage</p>
+@if (_showSignInLink)
+{
+    <p><a href="@_loginUrl">Sign in</a></p>
+}
 
 @code {
-    private const string DefaultReturnUrl = SafeReturnUrl.DefaultProjectsPath;
-    private string _statusMessage = "Redirecting to sign in...";
+    private const string DefaultReturnUrl = SafeReturnUrl.DefaultDocumentsPath;
+    private string _statusMessage = "Checking sign-in...";
+    private string _loginUrl = "/.auth/login/aad";
+    private bool _showSignInLink;
 
-    protected override void OnInitialized()
+    protected override Task OnInitializedAsync()
     {
         Uri currentUri = Navigation.ToAbsoluteUri(Navigation.Uri);
         string returnUrl = ResolveReturnUrl(currentUri.Query);
@@ -22,14 +28,13 @@
         {
             _statusMessage = "Signed in (dev). Redirecting...";
             Navigation.NavigateTo(returnUrl, forceLoad: true);
-            return;
+            return Task.CompletedTask;
         }
 
-        string origin = currentUri.GetLeftPart(UriPartial.Authority);
-        Uri absoluteReturnUri = new(new Uri(origin, UriKind.Absolute), returnUrl);
-        string encodedReturnUri = Uri.EscapeDataString(absoluteReturnUri.ToString());
-        string loginUrl = $"/.auth/login/aad?post_login_redirect_uri={encodedReturnUri}";
-        Navigation.NavigateTo(loginUrl, forceLoad: true);
+        _loginUrl = EasyAuthUrlBuilder.BuildLoginUrl(Navigation.BaseUri, returnUrl, DefaultReturnUrl);
+        _statusMessage = "You are not signed in. Please use the sign-in link.";
+        _showSignInLink = true;
+        return Task.CompletedTask;
     }
 
     private static string ResolveReturnUrl(string queryString)

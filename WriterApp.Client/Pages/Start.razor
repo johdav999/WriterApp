@@ -9,10 +9,16 @@
 
 <PageTitle>Start</PageTitle>
 
-<p>Preparing your workspace...</p>
+<p>@_statusMessage</p>
+@if (!string.IsNullOrWhiteSpace(_signInUrl))
+{
+    <p><a href="@_signInUrl">Sign in</a></p>
+}
 
 @code {
     private const string DefaultReturnUrl = SafeReturnUrl.DefaultProjectsPath;
+    private string _statusMessage = "Preparing your workspace...";
+    private string? _signInUrl;
 
     protected override async Task OnInitializedAsync()
     {
@@ -25,9 +31,8 @@
         AuthMeResponse? auth = await TryGetAuthMeAsync();
         if (auth is null || auth.IsAuthenticated != true || string.IsNullOrWhiteSpace(auth.UserId))
         {
-            string startReturnUrl = $"/start?plan={ToQueryValue(requestedPlan)}&returnUrl={Uri.EscapeDataString(returnUrl)}";
-            string loginUrl = $"/app/login?returnUrl={Uri.EscapeDataString(startReturnUrl)}";
-            Navigation.NavigateTo(loginUrl, forceLoad: true);
+            _statusMessage = "You are not signed in. Please use the sign-in link.";
+            _signInUrl = EasyAuthUrlBuilder.BuildLoginUrl(Navigation.BaseUri, returnUrl, SafeReturnUrl.DefaultDocumentsPath);
             return;
         }
 

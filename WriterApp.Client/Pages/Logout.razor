@@ -12,7 +12,7 @@
 @code {
     private string _statusMessage = "Signing out...";
 
-    protected override void OnInitialized()
+    protected override Task OnInitializedAsync()
     {
         Uri currentUri = Navigation.ToAbsoluteUri(Navigation.Uri);
         Dictionary<string, string> query = QueryStringParser.Parse(currentUri.Query);
@@ -24,13 +24,11 @@
         {
             _statusMessage = "Signed out (dev). Redirecting...";
             Navigation.NavigateTo(returnUrl, forceLoad: true);
-            return;
+            return Task.CompletedTask;
         }
 
-        string origin = currentUri.GetLeftPart(UriPartial.Authority);
-        Uri absoluteReturnUri = new(new Uri(origin, UriKind.Absolute), returnUrl);
-        string encodedReturnUri = Uri.EscapeDataString(absoluteReturnUri.ToString());
-        string logoutUrl = $"/.auth/logout?post_logout_redirect_uri={encodedReturnUri}";
+        string logoutUrl = EasyAuthUrlBuilder.BuildLogoutUrl(Navigation.BaseUri, returnUrl, SafeReturnUrl.DefaultHomePath);
         Navigation.NavigateTo(logoutUrl, forceLoad: true);
+        return Task.CompletedTask;
     }
 }
