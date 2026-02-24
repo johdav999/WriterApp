@@ -20,6 +20,7 @@ namespace WriterApp.Data
 
         public DbSet<UserProfile> UserProfiles => Set<UserProfile>();
         public DbSet<UserEntitlement> UserEntitlements => Set<UserEntitlement>();
+        public DbSet<StripeEventLog> StripeEventLogs => Set<StripeEventLog>();
         public DbSet<Plan> Plans => Set<Plan>();
         public DbSet<PlanEntitlement> PlanEntitlements => Set<PlanEntitlement>();
         public DbSet<UserPlanAssignment> UserPlanAssignments => Set<UserPlanAssignment>();
@@ -104,7 +105,26 @@ namespace WriterApp.Data
                 entity.Property(entitlement => entitlement.AiMonthlyTokenBudget).IsRequired();
                 entity.Property(entitlement => entitlement.AiTokensUsedThisPeriod).IsRequired();
                 entity.Property(entitlement => entitlement.PeriodStartUtc).IsRequired();
+                entity.Property(entitlement => entitlement.StripeCustomerId);
+                entity.Property(entitlement => entitlement.StripeSubscriptionId);
+                entity.Property(entitlement => entitlement.StripePriceId);
+                entity.Property(entitlement => entitlement.CurrentPeriodEndUtc);
+                entity.Property(entitlement => entitlement.CancelAtPeriodEnd).HasDefaultValue(false).IsRequired();
                 entity.Property(entitlement => entitlement.UpdatedUtc).IsRequired();
+            });
+
+            builder.Entity<StripeEventLog>(entity =>
+            {
+                entity.HasKey(log => log.StripeEventId);
+                entity.Property(log => log.Type).IsRequired();
+                entity.Property(log => log.ReceivedUtc).IsRequired();
+                entity.Property(log => log.ProcessedUtc);
+                entity.Property(log => log.UserId);
+                entity.Property(log => log.Status).IsRequired();
+                entity.Property(log => log.Error);
+                entity.HasIndex(log => log.ReceivedUtc);
+                entity.HasIndex(log => log.UserId);
+                entity.HasIndex(log => log.Status);
             });
 
             builder.Entity<Plan>(entity =>

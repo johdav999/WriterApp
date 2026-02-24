@@ -42,7 +42,7 @@ else
     private bool _probeCompleted;
     private AuthState? _probeState;
     private string _message = "You are not signed in. Please refresh or use the sign-in link.";
-    private string _signInUrl = "/.auth/login/aad";
+    private string _signInUrl = EasyAuthUrlBuilder.BuildAppLoginUrl(null);
 
     protected override async Task OnInitializedAsync()
     {
@@ -81,7 +81,7 @@ else
         }
 
         string returnPath = ResolveReturnPath();
-        _signInUrl = EasyAuthUrlBuilder.BuildLoginUrl(Navigation.BaseUri, returnPath, LandingPath);
+        _signInUrl = EasyAuthUrlBuilder.BuildAppLoginUrl(returnPath, LandingPath);
 
         if (!AuthState.HasResolvedState || !_probeCompleted)
         {

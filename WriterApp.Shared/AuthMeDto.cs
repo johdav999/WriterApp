@@ -10,6 +10,8 @@ namespace WriterApp.Application.Security
         public string? UserId { get; init; }
         public IReadOnlyList<string> Roles { get; init; } = new List<string>();
         public string? PlanKey { get; init; }
+        public string? SubscriptionStatus { get; init; }
+        public string? StripeCustomerId { get; init; }
         public int AiMonthlyTokenBudget { get; init; }
         public int AiTokensUsedThisPeriod { get; init; }
         public DateTimeOffset PeriodStartUtc { get; init; }

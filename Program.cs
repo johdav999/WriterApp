@@ -32,6 +32,7 @@ using WriterApp.AI.Core;
 using WriterApp.AI.Providers.Mock;
 using WriterApp.AI.Providers.OpenAI;
 using WriterApp.Application.Security;
+using WriterApp.Application.Billing;
 using WriterApp.Application.Subscriptions;
 using WriterApp.Application.Usage;
 using WriterApp.Application.Commands;
@@ -54,6 +55,16 @@ builder.Logging.AddFilter("Microsoft.AspNetCore.Components.Server.Circuits", Log
 builder.Logging.AddFilter(
     "Microsoft.AspNetCore.SignalR",
     builder.Environment.IsDevelopment() ? LogLevel.Debug : LogLevel.Information);
+
+StripeConfigurationResult stripeConfiguration = StripeOptions.Load(
+    builder.Configuration,
+    builder.Environment.IsDevelopment());
+
+if (stripeConfiguration.Errors.Count > 0)
+{
+    throw new InvalidOperationException(
+        "Stripe startup configuration failed:" + Environment.NewLine + string.Join(Environment.NewLine, stripeConfiguration.Errors));
+}
 
 // Auth mode configuration:
 // - Local Development always uses FakeAuth (DEV_AUTH_* claims), regardless of UseExternalIdAuth.
@@ -155,6 +166,8 @@ builder.Services.AddScoped(sp =>
     return new HttpClient { BaseAddress = new Uri(navigation.BaseUri) };
 });
 builder.Services.AddScoped<OutlineTemplatesClient>();
+builder.Services.AddSingleton(stripeConfiguration.Options);
+builder.Services.AddHttpClient<StripeApiClient>();
 
 builder.Services.AddMemoryCache();
 
@@ -344,6 +357,19 @@ QualityRewriteOutputValidator.Configure(app.Services.GetRequiredService<IOptions
 
 AdminPolicyDiagnostics.Configure(app.Services.GetRequiredService<ILoggerFactory>());
 
+foreach (string warning in stripeConfiguration.Warnings)
+{
+    app.Logger.LogWarning("{Warning}", warning);
+}
+
+app.Logger.LogInformation(
+    "Stripe configuration loaded. Enabled={Enabled}, Mode={Mode}, WebhookConfigured={WebhookConfigured}, StandardPriceConfigured={StandardPriceConfigured}, ProPriceConfigured={ProPriceConfigured}.",
+    stripeConfiguration.Options.Enabled,
+    stripeConfiguration.Options.Mode,
+    !string.IsNullOrWhiteSpace(stripeConfiguration.Options.WebhookSecret),
+    !string.IsNullOrWhiteSpace(stripeConfiguration.Options.PriceStandard),
+    !string.IsNullOrWhiteSpace(stripeConfiguration.Options.PricePro));
+
 // Manual verification:
 // 1) Local: delete sqlite file, start app, verify migrations create schema and startup logs "Migrations ok; schema up to date."
 // 2) Azure: POST /api/admin/db/migrate (Admin + optional X-DB-MIGRATE-KEY), then retry the failing workflow.
@@ -414,6 +440,23 @@ using (IServiceScope scope = app.Services.CreateScope())
         LogTablePresence(dbContext, logger, "PageVersions");
         LogTablePresence(dbContext, logger, "OutlineTemplates");
         LogSqliteTables(dbContext, logger, "post-migrate");
+    }
+
+    bool goalsEnabled =
+        app.Configuration.GetValue<bool?>("Workflow:GoalsEnabled")
+        ?? app.Configuration.GetValue<bool?>("WriterApp:Workflow:GoalsEnabled")
+        ?? false;
+    if (goalsEnabled)
+    {
+        bool hasProjectGoals = SqliteTableExists(dbContext, "ProjectGoals");
+        bool hasProjectProgressDaily = SqliteTableExists(dbContext, "ProjectProgressDaily");
+        if (!hasProjectGoals || !hasProjectProgressDaily)
+        {
+            logger.LogWarning(
+                "Goals feature is enabled, but required tables are missing. ProjectGoalsExists={ProjectGoalsExists}, ProjectProgressDailyExists={ProjectProgressDailyExists}. Run database migrations.",
+                hasProjectGoals,
+                hasProjectProgressDaily);
+        }
     }
 
     try
@@ -966,6 +1009,8 @@ app.MapGet("/api/auth/me", async (
             IsAuthenticated = false,
             Roles = Array.Empty<string>(),
             PlanKey = UserEntitlementDefaults.FreePlanKey,
+            SubscriptionStatus = null,
+            StripeCustomerId = null,
             AiMonthlyTokenBudget = 0,
             AiTokensUsedThisPeriod = 0,
             PeriodStartUtc = DateTimeOffset.MinValue
@@ -985,6 +1030,8 @@ app.MapGet("/api/auth/me", async (
             IsAuthenticated = false,
             Roles = Array.Empty<string>(),
             PlanKey = UserEntitlementDefaults.FreePlanKey,
+            SubscriptionStatus = null,
+            StripeCustomerId = null,
             AiMonthlyTokenBudget = 0,
             AiTokensUsedThisPeriod = 0,
             PeriodStartUtc = DateTimeOffset.MinValue
@@ -1065,6 +1112,8 @@ app.MapGet("/api/auth/me", async (
         UserId = userId,
         Roles = roles,
         PlanKey = entitlement.PlanKey,
+        SubscriptionStatus = entitlement.SubscriptionStatus,
+        StripeCustomerId = entitlement.StripeCustomerId,
         AiMonthlyTokenBudget = entitlement.AiMonthlyTokenBudget,
         AiTokensUsedThisPeriod = entitlement.AiTokensUsedThisPeriod,
         PeriodStartUtc = entitlement.PeriodStartUtc
@@ -1474,6 +1523,30 @@ static void LogTablePresence(AppDbContext dbContext, ILogger logger, string tabl
     catch (Exception ex)
     {
         logger.LogWarning(ex, "SQLite table check failed for {Table}.", tableName);
+    }
+    finally
+    {
+        dbContext.Database.CloseConnection();
+    }
+}
+
+static bool SqliteTableExists(AppDbContext dbContext, string tableName)
+{
+    try
+    {
+        dbContext.Database.OpenConnection();
+        using var command = dbContext.Database.GetDbConnection().CreateCommand();
+        command.CommandText = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = $tableName LIMIT 1;";
+        var parameter = command.CreateParameter();
+        parameter.ParameterName = "$tableName";
+        parameter.Value = tableName;
+        command.Parameters.Add(parameter);
+        object? result = command.ExecuteScalar();
+        return result is not null;
+    }
+    catch
+    {
+        return false;
     }
     finally
     {
