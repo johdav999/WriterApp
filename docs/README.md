@@ -23,7 +23,9 @@
   - `/app/login` does not call Easy Auth.
   - It immediately navigates to validated `returnUrl`.
 - Azure / non-development (Easy Auth):
-  - `/app/login` calls:
+  - App Service Authentication should own interactive redirects for protected routes.
+  - The WASM client must not auto-navigate to `/.auth/login/*`.
+  - `/app/login` can render a manual sign-in link:
     - `/.auth/login/aad?post_login_redirect_uri=<absolute-url>`
   - Absolute URL is built from current origin + validated `returnUrl`.
 
@@ -34,6 +36,29 @@
   - `/app/logout` calls:
     - `/.auth/logout?post_logout_redirect_uri=<absolute-url>`
   - Absolute URL is built from current origin + validated `returnUrl`.
+
+## Azure App Service auth settings for `/app/*`
+- Authentication: **On**
+- Identity provider: Microsoft (AAD / External ID, matching your tenant setup)
+- Unauthenticated requests: **HTTP 302 redirect to identity provider**
+- Session/token store: default App Service settings are fine
+- Auth probe contract:
+  - `GET /api/auth/me` must return `200` for both authenticated and anonymous callers.
+  - Anonymous response must be `{ isAuthenticated: false }` shape (no `401` for probe).
+  - Client probe endpoints must stay passive: no automatic navigation/reload on probe failures.
+  - Platform-led auth only: app code must not automatically navigate to `/.auth/login/*`.
+
+### Practical scoping notes
+- App Service EasyAuth is primarily app-level, not a full path-by-path policy engine in all portal flows.
+- Recommended for this app:
+  - protect the Writer app host globally (Require authentication),
+  - serve truly public marketing pages from a separate host/static site, or
+  - keep public endpoints outside the protected app surface and avoid mixing public + private UX under one EasyAuth-protected app unless you accept global auth behavior.
+
+## Auth redirect regression guardrail
+- PowerShell: `./scripts/check-no-forced-auth-nav.ps1`
+- Bash: `./scripts/check-no-forced-auth-nav.sh`
+- CI recommendation: run one of these scripts on every PR/build and fail on non-zero exit.
 
 ## Landing page CTA links (`Prosa.Landing`)
 - `NEXT_PUBLIC_APP_URL` controls where marketing CTA links point (`/login`, `/start?...`).

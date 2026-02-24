@@ -960,7 +960,16 @@ app.MapGet("/api/auth/me", async (
 
     if (user.Identity?.IsAuthenticated != true)
     {
-        return Results.Unauthorized();
+        logger.LogInformation("AuthMe probe resolved anonymous user.");
+        return Results.Ok(new WriterApp.Application.Security.AuthMeDto
+        {
+            IsAuthenticated = false,
+            Roles = Array.Empty<string>(),
+            PlanKey = UserEntitlementDefaults.FreePlanKey,
+            AiMonthlyTokenBudget = 0,
+            AiTokensUsedThisPeriod = 0,
+            PeriodStartUtc = DateTimeOffset.MinValue
+        });
     }
 
     string? userId;
@@ -970,7 +979,16 @@ app.MapGet("/api/auth/me", async (
     }
     catch (SecurityException)
     {
-        return Results.Unauthorized();
+        logger.LogWarning("AuthMe probe could not resolve user id from authenticated principal; returning anonymous state.");
+        return Results.Ok(new WriterApp.Application.Security.AuthMeDto
+        {
+            IsAuthenticated = false,
+            Roles = Array.Empty<string>(),
+            PlanKey = UserEntitlementDefaults.FreePlanKey,
+            AiMonthlyTokenBudget = 0,
+            AiTokensUsedThisPeriod = 0,
+            PeriodStartUtc = DateTimeOffset.MinValue
+        });
     }
 
     ExternalIdentityClaims.UserProfileIdentity profileIdentity =
@@ -1051,8 +1069,7 @@ app.MapGet("/api/auth/me", async (
         AiTokensUsedThisPeriod = entitlement.AiTokensUsedThisPeriod,
         PeriodStartUtc = entitlement.PeriodStartUtc
     });
-})
-.RequireAuthorization();
+});
 
 app.MapControllers().RequireAuthorization();
 

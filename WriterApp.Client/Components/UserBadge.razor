@@ -1,0 +1,41 @@
+@using WriterApp.Client.Services
+@inject EasyAuthMeClient EasyAuthMeClient
+
+@if (!_loaded)
+{
+    <span class="app-link">Checking sign-in...</span>
+}
+else if (_state.IsAuthenticated)
+{
+    <span class="app-link">@(BuildSignedInLabel())</span>
+}
+else
+{
+    <span class="app-link">Not signed in</span>
+}
+
+@code {
+    private bool _loaded;
+    private EasyAuthMeState _state = EasyAuthMeState.NotSignedIn;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _state = await EasyAuthMeClient.GetAsync();
+        _loaded = true;
+    }
+
+    private string BuildSignedInLabel()
+    {
+        if (!string.IsNullOrWhiteSpace(_state.DisplayName))
+        {
+            return _state.DisplayName!;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_state.Email))
+        {
+            return _state.Email!;
+        }
+
+        return "Signed in";
+    }
+}
