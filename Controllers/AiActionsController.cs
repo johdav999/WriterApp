@@ -19,6 +19,7 @@ using WriterApp.Application.Documents;
 using WriterApp.Application.Security;
 using WriterApp.Application.Synopsis;
 using WriterApp.Application.State;
+using WriterApp.Application.Subscriptions;
 using WriterApp.Data;
 using WriterApp.Data.Documents;
 using WriterApp.Domain.Documents;
@@ -691,7 +692,27 @@ namespace WriterApp.Controllers
             string code,
             IReadOnlyDictionary<string, object?>? extra = null)
         {
+            Dictionary<string, object?>? mergedExtra = null;
+            if (string.Equals(code, "plan_upgrade_required", StringComparison.OrdinalIgnoreCase))
+            {
+                mergedExtra = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["upgradePath"] = EntitlementDeniedApiError.BuildUpgradePath("ai.actions")
+                };
+                if (extra is not null)
+                {
+                    foreach ((string key, object? value) in extra)
+                    {
+                        mergedExtra[key] = value;
+                    }
+                }
+            }
+
             ProblemDetails problem = BuildProblemDetails(statusCode, title, detail, code, extra);
+            if (mergedExtra is not null)
+            {
+                problem = BuildProblemDetails(statusCode, title, detail, code, mergedExtra);
+            }
 
             return new ObjectResult(problem)
             {
@@ -737,6 +758,8 @@ namespace WriterApp.Controllers
                 "ai.rate_limited" => StatusCodes.Status429TooManyRequests,
                 "ai.quota_exceeded" => StatusCodes.Status429TooManyRequests,
                 "AI_QUOTA_EXCEEDED" => StatusCodes.Status402PaymentRequired,
+                "AI_SUBSCRIPTION_INACTIVE" => StatusCodes.Status402PaymentRequired,
+                "plan_upgrade_required" => StatusCodes.Status402PaymentRequired,
                 "ai.provider_unavailable" => StatusCodes.Status503ServiceUnavailable,
                 "ai.provider_missing" => StatusCodes.Status503ServiceUnavailable,
                 "ai.action_missing" => StatusCodes.Status400BadRequest,

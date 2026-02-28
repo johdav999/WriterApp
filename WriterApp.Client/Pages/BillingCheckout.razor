@@ -1,10 +1,14 @@
 @page "/billing/checkout"
 @page "/app/billing/checkout"
+@page "/account/billing"
+@page "/app/account/billing"
 @using System.Net
 @using System.Net.Http.Json
+@using WriterApp.Client.State
 @using WriterApp.Client.Utilities
 @inject NavigationManager Navigation
 @inject HttpClient Http
+@inject AuthMeStateService AuthMeStateService
 
 <PageTitle>Billing</PageTitle>
 
@@ -31,6 +35,26 @@
     @if (!string.IsNullOrWhiteSpace(_errorMessage))
     {
         <div class="projects-error" role="alert">@_errorMessage</div>
+    }
+
+    @if (_finalizingCheckout)
+    {
+        <div class="projects-subtitle">Finalizing subscription...</div>
+    }
+
+    @if (_showSuccessBanner)
+    {
+        <div class="account-row"><strong>Success:</strong> Billing checkout completed successfully.@(string.IsNullOrWhiteSpace(_sessionId) ? string.Empty : $" Session: {_sessionId}")</div>
+    }
+
+    @if (_showCanceledBanner)
+    {
+        <div class="account-row"><strong>Canceled:</strong> Billing checkout was canceled.</div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(_statusMessage))
+    {
+        <div class="account-row">@_statusMessage</div>
     }
 
     <div class="projects-actions">
@@ -64,6 +88,11 @@
     private string _currentPlanDisplay = "Free";
     private string _subscriptionStatusDisplay = "-";
     private bool _hasStripeCustomer;
+    private bool _showSuccessBanner;
+    private bool _showCanceledBanner;
+    private string? _sessionId;
+    private bool _finalizingCheckout;
+    private string? _statusMessage;
 
     private bool DisableUpgradeToStandard =>
         _isLoadingAccount
@@ -81,7 +110,18 @@
     protected override async Task OnInitializedAsync()
     {
         ApplyQueryState();
+        if (_showSuccessBanner)
+        {
+            await AuthMeStateService.RefreshAsync(force: true);
+        }
+
         await LoadAccountAsync();
+        if (_showSuccessBanner && !string.IsNullOrWhiteSpace(_sessionId))
+        {
+            await FinalizeCheckoutAsync(_sessionId);
+        }
+
+        RemoveHandledQueryFromUrl();
     }
 
     private void ApplyQueryState()
@@ -89,6 +129,109 @@
         Uri current = Navigation.ToAbsoluteUri(Navigation.Uri);
         Dictionary<string, string> query = QueryStringParser.Parse(current.Query);
         _returnUrl = ResolveReturnUrl(query);
+        _showSuccessBanner = query.TryGetValue("success", out string? success) && success == "1";
+        _showCanceledBanner = query.TryGetValue("canceled", out string? canceled) && canceled == "1";
+        _sessionId = query.TryGetValue("session_id", out string? sessionId) ? sessionId : null;
+    }
+
+    private async Task FinalizeCheckoutAsync(string sessionId)
+    {
+        _finalizingCheckout = true;
+        _statusMessage = null;
+
+        try
+        {
+            CheckoutStatusResponse? status = await GetCheckoutStatusAsync(sessionId);
+            if (status is null)
+            {
+                _statusMessage = "Could not verify checkout status.";
+                return;
+            }
+
+            if (string.Equals(status.State, "paid", StringComparison.OrdinalIgnoreCase))
+            {
+                await SyncEntitlementsAsync(sessionId, status.SubscriptionId);
+                await LoadAccountAsync();
+                await AuthMeStateService.RefreshAsync(force: true);
+                _showSuccessBanner = true;
+                _statusMessage = "Subscription activated.";
+                return;
+            }
+
+            if (string.Equals(status.State, "open", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(status.State, "incomplete", StringComparison.OrdinalIgnoreCase))
+            {
+                int[] delaysMs = { 1000, 2000, 4000 };
+                for (int i = 0; i < delaysMs.Length; i++)
+                {
+                    await Task.Delay(delaysMs[i]);
+                    status = await GetCheckoutStatusAsync(sessionId);
+                    if (status is not null && string.Equals(status.State, "paid", StringComparison.OrdinalIgnoreCase))
+                    {
+                        await SyncEntitlementsAsync(sessionId, status.SubscriptionId);
+                        await LoadAccountAsync();
+                        await AuthMeStateService.RefreshAsync(force: true);
+                        _showSuccessBanner = true;
+                        _statusMessage = "Subscription activated.";
+                        return;
+                    }
+                }
+
+                _statusMessage = "Payment not completed yet. If you just paid, refresh in a moment.";
+                return;
+            }
+
+            if (string.Equals(status.State, "expired", StringComparison.OrdinalIgnoreCase))
+            {
+                _statusMessage = "Checkout session expired. Please try again.";
+                return;
+            }
+
+            _statusMessage = status.Message ?? "Checkout status is unknown.";
+        }
+        catch
+        {
+            _statusMessage = "Could not finalize subscription.";
+        }
+        finally
+        {
+            _finalizingCheckout = false;
+        }
+    }
+
+    private async Task<CheckoutStatusResponse?> GetCheckoutStatusAsync(string sessionId)
+    {
+        string url = $"/api/billing/checkout-status?sessionId={Uri.EscapeDataString(sessionId)}";
+        using HttpResponseMessage response = await Http.GetAsync(url);
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        return await response.Content.ReadFromJsonAsync<CheckoutStatusResponse>();
+    }
+
+    private async Task SyncEntitlementsAsync(string sessionId, string? subscriptionId)
+    {
+        SyncEntitlementsRequest body = new(sessionId, subscriptionId);
+        using HttpResponseMessage response = await Http.PostAsJsonAsync("/api/billing/sync-entitlements", body);
+        _ = response.IsSuccessStatusCode;
+    }
+
+    private void RemoveHandledQueryFromUrl()
+    {
+        Uri current = Navigation.ToAbsoluteUri(Navigation.Uri);
+        Dictionary<string, string> query = QueryStringParser.Parse(current.Query);
+        bool hasHandled =
+            (query.TryGetValue("success", out string? success) && success == "1")
+            || (query.TryGetValue("canceled", out string? canceled) && canceled == "1")
+            || query.ContainsKey("session_id");
+        if (!hasHandled)
+        {
+            return;
+        }
+
+        Navigation.NavigateTo("/app/account/billing", replace: true);
     }
 
     private async Task LoadAccountAsync()
@@ -118,6 +261,7 @@
                 ? "-"
                 : auth.SubscriptionStatus;
             _hasStripeCustomer = !string.IsNullOrWhiteSpace(auth.StripeCustomerId);
+            await AuthMeStateService.RefreshAsync(serverEntitlementUpdatedUtc: auth.EntitlementUpdatedUtc);
         }
         catch
         {
@@ -136,8 +280,8 @@
         _errorMessage = null;
         try
         {
-            CreateCheckoutRequest body = new(planKey, _returnUrl);
-            using HttpResponseMessage response = await Http.PostAsJsonAsync("/api/billing/checkout", body);
+            CreateCheckoutRequest body = new(planKey);
+            using HttpResponseMessage response = await Http.PostAsJsonAsync("/api/billing/checkout-session", body);
             if (response.StatusCode == HttpStatusCode.Unauthorized)
             {
                 _errorMessage = "Checkout failed: unauthorized.";
@@ -259,14 +403,12 @@
 
     private sealed class CreateCheckoutRequest
     {
-        public CreateCheckoutRequest(string planKey, string returnUrl)
+        public CreateCheckoutRequest(string planKey)
         {
             PlanKey = planKey;
-            ReturnUrl = returnUrl;
         }
 
         public string PlanKey { get; }
-        public string ReturnUrl { get; }
     }
 
     private sealed class AuthMeResponse
@@ -275,10 +417,20 @@
         public string? PlanKey { get; init; }
         public string? SubscriptionStatus { get; init; }
         public string? StripeCustomerId { get; init; }
+        public DateTimeOffset EntitlementUpdatedUtc { get; init; }
     }
 
     private sealed class BillingUrlResponse
     {
         public string? Url { get; init; }
     }
+
+    private sealed class CheckoutStatusResponse
+    {
+        public string? State { get; init; }
+        public string? SubscriptionId { get; init; }
+        public string? Message { get; init; }
+    }
+
+    private sealed record SyncEntitlementsRequest(string SessionId, string? SubscriptionId);
 }

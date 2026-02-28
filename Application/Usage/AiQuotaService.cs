@@ -14,7 +14,9 @@ namespace WriterApp.Application.Usage
     public sealed class AiQuotaService : IAiQuotaService
     {
         private const string QuotaExceededCode = "AI_QUOTA_EXCEEDED";
+        private const string SubscriptionInactiveCode = "AI_SUBSCRIPTION_INACTIVE";
         private const string QuotaExceededMessage = "AI quota exceeded. Upgrade to continue.";
+        private const string SubscriptionInactiveMessage = "Your subscription is not active. Update billing to continue.";
         private static readonly TimeSpan BillingWindow = TimeSpan.FromDays(30);
 
         private readonly AppDbContext _dbContext;
@@ -31,47 +33,92 @@ namespace WriterApp.Application.Usage
             _clock = clock ?? throw new ArgumentNullException(nameof(clock));
         }
 
-        public async Task<AiQuotaDecision> CheckAsync(string userId, CancellationToken ct)
+        public async Task<AiQuotaDecision> EnsureAiAllowedAsync(string userId, int estimatedTokens, CancellationToken ct)
         {
             UserEntitlement entitlement = await _userEntitlementStore.GetOrCreateAsync(userId, ct);
             await ResetWindowIfExpiredAsync(entitlement, ct);
 
             AiQuotaSnapshot snapshot = ToSnapshot(entitlement);
-            if (snapshot.Used >= snapshot.Budget)
+            string normalizedPlan = UserEntitlementDefaults.NormalizePlanKey(entitlement.PlanKey);
+            string normalizedStatus = NormalizeSubscriptionStatus(entitlement.SubscriptionStatus);
+            bool paidPlan = IsPaidPlan(normalizedPlan);
+            bool subscriptionIsActive = !paidPlan || string.Equals(normalizedStatus, "active", StringComparison.Ordinal);
+            if (!subscriptionIsActive)
             {
-                return new AiQuotaDecision(false, QuotaExceededCode, QuotaExceededMessage, snapshot);
+                AiAccessError error = BuildAccessError(snapshot, upgradeRequired: true);
+                return new AiQuotaDecision(false, SubscriptionInactiveCode, SubscriptionInactiveMessage, snapshot, error);
             }
 
-            return new AiQuotaDecision(true, null, null, snapshot);
+            int boundedEstimate = Math.Max(0, estimatedTokens);
+            if (snapshot.Used + boundedEstimate > snapshot.Budget)
+            {
+                AiAccessError error = BuildAccessError(snapshot, upgradeRequired: true);
+                return new AiQuotaDecision(false, QuotaExceededCode, QuotaExceededMessage, snapshot, error);
+            }
+
+            return new AiQuotaDecision(true, null, null, snapshot, null);
         }
 
-        public async Task<AiQuotaChargeResult> ChargeAsync(string userId, AiRequest request, AiResult result, CancellationToken ct)
+        public async Task<AiQuotaChargeResult> ChargeActualUsageAsync(string userId, AiRequest request, AiResult result, CancellationToken ct)
         {
-            UserEntitlement entitlement = await _userEntitlementStore.GetOrCreateAsync(userId, ct);
-            await ResetWindowIfExpiredAsync(entitlement, ct);
-
             int chargedTokens = ResolveChargedTokens(request, result);
             if (chargedTokens <= 0)
             {
-                return new AiQuotaChargeResult(true, 0, ToSnapshot(entitlement), null, null);
+                UserEntitlement entitlement = await _userEntitlementStore.GetOrCreateAsync(userId, ct);
+                await ResetWindowIfExpiredAsync(entitlement, ct);
+                return new AiQuotaChargeResult(true, 0, ToSnapshot(entitlement), null, null, null);
             }
 
-            DateTimeOffset now = _clock.UtcNow;
-            int affectedRows = await _dbContext.Database.ExecuteSqlInterpolatedAsync($@"
+            const int maxRetries = 3;
+            for (int attempt = 1; attempt <= maxRetries; attempt++)
+            {
+                await using var transaction = await _dbContext.Database.BeginTransactionAsync(ct);
+                UserEntitlement entitlement = await _userEntitlementStore.GetOrCreateAsync(userId, ct);
+                await ResetWindowIfExpiredAsync(entitlement, ct);
+
+                AiQuotaSnapshot snapshot = ToSnapshot(entitlement);
+                string normalizedPlan = UserEntitlementDefaults.NormalizePlanKey(entitlement.PlanKey);
+                string normalizedStatus = NormalizeSubscriptionStatus(entitlement.SubscriptionStatus);
+                bool paidPlan = IsPaidPlan(normalizedPlan);
+                if (paidPlan && !string.Equals(normalizedStatus, "active", StringComparison.Ordinal))
+                {
+                    await transaction.RollbackAsync(ct);
+                    AiAccessError inactiveError = BuildAccessError(snapshot, upgradeRequired: true);
+                    return new AiQuotaChargeResult(false, 0, snapshot, SubscriptionInactiveCode, SubscriptionInactiveMessage, inactiveError);
+                }
+
+                if (snapshot.Used + chargedTokens > snapshot.Budget)
+                {
+                    await transaction.RollbackAsync(ct);
+                    AiAccessError accessError = BuildAccessError(snapshot, upgradeRequired: true);
+                    return new AiQuotaChargeResult(false, 0, snapshot, QuotaExceededCode, QuotaExceededMessage, accessError);
+                }
+
+                int originalUsed = entitlement.AiTokensUsedThisPeriod;
+                DateTimeOffset originalPeriodStart = entitlement.PeriodStartUtc;
+                DateTimeOffset now = _clock.UtcNow;
+                int affectedRows = await _dbContext.Database.ExecuteSqlInterpolatedAsync($@"
 UPDATE UserEntitlements
-SET AiTokensUsedThisPeriod = AiTokensUsedThisPeriod + {chargedTokens},
+SET AiTokensUsedThisPeriod = {originalUsed + chargedTokens},
     UpdatedUtc = {now}
 WHERE UserId = {userId}
-  AND AiTokensUsedThisPeriod + {chargedTokens} <= AiMonthlyTokenBudget;", ct);
+  AND AiTokensUsedThisPeriod = {originalUsed}
+  AND PeriodStartUtc = {originalPeriodStart};", ct);
 
-            UserEntitlement updated = await _userEntitlementStore.GetOrCreateAsync(userId, ct);
-            AiQuotaSnapshot snapshot = ToSnapshot(updated);
-            if (affectedRows <= 0)
-            {
-                return new AiQuotaChargeResult(false, 0, snapshot, QuotaExceededCode, QuotaExceededMessage);
+                if (affectedRows > 0)
+                {
+                    await transaction.CommitAsync(ct);
+                    UserEntitlement updated = await _userEntitlementStore.GetOrCreateAsync(userId, ct);
+                    return new AiQuotaChargeResult(true, chargedTokens, ToSnapshot(updated), null, null, null);
+                }
+
+                await transaction.RollbackAsync(ct);
             }
 
-            return new AiQuotaChargeResult(true, chargedTokens, snapshot, null, null);
+            UserEntitlement latest = await _userEntitlementStore.GetOrCreateAsync(userId, ct);
+            AiQuotaSnapshot latestSnapshot = ToSnapshot(latest);
+            AiAccessError error = BuildAccessError(latestSnapshot, upgradeRequired: true);
+            return new AiQuotaChargeResult(false, 0, latestSnapshot, QuotaExceededCode, QuotaExceededMessage, error);
         }
 
         private async Task ResetWindowIfExpiredAsync(UserEntitlement entitlement, CancellationToken ct)
@@ -135,6 +182,39 @@ WHERE UserId = {userId}
                 Math.Max(0, entitlement.AiMonthlyTokenBudget),
                 Math.Max(0, entitlement.AiTokensUsedThisPeriod),
                 entitlement.PeriodStartUtc);
+        }
+
+        private static bool IsPaidPlan(string planKey)
+        {
+            return string.Equals(planKey, UserEntitlementDefaults.StandardPlanKey, StringComparison.Ordinal)
+                || string.Equals(planKey, UserEntitlementDefaults.ProfessionalPlanKey, StringComparison.Ordinal);
+        }
+
+        private static string NormalizeSubscriptionStatus(string? rawStatus)
+        {
+            if (string.IsNullOrWhiteSpace(rawStatus))
+            {
+                return "active";
+            }
+
+            string normalized = rawStatus.Trim().ToLowerInvariant();
+            if (string.Equals(normalized, "trialing", StringComparison.Ordinal))
+            {
+                return "active";
+            }
+
+            return normalized;
+        }
+
+        private static AiAccessError BuildAccessError(AiQuotaSnapshot snapshot, bool upgradeRequired)
+        {
+            DateTimeOffset resetAt = snapshot.PeriodStartUtc + BillingWindow;
+            return new AiAccessError(
+                upgradeRequired,
+                snapshot.PlanKey,
+                snapshot.Budget,
+                snapshot.Used,
+                resetAt);
         }
     }
 }

@@ -515,6 +515,10 @@ namespace WriterApp.Client.Pages
         private int _aiQuotaBudget;
         private int _aiQuotaUsed;
         private string _aiQuotaMessage = "AI quota exceeded. Upgrade to continue.";
+        private bool _isEntitlementUpgradeDialogOpen;
+        private string _entitlementUpgradeUrl = "/upgrade?feature=ai.bibles.refresh";
+        private string _entitlementUserMessage = "Upgrade to enable this feature.";
+        private string _entitlementFeatureKey = "ai.bibles.refresh";
         private string? _lastReorderStatus;
         private int _lastReorderCount;
         private string? _lastReorderCorrelationId;
@@ -3590,6 +3594,12 @@ namespace WriterApp.Client.Pages
                             request);
                         if (!response.IsSuccessStatusCode)
                         {
+                            if (await TryHandleEntitlementDeniedAsync(response, "ai.bibles.refresh", "Upgrade to enable Bible refresh."))
+                            {
+                                _continuityStatus = _entitlementUserMessage;
+                                return;
+                            }
+
                             failures.Add($"{bibleType} ({(int)response.StatusCode})");
                             Logger.LogWarning(
                                 "Update Bible request failed. Type={BibleType}, Phase={Phase}, Status={Status}",
@@ -3646,6 +3656,12 @@ namespace WriterApp.Client.Pages
                     request);
                 if (!response.IsSuccessStatusCode)
                 {
+                    if (await TryHandleEntitlementDeniedAsync(response, "ai.bibles.refresh", "Upgrade to enable Bible refresh."))
+                    {
+                        _continuityStatus = _entitlementUserMessage;
+                        return;
+                    }
+
                     _continuityStatus = $"Bible refresh failed ({response.StatusCode}).";
                     return;
                 }
@@ -3730,6 +3746,17 @@ namespace WriterApp.Client.Pages
                 using HttpResponseMessage result = await Http.PostAsJsonAsync($"api/ai/actions/{actionKey}/execute", request);
                 if (!result.IsSuccessStatusCode)
                 {
+                    if (await TryHandleEntitlementDeniedAsync(result, "ai.actions", "Upgrade to continue using AI features."))
+                    {
+                        _continuityStatus = _entitlementUserMessage;
+                        return null;
+                    }
+
+                    if (await TryHandlePlanUpgradeRequiredAsync(result))
+                    {
+                        return null;
+                    }
+
                     if (await TryHandleAiQuotaExceededAsync(result))
                     {
                         _continuityStatus = _aiQuotaMessage;
@@ -5444,6 +5471,17 @@ namespace WriterApp.Client.Pages
                     await Http.PostAsJsonAsync($"api/ai/actions/{actionKey}/execute", payload);
                 if (!response.IsSuccessStatusCode)
                 {
+                    if (await TryHandleEntitlementDeniedAsync(response, "ai.actions", "Upgrade to continue using AI features."))
+                    {
+                        _sceneAiError = _entitlementUserMessage;
+                        return;
+                    }
+
+                    if (await TryHandlePlanUpgradeRequiredAsync(response))
+                    {
+                        return;
+                    }
+
                     if (await TryHandleAiQuotaExceededAsync(response))
                     {
                         _sceneAiError = _aiQuotaMessage;
@@ -7417,6 +7455,18 @@ private const string PreviewBootstrapScript = @"
                     request);
                 if (!result.IsSuccessStatusCode)
                 {
+                    if (await TryHandleEntitlementDeniedAsync(result, "ai.actions", "Upgrade to continue using AI features."))
+                    {
+                        ShowAiMessage(_entitlementUserMessage);
+                        await InvokeAsync(StateHasChanged);
+                        return;
+                    }
+
+                    if (await TryHandlePlanUpgradeRequiredAsync(result))
+                    {
+                        return;
+                    }
+
                     if (await TryHandleAiQuotaExceededAsync(result))
                     {
                         ShowAiMessage(_aiQuotaMessage);
@@ -7630,6 +7680,18 @@ private const string PreviewBootstrapScript = @"
                     request);
                 if (!result.IsSuccessStatusCode)
                 {
+                    if (await TryHandleEntitlementDeniedAsync(result, "ai.actions", "Upgrade to continue using AI features."))
+                    {
+                        ShowAiMessage(_entitlementUserMessage);
+                        await InvokeAsync(StateHasChanged);
+                        return;
+                    }
+
+                    if (await TryHandlePlanUpgradeRequiredAsync(result))
+                    {
+                        return;
+                    }
+
                     if (await TryHandleAiQuotaExceededAsync(result))
                     {
                         ShowAiMessage(_aiQuotaMessage);
@@ -7884,6 +7946,115 @@ private const string PreviewBootstrapScript = @"
             }
         }
 
+        private async Task<bool> TryHandleEntitlementDeniedAsync(
+            HttpResponseMessage response,
+            string fallbackFeatureKey,
+            string fallbackUserMessage)
+        {
+            if (response is null)
+            {
+                return false;
+            }
+
+            int statusCode = (int)response.StatusCode;
+            if (statusCode != (int)HttpStatusCode.PaymentRequired
+                && statusCode != (int)HttpStatusCode.Forbidden)
+            {
+                return false;
+            }
+
+            try
+            {
+                string payload = await response.Content.ReadAsStringAsync();
+                if (string.IsNullOrWhiteSpace(payload))
+                {
+                    return false;
+                }
+
+                using JsonDocument doc = JsonDocument.Parse(payload);
+                JsonElement root = doc.RootElement;
+                string? code = GetJsonString(root, "code");
+                string? problemType = GetJsonString(root, "type");
+                bool isEntitlementDenied =
+                    string.Equals(code, "entitlement_denied", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(problemType, "https://prosa.app/problems/entitlement-denied", StringComparison.OrdinalIgnoreCase)
+                    || !string.IsNullOrWhiteSpace(GetJsonString(root, "featureKey"));
+                if (!isEntitlementDenied)
+                {
+                    return false;
+                }
+
+                _entitlementFeatureKey = GetJsonString(root, "featureKey")
+                    ?? fallbackFeatureKey;
+                _entitlementUserMessage = GetJsonString(root, "userMessage")
+                    ?? GetJsonString(root, "detail")
+                    ?? fallbackUserMessage;
+                _entitlementUpgradeUrl = GetJsonString(root, "upgradePath")
+                    ?? GetJsonString(root, "upgradeUrl")
+                    ?? $"/upgrade?feature={WebUtility.UrlEncode(_entitlementFeatureKey)}";
+
+                Navigation.NavigateTo(_entitlementUpgradeUrl, forceLoad: true);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private async Task<bool> TryHandlePlanUpgradeRequiredAsync(HttpResponseMessage response)
+        {
+            if (response is null)
+            {
+                return false;
+            }
+
+            if (response.StatusCode != HttpStatusCode.PaymentRequired
+                && response.StatusCode != HttpStatusCode.Forbidden)
+            {
+                return false;
+            }
+
+            try
+            {
+                string payload = await response.Content.ReadAsStringAsync();
+                if (string.IsNullOrWhiteSpace(payload))
+                {
+                    return false;
+                }
+
+                using JsonDocument doc = JsonDocument.Parse(payload);
+                JsonElement root = doc.RootElement;
+                string? problemUpgradePath = GetJsonString(root, "upgradePath");
+                if (IsProblemDetailsResponse(response)
+                    && !string.IsNullOrWhiteSpace(problemUpgradePath))
+                {
+                    Navigation.NavigateTo(problemUpgradePath, forceLoad: true);
+                    return true;
+                }
+
+                string? code = GetJsonString(root, "code");
+                if (!string.Equals(code, "plan_upgrade_required", StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+
+                string upgradePath = problemUpgradePath ?? "/upgrade?feature=ai.actions";
+                Navigation.NavigateTo(upgradePath, forceLoad: true);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool IsProblemDetailsResponse(HttpResponseMessage response)
+        {
+            string? mediaType = response.Content?.Headers?.ContentType?.MediaType;
+            return string.Equals(mediaType, "application/problem+json", StringComparison.OrdinalIgnoreCase);
+        }
+
         private static int? GetJsonInt(JsonElement root, string name)
         {
             if (root.ValueKind != JsonValueKind.Object)
@@ -7925,6 +8096,20 @@ private const string PreviewBootstrapScript = @"
         {
             _isAiQuotaDialogOpen = false;
             Navigation.NavigateTo("/start?plan=pro", forceLoad: true);
+        }
+
+        private void CloseEntitlementUpgradeDialog()
+        {
+            _isEntitlementUpgradeDialogOpen = false;
+        }
+
+        private void NavigateToUpgradeFromEntitlementDialog()
+        {
+            _isEntitlementUpgradeDialogOpen = false;
+            string target = string.IsNullOrWhiteSpace(_entitlementUpgradeUrl)
+                ? $"/upgrade?feature={WebUtility.UrlEncode(_entitlementFeatureKey)}"
+                : _entitlementUpgradeUrl;
+            Navigation.NavigateTo(target, forceLoad: true);
         }
 
         private void ShowAiMessage(string message)

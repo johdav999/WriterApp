@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Components.Server.Circuits;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.Mvc.ApplicationParts;
 using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
@@ -21,6 +22,7 @@ using System.Security;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Data.Common;
@@ -46,6 +48,7 @@ using WriterApp.Application.Diagnostics.Circuits;
 using WriterApp.Application.Importing;
 using WriterApp.Application.Search;
 using WriterApp.Application.Continuity;
+using WriterApp.Application.Users;
 using WriterApp.Data;
 using WriterApp.Data.Subscriptions;
 using WriterApp.Shared;
@@ -157,7 +160,12 @@ builder.Services.AddAuthorization(options =>
                 return allowed;
             }));
 });
-builder.Services.AddControllers();
+var mvcBuilder = builder.Services.AddControllers();
+mvcBuilder.ConfigureApplicationPartManager(manager =>
+{
+    manager.ApplicationParts.Clear();
+    manager.ApplicationParts.Add(new AssemblyPart(typeof(Program).Assembly));
+});
 builder.Services.AddHttpContextAccessor();
 
 builder.Services.AddScoped(sp =>
@@ -167,7 +175,11 @@ builder.Services.AddScoped(sp =>
 });
 builder.Services.AddScoped<OutlineTemplatesClient>();
 builder.Services.AddSingleton(stripeConfiguration.Options);
-builder.Services.AddHttpClient<StripeApiClient>();
+builder.Services.AddSingleton<StripeApiClient>();
+builder.Services.AddScoped<StripeEntitlementSyncService>();
+builder.Services.AddScoped<IStripeClientFacade, StripeClientFacade>();
+builder.Services.Configure<StripeBillingOptions>(builder.Configuration.GetSection("Stripe:Billing"));
+builder.Services.AddScoped<IStripePriceResolver, StripePriceResolver>();
 
 builder.Services.AddMemoryCache();
 
@@ -197,6 +209,7 @@ builder.Services.AddScoped<IUserEntitlementStore, UserEntitlementStore>();
 builder.Services.AddScoped<IEntitlementService, EntitlementService>();
 builder.Services.AddScoped<IUserIdResolver, UserIdResolver>();
 builder.Services.AddScoped<IPlanAssignmentService, PlanAssignmentService>();
+builder.Services.AddScoped<IUserLookupService, UserLookupService>();
 builder.Services.AddScoped<IUsageMeter, UsageMeter>();
 builder.Services.AddSingleton<IClock, WriterApp.Application.Usage.SystemClock>();
 builder.Services.AddScoped<IAiQuotaService, AiQuotaService>();
@@ -353,6 +366,67 @@ builder.Services.AddServerSideBlazor()
     .AddCircuitOptions(o => o.DetailedErrors = true);
 
 var app = builder.Build();
+
+if (!app.Environment.IsDevelopment())
+{
+    AppDomain.CurrentDomain.FirstChanceException += (_, eventArgs) =>
+    {
+        if (eventArgs.Exception is BadImageFormatException badImageFormatException)
+        {
+            app.Logger.LogError(
+                badImageFormatException,
+                "First-chance BadImageFormatException observed during production startup/request pipeline. Message={Message}",
+                badImageFormatException.Message);
+        }
+    };
+}
+
+using (var scope = app.Services.CreateScope())
+{
+    var env = scope.ServiceProvider.GetRequiredService<IHostEnvironment>();
+    var logger = scope.ServiceProvider
+        .GetRequiredService<ILoggerFactory>()
+        .CreateLogger("StartupMigrations");
+
+    if (!env.IsDevelopment())
+    {
+        try
+        {
+            logger.LogInformation("Applying EF Core migrations at startup...");
+
+            var db = scope.ServiceProvider
+                .GetRequiredService<WriterApp.Data.AppDbContext>();
+
+            db.Database.Migrate();
+
+            if (db.Database.IsSqlite())
+            {
+                int updatedRows = db.Database.ExecuteSqlRaw(
+                    """
+                    UPDATE "Documents"
+                    SET "DeletedAtUtc" = STRFTIME('%Y-%m-%d %H:%M:%f', "DeletedAt")
+                    WHERE "DeletedAtUtc" IS NULL
+                      AND "DeletedAt" IS NOT NULL
+                      AND EXISTS (SELECT 1 FROM pragma_table_info('Documents') WHERE name = 'DeletedAt')
+                      AND EXISTS (SELECT 1 FROM pragma_table_info('Documents') WHERE name = 'DeletedAtUtc');
+                    """);
+
+                if (updatedRows > 0)
+                {
+                    logger.LogInformation("Backfilled DeletedAtUtc for {Count} document rows.", updatedRows);
+                }
+            }
+
+            logger.LogInformation("EF Core migrations applied successfully.");
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to apply EF Core migrations at startup.");
+            throw; // fail fast in Azure if DB is broken
+        }
+    }
+}
+
 QualityRewriteOutputValidator.Configure(app.Services.GetRequiredService<IOptions<QualityRewriteValidationOptions>>().Value);
 
 AdminPolicyDiagnostics.Configure(app.Services.GetRequiredService<ILoggerFactory>());
@@ -369,6 +443,18 @@ app.Logger.LogInformation(
     !string.IsNullOrWhiteSpace(stripeConfiguration.Options.WebhookSecret),
     !string.IsNullOrWhiteSpace(stripeConfiguration.Options.PriceStandard),
     !string.IsNullOrWhiteSpace(stripeConfiguration.Options.PricePro));
+
+StripeBillingOptions stripeBillingOptions = app.Services.GetRequiredService<IOptions<StripeBillingOptions>>().Value;
+app.Logger.LogInformation(
+    "Stripe billing mode configured. Mode={Mode}, ApiKeyPresent={ApiKeyPresent}, StandardPriceConfigured={StandardConfigured}, ProPriceConfigured={ProConfigured}.",
+    stripeBillingOptions.Mode,
+    !string.IsNullOrWhiteSpace(stripeBillingOptions.ApiKey),
+    !string.IsNullOrWhiteSpace(stripeBillingOptions.Prices.Standard.LivePriceId) || !string.IsNullOrWhiteSpace(stripeBillingOptions.Prices.Standard.TestPriceId),
+    !string.IsNullOrWhiteSpace(stripeBillingOptions.Prices.Pro.LivePriceId) || !string.IsNullOrWhiteSpace(stripeBillingOptions.Prices.Pro.TestPriceId));
+if (string.IsNullOrWhiteSpace(stripeBillingOptions.ApiKey))
+{
+    app.Logger.LogWarning("Stripe checkout endpoints are disabled because Stripe:Billing:ApiKey is not configured.");
+}
 
 // Manual verification:
 // 1) Local: delete sqlite file, start app, verify migrations create schema and startup logs "Migrations ok; schema up to date."
@@ -650,6 +736,8 @@ app.Use(async (context, next) =>
 
     ILogger logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("ApiRequests");
     bool isApiRequest = context.Request.Path.StartsWithSegments("/api");
+    bool isAuthMeRequest = context.Request.Path.Equals("/api/auth/me", StringComparison.OrdinalIgnoreCase);
+    bool enableAuthMeDiagnostics = app.Environment.IsProduction() && isAuthMeRequest;
     Stopwatch stopwatch = Stopwatch.StartNew();
 
     using IDisposable? scope = logger.BeginScope(new Dictionary<string, object?>
@@ -660,7 +748,46 @@ app.Use(async (context, next) =>
 
     try
     {
+        if (enableAuthMeDiagnostics)
+        {
+            string[] claimTypesBefore = context.User?.Claims
+                .Select(claim => claim.Type)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(type => type, StringComparer.Ordinal)
+                .Take(24)
+                .ToArray() ?? Array.Empty<string>();
+            string? authorizationHeader = context.Request.Headers.Authorization.FirstOrDefault();
+            string authorizationScheme = string.IsNullOrWhiteSpace(authorizationHeader)
+                ? string.Empty
+                : authorizationHeader.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? string.Empty;
+
+            logger.LogInformation(
+                "AuthMe diagnostics begin. Method={Method} Path={Path} Query={Query} Authenticated={Authenticated} AuthType={AuthType} Claims={ClaimTypes} XMsClientPrincipalLength={XMsClientPrincipalLength} XMsAadIdTokenLength={XMsAadIdTokenLength} AuthorizationScheme={AuthorizationScheme} AuthorizationLength={AuthorizationLength} CookieLength={CookieLength}",
+                context.Request.Method,
+                context.Request.Path.Value,
+                context.Request.QueryString.Value ?? string.Empty,
+                context.User?.Identity?.IsAuthenticated ?? false,
+                context.User?.Identity?.AuthenticationType ?? string.Empty,
+                claimTypesBefore,
+                context.Request.Headers["X-MS-CLIENT-PRINCIPAL"].ToString().Length,
+                context.Request.Headers["X-MS-TOKEN-AAD-ID-TOKEN"].ToString().Length,
+                authorizationScheme,
+                authorizationHeader?.Length ?? 0,
+                context.Request.Headers.Cookie.ToString().Length);
+        }
+
         await next();
+
+        if (enableAuthMeDiagnostics)
+        {
+            bool handlerEntered = context.Items.TryGetValue("AuthMeHandlerEntered", out object? marker)
+                && marker is true;
+            logger.LogInformation(
+                "AuthMe diagnostics end. StatusCode={StatusCode} DurationMs={DurationMs} HandlerEntered={HandlerEntered}",
+                context.Response.StatusCode,
+                stopwatch.ElapsedMilliseconds,
+                handlerEntered);
+        }
 
         if (isApiRequest)
         {
@@ -678,6 +805,27 @@ app.Use(async (context, next) =>
         if (!isApiRequest || context.Response.HasStarted)
         {
             throw;
+        }
+
+        if (ex is EntitlementDeniedException entitlementDenied)
+        {
+            Microsoft.AspNetCore.Mvc.ProblemDetails payload = EntitlementDeniedApiError.ToProblemDetails(entitlementDenied);
+            payload.Extensions["code"] = "entitlement_denied";
+            payload.Extensions["traceId"] = context.TraceIdentifier;
+            payload.Extensions["correlationId"] = correlationId;
+            logger.LogInformation(
+                "API request denied by entitlement. Method={Method} Path={Path} DurationMs={DurationMs} CorrelationId={CorrelationId} FeatureKey={FeatureKey} PlanKey={PlanKey}",
+                context.Request.Method,
+                context.Request.Path.Value,
+                stopwatch.ElapsedMilliseconds,
+                correlationId,
+                entitlementDenied.FeatureKey,
+                entitlementDenied.PlanKey ?? string.Empty);
+
+            context.Response.StatusCode = StatusCodes.Status402PaymentRequired;
+            context.Response.ContentType = "application/problem+json";
+            await context.Response.WriteAsJsonAsync(payload);
+            return;
         }
 
         if (IsSqliteBusyException(ex))
@@ -764,6 +912,23 @@ app.MapGet("/billing/checkout", (HttpContext context) =>
     string query = BuildRedirectQueryWithSafeReturnUrl(context, ReturnUrlSafety.DefaultProjectsPath);
     return Results.Redirect($"/app/billing/checkout{query}", permanent: false);
 });
+app.MapGet("/upgrade", (HttpContext context) =>
+{
+    string query = context.Request.QueryString.HasValue
+        ? context.Request.QueryString.Value ?? string.Empty
+        : string.Empty;
+    return Results.Redirect($"/app/upgrade{query}", permanent: false);
+});
+app.MapGet("/upgrade/{*rest}", (HttpContext context, string? rest) =>
+{
+    string suffix = string.IsNullOrWhiteSpace(rest)
+        ? string.Empty
+        : "/" + rest.TrimStart('/');
+    string query = context.Request.QueryString.HasValue
+        ? context.Request.QueryString.Value ?? string.Empty
+        : string.Empty;
+    return Results.Redirect($"/app/upgrade{suffix}{query}", permanent: false);
+});
 app.MapGet("/logout", (HttpContext context) =>
 {
     string query = BuildRedirectQueryWithSafeReturnUrl(context, ReturnUrlSafety.DefaultHomePath);
@@ -844,6 +1009,7 @@ app.MapPost("/api/admin/users/{userId}/plan/{planKey}", async (
         HttpContext context,
         string userId,
         string planKey,
+        IPlanAssignmentService planAssignmentService,
         IUserEntitlementStore userEntitlementStore,
         IEntitlementService entitlementService,
         AppDbContext dbContext,
@@ -876,28 +1042,52 @@ app.MapPost("/api/admin/users/{userId}/plan/{planKey}", async (
     ILogger logger = loggerFactory.CreateLogger("AdminPlanAssignments");
     string assignedBy = ResolveAssignedBy(context.User, userIdResolver, logger, out string? callerName);
 
-    UserEntitlement entitlement = await userEntitlementStore.GetOrCreateAsync(userId, context.RequestAborted);
-    DateTimeOffset now = DateTimeOffset.UtcNow;
-    entitlement.PlanKey = normalizedPlanKey;
-    entitlement.AiMonthlyTokenBudget = normalizedPlanKey switch
+    try
     {
-        UserEntitlementDefaults.StandardPlanKey => UserEntitlementDefaults.STANDARD_MONTHLY_TOKEN_BUDGET,
-        UserEntitlementDefaults.ProfessionalPlanKey => UserEntitlementDefaults.PROFESSIONAL_MONTHLY_TOKEN_BUDGET,
-        _ => UserEntitlementDefaults.FREE_MONTHLY_TOKEN_BUDGET
-    };
+        await planAssignmentService.AssignPlanAsync(
+            userId,
+            normalizedPlanKey,
+            assignedBy,
+            callerName,
+            context.RequestAborted);
+    }
+    catch (PlanAssignmentException ex)
+    {
+        logger.LogWarning(
+            ex,
+            "Admin plan assignment failed. userId={UserId} planKey={PlanKey} assignedBy={AssignedBy} callerName={CallerName} code={Code}",
+            userId,
+            normalizedPlanKey,
+            assignedBy,
+            callerName ?? string.Empty,
+            ex.Code);
+
+        int statusCode = ex.Code == PlanAssignmentErrorCode.AssignmentExists
+            ? StatusCodes.Status409Conflict
+            : StatusCodes.Status400BadRequest;
+        return Results.Json(
+            new
+            {
+                message = ex.Message,
+                code = ex.Code.ToString()
+            },
+            statusCode: statusCode);
+    }
+
+    UserEntitlement entitlement = await userEntitlementStore.GetOrCreateAsync(userId, context.RequestAborted);
 
     if (resetUsage)
     {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
         entitlement.AiTokensUsedThisPeriod = 0;
         entitlement.PeriodStartUtc = now;
+        entitlement.UpdatedUtc = now;
+        await dbContext.SaveChangesAsync(context.RequestAborted);
+        entitlementService.InvalidateForUser(userId);
     }
 
-    entitlement.UpdatedUtc = now;
-    await dbContext.SaveChangesAsync(context.RequestAborted);
-    entitlementService.InvalidateForUser(userId);
-
     logger.LogInformation(
-        "Admin entitlement updated: userId={UserId} planKey={PlanKey} budget={Budget} used={Used} resetUsage={ResetUsage} assignedBy={AssignedBy} callerName={CallerName}",
+        "Admin entitlement assignment applied: userId={UserId} planKey={PlanKey} budget={Budget} used={Used} resetUsage={ResetUsage} assignedBy={AssignedBy} callerName={CallerName}",
         userId,
         entitlement.PlanKey,
         entitlement.AiMonthlyTokenBudget,
@@ -955,6 +1145,145 @@ app.MapPost("/api/admin/db/migrate", async (
 })
 .RequireAuthorization("AdminOnly");
 
+app.MapPost("/api/admin/stripe/resync", async (
+        string? customerId,
+        string? subscriptionId,
+        StripeApiClient stripeApiClient,
+        StripeEntitlementSyncService stripeEntitlementSyncService,
+        StripeOptions stripeOptions,
+        AppDbContext dbContext,
+        ILoggerFactory loggerFactory,
+        CancellationToken ct) =>
+{
+    if (!stripeOptions.Enabled || string.IsNullOrWhiteSpace(stripeOptions.SecretKey))
+    {
+        return Results.Json(
+            new { success = false, message = "Stripe integration is not configured." },
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+
+    string? normalizedCustomerId = string.IsNullOrWhiteSpace(customerId) ? null : customerId.Trim();
+    string? normalizedSubscriptionId = string.IsNullOrWhiteSpace(subscriptionId) ? null : subscriptionId.Trim();
+    if (string.IsNullOrWhiteSpace(normalizedCustomerId) && string.IsNullOrWhiteSpace(normalizedSubscriptionId))
+    {
+        return Results.BadRequest(new { message = "Either customerId or subscriptionId is required." });
+    }
+
+    ILogger logger = loggerFactory.CreateLogger("AdminStripeResync");
+
+    JsonDocument subscriptionDoc;
+    try
+    {
+        if (!string.IsNullOrWhiteSpace(normalizedSubscriptionId))
+        {
+            subscriptionDoc = await stripeApiClient.GetSubscriptionAsync(
+                stripeOptions.SecretKey,
+                normalizedSubscriptionId,
+                ct);
+        }
+        else
+        {
+            using JsonDocument subscriptionsDoc = await stripeApiClient.ListSubscriptionsByCustomerAsync(
+                stripeOptions.SecretKey,
+                normalizedCustomerId!,
+                ct);
+            if (!subscriptionsDoc.RootElement.TryGetProperty("data", out JsonElement data)
+                || data.ValueKind != JsonValueKind.Array
+                || data.GetArrayLength() == 0)
+            {
+                return Results.NotFound(new
+                {
+                    message = "No Stripe subscription found for customer.",
+                    customerId = normalizedCustomerId
+                });
+            }
+
+            subscriptionDoc = JsonDocument.Parse(data[0].GetRawText());
+        }
+    }
+    catch (StripeApiException ex)
+    {
+        logger.LogError(
+            ex,
+            "Admin Stripe resync fetch failed. CustomerId={CustomerId} SubscriptionId={SubscriptionId}",
+            normalizedCustomerId ?? string.Empty,
+            normalizedSubscriptionId ?? string.Empty);
+        return Results.Json(
+            new
+            {
+                message = "Failed to fetch Stripe subscription.",
+                stripeStatusCode = (int)ex.StatusCode,
+                stripeErrorParam = ex.ErrorParam ?? string.Empty
+            },
+            statusCode: StatusCodes.Status502BadGateway);
+    }
+
+    using (subscriptionDoc)
+    {
+        JsonElement subscription = subscriptionDoc.RootElement;
+        string? resolvedSubscriptionId = ReadJsonString(subscription, "id");
+        if (string.IsNullOrWhiteSpace(normalizedCustomerId))
+        {
+            normalizedCustomerId = ReadJsonString(subscription, "customer");
+        }
+
+        string? resolvedUserId = ReadJsonString(subscription, "metadata", "userId");
+        if (string.IsNullOrWhiteSpace(resolvedUserId) && !string.IsNullOrWhiteSpace(resolvedSubscriptionId))
+        {
+            resolvedUserId = await dbContext.UserEntitlements
+                .AsNoTracking()
+                .Where(item => item.StripeSubscriptionId == resolvedSubscriptionId)
+                .Select(item => item.UserId)
+                .FirstOrDefaultAsync(ct);
+        }
+
+        if (string.IsNullOrWhiteSpace(resolvedUserId) && !string.IsNullOrWhiteSpace(normalizedCustomerId))
+        {
+            resolvedUserId = await dbContext.UserEntitlements
+                .AsNoTracking()
+                .Where(item => item.StripeCustomerId == normalizedCustomerId)
+                .Select(item => item.UserId)
+                .FirstOrDefaultAsync(ct);
+        }
+
+        if (string.IsNullOrWhiteSpace(resolvedUserId))
+        {
+            return Results.NotFound(new
+            {
+                message = "No user entitlement record found for the provided Stripe identifiers.",
+                customerId = normalizedCustomerId ?? string.Empty,
+                subscriptionId = resolvedSubscriptionId ?? normalizedSubscriptionId ?? string.Empty
+            });
+        }
+
+        UserEntitlement entitlement = await stripeEntitlementSyncService.SyncFromSubscriptionAsync(
+            resolvedUserId,
+            normalizedCustomerId,
+            subscription,
+            ct);
+
+        logger.LogInformation(
+            "Admin Stripe resync completed. UserId={UserId} PlanKey={PlanKey} CustomerId={CustomerId} SubscriptionId={SubscriptionId} PriceId={PriceId}",
+            entitlement.UserId,
+            entitlement.PlanKey,
+            entitlement.StripeCustomerId ?? string.Empty,
+            entitlement.StripeSubscriptionId ?? string.Empty,
+            entitlement.StripePriceId ?? string.Empty);
+
+        return Results.Ok(new
+        {
+            userId = entitlement.UserId,
+            planKey = entitlement.PlanKey,
+            subscriptionStatus = entitlement.SubscriptionStatus,
+            stripeCustomerId = entitlement.StripeCustomerId,
+            stripeSubscriptionId = entitlement.StripeSubscriptionId,
+            stripePriceId = entitlement.StripePriceId,
+            entitlementUpdatedUtc = entitlement.UpdatedUtc
+        });
+    }
+})
+.RequireAuthorization("AdminOnly");
+
 app.MapGet("/api/auth/debug", (HttpContext context, ILoggerFactory loggerFactory, IWebHostEnvironment environment) =>
 {
     string slotName = Environment.GetEnvironmentVariable("WEBSITE_SLOT_NAME") ?? string.Empty;
@@ -998,8 +1327,31 @@ app.MapGet("/api/auth/me", async (
     ILoggerFactory loggerFactory,
     CancellationToken ct) =>
 {
+    context.Items["AuthMeHandlerEntered"] = true;
+    string? forceRaw = context.Request.Query["force"].FirstOrDefault();
+    bool force = ParseTruthy(forceRaw);
+    if (force)
+    {
+        context.Response.Headers.CacheControl = "no-store, no-cache, max-age=0";
+        context.Response.Headers.Pragma = "no-cache";
+    }
+
     ILogger logger = loggerFactory.CreateLogger("AuthMe");
     ClaimsPrincipal user = context.User;
+    if (app.Environment.IsProduction())
+    {
+        string[] claimTypes = user.Claims
+            .Select(claim => claim.Type)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(type => type, StringComparer.Ordinal)
+            .Take(24)
+            .ToArray();
+        logger.LogInformation(
+            "AuthMe handler entered. Authenticated={Authenticated} AuthType={AuthType} ClaimTypes={ClaimTypes}",
+            user.Identity?.IsAuthenticated ?? false,
+            user.Identity?.AuthenticationType ?? string.Empty,
+            claimTypes);
+    }
 
     if (user.Identity?.IsAuthenticated != true)
     {
@@ -1013,7 +1365,8 @@ app.MapGet("/api/auth/me", async (
             StripeCustomerId = null,
             AiMonthlyTokenBudget = 0,
             AiTokensUsedThisPeriod = 0,
-            PeriodStartUtc = DateTimeOffset.MinValue
+            PeriodStartUtc = DateTimeOffset.MinValue,
+            EntitlementUpdatedUtc = DateTimeOffset.MinValue
         });
     }
 
@@ -1024,18 +1377,8 @@ app.MapGet("/api/auth/me", async (
     }
     catch (SecurityException)
     {
-        logger.LogWarning("AuthMe probe could not resolve user id from authenticated principal; returning anonymous state.");
-        return Results.Ok(new WriterApp.Application.Security.AuthMeDto
-        {
-            IsAuthenticated = false,
-            Roles = Array.Empty<string>(),
-            PlanKey = UserEntitlementDefaults.FreePlanKey,
-            SubscriptionStatus = null,
-            StripeCustomerId = null,
-            AiMonthlyTokenBudget = 0,
-            AiTokensUsedThisPeriod = 0,
-            PeriodStartUtc = DateTimeOffset.MinValue
-        });
+        logger.LogWarning("AuthMe probe could not resolve user id from authenticated principal.");
+        return Results.Unauthorized();
     }
 
     ExternalIdentityClaims.UserProfileIdentity profileIdentity =
@@ -1116,7 +1459,8 @@ app.MapGet("/api/auth/me", async (
         StripeCustomerId = entitlement.StripeCustomerId,
         AiMonthlyTokenBudget = entitlement.AiMonthlyTokenBudget,
         AiTokensUsedThisPeriod = entitlement.AiTokensUsedThisPeriod,
-        PeriodStartUtc = entitlement.PeriodStartUtc
+        PeriodStartUtc = entitlement.PeriodStartUtc,
+        EntitlementUpdatedUtc = entitlement.UpdatedUtc
     });
 });
 
@@ -1197,6 +1541,42 @@ if (wasmEnabled)
 app.MapStaticAssets();
 
 app.Run();
+
+static string? ReadJsonString(JsonElement element, params string[] path)
+{
+    JsonElement cursor = element;
+    foreach (string segment in path)
+    {
+        if (cursor.ValueKind != JsonValueKind.Object
+            || !cursor.TryGetProperty(segment, out JsonElement child))
+        {
+            return null;
+        }
+
+        cursor = child;
+    }
+
+    return cursor.ValueKind switch
+    {
+        JsonValueKind.String => cursor.GetString(),
+        JsonValueKind.Number => cursor.ToString(),
+        _ => null
+    };
+}
+
+static bool ParseTruthy(string? rawValue)
+{
+    if (string.IsNullOrWhiteSpace(rawValue))
+    {
+        return false;
+    }
+
+    string candidate = rawValue.Trim();
+    return candidate.Equals("1", StringComparison.OrdinalIgnoreCase)
+        || candidate.Equals("true", StringComparison.OrdinalIgnoreCase)
+        || candidate.Equals("yes", StringComparison.OrdinalIgnoreCase)
+        || candidate.Equals("on", StringComparison.OrdinalIgnoreCase);
+}
 
 static string ResolveAssignedBy(
     ClaimsPrincipal user,
@@ -1331,27 +1711,22 @@ static void LogRuntimeProbe(ILogger logger)
             return;
         }
 
-        foreach (string file in Directory.EnumerateFiles(runtimesDir, "*e_sqlite3*", SearchOption.AllDirectories))
+        string ridPrefix = RuntimeInformation.IsOSPlatform(OSPlatform.Linux) ? "linux-" : "win-";
+        foreach (string ridDir in Directory.EnumerateDirectories(runtimesDir, $"{ridPrefix}*", SearchOption.TopDirectoryOnly))
         {
-            LogFilePresence(logger, baseDir, file);
-        }
-
-        foreach (string file in Directory.EnumerateFiles(runtimesDir, "*libe_sqlite3*", SearchOption.AllDirectories))
-        {
-            LogFilePresence(logger, baseDir, file);
-        }
-
-        foreach (string file in Directory.EnumerateFiles(runtimesDir, "*", SearchOption.AllDirectories))
-        {
-            if (!file.Contains($"{Path.DirectorySeparatorChar}native{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase))
+            string nativeDir = Path.Combine(ridDir, "native");
+            if (!Directory.Exists(nativeDir))
             {
                 continue;
             }
 
-            if (file.Contains($"{Path.DirectorySeparatorChar}runtimes{Path.DirectorySeparatorChar}win", StringComparison.OrdinalIgnoreCase)
-                || file.Contains($"{Path.DirectorySeparatorChar}runtimes{Path.DirectorySeparatorChar}linux", StringComparison.OrdinalIgnoreCase))
+            foreach (string file in Directory.EnumerateFiles(nativeDir, "*", SearchOption.TopDirectoryOnly))
             {
-                LogFilePresence(logger, baseDir, file);
+                string fileName = Path.GetFileName(file);
+                if (fileName.Contains("sqlite3", StringComparison.OrdinalIgnoreCase))
+                {
+                    LogFilePresence(logger, baseDir, file);
+                }
             }
         }
     }
@@ -1430,8 +1805,56 @@ static async Task<(string Provider, string Database, string[] PendingBefore, str
         database,
         redactedConnectionString);
 
+    bool projectsExists = false;
+    int migrationsHistoryCount = 0;
+    try
+    {
+        dbContext.Database.OpenConnection();
+        using DbCommand projectsCommand = dbContext.Database.GetDbConnection().CreateCommand();
+        projectsCommand.CommandText = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = $tableName LIMIT 1;";
+        DbParameter projectsParameter = projectsCommand.CreateParameter();
+        projectsParameter.ParameterName = "$tableName";
+        projectsParameter.Value = "Projects";
+        projectsCommand.Parameters.Add(projectsParameter);
+        object? projectsResult = projectsCommand.ExecuteScalar();
+        projectsExists = projectsResult is not null;
+
+        using DbCommand historyCommand = dbContext.Database.GetDbConnection().CreateCommand();
+        historyCommand.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '__EFMigrationsHistory';";
+        object? historyTableExistsResult = historyCommand.ExecuteScalar();
+        bool historyTableExists = historyTableExistsResult is long countLong && countLong > 0
+            || historyTableExistsResult is int countInt && countInt > 0;
+        if (historyTableExists)
+        {
+            using DbCommand countCommand = dbContext.Database.GetDbConnection().CreateCommand();
+            countCommand.CommandText = "SELECT COUNT(*) FROM __EFMigrationsHistory;";
+            object? historyCountResult = countCommand.ExecuteScalar();
+            migrationsHistoryCount = historyCountResult switch
+            {
+                long value => (int)value,
+                int value => value,
+                _ => 0
+            };
+        }
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning(ex, "Pre-migration SQLite schema diagnostics failed.");
+    }
+    finally
+    {
+        dbContext.Database.CloseConnection();
+    }
+
     string[] pendingBefore = (await dbContext.Database.GetPendingMigrationsAsync(ct)).ToArray();
     string[] appliedBefore = (await dbContext.Database.GetAppliedMigrationsAsync(ct)).ToArray();
+
+    logger.LogInformation(
+        "EF pre-migration diagnostics. ProjectsExists={ProjectsExists}, EFMigrationsHistoryCount={HistoryCount}, PendingCount={PendingCount}, Pending=[{Pending}]",
+        projectsExists,
+        migrationsHistoryCount,
+        pendingBefore.Length,
+        string.Join(", ", pendingBefore));
 
     logger.LogInformation(
         "EF migrations pending before apply. Count={Count}. Pending=[{Pending}]",
@@ -1654,6 +2077,10 @@ static void LogSchemaHistoryMismatchWarning(AppDbContext dbContext, ILogger logg
         if (hasHistoryTable > 0 && hasProjectsTable == 0)
         {
             logger.LogWarning("Schema mismatch detected: migrations history present but Projects table missing. Attempting self-heal.");
+        }
+        else if (hasProjectsTable > 0 && hasHistoryTable == 0)
+        {
+            logger.LogWarning("Schema mismatch detected: Projects table exists but __EFMigrationsHistory is missing. Database was likely initialized outside EF migrations.");
         }
     }
     catch (Exception ex)

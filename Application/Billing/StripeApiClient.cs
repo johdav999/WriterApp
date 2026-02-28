@@ -86,6 +86,16 @@ namespace WriterApp.Application.Billing
             }
         }
 
+        public async Task<JsonDocument> GetCustomerAsync(string secretKey, string customerId, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(customerId))
+            {
+                throw new ArgumentException("Customer id is required.", nameof(customerId));
+            }
+
+            return await SendGetAsync(secretKey, $"customers/{Uri.EscapeDataString(customerId)}", ct);
+        }
+
         public async Task<string> CreateCheckoutSessionAsync(
             string secretKey,
             string customerId,
@@ -131,6 +141,38 @@ namespace WriterApp.Application.Billing
             return url;
         }
 
+        public async Task<JsonDocument> GetSubscriptionAsync(string secretKey, string subscriptionId, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(subscriptionId))
+            {
+                throw new ArgumentException("Subscription id is required.", nameof(subscriptionId));
+            }
+
+            return await SendGetAsync(secretKey, $"subscriptions/{Uri.EscapeDataString(subscriptionId)}", ct);
+        }
+
+        public async Task<JsonDocument> ListSubscriptionsByCustomerAsync(string secretKey, string customerId, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(customerId))
+            {
+                throw new ArgumentException("Customer id is required.", nameof(customerId));
+            }
+
+            string path = $"subscriptions?customer={Uri.EscapeDataString(customerId)}&status=all&limit=3";
+            return await SendGetAsync(secretKey, path, ct);
+        }
+
+        public async Task<JsonDocument> GetCheckoutSessionAsync(string secretKey, string sessionId, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(sessionId))
+            {
+                throw new ArgumentException("Session id is required.", nameof(sessionId));
+            }
+
+            string path = $"checkout/sessions/{Uri.EscapeDataString(sessionId)}?expand%5B%5D=subscription";
+            return await SendGetAsync(secretKey, path, ct);
+        }
+
         private async Task<JsonDocument> SendGetAsync(string secretKey, string relativePath, CancellationToken ct)
         {
             using HttpRequestMessage request = BuildRequest(HttpMethod.Get, relativePath, secretKey, content: null);
@@ -143,7 +185,25 @@ namespace WriterApp.Application.Billing
             IReadOnlyDictionary<string, string> formData,
             CancellationToken ct)
         {
-            using FormUrlEncodedContent content = new(formData.Where(pair => !string.IsNullOrWhiteSpace(pair.Value)));
+            KeyValuePair<string, string>[] entries = formData
+                .Where(pair => !string.IsNullOrWhiteSpace(pair.Value))
+                .ToArray();
+
+            _logger.LogInformation(
+                "Stripe form request prepared. Path={Path} Keys=[{Keys}]",
+                relativePath,
+                string.Join(", ", entries.Select(item => item.Key)));
+
+            foreach (KeyValuePair<string, string> entry in entries)
+            {
+                _logger.LogInformation(
+                    "Stripe form field. Path={Path} Key={Key} Value={Value}",
+                    relativePath,
+                    entry.Key,
+                    DescribeFormValue(entry.Key, entry.Value));
+            }
+
+            using FormUrlEncodedContent content = new(entries);
             using HttpRequestMessage request = BuildRequest(HttpMethod.Post, relativePath, secretKey, content);
             return await SendAsync(request, ct);
         }
@@ -167,10 +227,18 @@ namespace WriterApp.Application.Billing
 
             if (!response.IsSuccessStatusCode)
             {
+                string? errorParam = TryReadStripeErrorParam(payload);
                 string message = TryReadStripeErrorMessage(payload)
                     ?? $"Stripe API call failed with {(int)response.StatusCode}.";
-                _logger.LogWarning("Stripe API error. StatusCode={StatusCode} Message={Message}", (int)response.StatusCode, message);
-                throw new StripeApiException(message, response.StatusCode);
+                _logger.LogWarning(
+                    "Stripe API error. Method={Method} Path={Path} StatusCode={StatusCode} ErrorParam={ErrorParam} Message={Message} RawBody={RawBody}",
+                    request.Method.Method,
+                    request.RequestUri?.PathAndQuery ?? string.Empty,
+                    (int)response.StatusCode,
+                    errorParam ?? string.Empty,
+                    message,
+                    payload);
+                throw new StripeApiException(message, response.StatusCode, payload, errorParam);
             }
 
             try
@@ -181,6 +249,26 @@ namespace WriterApp.Application.Billing
             {
                 throw new StripeApiException("Stripe API returned invalid JSON payload.", response.StatusCode, ex);
             }
+        }
+
+        private static string DescribeFormValue(string key, string value)
+        {
+            if (string.Equals(key, "success_url", StringComparison.Ordinal)
+                || string.Equals(key, "cancel_url", StringComparison.Ordinal)
+                || string.Equals(key, "return_url", StringComparison.Ordinal))
+            {
+                return value;
+            }
+
+            if (string.Equals(key, "mode", StringComparison.Ordinal)
+                || string.Equals(key, "line_items[0][price]", StringComparison.Ordinal)
+                || string.Equals(key, "line_items[0][quantity]", StringComparison.Ordinal)
+                || string.Equals(key, "metadata[planKey]", StringComparison.Ordinal))
+            {
+                return value;
+            }
+
+            return "(redacted)";
         }
 
         private static string? TryReadStripeErrorMessage(string payload)
@@ -199,6 +287,29 @@ namespace WriterApp.Application.Billing
                 }
 
                 return errorElement.ToString();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string? TryReadStripeErrorParam(string payload)
+        {
+            try
+            {
+                using JsonDocument doc = JsonDocument.Parse(payload);
+                if (!doc.RootElement.TryGetProperty("error", out JsonElement errorElement))
+                {
+                    return null;
+                }
+
+                if (errorElement.TryGetProperty("param", out JsonElement paramElement))
+                {
+                    return paramElement.GetString();
+                }
+
+                return null;
             }
             catch
             {
@@ -225,18 +336,24 @@ namespace WriterApp.Application.Billing
 
     public sealed class StripeApiException : Exception
     {
-        public StripeApiException(string message, HttpStatusCode statusCode)
+        public StripeApiException(string message, HttpStatusCode statusCode, string? rawBody = null, string? errorParam = null)
             : base(message)
         {
             StatusCode = statusCode;
+            RawBody = rawBody;
+            ErrorParam = errorParam;
         }
 
-        public StripeApiException(string message, HttpStatusCode statusCode, Exception innerException)
+        public StripeApiException(string message, HttpStatusCode statusCode, Exception innerException, string? rawBody = null, string? errorParam = null)
             : base(message, innerException)
         {
             StatusCode = statusCode;
+            RawBody = rawBody;
+            ErrorParam = errorParam;
         }
 
         public HttpStatusCode StatusCode { get; }
+        public string? RawBody { get; }
+        public string? ErrorParam { get; }
     }
 }

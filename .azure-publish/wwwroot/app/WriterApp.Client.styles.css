@@ -430,9 +430,18 @@
 }
 
 .app-brand[b-nxiwjc76a4] {
+    display: inline-flex;
+    align-items: center;
     font-weight: 600;
     text-decoration: none;
     color: var(--color-primary);
+}
+
+.app-brand-logo[b-nxiwjc76a4] {
+    display: block;
+    height: 130px;
+    width: auto;
+    max-width: 720px;
 }
 
 .app-link[b-nxiwjc76a4] {
@@ -536,6 +545,11 @@
         height: auto;
         min-height: 100vh;
         overflow: auto;
+    }
+
+    .app-brand-logo[b-nxiwjc76a4] {
+        height: 96px;
+        max-width: 520px;
     }
 
     .app-main[b-nxiwjc76a4],
@@ -1842,6 +1856,11 @@
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
+.editor-toolbar button.icon-only[b-5ksjeq0dwx] {
+    min-width: var(--control-height);
+    padding: 0;
+}
+
 .editor-toolbar button.is-active[b-5ksjeq0dwx] {
     background: var(--accent-soft);
     border-color: #cfd9f5;
@@ -1882,6 +1901,20 @@
     border-radius: var(--radius-sm);
     background: var(--surface);
     cursor: pointer;
+}
+
+.editor-actions button.icon-only[b-5ksjeq0dwx] {
+    min-width: var(--control-height);
+    padding: 0;
+}
+
+.toolbar-icon[b-5ksjeq0dwx] {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    font-size: 1.32rem;
+    font-weight: 600;
 }
 
 .editor-actions button:hover:not(:disabled)[b-5ksjeq0dwx] {

@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using WriterApp.Application.Usage;
 using WriterApp.Data;
 using WriterApp.Data.Subscriptions;
@@ -13,11 +14,16 @@ namespace WriterApp.Application.Subscriptions
     {
         private readonly AppDbContext _dbContext;
         private readonly IClock _clock;
+        private readonly ILogger<UserEntitlementStore>? _logger;
 
-        public UserEntitlementStore(AppDbContext dbContext, IClock clock)
+        public UserEntitlementStore(
+            AppDbContext dbContext,
+            IClock clock,
+            ILogger<UserEntitlementStore>? logger = null)
         {
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _clock = clock ?? throw new ArgumentNullException(nameof(clock));
+            _logger = logger;
         }
 
         public async Task<UserEntitlement> GetOrCreateAsync(string userId, CancellationToken cancellationToken = default)
@@ -33,7 +39,14 @@ namespace WriterApp.Application.Subscriptions
             if (entitlement is null)
             {
                 DateTimeOffset now = _clock.UtcNow;
-                string planKey = await ResolvePlanKeyFromAssignmentsAsync(userId, cancellationToken);
+                string? initialAssignedPlanKey = await ResolvePlanKeyFromAssignmentsAsync(userId, cancellationToken);
+                // Precedence:
+                // 1) Manual assignment override wins when present.
+                // 2) Otherwise keep stored entitlement plan (Stripe source).
+                // 3) For first-time rows with no source, fall back to Free.
+                string planKey = string.IsNullOrWhiteSpace(initialAssignedPlanKey)
+                    ? UserEntitlementDefaults.FreePlanKey
+                    : initialAssignedPlanKey;
                 entitlement = new UserEntitlement
                 {
                     UserId = userId,
@@ -66,12 +79,27 @@ namespace WriterApp.Application.Subscriptions
             }
 
             bool dirty = false;
-            string assignedPlanKey = await ResolvePlanKeyFromAssignmentsAsync(userId, cancellationToken);
-            if (!string.Equals(entitlement.PlanKey, assignedPlanKey, StringComparison.Ordinal))
+            string entitlementPlanBefore = entitlement.PlanKey ?? string.Empty;
+            string? assignedPlanKey = await ResolvePlanKeyFromAssignmentsAsync(userId, cancellationToken);
+            bool didOverrideFromAssignment = false;
+            // Only explicit assignment rows are treated as manual overrides.
+            // No assignment means keep the existing entitlement plan value.
+            if (!string.IsNullOrWhiteSpace(assignedPlanKey)
+                && !string.Equals(entitlement.PlanKey, assignedPlanKey, StringComparison.Ordinal))
             {
+                DateTimeOffset now = _clock.UtcNow;
+                string previousPlanKey = entitlement.PlanKey ?? string.Empty;
                 entitlement.PlanKey = assignedPlanKey;
                 entitlement.AiMonthlyTokenBudget = UserEntitlementDefaults.ResolveMonthlyTokenBudget(assignedPlanKey);
+                entitlement.AiTokensUsedThisPeriod = 0;
+                entitlement.PeriodStartUtc = now;
                 dirty = true;
+                didOverrideFromAssignment = true;
+                _logger?.LogInformation(
+                    "Plan override applied from assignment. UserId={UserId} AssignedPlanKey={AssignedPlanKey} PreviousPlanKey={PreviousPlanKey}",
+                    userId,
+                    assignedPlanKey,
+                    previousPlanKey);
             }
 
             string normalizedPlan = UserEntitlementDefaults.NormalizePlanKey(entitlement.PlanKey);
@@ -103,6 +131,15 @@ namespace WriterApp.Application.Subscriptions
                 dirty = true;
             }
 
+            string entitlementPlanAfter = entitlement.PlanKey ?? string.Empty;
+            _logger?.LogInformation(
+                "Entitlement plan resolution. UserId={UserId} EntitlementPlanBefore={EntitlementPlanBefore} AssignedPlanKey={AssignedPlanKey} EntitlementPlanAfter={EntitlementPlanAfter} DidOverrideFromAssignment={DidOverrideFromAssignment}",
+                userId,
+                entitlementPlanBefore,
+                assignedPlanKey ?? string.Empty,
+                entitlementPlanAfter,
+                didOverrideFromAssignment);
+
             if (dirty)
             {
                 entitlement.UpdatedUtc = _clock.UtcNow;
@@ -112,7 +149,7 @@ namespace WriterApp.Application.Subscriptions
             return entitlement;
         }
 
-        private async Task<string> ResolvePlanKeyFromAssignmentsAsync(string userId, CancellationToken cancellationToken)
+        private async Task<string?> ResolvePlanKeyFromAssignmentsAsync(string userId, CancellationToken cancellationToken)
         {
             string? assignedKey = await _dbContext.UserPlanAssignments
                 .AsNoTracking()
@@ -121,8 +158,21 @@ namespace WriterApp.Application.Subscriptions
                     _dbContext.Plans.AsNoTracking(),
                     assignment => assignment.PlanId,
                     plan => plan.PlanId,
-                    (_, plan) => plan.Key)
+                    (assignment, plan) => new
+                    {
+                        assignment.AssignedUtc,
+                        assignment.PlanId,
+                        PlanKey = plan.Key
+                    })
+                .OrderByDescending(item => item.AssignedUtc)
+                .ThenByDescending(item => item.PlanId)
+                .Select(item => item.PlanKey)
                 .FirstOrDefaultAsync(cancellationToken);
+
+            if (string.IsNullOrWhiteSpace(assignedKey))
+            {
+                return null;
+            }
 
             return UserEntitlementDefaults.NormalizePlanKey(assignedKey);
         }

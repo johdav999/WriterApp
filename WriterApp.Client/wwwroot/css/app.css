@@ -20,6 +20,24 @@ a, .btn-link {
     color: var(--color-primary);
 }
 
+/* Keep brand logo sizing stable across environments even if scoped CSS is missing or overridden. */
+.app-header .app-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    text-decoration: none;
+}
+
+.app-header a.app-brand > img.app-brand-logo,
+.app-header .app-brand > img.app-brand-logo {
+    height: clamp(72px, 7vw, 140px);
+    width: auto;
+    max-width: none;
+    display: block;
+    object-fit: contain;
+    flex-shrink: 0;
+}
+
 .btn-primary {
     color: #fff;
     background-color: var(--color-primary);

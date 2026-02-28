@@ -39,9 +39,9 @@ namespace WriterApp.Data.Documents
 
             query = view switch
             {
-                DocumentListView.Archived => query.Where(document => document.DeletedAt == null && document.IsArchived),
-                DocumentListView.Trash => query.Where(document => document.DeletedAt != null),
-                _ => query.Where(document => document.DeletedAt == null && !document.IsArchived)
+                DocumentListView.Archived => query.Where(document => document.DeletedAtUtc == null && document.IsArchived),
+                DocumentListView.Trash => query.Where(document => document.DeletedAtUtc != null),
+                _ => query.Where(document => document.DeletedAtUtc == null && !document.IsArchived)
             };
 
             List<DocumentRecord> documents = await query.ToListAsync(ct);

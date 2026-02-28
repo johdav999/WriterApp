@@ -10,7 +10,7 @@ namespace WriterApp.Application.Subscriptions
         public const string ActiveSubscriptionStatus = "Active";
 
         public const int FreeMonthlyTokenBudget = 0;
-        public const int StandardMonthlyTokenBudget = 200000;
+        public const int StandardMonthlyTokenBudget = 250000;
         public const int ProfessionalMonthlyTokenBudget = 1000000;
         public const int FREE_MONTHLY_TOKEN_BUDGET = FreeMonthlyTokenBudget;
         public const int STANDARD_MONTHLY_TOKEN_BUDGET = StandardMonthlyTokenBudget;

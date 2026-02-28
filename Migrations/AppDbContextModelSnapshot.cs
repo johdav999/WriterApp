@@ -327,7 +327,7 @@ namespace BlazorApp.Migrations
                     b.Property<long>("CreatedAtUnixSeconds")
                         .HasColumnType("INTEGER");
 
-                    b.Property<DateTimeOffset?>("DeletedAt")
+                    b.Property<DateTime?>("DeletedAtUtc")
                         .HasColumnType("TEXT");
 
                     b.Property<int>("DocumentKind")
@@ -361,7 +361,7 @@ namespace BlazorApp.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("DeletedAt");
+                    b.HasIndex("DeletedAtUtc");
 
                     b.HasIndex("DocumentKind");
 
@@ -1628,38 +1628,39 @@ namespace BlazorApp.Migrations
                         });
                 });
 
-            modelBuilder.Entity("WriterApp.Data.Subscriptions.StripeEventLog", b =>
+            modelBuilder.Entity("WriterApp.Data.StripeEventLog", b =>
                 {
                     b.Property<string>("StripeEventId")
+                        .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Error")
+                        .HasMaxLength(2000)
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTimeOffset?>("ProcessedUtc")
+                    b.Property<DateTime?>("ProcessedUtc")
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTimeOffset>("ReceivedUtc")
+                    b.Property<DateTime>("ReceivedUtc")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Status")
                         .IsRequired()
+                        .HasMaxLength(50)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Type")
                         .IsRequired()
+                        .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("UserId")
+                        .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
                     b.HasKey("StripeEventId");
 
                     b.HasIndex("ReceivedUtc");
-
-                    b.HasIndex("Status");
-
-                    b.HasIndex("UserId");
 
                     b.ToTable("StripeEventLogs");
                 });

@@ -33,7 +33,7 @@ namespace WriterApp.Data.Documents
 
         public DateTimeOffset? ArchivedAt { get; set; }
 
-        public DateTimeOffset? DeletedAt { get; set; }
+        public DateTime? DeletedAtUtc { get; set; }
 
         public List<SectionRecord> Sections { get; set; } = new();
 

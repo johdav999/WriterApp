@@ -8,8 +8,28 @@ namespace WriterApp.Application.Usage
 {
     public interface IAiQuotaService
     {
-        Task<AiQuotaDecision> CheckAsync(string userId, CancellationToken ct);
-        Task<AiQuotaChargeResult> ChargeAsync(string userId, AiRequest request, AiResult result, CancellationToken ct);
+        Task<AiQuotaDecision> EnsureAiAllowedAsync(string userId, int estimatedTokens, CancellationToken ct);
+        Task<AiQuotaChargeResult> ChargeActualUsageAsync(string userId, AiRequest request, AiResult result, CancellationToken ct);
+    }
+
+    public sealed record AiAccessError(
+        bool UpgradeRequired,
+        string CurrentPlan,
+        int Limit,
+        int Used,
+        DateTimeOffset ResetAt)
+    {
+        public IReadOnlyDictionary<string, object?> ToDetails()
+        {
+            return new Dictionary<string, object?>
+            {
+                ["upgrade_required"] = UpgradeRequired,
+                ["current_plan"] = CurrentPlan,
+                ["limit"] = Limit,
+                ["used"] = Used,
+                ["reset_at"] = ResetAt
+            };
+        }
     }
 
     public sealed record AiQuotaSnapshot(
@@ -22,17 +42,28 @@ namespace WriterApp.Application.Usage
         bool Allowed,
         string? ErrorCode,
         string? ErrorMessage,
-        AiQuotaSnapshot Snapshot)
+        AiQuotaSnapshot Snapshot,
+        AiAccessError? Error)
     {
         public IReadOnlyDictionary<string, object?> ToErrorDetails()
         {
-            return new Dictionary<string, object?>
+            Dictionary<string, object?> details = new()
             {
                 ["planKey"] = Snapshot.PlanKey,
                 ["budget"] = Snapshot.Budget,
                 ["used"] = Snapshot.Used,
                 ["periodStartUtc"] = Snapshot.PeriodStartUtc
             };
+
+            if (Error is not null)
+            {
+                foreach ((string key, object? value) in Error.ToDetails())
+                {
+                    details[key] = value;
+                }
+            }
+
+            return details;
         }
     }
 
@@ -41,11 +72,12 @@ namespace WriterApp.Application.Usage
         int ChargedTokens,
         AiQuotaSnapshot Snapshot,
         string? ErrorCode,
-        string? ErrorMessage)
+        string? ErrorMessage,
+        AiAccessError? Error)
     {
         public IReadOnlyDictionary<string, object?> ToErrorDetails()
         {
-            return new Dictionary<string, object?>
+            Dictionary<string, object?> details = new()
             {
                 ["planKey"] = Snapshot.PlanKey,
                 ["budget"] = Snapshot.Budget,
@@ -53,6 +85,16 @@ namespace WriterApp.Application.Usage
                 ["chargedTokens"] = ChargedTokens,
                 ["periodStartUtc"] = Snapshot.PeriodStartUtc
             };
+
+            if (Error is not null)
+            {
+                foreach ((string key, object? value) in Error.ToDetails())
+                {
+                    details[key] = value;
+                }
+            }
+
+            return details;
         }
     }
 }

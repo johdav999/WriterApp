@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using WriterApp.Data.AI;
 using WriterApp.Data.Continuity;
 using WriterApp.Data.Documents;
@@ -88,6 +89,10 @@ namespace WriterApp.Data
 
         protected override void OnModelCreating(ModelBuilder builder)
         {
+            ValueConverter<DateTime?, DateTime?> nullableUtcDateTimeConverter = new(
+                value => NormalizeUtc(value),
+                value => NormalizeUtc(value));
+
             builder.Entity<UserProfile>(entity =>
             {
                 entity.HasKey(profile => profile.UserId);
@@ -115,16 +120,26 @@ namespace WriterApp.Data
 
             builder.Entity<StripeEventLog>(entity =>
             {
-                entity.HasKey(log => log.StripeEventId);
-                entity.Property(log => log.Type).IsRequired();
-                entity.Property(log => log.ReceivedUtc).IsRequired();
-                entity.Property(log => log.ProcessedUtc);
-                entity.Property(log => log.UserId);
-                entity.Property(log => log.Status).IsRequired();
-                entity.Property(log => log.Error);
-                entity.HasIndex(log => log.ReceivedUtc);
-                entity.HasIndex(log => log.UserId);
-                entity.HasIndex(log => log.Status);
+                entity.HasKey(x => x.StripeEventId);
+
+                entity.Property(x => x.StripeEventId)
+                    .HasMaxLength(100);
+
+                entity.Property(x => x.Type)
+                    .HasMaxLength(100)
+                    .IsRequired();
+
+                entity.Property(x => x.Status)
+                    .HasMaxLength(50)
+                    .IsRequired();
+
+                entity.Property(x => x.Error)
+                    .HasMaxLength(2000);
+
+                entity.Property(x => x.UserId)
+                    .HasMaxLength(100);
+
+                entity.HasIndex(x => x.ReceivedUtc);
             });
 
             builder.Entity<Plan>(entity =>
@@ -188,14 +203,15 @@ namespace WriterApp.Data
                 entity.Property(document => document.UpdatedAtUnixSeconds).IsRequired();
                 entity.Property(document => document.IsArchived).IsRequired();
                 entity.Property(document => document.ArchivedAt);
-                entity.Property(document => document.DeletedAt);
+                entity.Property(document => document.DeletedAtUtc)
+                    .HasConversion(nullableUtcDateTimeConverter);
                 entity.HasIndex(document => document.ProjectId);
                 entity.HasIndex(document => new { document.ProjectId, document.UpdatedAtUnixSeconds });
                 entity.HasIndex(document => document.DocumentKind);
                 entity.HasIndex(document => new { document.ProjectId, document.DocumentKind })
                     .IsUnique()
                     .HasFilter($"\"DocumentKind\" = {(int)DocumentKind.Manuscript}");
-                entity.HasIndex(document => document.DeletedAt);
+                entity.HasIndex(document => document.DeletedAtUtc);
                 entity.HasIndex(document => document.IsArchived);
                 entity.HasOne(document => document.Project)
                     .WithMany(project => project.Documents)
@@ -790,10 +806,26 @@ namespace WriterApp.Data
 
                 if (entry.State == EntityState.Added || entry.State == EntityState.Modified)
                 {
+                    entry.Entity.DeletedAtUtc = NormalizeUtc(entry.Entity.DeletedAtUtc);
                     entry.Entity.CreatedAtUnixSeconds = entry.Entity.CreatedAt.ToUnixTimeSeconds();
                     entry.Entity.UpdatedAtUnixSeconds = entry.Entity.UpdatedAt.ToUnixTimeSeconds();
                 }
             }
+        }
+
+        private static DateTime? NormalizeUtc(DateTime? value)
+        {
+            if (!value.HasValue)
+            {
+                return null;
+            }
+
+            return value.Value.Kind switch
+            {
+                DateTimeKind.Utc => value.Value,
+                DateTimeKind.Local => value.Value.ToUniversalTime(),
+                _ => DateTime.SpecifyKind(value.Value, DateTimeKind.Utc)
+            };
         }
 
         private static void SeedSubscriptionData(ModelBuilder builder)

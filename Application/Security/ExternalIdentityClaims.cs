@@ -7,10 +7,13 @@ namespace WriterApp.Application.Security
 {
     public static class ExternalIdentityClaims
     {
-        private static readonly string[] OidClaimTypes =
+        private static readonly string[] StableUserIdClaimTypes =
         {
             "oid",
-            "http://schemas.microsoft.com/identity/claims/objectidentifier"
+            "http://schemas.microsoft.com/identity/claims/objectidentifier",
+            "sub",
+            "sid",
+            ClaimTypes.Sid
         };
 
         private static readonly string[] EmailClaimTypes =
@@ -29,9 +32,14 @@ namespace WriterApp.Application.Security
             "given_name"
         };
 
+        public static string? ResolveStableUserId(IEnumerable<Claim> claims)
+        {
+            return ResolveFirstValue(claims, StableUserIdClaimTypes);
+        }
+
         public static string? ResolveOid(IEnumerable<Claim> claims)
         {
-            return ResolveFirstValue(claims, OidClaimTypes);
+            return ResolveStableUserId(claims);
         }
 
         public static string? ResolveEmail(IEnumerable<Claim> claims)
@@ -68,7 +76,7 @@ namespace WriterApp.Application.Security
         // name/email (fallback) -> UserProfile.DisplayName
         public static UserProfileIdentity MapToUserProfileIdentity(IEnumerable<Claim> claims, string fallbackUserId)
         {
-            string userId = ResolveOid(claims) ?? fallbackUserId;
+            string userId = ResolveStableUserId(claims) ?? fallbackUserId;
             return new UserProfileIdentity(
                 userId,
                 ResolveEmail(claims),

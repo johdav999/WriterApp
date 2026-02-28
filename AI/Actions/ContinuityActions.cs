@@ -71,7 +71,7 @@ namespace WriterApp.AI.Actions
 
     public sealed class ExtractCharacterBibleAction : ContinuityActionBase
     {
-        public const string ActionIdValue = "continuity.extract_character_bible";
+        public new const string ActionIdValue = "continuity.extract_character_bible";
 
         public ExtractCharacterBibleAction()
             : base(ActionIdValue, "Extract character bible")
@@ -120,7 +120,7 @@ namespace WriterApp.AI.Actions
 
     public sealed class ExtractPlaceBibleAction : ContinuityActionBase
     {
-        public const string ActionIdValue = "continuity.extract_place_bible";
+        public new const string ActionIdValue = "continuity.extract_place_bible";
 
         public ExtractPlaceBibleAction()
             : base(ActionIdValue, "Extract place bible")
@@ -169,7 +169,7 @@ namespace WriterApp.AI.Actions
 
     public sealed class ExtractTimelineBibleAction : ContinuityActionBase
     {
-        public const string ActionIdValue = "continuity.extract_timeline_bible";
+        public new const string ActionIdValue = "continuity.extract_timeline_bible";
 
         public ExtractTimelineBibleAction()
             : base(ActionIdValue, "Extract timeline bible")
@@ -218,7 +218,7 @@ namespace WriterApp.AI.Actions
 
     public sealed class RefreshCharacterBibleAction : ContinuityActionBase
     {
-        public const string ActionIdValue = "continuity.refresh_character_bible";
+        public new const string ActionIdValue = "continuity.refresh_character_bible";
 
         public RefreshCharacterBibleAction()
             : base(ActionIdValue, "Refresh character bible")
@@ -272,7 +272,7 @@ namespace WriterApp.AI.Actions
 
     public sealed class RefreshPlaceBibleAction : ContinuityActionBase
     {
-        public const string ActionIdValue = "continuity.refresh_place_bible";
+        public new const string ActionIdValue = "continuity.refresh_place_bible";
 
         public RefreshPlaceBibleAction()
             : base(ActionIdValue, "Refresh place bible")
@@ -326,7 +326,7 @@ namespace WriterApp.AI.Actions
 
     public sealed class RefreshTimelineBibleAction : ContinuityActionBase
     {
-        public const string ActionIdValue = "continuity.refresh_timeline_bible";
+        public new const string ActionIdValue = "continuity.refresh_timeline_bible";
 
         public RefreshTimelineBibleAction()
             : base(ActionIdValue, "Refresh timeline bible")
@@ -380,7 +380,7 @@ namespace WriterApp.AI.Actions
 
     public sealed class ContinuityCheckAction : ContinuityActionBase
     {
-        public const string ActionIdValue = "continuity.check_section";
+        public new const string ActionIdValue = "continuity.check_section";
 
         public ContinuityCheckAction()
             : base(ActionIdValue, "Check continuity")
@@ -455,7 +455,7 @@ namespace WriterApp.AI.Actions
 
     public sealed class ApplyContinuityFixAction : ContinuityActionBase
     {
-        public const string ActionIdValue = "continuity.apply_fix";
+        public new const string ActionIdValue = "continuity.apply_fix";
 
         public ApplyContinuityFixAction()
             : base(ActionIdValue, "Apply continuity fix")

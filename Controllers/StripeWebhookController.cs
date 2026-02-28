@@ -28,23 +28,30 @@ namespace WriterApp.Controllers
         private const string StatusProcessed = "Processed";
         private const string StatusSkipped = "Skipped";
         private const string StatusError = "Error";
+        private const string StatusNoUser = "NoUser";
         private const string StatusProcessing = "Processing";
         private static readonly TimeSpan SignatureTolerance = TimeSpan.FromMinutes(5);
         private static readonly TimeSpan ProcessingLease = TimeSpan.FromMinutes(10);
 
         private readonly AppDbContext _dbContext;
         private readonly IUserEntitlementStore _userEntitlementStore;
+        private readonly StripeEntitlementSyncService _stripeEntitlementSyncService;
+        private readonly StripeApiClient _stripeApiClient;
         private readonly StripeOptions _stripeOptions;
         private readonly ILogger<StripeWebhookController> _logger;
 
         public StripeWebhookController(
             AppDbContext dbContext,
             IUserEntitlementStore userEntitlementStore,
+            StripeEntitlementSyncService stripeEntitlementSyncService,
+            StripeApiClient stripeApiClient,
             StripeOptions stripeOptions,
             ILogger<StripeWebhookController> logger)
         {
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _userEntitlementStore = userEntitlementStore ?? throw new ArgumentNullException(nameof(userEntitlementStore));
+            _stripeEntitlementSyncService = stripeEntitlementSyncService ?? throw new ArgumentNullException(nameof(stripeEntitlementSyncService));
+            _stripeApiClient = stripeApiClient ?? throw new ArgumentNullException(nameof(stripeApiClient));
             _stripeOptions = stripeOptions ?? throw new ArgumentNullException(nameof(stripeOptions));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
@@ -64,9 +71,13 @@ namespace WriterApp.Controllers
             }
 
             string signatureHeader = Request.Headers["Stripe-Signature"].ToString();
+            string stripeRequestId = GetStripeRequestId();
             if (!IsStripeSignatureValid(signatureHeader, payload, _stripeOptions.WebhookSecret))
             {
-                _logger.LogWarning("Stripe webhook signature verification failed.");
+                _logger.LogWarning(
+                    "Stripe webhook signature verification failed. TraceId={TraceId} StripeRequestId={StripeRequestId}",
+                    HttpContext.TraceIdentifier,
+                    stripeRequestId);
                 return BadRequest("Invalid Stripe signature.");
             }
 
@@ -86,28 +97,43 @@ namespace WriterApp.Controllers
                 string? eventId = ReadString(root, "id");
                 string? eventType = ReadString(root, "type");
                 JsonElement dataObject = ReadDataObject(root);
+                string? customerId = ReadString(dataObject, "customer");
+                string? subscriptionId = ReadString(dataObject, "subscription")
+                    ?? ReadString(dataObject, "id");
+                string? userIdFromPayload = ReadString(dataObject, "client_reference_id")
+                    ?? ReadString(dataObject, "metadata", "userId");
 
                 if (string.IsNullOrWhiteSpace(eventId) || string.IsNullOrWhiteSpace(eventType))
                 {
                     return BadRequest("Stripe event missing id or type.");
                 }
 
+                _logger.LogInformation(
+                    "Stripe webhook received. EventId={EventId} EventType={EventType} StripeRequestId={StripeRequestId} CustomerId={CustomerId} SubscriptionId={SubscriptionId} UserId={UserId}",
+                    eventId,
+                    eventType,
+                    stripeRequestId,
+                    customerId ?? string.Empty,
+                    subscriptionId ?? string.Empty,
+                    userIdFromPayload ?? string.Empty);
+
                 StripeEventLog eventLog = await GetOrCreateEventLogAsync(eventId, eventType, ct);
                 if (string.Equals(eventLog.Status, StatusProcessed, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(eventLog.Status, StatusSkipped, StringComparison.OrdinalIgnoreCase))
+                    || string.Equals(eventLog.Status, StatusSkipped, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(eventLog.Status, StatusNoUser, StringComparison.OrdinalIgnoreCase))
                 {
                     return Ok();
                 }
 
                 if (string.Equals(eventLog.Status, StatusProcessing, StringComparison.OrdinalIgnoreCase)
                     && eventLog.ProcessedUtc is null
-                    && eventLog.ReceivedUtc >= DateTimeOffset.UtcNow - ProcessingLease)
+                    && eventLog.ReceivedUtc >= DateTime.UtcNow - ProcessingLease)
                 {
                     return Ok();
                 }
 
                 eventLog.Type = eventType;
-                eventLog.ReceivedUtc = DateTimeOffset.UtcNow;
+                eventLog.ReceivedUtc = DateTime.UtcNow;
                 eventLog.ProcessedUtc = null;
                 eventLog.Status = StatusProcessing;
                 eventLog.Error = null;
@@ -115,19 +141,26 @@ namespace WriterApp.Controllers
 
                 try
                 {
-                    WebhookHandleResult handleResult = await DispatchAsync(eventType, dataObject, ct);
+                    WebhookHandleResult handleResult = await DispatchAsync(eventId, eventType, dataObject, ct);
 
                     eventLog.UserId = handleResult.UserId ?? eventLog.UserId;
                     eventLog.Status = handleResult.Status;
-                    eventLog.ProcessedUtc = DateTimeOffset.UtcNow;
-                    eventLog.Error = null;
+                    eventLog.ProcessedUtc = DateTime.UtcNow;
+                    eventLog.Error = handleResult.Error;
                     await _dbContext.SaveChangesAsync(ct);
+                    _logger.LogInformation(
+                        "Stripe webhook processed. EventId={EventId} EventType={EventType} Status={Status} StripeRequestId={StripeRequestId} UserId={UserId}",
+                        eventId,
+                        eventType,
+                        handleResult.Status,
+                        stripeRequestId,
+                        handleResult.UserId ?? string.Empty);
                     return Ok();
                 }
                 catch (Exception ex)
                 {
                     eventLog.Status = StatusError;
-                    eventLog.ProcessedUtc = DateTimeOffset.UtcNow;
+                    eventLog.ProcessedUtc = DateTime.UtcNow;
                     eventLog.Error = Truncate(ex.Message, 2000);
                     await _dbContext.SaveChangesAsync(ct);
                     _logger.LogError(ex, "Stripe webhook processing failed. EventId={EventId} Type={Type}", eventId, eventType);
@@ -149,7 +182,7 @@ namespace WriterApp.Controllers
             {
                 StripeEventId = eventId,
                 Type = eventType,
-                ReceivedUtc = DateTimeOffset.UtcNow,
+                ReceivedUtc = DateTime.UtcNow,
                 Status = StatusError,
                 Error = "Accepted for processing."
             };
@@ -173,7 +206,7 @@ namespace WriterApp.Controllers
             }
         }
 
-        private async Task<WebhookHandleResult> DispatchAsync(string eventType, JsonElement dataObject, CancellationToken ct)
+        private async Task<WebhookHandleResult> DispatchAsync(string eventId, string eventType, JsonElement dataObject, CancellationToken ct)
         {
             switch (eventType)
             {
@@ -182,7 +215,7 @@ namespace WriterApp.Controllers
                 case "customer.subscription.created":
                 case "customer.subscription.updated":
                 case "customer.subscription.deleted":
-                    return await HandleSubscriptionChangedAsync(dataObject, ct);
+                    return await HandleSubscriptionChangedAsync(eventId, dataObject, ct);
                 case "invoice.paid":
                     return await HandleInvoicePaidAsync(dataObject, ct);
                 case "invoice.payment_failed":
@@ -201,78 +234,127 @@ namespace WriterApp.Controllers
                 return WebhookHandleResult.Skipped();
             }
 
-            UserEntitlement entitlement = await _userEntitlementStore.GetOrCreateAsync(userId, ct);
             string? customerId = ReadString(session, "customer");
             string? subscriptionId = ReadString(session, "subscription");
-            string? planKey = ReadString(session, "metadata", "planKey");
-
-            if (!string.IsNullOrWhiteSpace(customerId))
-            {
-                entitlement.StripeCustomerId = customerId;
-            }
-
             if (!string.IsNullOrWhiteSpace(subscriptionId))
             {
-                entitlement.StripeSubscriptionId = subscriptionId;
+                using JsonDocument subscription = await _stripeApiClient.GetSubscriptionAsync(
+                    _stripeOptions.SecretKey,
+                    subscriptionId,
+                    ct);
+                await _stripeEntitlementSyncService.SyncFromSubscriptionAsync(userId, customerId, subscription.RootElement, ct);
+                return WebhookHandleResult.Processed(userId);
             }
 
-            if (!string.IsNullOrWhiteSpace(planKey))
-            {
-                entitlement.StripePriceId = NormalizePlanToPriceId(planKey);
-            }
-
-            entitlement.SubscriptionStatus = UserEntitlementDefaults.ActiveSubscriptionStatus;
+            UserEntitlement entitlement = await _userEntitlementStore.GetOrCreateAsync(userId, ct);
+            entitlement.StripeCustomerId = customerId ?? entitlement.StripeCustomerId;
+            entitlement.StripeSubscriptionId = subscriptionId ?? entitlement.StripeSubscriptionId;
+            entitlement.SubscriptionStatus = "active";
             entitlement.CancelAtPeriodEnd = false;
             entitlement.UpdatedUtc = DateTimeOffset.UtcNow;
             await _dbContext.SaveChangesAsync(ct);
             return WebhookHandleResult.Processed(userId);
         }
 
-        private async Task<WebhookHandleResult> HandleSubscriptionChangedAsync(JsonElement subscription, CancellationToken ct)
+        private async Task<WebhookHandleResult> HandleSubscriptionChangedAsync(string eventId, JsonElement subscription, CancellationToken ct)
         {
             string? subscriptionId = ReadString(subscription, "id");
             string? customerId = ReadString(subscription, "customer");
-            string? userId = ReadString(subscription, "metadata", "userId");
+            (string? userId, string resolutionSource) = await ResolveSubscriptionUserIdAsync(
+                eventId,
+                subscription,
+                customerId,
+                subscriptionId,
+                ct);
 
-            UserEntitlement? entitlement = null;
+            _logger.LogInformation(
+                "Webhook user resolution: EventId={EventId} CustomerId={CustomerId} SubscriptionId={SubscriptionId} ResolvedUserId={ResolvedUserId} Source={Source}",
+                eventId,
+                customerId ?? string.Empty,
+                subscriptionId ?? string.Empty,
+                userId ?? string.Empty,
+                resolutionSource);
+
+            if (string.IsNullOrWhiteSpace(userId))
+            {
+                _logger.LogWarning(
+                    "Stripe webhook could not resolve user for subscription event. EventId={EventId} CustomerId={CustomerId} SubscriptionId={SubscriptionId}",
+                    eventId,
+                    customerId ?? string.Empty,
+                    subscriptionId ?? string.Empty);
+                return WebhookHandleResult.NoUser(
+                    $"No user mapping found for subscription event. customerId={customerId ?? string.Empty} subscriptionId={subscriptionId ?? string.Empty}");
+            }
+
+            await _stripeEntitlementSyncService.SyncFromSubscriptionAsync(userId!, customerId, subscription, ct);
+            return WebhookHandleResult.Processed(userId);
+        }
+
+        private async Task<(string? UserId, string Source)> ResolveSubscriptionUserIdAsync(
+            string eventId,
+            JsonElement subscription,
+            string? customerId,
+            string? subscriptionId,
+            CancellationToken ct)
+        {
+            string? userId = ReadString(subscription, "metadata", "userId")
+                ?? ReadString(subscription, "client_reference_id");
             if (!string.IsNullOrWhiteSpace(userId))
             {
-                entitlement = await _userEntitlementStore.GetOrCreateAsync(userId, ct);
-            }
-            else
-            {
-                entitlement = await ResolveEntitlementAsync(customerId, subscriptionId, ct);
-                userId = entitlement?.UserId;
-            }
-
-            if (entitlement is null)
-            {
-                return WebhookHandleResult.Skipped();
+                return (userId, "Metadata");
             }
 
             if (!string.IsNullOrWhiteSpace(customerId))
             {
-                entitlement.StripeCustomerId = customerId;
+                try
+                {
+                    using JsonDocument customer = await _stripeApiClient.GetCustomerAsync(
+                        _stripeOptions.SecretKey,
+                        customerId,
+                        ct);
+                    userId = ReadString(customer.RootElement, "metadata", "userId");
+                    if (!string.IsNullOrWhiteSpace(userId))
+                    {
+                        return (userId, "CustomerMetadata");
+                    }
+                }
+                catch (StripeApiException ex)
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "Stripe webhook customer metadata lookup failed. EventId={EventId} CustomerId={CustomerId}",
+                        eventId,
+                        customerId);
+                }
             }
 
             if (!string.IsNullOrWhiteSpace(subscriptionId))
             {
-                entitlement.StripeSubscriptionId = subscriptionId;
+                string? bySubscription = await _dbContext.UserEntitlements
+                    .AsNoTracking()
+                    .Where(item => item.StripeSubscriptionId == subscriptionId)
+                    .Select(item => item.UserId)
+                    .FirstOrDefaultAsync(ct);
+                if (!string.IsNullOrWhiteSpace(bySubscription))
+                {
+                    return (bySubscription, "DbSubscription");
+                }
             }
 
-            string? priceId = ReadString(subscription, "items", "data", 0, "price", "id");
-            if (!string.IsNullOrWhiteSpace(priceId))
+            if (!string.IsNullOrWhiteSpace(customerId))
             {
-                entitlement.StripePriceId = priceId;
+                string? byCustomer = await _dbContext.UserEntitlements
+                    .AsNoTracking()
+                    .Where(item => item.StripeCustomerId == customerId)
+                    .Select(item => item.UserId)
+                    .FirstOrDefaultAsync(ct);
+                if (!string.IsNullOrWhiteSpace(byCustomer))
+                {
+                    return (byCustomer, "DbCustomer");
+                }
             }
 
-            entitlement.CancelAtPeriodEnd = ReadBool(subscription, "cancel_at_period_end") ?? false;
-            entitlement.CurrentPeriodEndUtc = ReadUnixTimestamp(subscription, "current_period_end");
-            entitlement.SubscriptionStatus = NormalizeStripeStatus(ReadString(subscription, "status"));
-            entitlement.UpdatedUtc = DateTimeOffset.UtcNow;
-
-            await _dbContext.SaveChangesAsync(ct);
-            return WebhookHandleResult.Processed(userId);
+            return (null, "None");
         }
 
         private async Task<WebhookHandleResult> HandleInvoicePaidAsync(JsonElement invoice, CancellationToken ct)
@@ -285,11 +367,22 @@ namespace WriterApp.Controllers
                 return WebhookHandleResult.Skipped();
             }
 
-            entitlement.SubscriptionStatus = UserEntitlementDefaults.ActiveSubscriptionStatus;
+            if (!string.IsNullOrWhiteSpace(subscriptionId))
+            {
+                using JsonDocument subscription = await _stripeApiClient.GetSubscriptionAsync(
+                    _stripeOptions.SecretKey,
+                    subscriptionId,
+                    ct);
+                await _stripeEntitlementSyncService.SyncFromSubscriptionAsync(
+                    entitlement.UserId,
+                    customerId,
+                    subscription.RootElement,
+                    ct);
+                return WebhookHandleResult.Processed(entitlement.UserId);
+            }
+
+            entitlement.SubscriptionStatus = "active";
             entitlement.CancelAtPeriodEnd = false;
-            entitlement.CurrentPeriodEndUtc =
-                ReadUnixTimestamp(invoice, "lines", "data", 0, "period", "end")
-                ?? entitlement.CurrentPeriodEndUtc;
             entitlement.UpdatedUtc = DateTimeOffset.UtcNow;
             await _dbContext.SaveChangesAsync(ct);
             return WebhookHandleResult.Processed(entitlement.UserId);
@@ -305,7 +398,21 @@ namespace WriterApp.Controllers
                 return WebhookHandleResult.Skipped();
             }
 
-            entitlement.SubscriptionStatus = "PaymentFailed";
+            if (!string.IsNullOrWhiteSpace(subscriptionId))
+            {
+                using JsonDocument subscription = await _stripeApiClient.GetSubscriptionAsync(
+                    _stripeOptions.SecretKey,
+                    subscriptionId,
+                    ct);
+                await _stripeEntitlementSyncService.SyncFromSubscriptionAsync(
+                    entitlement.UserId,
+                    customerId,
+                    subscription.RootElement,
+                    ct);
+                return WebhookHandleResult.Processed(entitlement.UserId);
+            }
+
+            entitlement.SubscriptionStatus = "past_due";
             entitlement.UpdatedUtc = DateTimeOffset.UtcNow;
             await _dbContext.SaveChangesAsync(ct);
             return WebhookHandleResult.Processed(entitlement.UserId);
@@ -375,6 +482,23 @@ namespace WriterApp.Controllers
             }
 
             return false;
+        }
+
+        private string GetStripeRequestId()
+        {
+            string fromStripeHeader = Request.Headers["Stripe-Request-Id"].ToString();
+            if (!string.IsNullOrWhiteSpace(fromStripeHeader))
+            {
+                return fromStripeHeader;
+            }
+
+            string fromRequestIdHeader = Request.Headers["Request-Id"].ToString();
+            if (!string.IsNullOrWhiteSpace(fromRequestIdHeader))
+            {
+                return fromRequestIdHeader;
+            }
+
+            return HttpContext.TraceIdentifier;
         }
 
         private static Dictionary<string, List<string>> ParseSignatureHeader(string header)
@@ -458,47 +582,6 @@ namespace WriterApp.Controllers
             return null;
         }
 
-        private static bool? ReadBool(JsonElement element, params object[] path)
-        {
-            if (!TryTraverse(element, path, out JsonElement target))
-            {
-                return null;
-            }
-
-            if (target.ValueKind == JsonValueKind.True)
-            {
-                return true;
-            }
-
-            if (target.ValueKind == JsonValueKind.False)
-            {
-                return false;
-            }
-
-            return null;
-        }
-
-        private static DateTimeOffset? ReadUnixTimestamp(JsonElement element, params object[] path)
-        {
-            if (!TryTraverse(element, path, out JsonElement target))
-            {
-                return null;
-            }
-
-            if (target.ValueKind == JsonValueKind.Number && target.TryGetInt64(out long value))
-            {
-                return DateTimeOffset.FromUnixTimeSeconds(value);
-            }
-
-            if (target.ValueKind == JsonValueKind.String
-                && long.TryParse(target.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsed))
-            {
-                return DateTimeOffset.FromUnixTimeSeconds(parsed);
-            }
-
-            return null;
-        }
-
         private static bool TryTraverse(JsonElement element, object[] path, out JsonElement target)
         {
             target = element;
@@ -538,52 +621,6 @@ namespace WriterApp.Controllers
             return true;
         }
 
-        private string? NormalizePlanToPriceId(string planKey)
-        {
-            if (string.Equals(planKey, "standard", StringComparison.OrdinalIgnoreCase))
-            {
-                return _stripeOptions.PriceStandard;
-            }
-
-            if (string.Equals(planKey, "pro", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(planKey, "professional", StringComparison.OrdinalIgnoreCase))
-            {
-                return _stripeOptions.PricePro;
-            }
-
-            return null;
-        }
-
-        private static string NormalizeStripeStatus(string? status)
-        {
-            if (string.IsNullOrWhiteSpace(status))
-            {
-                return UserEntitlementDefaults.ActiveSubscriptionStatus;
-            }
-
-            if (string.Equals(status, "active", StringComparison.OrdinalIgnoreCase))
-            {
-                return UserEntitlementDefaults.ActiveSubscriptionStatus;
-            }
-
-            if (string.Equals(status, "past_due", StringComparison.OrdinalIgnoreCase))
-            {
-                return "PastDue";
-            }
-
-            if (string.Equals(status, "canceled", StringComparison.OrdinalIgnoreCase))
-            {
-                return "Canceled";
-            }
-
-            if (string.Equals(status, "unpaid", StringComparison.OrdinalIgnoreCase))
-            {
-                return "Unpaid";
-            }
-
-            return status.Trim();
-        }
-
         private static string Truncate(string value, int maxLength)
         {
             if (string.IsNullOrEmpty(value) || value.Length <= maxLength)
@@ -594,10 +631,11 @@ namespace WriterApp.Controllers
             return value[..maxLength];
         }
 
-        private sealed record WebhookHandleResult(string Status, string? UserId)
+        private sealed record WebhookHandleResult(string Status, string? UserId, string? Error)
         {
-            public static WebhookHandleResult Processed(string? userId) => new(StatusProcessed, userId);
-            public static WebhookHandleResult Skipped() => new(StatusSkipped, null);
+            public static WebhookHandleResult Processed(string? userId) => new(StatusProcessed, userId, null);
+            public static WebhookHandleResult Skipped() => new(StatusSkipped, null, null);
+            public static WebhookHandleResult NoUser(string? error) => new(StatusNoUser, null, error);
         }
     }
 }

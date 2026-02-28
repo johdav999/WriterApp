@@ -15,5 +15,6 @@ namespace WriterApp.Application.Security
         public int AiMonthlyTokenBudget { get; init; }
         public int AiTokensUsedThisPeriod { get; init; }
         public DateTimeOffset PeriodStartUtc { get; init; }
+        public DateTimeOffset EntitlementUpdatedUtc { get; init; }
     }
 }

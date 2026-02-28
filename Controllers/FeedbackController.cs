@@ -8,6 +8,7 @@ using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using WriterApp.Application.Security;
 
@@ -25,15 +26,18 @@ namespace WriterApp.Controllers
         private readonly IConfiguration _configuration;
         private readonly ILogger<FeedbackController> _logger;
         private readonly IUserIdResolver _userIdResolver;
+        private readonly IHostEnvironment _hostEnvironment;
 
         public FeedbackController(
             IConfiguration configuration,
             ILogger<FeedbackController> logger,
-            IUserIdResolver userIdResolver)
+            IUserIdResolver userIdResolver,
+            IHostEnvironment hostEnvironment)
         {
             _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
+            _hostEnvironment = hostEnvironment ?? throw new ArgumentNullException(nameof(hostEnvironment));
         }
 
         [HttpPost]
@@ -71,42 +75,36 @@ namespace WriterApp.Controllers
             bool useSsl = _configuration.GetValue<bool?>("Feedback:Smtp:UseSsl") ?? true;
             string smtpUser = _configuration["Feedback:Smtp:Username"] ?? string.Empty;
             string smtpPassword = _configuration["Feedback:Smtp:Password"] ?? string.Empty;
+            string kindLabel = string.Equals(type, "bug", StringComparison.OrdinalIgnoreCase) ? "Bug" : "Enhancement";
+            string senderName = User.Identity?.Name
+                ?? User.FindFirstValue(ClaimTypes.Email)
+                ?? userId;
+            string body = BuildFeedbackBody(kindLabel, subject, senderName, userId, description, request);
 
             if (string.IsNullOrWhiteSpace(smtpHost))
             {
+                if (_hostEnvironment.IsDevelopment())
+                {
+                    _logger.LogInformation(
+                        "Feedback captured locally because SMTP host is not configured. UserId={UserId} Subject={Subject} Type={Type}{NewLine}{Body}",
+                        userId,
+                        subject,
+                        kindLabel,
+                        Environment.NewLine,
+                        body);
+                    return Ok(new { message = "Feedback captured locally (SMTP not configured)." });
+                }
+
                 _logger.LogWarning("Feedback SMTP host is not configured.");
                 return StatusCode((int)HttpStatusCode.ServiceUnavailable, new { message = "Feedback email is not configured." });
             }
 
             try
             {
-                string kindLabel = string.Equals(type, "bug", StringComparison.OrdinalIgnoreCase) ? "Bug" : "Enhancement";
-                string senderName = User.Identity?.Name
-                    ?? User.FindFirstValue(ClaimTypes.Email)
-                    ?? userId;
-                StringBuilder body = new();
-                body.AppendLine($"Type: {kindLabel}");
-                body.AppendLine($"Subject: {subject}");
-                body.AppendLine($"User: {senderName}");
-                body.AppendLine($"UserId: {userId}");
-                body.AppendLine($"Timestamp (UTC): {DateTimeOffset.UtcNow:O}");
-                body.AppendLine();
-                body.AppendLine("Description:");
-                body.AppendLine(description);
-
-                if (request.IncludeDiagnostics && request.Diagnostics is not null)
-                {
-                    body.AppendLine();
-                    body.AppendLine("Diagnostics:");
-                    body.AppendLine($"URL: {request.Diagnostics.Url}");
-                    body.AppendLine($"Version: {request.Diagnostics.Version}");
-                    body.AppendLine($"UserAgent: {request.Diagnostics.UserAgent}");
-                }
-
                 using MailMessage message = new(fromAddress, toAddress)
                 {
                     Subject = $"[WriterApp Feedback] {kindLabel}: {subject}",
-                    Body = body.ToString()
+                    Body = body
                 };
 
                 using SmtpClient client = new(smtpHost, smtpPort)
@@ -126,6 +124,36 @@ namespace WriterApp.Controllers
                 _logger.LogError(ex, "Feedback email send failed for user {UserId}.", userId);
                 return StatusCode((int)HttpStatusCode.InternalServerError, new { message = "Feedback send failed." });
             }
+        }
+
+        private static string BuildFeedbackBody(
+            string kindLabel,
+            string subject,
+            string senderName,
+            string userId,
+            string description,
+            FeedbackSubmitRequest request)
+        {
+            StringBuilder body = new();
+            body.AppendLine($"Type: {kindLabel}");
+            body.AppendLine($"Subject: {subject}");
+            body.AppendLine($"User: {senderName}");
+            body.AppendLine($"UserId: {userId}");
+            body.AppendLine($"Timestamp (UTC): {DateTimeOffset.UtcNow:O}");
+            body.AppendLine();
+            body.AppendLine("Description:");
+            body.AppendLine(description);
+
+            if (request.IncludeDiagnostics && request.Diagnostics is not null)
+            {
+                body.AppendLine();
+                body.AppendLine("Diagnostics:");
+                body.AppendLine($"URL: {request.Diagnostics.Url}");
+                body.AppendLine($"Version: {request.Diagnostics.Version}");
+                body.AppendLine($"UserAgent: {request.Diagnostics.UserAgent}");
+            }
+
+            return body.ToString();
         }
 
         private static bool CheckRateLimit(string userId)

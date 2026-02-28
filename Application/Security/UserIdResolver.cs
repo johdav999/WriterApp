@@ -24,7 +24,7 @@ namespace WriterApp.Application.Security
             }
 
             string userId =
-                ExternalIdentityClaims.ResolveOid(user.Claims) ??
+                ExternalIdentityClaims.ResolveStableUserId(user.Claims) ??
                 string.Empty;
             _logger.LogInformation(
                 "Server Auth: IsAuthenticated={Auth}, Name={Name}",
@@ -33,8 +33,8 @@ namespace WriterApp.Application.Security
 
             if (string.IsNullOrWhiteSpace(userId))
             {
-                _logger.LogError("Authenticated user missing oid claim.");
-                throw new SecurityException("Authenticated user missing oid claim");
+                _logger.LogError("Authenticated user missing stable id claim (oid/sub/sid).");
+                throw new SecurityException("Authenticated user missing stable id claim (oid/sub/sid)");
             }
 
             if (!_hasLoggedResolvedUserId)

@@ -30,6 +30,7 @@ namespace WriterApp.Tests
 
             string ownerUserId = "cleanup-user";
             DateTimeOffset now = DateTimeOffset.UtcNow;
+            DateTime utcNow = now.UtcDateTime;
 
             ProjectRecord project = new()
             {
@@ -41,8 +42,8 @@ namespace WriterApp.Tests
             };
             db.Projects.Add(project);
 
-            DocumentRecord expired = BuildDocument(project.Id, ownerUserId, "Expired", DocumentKind.Other, now.AddDays(-10), now);
-            DocumentRecord recent = BuildDocument(project.Id, ownerUserId, "Recent", DocumentKind.Other, now.AddDays(-6), now);
+            DocumentRecord expired = BuildDocument(project.Id, ownerUserId, "Expired", DocumentKind.Other, utcNow.AddDays(-10), now);
+            DocumentRecord recent = BuildDocument(project.Id, ownerUserId, "Recent", DocumentKind.Other, utcNow.AddDays(-6), now);
             DocumentRecord active = BuildDocument(project.Id, ownerUserId, "Active", DocumentKind.Other, null, now);
             db.Documents.AddRange(expired, recent, active);
             await db.SaveChangesAsync();
@@ -63,12 +64,38 @@ namespace WriterApp.Tests
             Assert.Contains(active.Id, remainingIds);
         }
 
+        [Fact]
+        public async Task CleanupExpiredTrashAsync_QueryIsSqlTranslatable_OnSqlite()
+        {
+            await using SqliteConnection connection = new("Filename=:memory:");
+            await connection.OpenAsync();
+
+            DbContextOptions<AppDbContext> options = new DbContextOptionsBuilder<AppDbContext>()
+                .UseSqlite(connection)
+                .Options;
+
+            await using AppDbContext db = new(options);
+            await db.Database.EnsureCreatedAsync();
+
+            DateTime cutoffUtc = DateTime.UtcNow.AddDays(-30);
+            IQueryable<DocumentRecord> query = db.Documents
+                .AsNoTracking()
+                .Where(document => document.DeletedAtUtc != null && document.DeletedAtUtc < cutoffUtc)
+                .Select(document => document);
+
+            string sql = query.ToQueryString();
+
+            Assert.Contains("DeletedAtUtc", sql, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("<", sql, StringComparison.Ordinal);
+            Assert.Contains("WHERE", sql, StringComparison.OrdinalIgnoreCase);
+        }
+
         private static DocumentRecord BuildDocument(
             Guid projectId,
             string ownerUserId,
             string title,
             DocumentKind kind,
-            DateTimeOffset? deletedAt,
+            DateTime? deletedAtUtc,
             DateTimeOffset now)
         {
             return new DocumentRecord
@@ -86,7 +113,7 @@ namespace WriterApp.Tests
                 UpdatedAtUnixSeconds = now.ToUnixTimeSeconds(),
                 IsArchived = false,
                 ArchivedAt = null,
-                DeletedAt = deletedAt
+                DeletedAtUtc = deletedAtUtc
             };
         }
     }

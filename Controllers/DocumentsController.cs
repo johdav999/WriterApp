@@ -94,7 +94,7 @@ namespace WriterApp.Controllers
                     wordCounts.TryGetValue(document.Id, out int count) ? count : 0,
                     document.IsArchived,
                     document.ArchivedAt,
-                    document.DeletedAt,
+                    ToDeletedAtOffset(document.DeletedAtUtc),
                     document.ProjectId,
                     NormalizeDocumentKind(document.DocumentKind)))
                 .ToList();
@@ -126,7 +126,7 @@ namespace WriterApp.Controllers
                 document.TranslationGroupId,
                 document.IsArchived,
                 document.ArchivedAt,
-                document.DeletedAt,
+                ToDeletedAtOffset(document.DeletedAtUtc),
                 document.ProjectId,
                 NormalizeDocumentKind(document.DocumentKind)));
         }
@@ -319,7 +319,7 @@ namespace WriterApp.Controllers
                 UpdatedAtUnixSeconds = now.ToUnixTimeSeconds(),
                 IsArchived = false,
                 ArchivedAt = null,
-                DeletedAt = null,
+                DeletedAtUtc = null,
                 LanguageCode = request.TargetLanguage,
                 TranslationGroupId = translationGroupId
             };
@@ -405,7 +405,7 @@ namespace WriterApp.Controllers
                     translated.TranslationGroupId,
                     translated.IsArchived,
                     translated.ArchivedAt,
-                    translated.DeletedAt,
+                    ToDeletedAtOffset(translated.DeletedAtUtc),
                     translated.ProjectId,
                     NormalizeDocumentKind(translated.DocumentKind)),
                 firstSectionId,
@@ -457,7 +457,7 @@ namespace WriterApp.Controllers
                         existing.TranslationGroupId,
                         existing.IsArchived,
                         existing.ArchivedAt,
-                        existing.DeletedAt,
+                        ToDeletedAtOffset(existing.DeletedAtUtc),
                         existing.ProjectId,
                         NormalizeDocumentKind(existing.DocumentKind)),
                     null,
@@ -523,7 +523,7 @@ namespace WriterApp.Controllers
                 UpdatedAtUnixSeconds = updatedAt.ToUnixTimeSeconds(),
                 IsArchived = false,
                 ArchivedAt = null,
-                DeletedAt = null
+                DeletedAtUtc = null
             };
 
             if (project is not null)
@@ -587,7 +587,7 @@ namespace WriterApp.Controllers
                     document.TranslationGroupId,
                     document.IsArchived,
                     document.ArchivedAt,
-                    document.DeletedAt,
+                    ToDeletedAtOffset(document.DeletedAtUtc),
                     document.ProjectId,
                     NormalizeDocumentKind(document.DocumentKind)),
                 defaultSectionId,
@@ -624,7 +624,7 @@ namespace WriterApp.Controllers
                 document.TranslationGroupId,
                 document.IsArchived,
                 document.ArchivedAt,
-                document.DeletedAt,
+                ToDeletedAtOffset(document.DeletedAtUtc),
                 document.ProjectId,
                 NormalizeDocumentKind(document.DocumentKind)));
         }
@@ -648,7 +648,7 @@ namespace WriterApp.Controllers
                 document.TranslationGroupId,
                 document.IsArchived,
                 document.ArchivedAt,
-                document.DeletedAt,
+                ToDeletedAtOffset(document.DeletedAtUtc),
                 document.ProjectId,
                 NormalizeDocumentKind(document.DocumentKind)));
         }
@@ -672,7 +672,7 @@ namespace WriterApp.Controllers
                 document.TranslationGroupId,
                 document.IsArchived,
                 document.ArchivedAt,
-                document.DeletedAt,
+                ToDeletedAtOffset(document.DeletedAtUtc),
                 document.ProjectId,
                 NormalizeDocumentKind(document.DocumentKind)));
         }
@@ -696,7 +696,7 @@ namespace WriterApp.Controllers
                 document.TranslationGroupId,
                 document.IsArchived,
                 document.ArchivedAt,
-                document.DeletedAt,
+                ToDeletedAtOffset(document.DeletedAtUtc),
                 document.ProjectId,
                 NormalizeDocumentKind(document.DocumentKind)));
         }
@@ -720,7 +720,7 @@ namespace WriterApp.Controllers
                 document.TranslationGroupId,
                 document.IsArchived,
                 document.ArchivedAt,
-                document.DeletedAt,
+                ToDeletedAtOffset(document.DeletedAtUtc),
                 document.ProjectId,
                 NormalizeDocumentKind(document.DocumentKind)));
         }
@@ -755,6 +755,23 @@ namespace WriterApp.Controllers
             string normalized = string.IsNullOrWhiteSpace(originalTitle) ? "Untitled" : originalTitle.Trim();
             string lang = string.IsNullOrWhiteSpace(languageCode) ? string.Empty : languageCode.Trim().ToUpperInvariant();
             return string.IsNullOrWhiteSpace(lang) ? normalized : $"{normalized} ({lang})";
+        }
+
+        private static DateTimeOffset? ToDeletedAtOffset(DateTime? deletedAtUtc)
+        {
+            if (!deletedAtUtc.HasValue)
+            {
+                return null;
+            }
+
+            DateTime normalized = deletedAtUtc.Value.Kind switch
+            {
+                DateTimeKind.Utc => deletedAtUtc.Value,
+                DateTimeKind.Local => deletedAtUtc.Value.ToUniversalTime(),
+                _ => DateTime.SpecifyKind(deletedAtUtc.Value, DateTimeKind.Utc)
+            };
+
+            return new DateTimeOffset(normalized);
         }
 
         private static DocumentKind ParseDocumentKind(string? value)

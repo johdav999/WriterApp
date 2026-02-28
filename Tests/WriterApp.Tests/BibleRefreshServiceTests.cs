@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using WriterApp.AI.Abstractions;
 using WriterApp.Application.Commands;
 using WriterApp.Application.Continuity;
+using WriterApp.Application.Subscriptions;
 using WriterApp.Domain.Documents;
 using Xunit;
 
@@ -67,12 +68,14 @@ namespace WriterApp.Tests
             InMemoryBibleStore store = new();
             BibleRefreshService service = new(
                 orchestrator,
+                new StubEntitlementService(aiEnabled: true, planKey: "professional"),
                 store,
                 new BiblePatchApplier(),
                 NullLogger<BibleRefreshService>.Instance);
 
             BibleSnapshotState snapshot = await service.RefreshAsync(
                 document,
+                "user-1",
                 sectionId,
                 BibleType.Timeline,
                 fullRebuild: false,
@@ -82,6 +85,59 @@ namespace WriterApp.Tests
             JsonElement events = json.RootElement.GetProperty("events");
             Assert.True(events.GetArrayLength() >= 1);
             Assert.Equal(sectionId.ToString(), events[0].GetProperty("id").GetString());
+        }
+
+        [Fact]
+        public async Task RefreshAsync_ThrowsEntitlementDenied_WhenAiDisabled()
+        {
+            Guid documentId = Guid.NewGuid();
+            Guid sectionId = Guid.NewGuid();
+            Document document = new()
+            {
+                DocumentId = documentId,
+                Chapters = new List<Chapter>
+                {
+                    new()
+                    {
+                        Order = 0,
+                        Title = "Draft",
+                        Sections = new List<Section>
+                        {
+                            new()
+                            {
+                                SectionId = sectionId,
+                                Order = 0,
+                                Title = "Scene",
+                                Content = new SectionContent
+                                {
+                                    Format = "html",
+                                    Value = "<p>Sample</p>"
+                                }
+                            }
+                        }
+                    }
+                }
+            };
+
+            CountingAiOrchestrator orchestrator = new();
+            BibleRefreshService service = new(
+                orchestrator,
+                new StubEntitlementService(aiEnabled: false, planKey: "free"),
+                new InMemoryBibleStore(),
+                new BiblePatchApplier(),
+                NullLogger<BibleRefreshService>.Instance);
+
+            EntitlementDeniedException ex = await Assert.ThrowsAsync<EntitlementDeniedException>(() => service.RefreshAsync(
+                document,
+                "user-free",
+                sectionId,
+                BibleType.Character,
+                fullRebuild: false,
+                CancellationToken.None));
+
+            Assert.Equal("ai.bibles.refresh", ex.FeatureKey);
+            Assert.Equal("free", ex.PlanKey);
+            Assert.Equal(0, orchestrator.CallCount);
         }
 
         private sealed class FakeAiOrchestrator : IAiOrchestrator
@@ -164,6 +220,64 @@ namespace WriterApp.Tests
 
                 _states[(documentId, bibleType)] = state;
                 return Task.FromResult(state);
+            }
+        }
+
+        private sealed class StubEntitlementService : IEntitlementService
+        {
+            private readonly bool _aiEnabled;
+            private readonly string _planKey;
+
+            public StubEntitlementService(bool aiEnabled, string planKey)
+            {
+                _aiEnabled = aiEnabled;
+                _planKey = planKey;
+            }
+
+            public Task<UserEntitlements> GetEntitlementsAsync(string userId)
+            {
+                Dictionary<string, string> entitlements = new(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["ai.enabled"] = _aiEnabled ? "true" : "false"
+                };
+
+                return Task.FromResult(new UserEntitlements(userId, _planKey, _planKey, entitlements));
+            }
+
+            public Task<bool> HasAsync(string userId, string entitlementKey)
+            {
+                bool result = string.Equals(entitlementKey, "ai.enabled", StringComparison.OrdinalIgnoreCase) && _aiEnabled;
+                return Task.FromResult(result);
+            }
+
+            public Task<int?> GetIntAsync(string userId, string entitlementKey) => Task.FromResult<int?>(null);
+
+            public void InvalidateForUser(string userId)
+            {
+            }
+        }
+
+        private sealed class CountingAiOrchestrator : IAiOrchestrator
+        {
+            public int CallCount { get; private set; }
+
+            public IReadOnlyList<IAiAction> Actions => Array.Empty<IAiAction>();
+
+            public IAiAction? GetAction(string actionId) => null;
+
+            public bool CanRunAction(string actionId) => true;
+
+            public AiStreamingCapabilities GetStreamingCapabilities(string actionId) => new(true, false);
+
+            public Task<AiExecutionResult> ExecuteActionAsync(string actionId, AiActionInput input, CancellationToken ct)
+            {
+                CallCount++;
+                return Task.FromResult(AiExecutionResult.Blocked("unexpected", "Should not be called"));
+            }
+
+            public AiStreamingSession StreamActionAsync(string actionId, AiActionInput input, CancellationToken ct)
+            {
+                throw new NotSupportedException();
             }
         }
     }

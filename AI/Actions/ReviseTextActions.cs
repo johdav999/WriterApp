@@ -184,7 +184,7 @@ namespace WriterApp.AI.Actions
 
     public sealed class TightenSelectionAction : ReviseTextActionBase
     {
-        public const string ActionIdValue = "tighten.selection";
+        public new const string ActionIdValue = "tighten.selection";
 
         public TightenSelectionAction()
             : base(ActionIdValue, "Tighten selection", true, ReviseMode.Tighten)
@@ -194,7 +194,7 @@ namespace WriterApp.AI.Actions
 
     public sealed class TightenSectionAction : ReviseTextActionBase
     {
-        public const string ActionIdValue = "tighten.section";
+        public new const string ActionIdValue = "tighten.section";
 
         public TightenSectionAction()
             : base(ActionIdValue, "Tighten section", false, ReviseMode.Tighten)
@@ -204,7 +204,7 @@ namespace WriterApp.AI.Actions
 
     public sealed class ExpandSelectionAction : ReviseTextActionBase
     {
-        public const string ActionIdValue = "expand.selection";
+        public new const string ActionIdValue = "expand.selection";
 
         public ExpandSelectionAction()
             : base(ActionIdValue, "Expand selection", true, ReviseMode.Expand)
@@ -214,7 +214,7 @@ namespace WriterApp.AI.Actions
 
     public sealed class ExpandSectionAction : ReviseTextActionBase
     {
-        public const string ActionIdValue = "expand.section";
+        public new const string ActionIdValue = "expand.section";
 
         public ExpandSectionAction()
             : base(ActionIdValue, "Expand section", false, ReviseMode.Expand)
@@ -224,7 +224,7 @@ namespace WriterApp.AI.Actions
 
     public sealed class ChangeToneSelectionAction : ReviseTextActionBase
     {
-        public const string ActionIdValue = "change_tone.selection";
+        public new const string ActionIdValue = "change_tone.selection";
 
         public ChangeToneSelectionAction()
             : base(ActionIdValue, "Change tone (selection)", true, ReviseMode.ChangeTone)
@@ -234,7 +234,7 @@ namespace WriterApp.AI.Actions
 
     public sealed class ChangeToneSectionAction : ReviseTextActionBase
     {
-        public const string ActionIdValue = "change_tone.section";
+        public new const string ActionIdValue = "change_tone.section";
 
         public ChangeToneSectionAction()
             : base(ActionIdValue, "Change tone (section)", false, ReviseMode.ChangeTone)
@@ -244,7 +244,7 @@ namespace WriterApp.AI.Actions
 
     public sealed class ShowDontTellSelectionAction : ReviseTextActionBase
     {
-        public const string ActionIdValue = "show_dont_tell.selection";
+        public new const string ActionIdValue = "show_dont_tell.selection";
 
         public ShowDontTellSelectionAction()
             : base(ActionIdValue, "Show, don't tell (selection)", true, ReviseMode.ShowDontTell)
@@ -254,7 +254,7 @@ namespace WriterApp.AI.Actions
 
     public sealed class ShowDontTellSectionAction : ReviseTextActionBase
     {
-        public const string ActionIdValue = "show_dont_tell.section";
+        public new const string ActionIdValue = "show_dont_tell.section";
 
         public ShowDontTellSectionAction()
             : base(ActionIdValue, "Show, don't tell (section)", false, ReviseMode.ShowDontTell)
