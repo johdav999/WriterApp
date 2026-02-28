@@ -58,6 +58,12 @@ EditorShell (full width)
 - Manuscript width must not affect layout columns or right drawer visibility.
 - Avoid adding telemetry (AI usage/plan) to persistent UI; keep it secondary/collapsible.
 
+## Shared Brand Asset
+- Source of truth: `/logo.png` at repo root.
+- Propagate to frontend static folders when updated:
+  - `Prosa.Landing/public/logo.png`
+  - `WriterApp.Client/wwwroot/logo.png`
+
 ## TipTap Bundle (Vite)
 From `WriterApp.Client`:
 - `npm install`

@@ -18,8 +18,16 @@ export function Navbar() {
   return (
     <header className="sticky top-0 z-50 border-b border-border/60 bg-background/80 backdrop-blur-md">
       <nav className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-        <a href="#" className="font-serif text-xl font-bold tracking-tight text-foreground">
-          Prosa
+        <a
+          href="/"
+          className="inline-flex items-center rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          aria-label="Prosa home"
+        >
+          <img
+            src="/logo.png"
+            alt="Prosa"
+            className="block h-12 w-auto max-w-[320px] sm:h-14 sm:max-w-[360px]"
+          />
         </a>
 
         {/* Desktop links */}

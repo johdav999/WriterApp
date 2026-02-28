@@ -258,7 +258,7 @@ namespace WriterApp.Application.Documents
                 UpdatedAtUnixSeconds = now.ToUnixTimeSeconds(),
                 IsArchived = false,
                 ArchivedAt = null,
-                DeletedAt = null
+                DeletedAtUtc = null
             };
             _dbContext.Documents.Add(manuscript);
             project.UpdatedUtc = now;

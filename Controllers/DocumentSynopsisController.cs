@@ -15,6 +15,7 @@ using WriterApp.Application.Commands;
 using WriterApp.Application.Documents;
 using WriterApp.Application.Security;
 using WriterApp.Application.Synopsis;
+using WriterApp.Application.Subscriptions;
 using WriterApp.Data;
 using WriterApp.Data.Documents;
 using WriterApp.Domain.Documents;
@@ -246,7 +247,9 @@ namespace WriterApp.Controllers
                 string code = string.IsNullOrWhiteSpace(result.ErrorCode) ? "ai.blocked" : result.ErrorCode!;
                 int statusCode = string.Equals(code, "AI_QUOTA_EXCEEDED", StringComparison.Ordinal)
                     ? StatusCodes.Status402PaymentRequired
-                    : StatusCodes.Status400BadRequest;
+                    : string.Equals(code, "plan_upgrade_required", StringComparison.OrdinalIgnoreCase)
+                        ? StatusCodes.Status402PaymentRequired
+                        : StatusCodes.Status400BadRequest;
                 ProblemDetails problem = new()
                 {
                     Status = statusCode,
@@ -254,6 +257,10 @@ namespace WriterApp.Controllers
                     Detail = message
                 };
                 problem.Extensions["code"] = code;
+                if (string.Equals(code, "plan_upgrade_required", StringComparison.OrdinalIgnoreCase))
+                {
+                    problem.Extensions["upgradePath"] = EntitlementDeniedApiError.BuildUpgradePath("ai.synopsis");
+                }
                 if (result.ErrorDetails is not null)
                 {
                     foreach ((string key, object? value) in result.ErrorDetails)

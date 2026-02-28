@@ -5,10 +5,13 @@
 @using System.Security.Claims
 @using WriterApp.Application.Security
 @using WriterApp.Application.Subscriptions
+@using WriterApp.Application.Users
 @using WriterApp.Data.Subscriptions
 @attribute [Authorize(Policy = "AdminOnly")]
 @inject AuthenticationStateProvider AuthStateProvider
 @inject IPlanAssignmentService PlanAssignmentService
+@inject IUserLookupService UserLookupService
+@inject IUserEntitlementStore UserEntitlementStore
 @inject IUserIdResolver UserIdResolver
 @inject ILogger<PlanAssignments> Logger
 
@@ -25,7 +28,51 @@
     {
         <div class="admin-form">
             <label for="adminUserId">User Id</label>
-            <input id="adminUserId" type="text" @bind="_userIdInput" @bind:event="oninput" />
+            <input id="adminUserId" type="text" @bind="UserIdInput" @bind:event="oninput" />
+            <button type="button" @onclick="OnValidateUserIdAsync" disabled="@string.IsNullOrWhiteSpace(_userIdInput)">Validate UserId</button>
+
+            <label for="adminEmail">Email</label>
+            <input id="adminEmail" type="email" @bind="EmailInput" @bind:event="oninput" />
+            <button type="button" @onclick="OnLookupByEmailAsync" disabled="@string.IsNullOrWhiteSpace(_emailInput)">Lookup</button>
+
+            @if (_lookupInProgress)
+            {
+                <p>Looking up user...</p>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(_lookupMessage))
+            {
+                <p class="status-message">@_lookupMessage</p>
+            }
+
+            @if (_lookupCandidates.Count > 1)
+            {
+                <div class="admin-latest">
+                    <h2>Multiple matches</h2>
+                    @foreach (UserLookupUser candidate in _lookupCandidates)
+                    {
+                        <label>
+                            <input type="radio"
+                                   name="lookup-candidate"
+                                   checked="@string.Equals(_selectedLookupUserId, candidate.UserId, StringComparison.Ordinal)"
+                                   @onchange="@(() => _selectedLookupUserId = candidate.UserId)" />
+                            @candidate.DisplayName (@candidate.UserId) @(string.IsNullOrWhiteSpace(candidate.Email) ? string.Empty : $"<{candidate.Email}>")
+                        </label>
+                    }
+                    <button type="button" @onclick="ConfirmLookupSelectionAsync" disabled="@string.IsNullOrWhiteSpace(_selectedLookupUserId)">Use selected user</button>
+                </div>
+            }
+
+            @if (_resolvedUser is not null)
+            {
+                <div class="admin-latest">
+                    <h2>Resolved user</h2>
+                    <p>UserId: @_resolvedUser.UserId</p>
+                    <p>Display name: @(_resolvedUser.DisplayName ?? "-")</p>
+                    <p>Email: @(_resolvedUser.Email ?? "-")</p>
+                    <p>Confirmed: @(_isResolvedUserConfirmed ? "Yes" : "No")</p>
+                </div>
+            }
 
             <label for="adminPlanKey">Plan</label>
             <select id="adminPlanKey" @bind="_selectedPlanKey">
@@ -37,13 +84,25 @@
 
             <div class="admin-form-actions">
                 <button type="button" @onclick="OnAssignAsync" disabled="@(!_canAssign)">Assign</button>
-                <button type="button" @onclick="OnLoadLatestAsync" disabled="@string.IsNullOrWhiteSpace(_userIdInput)">Load latest</button>
+                <button type="button" @onclick="OnLoadLatestAsync" disabled="@string.IsNullOrWhiteSpace(ResolvedUserId)">Load latest</button>
             </div>
         </div>
 
         @if (!string.IsNullOrWhiteSpace(_statusMessage))
         {
             <p class="status-message">@_statusMessage</p>
+        }
+
+        @if (_entitlement is not null)
+        {
+            <div class="admin-latest">
+                <h2>Resolved entitlement</h2>
+                <p>User: @_entitlement.UserId</p>
+                <p>Plan: @_entitlement.PlanKey</p>
+                <p>Budget: @_entitlement.AiMonthlyTokenBudget</p>
+                <p>Used: @_entitlement.AiTokensUsedThisPeriod</p>
+                <p>Period start UTC: @_entitlement.PeriodStartUtc.ToString("u")</p>
+            </div>
         }
 
         @if (_latestAssignment is not null)
@@ -60,18 +119,56 @@
 
 @code {
     private readonly List<Plan> _plans = new();
+    private readonly List<UserLookupUser> _lookupCandidates = new();
     private bool _isLoading = true;
+    private bool _lookupInProgress;
     private string? _statusMessage;
+    private string? _lookupMessage;
     private string _userIdInput = string.Empty;
+    private string _emailInput = string.Empty;
+    private string? _selectedLookupUserId;
     private string _selectedPlanKey = string.Empty;
+    private UserLookupUser? _resolvedUser;
+    private bool _isResolvedUserConfirmed;
     private LatestAssignmentView? _latestAssignment;
+    private UserEntitlement? _entitlement;
 
     protected override async Task OnInitializedAsync()
     {
         await LoadPlansAsync();
     }
 
-    private bool _canAssign => !string.IsNullOrWhiteSpace(_userIdInput) && !string.IsNullOrWhiteSpace(_selectedPlanKey);
+    private string? ResolvedUserId => _isResolvedUserConfirmed ? _resolvedUser?.UserId : null;
+
+    private string UserIdInput
+    {
+        get => _userIdInput;
+        set
+        {
+            if (!string.Equals(_userIdInput, value, StringComparison.Ordinal))
+            {
+                _userIdInput = value;
+                ResetResolvedSelection(clearLookupMessage: false);
+            }
+        }
+    }
+
+    private string EmailInput
+    {
+        get => _emailInput;
+        set
+        {
+            if (!string.Equals(_emailInput, value, StringComparison.Ordinal))
+            {
+                _emailInput = value;
+                ResetResolvedSelection(clearLookupMessage: false);
+            }
+        }
+    }
+
+    private bool _canAssign =>
+        !string.IsNullOrWhiteSpace(ResolvedUserId)
+        && !string.IsNullOrWhiteSpace(_selectedPlanKey);
 
     private async Task LoadPlansAsync()
     {
@@ -90,22 +187,30 @@
     {
         _statusMessage = null;
         _latestAssignment = null;
+        _entitlement = null;
 
         if (!_canAssign)
         {
-            _statusMessage = "Provide a user id and choose a plan.";
+            _statusMessage = "Resolve and confirm the target user, then choose a plan.";
             return;
         }
 
         try
         {
+            string resolvedUserId = ResolvedUserId!;
             AuthenticationState authState = await AuthStateProvider.GetAuthenticationStateAsync();
             ClaimsPrincipal user = authState.User;
             string? callerName = user.Identity?.Name;
             string assignedBy = ResolveAssignedBy(user, callerName);
 
+            Logger.LogInformation(
+                "Admin assigning plan. userId={UserId} email={Email} planKey={PlanKey}",
+                resolvedUserId,
+                _resolvedUser?.Email ?? string.Empty,
+                _selectedPlanKey);
+
             PlanAssignmentResult result = await PlanAssignmentService.AssignPlanAsync(
-                _userIdInput,
+                resolvedUserId,
                 _selectedPlanKey,
                 assignedBy,
                 callerName,
@@ -113,6 +218,7 @@
 
             _statusMessage = $"Assigned {result.UserId} to {result.PlanName}.";
             await LoadLatestAssignmentAsync(result.UserId);
+            _entitlement = await UserEntitlementStore.GetOrCreateAsync(result.UserId, CancellationToken.None);
         }
         catch (PlanAssignmentException ex)
         {
@@ -136,7 +242,16 @@
     private async Task OnLoadLatestAsync()
     {
         _statusMessage = null;
-        await LoadLatestAssignmentAsync(_userIdInput);
+        _entitlement = null;
+
+        if (string.IsNullOrWhiteSpace(ResolvedUserId))
+        {
+            _statusMessage = "Resolve and confirm a user first.";
+            return;
+        }
+
+        await LoadLatestAssignmentAsync(ResolvedUserId);
+        _entitlement = await UserEntitlementStore.GetOrCreateAsync(ResolvedUserId, CancellationToken.None);
     }
 
     private async Task LoadLatestAssignmentAsync(string? userId)
@@ -167,6 +282,119 @@
         string PlanKey,
         string PlanName,
         DateTime AssignedUtc);
+
+    private async Task OnValidateUserIdAsync()
+    {
+        ResetResolvedSelection(clearLookupMessage: true);
+
+        string candidate = _userIdInput?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(candidate))
+        {
+            _lookupMessage = "Enter a user id to validate.";
+            return;
+        }
+
+        UserLookupUser? found = await UserLookupService.FindByUserIdAsync(candidate, CancellationToken.None);
+        if (found is null || string.IsNullOrWhiteSpace(found.UserId))
+        {
+            _lookupMessage = "UserId not found in UserProfiles.";
+            return;
+        }
+
+        _resolvedUser = found;
+        _isResolvedUserConfirmed = true;
+        _lookupMessage = $"Validated user id: {found.UserId}.";
+    }
+
+    private async Task OnLookupByEmailAsync()
+    {
+        _lookupInProgress = true;
+        ResetResolvedSelection(clearLookupMessage: true);
+
+        try
+        {
+            string email = _emailInput?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(email))
+            {
+                _lookupMessage = "Enter an email to lookup.";
+                return;
+            }
+
+            UserLookupResult? result = await UserLookupService.FindByEmailAsync(email, CancellationToken.None);
+            if (result is null || result.Matches.Count == 0)
+            {
+                _lookupMessage = "No user found for that email.";
+                return;
+            }
+
+            _lookupCandidates.AddRange(result.Matches.Where(item => !string.IsNullOrWhiteSpace(item.UserId)));
+            if (_lookupCandidates.Count == 0)
+            {
+                _lookupMessage = "Lookup returned users without valid UserId values.";
+                return;
+            }
+
+            if (_lookupCandidates.Count == 1)
+            {
+                _resolvedUser = _lookupCandidates[0];
+                _isResolvedUserConfirmed = true;
+                _lookupMessage = $"Resolved and confirmed: {_resolvedUser.UserId}.";
+                return;
+            }
+
+            _selectedLookupUserId = _lookupCandidates[0].UserId;
+            _lookupMessage = "Multiple users matched. Select one and confirm.";
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Lookup by email failed.");
+            _lookupMessage = "Lookup failed.";
+        }
+        finally
+        {
+            _lookupInProgress = false;
+        }
+    }
+
+    private Task ConfirmLookupSelectionAsync()
+    {
+        _statusMessage = null;
+
+        if (string.IsNullOrWhiteSpace(_selectedLookupUserId))
+        {
+            _lookupMessage = "Select a user first.";
+            return Task.CompletedTask;
+        }
+
+        UserLookupUser? selected = _lookupCandidates
+            .FirstOrDefault(item => string.Equals(item.UserId, _selectedLookupUserId, StringComparison.Ordinal));
+        if (selected is null || string.IsNullOrWhiteSpace(selected.UserId))
+        {
+            _lookupMessage = "Selected user is invalid.";
+            return Task.CompletedTask;
+        }
+
+        _resolvedUser = selected;
+        _isResolvedUserConfirmed = true;
+        _lookupMessage = $"Confirmed user: {selected.UserId}.";
+        return Task.CompletedTask;
+    }
+
+    private void ResetResolvedSelection(bool clearLookupMessage)
+    {
+        if (clearLookupMessage)
+        {
+            _lookupMessage = null;
+        }
+
+        _statusMessage = null;
+        _lookupCandidates.Clear();
+        _selectedLookupUserId = null;
+        _entitlement = null;
+        _latestAssignment = null;
+        _isResolvedUserConfirmed = false;
+        _resolvedUser = null;
+    }
 
     private string ResolveAssignedBy(ClaimsPrincipal user, string? callerName)
     {

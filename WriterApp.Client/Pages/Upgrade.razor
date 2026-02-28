@@ -1,0 +1,100 @@
+@page "/upgrade"
+@using System.Net.Http.Json
+@using WriterApp.Client.Utilities
+@inject NavigationManager Navigation
+@inject HttpClient Http
+
+<PageTitle>Upgrade</PageTitle>
+
+<div class="projects-page">
+    <header class="projects-header">
+        <div>
+            <h1>Upgrade</h1>
+            <p class="projects-subtitle">This feature requires Standard or Pro.</p>
+            @if (!string.IsNullOrWhiteSpace(_featureKey))
+            {
+                <p class="projects-subtitle">Feature: @_featureKey</p>
+            }
+        </div>
+    </header>
+
+    @if (!string.IsNullOrWhiteSpace(_errorMessage))
+    {
+        <div class="projects-error" role="alert">@_errorMessage</div>
+    }
+
+    <div class="projects-actions">
+        <button type="button" class="primary" @onclick='() => StartUpgradeAsync("standard")' disabled="@_isBusy">
+            @(_isBusy && _selectedPlan == "standard" ? "Opening..." : "Upgrade to Standard")
+        </button>
+        <button type="button" class="primary" @onclick='() => StartUpgradeAsync("pro")' disabled="@_isBusy">
+            @(_isBusy && _selectedPlan == "pro" ? "Opening..." : "Upgrade to Pro")
+        </button>
+        <button type="button" class="secondary" @onclick="GoBack" disabled="@_isBusy">Back</button>
+    </div>
+</div>
+
+@code {
+    private string _featureKey = "ai.feature";
+    private bool _isBusy;
+    private string? _selectedPlan;
+    private string? _errorMessage;
+
+    protected override void OnInitialized()
+    {
+        Uri uri = Navigation.ToAbsoluteUri(Navigation.Uri);
+        Dictionary<string, string> query = QueryStringParser.Parse(uri.Query);
+        if (query.TryGetValue("feature", out string? feature)
+            && !string.IsNullOrWhiteSpace(feature))
+        {
+            _featureKey = feature.Trim();
+        }
+    }
+
+    private async Task StartUpgradeAsync(string plan)
+    {
+        _isBusy = true;
+        _selectedPlan = plan;
+        _errorMessage = null;
+
+        try
+        {
+            string url =
+                $"/api/billing/upgrade-url?plan={Uri.EscapeDataString(plan)}&feature={Uri.EscapeDataString(_featureKey)}";
+            using HttpResponseMessage response = await Http.GetAsync(url);
+            if (!response.IsSuccessStatusCode)
+            {
+                _errorMessage = $"Could not start upgrade: {(int)response.StatusCode}.";
+                return;
+            }
+
+            BillingUrlResponse? payload = await response.Content.ReadFromJsonAsync<BillingUrlResponse>();
+            if (payload is null || string.IsNullOrWhiteSpace(payload.Url))
+            {
+                _errorMessage = "Could not start upgrade: empty redirect URL.";
+                return;
+            }
+
+            Navigation.NavigateTo(payload.Url, forceLoad: true);
+        }
+        catch
+        {
+            _errorMessage = "Could not start upgrade due to a network error.";
+        }
+        finally
+        {
+            _isBusy = false;
+            _selectedPlan = null;
+        }
+    }
+
+    private void GoBack()
+    {
+        Navigation.NavigateTo("/app/account/billing");
+    }
+
+    private sealed class BillingUrlResponse
+    {
+        public string? Url { get; init; }
+    }
+}

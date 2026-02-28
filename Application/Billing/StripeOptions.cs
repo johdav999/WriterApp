@@ -28,6 +28,10 @@ namespace WriterApp.Application.Billing
                 throw new ArgumentNullException(nameof(configuration));
             }
 
+            StripeBillingOptions billingOptions = configuration
+                .GetSection("Stripe:Billing")
+                .Get<StripeBillingOptions>() ?? new StripeBillingOptions();
+
             string mode = ReadSetting(configuration, "Mode");
             string secretKey = ReadSetting(configuration, "SecretKey");
             string webhookSecret = ReadSetting(configuration, "WebhookSecret");
@@ -36,6 +40,21 @@ namespace WriterApp.Application.Billing
             string successUrl = ReadSetting(configuration, "SuccessUrl");
             string cancelUrl = ReadSetting(configuration, "CancelUrl");
             string billingPortalReturnUrl = ReadSetting(configuration, "BillingPortalReturnUrl");
+
+            if (string.IsNullOrWhiteSpace(mode) && !string.IsNullOrWhiteSpace(billingOptions.Mode))
+            {
+                mode = billingOptions.Mode;
+            }
+
+            if (string.IsNullOrWhiteSpace(secretKey) && !string.IsNullOrWhiteSpace(billingOptions.ApiKey))
+            {
+                secretKey = billingOptions.ApiKey;
+            }
+
+            if (string.IsNullOrWhiteSpace(webhookSecret) && !string.IsNullOrWhiteSpace(billingOptions.WebhookSecret))
+            {
+                webhookSecret = billingOptions.WebhookSecret;
+            }
 
             string normalizedMode = string.IsNullOrWhiteSpace(mode)
                 ? TestMode
@@ -46,6 +65,30 @@ namespace WriterApp.Application.Billing
             string normalizedCancelUrl = string.IsNullOrWhiteSpace(cancelUrl)
                 ? DefaultCancelUrl
                 : cancelUrl.Trim();
+
+            if (string.IsNullOrWhiteSpace(priceStandard))
+            {
+                priceStandard = string.Equals(normalizedMode, LiveMode, StringComparison.Ordinal)
+                    ? billingOptions.Prices.Standard.LivePriceId
+                    : billingOptions.Prices.Standard.TestPriceId;
+            }
+
+            if (string.IsNullOrWhiteSpace(pricePro))
+            {
+                pricePro = string.Equals(normalizedMode, LiveMode, StringComparison.Ordinal)
+                    ? billingOptions.Prices.Pro.LivePriceId
+                    : billingOptions.Prices.Pro.TestPriceId;
+            }
+
+            if (string.IsNullOrWhiteSpace(successUrl) && !string.IsNullOrWhiteSpace(billingOptions.Checkout.SuccessPath))
+            {
+                normalizedSuccessUrl = billingOptions.Checkout.SuccessPath.Trim();
+            }
+
+            if (string.IsNullOrWhiteSpace(cancelUrl) && !string.IsNullOrWhiteSpace(billingOptions.Checkout.CancelPath))
+            {
+                normalizedCancelUrl = billingOptions.Checkout.CancelPath.Trim();
+            }
 
             List<string> errors = new();
             List<string> warnings = new();
@@ -71,6 +114,12 @@ namespace WriterApp.Application.Billing
                     errors.Add("Stripe configuration invalid: Stripe__Mode must be either 'test' or 'live'.");
                 }
 
+                string? keyMode = InferModeFromSecretKey(secretKey);
+                if (keyMode is not null && !string.Equals(keyMode, normalizedMode, StringComparison.Ordinal))
+                {
+                    errors.Add($"Stripe configuration invalid: Stripe__Mode is '{normalizedMode}' but Stripe__SecretKey looks like '{keyMode}'.");
+                }
+
                 if (string.IsNullOrWhiteSpace(webhookSecret))
                 {
                     errors.Add("Stripe configuration invalid: Stripe__WebhookSecret is required when Stripe is enabled.");
@@ -86,10 +135,7 @@ namespace WriterApp.Application.Billing
                     errors.Add("Stripe configuration invalid: Stripe__PricePro is required when Stripe is enabled.");
                 }
 
-                if (string.IsNullOrWhiteSpace(billingPortalReturnUrl))
-                {
-                    errors.Add("Stripe configuration invalid: Stripe__BillingPortalReturnUrl is required when Stripe is enabled.");
-                }
+                // Legacy portal endpoint can infer a fallback if this is not configured.
             }
 
             StripeOptions options = new()
@@ -148,6 +194,29 @@ namespace WriterApp.Application.Billing
             }
 
             return string.Empty;
+        }
+
+        private static string? InferModeFromSecretKey(string secretKey)
+        {
+            if (string.IsNullOrWhiteSpace(secretKey))
+            {
+                return null;
+            }
+
+            string normalized = secretKey.Trim().ToLowerInvariant();
+            if (normalized.StartsWith("sk_test_", StringComparison.Ordinal)
+                || normalized.StartsWith("rk_test_", StringComparison.Ordinal))
+            {
+                return TestMode;
+            }
+
+            if (normalized.StartsWith("sk_live_", StringComparison.Ordinal)
+                || normalized.StartsWith("rk_live_", StringComparison.Ordinal))
+            {
+                return LiveMode;
+            }
+
+            return null;
         }
     }
 

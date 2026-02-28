@@ -11,6 +11,7 @@ using Microsoft.Extensions.Logging;
 using WriterApp.AI.Abstractions;
 using WriterApp.AI.Actions;
 using WriterApp.Application.Documents;
+using WriterApp.Application.Subscriptions;
 using WriterApp.Domain.Documents;
 
 namespace WriterApp.Application.Continuity
@@ -18,17 +19,20 @@ namespace WriterApp.Application.Continuity
     public sealed class BibleRefreshService
     {
         private readonly IAiOrchestrator _aiOrchestrator;
+        private readonly IEntitlementService _entitlementService;
         private readonly IBibleStore _bibleStore;
         private readonly BiblePatchApplier _patchApplier;
         private readonly ILogger<BibleRefreshService> _logger;
 
         public BibleRefreshService(
             IAiOrchestrator aiOrchestrator,
+            IEntitlementService entitlementService,
             IBibleStore bibleStore,
             BiblePatchApplier patchApplier,
             ILogger<BibleRefreshService> logger)
         {
             _aiOrchestrator = aiOrchestrator ?? throw new ArgumentNullException(nameof(aiOrchestrator));
+            _entitlementService = entitlementService ?? throw new ArgumentNullException(nameof(entitlementService));
             _bibleStore = bibleStore ?? throw new ArgumentNullException(nameof(bibleStore));
             _patchApplier = patchApplier ?? throw new ArgumentNullException(nameof(patchApplier));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -36,11 +40,29 @@ namespace WriterApp.Application.Continuity
 
         public async Task<BibleSnapshotState> RefreshAsync(
             Document document,
+            string userId,
             Guid activeSectionId,
             BibleType bibleType,
             bool fullRebuild,
             CancellationToken ct)
         {
+            const string featureKey = "ai.bibles.refresh";
+            UserEntitlements entitlements = await _entitlementService.GetEntitlementsAsync(userId);
+            bool aiEnabled = await _entitlementService.HasAsync(userId, "ai.enabled");
+            if (!aiEnabled)
+            {
+                _logger.LogInformation(
+                    "[BIBLE] Entitlement denied. FeatureKey={FeatureKey} UserId={UserId} PlanKey={PlanKey} BibleType={BibleType}",
+                    featureKey,
+                    userId,
+                    entitlements.PlanKey,
+                    bibleType);
+                throw new EntitlementDeniedException(
+                    featureKey,
+                    entitlements.PlanKey,
+                    "Upgrade to enable Bible refresh.");
+            }
+
             BibleSnapshotState? existing = await _bibleStore.GetSnapshotAsync(document.DocumentId, bibleType, ct);
             BibleRefreshCursor cursor = existing?.Cursor ?? BibleJson.EmptyCursor();
             Dictionary<Guid, string> currentHashes = ComputeSectionHashes(document);

@@ -7,10 +7,12 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using WriterApp.Application.Continuity;
 using WriterApp.Application.Documents;
 using WriterApp.Application.Security;
+using WriterApp.Application.Subscriptions;
 using WriterApp.Data.Documents;
 using WriterApp.Domain.Documents;
 
@@ -124,12 +126,29 @@ namespace WriterApp.Controllers
                 activeSectionId = sectionRecords.OrderBy(section => section.OrderIndex).First().Id;
             }
 
-            BibleSnapshotState snapshot = await _refreshService.RefreshAsync(
-                document,
-                activeSectionId,
-                parsedType,
-                request?.FullRebuild ?? false,
-                ct);
+            BibleSnapshotState snapshot;
+            try
+            {
+                snapshot = await _refreshService.RefreshAsync(
+                    document,
+                    userId,
+                    activeSectionId,
+                    parsedType,
+                    request?.FullRebuild ?? false,
+                    ct);
+            }
+            catch (EntitlementDeniedException ex)
+            {
+                ProblemDetails payload = EntitlementDeniedApiError.ToProblemDetails(ex);
+                payload.Extensions["code"] = "entitlement_denied";
+                payload.Extensions["traceId"] = HttpContext.TraceIdentifier;
+                ObjectResult result = new(payload)
+                {
+                    StatusCode = StatusCodes.Status402PaymentRequired
+                };
+                result.ContentTypes.Add("application/problem+json");
+                return result;
+            }
 
             int changedSections = CountChangedSections(snapshot.Cursor, document);
             return Ok(BibleSnapshotDto.FromState(snapshot, changedSections));

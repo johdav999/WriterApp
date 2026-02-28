@@ -1,4 +1,4 @@
-﻿.app-shell {
+.app-shell {
     height: 100vh;
     display: flex;
     flex-direction: column;
@@ -27,9 +27,18 @@
 }
 
 .app-brand {
+    display: inline-flex;
+    align-items: center;
     font-weight: 600;
     text-decoration: none;
     color: var(--color-primary);
+}
+
+.app-brand-logo {
+    display: block;
+    height: 130px;
+    width: auto;
+    max-width: 720px;
 }
 
 .app-link {
@@ -133,6 +142,11 @@
         height: auto;
         min-height: 100vh;
         overflow: auto;
+    }
+
+    .app-brand-logo {
+        height: 96px;
+        max-width: 520px;
     }
 
     .app-main,

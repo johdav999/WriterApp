@@ -160,11 +160,11 @@ namespace WriterApp.Controllers
                 projectDocs ??= new List<DocumentRecord>();
 
                 DocumentRecord? primary = projectDocs
-                    .Where(item => item.DeletedAt is null && item.DocumentKind == DocumentKind.Manuscript)
+                    .Where(item => item.DeletedAtUtc is null && item.DocumentKind == DocumentKind.Manuscript)
                     .OrderByDescending(item => item.UpdatedAtUnixSeconds)
                     .FirstOrDefault()
                     ?? projectDocs
-                        .Where(item => item.DeletedAt is null)
+                        .Where(item => item.DeletedAtUtc is null)
                         .OrderByDescending(item => item.UpdatedAtUnixSeconds)
                         .FirstOrDefault();
 
@@ -279,7 +279,7 @@ namespace WriterApp.Controllers
                 UpdatedAtUnixSeconds = now.ToUnixTimeSeconds(),
                 IsArchived = false,
                 ArchivedAt = null,
-                DeletedAt = null,
+                DeletedAtUtc = null,
                 LanguageCode = project.Language,
                 TranslationGroupId = null
             });
@@ -537,7 +537,7 @@ namespace WriterApp.Controllers
                 UpdatedAtUnixSeconds = now.ToUnixTimeSeconds(),
                 IsArchived = false,
                 ArchivedAt = null,
-                DeletedAt = null,
+                DeletedAtUtc = null,
                 LanguageCode = project.Language,
                 TranslationGroupId = null
             };
@@ -589,7 +589,7 @@ namespace WriterApp.Controllers
                     document.TranslationGroupId,
                     document.IsArchived,
                     document.ArchivedAt,
-                    document.DeletedAt,
+                    ToDeletedAtOffset(document.DeletedAtUtc),
                     document.ProjectId,
                     NormalizeDocumentKind(document.DocumentKind)),
                 defaultSectionId,
@@ -1974,7 +1974,24 @@ namespace WriterApp.Controllers
                 document.UpdatedAt,
                 document.IsArchived,
                 document.ArchivedAt,
-                document.DeletedAt);
+                ToDeletedAtOffset(document.DeletedAtUtc));
+        }
+
+        private static DateTimeOffset? ToDeletedAtOffset(DateTime? deletedAtUtc)
+        {
+            if (!deletedAtUtc.HasValue)
+            {
+                return null;
+            }
+
+            DateTime normalized = deletedAtUtc.Value.Kind switch
+            {
+                DateTimeKind.Utc => deletedAtUtc.Value,
+                DateTimeKind.Local => deletedAtUtc.Value.ToUniversalTime(),
+                _ => DateTime.SpecifyKind(deletedAtUtc.Value, DateTimeKind.Utc)
+            };
+
+            return new DateTimeOffset(normalized);
         }
 
         private static DocumentKind ParseDocumentKind(string? value)

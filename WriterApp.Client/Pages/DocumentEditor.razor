@@ -60,33 +60,34 @@ else
 
                 <div class="editor-toolbar" role="toolbar" aria-label="Editor formatting">
                     <div class="editor-toolbar-group" aria-label="Essentials" data-compact="true">
-                        <button type="button" class="@GetActiveClass(_formattingState.IsBold)" disabled="@(!_formattingState.CanBold)" title='@GetTooltip("Make selected text bold.")' @onclick="OnBoldRequested">Bold</button>
-                        <button type="button" class="@GetActiveClass(_formattingState.IsItalic)" disabled="@(!_formattingState.CanItalic)" title='@GetTooltip("Italicize selected text.")' @onclick="OnItalicRequested">Italic</button>
+                        <button type="button" class='@($"{GetActiveClass(_formattingState.IsBold)} icon-only")' disabled="@(!_formattingState.CanBold)" title='@GetTooltip("Make selected text bold.")' aria-label="Bold" @onclick="OnBoldRequested"><span class="toolbar-icon" aria-hidden="true">B</span></button>
+                        <button type="button" class='@($"{GetActiveClass(_formattingState.IsItalic)} icon-only")' disabled="@(!_formattingState.CanItalic)" title='@GetTooltip("Italicize selected text.")' aria-label="Italic" @onclick="OnItalicRequested"><span class="toolbar-icon" aria-hidden="true">I</span></button>
                         <select class="editor-toolbar-select" value="@GetBlockTypeValue()" title='@GetTooltip("Change text style.")' @onchange="OnBlockTypeChanged" disabled="@(!_formattingState.CanApplyHeading)">
                             <option value="paragraph">Paragraph</option>
                             <option value="heading:1">Heading 1</option>
                             <option value="heading:2">Heading 2</option>
                             <option value="heading:3">Heading 3</option>
                         </select>
-                        <button type="button" disabled="@(!_formattingState.CanToggleList)" title='@GetTooltip("Create a bulleted list.")' @onclick="OnBulletListRequested">Bulleted list</button>
-                        <button type="button" disabled="@(!_formattingState.CanToggleList)" title='@GetTooltip("Create a numbered list.")' @onclick="OnOrderedListRequested">Numbered list</button>
-                        <button type="button" disabled="@(!_formattingState.CanBlockquote)" title='@GetTooltip("Format text as a quotation.")' @onclick="OnBlockquoteRequested">Blockquote</button>
-                        <button type="button" class="@GetActiveClass(_formattingState.IsLink)" title='@GetTooltip("Insert or edit a link.")' @onclick="OnLinkRequested">Link</button>
+                        <button type="button" class="icon-only" disabled="@(!_formattingState.CanToggleList)" title='@GetTooltip("Create a bulleted list.")' aria-label="Bulleted list" @onclick="OnBulletListRequested"><span class="toolbar-icon" aria-hidden="true">•</span></button>
+                        <button type="button" class="icon-only" disabled="@(!_formattingState.CanToggleList)" title='@GetTooltip("Create a numbered list.")' aria-label="Numbered list" @onclick="OnOrderedListRequested"><span class="toolbar-icon" aria-hidden="true">1.</span></button>
+                        <button type="button" class="icon-only" disabled="@(!_formattingState.CanBlockquote)" title='@GetTooltip("Format text as a quotation.")' aria-label="Blockquote" @onclick="OnBlockquoteRequested"><span class="toolbar-icon" aria-hidden="true">"</span></button>
+                        <button type="button" class='@($"{GetActiveClass(_formattingState.IsLink)} icon-only")' title='@GetTooltip("Insert or edit a link.")' aria-label="Link" @onclick="OnLinkRequested"><span class="toolbar-icon" aria-hidden="true">🔗</span></button>
                     </div>
                     <div class="editor-toolbar-group" aria-label="Table">
-                        <button type="button" disabled="@(!_formattingState.CanInsertTable)" title='@GetTooltip("Insert a 3x3 table.")' @onclick="OnInsertTableRequested">Table</button>
-                        <button type="button" disabled="@(!_formattingState.CanAddTableRowAfter)" title='@GetTooltip("Add row below.")' @onclick="OnAddTableRowAfterRequested">+Row</button>
-                        <button type="button" disabled="@(!_formattingState.CanAddTableColumnAfter)" title='@GetTooltip("Add column to the right.")' @onclick="OnAddTableColumnAfterRequested">+Col</button>
-                        <button type="button" class="@GetActiveClass(_formattingState.IsHeaderCell)" disabled="@(!_formattingState.CanToggleTableHeaderRow)" title='@GetTooltip("Toggle header row.")' @onclick="OnToggleTableHeaderRowRequested">Header</button>
-                        <button type="button" disabled="@(!_formattingState.CanDeleteTable)" title='@GetTooltip("Delete current table.")' @onclick="OnDeleteTableRequested">Del table</button>
+                        <button type="button" class="icon-only" disabled="@(!_formattingState.CanInsertTable)" title='@GetTooltip("Insert a 3x3 table.")' aria-label="Table" @onclick="OnInsertTableRequested"><span class="toolbar-icon" aria-hidden="true">▦</span></button>
+                        <button type="button" class="icon-only" disabled="@(!_formattingState.CanAddTableRowAfter)" title='@GetTooltip("Add row below.")' aria-label="+Row" @onclick="OnAddTableRowAfterRequested"><span class="toolbar-icon" aria-hidden="true">↧</span></button>
+                        <button type="button" class="icon-only" disabled="@(!_formattingState.CanAddTableColumnAfter)" title='@GetTooltip("Add column to the right.")' aria-label="+Col" @onclick="OnAddTableColumnAfterRequested"><span class="toolbar-icon" aria-hidden="true">↦</span></button>
+                        <button type="button" class='@($"{GetActiveClass(_formattingState.IsHeaderCell)} icon-only")' disabled="@(!_formattingState.CanToggleTableHeaderRow)" title='@GetTooltip("Toggle header row.")' aria-label="Header" @onclick="OnToggleTableHeaderRowRequested"><span class="toolbar-icon" aria-hidden="true">☰</span></button>
+                        <button type="button" class="icon-only" disabled="@(!_formattingState.CanDeleteTable)" title='@GetTooltip("Delete current table.")' aria-label="Del table" @onclick="OnDeleteTableRequested"><span class="toolbar-icon" aria-hidden="true">⌫</span></button>
                     </div>
                     <div class="editor-toolbar-group" aria-label="Image">
                         <button type="button"
-                                class="editor-toolbar-upload-button"
+                                class="editor-toolbar-upload-button icon-only"
                                 disabled="@(!_formattingState.CanInsertImage)"
                                 title='@GetTooltip("Insert image from your device.")'
+                                aria-label="Image"
                                 @onclick="OnInsertImageRequested">
-                            Image
+                            <span class="toolbar-icon" aria-hidden="true">🖼</span>
                         </button>
                         <InputFile @key="_imageUploadInputKey"
                                    id="editor-image-upload"
@@ -94,40 +95,40 @@ else
                                    style="display:none"
                                    accept="image/png,image/jpeg,image/gif,image/webp"
                                    OnChange="OnImageFileSelected" />
-                        <button type="button" disabled="@(!_formattingState.CanInsertImage)" title='@GetTooltip("Insert image from URL.")' @onclick="OnInsertImageFromUrlRequested">Image URL</button>
-                        <button type="button" disabled="@(!_formattingState.CanRemoveImage)" title='@GetTooltip("Remove selected image.")' @onclick="OnRemoveImageRequested">Remove image</button>
+                        <button type="button" class="icon-only" disabled="@(!_formattingState.CanInsertImage)" title='@GetTooltip("Insert image from URL.")' aria-label="Image URL" @onclick="OnInsertImageFromUrlRequested"><span class="toolbar-icon" aria-hidden="true">🌐</span></button>
+                        <button type="button" class="icon-only" disabled="@(!_formattingState.CanRemoveImage)" title='@GetTooltip("Remove selected image.")' aria-label="Remove image" @onclick="OnRemoveImageRequested"><span class="toolbar-icon" aria-hidden="true">🗑</span></button>
                     </div>
                     <div class="editor-toolbar-group" aria-label="Zoom">
-                        <button type="button" title='@GetTooltip("Decrease text size.")' @onclick="OnZoomOutRequested">A-</button>
+                        <button type="button" class="icon-only" title='@GetTooltip("Decrease text size.")' aria-label="Zoom out" @onclick="OnZoomOutRequested"><span class="toolbar-icon" aria-hidden="true">−</span></button>
                         <span class="editor-zoom-label">@GetZoomLabel()</span>
-                        <button type="button" title='@GetTooltip("Increase text size.")' @onclick="OnZoomInRequested">A+</button>
+                        <button type="button" class="icon-only" title='@GetTooltip("Increase text size.")' aria-label="Zoom in" @onclick="OnZoomInRequested"><span class="toolbar-icon" aria-hidden="true">+</span></button>
                     </div>
                     <div class="editor-toolbar-group editor-toolbar-overflow" aria-label="More">
-                        <button type="button" title='@GetTooltip("More formatting options.")' @onclick="ToggleToolbarOverflow">...</button>
+                        <button type="button" class="icon-only" title='@GetTooltip("More formatting options.")' aria-label="More formatting options" @onclick="ToggleToolbarOverflow"><span class="toolbar-icon" aria-hidden="true">⋯</span></button>
                         @if (_isToolbarOverflowOpen)
                         {
                             <div class="editor-toolbar-overflow-panel">
-                                <button type="button" class="@GetActiveClass(_formattingState.IsStrike)" disabled="@(!_formattingState.CanStrike)" @onclick="OnStrikeRequested">Strike</button>
-                                <button type="button" class="@GetActiveClass(_formattingState.IsCode)" disabled="@(!_formattingState.CanCode)" @onclick="OnCodeRequested">Code</button>
-                                <button type="button" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnHeadingRequested(3)">Heading 3</button>
-                                <button type="button" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnHeadingRequested(4)">Heading 4</button>
-                                <button type="button" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnHeadingRequested(5)">Heading 5</button>
-                                <button type="button" disabled="@(!_formattingState.CanApplyHeading)" @onclick="() => OnHeadingRequested(6)">Heading 6</button>
-                                <button type="button" disabled="@(!_formattingState.CanHorizontalRule)" @onclick="OnHorizontalRuleRequested">Horizontal rule</button>
-                                <button type="button" class='@GetActiveClass(_formattingState.TextAlign == "left")' @onclick='@(() => OnAlignRequested("left"))'>Align left</button>
-                                <button type="button" class='@GetActiveClass(_formattingState.TextAlign == "center")' @onclick='@(() => OnAlignRequested("center"))'>Align center</button>
-                                <button type="button" class='@GetActiveClass(_formattingState.TextAlign == "right")' @onclick='@(() => OnAlignRequested("right"))'>Align right</button>
-                                <button type="button" @onclick="OnIndentDecreaseRequested">Indent -</button>
-                                <button type="button" @onclick="OnIndentIncreaseRequested">Indent +</button>
-                                <button type="button" disabled="@(!_formattingState.CanAddTableRowBefore)" @onclick="OnAddTableRowBeforeRequested">Row above</button>
-                                <button type="button" disabled="@(!_formattingState.CanAddTableRowAfter)" @onclick="OnAddTableRowAfterRequested">Row below</button>
-                                <button type="button" disabled="@(!_formattingState.CanDeleteTableRow)" @onclick="OnDeleteTableRowRequested">Delete row</button>
-                                <button type="button" disabled="@(!_formattingState.CanAddTableColumnBefore)" @onclick="OnAddTableColumnBeforeRequested">Col left</button>
-                                <button type="button" disabled="@(!_formattingState.CanAddTableColumnAfter)" @onclick="OnAddTableColumnAfterRequested">Col right</button>
-                                <button type="button" disabled="@(!_formattingState.CanDeleteTableColumn)" @onclick="OnDeleteTableColumnRequested">Delete col</button>
-                                <button type="button" disabled="@(!_formattingState.CanToggleTableHeaderColumn)" @onclick="OnToggleTableHeaderColumnRequested">Header col</button>
-                                <button type="button" disabled="@(!_formattingState.CanMergeTableCells)" @onclick="OnMergeTableCellsRequested">Merge cells</button>
-                                <button type="button" disabled="@(!_formattingState.CanSplitTableCell)" @onclick="OnSplitTableCellRequested">Split cell</button>
+                                <button type="button" class='@($"{GetActiveClass(_formattingState.IsStrike)} icon-only")' disabled="@(!_formattingState.CanStrike)" title='@GetTooltip("Strikethrough text.")' aria-label="Strike" @onclick="OnStrikeRequested"><span class="toolbar-icon" aria-hidden="true">S</span></button>
+                                <button type="button" class='@($"{GetActiveClass(_formattingState.IsCode)} icon-only")' disabled="@(!_formattingState.CanCode)" title='@GetTooltip("Inline code.")' aria-label="Code" @onclick="OnCodeRequested"><span class="toolbar-icon" aria-hidden="true">&lt;/&gt;</span></button>
+                                <button type="button" class="icon-only" disabled="@(!_formattingState.CanApplyHeading)" title='@GetTooltip("Heading 3.")' aria-label="Heading 3" @onclick="() => OnHeadingRequested(3)"><span class="toolbar-icon" aria-hidden="true">H3</span></button>
+                                <button type="button" class="icon-only" disabled="@(!_formattingState.CanApplyHeading)" title='@GetTooltip("Heading 4.")' aria-label="Heading 4" @onclick="() => OnHeadingRequested(4)"><span class="toolbar-icon" aria-hidden="true">H4</span></button>
+                                <button type="button" class="icon-only" disabled="@(!_formattingState.CanApplyHeading)" title='@GetTooltip("Heading 5.")' aria-label="Heading 5" @onclick="() => OnHeadingRequested(5)"><span class="toolbar-icon" aria-hidden="true">H5</span></button>
+                                <button type="button" class="icon-only" disabled="@(!_formattingState.CanApplyHeading)" title='@GetTooltip("Heading 6.")' aria-label="Heading 6" @onclick="() => OnHeadingRequested(6)"><span class="toolbar-icon" aria-hidden="true">H6</span></button>
+                                <button type="button" class="icon-only" disabled="@(!_formattingState.CanHorizontalRule)" title='@GetTooltip("Horizontal rule.")' aria-label="Horizontal rule" @onclick="OnHorizontalRuleRequested"><span class="toolbar-icon" aria-hidden="true">―</span></button>
+                                <button type="button" class='@($"{GetActiveClass(_formattingState.TextAlign == "left")} icon-only")' title='@GetTooltip("Align left.")' aria-label="Align left" @onclick='@(() => OnAlignRequested("left"))'><span class="toolbar-icon" aria-hidden="true">⇤</span></button>
+                                <button type="button" class='@($"{GetActiveClass(_formattingState.TextAlign == "center")} icon-only")' title='@GetTooltip("Align center.")' aria-label="Align center" @onclick='@(() => OnAlignRequested("center"))'><span class="toolbar-icon" aria-hidden="true">≡</span></button>
+                                <button type="button" class='@($"{GetActiveClass(_formattingState.TextAlign == "right")} icon-only")' title='@GetTooltip("Align right.")' aria-label="Align right" @onclick='@(() => OnAlignRequested("right"))'><span class="toolbar-icon" aria-hidden="true">⇥</span></button>
+                                <button type="button" class="icon-only" title='@GetTooltip("Indent decrease.")' aria-label="Indent -" @onclick="OnIndentDecreaseRequested"><span class="toolbar-icon" aria-hidden="true">⟵</span></button>
+                                <button type="button" class="icon-only" title='@GetTooltip("Indent increase.")' aria-label="Indent +" @onclick="OnIndentIncreaseRequested"><span class="toolbar-icon" aria-hidden="true">⟶</span></button>
+                                <button type="button" class="icon-only" disabled="@(!_formattingState.CanAddTableRowBefore)" title='@GetTooltip("Row above.")' aria-label="Row above" @onclick="OnAddTableRowBeforeRequested"><span class="toolbar-icon" aria-hidden="true">↥</span></button>
+                                <button type="button" class="icon-only" disabled="@(!_formattingState.CanAddTableRowAfter)" title='@GetTooltip("Row below.")' aria-label="Row below" @onclick="OnAddTableRowAfterRequested"><span class="toolbar-icon" aria-hidden="true">↧</span></button>
+                                <button type="button" class="icon-only" disabled="@(!_formattingState.CanDeleteTableRow)" title='@GetTooltip("Delete row.")' aria-label="Delete row" @onclick="OnDeleteTableRowRequested"><span class="toolbar-icon" aria-hidden="true">⊟</span></button>
+                                <button type="button" class="icon-only" disabled="@(!_formattingState.CanAddTableColumnBefore)" title='@GetTooltip("Col left.")' aria-label="Col left" @onclick="OnAddTableColumnBeforeRequested"><span class="toolbar-icon" aria-hidden="true">↤</span></button>
+                                <button type="button" class="icon-only" disabled="@(!_formattingState.CanAddTableColumnAfter)" title='@GetTooltip("Col right.")' aria-label="Col right" @onclick="OnAddTableColumnAfterRequested"><span class="toolbar-icon" aria-hidden="true">↦</span></button>
+                                <button type="button" class="icon-only" disabled="@(!_formattingState.CanDeleteTableColumn)" title='@GetTooltip("Delete col.")' aria-label="Delete col" @onclick="OnDeleteTableColumnRequested"><span class="toolbar-icon" aria-hidden="true">⊟</span></button>
+                                <button type="button" class="icon-only" disabled="@(!_formattingState.CanToggleTableHeaderColumn)" title='@GetTooltip("Header col.")' aria-label="Header col" @onclick="OnToggleTableHeaderColumnRequested"><span class="toolbar-icon" aria-hidden="true">☷</span></button>
+                                <button type="button" class="icon-only" disabled="@(!_formattingState.CanMergeTableCells)" title='@GetTooltip("Merge cells.")' aria-label="Merge cells" @onclick="OnMergeTableCellsRequested"><span class="toolbar-icon" aria-hidden="true">⊞</span></button>
+                                <button type="button" class="icon-only" disabled="@(!_formattingState.CanSplitTableCell)" title='@GetTooltip("Split cell.")' aria-label="Split cell" @onclick="OnSplitTableCellRequested"><span class="toolbar-icon" aria-hidden="true">⊠</span></button>
                             </div>
                         }
                     </div>
@@ -137,8 +138,8 @@ else
                     <div class="editor-image-error">@_imageUploadError</div>
                 }
                 <div class="editor-actions">
-                    <button type="button" title='@GetTooltip("Undo last change.")' @onclick="OnUndoRequested">Undo</button>
-                    <button type="button" title='@GetTooltip("Redo last change.")' @onclick="OnRedoRequested">Redo</button>
+                    <button type="button" class="icon-only" title='@GetTooltip("Undo last change.")' aria-label="Undo" @onclick="OnUndoRequested"><span class="toolbar-icon" aria-hidden="true">↶</span></button>
+                    <button type="button" class="icon-only" title='@GetTooltip("Redo last change.")' aria-label="Redo" @onclick="OnRedoRequested"><span class="toolbar-icon" aria-hidden="true">↷</span></button>
                     <button type="button" title='@GetTooltip("User feedback: Report a bug or request an enhancement.")' @onclick="OpenFeedbackDialog">User Feedback</button>
                     @if (CanShowPromptLibrary && PinnedPromptPresets.Count > 0)
                     {
@@ -2555,6 +2556,25 @@ else
             <div class="modal-footer">
                 <button type="button" class="btn btn-primary" @onclick="NavigateToUpgradeFromQuotaDialog">Upgrade</button>
                 <button type="button" class="btn btn-ghost" @onclick="CloseAiQuotaDialog">Close</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_isEntitlementUpgradeDialogOpen)
+{
+    <div class="modal-overlay modal-overlay-dimmed" role="presentation" @onclick="CloseEntitlementUpgradeDialog">
+        <div class="modal-backdrop"></div>
+        <div class="modal modal-panel" role="dialog" aria-modal="true" aria-labelledby="entitlementUpgradeDialogTitle" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <div class="modal-title" id="entitlementUpgradeDialogTitle">Upgrade to enable Bible refresh</div>
+            </div>
+            <div class="modal-body">
+                <p>@_entitlementUserMessage</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-primary" @onclick="NavigateToUpgradeFromEntitlementDialog">Upgrade</button>
+                <button type="button" class="btn btn-ghost" @onclick="CloseEntitlementUpgradeDialog">Cancel</button>
             </div>
         </div>
     </div>

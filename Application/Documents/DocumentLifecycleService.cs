@@ -25,7 +25,7 @@ namespace WriterApp.Application.Documents
         public async Task<DocumentRecord?> ArchiveAsync(Guid documentId, string ownerUserId, CancellationToken ct)
         {
             DocumentRecord? document = await FindOwnedDocumentAsync(documentId, ownerUserId, ct);
-            if (document is null || document.DeletedAt is not null)
+            if (document is null || document.DeletedAtUtc is not null)
             {
                 return null;
             }
@@ -44,7 +44,7 @@ namespace WriterApp.Application.Documents
         public async Task<DocumentRecord?> UnarchiveAsync(Guid documentId, string ownerUserId, CancellationToken ct)
         {
             DocumentRecord? document = await FindOwnedDocumentAsync(documentId, ownerUserId, ct);
-            if (document is null || document.DeletedAt is not null)
+            if (document is null || document.DeletedAtUtc is not null)
             {
                 return null;
             }
@@ -68,9 +68,9 @@ namespace WriterApp.Application.Documents
                 return null;
             }
 
-            if (document.DeletedAt is null)
+            if (document.DeletedAtUtc is null)
             {
-                document.DeletedAt = DateTimeOffset.UtcNow;
+                document.DeletedAtUtc = DateTime.UtcNow;
                 document.IsArchived = false;
                 document.ArchivedAt = null;
                 document.UpdatedAt = DateTimeOffset.UtcNow;
@@ -88,9 +88,9 @@ namespace WriterApp.Application.Documents
                 return null;
             }
 
-            if (document.DeletedAt is not null || document.IsArchived)
+            if (document.DeletedAtUtc is not null || document.IsArchived)
             {
-                document.DeletedAt = null;
+                document.DeletedAtUtc = null;
                 document.IsArchived = false;
                 document.ArchivedAt = null;
                 document.UpdatedAt = DateTimeOffset.UtcNow;
@@ -147,10 +147,10 @@ namespace WriterApp.Application.Documents
 
         public async Task<int> CleanupExpiredTrashAsync(TimeSpan retention, CancellationToken ct)
         {
-            DateTimeOffset cutoff = DateTimeOffset.UtcNow.Subtract(retention);
+            DateTime cutoffUtc = DateTime.UtcNow.Subtract(retention);
             List<Guid> expiredIds = await _dbContext.Documents
                 .AsNoTracking()
-                .Where(document => document.DeletedAt != null && document.DeletedAt < cutoff)
+                .Where(document => document.DeletedAtUtc != null && document.DeletedAtUtc < cutoffUtc)
                 .Select(document => document.Id)
                 .ToListAsync(ct);
 

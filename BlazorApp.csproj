@@ -23,12 +23,16 @@
 
   <!-- Exclude client/shared project sources from server compilation -->
   <ItemGroup>
+    <Compile Remove="WriterApp\**\*.cs" />
     <Compile Remove="WriterApp.Client\**\*.cs" />
     <Compile Remove="WriterApp.Shared\**\*.cs" />
+    <Content Remove="WriterApp\**" />
     <Content Remove="WriterApp.Client\**" />
     <Content Remove="WriterApp.Shared\**" />
+    <None Remove="WriterApp\**" />
     <None Remove="WriterApp.Client\**" />
     <None Remove="WriterApp.Shared\**" />
+    <RazorComponent Remove="WriterApp\**\*.razor" />
     <RazorComponent Remove="WriterApp.Client\**\*.razor" />
     <RazorComponent Remove="WriterApp.Shared\**\*.razor" />
   </ItemGroup>

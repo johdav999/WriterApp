@@ -71,6 +71,7 @@
 
 ## Stripe configuration contract
 - The server reads Stripe config from one logical options source: `StripeOptions`.
+- Stable webhook endpoint path: `POST /api/stripe/webhook`.
 - Preferred Azure App Settings names (recommended):
   - `Stripe__Mode` (`test` or `live`)
   - `Stripe__SecretKey`
@@ -89,6 +90,9 @@
   - if `Stripe__SecretKey` is missing, Stripe is disabled and startup continues.
 - Non-development:
   - missing required Stripe values causes startup failure with clear error messages.
+- Safety rails:
+  - `Stripe__Mode=live` rejects test secret keys (`sk_test_...` / `rk_test_...`).
+  - `Stripe__Mode=test` rejects live secret keys (`sk_live_...` / `rk_live_...`).
 - When Stripe is enabled, required values are:
   - `Mode` (`test|live`)
   - `SecretKey`
@@ -119,3 +123,42 @@
 
 Security note:
 - Do not commit Stripe keys or webhook secrets to source control.
+
+### Billing status endpoint
+- `GET /api/billing/status` returns Stripe configuration status (boolean-only signal for keys/prices):
+  - `mode`
+  - `enabled`
+  - `keysPresent`
+  - `standardPriceConfigured`
+  - `proPriceConfigured`
+
+## Stripe CLI local webhook workflow
+Use this to test billing webhook handling locally without deploying.
+
+### Prerequisites
+1. Install Stripe CLI and sign in to your Stripe account.
+2. Run WriterApp locally (`http` or `https` launch profile).
+3. Set local Stripe env vars (`Stripe__Mode=test`, test secret key, test price ids).
+
+### Commands
+1. Log in:
+   - `stripe login`
+2. Start webhook forwarding (example uses local HTTP profile to avoid TLS cert issues):
+   - `stripe listen --forward-to http://localhost:5387/api/stripe/webhook`
+   - if you run HTTPS locally instead: `stripe listen --forward-to https://localhost:7384/api/stripe/webhook`
+3. Copy the signing secret printed by `stripe listen` (`whsec_...`) and set it as:
+   - `Stripe__WebhookSecret`
+4. Trigger a test event:
+   - `stripe trigger checkout.session.completed`
+
+### Local user flow checklist
+1. Start WriterApp in `Development` and confirm Stripe is enabled in logs.
+2. Open the app, sign in with local dev auth, and go to billing page.
+3. Click `Upgrade to Standard` or `Upgrade to Pro` and verify redirect to Stripe Checkout.
+4. Complete checkout with Stripe test card.
+5. Confirm webhook request arrives in the Stripe CLI terminal and returns `200`.
+6. Verify entitlement changes in app (`/api/auth/me` should reflect new plan/status).
+7. Optionally trigger more events for regression checks:
+   - `stripe trigger customer.subscription.updated`
+   - `stripe trigger invoice.paid`
+   - `stripe trigger invoice.payment_failed`

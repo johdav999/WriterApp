@@ -77,7 +77,7 @@ namespace WriterApp.AI.Core
             bool aiEnabled = await _entitlementService.HasAsync(userId, "ai.enabled");
             if (!aiEnabled)
             {
-                return new AiUsageDecision(false, userId, "ai.disabled", "AI is not enabled for your plan.");
+                return new AiUsageDecision(false, userId, "plan_upgrade_required", "AI is not enabled for your plan.");
             }
 
             if (string.Equals(actionId, GenerateCoverImageAction.ActionIdValue, StringComparison.Ordinal))
@@ -85,7 +85,7 @@ namespace WriterApp.AI.Core
                 bool imagesEnabled = await _entitlementService.HasAsync(userId, "ai.images.cover");
                 if (!imagesEnabled)
                 {
-                    return new AiUsageDecision(false, userId, "ai.images.cover_disabled", "Cover image generation is not enabled for your plan.");
+                    return new AiUsageDecision(false, userId, "plan_upgrade_required", "Cover image generation is not enabled for your plan.");
                 }
             }
 

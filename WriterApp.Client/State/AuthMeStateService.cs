@@ -25,8 +25,9 @@ namespace WriterApp.Client.State
         public int AiMonthlyTokenBudget { get; private set; }
         public int AiTokensUsedThisPeriod { get; private set; }
         public DateTimeOffset PeriodStartUtc { get; private set; }
+        public DateTimeOffset EntitlementUpdatedUtc { get; private set; }
 
-        public async Task RefreshAsync(bool force = false)
+        public async Task RefreshAsync(bool force = false, DateTimeOffset? serverEntitlementUpdatedUtc = null)
         {
             if (_refreshInProgress)
             {
@@ -35,29 +36,33 @@ namespace WriterApp.Client.State
 
             if (!force && IsLoaded)
             {
-                return;
+                if (!serverEntitlementUpdatedUtc.HasValue || serverEntitlementUpdatedUtc.Value <= EntitlementUpdatedUtc)
+                {
+                    return;
+                }
             }
 
             _refreshInProgress = true;
             try
             {
-                using HttpResponseMessage response = await _http.GetAsync("/api/auth/me");
+                string endpoint = force ? "/api/auth/me?force=1" : "/api/auth/me";
+                using HttpResponseMessage response = await _http.GetAsync(endpoint);
                 if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
                 {
-                    Apply(false, "Free", 0, 0, DateTimeOffset.MinValue);
+                    Apply(false, "Free", 0, 0, DateTimeOffset.MinValue, DateTimeOffset.MinValue);
                     return;
                 }
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    Apply(false, "Free", 0, 0, DateTimeOffset.MinValue);
+                    Apply(false, "Free", 0, 0, DateTimeOffset.MinValue, DateTimeOffset.MinValue);
                     return;
                 }
 
                 AuthMeDto? auth = await response.Content.ReadFromJsonAsync<AuthMeDto>();
                 if (auth is null)
                 {
-                    Apply(false, "Free", 0, 0, DateTimeOffset.MinValue);
+                    Apply(false, "Free", 0, 0, DateTimeOffset.MinValue, DateTimeOffset.MinValue);
                     return;
                 }
 
@@ -66,7 +71,8 @@ namespace WriterApp.Client.State
                     NormalizePlanKey(auth.PlanKey),
                     Math.Max(0, auth.AiMonthlyTokenBudget),
                     Math.Max(0, auth.AiTokensUsedThisPeriod),
-                    auth.PeriodStartUtc);
+                    auth.PeriodStartUtc,
+                    auth.EntitlementUpdatedUtc);
             }
             catch
             {
@@ -77,14 +83,15 @@ namespace WriterApp.Client.State
             }
         }
 
-        private void Apply(bool isAuthenticated, string planKey, int budget, int used, DateTimeOffset periodStartUtc)
+        private void Apply(bool isAuthenticated, string planKey, int budget, int used, DateTimeOffset periodStartUtc, DateTimeOffset entitlementUpdatedUtc)
         {
             bool changed = IsLoaded != true
                 || IsAuthenticated != isAuthenticated
                 || !string.Equals(PlanKey, planKey, StringComparison.Ordinal)
                 || AiMonthlyTokenBudget != budget
                 || AiTokensUsedThisPeriod != used
-                || PeriodStartUtc != periodStartUtc;
+                || PeriodStartUtc != periodStartUtc
+                || EntitlementUpdatedUtc != entitlementUpdatedUtc;
 
             IsLoaded = true;
             IsAuthenticated = isAuthenticated;
@@ -92,6 +99,7 @@ namespace WriterApp.Client.State
             AiMonthlyTokenBudget = budget;
             AiTokensUsedThisPeriod = used;
             PeriodStartUtc = periodStartUtc;
+            EntitlementUpdatedUtc = entitlementUpdatedUtc;
 
             if (changed)
             {

@@ -1075,6 +1075,11 @@
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
+.editor-toolbar button.icon-only {
+    min-width: var(--control-height);
+    padding: 0;
+}
+
 .editor-toolbar button.is-active {
     background: var(--accent-soft);
     border-color: #cfd9f5;
@@ -1115,6 +1120,20 @@
     border-radius: var(--radius-sm);
     background: var(--surface);
     cursor: pointer;
+}
+
+.editor-actions button.icon-only {
+    min-width: var(--control-height);
+    padding: 0;
+}
+
+.toolbar-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    font-size: 1.32rem;
+    font-weight: 600;
 }
 
 .editor-actions button:hover:not(:disabled) {

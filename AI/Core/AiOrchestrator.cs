@@ -17,16 +17,16 @@ namespace WriterApp.AI.Core
     {
         private sealed class PassThroughAiQuotaService : IAiQuotaService
         {
-            public Task<AiQuotaDecision> CheckAsync(string userId, CancellationToken ct)
+            public Task<AiQuotaDecision> EnsureAiAllowedAsync(string userId, int estimatedTokens, CancellationToken ct)
             {
                 AiQuotaSnapshot snapshot = new("Free", int.MaxValue, 0, DateTimeOffset.UtcNow);
-                return Task.FromResult(new AiQuotaDecision(true, null, null, snapshot));
+                return Task.FromResult(new AiQuotaDecision(true, null, null, snapshot, null));
             }
 
-            public Task<AiQuotaChargeResult> ChargeAsync(string userId, AiRequest request, AiResult result, CancellationToken ct)
+            public Task<AiQuotaChargeResult> ChargeActualUsageAsync(string userId, AiRequest request, AiResult result, CancellationToken ct)
             {
                 AiQuotaSnapshot snapshot = new("Free", int.MaxValue, 0, DateTimeOffset.UtcNow);
-                return Task.FromResult(new AiQuotaChargeResult(true, 0, snapshot, null, null));
+                return Task.FromResult(new AiQuotaChargeResult(true, 0, snapshot, null, null, null));
             }
         }
 
@@ -209,7 +209,8 @@ namespace WriterApp.AI.Core
                 && !string.IsNullOrWhiteSpace(decision.UserId);
             if (billable)
             {
-                AiQuotaDecision quotaDecision = await _quotaService.CheckAsync(decision.UserId, ct);
+                int estimatedTokens = EstimateTokens(request);
+                AiQuotaDecision quotaDecision = await _quotaService.EnsureAiAllowedAsync(decision.UserId, estimatedTokens, ct);
                 if (!quotaDecision.Allowed)
                 {
                     return AiExecutionResult.Blocked(
@@ -223,7 +224,7 @@ namespace WriterApp.AI.Core
 
             if (billable && outcome.Proposal is not null)
             {
-                AiQuotaChargeResult chargeResult = await _quotaService.ChargeAsync(decision.UserId, request, outcome.Result, ct);
+                AiQuotaChargeResult chargeResult = await _quotaService.ChargeActualUsageAsync(decision.UserId, request, outcome.Result, ct);
                 if (!chargeResult.Applied)
                 {
                     return AiExecutionResult.Blocked(
@@ -287,6 +288,28 @@ namespace WriterApp.AI.Core
                 ct);
 
             return new AiStreamingSession(events, completionSource.Task);
+        }
+
+        private static int EstimateTokens(AiRequest request)
+        {
+            int requestChars = 0;
+            requestChars += request.Context.OriginalText?.Length ?? 0;
+            requestChars += request.Context.SelectionText?.Length ?? 0;
+            requestChars += request.Context.SurroundingText?.Length ?? 0;
+            requestChars += request.Context.ContainingParagraph?.Length ?? 0;
+            requestChars += request.Context.SurroundingBefore?.Length ?? 0;
+            requestChars += request.Context.SurroundingAfter?.Length ?? 0;
+
+            if (request.Inputs is not null)
+            {
+                foreach (KeyValuePair<string, object> pair in request.Inputs)
+                {
+                    requestChars += pair.Value?.ToString()?.Length ?? 0;
+                }
+            }
+
+            int estimated = (requestChars + 3) / 4;
+            return Math.Max(1, estimated);
         }
 
         private async IAsyncEnumerable<AiStreamEvent> StreamProposalAsync(
