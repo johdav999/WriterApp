@@ -1,0 +1,31 @@
+.editor-status {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.85rem;
+    color: #6b7280;
+    padding: 10px 2px 0;
+    border-top: 1px solid #e5e7eb;
+    margin-top: 12px;
+    gap: 12px;
+    background: var(--surface);
+    position: relative;
+    z-index: 5;
+}
+
+.saving-indicator {
+    color: #d97706;
+}
+
+.dirty-indicator {
+    color: #b91c1c;
+}
+
+.clean-indicator {
+    color: #059669;
+}
+
+.page-editor-empty {
+    color: #6b7280;
+    font-size: 0.9rem;
+    padding: 12px;
+}

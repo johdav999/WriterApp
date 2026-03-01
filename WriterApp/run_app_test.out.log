@@ -1,0 +1,142 @@
+Using launch settings from Properties\launchSettings.json...
+info: Startup[0]
+      Runtime probe: OS=Microsoft Windows 10.0.26100 Framework=.NET 9.0.1 ProcessArch=X64 OSArch=X64
+info: Startup[0]
+      Runtime probe: BaseDirectory=C:\Users\Johan\source\repos\WriterApp\bin\Debug\net9.0\
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-arm\native\libe_sqlite3.so (827568 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-arm64\native\libe_sqlite3.so (1285800 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-armel\native\libe_sqlite3.so (1162812 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-mips64\native\libe_sqlite3.so (1500256 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-musl-arm\native\libe_sqlite3.so (1126664 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-musl-arm64\native\libe_sqlite3.so (1333800 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-musl-x64\native\libe_sqlite3.so (1228752 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-ppc64le\native\libe_sqlite3.so (1648888 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-s390x\native\libe_sqlite3.so (1397832 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-x64\native\libe_sqlite3.so (1249880 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-x86\native\libe_sqlite3.so (1309268 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\maccatalyst-arm64\native\libe_sqlite3.dylib (1091295 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\maccatalyst-x64\native\libe_sqlite3.dylib (1117336 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\osx-arm64\native\libe_sqlite3.dylib (1091359 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\osx-x64\native\libe_sqlite3.dylib (1116192 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\win-arm\native\e_sqlite3.dll (1192960 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\win-arm64\native\e_sqlite3.dll (1485824 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\win-x64\native\e_sqlite3.dll (1691648 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\win-x86\native\e_sqlite3.dll (1308672 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\browser-wasm\nativeassets\net8.0\e_sqlite3.a (1122394 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-arm\native\libe_sqlite3.so (827568 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-arm64\native\libe_sqlite3.so (1285800 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-armel\native\libe_sqlite3.so (1162812 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-mips64\native\libe_sqlite3.so (1500256 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-musl-arm\native\libe_sqlite3.so (1126664 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-musl-arm64\native\libe_sqlite3.so (1333800 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-musl-x64\native\libe_sqlite3.so (1228752 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-ppc64le\native\libe_sqlite3.so (1648888 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-s390x\native\libe_sqlite3.so (1397832 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-x64\native\libe_sqlite3.so (1249880 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-x86\native\libe_sqlite3.so (1309268 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\maccatalyst-arm64\native\libe_sqlite3.dylib (1091295 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\maccatalyst-x64\native\libe_sqlite3.dylib (1117336 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\osx-arm64\native\libe_sqlite3.dylib (1091359 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\osx-x64\native\libe_sqlite3.dylib (1116192 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-arm\native\libe_sqlite3.so (827568 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-arm64\native\libe_sqlite3.so (1285800 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-armel\native\libe_sqlite3.so (1162812 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-mips64\native\libe_sqlite3.so (1500256 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-musl-arm\native\libe_sqlite3.so (1126664 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-musl-arm64\native\libe_sqlite3.so (1333800 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-musl-x64\native\libe_sqlite3.so (1228752 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-ppc64le\native\libe_sqlite3.so (1648888 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-s390x\native\libe_sqlite3.so (1397832 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-x64\native\libe_sqlite3.so (1249880 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\linux-x86\native\libe_sqlite3.so (1309268 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\win-arm\native\e_sqlite3.dll (1192960 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\win-arm64\native\e_sqlite3.dll (1485824 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\win-x64\native\e_sqlite3.dll (1691648 bytes)
+info: Startup[0]
+      Runtime probe: native file runtimes\win-x86\native\e_sqlite3.dll (1308672 bytes)
+info: Startup[0]
+      SQLite probe succeeded.
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (8ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT COUNT(*) FROM "sqlite_master" WHERE "name" = '__EFMigrationsHistory' AND "type" = 'table';
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT COUNT(*) FROM "sqlite_master" WHERE "name" = '__EFMigrationsHistory' AND "type" = 'table';
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (0ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      SELECT "MigrationId", "ProductVersion"
+      FROM "__EFMigrationsHistory"
+      ORDER BY "MigrationId";
+info: Microsoft.EntityFrameworkCore.Migrations[20405]
+      No migrations were applied. The database is already up to date.
+info: Startup[0]
+      Database migrations applied (development).
+info: Startup[0]
+      SQLite table check: PageVersions exists.
+warn: Startup[0]
+      Startup trash cleanup failed.
+      System.InvalidOperationException: The LINQ expression 'DbSet<DocumentRecord>()
+          .Where(d => d.DeletedAt != null && d.DeletedAt < __cutoff_0)' could not be translated. Either rewrite the query in a form that can be translated, or switch to client evaluation explicitly by inserting a call to 'AsEnumerable', 'AsAsyncEnumerable', 'ToList', or 'ToListAsync'. See https://go.microsoft.com/fwlink/?linkid=2101038 for more information.
+         at Microsoft.EntityFrameworkCore.Query.QueryableMethodTranslatingExpressionVisitor.Translate(Expression expression)
+         at Microsoft.EntityFrameworkCore.Query.RelationalQueryableMethodTranslatingExpressionVisitor.Translate(Expression expression)
+         at Microsoft.EntityFrameworkCore.Query.QueryCompilationContext.CreateQueryExecutor[TResult](Expression query)
+         at Microsoft.EntityFrameworkCore.Storage.Database.CompileQuery[TResult](Expression query, Boolean async)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.CompileQueryCore[TResult](IDatabase database, Expression query, IModel model, Boolean async)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.<>c__DisplayClass12_0`1.<ExecuteAsync>b__0()
+         at Microsoft.EntityFrameworkCore.Query.Internal.CompiledQueryCache.GetOrAddQuery[TResult](Object cacheKey, Func`1 compiler)
+         at Microsoft.EntityFrameworkCore.Query.Internal.QueryCompiler.ExecuteAsync[TResult](Expression query, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Query.Internal.EntityQueryProvider.ExecuteAsync[TResult](Expression expression, CancellationToken cancellationToken)
+         at Microsoft.EntityFrameworkCore.Query.Internal.EntityQueryable`1.GetAsyncEnumerator(CancellationToken cancellationToken)
+         at System.Runtime.CompilerServices.ConfiguredCancelableAsyncEnumerable`1.GetAsyncEnumerator()
+         at Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync[TSource](IQueryable`1 source, CancellationToken cancellationToken)
+         at WriterApp.Application.Documents.DocumentLifecycleService.CleanupExpiredTrashAsync(TimeSpan retention, CancellationToken ct) in C:\Users\Johan\source\repos\WriterApp\Application\Documents\DocumentLifecycleService.cs:line 151
+         at Program.<Main>$(String[] args) in C:\Users\Johan\source\repos\WriterApp\Program.cs:line 347
