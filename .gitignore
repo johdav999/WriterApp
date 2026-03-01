@@ -29,3 +29,5 @@ appsettings.Development.json
 
 .dll
 
+
+.fix-stall.bat.txt
