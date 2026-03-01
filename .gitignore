@@ -4,6 +4,19 @@ obj/
 *.user
 *.suo
 
+# build/publish output
+publish/
+**/publish/
+.azure-publish/
+**/.azure-publish/
+
+# dotnet
+bin/
+obj/
+**/bin/
+**/obj/
+
+
 # VS Code
 .vscode/
 
