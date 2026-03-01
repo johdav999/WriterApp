@@ -50,3 +50,9 @@ appsettings.Development.json
 publish/
 **/bin/
 **/obj/
+
+# dotnet publish output (deployment artifacts)
+publish/
+**/publish/
+**/.azure-publish/
+*.PublishSettings
