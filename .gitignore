@@ -31,3 +31,9 @@ appsettings.Development.json
 
 
 .fix-stall.bat.txt
+
+# build / publish outputs (do not commit)
+.azure-publish/
+publish/
+**/bin/
+**/obj/
