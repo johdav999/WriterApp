@@ -56,3 +56,11 @@ publish/
 **/publish/
 **/.azure-publish/
 *.PublishSettings
+
+
+# publish artifacts
+publish.bat
+publish.zip
+publish/
+**/publish/
+**/.azure-publish/

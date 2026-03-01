@@ -1,0 +1,54 @@
+<div class="page-list-header">
+    <button type="button"
+            class="page-toggle"
+            aria-expanded="@(!IsCollapsed)"
+            @onclick="() => OnToggleCollapse.InvokeAsync(SectionId)">
+        <span>Pages</span>
+    </button>
+</div>
+
+@if (IsCollapsed)
+{
+    <div class="page-list-collapsed">Pages hidden</div>
+}
+else if (PageCount <= 0)
+{
+    <div class="page-list-empty">No pages</div>
+}
+else
+{
+    <ul class="page-list">
+        @for (int index = 0; index < PageCount; index++)
+        {
+            int pageIndex = index + 1;
+            <li class="page-list-item">
+                <button type="button"
+                        class="page-nav-item @(pageIndex == ActivePageIndex ? "is-active" : string.Empty)"
+                        @onclick="() => OnPageSelected.InvokeAsync(pageIndex)">
+                    Page @pageIndex
+                </button>
+            </li>
+        }
+    </ul>
+}
+
+@code {
+    [Parameter]
+
+    public int PageCount { get; set; }
+
+    [Parameter]
+    public Guid SectionId { get; set; }
+
+    [Parameter]
+    public bool IsCollapsed { get; set; }
+
+    [Parameter]
+    public int ActivePageIndex { get; set; } = 1;
+
+    [Parameter]
+    public EventCallback<int> OnPageSelected { get; set; }
+
+    [Parameter]
+    public EventCallback<Guid> OnToggleCollapse { get; set; }
+}
