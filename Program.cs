@@ -209,6 +209,7 @@ builder.Services.AddScoped<IUserEntitlementStore, UserEntitlementStore>();
 builder.Services.AddScoped<IEntitlementService, EntitlementService>();
 builder.Services.AddScoped<IUserIdResolver, UserIdResolver>();
 builder.Services.AddScoped<IPlanAssignmentService, PlanAssignmentService>();
+builder.Services.AddScoped<AdminPlanOverrideService>();
 builder.Services.AddScoped<IUserLookupService, UserLookupService>();
 builder.Services.AddScoped<IUsageMeter, UsageMeter>();
 builder.Services.AddSingleton<IClock, WriterApp.Application.Usage.SystemClock>();
@@ -1014,108 +1015,97 @@ app.MapGet("/api/ai/status", async (
 })
 .RequireAuthorization();
 
-// Admin API: use the admin page to call this endpoint; manual calls require the X-MS-CLIENT-PRINCIPAL header.
-app.MapPost("/api/admin/users/{userId}/plan/{planKey}", async (
+app.MapGet("/api/admin/users/{userId}/plan", async (
         HttpContext context,
         string userId,
-        string planKey,
-        IPlanAssignmentService planAssignmentService,
-        IUserEntitlementStore userEntitlementStore,
-        IEntitlementService entitlementService,
-        AppDbContext dbContext,
-        IUserIdResolver userIdResolver,
+        IConfiguration configuration,
+        AdminPlanOverrideService adminPlanOverrideService,
         ILoggerFactory loggerFactory) =>
 {
+    if (!AdminPlanOverrideAccess.IsEnabled(configuration)
+        || !AdminPlanOverrideAccess.IsAuthorized(context.User))
+    {
+        return Results.NotFound();
+    }
+
     if (string.IsNullOrWhiteSpace(userId))
     {
         return Results.BadRequest(new { message = "userId is required." });
     }
 
-    if (string.IsNullOrWhiteSpace(planKey))
+    try
     {
-        return Results.BadRequest(new { message = "planKey is required." });
+        AdminPlanOverrideResponse response = await adminPlanOverrideService.GetOverride(userId, context.RequestAborted);
+        return Results.Ok(response);
+    }
+    catch (Exception ex)
+    {
+        ILogger logger = loggerFactory.CreateLogger("AdminPlanOverride");
+        logger.LogError(ex, "Admin plan override read failed. userId={UserId}", userId);
+        return Results.BadRequest(new { message = ex.Message });
+    }
+});
+
+app.MapPost("/api/admin/users/{userId}/plan", async (
+        HttpContext context,
+        string userId,
+        AdminSetPlanOverrideRequest request,
+        IConfiguration configuration,
+        AdminPlanOverrideService adminPlanOverrideService,
+        IUserIdResolver userIdResolver,
+        ILoggerFactory loggerFactory) =>
+{
+    if (!AdminPlanOverrideAccess.IsEnabled(configuration)
+        || !AdminPlanOverrideAccess.IsAuthorized(context.User))
+    {
+        return Results.NotFound();
     }
 
-    if (!TryParseAdminPlanKey(planKey, out string normalizedPlanKey))
+    if (string.IsNullOrWhiteSpace(userId))
     {
-        return Results.BadRequest(new
-        {
-            message = "planKey must be one of: free, standard, pro, professional.",
-            code = "INVALID_PLAN_KEY",
-            received = planKey,
-            allowed = new[] { "free", "standard", "pro", "professional" }
-        });
+        return Results.BadRequest(new { message = "userId is required." });
     }
-
-    bool resetUsage = IsResetUsageRequested(context.Request.Query);
 
     ILogger logger = loggerFactory.CreateLogger("AdminPlanAssignments");
-    string assignedBy = ResolveAssignedBy(context.User, userIdResolver, logger, out string? callerName);
+    string assignedBy = ResolveAssignedBy(context.User, userIdResolver, logger, out _);
+    string? adminCallerEmail = context.User.FindFirstValue(ClaimTypes.Email)
+        ?? context.User.FindFirstValue("emails")
+        ?? context.User.FindFirstValue("preferred_username")
+        ?? context.User.Identity?.Name;
 
     try
     {
-        await planAssignmentService.AssignPlanAsync(
+        AdminPlanOverrideResponse response = await adminPlanOverrideService.SetOverride(
             userId,
-            normalizedPlanKey,
+            request.PlanKey,
             assignedBy,
-            callerName,
+            adminCallerEmail,
+            request.Reason,
             context.RequestAborted);
+        return Results.Ok(response);
     }
-    catch (PlanAssignmentException ex)
+    catch (ArgumentException ex)
     {
-        logger.LogWarning(
-            ex,
-            "Admin plan assignment failed. userId={UserId} planKey={PlanKey} assignedBy={AssignedBy} callerName={CallerName} code={Code}",
-            userId,
-            normalizedPlanKey,
-            assignedBy,
-            callerName ?? string.Empty,
-            ex.Code);
-
-        int statusCode = ex.Code == PlanAssignmentErrorCode.AssignmentExists
-            ? StatusCodes.Status409Conflict
-            : StatusCodes.Status400BadRequest;
-        return Results.Json(
-            new
-            {
-                message = ex.Message,
-                code = ex.Code.ToString()
-            },
-            statusCode: statusCode);
+        return Results.BadRequest(new
+        {
+            message = ex.Message,
+            code = "INVALID_PLAN_KEY"
+        });
     }
-
-    UserEntitlement entitlement = await userEntitlementStore.GetOrCreateAsync(userId, context.RequestAborted);
-
-    if (resetUsage)
+    catch (InvalidOperationException ex)
     {
-        DateTimeOffset now = DateTimeOffset.UtcNow;
-        entitlement.AiTokensUsedThisPeriod = 0;
-        entitlement.PeriodStartUtc = now;
-        entitlement.UpdatedUtc = now;
-        await dbContext.SaveChangesAsync(context.RequestAborted);
-        entitlementService.InvalidateForUser(userId);
+        return Results.BadRequest(new
+        {
+            message = ex.Message,
+            code = "PLAN_NOT_FOUND"
+        });
     }
-
-    logger.LogInformation(
-        "Admin entitlement assignment applied: userId={UserId} planKey={PlanKey} budget={Budget} used={Used} resetUsage={ResetUsage} assignedBy={AssignedBy} callerName={CallerName}",
-        userId,
-        entitlement.PlanKey,
-        entitlement.AiMonthlyTokenBudget,
-        entitlement.AiTokensUsedThisPeriod,
-        resetUsage,
-        assignedBy,
-        callerName ?? string.Empty);
-
-    return Results.Ok(new
+    catch (Exception ex)
     {
-        userId = entitlement.UserId,
-        planKey = entitlement.PlanKey,
-        aiMonthlyTokenBudget = entitlement.AiMonthlyTokenBudget,
-        aiTokensUsedThisPeriod = entitlement.AiTokensUsedThisPeriod,
-        periodStartUtc = entitlement.PeriodStartUtc
-    });
-})
-.RequireAuthorization("AdminOnly");
+        logger.LogError(ex, "Admin plan override failed. userId={UserId}", userId);
+        return Results.BadRequest(new { message = "Plan override request failed." });
+    }
+});
 
 app.MapPost("/api/admin/db/migrate", async (
         HttpContext context,
