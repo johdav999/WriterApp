@@ -55,3 +55,88 @@
     display: flex;
     gap: 10px;
 }
+
+.onboarding-intent-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+}
+
+.onboarding-intent-tile {
+    width: 100%;
+    border: 1px solid #d0d5dd;
+    border-radius: 12px;
+    background: linear-gradient(180deg, #ffffff 0%, #f9fafb 100%);
+    color: #101828;
+    padding: 14px 14px 12px;
+    text-align: left;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 12px;
+    align-items: start;
+    transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+}
+
+.onboarding-intent-tile:hover:not(:disabled) {
+    transform: translateY(-1px);
+    border-color: #98a2b3;
+    box-shadow: 0 6px 20px rgba(16, 24, 40, 0.08);
+}
+
+.onboarding-intent-tile:focus-visible {
+    outline: 3px solid #98a2b3;
+    outline-offset: 2px;
+}
+
+.onboarding-intent-tile.is-selected {
+    border-color: #344054;
+    background: linear-gradient(180deg, #f8fafc 0%, #eef2f6 100%);
+    box-shadow: 0 0 0 1px rgba(52, 64, 84, 0.22), 0 10px 24px rgba(16, 24, 40, 0.1);
+}
+
+.onboarding-intent-tile:disabled {
+    opacity: 0.75;
+    cursor: not-allowed;
+}
+
+.intent-icon {
+    font-size: 1.25rem;
+    line-height: 1.2;
+    margin-top: 1px;
+}
+
+.intent-content {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+}
+
+.intent-title {
+    font-weight: 700;
+    color: #0f172a;
+}
+
+.intent-subtitle {
+    font-size: 0.875rem;
+    color: #475467;
+}
+
+.intent-check {
+    width: 1.15rem;
+    height: 1.15rem;
+    border-radius: 999px;
+    border: 1px solid #98a2b3;
+    color: transparent;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    font-weight: 700;
+    margin-top: 2px;
+}
+
+.onboarding-intent-tile.is-selected .intent-check {
+    border-color: #344054;
+    background: #344054;
+    color: #ffffff;
+}

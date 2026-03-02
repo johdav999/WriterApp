@@ -27,7 +27,7 @@ else
     <div class="editor-shell @GetLayoutStateClass()" style="@GetLayoutStyle()">
         <div class="editor-workspace @GetWorkspaceClass()">
 
-            <section class="editor-main">
+            <section class="editor-main" id="onboarding-editor-scene">
                 <div class="editor-main-header">
                     <div class="editor-section-info">
                         <div class="editor-section-label">Section</div>
@@ -500,7 +500,7 @@ else
                             <span title="Estimated page count.">Page @_editorStatus.CurrentPageIndex / @_editorStatus.PageCount</span>
                             <span class="@_editorStatus.SaveStatusClass" title="Your work is saved automatically.">@_editorStatus.SaveStatusLabel</span>
                             <span title="Current subscription plan.">@PlanStatusLabel</span>
-                            <span title="Current monthly AI token usage.">@AiUsageStatusLabel</span>
+                            <span id="onboarding-token-budget" title="Current monthly AI token usage.">@AiUsageStatusLabel</span>
                             @if (ShowPlanUpgrade)
                             {
                                 <button type="button" class="panel-toggle" @onclick="NavigateToPlanUpgrade">@GetPlanUpgradeLabel()</button>
@@ -547,6 +547,7 @@ else
                                         {
                                             <button type="button"
                                                     class="context-tab context-tab-subview context-tab-secondary @GetContextTabClass(tab)"
+                                                    id="@GetOnboardingContextTabId(tab)"
                                                     role="tab"
                                                     tabindex="@(_activeContextTab == tab ? 0 : -1)"
                                                     aria-selected="@(_activeContextTab == tab)"
@@ -1573,6 +1574,7 @@ else
 
         </div>
     </div>
+
 }
 
 @if (_isRestoreDialogOpen)

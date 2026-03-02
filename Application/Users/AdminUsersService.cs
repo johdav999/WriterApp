@@ -415,6 +415,61 @@ namespace WriterApp.Application.Users
             return response;
         }
 
+        public async Task<AdminUserDetailDto> ResetOnboardingAsync(
+            string userId,
+            string adminUserId,
+            string? adminEmail,
+            CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(userId))
+            {
+                throw new ArgumentException("userId is required.", nameof(userId));
+            }
+
+            string normalizedUserId = IdNorm.Norm(userId);
+            DateTime now = DateTime.UtcNow;
+            UserProfile? profile = await _dbContext.UserProfiles
+                .FirstOrDefaultAsync(item => item.UserId == normalizedUserId, ct);
+
+            if (profile is null)
+            {
+                profile = new UserProfile
+                {
+                    UserId = normalizedUserId,
+                    DisplayName = ResolveEmail(null, normalizedUserId),
+                    HasOnboarded = false,
+                    CreatedUtc = now,
+                    UpdatedUtc = now
+                };
+                _dbContext.UserProfiles.Add(profile);
+            }
+
+            profile.HasCompletedOnboarding = false;
+            profile.OnboardingStep = 0;
+            profile.OnboardingStartedUtc = null;
+            profile.OnboardingCompletedUtc = null;
+            profile.PrimaryWritingIntent = null;
+            profile.UpdatedUtc = now;
+
+            await _dbContext.SaveChangesAsync(ct);
+            _logger.LogInformation(
+                "Admin reset onboarding state. AdminUserId={AdminUserId} TargetUserId={TargetUserId}",
+                adminUserId,
+                normalizedUserId);
+
+            await _adminAuditService.WriteAsync(
+                adminUserId,
+                adminEmail,
+                "ResetOnboardingState",
+                normalizedUserId,
+                ResolveEmail(profile.DisplayName, normalizedUserId),
+                new { reset = true },
+                ct);
+
+            AdminUserDetailDto? snapshot = await GetUserAsync(normalizedUserId, ct);
+            return snapshot ?? throw new InvalidOperationException("Failed to load user after onboarding reset.");
+        }
+
         public async Task<AdminTokenOperationResponse> ResetTokensPeriodAsync(
             string userId,
             string adminUserId,

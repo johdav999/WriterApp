@@ -30,6 +30,7 @@ namespace WriterApp.Data
         public DbSet<UserPlanAssignment> UserPlanAssignments => Set<UserPlanAssignment>();
         public DbSet<TokenAdjustment> TokenAdjustments => Set<TokenAdjustment>();
         public DbSet<UsageEvent> UsageEvents => Set<UsageEvent>();
+        public DbSet<UserEvent> UserEvents => Set<UserEvent>();
         public DbSet<UsageAggregate> UsageAggregates => Set<UsageAggregate>();
         public DbSet<DocumentRecord> Documents => Set<DocumentRecord>();
         public DbSet<SectionRecord> Sections => Set<SectionRecord>();
@@ -106,7 +107,13 @@ namespace WriterApp.Data
                 entity.HasKey(profile => profile.UserId);
                 entity.Property(profile => profile.CreatedUtc).IsRequired();
                 entity.Property(profile => profile.HasOnboarded).IsRequired();
+                entity.Property(profile => profile.HasCompletedOnboarding).HasDefaultValue(false).IsRequired();
+                entity.Property(profile => profile.OnboardingStep).HasDefaultValue(0).IsRequired();
+                entity.Property(profile => profile.OnboardingStartedUtc);
+                entity.Property(profile => profile.OnboardingCompletedUtc);
+                entity.Property(profile => profile.PrimaryWritingIntent);
                 entity.Property(profile => profile.UpdatedUtc).IsRequired();
+                entity.HasIndex(profile => profile.HasCompletedOnboarding);
             });
 
             builder.Entity<UserEntitlement>(entity =>
@@ -212,6 +219,18 @@ namespace WriterApp.Data
                 entity.Property(usage => usage.Provider).IsRequired();
                 entity.Property(usage => usage.Model).IsRequired();
                 entity.Property(usage => usage.TimestampUtc).IsRequired();
+            });
+
+            builder.Entity<UserEvent>(entity =>
+            {
+                entity.HasKey(item => item.Id);
+                entity.Property(item => item.UserId).IsRequired();
+                entity.Property(item => item.EventName).IsRequired();
+                entity.Property(item => item.MetadataJson);
+                entity.Property(item => item.CreatedUtc).IsRequired();
+                entity.HasIndex(item => item.UserId);
+                entity.HasIndex(item => item.EventName);
+                entity.HasIndex(item => item.CreatedUtc);
             });
 
             builder.Entity<UsageAggregate>(entity =>
@@ -964,6 +983,8 @@ namespace WriterApp.Data
                     DisplayName = "System",
                     CreatedUtc = seededUtc,
                     HasOnboarded = true,
+                    HasCompletedOnboarding = true,
+                    OnboardingStep = 0,
                     UpdatedUtc = seededUtc
                 }
             );

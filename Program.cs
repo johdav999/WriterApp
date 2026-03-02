@@ -109,21 +109,32 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite(connectionString);
 });
 
-builder.Services.AddAuthentication(options =>
-    {
-        options.DefaultAuthenticateScheme = useExternalIdAuth
-            ? EasyAuthAuthenticationHandler.SchemeName
-            : FakeAuthAuthenticationHandler.SchemeName;
-        options.DefaultChallengeScheme = useExternalIdAuth
-            ? EasyAuthAuthenticationHandler.SchemeName
-            : FakeAuthAuthenticationHandler.SchemeName;
-    })
-    .AddScheme<AuthenticationSchemeOptions, EasyAuthAuthenticationHandler>(
-        EasyAuthAuthenticationHandler.SchemeName,
-        _ => { })
-    .AddScheme<AuthenticationSchemeOptions, FakeAuthAuthenticationHandler>(
-        FakeAuthAuthenticationHandler.SchemeName,
-        _ => { });
+if (builder.Environment.IsDevelopment())
+{
+    // Local development auth for onboarding/auth-gated flows without EasyAuth.
+    builder.Services.AddAuthentication(LocalDevAuthenticationHandler.SchemeName)
+        .AddScheme<AuthenticationSchemeOptions, LocalDevAuthenticationHandler>(
+            LocalDevAuthenticationHandler.SchemeName,
+            _ => { });
+}
+else
+{
+    builder.Services.AddAuthentication(options =>
+        {
+            options.DefaultAuthenticateScheme = useExternalIdAuth
+                ? EasyAuthAuthenticationHandler.SchemeName
+                : FakeAuthAuthenticationHandler.SchemeName;
+            options.DefaultChallengeScheme = useExternalIdAuth
+                ? EasyAuthAuthenticationHandler.SchemeName
+                : FakeAuthAuthenticationHandler.SchemeName;
+        })
+        .AddScheme<AuthenticationSchemeOptions, EasyAuthAuthenticationHandler>(
+            EasyAuthAuthenticationHandler.SchemeName,
+            _ => { })
+        .AddScheme<AuthenticationSchemeOptions, FakeAuthAuthenticationHandler>(
+            FakeAuthAuthenticationHandler.SchemeName,
+            _ => { });
+}
 builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy("AdminOnly", policy =>
@@ -211,6 +222,7 @@ builder.Services.AddScoped<IUserIdResolver, UserIdResolver>();
 builder.Services.AddScoped<IPlanAssignmentService, PlanAssignmentService>();
 builder.Services.AddScoped<AdminPlanOverrideService>();
 builder.Services.AddScoped<AdminAuditService>();
+builder.Services.AddScoped<UserEventService>();
 builder.Services.AddScoped<IUserLookupService, UserLookupService>();
 builder.Services.AddScoped<AdminUsersService>();
 builder.Services.AddSingleton<AdminEndpointRateLimiter>();
@@ -1506,6 +1518,41 @@ app.MapGet("/api/admin/users/export.csv", async (
     context.Response.Headers.ContentDisposition = "attachment; filename=admin-users-export.csv";
     return Results.Text(csv, "text/csv");
 });
+
+app.MapPost("/api/dev/users/{userId}/reset-onboarding", async (
+        HttpContext context,
+        string userId,
+        IUserIdResolver userIdResolver,
+        AdminUsersService adminUsersService,
+        ILoggerFactory loggerFactory) =>
+{
+    if (!app.Environment.IsDevelopment())
+    {
+        return Results.NotFound();
+    }
+
+    ILogger logger = loggerFactory.CreateLogger("DevAdmin");
+    string adminUserId = ResolveAssignedBy(context.User, userIdResolver, logger, out _);
+    string? adminEmail = context.User.FindFirstValue(ClaimTypes.Email)
+        ?? context.User.FindFirstValue("emails")
+        ?? context.User.FindFirstValue("preferred_username")
+        ?? context.User.Identity?.Name;
+
+    try
+    {
+        AdminUserDetailDto updated = await adminUsersService.ResetOnboardingAsync(
+            userId,
+            adminUserId,
+            adminEmail,
+            context.RequestAborted);
+        return Results.Ok(updated);
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(new { message = ex.Message });
+    }
+})
+.RequireAuthorization("AdminOnly");
 
 app.MapPost("/api/admin/db/migrate", async (
         HttpContext context,

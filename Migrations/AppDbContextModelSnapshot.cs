@@ -1748,13 +1748,34 @@ namespace BlazorApp.Migrations
                     b.Property<string>("DisplayName")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("HasCompletedOnboarding")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false);
+
                     b.Property<bool>("HasOnboarded")
                         .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset?>("OnboardingCompletedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("OnboardingStartedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("OnboardingStep")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(0);
+
+                    b.Property<string>("PrimaryWritingIntent")
+                        .HasColumnType("TEXT");
 
                     b.Property<DateTime>("UpdatedUtc")
                         .HasColumnType("TEXT");
 
                     b.HasKey("UserId");
+
+                    b.HasIndex("HasCompletedOnboarding");
 
                     b.ToTable("UserProfiles");
 
@@ -1764,7 +1785,9 @@ namespace BlazorApp.Migrations
                             UserId = "seed-system",
                             CreatedUtc = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
                             DisplayName = "System",
+                            HasCompletedOnboarding = true,
                             HasOnboarded = true,
+                            OnboardingStep = 0,
                             UpdatedUtc = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)
                         });
                 });
@@ -1846,6 +1869,37 @@ namespace BlazorApp.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("UsageEvents");
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Usage.UserEvent", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset>("CreatedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("EventName")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MetadataJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedUtc");
+
+                    b.HasIndex("EventName");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("UserEvents");
                 });
 
             modelBuilder.Entity("WriterApp.Data.AI.AiActionAppliedEventRecord", b =>

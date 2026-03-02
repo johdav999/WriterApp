@@ -1,0 +1,132 @@
+@using Microsoft.JSInterop
+@inject IJSRuntime JSRuntime
+@implements IAsyncDisposable
+
+@if (IsVisible)
+{
+    <div class="guided-walkthrough-backdrop"></div>
+    <section class="guided-walkthrough-card" role="dialog" aria-modal="true" aria-live="polite">
+        <div class="guided-walkthrough-step">Step @(StepIndex + 1) of @TotalSteps</div>
+        <h3>@Title</h3>
+        <p>@Description</p>
+        @if (!string.IsNullOrWhiteSpace(StatusMessage))
+        {
+            <div class="guided-walkthrough-status">@StatusMessage</div>
+        }
+        <div class="guided-walkthrough-actions">
+            @if (ShowActionButton)
+            {
+                <button type="button"
+                        class="primary"
+                        disabled="@IsBusy"
+                        @onclick="OnActionButtonClick">
+                    @ActionButtonText
+                </button>
+            }
+            <button type="button"
+                    class="secondary"
+                    disabled="@IsBusy"
+                    @onclick="OnSkipClick">
+                Skip
+            </button>
+            <button type="button"
+                    class="primary"
+                    disabled="@IsBusy"
+                    @onclick="OnNextClick">
+                @NextButtonText
+            </button>
+        </div>
+    </section>
+}
+
+@code {
+    [Parameter] public bool IsVisible { get; set; }
+    [Parameter] public int StepIndex { get; set; }
+    [Parameter] public int TotalSteps { get; set; }
+    [Parameter] public string Title { get; set; } = string.Empty;
+    [Parameter] public string Description { get; set; } = string.Empty;
+    [Parameter] public string? TargetSelector { get; set; }
+    [Parameter] public string? StatusMessage { get; set; }
+    [Parameter] public bool IsBusy { get; set; }
+    [Parameter] public string NextButtonText { get; set; } = "Next";
+    [Parameter] public bool ShowActionButton { get; set; }
+    [Parameter] public string ActionButtonText { get; set; } = "Action";
+    [Parameter] public EventCallback OnNext { get; set; }
+    [Parameter] public EventCallback OnSkip { get; set; }
+    [Parameter] public EventCallback OnAction { get; set; }
+
+    private string? _appliedSelector;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!IsVisible)
+        {
+            await ClearHighlightAsync();
+            return;
+        }
+
+        if (string.Equals(_appliedSelector, TargetSelector, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        await ApplyHighlightAsync(TargetSelector);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await ClearHighlightAsync();
+    }
+
+    private async Task OnNextClick()
+    {
+        if (OnNext.HasDelegate)
+        {
+            await OnNext.InvokeAsync();
+        }
+    }
+
+    private async Task OnSkipClick()
+    {
+        if (OnSkip.HasDelegate)
+        {
+            await OnSkip.InvokeAsync();
+        }
+    }
+
+    private async Task OnActionButtonClick()
+    {
+        if (OnAction.HasDelegate)
+        {
+            await OnAction.InvokeAsync();
+        }
+    }
+
+    private async Task ApplyHighlightAsync(string? selector)
+    {
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("writerAppOnboardingHighlight.apply", selector);
+            _appliedSelector = selector;
+        }
+        catch
+        {
+            _appliedSelector = selector;
+        }
+    }
+
+    private async Task ClearHighlightAsync()
+    {
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("writerAppOnboardingHighlight.clear");
+        }
+        catch
+        {
+        }
+        finally
+        {
+            _appliedSelector = null;
+        }
+    }
+}
