@@ -1,0 +1,3210 @@
+diff --git a/Application/Security/AdminPlanOverrideAccess.cs b/Application/Security/AdminPlanOverrideAccess.cs
+index 523b295..72b2164 100644
+--- a/Application/Security/AdminPlanOverrideAccess.cs
++++ b/Application/Security/AdminPlanOverrideAccess.cs
+@@ -12,6 +12,11 @@ namespace WriterApp.Application.Security
+             return configuration.GetValue<bool?>("Admin:EnablePlanOverride") ?? false;
+         }
+ 
++        public static bool IsAdminApiEnabled(IConfiguration configuration)
++        {
++            return configuration.GetValue<bool?>("Admin:EnableAdminApi") ?? false;
++        }
++
+         public static bool IsAuthorized(ClaimsPrincipal user)
+         {
+             if (user.Identity?.IsAuthenticated != true)
+diff --git a/Components/Layout/NavMenu.razor b/Components/Layout/NavMenu.razor
+index 070e89b..d4e8821 100644
+--- a/Components/Layout/NavMenu.razor
++++ b/Components/Layout/NavMenu.razor
+@@ -23,9 +23,9 @@
+         <AuthorizeView Policy="AdminOnly">
+             <Authorized>
+                 <div class="nav-item px-3">
+-                    <NavLink class="nav-link" href="/admin/plan-assignments">
++                    <NavLink class="nav-link" href="/admin/users">
+                         <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span>
+-                        Plan Management
++                        Users
+                     </NavLink>
+                 </div>
+             </Authorized>
+diff --git a/Components/Pages/Admin/PlanAssignments.razor b/Components/Pages/Admin/PlanAssignments.razor
+index 8ba4c3d..53b7c4d 100644
+--- a/Components/Pages/Admin/PlanAssignments.razor
++++ b/Components/Pages/Admin/PlanAssignments.razor
+@@ -1,411 +1,20 @@
+ @page "/admin/plan-assignments"
+-@using Microsoft.AspNetCore.Components.Authorization
+ @using Microsoft.AspNetCore.Authorization
+-@using System.Security
+-@using System.Security.Claims
+-@using WriterApp.Application.Security
+-@using WriterApp.Application.Subscriptions
+-@using WriterApp.Application.Users
+-@using WriterApp.Data.Subscriptions
+ @attribute [Authorize(Policy = "AdminOnly")]
+-@inject AuthenticationStateProvider AuthStateProvider
+-@inject IPlanAssignmentService PlanAssignmentService
+-@inject IUserLookupService UserLookupService
+-@inject IUserEntitlementStore UserEntitlementStore
+-@inject IUserIdResolver UserIdResolver
+-@inject ILogger<PlanAssignments> Logger
++@inject NavigationManager Navigation
+ 
+-<PageTitle>Admin - Plan Assignments</PageTitle>
++<PageTitle>Admin - Redirecting</PageTitle>
+ 
+-<div class="admin-page">
+-    <h1>Assign plan to user</h1>
+-
+-    @if (_isLoading)
+-    {
+-        <p>Loading plans...</p>
+-    }
+-    else
+-    {
+-        <div class="admin-form">
+-            <label for="adminUserId">User Id</label>
+-            <input id="adminUserId" type="text" @bind="UserIdInput" @bind:event="oninput" />
+-            <button type="button" @onclick="OnValidateUserIdAsync" disabled="@string.IsNullOrWhiteSpace(_userIdInput)">Validate UserId</button>
+-
+-            <label for="adminEmail">Email</label>
+-            <input id="adminEmail" type="email" @bind="EmailInput" @bind:event="oninput" />
+-            <button type="button" @onclick="OnLookupByEmailAsync" disabled="@string.IsNullOrWhiteSpace(_emailInput)">Lookup</button>
+-
+-            @if (_lookupInProgress)
+-            {
+-                <p>Looking up user...</p>
+-            }
+-
+-            @if (!string.IsNullOrWhiteSpace(_lookupMessage))
+-            {
+-                <p class="status-message">@_lookupMessage</p>
+-            }
+-
+-            @if (_lookupCandidates.Count > 1)
+-            {
+-                <div class="admin-latest">
+-                    <h2>Multiple matches</h2>
+-                    @foreach (UserLookupUser candidate in _lookupCandidates)
+-                    {
+-                        <label>
+-                            <input type="radio"
+-                                   name="lookup-candidate"
+-                                   checked="@string.Equals(_selectedLookupUserId, candidate.UserId, StringComparison.Ordinal)"
+-                                   @onchange="@(() => _selectedLookupUserId = candidate.UserId)" />
+-                            @candidate.DisplayName (@candidate.UserId) @(string.IsNullOrWhiteSpace(candidate.Email) ? string.Empty : $"<{candidate.Email}>")
+-                        </label>
+-                    }
+-                    <button type="button" @onclick="ConfirmLookupSelectionAsync" disabled="@string.IsNullOrWhiteSpace(_selectedLookupUserId)">Use selected user</button>
+-                </div>
+-            }
+-
+-            @if (_resolvedUser is not null)
+-            {
+-                <div class="admin-latest">
+-                    <h2>Resolved user</h2>
+-                    <p>UserId: @_resolvedUser.UserId</p>
+-                    <p>Display name: @(_resolvedUser.DisplayName ?? "-")</p>
+-                    <p>Email: @(_resolvedUser.Email ?? "-")</p>
+-                    <p>Confirmed: @(_isResolvedUserConfirmed ? "Yes" : "No")</p>
+-                </div>
+-            }
+-
+-            <label for="adminPlanKey">Plan</label>
+-            <select id="adminPlanKey" @bind="_selectedPlanKey">
+-                @foreach (Plan plan in _plans)
+-                {
+-                    <option value="@plan.Key">@plan.Name (@plan.Key)</option>
+-                }
+-            </select>
+-
+-            <div class="admin-form-actions">
+-                <button type="button" @onclick="OnAssignAsync" disabled="@(!_canAssign)">Assign</button>
+-                <button type="button" @onclick="OnLoadLatestAsync" disabled="@string.IsNullOrWhiteSpace(ResolvedUserId)">Load latest</button>
+-            </div>
+-        </div>
+-
+-        @if (!string.IsNullOrWhiteSpace(_statusMessage))
+-        {
+-            <p class="status-message">@_statusMessage</p>
+-        }
+-
+-        @if (_entitlement is not null)
+-        {
+-            <div class="admin-latest">
+-                <h2>Resolved entitlement</h2>
+-                <p>User: @_entitlement.UserId</p>
+-                <p>Plan: @_entitlement.PlanKey</p>
+-                <p>Budget: @_entitlement.AiMonthlyTokenBudget</p>
+-                <p>Used: @_entitlement.AiTokensUsedThisPeriod</p>
+-                <p>Period start UTC: @_entitlement.PeriodStartUtc.ToString("u")</p>
+-            </div>
+-        }
+-
+-        @if (_latestAssignment is not null)
+-        {
+-            <div class="admin-latest">
+-                <h2>Latest assignment</h2>
+-                <p>User: @_latestAssignment.UserId</p>
+-                <p>Plan: @_latestAssignment.PlanName (@_latestAssignment.PlanKey)</p>
+-                <p>Assigned UTC: @_latestAssignment.AssignedUtc.ToString("u")</p>
+-            </div>
+-        }
+-    }
+-</div>
++<p>Redirecting to <a href="/admin/users">/admin/users</a>...</p>
+ 
+ @code {
+-    private readonly List<Plan> _plans = new();
+-    private readonly List<UserLookupUser> _lookupCandidates = new();
+-    private bool _isLoading = true;
+-    private bool _lookupInProgress;
+-    private string? _statusMessage;
+-    private string? _lookupMessage;
+-    private string _userIdInput = string.Empty;
+-    private string _emailInput = string.Empty;
+-    private string? _selectedLookupUserId;
+-    private string _selectedPlanKey = string.Empty;
+-    private UserLookupUser? _resolvedUser;
+-    private bool _isResolvedUserConfirmed;
+-    private LatestAssignmentView? _latestAssignment;
+-    private UserEntitlement? _entitlement;
+-
+-    protected override async Task OnInitializedAsync()
+-    {
+-        await LoadPlansAsync();
+-    }
+-
+-    private string? ResolvedUserId => _isResolvedUserConfirmed ? _resolvedUser?.UserId : null;
+-
+-    private string UserIdInput
+-    {
+-        get => _userIdInput;
+-        set
+-        {
+-            if (!string.Equals(_userIdInput, value, StringComparison.Ordinal))
+-            {
+-                _userIdInput = value;
+-                ResetResolvedSelection(clearLookupMessage: false);
+-            }
+-        }
+-    }
+-
+-    private string EmailInput
++    protected override void OnAfterRender(bool firstRender)
+     {
+-        get => _emailInput;
+-        set
++        if (!firstRender)
+         {
+-            if (!string.Equals(_emailInput, value, StringComparison.Ordinal))
+-            {
+-                _emailInput = value;
+-                ResetResolvedSelection(clearLookupMessage: false);
+-            }
+-        }
+-    }
+-
+-    private bool _canAssign =>
+-        !string.IsNullOrWhiteSpace(ResolvedUserId)
+-        && !string.IsNullOrWhiteSpace(_selectedPlanKey);
+-
+-    private async Task LoadPlansAsync()
+-    {
+-        _isLoading = true;
+-        _plans.Clear();
+-        _statusMessage = null;
+-
+-        IReadOnlyList<Plan> plans = await PlanAssignmentService.GetActivePlansAsync();
+-        _plans.AddRange(plans);
+-        _selectedPlanKey = _plans.FirstOrDefault()?.Key ?? string.Empty;
+-
+-        _isLoading = false;
+-    }
+-
+-    private async Task OnAssignAsync()
+-    {
+-        _statusMessage = null;
+-        _latestAssignment = null;
+-        _entitlement = null;
+-
+-        if (!_canAssign)
+-        {
+-            _statusMessage = "Resolve and confirm the target user, then choose a plan.";
+-            return;
+-        }
+-
+-        try
+-        {
+-            string resolvedUserId = ResolvedUserId!;
+-            AuthenticationState authState = await AuthStateProvider.GetAuthenticationStateAsync();
+-            ClaimsPrincipal user = authState.User;
+-            string? callerName = user.Identity?.Name;
+-            string assignedBy = ResolveAssignedBy(user, callerName);
+-
+-            Logger.LogInformation(
+-                "Admin assigning plan. userId={UserId} email={Email} planKey={PlanKey}",
+-                resolvedUserId,
+-                _resolvedUser?.Email ?? string.Empty,
+-                _selectedPlanKey);
+-
+-            PlanAssignmentResult result = await PlanAssignmentService.AssignPlanAsync(
+-                resolvedUserId,
+-                _selectedPlanKey,
+-                assignedBy,
+-                callerName,
+-                CancellationToken.None);
+-
+-            _statusMessage = $"Assigned {result.UserId} to {result.PlanName}.";
+-            await LoadLatestAssignmentAsync(result.UserId);
+-            _entitlement = await UserEntitlementStore.GetOrCreateAsync(result.UserId, CancellationToken.None);
+-        }
+-        catch (PlanAssignmentException ex)
+-        {
+-            _statusMessage = ex.Code switch
+-            {
+-                PlanAssignmentErrorCode.PlanNotFound => ex.Message,
+-                PlanAssignmentErrorCode.PlanInactive => ex.Message,
+-                PlanAssignmentErrorCode.InvalidUserId => ex.Message,
+-                PlanAssignmentErrorCode.InvalidPlanKey => ex.Message,
+-                PlanAssignmentErrorCode.AssignmentExists => ex.Message,
+-                _ => ex.Message
+-            };
+-        }
+-        catch (Exception ex)
+-        {
+-            Logger.LogError(ex, "Admin assignment request failed.");
+-            _statusMessage = "Assignment request failed.";
+-        }
+-    }
+-
+-    private async Task OnLoadLatestAsync()
+-    {
+-        _statusMessage = null;
+-        _entitlement = null;
+-
+-        if (string.IsNullOrWhiteSpace(ResolvedUserId))
+-        {
+-            _statusMessage = "Resolve and confirm a user first.";
+             return;
+         }
+ 
+-        await LoadLatestAssignmentAsync(ResolvedUserId);
+-        _entitlement = await UserEntitlementStore.GetOrCreateAsync(ResolvedUserId, CancellationToken.None);
+-    }
+-
+-    private async Task LoadLatestAssignmentAsync(string? userId)
+-    {
+-        if (string.IsNullOrWhiteSpace(userId))
+-        {
+-            _latestAssignment = null;
+-            return;
+-        }
+-
+-        UserPlanAssignment? assignment = await PlanAssignmentService.GetLatestAssignmentAsync(userId);
+-        if (assignment?.Plan is null)
+-        {
+-            _latestAssignment = null;
+-            _statusMessage = "No assignments found for this user.";
+-            return;
+-        }
+-
+-        _latestAssignment = new LatestAssignmentView(
+-            assignment.UserId,
+-            assignment.Plan.Key,
+-            assignment.Plan.Name,
+-            assignment.AssignedUtc);
+-    }
+-
+-    private sealed record LatestAssignmentView(
+-        string UserId,
+-        string PlanKey,
+-        string PlanName,
+-        DateTime AssignedUtc);
+-
+-    private async Task OnValidateUserIdAsync()
+-    {
+-        ResetResolvedSelection(clearLookupMessage: true);
+-
+-        string candidate = _userIdInput?.Trim() ?? string.Empty;
+-        if (string.IsNullOrWhiteSpace(candidate))
+-        {
+-            _lookupMessage = "Enter a user id to validate.";
+-            return;
+-        }
+-
+-        UserLookupUser? found = await UserLookupService.FindByUserIdAsync(candidate, CancellationToken.None);
+-        if (found is null || string.IsNullOrWhiteSpace(found.UserId))
+-        {
+-            _lookupMessage = "UserId not found in UserProfiles.";
+-            return;
+-        }
+-
+-        _resolvedUser = found;
+-        _isResolvedUserConfirmed = true;
+-        _lookupMessage = $"Validated user id: {found.UserId}.";
+-    }
+-
+-    private async Task OnLookupByEmailAsync()
+-    {
+-        _lookupInProgress = true;
+-        ResetResolvedSelection(clearLookupMessage: true);
+-
+-        try
+-        {
+-            string email = _emailInput?.Trim() ?? string.Empty;
+-            if (string.IsNullOrWhiteSpace(email))
+-            {
+-                _lookupMessage = "Enter an email to lookup.";
+-                return;
+-            }
+-
+-            UserLookupResult? result = await UserLookupService.FindByEmailAsync(email, CancellationToken.None);
+-            if (result is null || result.Matches.Count == 0)
+-            {
+-                _lookupMessage = "No user found for that email.";
+-                return;
+-            }
+-
+-            _lookupCandidates.AddRange(result.Matches.Where(item => !string.IsNullOrWhiteSpace(item.UserId)));
+-            if (_lookupCandidates.Count == 0)
+-            {
+-                _lookupMessage = "Lookup returned users without valid UserId values.";
+-                return;
+-            }
+-
+-            if (_lookupCandidates.Count == 1)
+-            {
+-                _resolvedUser = _lookupCandidates[0];
+-                _isResolvedUserConfirmed = true;
+-                _lookupMessage = $"Resolved and confirmed: {_resolvedUser.UserId}.";
+-                return;
+-            }
+-
+-            _selectedLookupUserId = _lookupCandidates[0].UserId;
+-            _lookupMessage = "Multiple users matched. Select one and confirm.";
+-        }
+-        catch (Exception ex)
+-        {
+-            Logger.LogError(ex, "Lookup by email failed.");
+-            _lookupMessage = "Lookup failed.";
+-        }
+-        finally
+-        {
+-            _lookupInProgress = false;
+-        }
+-    }
+-
+-    private Task ConfirmLookupSelectionAsync()
+-    {
+-        _statusMessage = null;
+-
+-        if (string.IsNullOrWhiteSpace(_selectedLookupUserId))
+-        {
+-            _lookupMessage = "Select a user first.";
+-            return Task.CompletedTask;
+-        }
+-
+-        UserLookupUser? selected = _lookupCandidates
+-            .FirstOrDefault(item => string.Equals(item.UserId, _selectedLookupUserId, StringComparison.Ordinal));
+-        if (selected is null || string.IsNullOrWhiteSpace(selected.UserId))
+-        {
+-            _lookupMessage = "Selected user is invalid.";
+-            return Task.CompletedTask;
+-        }
+-
+-        _resolvedUser = selected;
+-        _isResolvedUserConfirmed = true;
+-        _lookupMessage = $"Confirmed user: {selected.UserId}.";
+-        return Task.CompletedTask;
+-    }
+-
+-    private void ResetResolvedSelection(bool clearLookupMessage)
+-    {
+-        if (clearLookupMessage)
+-        {
+-            _lookupMessage = null;
+-        }
+-
+-        _statusMessage = null;
+-        _lookupCandidates.Clear();
+-        _selectedLookupUserId = null;
+-        _entitlement = null;
+-        _latestAssignment = null;
+-        _isResolvedUserConfirmed = false;
+-        _resolvedUser = null;
+-    }
+-
+-    private string ResolveAssignedBy(ClaimsPrincipal user, string? callerName)
+-    {
+-        try
+-        {
+-            return UserIdResolver.ResolveUserId(user);
+-        }
+-        catch (SecurityException ex)
+-        {
+-            Logger.LogWarning(ex, "Admin assignment missing oid claim.");
+-            return callerName ?? "admin";
+-        }
++        Navigation.NavigateTo("/admin/users", replace: true);
+     }
+ }
+diff --git a/Data/AppDbContext.cs b/Data/AppDbContext.cs
+index 8860c21..aeefb08 100644
+--- a/Data/AppDbContext.cs
++++ b/Data/AppDbContext.cs
+@@ -5,6 +5,7 @@ using System.Threading.Tasks;
+ using Microsoft.EntityFrameworkCore;
+ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
+ using WriterApp.Data.AI;
++using WriterApp.Data.Admin;
+ using WriterApp.Data.Continuity;
+ using WriterApp.Data.Documents;
+ using WriterApp.Data.Exporting;
+@@ -22,10 +23,12 @@ namespace WriterApp.Data
+ 
+         public DbSet<UserProfile> UserProfiles => Set<UserProfile>();
+         public DbSet<UserEntitlement> UserEntitlements => Set<UserEntitlement>();
++        public DbSet<AdminAuditEvent> AdminAuditEvents => Set<AdminAuditEvent>();
+         public DbSet<StripeEventLog> StripeEventLogs => Set<StripeEventLog>();
+         public DbSet<Plan> Plans => Set<Plan>();
+         public DbSet<PlanEntitlement> PlanEntitlements => Set<PlanEntitlement>();
+         public DbSet<UserPlanAssignment> UserPlanAssignments => Set<UserPlanAssignment>();
++        public DbSet<TokenAdjustment> TokenAdjustments => Set<TokenAdjustment>();
+         public DbSet<UsageEvent> UsageEvents => Set<UsageEvent>();
+         public DbSet<UsageAggregate> UsageAggregates => Set<UsageAggregate>();
+         public DbSet<DocumentRecord> Documents => Set<DocumentRecord>();
+@@ -123,6 +126,18 @@ namespace WriterApp.Data
+                 entity.Property(entitlement => entitlement.UpdatedUtc).IsRequired();
+             });
+ 
++            builder.Entity<AdminAuditEvent>(entity =>
++            {
++                entity.HasKey(audit => audit.Id);
++                entity.Property(audit => audit.OccurredAtUtc).IsRequired();
++                entity.Property(audit => audit.AdminUserId).IsRequired();
++                entity.Property(audit => audit.Action).IsRequired();
++                entity.HasIndex(audit => audit.OccurredAtUtc);
++                entity.HasIndex(audit => audit.AdminUserId);
++                entity.HasIndex(audit => audit.TargetUserId);
++                entity.HasIndex(audit => audit.Action);
++            });
++
+             builder.Entity<StripeEventLog>(entity =>
+             {
+                 entity.HasKey(x => x.StripeEventId);
+@@ -177,6 +192,18 @@ namespace WriterApp.Data
+                     .OnDelete(DeleteBehavior.Cascade);
+             });
+ 
++            builder.Entity<TokenAdjustment>(entity =>
++            {
++                entity.HasKey(adjustment => adjustment.Id);
++                entity.Property(adjustment => adjustment.UserId).IsRequired();
++                entity.Property(adjustment => adjustment.DeltaTokens).IsRequired();
++                entity.Property(adjustment => adjustment.Reason).IsRequired();
++                entity.Property(adjustment => adjustment.AdjustedBy).IsRequired();
++                entity.Property(adjustment => adjustment.OccurredAtUtc).IsRequired();
++                entity.HasIndex(adjustment => adjustment.UserId);
++                entity.HasIndex(adjustment => adjustment.OccurredAtUtc);
++            });
++
+             builder.Entity<UsageEvent>(entity =>
+             {
+                 entity.HasKey(usage => usage.Id);
+diff --git a/Program.cs b/Program.cs
+index afa2cde..852539b 100644
+--- a/Program.cs
++++ b/Program.cs
+@@ -210,7 +210,10 @@ builder.Services.AddScoped<IEntitlementService, EntitlementService>();
+ builder.Services.AddScoped<IUserIdResolver, UserIdResolver>();
+ builder.Services.AddScoped<IPlanAssignmentService, PlanAssignmentService>();
+ builder.Services.AddScoped<AdminPlanOverrideService>();
++builder.Services.AddScoped<AdminAuditService>();
+ builder.Services.AddScoped<IUserLookupService, UserLookupService>();
++builder.Services.AddScoped<AdminUsersService>();
++builder.Services.AddSingleton<AdminEndpointRateLimiter>();
+ builder.Services.AddScoped<IUsageMeter, UsageMeter>();
+ builder.Services.AddSingleton<IClock, WriterApp.Application.Usage.SystemClock>();
+ builder.Services.AddScoped<IAiQuotaService, AiQuotaService>();
+@@ -1015,47 +1018,214 @@ app.MapGet("/api/ai/status", async (
+ })
+ .RequireAuthorization();
+ 
+-app.MapGet("/api/admin/users/{userId}/plan", async (
++app.MapGet("/api/admin/users", async (
++        HttpContext context,
++        IConfiguration configuration,
++        IUserIdResolver userIdResolver,
++        AdminEndpointRateLimiter adminRateLimiter,
++        AdminUsersService adminUsersService,
++        ILoggerFactory loggerFactory,
++        int page = 1,
++        int pageSize = 20,
++        string? q = null,
++        string? planKey = null,
++        bool overrideOnly = false,
++        string? subscriptionStatus = null,
++        int? tokensLeftLt = null,
++        int? tokensLeftGt = null,
++        string? sort = null) =>
++{
++    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
++        || !AdminPlanOverrideAccess.IsAuthorized(context.User))
++    {
++        return Results.NotFound();
++    }
++
++    ILogger logger = loggerFactory.CreateLogger("AdminUsers");
++    string adminUserId = ResolveAssignedBy(context.User, userIdResolver, logger, out _);
++    if (!adminRateLimiter.TryAcquire($"{adminUserId}:list-users", 120))
++    {
++        return Results.StatusCode(StatusCodes.Status429TooManyRequests);
++    }
++
++    AdminUserListResponseDto response = await adminUsersService.QueryUsersAsync(
++        page,
++        pageSize,
++        q,
++        planKey,
++        overrideOnly,
++        subscriptionStatus,
++        tokensLeftLt,
++        tokensLeftGt,
++        sort,
++        context.RequestAborted);
++    return Results.Ok(response);
++});
++
++app.MapGet("/api/admin/users/{userId}", async (
+         HttpContext context,
+         string userId,
+         IConfiguration configuration,
+-        AdminPlanOverrideService adminPlanOverrideService,
++        IUserIdResolver userIdResolver,
++        AdminEndpointRateLimiter adminRateLimiter,
++        AdminUsersService adminUsersService,
+         ILoggerFactory loggerFactory) =>
+ {
+-    if (!AdminPlanOverrideAccess.IsEnabled(configuration)
++    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
+         || !AdminPlanOverrideAccess.IsAuthorized(context.User))
+     {
+         return Results.NotFound();
+     }
+ 
+-    if (string.IsNullOrWhiteSpace(userId))
++    ILogger logger = loggerFactory.CreateLogger("AdminUsers");
++    string adminUserId = ResolveAssignedBy(context.User, userIdResolver, logger, out _);
++    if (!adminRateLimiter.TryAcquire($"{adminUserId}:get-user", 240))
+     {
+-        return Results.BadRequest(new { message = "userId is required." });
++        return Results.StatusCode(StatusCodes.Status429TooManyRequests);
++    }
++
++    AdminUserDetailDto? user = await adminUsersService.GetUserAsync(userId, context.RequestAborted);
++    return user is null ? Results.NotFound() : Results.Ok(user);
++});
++
++app.MapPost("/api/admin/users", async (
++        HttpContext context,
++        AdminCreateUserRequest request,
++        IConfiguration configuration,
++        IUserIdResolver userIdResolver,
++        AdminEndpointRateLimiter adminRateLimiter,
++        AdminUsersService adminUsersService,
++        ILoggerFactory loggerFactory) =>
++{
++    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
++        || !AdminPlanOverrideAccess.IsAuthorized(context.User))
++    {
++        return Results.NotFound();
++    }
++
++    ILogger logger = loggerFactory.CreateLogger("AdminUsers");
++    string adminUserId = ResolveAssignedBy(context.User, userIdResolver, logger, out _);
++    string? adminEmail = context.User.FindFirstValue(ClaimTypes.Email)
++        ?? context.User.FindFirstValue("emails")
++        ?? context.User.FindFirstValue("preferred_username")
++        ?? context.User.Identity?.Name;
++    if (!adminRateLimiter.TryAcquire($"{adminUserId}:create-user", 60))
++    {
++        return Results.StatusCode(StatusCodes.Status429TooManyRequests);
+     }
+ 
+     try
+     {
+-        AdminPlanOverrideResponse response = await adminPlanOverrideService.GetOverride(userId, context.RequestAborted);
+-        return Results.Ok(response);
++        AdminUserDetailDto created = await adminUsersService.CreateUserAsync(
++            request,
++            adminUserId,
++            adminEmail,
++            context.RequestAborted);
++        return Results.Ok(created);
+     }
+-    catch (Exception ex)
++    catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
++    {
++        return Results.BadRequest(new { message = ex.Message });
++    }
++});
++
++app.MapPut("/api/admin/users/{userId}", async (
++        HttpContext context,
++        string userId,
++        AdminUpdateUserRequest request,
++        IConfiguration configuration,
++        IUserIdResolver userIdResolver,
++        AdminEndpointRateLimiter adminRateLimiter,
++        AdminUsersService adminUsersService,
++        ILoggerFactory loggerFactory) =>
++{
++    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
++        || !AdminPlanOverrideAccess.IsAuthorized(context.User))
++    {
++        return Results.NotFound();
++    }
++
++    ILogger logger = loggerFactory.CreateLogger("AdminUsers");
++    string adminUserId = ResolveAssignedBy(context.User, userIdResolver, logger, out _);
++    string? adminEmail = context.User.FindFirstValue(ClaimTypes.Email)
++        ?? context.User.FindFirstValue("emails")
++        ?? context.User.FindFirstValue("preferred_username")
++        ?? context.User.Identity?.Name;
++    if (!adminRateLimiter.TryAcquire($"{adminUserId}:update-user", 120))
++    {
++        return Results.StatusCode(StatusCodes.Status429TooManyRequests);
++    }
++
++    try
++    {
++        AdminUserDetailDto? updated = await adminUsersService.UpdateUserAsync(
++            userId,
++            request,
++            adminUserId,
++            adminEmail,
++            context.RequestAborted);
++        return updated is null ? Results.NotFound() : Results.Ok(updated);
++    }
++    catch (ArgumentException ex)
+     {
+-        ILogger logger = loggerFactory.CreateLogger("AdminPlanOverride");
+-        logger.LogError(ex, "Admin plan override read failed. userId={UserId}", userId);
+         return Results.BadRequest(new { message = ex.Message });
+     }
+ });
+ 
+-app.MapPost("/api/admin/users/{userId}/plan", async (
++app.MapDelete("/api/admin/users/{userId}", async (
++        HttpContext context,
++        string userId,
++        IConfiguration configuration,
++        IUserIdResolver userIdResolver,
++        AdminEndpointRateLimiter adminRateLimiter,
++        AdminUsersService adminUsersService,
++        ILoggerFactory loggerFactory) =>
++{
++    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
++        || !AdminPlanOverrideAccess.IsAuthorized(context.User))
++    {
++        return Results.NotFound();
++    }
++
++    ILogger logger = loggerFactory.CreateLogger("AdminUsers");
++    string adminUserId = ResolveAssignedBy(context.User, userIdResolver, logger, out _);
++    string? adminEmail = context.User.FindFirstValue(ClaimTypes.Email)
++        ?? context.User.FindFirstValue("emails")
++        ?? context.User.FindFirstValue("preferred_username")
++        ?? context.User.Identity?.Name;
++    if (!adminRateLimiter.TryAcquire($"{adminUserId}:delete-user", 30))
++    {
++        return Results.StatusCode(StatusCodes.Status429TooManyRequests);
++    }
++
++    bool allowDeleteWithActiveSubscription = configuration.GetValue<bool?>("Admin:AllowDeleteWithActiveSubscription") ?? false;
++    try
++    {
++        bool deleted = await adminUsersService.DeleteUserAsync(
++            userId,
++            allowDeleteWithActiveSubscription,
++            adminUserId,
++            adminEmail,
++            context.RequestAborted);
++        return deleted ? Results.NoContent() : Results.NotFound();
++    }
++    catch (InvalidOperationException ex)
++    {
++        return Results.Conflict(new { message = ex.Message });
++    }
++});
++
++app.MapPost("/api/admin/users/{userId}/plan-override", async (
+         HttpContext context,
+         string userId,
+         AdminSetPlanOverrideRequest request,
+         IConfiguration configuration,
+-        AdminPlanOverrideService adminPlanOverrideService,
++        AdminEndpointRateLimiter adminRateLimiter,
++        AdminUsersService adminUsersService,
+         IUserIdResolver userIdResolver,
+         ILoggerFactory loggerFactory) =>
+ {
+-    if (!AdminPlanOverrideAccess.IsEnabled(configuration)
++    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
+         || !AdminPlanOverrideAccess.IsAuthorized(context.User))
+     {
+         return Results.NotFound();
+@@ -1068,6 +1238,10 @@ app.MapPost("/api/admin/users/{userId}/plan", async (
+ 
+     ILogger logger = loggerFactory.CreateLogger("AdminPlanAssignments");
+     string assignedBy = ResolveAssignedBy(context.User, userIdResolver, logger, out _);
++    if (!adminRateLimiter.TryAcquire($"{assignedBy}:plan-override", 120))
++    {
++        return Results.StatusCode(StatusCodes.Status429TooManyRequests);
++    }
+     string? adminCallerEmail = context.User.FindFirstValue(ClaimTypes.Email)
+         ?? context.User.FindFirstValue("emails")
+         ?? context.User.FindFirstValue("preferred_username")
+@@ -1075,12 +1249,11 @@ app.MapPost("/api/admin/users/{userId}/plan", async (
+ 
+     try
+     {
+-        AdminPlanOverrideResponse response = await adminPlanOverrideService.SetOverride(
++        AdminPlanOverrideResponse response = await adminUsersService.SetPlanOverrideAsync(
+             userId,
+-            request.PlanKey,
++            request,
+             assignedBy,
+             adminCallerEmail,
+-            request.Reason,
+             context.RequestAborted);
+         return Results.Ok(response);
+     }
+@@ -1107,6 +1280,217 @@ app.MapPost("/api/admin/users/{userId}/plan", async (
+     }
+ });
+ 
++app.MapPost("/api/admin/users/{userId}/stripe/sync", async (
++        HttpContext context,
++        string userId,
++        IConfiguration configuration,
++        AdminEndpointRateLimiter adminRateLimiter,
++        AdminUsersService adminUsersService,
++        IUserIdResolver userIdResolver,
++        ILoggerFactory loggerFactory) =>
++{
++    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
++        || !AdminPlanOverrideAccess.IsAuthorized(context.User))
++    {
++        return Results.NotFound();
++    }
++
++    ILogger logger = loggerFactory.CreateLogger("AdminStripeSyncUser");
++    string adminUserId = ResolveAssignedBy(context.User, userIdResolver, logger, out _);
++    string? adminEmail = context.User.FindFirstValue(ClaimTypes.Email)
++        ?? context.User.FindFirstValue("emails")
++        ?? context.User.FindFirstValue("preferred_username")
++        ?? context.User.Identity?.Name;
++    if (!adminRateLimiter.TryAcquire($"{adminUserId}:stripe-sync-user", 30))
++    {
++        return Results.StatusCode(StatusCodes.Status429TooManyRequests);
++    }
++
++    try
++    {
++        AdminUserDetailDto updated = await adminUsersService.SyncStripeForUserAsync(
++            userId,
++            adminUserId,
++            adminEmail,
++            context.RequestAborted);
++        return Results.Ok(updated);
++    }
++    catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or StripeApiException)
++    {
++        return Results.BadRequest(new { message = ex.Message });
++    }
++});
++
++app.MapPost("/api/admin/users/{userId}/tokens/reset-period", async (
++        HttpContext context,
++        string userId,
++        IConfiguration configuration,
++        AdminEndpointRateLimiter adminRateLimiter,
++        AdminUsersService adminUsersService,
++        IUserIdResolver userIdResolver,
++        ILoggerFactory loggerFactory) =>
++{
++    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
++        || !AdminPlanOverrideAccess.IsAuthorized(context.User))
++    {
++        return Results.NotFound();
++    }
++
++    ILogger logger = loggerFactory.CreateLogger("AdminTokens");
++    string adminUserId = ResolveAssignedBy(context.User, userIdResolver, logger, out _);
++    string? adminEmail = context.User.FindFirstValue(ClaimTypes.Email)
++        ?? context.User.FindFirstValue("emails")
++        ?? context.User.FindFirstValue("preferred_username")
++        ?? context.User.Identity?.Name;
++    if (!adminRateLimiter.TryAcquire($"{adminUserId}:tokens-reset", 60))
++    {
++        return Results.StatusCode(StatusCodes.Status429TooManyRequests);
++    }
++
++    AdminTokenOperationResponse response = await adminUsersService.ResetTokensPeriodAsync(
++        userId,
++        adminUserId,
++        adminEmail,
++        context.RequestAborted);
++    return Results.Ok(response);
++});
++
++app.MapPost("/api/admin/users/{userId}/tokens/adjust", async (
++        HttpContext context,
++        string userId,
++        AdminAdjustTokensRequest request,
++        IConfiguration configuration,
++        AdminEndpointRateLimiter adminRateLimiter,
++        AdminUsersService adminUsersService,
++        IUserIdResolver userIdResolver,
++        ILoggerFactory loggerFactory) =>
++{
++    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
++        || !AdminPlanOverrideAccess.IsAuthorized(context.User))
++    {
++        return Results.NotFound();
++    }
++
++    bool tokenAdjustEnabled = configuration.GetValue<bool?>("Admin:EnableTokenAdjust") ?? false;
++    if (!tokenAdjustEnabled)
++    {
++        return Results.NotFound();
++    }
++
++    ILogger logger = loggerFactory.CreateLogger("AdminTokens");
++    string adminUserId = ResolveAssignedBy(context.User, userIdResolver, logger, out _);
++    string? adminEmail = context.User.FindFirstValue(ClaimTypes.Email)
++        ?? context.User.FindFirstValue("emails")
++        ?? context.User.FindFirstValue("preferred_username")
++        ?? context.User.Identity?.Name;
++    if (!adminRateLimiter.TryAcquire($"{adminUserId}:tokens-adjust", 60))
++    {
++        return Results.StatusCode(StatusCodes.Status429TooManyRequests);
++    }
++
++    try
++    {
++        AdminTokenOperationResponse response = await adminUsersService.AdjustTokensAsync(
++            userId,
++            request.DeltaTokens,
++            request.Reason ?? string.Empty,
++            adminUserId,
++            adminEmail,
++            context.RequestAborted);
++        return Results.Ok(response);
++    }
++    catch (ArgumentException ex)
++    {
++        return Results.BadRequest(new { message = ex.Message });
++    }
++});
++
++app.MapGet("/api/admin/audit", async (
++        HttpContext context,
++        IConfiguration configuration,
++        IUserIdResolver userIdResolver,
++        AdminEndpointRateLimiter adminRateLimiter,
++        AdminAuditService adminAuditService,
++        ILoggerFactory loggerFactory,
++        int page = 1,
++        int pageSize = 50,
++        string? adminUserId = null,
++        string? targetUserId = null,
++        string? action = null,
++        DateTime? fromUtc = null,
++        DateTime? toUtc = null) =>
++{
++    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
++        || !AdminPlanOverrideAccess.IsAuthorized(context.User))
++    {
++        return Results.NotFound();
++    }
++
++    ILogger logger = loggerFactory.CreateLogger("AdminAudit");
++    string caller = ResolveAssignedBy(context.User, userIdResolver, logger, out _);
++    if (!adminRateLimiter.TryAcquire($"{caller}:audit-list", 120))
++    {
++        return Results.StatusCode(StatusCodes.Status429TooManyRequests);
++    }
++
++    AdminAuditListResponseDto response = await adminAuditService.QueryAsync(
++        new AdminAuditQueryDto(page, pageSize, adminUserId, targetUserId, action, fromUtc, toUtc),
++        context.RequestAborted);
++    return Results.Ok(response);
++});
++
++app.MapGet("/api/admin/users/export.csv", async (
++        HttpContext context,
++        IConfiguration configuration,
++        IUserIdResolver userIdResolver,
++        AdminEndpointRateLimiter adminRateLimiter,
++        AdminUsersService adminUsersService,
++        ILoggerFactory loggerFactory,
++        int page = 1,
++        int pageSize = 500,
++        string? q = null,
++        string? planKey = null,
++        bool overrideOnly = false,
++        string? subscriptionStatus = null,
++        int? tokensLeftLt = null,
++        int? tokensLeftGt = null,
++        string? sort = null) =>
++{
++    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
++        || !AdminPlanOverrideAccess.IsAuthorized(context.User))
++    {
++        return Results.NotFound();
++    }
++
++    ILogger logger = loggerFactory.CreateLogger("AdminUsersExport");
++    string adminUserId = ResolveAssignedBy(context.User, userIdResolver, logger, out _);
++    string? adminEmail = context.User.FindFirstValue(ClaimTypes.Email)
++        ?? context.User.FindFirstValue("emails")
++        ?? context.User.FindFirstValue("preferred_username")
++        ?? context.User.Identity?.Name;
++    if (!adminRateLimiter.TryAcquire($"{adminUserId}:users-export", 20))
++    {
++        return Results.StatusCode(StatusCodes.Status429TooManyRequests);
++    }
++
++    string csv = await adminUsersService.ExportCsvAsync(
++        page,
++        pageSize,
++        q,
++        planKey,
++        overrideOnly,
++        subscriptionStatus,
++        tokensLeftLt,
++        tokensLeftGt,
++        sort,
++        adminUserId,
++        adminEmail,
++        context.RequestAborted);
++
++    context.Response.Headers.ContentDisposition = "attachment; filename=admin-users-export.csv";
++    return Results.Text(csv, "text/csv");
++});
++
+ app.MapPost("/api/admin/db/migrate", async (
+         HttpContext context,
+         AppDbContext dbContext,
+@@ -1413,6 +1797,22 @@ app.MapGet("/api/auth/me", async (
+             createdProfile = false;
+         }
+     }
++    else
++    {
++        DateTime now = DateTime.UtcNow;
++        string? nextDisplayName = string.IsNullOrWhiteSpace(profileIdentity.DisplayName)
++            ? userProfile.DisplayName
++            : profileIdentity.DisplayName;
++        bool changed =
++            !string.Equals(userProfile.DisplayName, nextDisplayName, StringComparison.Ordinal)
++            || userProfile.UpdatedUtc != now;
++        if (changed)
++        {
++            userProfile.DisplayName = nextDisplayName;
++            userProfile.UpdatedUtc = now;
++            await dbContext.SaveChangesAsync(ct);
++        }
++    }
+ 
+     bool hadEntitlement = await dbContext.UserEntitlements
+         .AsNoTracking()
+diff --git a/appsettings.Production.json b/appsettings.Production.json
+index da3b9ae..9772763 100644
+--- a/appsettings.Production.json
++++ b/appsettings.Production.json
+@@ -22,6 +22,10 @@
+     }
+   },
+   "Admin": {
+-    "EnablePlanOverride": false
++    "EnablePlanOverride": false,
++    "EnableAdminApi": false,
++    "AllowDeleteWithActiveSubscription": false,
++    "EnableTokenAdjust": false,
++    "EnableImpersonation": false
+   }
+ }
+diff --git a/appsettings.json b/appsettings.json
+index ce05da3..499ee7d 100644
+--- a/appsettings.json
++++ b/appsettings.json
+@@ -61,6 +61,10 @@
+     "GoalsEnabled": true
+   },
+   "Admin": {
+-    "EnablePlanOverride": false
++    "EnablePlanOverride": false,
++    "EnableAdminApi": false,
++    "AllowDeleteWithActiveSubscription": false,
++    "EnableTokenAdjust": false,
++    "EnableImpersonation": false
+   }
+ }
+diff --git a/Application/Security/AdminEndpointRateLimiter.cs b/Application/Security/AdminEndpointRateLimiter.cs
+new file mode 100644
+index 0000000..f102b51
+--- /dev/null
++++ b/Application/Security/AdminEndpointRateLimiter.cs
+@@ -0,0 +1,42 @@
++using System;
++using Microsoft.Extensions.Caching.Memory;
++
++namespace WriterApp.Application.Security
++{
++    public sealed class AdminEndpointRateLimiter
++    {
++        private readonly IMemoryCache _cache;
++
++        public AdminEndpointRateLimiter(IMemoryCache cache)
++        {
++            _cache = cache ?? throw new ArgumentNullException(nameof(cache));
++        }
++
++        public bool TryAcquire(string key, int limitPerMinute)
++        {
++            if (limitPerMinute <= 0)
++            {
++                return true;
++            }
++
++            string cacheKey = $"admin-rate:{key}";
++            Counter counter = _cache.GetOrCreate(cacheKey, entry =>
++            {
++                entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1);
++                return new Counter();
++            })!;
++
++            lock (counter.Sync)
++            {
++                counter.Count++;
++                return counter.Count <= limitPerMinute;
++            }
++        }
++
++        private sealed class Counter
++        {
++            public object Sync { get; } = new();
++            public int Count { get; set; }
++        }
++    }
++}
+diff --git a/Application/Users/AdminAuditService.cs b/Application/Users/AdminAuditService.cs
+new file mode 100644
+index 0000000..6da03c4
+--- /dev/null
++++ b/Application/Users/AdminAuditService.cs
+@@ -0,0 +1,104 @@
++using System;
++using System.Linq;
++using System.Text.Json;
++using System.Threading;
++using System.Threading.Tasks;
++using Microsoft.EntityFrameworkCore;
++using WriterApp.Data;
++using WriterApp.Data.Admin;
++using WriterApp.Shared;
++
++namespace WriterApp.Application.Users
++{
++    public sealed class AdminAuditService
++    {
++        private readonly AppDbContext _dbContext;
++
++        public AdminAuditService(AppDbContext dbContext)
++        {
++            _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
++        }
++
++        public async Task WriteAsync(
++            string adminUserId,
++            string? adminEmail,
++            string action,
++            string? targetUserId,
++            string? targetEmail,
++            object? details,
++            CancellationToken ct = default)
++        {
++            AdminAuditEvent audit = new()
++            {
++                OccurredAtUtc = DateTime.UtcNow,
++                AdminUserId = string.IsNullOrWhiteSpace(adminUserId) ? "admin" : adminUserId,
++                AdminEmail = adminEmail,
++                Action = action,
++                TargetUserId = targetUserId,
++                TargetEmail = targetEmail,
++                DetailsJson = details is null ? null : JsonSerializer.Serialize(details)
++            };
++
++            _dbContext.AdminAuditEvents.Add(audit);
++            await _dbContext.SaveChangesAsync(ct);
++        }
++
++        public async Task<AdminAuditListResponseDto> QueryAsync(
++            AdminAuditQueryDto query,
++            CancellationToken ct = default)
++        {
++            int page = query.Page <= 0 ? 1 : query.Page;
++            int pageSize = query.PageSize <= 0 ? 50 : Math.Min(query.PageSize, 200);
++
++            IQueryable<AdminAuditEvent> source = _dbContext.AdminAuditEvents.AsNoTracking();
++
++            if (!string.IsNullOrWhiteSpace(query.AdminUserId))
++            {
++                string adminUserId = query.AdminUserId.Trim();
++                source = source.Where(item => item.AdminUserId == adminUserId);
++            }
++
++            if (!string.IsNullOrWhiteSpace(query.TargetUserId))
++            {
++                string targetUserId = query.TargetUserId.Trim();
++                source = source.Where(item => item.TargetUserId == targetUserId);
++            }
++
++            if (!string.IsNullOrWhiteSpace(query.Action))
++            {
++                string action = query.Action.Trim();
++                source = source.Where(item => item.Action == action);
++            }
++
++            if (query.FromUtc.HasValue)
++            {
++                DateTime from = query.FromUtc.Value;
++                source = source.Where(item => item.OccurredAtUtc >= from);
++            }
++
++            if (query.ToUtc.HasValue)
++            {
++                DateTime to = query.ToUtc.Value;
++                source = source.Where(item => item.OccurredAtUtc <= to);
++            }
++
++            source = source.OrderByDescending(item => item.OccurredAtUtc).ThenByDescending(item => item.Id);
++            int totalCount = await source.CountAsync(ct);
++            AdminAuditEventDto[] items = await source
++                .Skip((page - 1) * pageSize)
++                .Take(pageSize)
++                .Select(item => new AdminAuditEventDto(
++                    item.Id,
++                    item.OccurredAtUtc,
++                    item.AdminUserId,
++                    item.AdminEmail,
++                    item.Action,
++                    item.TargetUserId,
++                    item.TargetEmail,
++                    item.DetailsJson))
++                .ToArrayAsync(ct);
++
++            return new AdminAuditListResponseDto(items, page, pageSize, totalCount);
++        }
++    }
++}
+diff --git a/Components/Pages/Admin/Users.razor b/Components/Pages/Admin/Users.razor
+new file mode 100644
+index 0000000..97e62a7
+--- /dev/null
++++ b/Components/Pages/Admin/Users.razor
+@@ -0,0 +1,1032 @@
++@page "/admin/users"
++@using Microsoft.AspNetCore.Authorization
++@using Microsoft.AspNetCore.Components.Authorization
++@using Microsoft.AspNetCore.WebUtilities
++@using WriterApp.Shared
++@attribute [Authorize(Policy = "AdminOnly")]
++@implements IDisposable
++@inject HttpClient Http
++@inject NavigationManager Navigation
++@inject IConfiguration Configuration
++@inject IJSRuntime JS
++@inject ILogger<Users> Logger
++
++<PageTitle>Admin - Users</PageTitle>
++
++<div class="admin-users-page">
++    <div class="page-header">
++        <h1>Users</h1>
++        <div class="header-actions">
++            <button class="btn btn-outline-secondary" @onclick="ExportCsvAsync">Export CSV</button>
++            <button class="btn btn-primary" @onclick="OpenAddUserModal">Add user</button>
++        </div>
++    </div>
++
++    @if (!_adminApiEnabled)
++    {
++        <div class="admin-disabled">
++            <h2>Admin tools disabled</h2>
++            <p>Set <code>Admin:EnableAdminApi=true</code> to enable this page.</p>
++        </div>
++    }
++    else
++    {
++        <div class="admin-tabs">
++            <button class="btn @(_activeTab == "users" ? "btn-primary" : "btn-outline-primary")" @onclick="() => SelectTabAsync(\"users\")">Users</button>
++            <button class="btn @(_activeTab == "audit" ? "btn-primary" : "btn-outline-primary")" @onclick="() => SelectTabAsync(\"audit\")">Audit</button>
++        </div>
++
++        @if (_activeTab == "users")
++        {
++        <div class="filters">
++            <div class="filter-row">
++                <input type="text"
++                       class="form-control"
++                       placeholder="Search email, name, or userId"
++                       value="@_searchText"
++                       @oninput="OnSearchInput" />
++
++                <select class="form-select" @bind="_planFilter">
++                    <option value="">All plans</option>
++                    <option value="Free">Free</option>
++                    <option value="Standard">Standard</option>
++                    <option value="Pro">Pro</option>
++                </select>
++
++                <select class="form-select" @bind="_subscriptionStatusFilter">
++                    <option value="">All statuses</option>
++                    <option value="Active">Active</option>
++                    <option value="active">active</option>
++                    <option value="past_due">past_due</option>
++                    <option value="incomplete">incomplete</option>
++                    <option value="unpaid">unpaid</option>
++                    <option value="canceled">canceled</option>
++                </select>
++
++                <label class="toggle">
++                    <input type="checkbox" @bind="_overrideOnly" />
++                    Override only
++                </label>
++            </div>
++
++            <div class="filter-row">
++                <input type="number"
++                       class="form-control"
++                       placeholder="Tokens left min"
++                       @bind="_tokensLeftMinInput"
++                       @bind:event="oninput" />
++                <input type="number"
++                       class="form-control"
++                       placeholder="Tokens left max"
++                       @bind="_tokensLeftMaxInput"
++                       @bind:event="oninput" />
++
++                <select class="form-select" @bind="_pageSize">
++                    <option value="20">20</option>
++                    <option value="50">50</option>
++                    <option value="100">100</option>
++                </select>
++
++                <select class="form-select" @bind="_sort">
++                    <option value="createdAt desc">Newest</option>
++                    <option value="createdAt asc">Oldest</option>
++                    <option value="email asc">Email A-Z</option>
++                    <option value="email desc">Email Z-A</option>
++                    <option value="tokensLeft asc">Tokens left low-high</option>
++                    <option value="tokensLeft desc">Tokens left high-low</option>
++                    <option value="lastSeen desc">Last seen newest</option>
++                </select>
++
++                <button class="btn btn-primary" @onclick="ApplyFiltersAsync">Apply</button>
++                <button class="btn btn-secondary" @onclick="ResetFiltersAsync">Reset</button>
++            </div>
++        </div>
++
++        @if (!string.IsNullOrWhiteSpace(_error))
++        {
++            <div class="error-bar">
++                <span>@_error</span>
++                <button class="btn btn-link" @onclick="RetryAsync">Retry</button>
++            </div>
++        }
++
++        <div class="table-wrap">
++            <table class="table users-table">
++                <thead>
++                    <tr>
++                        <th>Email</th>
++                        <th>Name</th>
++                        <th>UserId</th>
++                        <th>Current plan</th>
++                        <th>Override</th>
++                        <th>Tokens left</th>
++                        <th>Status</th>
++                        <th>Updated</th>
++                        <th>Actions</th>
++                    </tr>
++                </thead>
++                <tbody>
++                    @if (_loading)
++                    {
++                        @for (int i = 0; i < 8; i++)
++                        {
++                            <tr>
++                                <td colspan="9"><div class="skeleton-row"></div></td>
++                            </tr>
++                        }
++                    }
++                    else if (_items.Count == 0)
++                    {
++                        <tr>
++                            <td colspan="9">No users found.</td>
++                        </tr>
++                    }
++                    else
++                    {
++                        @foreach (AdminUserListItemDto item in _items)
++                        {
++                            <tr>
++                                <td>@(item.Email ?? "-")</td>
++                                <td>@(item.DisplayName ?? "-")</td>
++                                <td>
++                                    <span>@item.UserId</span>
++                                    <button class="btn btn-link btn-sm" @onclick="() => CopyUserIdAsync(item.UserId)">Copy</button>
++                                </td>
++                                <td><span class="chip chip-plan">@item.PlanKey</span></td>
++                                <td><span class="chip @(item.IsManuallyOverridden ? "chip-override" : "chip-muted")">@(item.IsManuallyOverridden ? "Manual" : "None")</span></td>
++                                <td>@($"{item.TokensLeft} ({item.AiMonthlyTokenBudget}-{item.AiTokensUsedThisPeriod})")</td>
++                                <td><span class="chip chip-status">@item.SubscriptionStatus</span></td>
++                                <td>@item.LastSeenUtc.ToString("u")</td>
++                                <td class="actions">
++                                    <button class="btn btn-sm btn-outline-primary" @onclick="() => ViewUserAsync(item.UserId)">View</button>
++                                    <select class="form-select form-select-sm override-select"
++                                            value="@GetOverrideSelection(item.UserId)"
++                                            @onchange="(e) => OnOverrideSelectionChanged(item.UserId, e)">
++                                        <option value="">None</option>
++                                        <option value="Free">Free</option>
++                                        <option value="Standard">Standard</option>
++                                        <option value="Pro">Pro</option>
++                                    </select>
++                                    <button class="btn btn-sm btn-outline-success" @onclick="() => SetOverrideAsync(item.UserId)">Set</button>
++                                    <button class="btn btn-sm btn-outline-secondary" @onclick="() => ResetTokensStubAsync(item.UserId)">Reset tokens</button>
++                                    <button class="btn btn-sm btn-outline-danger" @onclick="() => PromptDelete(item)">Delete</button>
++                                </td>
++                            </tr>
++                        }
++                    }
++                </tbody>
++            </table>
++        </div>
++
++        <div class="pager">
++            <span>Total: @_totalCount</span>
++            <button class="btn btn-secondary" disabled="@(_page <= 1 || _loading)" @onclick="PrevPageAsync">Prev</button>
++            <span>Page @_page</span>
++            <button class="btn btn-secondary" disabled="@(_loading || !_hasNextPage)" @onclick="NextPageAsync">Next</button>
++        </div>
++        }
++        else
++        {
++            <div class="filters">
++                <div class="filter-row">
++                    <input class="form-control" placeholder="Admin userId" @bind="_auditAdminFilter" @bind:event="oninput" />
++                    <input class="form-control" placeholder="Target userId" @bind="_auditTargetFilter" @bind:event="oninput" />
++                    <input class="form-control" placeholder="Action" @bind="_auditActionFilter" @bind:event="oninput" />
++                    <input type="date" class="form-control" @bind="_auditFromDate" />
++                </div>
++                <div class="filter-row">
++                    <input type="date" class="form-control" @bind="_auditToDate" />
++                    <select class="form-select" @bind="_auditPageSize">
++                        <option value="50">50</option>
++                        <option value="100">100</option>
++                        <option value="200">200</option>
++                    </select>
++                    <button class="btn btn-primary" @onclick="ApplyAuditFiltersAsync">Apply</button>
++                </div>
++            </div>
++
++            <div class="table-wrap">
++                <table class="table users-table">
++                    <thead>
++                        <tr>
++                            <th>When (UTC)</th>
++                            <th>Admin</th>
++                            <th>Action</th>
++                            <th>Target user</th>
++                            <th>Details</th>
++                        </tr>
++                    </thead>
++                    <tbody>
++                        @if (_auditLoading)
++                        {
++                            @for (int i = 0; i < 6; i++)
++                            {
++                                <tr><td colspan="5"><div class="skeleton-row"></div></td></tr>
++                            }
++                        }
++                        else if (_auditItems.Count == 0)
++                        {
++                            <tr><td colspan="5">No audit events found.</td></tr>
++                        }
++                        else
++                        {
++                            @foreach (AdminAuditEventDto evt in _auditItems)
++                            {
++                                <tr>
++                                    <td>@evt.OccurredAtUtc.ToString("u")</td>
++                                    <td>@evt.AdminUserId</td>
++                                    <td><span class="chip chip-status">@evt.Action</span></td>
++                                    <td>@(evt.TargetUserId ?? "-")</td>
++                                    <td class="details-cell"><code>@(evt.DetailsJson ?? "-")</code></td>
++                                </tr>
++                            }
++                        }
++                    </tbody>
++                </table>
++            </div>
++
++            <div class="pager">
++                <span>Total: @_auditTotalCount</span>
++                <button class="btn btn-secondary" disabled="@(_auditPage <= 1 || _auditLoading)" @onclick="PrevAuditPageAsync">Prev</button>
++                <span>Page @_auditPage</span>
++                <button class="btn btn-secondary" disabled="@(_auditLoading || !_auditHasNextPage)" @onclick="NextAuditPageAsync">Next</button>
++            </div>
++        }
++    }
++</div>
++
++@if (_showAddUserModal)
++{
++    <div class="modal-backdrop">
++        <div class="modal-panel">
++            <h2>Add user</h2>
++            <label>Email</label>
++            <input type="email" class="form-control" @bind="_newEmail" @bind:event="oninput" />
++            <label>Display name</label>
++            <input type="text" class="form-control" @bind="_newDisplayName" @bind:event="oninput" />
++            <label>UserId (optional)</label>
++            <input type="text" class="form-control" @bind="_newUserId" @bind:event="oninput" />
++            <div class="modal-actions">
++                <button class="btn btn-primary" @onclick="CreateUserAsync">Create</button>
++                <button class="btn btn-secondary" @onclick="CloseAddUserModal">Cancel</button>
++            </div>
++        </div>
++    </div>
++}
++
++@if (_showDeleteConfirm && _deleteTarget is not null)
++{
++    <div class="modal-backdrop">
++        <div class="modal-panel">
++            <h2>Remove user</h2>
++            <p>Delete user <strong>@_deleteTarget.UserId</strong>?</p>
++            <div class="modal-actions">
++                <button class="btn btn-danger" @onclick="ConfirmDeleteAsync">Delete</button>
++                <button class="btn btn-secondary" @onclick="CancelDelete">Cancel</button>
++            </div>
++        </div>
++    </div>
++}
++
++@if (_detailOpen)
++{
++    <div class="drawer-backdrop" @onclick="CloseDetailDrawer"></div>
++    <aside class="detail-drawer">
++        <div class="drawer-header">
++            <h2>User detail</h2>
++            <button class="btn btn-link" @onclick="CloseDetailDrawer">Close</button>
++        </div>
++        @if (_detailLoading)
++        {
++            <div class="skeleton-row"></div>
++            <div class="skeleton-row"></div>
++            <div class="skeleton-row"></div>
++        }
++        else if (!string.IsNullOrWhiteSpace(_detailError))
++        {
++            <p class="error-text">@_detailError</p>
++        }
++        else if (_selectedUser is not null)
++        {
++            <div class="detail-grid">
++                <label>UserId</label><div>@_selectedUser.UserId</div>
++                <label>Email</label><div>@(_selectedUser.Email ?? "-")</div>
++                <label>Plan</label><div>@_selectedUser.PlanKey</div>
++                <label>Status</label><div>@_selectedUser.SubscriptionStatus</div>
++                <label>Override</label><div>@(_selectedUser.IsManuallyOverridden ? _selectedUser.OverridePlanKey : "None")</div>
++                <label>Stripe customer</label><div>@(_selectedUser.StripeCustomerId ?? "-")</div>
++                <label>Stripe subscription</label><div>@(_selectedUser.StripeSubscriptionId ?? "-")</div>
++            </div>
++
++            <div class="drawer-actions">
++                <button class="btn btn-outline-primary" disabled="@string.IsNullOrWhiteSpace(_selectedUser.StripeCustomerId)" @onclick="OpenStripeCustomer">Open customer</button>
++                <button class="btn btn-outline-primary" disabled="@string.IsNullOrWhiteSpace(_selectedUser.StripeSubscriptionId)" @onclick="OpenStripeSubscription">Open subscription</button>
++                <button class="btn btn-outline-secondary" @onclick="SyncStripeAsync">Sync Stripe</button>
++            </div>
++            <small>Webhook replay can be done in Stripe Dashboard Developers -> Events.</small>
++
++            <h3>Update profile</h3>
++            <label>Display name</label>
++            <input type="text" class="form-control" @bind="_editDisplayName" @bind:event="oninput" />
++            <label>Email</label>
++            <input type="email" class="form-control" @bind="_editEmail" @bind:event="oninput" disabled />
++            <small>Email updates are disabled in this build.</small>
++            <div class="drawer-actions">
++                <button class="btn btn-primary" @onclick="UpdateUserAsync">Save</button>
++            </div>
++
++            <h3>Token tools</h3>
++            <div class="drawer-actions">
++                <button class="btn btn-outline-secondary" @onclick="ResetTokensAsync">Reset period</button>
++            </div>
++            <label>Adjust delta tokens</label>
++            <input type="number" class="form-control" @bind="_deltaTokensInput" @bind:event="oninput" />
++            <label>Reason</label>
++            <input type="text" class="form-control" @bind="_deltaTokensReason" @bind:event="oninput" />
++            <div class="drawer-actions">
++                <button class="btn btn-outline-secondary" @onclick="AdjustTokensAsync">Apply adjustment</button>
++            </div>
++        }
++    </aside>
++}
++
++@if (_toasts.Count > 0)
++{
++    <div class="toast-stack">
++        @foreach (ToastMessage toast in _toasts)
++        {
++            <div class="toast-item @($"toast-{toast.Kind}")">
++                <span>@toast.Text</span>
++                <button class="btn btn-link btn-sm" @onclick="() => DismissToast(toast.Id)">x</button>
++            </div>
++        }
++    </div>
++}
++
++@code {
++    private readonly List<AdminUserListItemDto> _items = new();
++    private readonly Dictionary<string, string?> _overrideSelections = new(StringComparer.Ordinal);
++    private readonly List<ToastMessage> _toasts = new();
++    private readonly List<AdminAuditEventDto> _auditItems = new();
++    private AdminApiClient? _adminApi;
++
++    private bool _adminApiEnabled;
++    private bool _loading;
++    private bool _hasNextPage;
++    private string? _error;
++
++    private int _page = 1;
++    private int _pageSize = 20;
++    private int _totalCount;
++    private string? _searchText;
++    private string? _planFilter;
++    private string? _subscriptionStatusFilter;
++    private bool _overrideOnly;
++    private string? _tokensLeftMinInput;
++    private string? _tokensLeftMaxInput;
++    private string _sort = "createdAt desc";
++    private string _activeTab = "users";
++
++    private bool _showAddUserModal;
++    private string? _newEmail;
++    private string? _newDisplayName;
++    private string? _newUserId;
++
++    private bool _showDeleteConfirm;
++    private AdminUserListItemDto? _deleteTarget;
++
++    private bool _detailOpen;
++    private bool _detailLoading;
++    private string? _detailError;
++    private AdminUserDetailDto? _selectedUser;
++    private string? _editDisplayName;
++    private string? _editEmail;
++    private string? _deltaTokensInput;
++    private string? _deltaTokensReason;
++
++    private bool _auditLoading;
++    private bool _auditHasNextPage;
++    private int _auditPage = 1;
++    private int _auditPageSize = 50;
++    private int _auditTotalCount;
++    private string? _auditAdminFilter;
++    private string? _auditTargetFilter;
++    private string? _auditActionFilter;
++    private string? _auditFromDate;
++    private string? _auditToDate;
++
++    private CancellationTokenSource? _searchDebounceCts;
++
++    protected override async Task OnInitializedAsync()
++    {
++        _adminApiEnabled = Configuration.GetValue<bool?>("Admin:EnableAdminApi") ?? false;
++        ApplyQueryStringToState();
++        if (_adminApiEnabled)
++        {
++            await LoadUsersAsync(updateQueryString: false);
++        }
++    }
++
++    private async Task SelectTabAsync(string tab)
++    {
++        _activeTab = tab;
++        if (_activeTab == "audit")
++        {
++            await LoadAuditAsync();
++        }
++    }
++
++    private void ApplyQueryStringToState()
++    {
++        Dictionary<string, Microsoft.Extensions.Primitives.StringValues> query =
++            QueryHelpers.ParseQuery(new Uri(Navigation.Uri).Query);
++
++        _page = ReadInt(query, "page", 1);
++        _pageSize = ReadInt(query, "pageSize", 20);
++        _searchText = ReadString(query, "q");
++        _planFilter = ReadString(query, "plan");
++        _subscriptionStatusFilter = ReadString(query, "status");
++        _overrideOnly = ReadBool(query, "overrideOnly");
++        _tokensLeftMinInput = ReadString(query, "tokensMin");
++        _tokensLeftMaxInput = ReadString(query, "tokensMax");
++        _sort = ReadString(query, "sort") ?? "createdAt desc";
++
++        if (_pageSize is not (20 or 50 or 100))
++        {
++            _pageSize = 20;
++        }
++    }
++
++    private async Task LoadUsersAsync(bool updateQueryString)
++    {
++        _loading = true;
++        _error = null;
++
++        if (updateQueryString)
++        {
++            SyncQueryString();
++        }
++
++        try
++        {
++            AdminUserQueryDto query = new(
++                Page: _page,
++                PageSize: _pageSize,
++                Q: _searchText,
++                PlanKey: string.IsNullOrWhiteSpace(_planFilter) ? null : _planFilter,
++                SubscriptionStatus: string.IsNullOrWhiteSpace(_subscriptionStatusFilter) ? null : _subscriptionStatusFilter,
++                OverrideOnly: _overrideOnly,
++                TokensLeftLt: ParseNullableInt(_tokensLeftMaxInput),
++                TokensLeftGt: ParseNullableInt(_tokensLeftMinInput),
++                Sort: _sort);
++
++            AdminUserListResponseDto response = await AdminApi.GetUsersAsync(query);
++
++            _items.Clear();
++            _items.AddRange(response.Items);
++            _totalCount = response.TotalCount;
++            _hasNextPage = (_page * _pageSize) < _totalCount;
++
++            foreach (AdminUserListItemDto item in _items)
++            {
++                if (!_overrideSelections.ContainsKey(item.UserId))
++                {
++                    _overrideSelections[item.UserId] = item.IsManuallyOverridden ? item.PlanKey : null;
++                }
++            }
++        }
++        catch (Exception ex)
++        {
++            _error = ex.Message;
++            Logger.LogError(ex, "Failed to load admin users list.");
++        }
++        finally
++        {
++            _loading = false;
++            StateHasChanged();
++        }
++    }
++
++    private async Task ApplyFiltersAsync()
++    {
++        _page = 1;
++        await LoadUsersAsync(updateQueryString: true);
++    }
++
++    private async Task ResetFiltersAsync()
++    {
++        _searchText = null;
++        _planFilter = null;
++        _subscriptionStatusFilter = null;
++        _overrideOnly = false;
++        _tokensLeftMinInput = null;
++        _tokensLeftMaxInput = null;
++        _pageSize = 20;
++        _sort = "createdAt desc";
++        _page = 1;
++        await LoadUsersAsync(updateQueryString: true);
++    }
++
++    private async Task RetryAsync()
++    {
++        if (_activeTab == "audit")
++        {
++            await LoadAuditAsync();
++            return;
++        }
++
++        await LoadUsersAsync(updateQueryString: false);
++    }
++
++    private async Task PrevPageAsync()
++    {
++        if (_page <= 1)
++        {
++            return;
++        }
++
++        _page--;
++        await LoadUsersAsync(updateQueryString: true);
++    }
++
++    private async Task NextPageAsync()
++    {
++        if (!_hasNextPage)
++        {
++            return;
++        }
++
++        _page++;
++        await LoadUsersAsync(updateQueryString: true);
++    }
++
++    private async Task OnSearchInput(ChangeEventArgs args)
++    {
++        _searchText = args.Value?.ToString();
++        _searchDebounceCts?.Cancel();
++        _searchDebounceCts?.Dispose();
++        _searchDebounceCts = new CancellationTokenSource();
++        try
++        {
++            await Task.Delay(400, _searchDebounceCts.Token);
++            _page = 1;
++            await LoadUsersAsync(updateQueryString: true);
++        }
++        catch (OperationCanceledException)
++        {
++            // no-op
++        }
++    }
++
++    private async Task ViewUserAsync(string userId)
++    {
++        _detailOpen = true;
++        _detailLoading = true;
++        _detailError = null;
++        _selectedUser = null;
++
++        try
++        {
++            _selectedUser = await AdminApi.GetUserAsync(userId);
++            _editDisplayName = _selectedUser?.DisplayName;
++            _editEmail = _selectedUser?.Email;
++        }
++        catch (Exception ex)
++        {
++            _detailError = ex.Message;
++            Logger.LogError(ex, "Failed to load user detail for {UserId}.", userId);
++        }
++        finally
++        {
++            _detailLoading = false;
++        }
++    }
++
++    private void CloseDetailDrawer()
++    {
++        _detailOpen = false;
++        _detailError = null;
++        _selectedUser = null;
++    }
++
++    private async Task UpdateUserAsync()
++    {
++        if (_selectedUser is null)
++        {
++            return;
++        }
++
++        try
++        {
++            AdminUserDetailDto updated = await AdminApi.UpdateUserAsync(
++                _selectedUser.UserId,
++                new AdminUpdateUserRequest(
++                    Email: null,
++                    DisplayName: _editDisplayName));
++
++            _selectedUser = updated;
++            AddToast("User updated.", "success");
++            await LoadUsersAsync(updateQueryString: false);
++        }
++        catch (Exception ex)
++        {
++            AddToast(ex.Message, "error");
++        }
++    }
++
++    private async Task SyncStripeAsync()
++    {
++        if (_selectedUser is null)
++        {
++            return;
++        }
++
++        try
++        {
++            _selectedUser = await AdminApi.SyncStripeAsync(_selectedUser.UserId);
++            AddToast("Stripe sync completed.", "success");
++            await LoadUsersAsync(updateQueryString: false);
++        }
++        catch (Exception ex)
++        {
++            AddToast(ex.Message, "error");
++        }
++    }
++
++    private async Task ResetTokensAsync()
++    {
++        if (_selectedUser is null)
++        {
++            return;
++        }
++
++        try
++        {
++            _ = await AdminApi.ResetTokensPeriodAsync(_selectedUser.UserId);
++            AddToast("Token period reset.", "success");
++            _selectedUser = await AdminApi.GetUserAsync(_selectedUser.UserId);
++            await LoadUsersAsync(updateQueryString: false);
++        }
++        catch (Exception ex)
++        {
++            AddToast(ex.Message, "error");
++        }
++    }
++
++    private async Task AdjustTokensAsync()
++    {
++        if (_selectedUser is null)
++        {
++            return;
++        }
++
++        if (!int.TryParse(_deltaTokensInput, out int deltaTokens))
++        {
++            AddToast("Enter a numeric delta.", "error");
++            return;
++        }
++
++        try
++        {
++            _ = await AdminApi.AdjustTokensAsync(
++                _selectedUser.UserId,
++                new AdminAdjustTokensRequest(deltaTokens, _deltaTokensReason));
++            AddToast("Token adjustment applied.", "success");
++            _selectedUser = await AdminApi.GetUserAsync(_selectedUser.UserId);
++            await LoadUsersAsync(updateQueryString: false);
++        }
++        catch (Exception ex)
++        {
++            AddToast(ex.Message, "error");
++        }
++    }
++
++    private Task OpenStripeCustomer()
++    {
++        if (string.IsNullOrWhiteSpace(_selectedUser?.StripeCustomerId))
++        {
++            return Task.CompletedTask;
++        }
++
++        string url = $"https://dashboard.stripe.com/customers/{Uri.EscapeDataString(_selectedUser.StripeCustomerId)}";
++        return JS.InvokeVoidAsync("open", url, "_blank").AsTask();
++    }
++
++    private Task OpenStripeSubscription()
++    {
++        if (string.IsNullOrWhiteSpace(_selectedUser?.StripeSubscriptionId))
++        {
++            return Task.CompletedTask;
++        }
++
++        string url = $"https://dashboard.stripe.com/subscriptions/{Uri.EscapeDataString(_selectedUser.StripeSubscriptionId)}";
++        return JS.InvokeVoidAsync("open", url, "_blank").AsTask();
++    }
++
++    private async Task ExportCsvAsync()
++    {
++        try
++        {
++            AdminUserQueryDto query = new(
++                Page: _page,
++                PageSize: Math.Max(_pageSize, 200),
++                Q: _searchText,
++                PlanKey: _planFilter,
++                SubscriptionStatus: _subscriptionStatusFilter,
++                OverrideOnly: _overrideOnly,
++                TokensLeftLt: ParseNullableInt(_tokensLeftMaxInput),
++                TokensLeftGt: ParseNullableInt(_tokensLeftMinInput),
++                Sort: _sort);
++            string csv = await AdminApi.ExportUsersCsvAsync(query);
++            await JS.InvokeVoidAsync("navigator.clipboard.writeText", csv);
++            AddToast("CSV copied to clipboard.", "success");
++        }
++        catch (Exception ex)
++        {
++            AddToast(ex.Message, "error");
++        }
++    }
++
++    private async Task ApplyAuditFiltersAsync()
++    {
++        _auditPage = 1;
++        await LoadAuditAsync();
++    }
++
++    private async Task PrevAuditPageAsync()
++    {
++        if (_auditPage <= 1)
++        {
++            return;
++        }
++
++        _auditPage--;
++        await LoadAuditAsync();
++    }
++
++    private async Task NextAuditPageAsync()
++    {
++        if (!_auditHasNextPage)
++        {
++            return;
++        }
++
++        _auditPage++;
++        await LoadAuditAsync();
++    }
++
++    private async Task LoadAuditAsync()
++    {
++        _auditLoading = true;
++        try
++        {
++            DateTime? fromUtc = ParseDate(_auditFromDate, endOfDay: false);
++            DateTime? toUtc = ParseDate(_auditToDate, endOfDay: true);
++            AdminAuditListResponseDto response = await AdminApi.GetAuditAsync(
++                new AdminAuditQueryDto(
++                    _auditPage,
++                    _auditPageSize,
++                    _auditAdminFilter,
++                    _auditTargetFilter,
++                    _auditActionFilter,
++                    fromUtc,
++                    toUtc));
++            _auditItems.Clear();
++            _auditItems.AddRange(response.Items);
++            _auditTotalCount = response.TotalCount;
++            _auditHasNextPage = (_auditPage * _auditPageSize) < _auditTotalCount;
++        }
++        catch (Exception ex)
++        {
++            AddToast(ex.Message, "error");
++            Logger.LogError(ex, "Failed to load audit events.");
++        }
++        finally
++        {
++            _auditLoading = false;
++        }
++    }
++
++    private void OpenAddUserModal()
++    {
++        _newEmail = null;
++        _newDisplayName = null;
++        _newUserId = null;
++        _showAddUserModal = true;
++    }
++
++    private void CloseAddUserModal()
++    {
++        _showAddUserModal = false;
++    }
++
++    private async Task CreateUserAsync()
++    {
++        try
++        {
++            _ = await AdminApi.CreateUserAsync(new AdminCreateUserRequest(_newUserId, _newEmail, _newDisplayName));
++            _showAddUserModal = false;
++            AddToast("User created.", "success");
++            await LoadUsersAsync(updateQueryString: false);
++        }
++        catch (Exception ex)
++        {
++            AddToast(ex.Message, "error");
++        }
++    }
++
++    private void PromptDelete(AdminUserListItemDto user)
++    {
++        _deleteTarget = user;
++        _showDeleteConfirm = true;
++    }
++
++    private void CancelDelete()
++    {
++        _showDeleteConfirm = false;
++        _deleteTarget = null;
++    }
++
++    private async Task ConfirmDeleteAsync()
++    {
++        if (_deleteTarget is null)
++        {
++            return;
++        }
++
++        try
++        {
++            await AdminApi.DeleteUserAsync(_deleteTarget.UserId);
++            AddToast("User removed.", "success");
++            _showDeleteConfirm = false;
++            _deleteTarget = null;
++            await LoadUsersAsync(updateQueryString: false);
++        }
++        catch (Exception ex)
++        {
++            AddToast(ex.Message, "error");
++        }
++    }
++
++    private async Task SetOverrideAsync(string userId)
++    {
++        try
++        {
++            string? selected = GetOverrideSelection(userId);
++            await AdminApi.SetPlanOverrideAsync(userId, new AdminSetPlanOverrideRequest(selected, "Admin UI"));
++            AddToast("Plan override updated.", "success");
++            await LoadUsersAsync(updateQueryString: false);
++            if (_selectedUser?.UserId == userId)
++            {
++                await ViewUserAsync(userId);
++            }
++        }
++        catch (Exception ex)
++        {
++            AddToast(ex.Message, "error");
++        }
++    }
++
++    private Task ResetTokensStubAsync(string userId)
++    {
++        AddToast($"Reset tokens for {userId} is not implemented yet.", "info");
++        return Task.CompletedTask;
++    }
++
++    private string? GetOverrideSelection(string userId)
++    {
++        if (_overrideSelections.TryGetValue(userId, out string? value))
++        {
++            return value;
++        }
++
++        return null;
++    }
++
++    private void OnOverrideSelectionChanged(string userId, ChangeEventArgs args)
++    {
++        string? value = args.Value?.ToString();
++        _overrideSelections[userId] = string.IsNullOrWhiteSpace(value) ? null : value;
++    }
++
++    private async Task CopyUserIdAsync(string userId)
++    {
++        try
++        {
++            await JS.InvokeVoidAsync("navigator.clipboard.writeText", userId);
++            AddToast("UserId copied.", "success");
++        }
++        catch
++        {
++            AddToast("Could not copy UserId.", "error");
++        }
++    }
++
++    private void AddToast(string text, string kind)
++    {
++        _toasts.Add(new ToastMessage(Guid.NewGuid(), text, kind));
++        if (_toasts.Count > 4)
++        {
++            _toasts.RemoveAt(0);
++        }
++    }
++
++    private void DismissToast(Guid id)
++    {
++        int index = _toasts.FindIndex(item => item.Id == id);
++        if (index >= 0)
++        {
++            _toasts.RemoveAt(index);
++        }
++    }
++
++    private void SyncQueryString()
++    {
++        Dictionary<string, string?> values = new(StringComparer.Ordinal)
++        {
++            ["page"] = _page.ToString(System.Globalization.CultureInfo.InvariantCulture),
++            ["pageSize"] = _pageSize.ToString(System.Globalization.CultureInfo.InvariantCulture),
++            ["q"] = _searchText,
++            ["plan"] = _planFilter,
++            ["status"] = _subscriptionStatusFilter,
++            ["overrideOnly"] = _overrideOnly ? "true" : null,
++            ["tokensMin"] = _tokensLeftMinInput,
++            ["tokensMax"] = _tokensLeftMaxInput,
++            ["sort"] = _sort
++        };
++
++        string next = QueryHelpers.AddQueryString("/admin/users", values);
++        if (!string.Equals(Navigation.ToBaseRelativePath(Navigation.Uri), next.TrimStart('/'), StringComparison.Ordinal))
++        {
++            Navigation.NavigateTo(next, replace: true);
++        }
++    }
++
++    private static int ReadInt(IReadOnlyDictionary<string, Microsoft.Extensions.Primitives.StringValues> query, string key, int fallback)
++    {
++        if (!query.TryGetValue(key, out Microsoft.Extensions.Primitives.StringValues values))
++        {
++            return fallback;
++        }
++
++        return int.TryParse(values.ToString(), out int parsed) ? parsed : fallback;
++    }
++
++    private static string? ReadString(IReadOnlyDictionary<string, Microsoft.Extensions.Primitives.StringValues> query, string key)
++    {
++        if (!query.TryGetValue(key, out Microsoft.Extensions.Primitives.StringValues values))
++        {
++            return null;
++        }
++
++        string value = values.ToString();
++        return string.IsNullOrWhiteSpace(value) ? null : value;
++    }
++
++    private static bool ReadBool(IReadOnlyDictionary<string, Microsoft.Extensions.Primitives.StringValues> query, string key)
++    {
++        if (!query.TryGetValue(key, out Microsoft.Extensions.Primitives.StringValues values))
++        {
++            return false;
++        }
++
++        string raw = values.ToString();
++        return raw.Equals("true", StringComparison.OrdinalIgnoreCase) || raw == "1";
++    }
++
++    private static int? ParseNullableInt(string? raw)
++    {
++        if (string.IsNullOrWhiteSpace(raw))
++        {
++            return null;
++        }
++
++        return int.TryParse(raw, out int parsed) ? parsed : null;
++    }
++
++    private static DateTime? ParseDate(string? raw, bool endOfDay)
++    {
++        if (string.IsNullOrWhiteSpace(raw))
++        {
++            return null;
++        }
++
++        if (!DateTime.TryParse(raw, out DateTime parsed))
++        {
++            return null;
++        }
++
++        DateTime utc = DateTime.SpecifyKind(parsed.Date, DateTimeKind.Utc);
++        return endOfDay ? utc.AddDays(1).AddTicks(-1) : utc;
++    }
++
++    public void Dispose()
++    {
++        _searchDebounceCts?.Cancel();
++        _searchDebounceCts?.Dispose();
++    }
++
++    private sealed record ToastMessage(Guid Id, string Text, string Kind);
++
++    private AdminApiClient AdminApi => _adminApi ??= new AdminApiClient(Http);
++}
+diff --git a/Components/Pages/Admin/Users.razor.css b/Components/Pages/Admin/Users.razor.css
+new file mode 100644
+index 0000000..e2e7b28
+--- /dev/null
++++ b/Components/Pages/Admin/Users.razor.css
+@@ -0,0 +1,249 @@
++.admin-users-page {
++    display: grid;
++    gap: 1rem;
++    padding: 1rem;
++}
++
++.page-header {
++    display: flex;
++    align-items: center;
++    justify-content: space-between;
++}
++
++.header-actions {
++    display: inline-flex;
++    gap: 0.5rem;
++}
++
++.admin-tabs {
++    display: flex;
++    gap: 0.5rem;
++}
++
++.filters {
++    display: grid;
++    gap: 0.75rem;
++    padding: 0.75rem;
++    border: 1px solid #d9dde5;
++    border-radius: 0.5rem;
++    background: #f8fafc;
++}
++
++.filter-row {
++    display: grid;
++    grid-template-columns: 2fr 1fr 1fr auto;
++    gap: 0.5rem;
++    align-items: center;
++}
++
++.filter-row:last-child {
++    grid-template-columns: 1fr 1fr 120px 1fr auto auto;
++}
++
++.toggle {
++    display: inline-flex;
++    align-items: center;
++    gap: 0.35rem;
++    white-space: nowrap;
++}
++
++.table-wrap {
++    overflow: auto;
++    border: 1px solid #e2e8f0;
++    border-radius: 0.5rem;
++    background: #fff;
++}
++
++.users-table th,
++.users-table td {
++    vertical-align: middle;
++    white-space: nowrap;
++}
++
++.users-table td.actions {
++    display: flex;
++    gap: 0.35rem;
++    align-items: center;
++}
++
++.details-cell code {
++    display: inline-block;
++    max-width: 520px;
++    white-space: nowrap;
++    overflow: hidden;
++    text-overflow: ellipsis;
++}
++
++.override-select {
++    min-width: 110px;
++}
++
++.chip {
++    display: inline-block;
++    padding: 0.15rem 0.5rem;
++    border-radius: 999px;
++    font-size: 0.75rem;
++    font-weight: 600;
++}
++
++.chip-plan {
++    background: #e0f2fe;
++    color: #0f4f7a;
++}
++
++.chip-status {
++    background: #ecfdf3;
++    color: #19603d;
++}
++
++.chip-override {
++    background: #fff7ed;
++    color: #9a3412;
++}
++
++.chip-muted {
++    background: #f1f5f9;
++    color: #475569;
++}
++
++.pager {
++    display: flex;
++    align-items: center;
++    gap: 0.75rem;
++}
++
++.error-bar {
++    display: flex;
++    align-items: center;
++    justify-content: space-between;
++    padding: 0.5rem 0.75rem;
++    border-radius: 0.4rem;
++    border: 1px solid #fecaca;
++    background: #fef2f2;
++    color: #991b1b;
++}
++
++.admin-disabled {
++    padding: 1rem;
++    border: 1px solid #e5e7eb;
++    border-radius: 0.5rem;
++    background: #f8fafc;
++}
++
++.skeleton-row {
++    height: 1.25rem;
++    border-radius: 0.35rem;
++    background: linear-gradient(90deg, #e5e7eb 25%, #f3f4f6 40%, #e5e7eb 55%);
++    background-size: 200% 100%;
++    animation: shimmer 1.2s infinite linear;
++}
++
++@keyframes shimmer {
++    from { background-position: 0 0; }
++    to { background-position: -200% 0; }
++}
++
++.modal-backdrop {
++    position: fixed;
++    inset: 0;
++    background: rgba(15, 23, 42, 0.45);
++    display: grid;
++    place-items: center;
++    z-index: 50;
++}
++
++.modal-panel {
++    width: min(520px, calc(100vw - 2rem));
++    background: #fff;
++    border-radius: 0.5rem;
++    padding: 1rem;
++    display: grid;
++    gap: 0.5rem;
++}
++
++.modal-actions {
++    margin-top: 0.5rem;
++    display: flex;
++    justify-content: flex-end;
++    gap: 0.5rem;
++}
++
++.drawer-backdrop {
++    position: fixed;
++    inset: 0;
++    background: rgba(15, 23, 42, 0.25);
++    z-index: 40;
++}
++
++.detail-drawer {
++    position: fixed;
++    top: 0;
++    right: 0;
++    width: min(520px, 100vw);
++    height: 100vh;
++    background: #fff;
++    z-index: 41;
++    border-left: 1px solid #e2e8f0;
++    padding: 1rem;
++    overflow: auto;
++    display: grid;
++    gap: 0.75rem;
++}
++
++.drawer-header {
++    display: flex;
++    align-items: center;
++    justify-content: space-between;
++}
++
++.detail-grid {
++    display: grid;
++    grid-template-columns: 140px 1fr;
++    gap: 0.35rem 0.75rem;
++}
++
++.drawer-actions {
++    display: flex;
++    justify-content: flex-end;
++}
++
++.toast-stack {
++    position: fixed;
++    top: 1rem;
++    right: 1rem;
++    display: grid;
++    gap: 0.5rem;
++    z-index: 70;
++}
++
++.toast-item {
++    min-width: 240px;
++    max-width: 420px;
++    display: flex;
++    align-items: center;
++    justify-content: space-between;
++    gap: 0.5rem;
++    border-radius: 0.4rem;
++    padding: 0.4rem 0.6rem;
++    box-shadow: 0 8px 22px rgba(15, 23, 42, 0.18);
++    background: #fff;
++}
++
++.toast-success { border-left: 4px solid #16a34a; }
++.toast-error { border-left: 4px solid #dc2626; }
++.toast-info { border-left: 4px solid #0ea5e9; }
++
++.error-text {
++    color: #991b1b;
++}
++
++@media (max-width: 1100px) {
++    .filter-row,
++    .filter-row:last-child {
++        grid-template-columns: 1fr;
++    }
++
++    .users-table td.actions {
++        flex-wrap: wrap;
++    }
++}
+diff --git a/Data/Admin/AdminAuditEvent.cs b/Data/Admin/AdminAuditEvent.cs
+new file mode 100644
+index 0000000..e0958db
+--- /dev/null
++++ b/Data/Admin/AdminAuditEvent.cs
+@@ -0,0 +1,16 @@
++using System;
++
++namespace WriterApp.Data.Admin
++{
++    public sealed class AdminAuditEvent
++    {
++        public long Id { get; set; }
++        public DateTime OccurredAtUtc { get; set; }
++        public string AdminUserId { get; set; } = string.Empty;
++        public string? AdminEmail { get; set; }
++        public string Action { get; set; } = string.Empty;
++        public string? TargetUserId { get; set; }
++        public string? TargetEmail { get; set; }
++        public string? DetailsJson { get; set; }
++    }
++}
+diff --git a/Data/Subscriptions/TokenAdjustment.cs b/Data/Subscriptions/TokenAdjustment.cs
+new file mode 100644
+index 0000000..262b214
+--- /dev/null
++++ b/Data/Subscriptions/TokenAdjustment.cs
+@@ -0,0 +1,15 @@
++using System;
++
++namespace WriterApp.Data.Subscriptions
++{
++    public sealed class TokenAdjustment
++    {
++        public long Id { get; set; }
++        public string UserId { get; set; } = string.Empty;
++        public int DeltaTokens { get; set; }
++        public string Reason { get; set; } = string.Empty;
++        public string AdjustedBy { get; set; } = string.Empty;
++        public string? AdjustedByEmail { get; set; }
++        public DateTime OccurredAtUtc { get; set; }
++    }
++}
+diff --git a/Migrations/20260302102000_AddAdminAuditAndTokenAdjustments.cs b/Migrations/20260302102000_AddAdminAuditAndTokenAdjustments.cs
+new file mode 100644
+index 0000000..1e49e99
+--- /dev/null
++++ b/Migrations/20260302102000_AddAdminAuditAndTokenAdjustments.cs
+@@ -0,0 +1,89 @@
++using System;
++using Microsoft.EntityFrameworkCore.Migrations;
++
++#nullable disable
++
++namespace BlazorApp.Migrations
++{
++    public partial class AddAdminAuditAndTokenAdjustments : Migration
++    {
++        protected override void Up(MigrationBuilder migrationBuilder)
++        {
++            migrationBuilder.CreateTable(
++                name: "AdminAuditEvents",
++                columns: table => new
++                {
++                    Id = table.Column<long>(type: "INTEGER", nullable: false)
++                        .Annotation("Sqlite:Autoincrement", true),
++                    OccurredAtUtc = table.Column<DateTime>(type: "TEXT", nullable: false),
++                    AdminUserId = table.Column<string>(type: "TEXT", nullable: false),
++                    AdminEmail = table.Column<string>(type: "TEXT", nullable: true),
++                    Action = table.Column<string>(type: "TEXT", nullable: false),
++                    TargetUserId = table.Column<string>(type: "TEXT", nullable: true),
++                    TargetEmail = table.Column<string>(type: "TEXT", nullable: true),
++                    DetailsJson = table.Column<string>(type: "TEXT", nullable: true)
++                },
++                constraints: table =>
++                {
++                    table.PrimaryKey("PK_AdminAuditEvents", x => x.Id);
++                });
++
++            migrationBuilder.CreateTable(
++                name: "TokenAdjustments",
++                columns: table => new
++                {
++                    Id = table.Column<long>(type: "INTEGER", nullable: false)
++                        .Annotation("Sqlite:Autoincrement", true),
++                    UserId = table.Column<string>(type: "TEXT", nullable: false),
++                    DeltaTokens = table.Column<int>(type: "INTEGER", nullable: false),
++                    Reason = table.Column<string>(type: "TEXT", nullable: false),
++                    AdjustedBy = table.Column<string>(type: "TEXT", nullable: false),
++                    AdjustedByEmail = table.Column<string>(type: "TEXT", nullable: true),
++                    OccurredAtUtc = table.Column<DateTime>(type: "TEXT", nullable: false)
++                },
++                constraints: table =>
++                {
++                    table.PrimaryKey("PK_TokenAdjustments", x => x.Id);
++                });
++
++            migrationBuilder.CreateIndex(
++                name: "IX_AdminAuditEvents_Action",
++                table: "AdminAuditEvents",
++                column: "Action");
++
++            migrationBuilder.CreateIndex(
++                name: "IX_AdminAuditEvents_AdminUserId",
++                table: "AdminAuditEvents",
++                column: "AdminUserId");
++
++            migrationBuilder.CreateIndex(
++                name: "IX_AdminAuditEvents_OccurredAtUtc",
++                table: "AdminAuditEvents",
++                column: "OccurredAtUtc");
++
++            migrationBuilder.CreateIndex(
++                name: "IX_AdminAuditEvents_TargetUserId",
++                table: "AdminAuditEvents",
++                column: "TargetUserId");
++
++            migrationBuilder.CreateIndex(
++                name: "IX_TokenAdjustments_OccurredAtUtc",
++                table: "TokenAdjustments",
++                column: "OccurredAtUtc");
++
++            migrationBuilder.CreateIndex(
++                name: "IX_TokenAdjustments_UserId",
++                table: "TokenAdjustments",
++                column: "UserId");
++        }
++
++        protected override void Down(MigrationBuilder migrationBuilder)
++        {
++            migrationBuilder.DropTable(
++                name: "AdminAuditEvents");
++
++            migrationBuilder.DropTable(
++                name: "TokenAdjustments");
++        }
++    }
++}
+diff --git a/WriterApp.Shared/AdminApiClient.cs b/WriterApp.Shared/AdminApiClient.cs
+new file mode 100644
+index 0000000..cf42471
+--- /dev/null
++++ b/WriterApp.Shared/AdminApiClient.cs
+@@ -0,0 +1,197 @@
++using System;
++using System.Collections.Generic;
++using System.Globalization;
++using System.Net.Http;
++using System.Net.Http.Json;
++using System.Text;
++using System.Text.Json;
++using System.Threading;
++using System.Threading.Tasks;
++using Microsoft.AspNetCore.WebUtilities;
++
++namespace WriterApp.Shared
++{
++    public sealed class AdminApiClient
++    {
++        private readonly HttpClient _http;
++
++        public AdminApiClient(HttpClient http)
++        {
++            _http = http ?? throw new ArgumentNullException(nameof(http));
++        }
++
++        public async Task<AdminUserListResponseDto> GetUsersAsync(AdminUserQueryDto query, CancellationToken ct = default)
++        {
++            string url = BuildUsersUrl(query);
++            AdminUserListResponseDto? payload = await _http.GetFromJsonAsync<AdminUserListResponseDto>(url, ct);
++            return payload ?? new AdminUserListResponseDto(Array.Empty<AdminUserListItemDto>(), query.Page, query.PageSize, 0);
++        }
++
++        public async Task<AdminUserDetailDto?> GetUserAsync(string userId, CancellationToken ct = default)
++        {
++            return await _http.GetFromJsonAsync<AdminUserDetailDto>($"api/admin/users/{Uri.EscapeDataString(userId)}", ct);
++        }
++
++        public async Task<AdminUserDetailDto> CreateUserAsync(AdminCreateUserRequest request, CancellationToken ct = default)
++        {
++            using HttpResponseMessage response = await _http.PostAsJsonAsync("api/admin/users", request, ct);
++            await EnsureSuccess(response, ct);
++            AdminUserDetailDto? payload = await response.Content.ReadFromJsonAsync<AdminUserDetailDto>(cancellationToken: ct);
++            return payload ?? throw new InvalidOperationException("Admin API returned an empty create-user response.");
++        }
++
++        public async Task<AdminUserDetailDto> UpdateUserAsync(string userId, AdminUpdateUserRequest request, CancellationToken ct = default)
++        {
++            using HttpResponseMessage response = await _http.PutAsJsonAsync($"api/admin/users/{Uri.EscapeDataString(userId)}", request, ct);
++            await EnsureSuccess(response, ct);
++            AdminUserDetailDto? payload = await response.Content.ReadFromJsonAsync<AdminUserDetailDto>(cancellationToken: ct);
++            return payload ?? throw new InvalidOperationException("Admin API returned an empty update-user response.");
++        }
++
++        public async Task DeleteUserAsync(string userId, CancellationToken ct = default)
++        {
++            using HttpResponseMessage response = await _http.DeleteAsync($"api/admin/users/{Uri.EscapeDataString(userId)}", ct);
++            await EnsureSuccess(response, ct);
++        }
++
++        public async Task<AdminPlanOverrideResponse> SetPlanOverrideAsync(string userId, AdminSetPlanOverrideRequest request, CancellationToken ct = default)
++        {
++            using HttpResponseMessage response =
++                await _http.PostAsJsonAsync($"api/admin/users/{Uri.EscapeDataString(userId)}/plan-override", request, ct);
++            await EnsureSuccess(response, ct);
++            AdminPlanOverrideResponse? payload = await response.Content.ReadFromJsonAsync<AdminPlanOverrideResponse>(cancellationToken: ct);
++            return payload ?? throw new InvalidOperationException("Admin API returned an empty plan-override response.");
++        }
++
++        public async Task<AdminUserDetailDto> SyncStripeAsync(string userId, CancellationToken ct = default)
++        {
++            using HttpResponseMessage response =
++                await _http.PostAsync($"api/admin/users/{Uri.EscapeDataString(userId)}/stripe/sync", content: null, ct);
++            await EnsureSuccess(response, ct);
++            AdminUserDetailDto? payload = await response.Content.ReadFromJsonAsync<AdminUserDetailDto>(cancellationToken: ct);
++            return payload ?? throw new InvalidOperationException("Admin API returned an empty stripe-sync response.");
++        }
++
++        public async Task<AdminTokenOperationResponse> ResetTokensPeriodAsync(string userId, CancellationToken ct = default)
++        {
++            using HttpResponseMessage response =
++                await _http.PostAsync($"api/admin/users/{Uri.EscapeDataString(userId)}/tokens/reset-period", content: null, ct);
++            await EnsureSuccess(response, ct);
++            AdminTokenOperationResponse? payload = await response.Content.ReadFromJsonAsync<AdminTokenOperationResponse>(cancellationToken: ct);
++            return payload ?? throw new InvalidOperationException("Admin API returned an empty reset-tokens response.");
++        }
++
++        public async Task<AdminTokenOperationResponse> AdjustTokensAsync(string userId, AdminAdjustTokensRequest request, CancellationToken ct = default)
++        {
++            using HttpResponseMessage response =
++                await _http.PostAsJsonAsync($"api/admin/users/{Uri.EscapeDataString(userId)}/tokens/adjust", request, ct);
++            await EnsureSuccess(response, ct);
++            AdminTokenOperationResponse? payload = await response.Content.ReadFromJsonAsync<AdminTokenOperationResponse>(cancellationToken: ct);
++            return payload ?? throw new InvalidOperationException("Admin API returned an empty adjust-tokens response.");
++        }
++
++        public async Task<AdminAuditListResponseDto> GetAuditAsync(AdminAuditQueryDto query, CancellationToken ct = default)
++        {
++            string url = BuildAuditUrl(query);
++            AdminAuditListResponseDto? payload = await _http.GetFromJsonAsync<AdminAuditListResponseDto>(url, ct);
++            return payload ?? new AdminAuditListResponseDto(Array.Empty<AdminAuditEventDto>(), query.Page, query.PageSize, 0);
++        }
++
++        public Task<string> ExportUsersCsvAsync(AdminUserQueryDto query, CancellationToken ct = default)
++        {
++            string url = BuildUsersCsvUrl(query);
++            return _http.GetStringAsync(url, ct);
++        }
++
++        private static string BuildUsersUrl(AdminUserQueryDto query)
++        {
++            Dictionary<string, string?> parameters = new(StringComparer.Ordinal)
++            {
++                ["page"] = query.Page.ToString(CultureInfo.InvariantCulture),
++                ["pageSize"] = query.PageSize.ToString(CultureInfo.InvariantCulture),
++                ["q"] = query.Q,
++                ["planKey"] = query.PlanKey,
++                ["subscriptionStatus"] = query.SubscriptionStatus,
++                ["overrideOnly"] = query.OverrideOnly ? "true" : null,
++                ["tokensLeftLt"] = query.TokensLeftLt?.ToString(CultureInfo.InvariantCulture),
++                ["tokensLeftGt"] = query.TokensLeftGt?.ToString(CultureInfo.InvariantCulture),
++                ["sort"] = query.Sort
++            };
++
++            return QueryHelpers.AddQueryString("api/admin/users", parameters);
++        }
++
++        private static string BuildUsersCsvUrl(AdminUserQueryDto query)
++        {
++            Dictionary<string, string?> parameters = new(StringComparer.Ordinal)
++            {
++                ["page"] = query.Page.ToString(CultureInfo.InvariantCulture),
++                ["pageSize"] = query.PageSize.ToString(CultureInfo.InvariantCulture),
++                ["q"] = query.Q,
++                ["planKey"] = query.PlanKey,
++                ["subscriptionStatus"] = query.SubscriptionStatus,
++                ["overrideOnly"] = query.OverrideOnly ? "true" : null,
++                ["tokensLeftLt"] = query.TokensLeftLt?.ToString(CultureInfo.InvariantCulture),
++                ["tokensLeftGt"] = query.TokensLeftGt?.ToString(CultureInfo.InvariantCulture),
++                ["sort"] = query.Sort
++            };
++
++            return QueryHelpers.AddQueryString("api/admin/users/export.csv", parameters);
++        }
++
++        private static string BuildAuditUrl(AdminAuditQueryDto query)
++        {
++            Dictionary<string, string?> parameters = new(StringComparer.Ordinal)
++            {
++                ["page"] = query.Page.ToString(CultureInfo.InvariantCulture),
++                ["pageSize"] = query.PageSize.ToString(CultureInfo.InvariantCulture),
++                ["adminUserId"] = query.AdminUserId,
++                ["targetUserId"] = query.TargetUserId,
++                ["action"] = query.Action,
++                ["fromUtc"] = query.FromUtc?.ToString("O", CultureInfo.InvariantCulture),
++                ["toUtc"] = query.ToUtc?.ToString("O", CultureInfo.InvariantCulture)
++            };
++
++            return QueryHelpers.AddQueryString("api/admin/audit", parameters);
++        }
++
++        private static async Task EnsureSuccess(HttpResponseMessage response, CancellationToken ct)
++        {
++            if (response.IsSuccessStatusCode)
++            {
++                return;
++            }
++
++            string content = await response.Content.ReadAsStringAsync(ct);
++            if (string.IsNullOrWhiteSpace(content))
++            {
++                throw new HttpRequestException($"Admin API failed with status {(int)response.StatusCode} ({response.StatusCode}).");
++            }
++
++            try
++            {
++                using JsonDocument doc = JsonDocument.Parse(content);
++                if (doc.RootElement.TryGetProperty("message", out JsonElement messageElement))
++                {
++                    string? message = messageElement.GetString();
++                    if (!string.IsNullOrWhiteSpace(message))
++                    {
++                        throw new HttpRequestException(message);
++                    }
++                }
++            }
++            catch (JsonException)
++            {
++                // Ignore parse issues and throw generic error below.
++            }
++
++            throw new HttpRequestException(new StringBuilder()
++                .Append("Admin API failed with status ")
++                .Append((int)response.StatusCode)
++                .Append(" (")
++                .Append(response.StatusCode)
++                .Append(')')
++                .ToString());
++        }
++    }
++}
+diff --git a/WriterApp.Shared/AdminUserDtos.cs b/WriterApp.Shared/AdminUserDtos.cs
+new file mode 100644
+index 0000000..92e61ca
+--- /dev/null
++++ b/WriterApp.Shared/AdminUserDtos.cs
+@@ -0,0 +1,98 @@
++using System;
++using System.Collections.Generic;
++
++namespace WriterApp.Shared
++{
++    public sealed record AdminUserQueryDto(
++        int Page = 1,
++        int PageSize = 20,
++        string? Q = null,
++        string? PlanKey = null,
++        string? SubscriptionStatus = null,
++        bool OverrideOnly = false,
++        int? TokensLeftLt = null,
++        int? TokensLeftGt = null,
++        string? Sort = null);
++
++    public sealed record AdminUserListItemDto(
++        string UserId,
++        string? Email,
++        string? DisplayName,
++        DateTime CreatedAtUtc,
++        DateTime LastSeenUtc,
++        string PlanKey,
++        string SubscriptionStatus,
++        int AiMonthlyTokenBudget,
++        int AiTokensUsedThisPeriod,
++        int TokensLeft,
++        bool IsManuallyOverridden);
++
++    public sealed record AdminUserListResponseDto(
++        IReadOnlyList<AdminUserListItemDto> Items,
++        int Page,
++        int PageSize,
++        int TotalCount);
++
++    public sealed record AdminUserDetailDto(
++        string UserId,
++        string? Email,
++        string? DisplayName,
++        DateTime CreatedAtUtc,
++        DateTime LastSeenUtc,
++        string PlanKey,
++        string SubscriptionStatus,
++        int AiMonthlyTokenBudget,
++        int AiTokensUsedThisPeriod,
++        int TokensLeft,
++        bool IsManuallyOverridden,
++        string? OverridePlanKey,
++        DateTime? OverrideAssignedUtc,
++        string? OverrideAssignedBy,
++        string? StripeCustomerId,
++        string? StripeSubscriptionId);
++
++    public sealed record AdminCreateUserRequest(
++        string? UserId,
++        string? Email,
++        string? DisplayName);
++
++    public sealed record AdminUpdateUserRequest(
++        string? Email,
++        string? DisplayName);
++
++    public sealed record AdminAuditEventDto(
++        long Id,
++        DateTime OccurredAtUtc,
++        string AdminUserId,
++        string? AdminEmail,
++        string Action,
++        string? TargetUserId,
++        string? TargetEmail,
++        string? DetailsJson);
++
++    public sealed record AdminAuditQueryDto(
++        int Page = 1,
++        int PageSize = 50,
++        string? AdminUserId = null,
++        string? TargetUserId = null,
++        string? Action = null,
++        DateTime? FromUtc = null,
++        DateTime? ToUtc = null);
++
++    public sealed record AdminAuditListResponseDto(
++        IReadOnlyList<AdminAuditEventDto> Items,
++        int Page,
++        int PageSize,
++        int TotalCount);
++
++    public sealed record AdminAdjustTokensRequest(
++        int DeltaTokens,
++        string? Reason);
++
++    public sealed record AdminTokenOperationResponse(
++        string UserId,
++        int AiMonthlyTokenBudget,
++        int AiTokensUsedThisPeriod,
++        int TokensLeft,
++        DateTimeOffset PeriodStartUtc);
++}
+diff --git a/Tests/WriterApp.Tests/AdminUsersServiceTests.cs b/Tests/WriterApp.Tests/AdminUsersServiceTests.cs
+new file mode 100644
+index 0000000..39ae8cc
+--- /dev/null
++++ b/Tests/WriterApp.Tests/AdminUsersServiceTests.cs
+@@ -0,0 +1,249 @@
++using System;
++using System.Collections.Generic;
++using System.Linq;
++using System.Security.Claims;
++using System.Threading.Tasks;
++using Microsoft.Data.Sqlite;
++using Microsoft.EntityFrameworkCore;
++using Microsoft.Extensions.Caching.Memory;
++using Microsoft.Extensions.Configuration;
++using Microsoft.Extensions.Logging.Abstractions;
++using WriterApp.Application.Billing;
++using WriterApp.Application.Security;
++using WriterApp.Application.Subscriptions;
++using WriterApp.Application.Usage;
++using WriterApp.Application.Users;
++using WriterApp.Data;
++using WriterApp.Data.Subscriptions;
++using WriterApp.Shared;
++using Xunit;
++
++namespace WriterApp.Tests
++{
++    public sealed class AdminUsersServiceTests
++    {
++        [Fact]
++        public void AdminApiFlag_DefaultsToDisabled()
++        {
++            IConfiguration configuration = new ConfigurationBuilder()
++                .AddInMemoryCollection(new Dictionary<string, string?>())
++                .Build();
++
++            Assert.False(AdminPlanOverrideAccess.IsAdminApiEnabled(configuration));
++        }
++
++        [Fact]
++        public void AdminApi_NonAdminPrincipal_IsBlocked()
++        {
++            ClaimsPrincipal principal = new(new ClaimsIdentity(
++                new[] { new Claim("roles", "User") },
++                authenticationType: "Test"));
++
++            Assert.False(AdminPlanOverrideAccess.IsAuthorized(principal));
++        }
++
++        [Fact]
++        public async Task QueryUsers_Paging_ReturnsTwentyAndTotalCount()
++        {
++            await using SqliteConnection connection = new("Data Source=:memory:");
++            await connection.OpenAsync();
++            await using AppDbContext dbContext = BuildDbContext(connection);
++            SeedUsers(dbContext, count: 25);
++
++            AdminUsersService service = BuildService(dbContext);
++
++            AdminUserListResponseDto response = await service.QueryUsersAsync(
++                page: 1,
++                pageSize: 20,
++                q: null,
++                planKey: null,
++                overrideOnly: false,
++                subscriptionStatus: null,
++                tokensLeftLt: null,
++                tokensLeftGt: null,
++                sort: "createdAt asc");
++
++            Assert.Equal(20, response.Items.Count);
++            Assert.Equal(25, response.TotalCount);
++            Assert.Equal(1, response.Page);
++            Assert.Equal(20, response.PageSize);
++        }
++
++        [Fact]
++        public async Task QueryUsers_Filters_WorkForPlanQueryAndOverrideOnly()
++        {
++            await using SqliteConnection connection = new("Data Source=:memory:");
++            await connection.OpenAsync();
++            await using AppDbContext dbContext = BuildDbContext(connection);
++            SeedUsers(dbContext, count: 6);
++
++            AdminUsersService service = BuildService(dbContext);
++
++            AdminUserListResponseDto response = await service.QueryUsersAsync(
++                page: 1,
++                pageSize: 20,
++                q: "user-0",
++                planKey: "Standard",
++                overrideOnly: true,
++                subscriptionStatus: null,
++                tokensLeftLt: null,
++                tokensLeftGt: null,
++                sort: "createdAt asc");
++
++            Assert.Single(response.Items);
++            Assert.Equal("user-0", response.Items[0].UserId);
++            Assert.Equal("Standard", response.Items[0].PlanKey);
++            Assert.True(response.Items[0].IsManuallyOverridden);
++        }
++
++        [Fact]
++        public async Task PlanOverride_UpdatesSnapshotImmediately()
++        {
++            await using SqliteConnection connection = new("Data Source=:memory:");
++            await connection.OpenAsync();
++            await using AppDbContext dbContext = BuildDbContext(connection);
++            SeedUsers(dbContext, count: 1);
++
++            AdminUsersService service = BuildService(dbContext);
++
++            AdminPlanOverrideResponse overrideResponse = await service.SetPlanOverrideAsync(
++                "user-0",
++                new AdminSetPlanOverrideRequest("Pro", "admin test"),
++                "admin-1",
++                "admin@example.com");
++
++            AdminUserDetailDto? detail = await service.GetUserAsync("user-0");
++
++            Assert.NotNull(detail);
++            Assert.Equal(UserEntitlementDefaults.ProfessionalPlanKey, overrideResponse.ResolvedPlanKey);
++            Assert.Equal(UserEntitlementDefaults.ProfessionalPlanKey, detail!.PlanKey);
++            Assert.True(detail.IsManuallyOverridden);
++        }
++
++        private static AppDbContext BuildDbContext(SqliteConnection connection)
++        {
++            DbContextOptions<AppDbContext> options = new DbContextOptionsBuilder<AppDbContext>()
++                .UseSqlite(connection)
++                .Options;
++
++            AppDbContext context = new(options);
++            context.Database.EnsureCreated();
++            return context;
++        }
++
++        private static AdminUsersService BuildService(AppDbContext dbContext)
++        {
++            IUserEntitlementStore entitlementStore = new UserEntitlementStore(
++                dbContext,
++                new FixedClock(DateTime.UtcNow),
++                NullLogger<UserEntitlementStore>.Instance);
++            IEntitlementService entitlementService = new EntitlementService(
++                new PlanRepository(dbContext),
++                entitlementStore,
++                new MemoryCache(new MemoryCacheOptions()));
++            AdminPlanOverrideService overrideService = new(
++                dbContext,
++                entitlementStore,
++                entitlementService,
++                new StubStripePriceResolver(),
++                NullLogger<AdminPlanOverrideService>.Instance);
++
++            return new AdminUsersService(
++                dbContext,
++                overrideService,
++                NullLogger<AdminUsersService>.Instance);
++        }
++
++        private static void SeedUsers(AppDbContext dbContext, int count)
++        {
++            DateTime now = DateTime.UtcNow;
++            Plan standardPlan = dbContext.Plans.First(plan => plan.Key == "standard");
++            Plan professionalPlan = dbContext.Plans.First(plan => plan.Key == "professional");
++
++            for (int i = 0; i < count; i++)
++            {
++                string userId = $"user-{i}";
++                dbContext.UserProfiles.Add(new UserProfile
++                {
++                    UserId = userId,
++                    DisplayName = $"user{i}@example.com",
++                    CreatedUtc = now.AddMinutes(-i),
++                    UpdatedUtc = now.AddMinutes(-i),
++                    HasOnboarded = true
++                });
++
++                bool isStandard = i % 2 == 0;
++                dbContext.UserEntitlements.Add(new UserEntitlement
++                {
++                    UserId = userId,
++                    PlanKey = isStandard ? UserEntitlementDefaults.StandardPlanKey : UserEntitlementDefaults.ProfessionalPlanKey,
++                    SubscriptionStatus = UserEntitlementDefaults.ActiveSubscriptionStatus,
++                    CreatedAt = now.AddMinutes(-i),
++                    AiMonthlyTokenBudget = isStandard
++                        ? UserEntitlementDefaults.StandardMonthlyTokenBudget
++                        : UserEntitlementDefaults.ProfessionalMonthlyTokenBudget,
++                    AiTokensUsedThisPeriod = 1000,
++                    PeriodStartUtc = now.AddDays(-2),
++                    UpdatedUtc = now.AddMinutes(-i)
++                });
++
++                if (isStandard)
++                {
++                    dbContext.UserPlanAssignments.Add(new UserPlanAssignment
++                    {
++                        UserId = userId,
++                        PlanId = standardPlan.PlanId,
++                        AssignedUtc = now.AddMinutes(-i),
++                        AssignedBy = "seed"
++                    });
++                }
++                else
++                {
++                    dbContext.UserPlanAssignments.Add(new UserPlanAssignment
++                    {
++                        UserId = userId,
++                        PlanId = professionalPlan.PlanId,
++                        AssignedUtc = now.AddMinutes(-i),
++                        AssignedBy = "seed"
++                    });
++                }
++            }
++
++            dbContext.SaveChanges();
++        }
++
++        private sealed class StubStripePriceResolver : IStripePriceResolver
++        {
++            public string ResolvePriceId(string planKey, out string normalizedPlanKey)
++            {
++                normalizedPlanKey = UserEntitlementDefaults.NormalizePlanKey(planKey);
++                return normalizedPlanKey switch
++                {
++                    UserEntitlementDefaults.StandardPlanKey => "price_standard",
++                    UserEntitlementDefaults.ProfessionalPlanKey => "price_pro",
++                    _ => "price_free"
++                };
++            }
++
++            public string? ResolvePlanKey(string priceId)
++            {
++                return priceId switch
++                {
++                    "price_standard" => "standard",
++                    "price_pro" => "pro",
++                    _ => null
++                };
++            }
++        }
++
++        private sealed class FixedClock : IClock
++        {
++            public FixedClock(DateTime utcNow)
++            {
++                UtcNow = utcNow;
++            }
++
++            public DateTime UtcNow { get; }
++        }
++    }
++}

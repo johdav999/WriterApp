@@ -26,6 +26,11 @@ namespace WriterApp.Application.Search
         Task ReplaceOutlineAsync(DocumentRecord document, string outlineText, IReadOnlyList<DocumentOutlineNodeRecord> nodes, CancellationToken ct);
         Task DeleteByEntityAsync(string entityType, Guid entityId, CancellationToken ct);
         Task<IReadOnlyList<SearchResultDto>> SearchAsync(string userId, Guid projectId, string query, bool includeMeta, int limit, string? correlationId, CancellationToken ct);
+        Task<int> GetProjectEntryCountAsync(string ownerUserId, Guid projectId, CancellationToken ct);
+        Task RebuildProjectIndexAsync(string ownerUserId, Guid projectId, CancellationToken ct);
+        string? DisabledReason { get; }
+        Task<bool> TryProbeAndRecoverAsync(CancellationToken ct = default);
+        Task RebuildSearchIndexAsync(CancellationToken ct = default);
     }
 
     public interface ISearchIndexBackfillWorker
@@ -39,9 +44,13 @@ namespace WriterApp.Application.Search
         private readonly ILogger<SearchIndexService> _logger;
         private readonly ISearchIndexBackfillQueue _backfillQueue;
         private static readonly SemaphoreSlim InitLock = new(1, 1);
+        private static readonly SemaphoreSlim _probeLock = new(1, 1);
         private static bool _initialized;
-        private static bool _disabled;
+        private static bool _runtimePathLogged;
+        private static volatile bool _disabled;
         private static string? _disabledReason;
+        private static DateTimeOffset? _disabledUntilUtc;
+        private static DateTimeOffset _lastProbeUtc;
 
         public SearchIndexService(
             AppDbContext dbContext,
@@ -52,6 +61,8 @@ namespace WriterApp.Application.Search
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _backfillQueue = backfillQueue ?? throw new ArgumentNullException(nameof(backfillQueue));
         }
+
+        public string? DisabledReason => _disabledReason;
 
         public Task UpsertDocumentAsync(DocumentRecord document, CancellationToken ct)
         {
@@ -64,10 +75,12 @@ namespace WriterApp.Application.Search
                 EntityType: SearchEntityTypes.Document,
                 EntityId: document.Id,
                 DocumentId: document.Id,
+                ProjectId: document.ProjectId,
                 SectionId: null,
                 PageId: null,
                 Title: document.Title ?? string.Empty,
-                Content: document.Title ?? string.Empty), ct);
+                Content: document.Title ?? string.Empty,
+                UpdatedAt: document.UpdatedAt), ct);
         }
 
         public Task UpsertSectionAsync(SectionRecord section, CancellationToken ct)
@@ -76,15 +89,23 @@ namespace WriterApp.Application.Search
             {
                 throw new ArgumentNullException(nameof(section));
             }
+            
+            return UpsertSectionCoreAsync(section, ct);
+        }
 
-            return UpsertEntryAsync(new SearchIndexEntry(
+        private async Task UpsertSectionCoreAsync(SectionRecord section, CancellationToken ct)
+        {
+            Guid projectId = section.Document?.ProjectId ?? await ResolveProjectIdForDocumentAsync(section.DocumentId, ct);
+            await UpsertEntryAsync(new SearchIndexEntry(
                 EntityType: SearchEntityTypes.Section,
                 EntityId: section.Id,
                 DocumentId: section.DocumentId,
+                ProjectId: projectId,
                 SectionId: section.Id,
                 PageId: null,
                 Title: section.Title ?? string.Empty,
-                Content: section.Title ?? string.Empty), ct);
+                Content: section.Title ?? string.Empty,
+                UpdatedAt: section.UpdatedAt), ct);
         }
 
         public Task UpsertPageAsync(PageRecord page, CancellationToken ct)
@@ -93,16 +114,24 @@ namespace WriterApp.Application.Search
             {
                 throw new ArgumentNullException(nameof(page));
             }
+            
+            return UpsertPageCoreAsync(page, ct);
+        }
 
+        private async Task UpsertPageCoreAsync(PageRecord page, CancellationToken ct)
+        {
             string content = NormalizeText(page.Content);
-            return UpsertEntryAsync(new SearchIndexEntry(
+            Guid projectId = page.Document?.ProjectId ?? await ResolveProjectIdForDocumentAsync(page.DocumentId, ct);
+            await UpsertEntryAsync(new SearchIndexEntry(
                 EntityType: SearchEntityTypes.Page,
                 EntityId: page.Id,
                 DocumentId: page.DocumentId,
+                ProjectId: projectId,
                 SectionId: page.SectionId,
                 PageId: page.Id,
                 Title: page.Title ?? string.Empty,
-                Content: content), ct);
+                Content: content,
+                UpdatedAt: page.UpdatedAt), ct);
         }
 
         public Task UpsertPageNotesAsync(PageRecord page, PageNoteRecord notes, CancellationToken ct)
@@ -116,16 +145,24 @@ namespace WriterApp.Application.Search
             {
                 throw new ArgumentNullException(nameof(notes));
             }
+            
+            return UpsertPageNotesCoreAsync(page, notes, ct);
+        }
 
+        private async Task UpsertPageNotesCoreAsync(PageRecord page, PageNoteRecord notes, CancellationToken ct)
+        {
             string content = NormalizeText(notes.Notes);
-            return UpsertEntryAsync(new SearchIndexEntry(
+            Guid projectId = page.Document?.ProjectId ?? await ResolveProjectIdForDocumentAsync(page.DocumentId, ct);
+            await UpsertEntryAsync(new SearchIndexEntry(
                 EntityType: SearchEntityTypes.Note,
                 EntityId: notes.PageId,
                 DocumentId: page.DocumentId,
+                ProjectId: projectId,
                 SectionId: page.SectionId,
                 PageId: page.Id,
                 Title: $"Notes: {page.Title ?? "Page"}",
-                Content: content), ct);
+                Content: content,
+                UpdatedAt: notes.UpdatedAt), ct);
         }
 
         public Task UpsertSceneCardAsync(SectionRecord section, SectionSceneCardRecord card, CancellationToken ct)
@@ -140,6 +177,11 @@ namespace WriterApp.Application.Search
                 throw new ArgumentNullException(nameof(card));
             }
 
+            return UpsertSceneCardCoreAsync(section, card, ct);
+        }
+
+        private async Task UpsertSceneCardCoreAsync(SectionRecord section, SectionSceneCardRecord card, CancellationToken ct)
+        {
             string content = string.Join("\n", new[]
             {
                 card.NarrativePurpose,
@@ -148,14 +190,17 @@ namespace WriterApp.Application.Search
                 card.OpenQuestions
             }.Where(value => !string.IsNullOrWhiteSpace(value)));
 
-            return UpsertEntryAsync(new SearchIndexEntry(
+            Guid projectId = section.Document?.ProjectId ?? await ResolveProjectIdForDocumentAsync(section.DocumentId, ct);
+            await UpsertEntryAsync(new SearchIndexEntry(
                 EntityType: SearchEntityTypes.SceneCard,
                 EntityId: card.SectionId,
                 DocumentId: section.DocumentId,
+                ProjectId: projectId,
                 SectionId: section.Id,
                 PageId: null,
                 Title: $"Scene card: {section.Title ?? "Section"}",
-                Content: NormalizeText(content)), ct);
+                Content: NormalizeText(content),
+                UpdatedAt: card.UpdatedUtc), ct);
         }
 
         public async Task ReplaceOutlineAsync(
@@ -177,10 +222,12 @@ namespace WriterApp.Application.Search
                     EntityType: SearchEntityTypes.Outline,
                     EntityId: document.Id,
                     DocumentId: document.Id,
+                    ProjectId: document.ProjectId,
                     SectionId: null,
                     PageId: null,
                     Title: $"Outline: {document.Title ?? "Document"}",
-                    Content: NormalizeText(outlineText)), ct);
+                    Content: NormalizeText(outlineText),
+                    UpdatedAt: document.UpdatedAt), ct);
             }
 
             if (nodes is null || nodes.Count == 0)
@@ -200,10 +247,12 @@ namespace WriterApp.Application.Search
                     EntityType: SearchEntityTypes.Outline,
                     EntityId: node.Id,
                     DocumentId: document.Id,
+                    ProjectId: document.ProjectId,
                     SectionId: node.LinkedSectionId,
                     PageId: null,
                     Title: $"Outline: {node.Title}",
-                    Content: NormalizeText(content)), ct);
+                    Content: NormalizeText(content),
+                    UpdatedAt: document.UpdatedAt), ct);
             }
         }
 
@@ -250,10 +299,11 @@ namespace WriterApp.Application.Search
             }
 
             string normalizedQuery = NormalizeText(query);
+            string projectIdLower = IdNorm.Norm(projectId);
             _logger.LogDebug("Search normalized query. RawLength={RawLength} Normalized='{NormalizedQuery}'. ProjectId={ProjectId}",
                 query?.Length ?? 0,
                 normalizedQuery,
-                projectId);
+                projectIdLower);
             if (string.IsNullOrWhiteSpace(normalizedQuery))
             {
                 _logger.LogDebug("Search skipped: normalized query was empty.");
@@ -325,15 +375,15 @@ SELECT
     e.Content
 FROM SearchIndexEntries e
 JOIN Documents d ON (
-    lower(d.Id) = e.DocumentId
+    lower(d.Id) = lower(e.DocumentId)
 )
 WHERE d.OwnerUserId = $userId
-  AND lower(d.ProjectId) = $projectId
+  AND lower(e.ProjectId) = $projectId
   AND (
-        (e.EntityType = 'page' AND lower(e.Content) LIKE '%' || lower($query) || '%')
+        (lower(e.EntityType) = 'page' AND lower(e.Content) LIKE '%' || lower($query) || '%')
         OR (
             $includeMeta = 1
-            AND e.EntityType <> 'page'
+            AND lower(e.EntityType) <> 'page'
             AND (
                 lower(e.Title) LIKE '%' || lower($query) || '%'
                 OR lower(e.Content) LIKE '%' || lower($query) || '%'
@@ -342,11 +392,11 @@ WHERE d.OwnerUserId = $userId
     )
 ORDER BY
     CASE
-        WHEN e.EntityType = 'page' THEN 0
-        WHEN e.EntityType IN ('document', 'section') THEN 1
-        WHEN e.EntityType = 'note' THEN 2
-        WHEN e.EntityType = 'scenecard' THEN 3
-        WHEN e.EntityType = 'outline' THEN 4
+        WHEN lower(e.EntityType) = 'page' THEN 0
+        WHEN lower(e.EntityType) IN ('document', 'section') THEN 1
+        WHEN lower(e.EntityType) = 'note' THEN 2
+        WHEN lower(e.EntityType) = 'scenecard' THEN 3
+        WHEN lower(e.EntityType) = 'outline' THEN 4
         ELSE 5
     END,
     e.UpdatedAt DESC
@@ -423,6 +473,180 @@ LIMIT $limit;
                 DisableSearchIndex(ex);
                 return Array.Empty<SearchResultDto>();
             }
+        }
+
+        public async Task<int> GetProjectEntryCountAsync(string ownerUserId, Guid projectId, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(ownerUserId) || projectId == Guid.Empty)
+            {
+                return 0;
+            }
+
+            if (!await EnsureSearchIndexAsync(ct))
+            {
+                return 0;
+            }
+
+            await using var connection = _dbContext.Database.GetDbConnection();
+            if (connection.State != ConnectionState.Open)
+            {
+                await connection.OpenAsync(ct);
+            }
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = @"
+SELECT COUNT(*)
+FROM SearchIndexEntries e
+JOIN Documents d ON lower(d.Id) = lower(e.DocumentId)
+WHERE lower(e.ProjectId) = $projectId
+  AND d.OwnerUserId = $ownerUserId;
+";
+            AddParameter(command, "$projectId", IdNorm.Norm(projectId));
+            AddParameter(command, "$ownerUserId", ownerUserId);
+
+            object? result = await command.ExecuteScalarAsync(ct);
+            return result is null || result == DBNull.Value ? 0 : Convert.ToInt32(result);
+        }
+
+        public async Task RebuildProjectIndexAsync(string ownerUserId, Guid projectId, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(ownerUserId))
+            {
+                throw new ArgumentException("ownerUserId is required.", nameof(ownerUserId));
+            }
+
+            if (projectId == Guid.Empty)
+            {
+                throw new ArgumentException("projectId is required.", nameof(projectId));
+            }
+
+            if (!await EnsureSearchIndexAsync(ct))
+            {
+                throw new InvalidOperationException("Search index is not available.");
+            }
+
+            string normalizedProjectId = IdNorm.Norm(projectId);
+
+            await using var connection = _dbContext.Database.GetDbConnection();
+            if (connection.State != ConnectionState.Open)
+            {
+                await connection.OpenAsync(ct);
+            }
+
+            await using (var tx = await connection.BeginTransactionAsync(ct))
+            {
+                List<long> existingIds = new();
+                await using (var idCommand = connection.CreateCommand())
+                {
+                    idCommand.Transaction = tx;
+                    idCommand.CommandText = @"
+SELECT e.Id
+FROM SearchIndexEntries e
+JOIN Documents d ON lower(d.Id) = lower(e.DocumentId)
+WHERE lower(e.ProjectId) = $projectId
+  AND d.OwnerUserId = $ownerUserId;";
+                    AddParameter(idCommand, "$projectId", normalizedProjectId);
+                    AddParameter(idCommand, "$ownerUserId", ownerUserId);
+                    await using var reader = await idCommand.ExecuteReaderAsync(ct);
+                    while (await reader.ReadAsync(ct))
+                    {
+                        existingIds.Add(reader.GetInt64(0));
+                    }
+                }
+
+                foreach (long id in existingIds)
+                {
+                    await DeleteFtsAsync(connection, tx, id, ct);
+                }
+
+                await using (var deleteEntries = connection.CreateCommand())
+                {
+                    deleteEntries.Transaction = tx;
+                    deleteEntries.CommandText = @"
+DELETE FROM SearchIndexEntries
+WHERE ProjectId = $projectId
+  AND EXISTS (
+      SELECT 1
+      FROM Documents d
+      WHERE lower(d.Id) = lower(SearchIndexEntries.DocumentId)
+        AND d.OwnerUserId = $ownerUserId
+  );";
+                    AddParameter(deleteEntries, "$projectId", normalizedProjectId);
+                    AddParameter(deleteEntries, "$ownerUserId", ownerUserId);
+                    await deleteEntries.ExecuteNonQueryAsync(ct);
+                }
+
+                await tx.CommitAsync(ct);
+            }
+
+            List<DocumentRecord> documents = await _dbContext.Documents
+                .AsNoTracking()
+                .Where(d => d.OwnerUserId == ownerUserId && d.ProjectId == projectId)
+                .ToListAsync(ct);
+
+            if (documents.Count == 0)
+            {
+                _logger.LogInformation(
+                    "Search project rebuild completed with no documents. OwnerUserId={OwnerUserId} ProjectId={ProjectId}",
+                    ownerUserId,
+                    normalizedProjectId);
+                return;
+            }
+
+            HashSet<Guid> documentIds = documents.Select(d => d.Id).ToHashSet();
+            List<PageRecord> pages = await _dbContext.Pages
+                .AsNoTracking()
+                .Where(p => documentIds.Contains(p.DocumentId))
+                .ToListAsync(ct);
+
+            Dictionary<Guid, DocumentRecord> docsById = documents.ToDictionary(d => d.Id);
+            const int batchSize = 200;
+            int inserted = 0;
+            System.Data.Common.DbTransaction transaction = await connection.BeginTransactionAsync(ct);
+            try
+            {
+                foreach (PageRecord page in pages)
+                {
+                    if (!docsById.TryGetValue(page.DocumentId, out DocumentRecord? doc))
+                    {
+                        continue;
+                    }
+
+                    SearchIndexEntry entry = new(
+                        EntityType: "Page",
+                        EntityId: page.Id,
+                        DocumentId: page.DocumentId,
+                        ProjectId: doc.ProjectId,
+                        SectionId: page.SectionId,
+                        PageId: page.Id,
+                        Title: string.IsNullOrWhiteSpace(page.Title) ? "Page" : page.Title,
+                        Content: NormalizeText(string.Concat(page.Title ?? "Page", "\n", page.Content ?? string.Empty)),
+                        UpdatedAt: page.UpdatedAt);
+
+                    long id = await InsertEntryAsync(connection, transaction, entry, ct);
+                    await InsertFtsAsync(connection, transaction, id, entry, ct);
+                    inserted++;
+
+                    if (inserted % batchSize == 0)
+                    {
+                        await transaction.CommitAsync(ct);
+                        await transaction.DisposeAsync();
+                        transaction = await connection.BeginTransactionAsync(ct);
+                    }
+                }
+
+                await transaction.CommitAsync(ct);
+            }
+            finally
+            {
+                await transaction.DisposeAsync();
+            }
+
+            _logger.LogInformation(
+                "Search project rebuild completed. OwnerUserId={OwnerUserId} ProjectId={ProjectId} Entries={Entries}",
+                ownerUserId,
+                normalizedProjectId,
+                inserted);
         }
 
         private async Task UpsertEntryAsync(SearchIndexEntry entry, CancellationToken ct)
@@ -514,7 +738,7 @@ LIMIT $limit;
                 command.CommandText = @"
 SELECT Id
 FROM SearchIndexEntries
-WHERE EntityType = 'outline' AND DocumentId = $documentId;
+WHERE EntityType = 'outline' AND lower(DocumentId) = $documentId;
 ";
                 AddParameter(command, "$documentId", IdNorm.Norm(documentId));
 
@@ -580,6 +804,7 @@ INSERT INTO SearchIndexEntries (
     EntityType,
     EntityId,
     DocumentId,
+    ProjectId,
     SectionId,
     PageId,
     Title,
@@ -590,6 +815,7 @@ VALUES (
     $entityType,
     $entityId,
     $documentId,
+    $projectId,
     $sectionId,
     $pageId,
     $title,
@@ -601,11 +827,12 @@ SELECT last_insert_rowid();
             AddParameter(command, "$entityType", entry.EntityType);
             AddParameter(command, "$entityId", IdNorm.Norm(entry.EntityId));
             AddParameter(command, "$documentId", IdNorm.Norm(entry.DocumentId));
+            AddParameter(command, "$projectId", IdNorm.Norm(entry.ProjectId));
             AddParameter(command, "$sectionId", entry.SectionId.HasValue ? IdNorm.Norm(entry.SectionId.Value) : null);
             AddParameter(command, "$pageId", entry.PageId.HasValue ? IdNorm.Norm(entry.PageId.Value) : null);
             AddParameter(command, "$title", entry.Title ?? string.Empty);
             AddParameter(command, "$content", entry.Content ?? string.Empty);
-            AddParameter(command, "$updatedAt", DateTimeOffset.UtcNow.ToString("O"));
+            AddParameter(command, "$updatedAt", entry.UpdatedAt.ToString("O"));
 
             object? result = await command.ExecuteScalarAsync(ct);
             return Convert.ToInt64(result);
@@ -624,6 +851,7 @@ SELECT last_insert_rowid();
 UPDATE SearchIndexEntries
 SET
     DocumentId = $documentId,
+    ProjectId = $projectId,
     SectionId = $sectionId,
     PageId = $pageId,
     Title = $title,
@@ -632,11 +860,12 @@ SET
 WHERE Id = $id;
 ";
             AddParameter(command, "$documentId", IdNorm.Norm(entry.DocumentId));
+            AddParameter(command, "$projectId", IdNorm.Norm(entry.ProjectId));
             AddParameter(command, "$sectionId", entry.SectionId.HasValue ? IdNorm.Norm(entry.SectionId.Value) : null);
             AddParameter(command, "$pageId", entry.PageId.HasValue ? IdNorm.Norm(entry.PageId.Value) : null);
             AddParameter(command, "$title", entry.Title ?? string.Empty);
             AddParameter(command, "$content", entry.Content ?? string.Empty);
-            AddParameter(command, "$updatedAt", DateTimeOffset.UtcNow.ToString("O"));
+            AddParameter(command, "$updatedAt", entry.UpdatedAt.ToString("O"));
             AddParameter(command, "$id", id);
             await command.ExecuteNonQueryAsync(ct);
 
@@ -927,6 +1156,8 @@ VALUES (
                     await connection.OpenAsync(ct);
                 }
 
+                await LogDatabasePathOnceAsync(connection, ct);
+
                 await using var command = connection.CreateCommand();
                 command.CommandText = @"
 CREATE TABLE IF NOT EXISTS SearchIndexEntries (
@@ -934,6 +1165,7 @@ CREATE TABLE IF NOT EXISTS SearchIndexEntries (
     EntityType TEXT NOT NULL,
     EntityId TEXT NOT NULL,
     DocumentId TEXT NOT NULL,
+    ProjectId TEXT NOT NULL DEFAULT '',
     SectionId TEXT NULL,
     PageId TEXT NULL,
     Title TEXT NOT NULL DEFAULT '',
@@ -944,6 +1176,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS IX_SearchIndexEntries_Entity
 ON SearchIndexEntries (EntityType, EntityId);
 CREATE INDEX IF NOT EXISTS IX_SearchIndexEntries_Document
 ON SearchIndexEntries (DocumentId);
+CREATE INDEX IF NOT EXISTS IX_SearchIndexEntries_ProjectId
+ON SearchIndexEntries (ProjectId);
 CREATE VIRTUAL TABLE IF NOT EXISTS SearchIndexFts
 USING fts5(
     Title,
@@ -960,6 +1194,7 @@ USING fts5(
                 try
                 {
                     await command.ExecuteNonQueryAsync(ct);
+                    await EnsureProjectIdColumnAsync(connection, ct);
                     _initialized = true;
                     return true;
                 }
@@ -988,7 +1223,180 @@ USING fts5(
         {
             _disabled = true;
             _disabledReason = ex.Message;
-            _logger.LogError(ex, "Search index disabled: {Reason}", _disabledReason);
+            _disabledUntilUtc = DateTimeOffset.UtcNow.AddSeconds(30);
+            _logger.LogWarning(
+                ex,
+                "Search index disabled temporarily: {Reason}. RetryAfterUtc={RetryAfterUtc}",
+                _disabledReason,
+                _disabledUntilUtc);
+        }
+
+        public async Task<bool> TryProbeAndRecoverAsync(CancellationToken ct = default)
+        {
+            if (!_disabled)
+            {
+                return true;
+            }
+
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            if (_disabledUntilUtc.HasValue && now < _disabledUntilUtc.Value)
+            {
+                return false;
+            }
+
+            await _probeLock.WaitAsync(ct);
+            try
+            {
+                if (!_disabled)
+                {
+                    return true;
+                }
+
+                now = DateTimeOffset.UtcNow;
+                if (_disabledUntilUtc.HasValue && now < _disabledUntilUtc.Value)
+                {
+                    return false;
+                }
+
+                _lastProbeUtc = now;
+                try
+                {
+                    await using var connection = _dbContext.Database.GetDbConnection();
+                    if (connection.State != ConnectionState.Open)
+                    {
+                        await connection.OpenAsync(ct);
+                    }
+
+                    await using (var quickCheck = connection.CreateCommand())
+                    {
+                        quickCheck.CommandText = "PRAGMA quick_check;";
+                        await quickCheck.ExecuteScalarAsync(ct);
+                    }
+
+                    _initialized = false;
+                    if (!await EnsureSearchIndexAsync(ct))
+                    {
+                        _disabled = true;
+                        _disabledUntilUtc = DateTimeOffset.UtcNow.AddSeconds(60);
+                        _logger.LogWarning(
+                            "Search index probe failed to initialize. DisabledReason={Reason} RetryAfterUtc={RetryAfterUtc}",
+                            _disabledReason,
+                            _disabledUntilUtc);
+                        return false;
+                    }
+
+                    await using (var ftsProbe = connection.CreateCommand())
+                    {
+                        ftsProbe.CommandText = "SELECT rowid FROM SearchIndexFts LIMIT 1;";
+                        await ftsProbe.ExecuteScalarAsync(ct);
+                    }
+
+                    _disabled = false;
+                    _disabledReason = null;
+                    _disabledUntilUtc = null;
+                    _logger.LogInformation("Search index recovered successfully. LastProbeUtc={LastProbeUtc}", _lastProbeUtc);
+                    return true;
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    _disabled = true;
+                    _disabledReason = ex.Message;
+                    _disabledUntilUtc = DateTimeOffset.UtcNow.AddSeconds(60);
+                    _logger.LogWarning(
+                        ex,
+                        "Search index probe failed. DisabledReason={Reason} RetryAfterUtc={RetryAfterUtc}",
+                        _disabledReason,
+                        _disabledUntilUtc);
+                    return false;
+                }
+            }
+            finally
+            {
+                _probeLock.Release();
+            }
+        }
+
+        public async Task RebuildSearchIndexAsync(CancellationToken ct = default)
+        {
+            await using var connection = _dbContext.Database.GetDbConnection();
+            if (connection.State != ConnectionState.Open)
+            {
+                await connection.OpenAsync(ct);
+            }
+
+            await using (var drop = connection.CreateCommand())
+            {
+                drop.CommandText = @"
+DROP TABLE IF EXISTS SearchIndexFts;
+DROP TABLE IF EXISTS SearchIndexEntries;";
+                await drop.ExecuteNonQueryAsync(ct);
+            }
+
+            _initialized = false;
+            _disabled = false;
+            _disabledReason = null;
+            _disabledUntilUtc = null;
+
+            if (!await EnsureSearchIndexAsync(ct))
+            {
+                throw new InvalidOperationException($"Search index rebuild failed during initialization: {_disabledReason}");
+            }
+
+            List<string> userIds = await _dbContext.Documents
+                .AsNoTracking()
+                .Where(d => !string.IsNullOrWhiteSpace(d.OwnerUserId))
+                .Select(d => d.OwnerUserId)
+                .Distinct()
+                .ToListAsync(ct);
+
+            foreach (string userId in userIds)
+            {
+                await BackfillUserAsync(userId, ct);
+            }
+
+            _logger.LogInformation("Search index rebuild completed. UserCount={UserCount}", userIds.Count);
+        }
+
+        private async Task LogDatabasePathOnceAsync(System.Data.Common.DbConnection connection, CancellationToken ct)
+        {
+            if (_runtimePathLogged)
+            {
+                return;
+            }
+
+            string dataSource = connection.DataSource ?? string.Empty;
+            string mainFile = string.Empty;
+            try
+            {
+                await using var pragmaCommand = connection.CreateCommand();
+                pragmaCommand.CommandText = "PRAGMA database_list;";
+                await using var reader = await pragmaCommand.ExecuteReaderAsync(ct);
+                while (await reader.ReadAsync(ct))
+                {
+                    string name = reader.IsDBNull(1) ? string.Empty : reader.GetString(1);
+                    if (!string.Equals(name, "main", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    mainFile = reader.IsDBNull(2) ? string.Empty : reader.GetString(2);
+                    break;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Search index could not read PRAGMA database_list.");
+            }
+
+            _runtimePathLogged = true;
+            _logger.LogInformation(
+                "Search index runtime DB path. DataSource={DataSource} MainFile={MainFile}",
+                dataSource,
+                string.IsNullOrWhiteSpace(mainFile) ? "(unknown)" : mainFile);
         }
 
         private async Task<bool> HasEntriesForUserProjectAsync(string userId, Guid projectId, CancellationToken ct)
@@ -1010,10 +1418,10 @@ USING fts5(
 SELECT 1
 FROM SearchIndexEntries e
 JOIN Documents d ON (
-    lower(d.Id) = e.DocumentId
+    lower(d.Id) = lower(e.DocumentId)
 )
 WHERE d.OwnerUserId = $userId
-  AND lower(d.ProjectId) = $projectId
+  AND lower(e.ProjectId) = $projectId
 LIMIT 1;
 ";
                 AddParameter(command, "$userId", userId);
@@ -1155,10 +1563,10 @@ LIMIT 1;
 SELECT COUNT(*)
 FROM SearchIndexEntries e
 JOIN Documents d ON (
-    lower(d.Id) = e.DocumentId
+    lower(d.Id) = lower(e.DocumentId)
 )
 WHERE d.OwnerUserId = $userId
-  AND lower(d.ProjectId) = $projectId;
+  AND lower(e.ProjectId) = $projectId;
 ";
             AddParameter(countCommand, "$userId", userId);
             AddParameter(countCommand, "$projectId", IdNorm.Norm(projectId));
@@ -1192,10 +1600,69 @@ WHERE d.OwnerUserId = $userId;
             string EntityType,
             Guid EntityId,
             Guid DocumentId,
+            Guid ProjectId,
             Guid? SectionId,
             Guid? PageId,
             string Title,
-            string Content);
+            string Content,
+            DateTimeOffset UpdatedAt);
+
+        private static async Task EnsureProjectIdColumnAsync(System.Data.Common.DbConnection connection, CancellationToken ct)
+        {
+            bool hasProjectId = false;
+            await using (var pragma = connection.CreateCommand())
+            {
+                pragma.CommandText = "PRAGMA table_info('SearchIndexEntries');";
+                await using var reader = await pragma.ExecuteReaderAsync(ct);
+                while (await reader.ReadAsync(ct))
+                {
+                    string name = reader.IsDBNull(1) ? string.Empty : reader.GetString(1);
+                    if (string.Equals(name, "ProjectId", StringComparison.OrdinalIgnoreCase))
+                    {
+                        hasProjectId = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!hasProjectId)
+            {
+                await using var alter = connection.CreateCommand();
+                alter.CommandText = "ALTER TABLE SearchIndexEntries ADD COLUMN ProjectId TEXT NOT NULL DEFAULT '';";
+                await alter.ExecuteNonQueryAsync(ct);
+            }
+
+            await using (var backfill = connection.CreateCommand())
+            {
+                backfill.CommandText = @"
+UPDATE SearchIndexEntries
+SET ProjectId = COALESCE((
+    SELECT lower(d.ProjectId)
+    FROM Documents d
+    WHERE lower(d.Id) = lower(SearchIndexEntries.DocumentId)
+    LIMIT 1
+), '')
+WHERE ProjectId IS NULL OR ProjectId = '';";
+                await backfill.ExecuteNonQueryAsync(ct);
+            }
+
+            await using (var idx = connection.CreateCommand())
+            {
+                idx.CommandText = "CREATE INDEX IF NOT EXISTS IX_SearchIndexEntries_ProjectId ON SearchIndexEntries (ProjectId);";
+                await idx.ExecuteNonQueryAsync(ct);
+            }
+        }
+
+        private async Task<Guid> ResolveProjectIdForDocumentAsync(Guid documentId, CancellationToken ct)
+        {
+            Guid? projectId = await _dbContext.Documents
+                .AsNoTracking()
+                .Where(document => document.Id == documentId)
+                .Select(document => (Guid?)document.ProjectId)
+                .FirstOrDefaultAsync(ct);
+
+            return projectId ?? Guid.Empty;
+        }
     }
 
     public static class SearchEntityTypes

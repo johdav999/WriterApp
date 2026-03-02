@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using WriterApp.Data.AI;
+using WriterApp.Data.Admin;
 using WriterApp.Data.Continuity;
 using WriterApp.Data.Documents;
 using WriterApp.Data.Exporting;
@@ -22,10 +23,12 @@ namespace WriterApp.Data
 
         public DbSet<UserProfile> UserProfiles => Set<UserProfile>();
         public DbSet<UserEntitlement> UserEntitlements => Set<UserEntitlement>();
+        public DbSet<AdminAuditEvent> AdminAuditEvents => Set<AdminAuditEvent>();
         public DbSet<StripeEventLog> StripeEventLogs => Set<StripeEventLog>();
         public DbSet<Plan> Plans => Set<Plan>();
         public DbSet<PlanEntitlement> PlanEntitlements => Set<PlanEntitlement>();
         public DbSet<UserPlanAssignment> UserPlanAssignments => Set<UserPlanAssignment>();
+        public DbSet<TokenAdjustment> TokenAdjustments => Set<TokenAdjustment>();
         public DbSet<UsageEvent> UsageEvents => Set<UsageEvent>();
         public DbSet<UsageAggregate> UsageAggregates => Set<UsageAggregate>();
         public DbSet<DocumentRecord> Documents => Set<DocumentRecord>();
@@ -123,6 +126,18 @@ namespace WriterApp.Data
                 entity.Property(entitlement => entitlement.UpdatedUtc).IsRequired();
             });
 
+            builder.Entity<AdminAuditEvent>(entity =>
+            {
+                entity.HasKey(audit => audit.Id);
+                entity.Property(audit => audit.OccurredAtUtc).IsRequired();
+                entity.Property(audit => audit.AdminUserId).IsRequired();
+                entity.Property(audit => audit.Action).IsRequired();
+                entity.HasIndex(audit => audit.OccurredAtUtc);
+                entity.HasIndex(audit => audit.AdminUserId);
+                entity.HasIndex(audit => audit.TargetUserId);
+                entity.HasIndex(audit => audit.Action);
+            });
+
             builder.Entity<StripeEventLog>(entity =>
             {
                 entity.HasKey(x => x.StripeEventId);
@@ -175,6 +190,18 @@ namespace WriterApp.Data
                     .WithMany()
                     .HasForeignKey(assignment => assignment.PlanId)
                     .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            builder.Entity<TokenAdjustment>(entity =>
+            {
+                entity.HasKey(adjustment => adjustment.Id);
+                entity.Property(adjustment => adjustment.UserId).IsRequired();
+                entity.Property(adjustment => adjustment.DeltaTokens).IsRequired();
+                entity.Property(adjustment => adjustment.Reason).IsRequired();
+                entity.Property(adjustment => adjustment.AdjustedBy).IsRequired();
+                entity.Property(adjustment => adjustment.OccurredAtUtc).IsRequired();
+                entity.HasIndex(adjustment => adjustment.UserId);
+                entity.HasIndex(adjustment => adjustment.OccurredAtUtc);
             });
 
             builder.Entity<UsageEvent>(entity =>

@@ -210,7 +210,10 @@ builder.Services.AddScoped<IEntitlementService, EntitlementService>();
 builder.Services.AddScoped<IUserIdResolver, UserIdResolver>();
 builder.Services.AddScoped<IPlanAssignmentService, PlanAssignmentService>();
 builder.Services.AddScoped<AdminPlanOverrideService>();
+builder.Services.AddScoped<AdminAuditService>();
 builder.Services.AddScoped<IUserLookupService, UserLookupService>();
+builder.Services.AddScoped<AdminUsersService>();
+builder.Services.AddSingleton<AdminEndpointRateLimiter>();
 builder.Services.AddScoped<IUsageMeter, UsageMeter>();
 builder.Services.AddSingleton<IClock, WriterApp.Application.Usage.SystemClock>();
 builder.Services.AddScoped<IAiQuotaService, AiQuotaService>();
@@ -520,6 +523,19 @@ using (IServiceScope scope = app.Services.CreateScope())
     else
     {
         logger.LogWarning("AUTO_MIGRATE is disabled. Skipping Database.Migrate().");
+    }
+
+    bool adminApiEnabled = app.Configuration.GetValue<bool?>("Admin:EnableAdminApi") ?? false;
+    if (adminApiEnabled)
+    {
+        string[] appliedMigrations = (await dbContext.Database.GetAppliedMigrationsAsync(CancellationToken.None)).ToArray();
+        string[] pendingMigrations = (await dbContext.Database.GetPendingMigrationsAsync(CancellationToken.None)).ToArray();
+        string currentMigration = appliedMigrations.LastOrDefault() ?? "(none)";
+        logger.LogInformation(
+            "Admin API migration check. CurrentMigration={CurrentMigration}, PendingCount={PendingCount}, Pending=[{Pending}]",
+            currentMigration,
+            pendingMigrations.Length,
+            string.Join(", ", pendingMigrations));
     }
 
     if (diagnosticsDb)
@@ -1015,47 +1031,214 @@ app.MapGet("/api/ai/status", async (
 })
 .RequireAuthorization();
 
-app.MapGet("/api/admin/users/{userId}/plan", async (
+app.MapGet("/api/admin/users", async (
         HttpContext context,
-        string userId,
         IConfiguration configuration,
-        AdminPlanOverrideService adminPlanOverrideService,
-        ILoggerFactory loggerFactory) =>
+        IUserIdResolver userIdResolver,
+        AdminEndpointRateLimiter adminRateLimiter,
+        AdminUsersService adminUsersService,
+        ILoggerFactory loggerFactory,
+        int page = 1,
+        int pageSize = 20,
+        string? q = null,
+        string? planKey = null,
+        bool overrideOnly = false,
+        string? subscriptionStatus = null,
+        int? tokensLeftLt = null,
+        int? tokensLeftGt = null,
+        string? sort = null) =>
 {
-    if (!AdminPlanOverrideAccess.IsEnabled(configuration)
+    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
         || !AdminPlanOverrideAccess.IsAuthorized(context.User))
     {
         return Results.NotFound();
     }
 
-    if (string.IsNullOrWhiteSpace(userId))
+    ILogger logger = loggerFactory.CreateLogger("AdminUsers");
+    string adminUserId = ResolveAssignedBy(context.User, userIdResolver, logger, out _);
+    if (!adminRateLimiter.TryAcquire($"{adminUserId}:list-users", 120))
     {
-        return Results.BadRequest(new { message = "userId is required." });
+        return Results.StatusCode(StatusCodes.Status429TooManyRequests);
+    }
+
+    AdminUserListResponseDto response = await adminUsersService.QueryUsersAsync(
+        page,
+        pageSize,
+        q,
+        planKey,
+        overrideOnly,
+        subscriptionStatus,
+        tokensLeftLt,
+        tokensLeftGt,
+        sort,
+        context.RequestAborted);
+    return Results.Ok(response);
+});
+
+app.MapGet("/api/admin/users/{userId}", async (
+        HttpContext context,
+        string userId,
+        IConfiguration configuration,
+        IUserIdResolver userIdResolver,
+        AdminEndpointRateLimiter adminRateLimiter,
+        AdminUsersService adminUsersService,
+        ILoggerFactory loggerFactory) =>
+{
+    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
+        || !AdminPlanOverrideAccess.IsAuthorized(context.User))
+    {
+        return Results.NotFound();
+    }
+
+    ILogger logger = loggerFactory.CreateLogger("AdminUsers");
+    string adminUserId = ResolveAssignedBy(context.User, userIdResolver, logger, out _);
+    if (!adminRateLimiter.TryAcquire($"{adminUserId}:get-user", 240))
+    {
+        return Results.StatusCode(StatusCodes.Status429TooManyRequests);
+    }
+
+    AdminUserDetailDto? user = await adminUsersService.GetUserAsync(userId, context.RequestAborted);
+    return user is null ? Results.NotFound() : Results.Ok(user);
+});
+
+app.MapPost("/api/admin/users", async (
+        HttpContext context,
+        AdminCreateUserRequest request,
+        IConfiguration configuration,
+        IUserIdResolver userIdResolver,
+        AdminEndpointRateLimiter adminRateLimiter,
+        AdminUsersService adminUsersService,
+        ILoggerFactory loggerFactory) =>
+{
+    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
+        || !AdminPlanOverrideAccess.IsAuthorized(context.User))
+    {
+        return Results.NotFound();
+    }
+
+    ILogger logger = loggerFactory.CreateLogger("AdminUsers");
+    string adminUserId = ResolveAssignedBy(context.User, userIdResolver, logger, out _);
+    string? adminEmail = context.User.FindFirstValue(ClaimTypes.Email)
+        ?? context.User.FindFirstValue("emails")
+        ?? context.User.FindFirstValue("preferred_username")
+        ?? context.User.Identity?.Name;
+    if (!adminRateLimiter.TryAcquire($"{adminUserId}:create-user", 60))
+    {
+        return Results.StatusCode(StatusCodes.Status429TooManyRequests);
     }
 
     try
     {
-        AdminPlanOverrideResponse response = await adminPlanOverrideService.GetOverride(userId, context.RequestAborted);
-        return Results.Ok(response);
+        AdminUserDetailDto created = await adminUsersService.CreateUserAsync(
+            request,
+            adminUserId,
+            adminEmail,
+            context.RequestAborted);
+        return Results.Ok(created);
     }
-    catch (Exception ex)
+    catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
     {
-        ILogger logger = loggerFactory.CreateLogger("AdminPlanOverride");
-        logger.LogError(ex, "Admin plan override read failed. userId={UserId}", userId);
         return Results.BadRequest(new { message = ex.Message });
     }
 });
 
-app.MapPost("/api/admin/users/{userId}/plan", async (
+app.MapPut("/api/admin/users/{userId}", async (
+        HttpContext context,
+        string userId,
+        AdminUpdateUserRequest request,
+        IConfiguration configuration,
+        IUserIdResolver userIdResolver,
+        AdminEndpointRateLimiter adminRateLimiter,
+        AdminUsersService adminUsersService,
+        ILoggerFactory loggerFactory) =>
+{
+    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
+        || !AdminPlanOverrideAccess.IsAuthorized(context.User))
+    {
+        return Results.NotFound();
+    }
+
+    ILogger logger = loggerFactory.CreateLogger("AdminUsers");
+    string adminUserId = ResolveAssignedBy(context.User, userIdResolver, logger, out _);
+    string? adminEmail = context.User.FindFirstValue(ClaimTypes.Email)
+        ?? context.User.FindFirstValue("emails")
+        ?? context.User.FindFirstValue("preferred_username")
+        ?? context.User.Identity?.Name;
+    if (!adminRateLimiter.TryAcquire($"{adminUserId}:update-user", 120))
+    {
+        return Results.StatusCode(StatusCodes.Status429TooManyRequests);
+    }
+
+    try
+    {
+        AdminUserDetailDto? updated = await adminUsersService.UpdateUserAsync(
+            userId,
+            request,
+            adminUserId,
+            adminEmail,
+            context.RequestAborted);
+        return updated is null ? Results.NotFound() : Results.Ok(updated);
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(new { message = ex.Message });
+    }
+});
+
+app.MapDelete("/api/admin/users/{userId}", async (
+        HttpContext context,
+        string userId,
+        IConfiguration configuration,
+        IUserIdResolver userIdResolver,
+        AdminEndpointRateLimiter adminRateLimiter,
+        AdminUsersService adminUsersService,
+        ILoggerFactory loggerFactory) =>
+{
+    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
+        || !AdminPlanOverrideAccess.IsAuthorized(context.User))
+    {
+        return Results.NotFound();
+    }
+
+    ILogger logger = loggerFactory.CreateLogger("AdminUsers");
+    string adminUserId = ResolveAssignedBy(context.User, userIdResolver, logger, out _);
+    string? adminEmail = context.User.FindFirstValue(ClaimTypes.Email)
+        ?? context.User.FindFirstValue("emails")
+        ?? context.User.FindFirstValue("preferred_username")
+        ?? context.User.Identity?.Name;
+    if (!adminRateLimiter.TryAcquire($"{adminUserId}:delete-user", 30))
+    {
+        return Results.StatusCode(StatusCodes.Status429TooManyRequests);
+    }
+
+    bool allowDeleteWithActiveSubscription = configuration.GetValue<bool?>("Admin:AllowDeleteWithActiveSubscription") ?? false;
+    try
+    {
+        bool deleted = await adminUsersService.DeleteUserAsync(
+            userId,
+            allowDeleteWithActiveSubscription,
+            adminUserId,
+            adminEmail,
+            context.RequestAborted);
+        return deleted ? Results.NoContent() : Results.NotFound();
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.Conflict(new { message = ex.Message });
+    }
+});
+
+app.MapPost("/api/admin/users/{userId}/plan-override", async (
         HttpContext context,
         string userId,
         AdminSetPlanOverrideRequest request,
         IConfiguration configuration,
-        AdminPlanOverrideService adminPlanOverrideService,
+        AdminEndpointRateLimiter adminRateLimiter,
+        AdminUsersService adminUsersService,
         IUserIdResolver userIdResolver,
         ILoggerFactory loggerFactory) =>
 {
-    if (!AdminPlanOverrideAccess.IsEnabled(configuration)
+    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
         || !AdminPlanOverrideAccess.IsAuthorized(context.User))
     {
         return Results.NotFound();
@@ -1068,6 +1251,10 @@ app.MapPost("/api/admin/users/{userId}/plan", async (
 
     ILogger logger = loggerFactory.CreateLogger("AdminPlanAssignments");
     string assignedBy = ResolveAssignedBy(context.User, userIdResolver, logger, out _);
+    if (!adminRateLimiter.TryAcquire($"{assignedBy}:plan-override", 120))
+    {
+        return Results.StatusCode(StatusCodes.Status429TooManyRequests);
+    }
     string? adminCallerEmail = context.User.FindFirstValue(ClaimTypes.Email)
         ?? context.User.FindFirstValue("emails")
         ?? context.User.FindFirstValue("preferred_username")
@@ -1075,12 +1262,11 @@ app.MapPost("/api/admin/users/{userId}/plan", async (
 
     try
     {
-        AdminPlanOverrideResponse response = await adminPlanOverrideService.SetOverride(
+        AdminPlanOverrideResponse response = await adminUsersService.SetPlanOverrideAsync(
             userId,
-            request.PlanKey,
+            request,
             assignedBy,
             adminCallerEmail,
-            request.Reason,
             context.RequestAborted);
         return Results.Ok(response);
     }
@@ -1103,8 +1289,222 @@ app.MapPost("/api/admin/users/{userId}/plan", async (
     catch (Exception ex)
     {
         logger.LogError(ex, "Admin plan override failed. userId={UserId}", userId);
-        return Results.BadRequest(new { message = "Plan override request failed." });
+        return Results.Problem(
+            title: "Plan override failed.",
+            detail: "An unexpected error occurred while persisting the override.",
+            statusCode: StatusCodes.Status500InternalServerError);
     }
+});
+
+app.MapPost("/api/admin/users/{userId}/stripe/sync", async (
+        HttpContext context,
+        string userId,
+        IConfiguration configuration,
+        AdminEndpointRateLimiter adminRateLimiter,
+        AdminUsersService adminUsersService,
+        IUserIdResolver userIdResolver,
+        ILoggerFactory loggerFactory) =>
+{
+    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
+        || !AdminPlanOverrideAccess.IsAuthorized(context.User))
+    {
+        return Results.NotFound();
+    }
+
+    ILogger logger = loggerFactory.CreateLogger("AdminStripeSyncUser");
+    string adminUserId = ResolveAssignedBy(context.User, userIdResolver, logger, out _);
+    string? adminEmail = context.User.FindFirstValue(ClaimTypes.Email)
+        ?? context.User.FindFirstValue("emails")
+        ?? context.User.FindFirstValue("preferred_username")
+        ?? context.User.Identity?.Name;
+    if (!adminRateLimiter.TryAcquire($"{adminUserId}:stripe-sync-user", 30))
+    {
+        return Results.StatusCode(StatusCodes.Status429TooManyRequests);
+    }
+
+    try
+    {
+        AdminUserDetailDto updated = await adminUsersService.SyncStripeForUserAsync(
+            userId,
+            adminUserId,
+            adminEmail,
+            context.RequestAborted);
+        return Results.Ok(updated);
+    }
+    catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or StripeApiException)
+    {
+        return Results.BadRequest(new { message = ex.Message });
+    }
+});
+
+app.MapPost("/api/admin/users/{userId}/tokens/reset-period", async (
+        HttpContext context,
+        string userId,
+        IConfiguration configuration,
+        AdminEndpointRateLimiter adminRateLimiter,
+        AdminUsersService adminUsersService,
+        IUserIdResolver userIdResolver,
+        ILoggerFactory loggerFactory) =>
+{
+    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
+        || !AdminPlanOverrideAccess.IsAuthorized(context.User))
+    {
+        return Results.NotFound();
+    }
+
+    ILogger logger = loggerFactory.CreateLogger("AdminTokens");
+    string adminUserId = ResolveAssignedBy(context.User, userIdResolver, logger, out _);
+    string? adminEmail = context.User.FindFirstValue(ClaimTypes.Email)
+        ?? context.User.FindFirstValue("emails")
+        ?? context.User.FindFirstValue("preferred_username")
+        ?? context.User.Identity?.Name;
+    if (!adminRateLimiter.TryAcquire($"{adminUserId}:tokens-reset", 60))
+    {
+        return Results.StatusCode(StatusCodes.Status429TooManyRequests);
+    }
+
+    AdminTokenOperationResponse response = await adminUsersService.ResetTokensPeriodAsync(
+        userId,
+        adminUserId,
+        adminEmail,
+        context.RequestAborted);
+    return Results.Ok(response);
+});
+
+app.MapPost("/api/admin/users/{userId}/tokens/adjust", async (
+        HttpContext context,
+        string userId,
+        AdminAdjustTokensRequest request,
+        IConfiguration configuration,
+        AdminEndpointRateLimiter adminRateLimiter,
+        AdminUsersService adminUsersService,
+        IUserIdResolver userIdResolver,
+        ILoggerFactory loggerFactory) =>
+{
+    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
+        || !AdminPlanOverrideAccess.IsAuthorized(context.User))
+    {
+        return Results.NotFound();
+    }
+
+    bool tokenAdjustEnabled = configuration.GetValue<bool?>("Admin:EnableTokenAdjust") ?? false;
+    if (!tokenAdjustEnabled)
+    {
+        return Results.NotFound();
+    }
+
+    ILogger logger = loggerFactory.CreateLogger("AdminTokens");
+    string adminUserId = ResolveAssignedBy(context.User, userIdResolver, logger, out _);
+    string? adminEmail = context.User.FindFirstValue(ClaimTypes.Email)
+        ?? context.User.FindFirstValue("emails")
+        ?? context.User.FindFirstValue("preferred_username")
+        ?? context.User.Identity?.Name;
+    if (!adminRateLimiter.TryAcquire($"{adminUserId}:tokens-adjust", 60))
+    {
+        return Results.StatusCode(StatusCodes.Status429TooManyRequests);
+    }
+
+    try
+    {
+        AdminTokenOperationResponse response = await adminUsersService.AdjustTokensAsync(
+            userId,
+            request.DeltaTokens,
+            request.Reason ?? string.Empty,
+            adminUserId,
+            adminEmail,
+            context.RequestAborted);
+        return Results.Ok(response);
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(new { message = ex.Message });
+    }
+});
+
+app.MapGet("/api/admin/audit", async (
+        HttpContext context,
+        IConfiguration configuration,
+        IUserIdResolver userIdResolver,
+        AdminEndpointRateLimiter adminRateLimiter,
+        AdminAuditService adminAuditService,
+        ILoggerFactory loggerFactory,
+        int page = 1,
+        int pageSize = 50,
+        string? adminUserId = null,
+        string? targetUserId = null,
+        string? action = null,
+        DateTime? fromUtc = null,
+        DateTime? toUtc = null) =>
+{
+    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
+        || !AdminPlanOverrideAccess.IsAuthorized(context.User))
+    {
+        return Results.NotFound();
+    }
+
+    ILogger logger = loggerFactory.CreateLogger("AdminAudit");
+    string caller = ResolveAssignedBy(context.User, userIdResolver, logger, out _);
+    if (!adminRateLimiter.TryAcquire($"{caller}:audit-list", 120))
+    {
+        return Results.StatusCode(StatusCodes.Status429TooManyRequests);
+    }
+
+    AdminAuditListResponseDto response = await adminAuditService.QueryAsync(
+        new AdminAuditQueryDto(page, pageSize, adminUserId, targetUserId, action, fromUtc, toUtc),
+        context.RequestAborted);
+    return Results.Ok(response);
+});
+
+app.MapGet("/api/admin/users/export.csv", async (
+        HttpContext context,
+        IConfiguration configuration,
+        IUserIdResolver userIdResolver,
+        AdminEndpointRateLimiter adminRateLimiter,
+        AdminUsersService adminUsersService,
+        ILoggerFactory loggerFactory,
+        int page = 1,
+        int pageSize = 500,
+        string? q = null,
+        string? planKey = null,
+        bool overrideOnly = false,
+        string? subscriptionStatus = null,
+        int? tokensLeftLt = null,
+        int? tokensLeftGt = null,
+        string? sort = null) =>
+{
+    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
+        || !AdminPlanOverrideAccess.IsAuthorized(context.User))
+    {
+        return Results.NotFound();
+    }
+
+    ILogger logger = loggerFactory.CreateLogger("AdminUsersExport");
+    string adminUserId = ResolveAssignedBy(context.User, userIdResolver, logger, out _);
+    string? adminEmail = context.User.FindFirstValue(ClaimTypes.Email)
+        ?? context.User.FindFirstValue("emails")
+        ?? context.User.FindFirstValue("preferred_username")
+        ?? context.User.Identity?.Name;
+    if (!adminRateLimiter.TryAcquire($"{adminUserId}:users-export", 20))
+    {
+        return Results.StatusCode(StatusCodes.Status429TooManyRequests);
+    }
+
+    string csv = await adminUsersService.ExportCsvAsync(
+        page,
+        pageSize,
+        q,
+        planKey,
+        overrideOnly,
+        subscriptionStatus,
+        tokensLeftLt,
+        tokensLeftGt,
+        sort,
+        adminUserId,
+        adminEmail,
+        context.RequestAborted);
+
+    context.Response.Headers.ContentDisposition = "attachment; filename=admin-users-export.csv";
+    return Results.Text(csv, "text/csv");
 });
 
 app.MapPost("/api/admin/db/migrate", async (
@@ -1411,6 +1811,22 @@ app.MapGet("/api/auth/me", async (
             userProfile = await dbContext.UserProfiles
                 .FirstOrDefaultAsync(item => item.UserId == userId, ct);
             createdProfile = false;
+        }
+    }
+    else
+    {
+        DateTime now = DateTime.UtcNow;
+        string? nextDisplayName = string.IsNullOrWhiteSpace(profileIdentity.DisplayName)
+            ? userProfile.DisplayName
+            : profileIdentity.DisplayName;
+        bool changed =
+            !string.Equals(userProfile.DisplayName, nextDisplayName, StringComparison.Ordinal)
+            || userProfile.UpdatedUtc != now;
+        if (changed)
+        {
+            userProfile.DisplayName = nextDisplayName;
+            userProfile.UpdatedUtc = now;
+            await dbContext.SaveChangesAsync(ct);
         }
     }
 
