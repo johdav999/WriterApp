@@ -6,7 +6,9 @@
         @if (IsProtectedRoute(routeData.PageType))
         {
             <AuthGuard LandingPath="@EasyAuthUrlBuilder.DefaultPostAuthPath">
-                <RouteView RouteData="@routeData" DefaultLayout="@typeof(MainLayout)" />
+                <OnboardingGuard>
+                    <RouteView RouteData="@routeData" DefaultLayout="@typeof(MainLayout)" />
+                </OnboardingGuard>
             </AuthGuard>
         }
         else

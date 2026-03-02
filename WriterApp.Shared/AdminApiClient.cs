@@ -89,6 +89,15 @@ namespace WriterApp.Shared
             return payload ?? throw new InvalidOperationException("Admin API returned an empty adjust-tokens response.");
         }
 
+        public async Task<AdminUserDetailDto> ResetOnboardingAsync(string userId, CancellationToken ct = default)
+        {
+            using HttpResponseMessage response =
+                await _http.PostAsync($"api/dev/users/{Uri.EscapeDataString(userId)}/reset-onboarding", content: null, ct);
+            await EnsureSuccess(response, ct);
+            AdminUserDetailDto? payload = await response.Content.ReadFromJsonAsync<AdminUserDetailDto>(cancellationToken: ct);
+            return payload ?? throw new InvalidOperationException("Admin API returned an empty reset-onboarding response.");
+        }
+
         public async Task<AdminAuditListResponseDto> GetAuditAsync(AdminAuditQueryDto query, CancellationToken ct = default)
         {
             string url = BuildAuditUrl(query);

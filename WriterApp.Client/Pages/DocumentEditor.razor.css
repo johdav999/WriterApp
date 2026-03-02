@@ -1083,6 +1083,15 @@
     justify-content: center;
 }
 
+.onboarding-spotlight-target {
+    position: relative;
+    z-index: 9005;
+    outline: 3px solid rgba(37, 99, 235, 0.9);
+    outline-offset: 3px;
+    border-radius: 10px;
+    box-shadow: 0 0 0 6px rgba(37, 99, 235, 0.16);
+}
+
 .editor-toolbar button.is-active {
     background: var(--accent-soft);
     border-color: #cfd9f5;

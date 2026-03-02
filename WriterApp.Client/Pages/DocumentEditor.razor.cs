@@ -34,6 +34,7 @@ namespace WriterApp.Client.Pages
     public partial class DocumentEditor : ComponentBase, IDisposable
     {
         private const string ContextPanelStateStoragePrefix = "writerapp.editor.contextpanel.v1";
+        private const int OnboardingMinTypedCharacters = 100;
 
         [Parameter]
         public Guid DocumentId { get; set; }
@@ -82,6 +83,15 @@ namespace WriterApp.Client.Pages
 
         [Inject]
         public CoachRecommendationService CoachRecommendationService { get; set; } = default!;
+
+        [Inject]
+        public OnboardingService OnboardingService { get; set; } = default!;
+
+        [Inject]
+        public OnboardingStateStore OnboardingStateStore { get; set; } = default!;
+
+        [Inject]
+        public OnboardingOverlayStateService OnboardingOverlayStateService { get; set; } = default!;
 
         private readonly List<SectionDto> _sections = new();
         private readonly Dictionary<Guid, List<PageDto>> _pagesBySection = new();
@@ -417,6 +427,25 @@ namespace WriterApp.Client.Pages
         private TranslateContext? _pendingTranslateContext;
         private ContextTab _activeContextTab = ContextTab.Ai;
         private PanelCategory _activePanelCategory = PanelCategory.Coach;
+        private bool _showOnboardingWalkthrough;
+        private int _onboardingWalkthroughIndex;
+        private bool _onboardingWalkthroughBusy;
+        private string? _onboardingWalkthroughStatus;
+        private bool _onboardingStarterTextEnsured;
+        private bool _onboardingProjectCreated;
+        private bool _onboardingTypedEnough;
+        private bool _onboardingSavedOnce;
+        private bool _onboardingAiRequirementMet;
+        private bool _onboardingCompletionInFlight;
+        private DateTimeOffset _onboardingLastTypingProbeUtc = DateTimeOffset.MinValue;
+        private int _onboardingMeasuredCharacterCount;
+        private readonly IReadOnlyList<OnboardingWalkthroughTip> _onboardingWalkthroughTips = new List<OnboardingWalkthroughTip>
+        {
+            new(4, "This is your scene editor", "Write, revise, and structure your draft in this scene editor.", "#onboarding-editor-scene", false),
+            new(5, "Open AI Coach", "Use Writing tools to expand, rewrite, or continue your scene.", "#onboarding-tab-ai", true),
+            new(6, "Continuity & Quality checks", "Run consistency and style checks while you draft.", "#onboarding-tab-continuity", false),
+            new(7, "Token budget indicator", "Track your current AI usage and plan budget here.", "#onboarding-token-budget", false)
+        };
         private readonly List<PageVersionListItemDto> _pageVersions = new();
         private bool _versionsLoading;
         private string? _versionsError;
@@ -702,6 +731,8 @@ namespace WriterApp.Client.Pages
 
             CurrentDocumentStateService.SetCurrent(DocumentId, SectionId);
             await LoadDocumentAsync();
+            await RefreshOnboardingWalkthroughAsync();
+            await EnsureOnboardingStarterTextAsync();
         }
 
         private async Task<bool> EnsureLegacySectionTargetForSceneRouteAsync()
@@ -1834,13 +1865,16 @@ namespace WriterApp.Client.Pages
                 await RefreshNavigatorInspectorAsync();
             }
 
+            _onboardingSavedOnce = true;
+            await EvaluateOnboardingCompletionAsync(forceTypingProbe: false);
             await InvokeAsync(StateHasChanged);
         }
 
-        private Task OnEditorStatusChanged(PageEditor.EditorStatusSnapshot status)
+        private async Task OnEditorStatusChanged(PageEditor.EditorStatusSnapshot status)
         {
             _editorStatus = status;
-            return InvokeAsync(StateHasChanged);
+            await EvaluateOnboardingCompletionAsync(forceTypingProbe: false);
+            await InvokeAsync(StateHasChanged);
         }
         private bool IsContextPanelCollapsed()
         {
@@ -2209,6 +2243,7 @@ namespace WriterApp.Client.Pages
         {
             LayoutStateService.Changed -= OnLayoutStateChanged;
             AuthMeStateService.Changed -= OnAuthMeStateChanged;
+            OnboardingOverlayStateService.Clear();
             _notesAutosaveCts?.Cancel();
             _notesAutosaveCts?.Dispose();
             _notesAutosaveCts = null;
@@ -7627,8 +7662,400 @@ private const string PreviewBootstrapScript = @"
                     _activePage?.Id,
                     selectionSnapshot));
             _pendingDetailsExpanded = false;
+            await MarkOnboardingAiSignalAsync("onboarding_first_ai_success", action.ActionKey);
             await LoadAiHistoryAsync();
             await InvokeAsync(StateHasChanged);
+        }
+
+        private OnboardingWalkthroughTip CurrentOnboardingWalkthroughTip
+        {
+            get
+            {
+                if (_onboardingWalkthroughTips.Count == 0)
+                {
+                    return new OnboardingWalkthroughTip(4, "Onboarding", "Continue onboarding.", null, false);
+                }
+
+                int index = Math.Clamp(_onboardingWalkthroughIndex, 0, _onboardingWalkthroughTips.Count - 1);
+                return _onboardingWalkthroughTips[index];
+            }
+        }
+
+        private bool ShowOnboardingAiActionCta =>
+            _showOnboardingWalkthrough && CurrentOnboardingWalkthroughTip.ShowAiAction;
+
+        private void SyncOnboardingOverlayState()
+        {
+            OnboardingWalkthroughTip tip = CurrentOnboardingWalkthroughTip;
+            OnboardingOverlayStateService.Set(
+                _showOnboardingWalkthrough,
+                _onboardingWalkthroughIndex,
+                _onboardingWalkthroughTips.Count,
+                tip.Title,
+                tip.Description,
+                tip.TargetSelector,
+                _onboardingWalkthroughStatus,
+                _onboardingWalkthroughBusy,
+                ShowOnboardingAiActionCta,
+                "Expand scene with AI",
+                "Next",
+                OnOnboardingWalkthroughNextAsync,
+                OnOnboardingWalkthroughSkipAsync,
+                OnOnboardingAiExpandAsync);
+        }
+
+        private async Task RefreshOnboardingWalkthroughAsync()
+        {
+            try
+            {
+                await OnboardingStateStore.RefreshAsync();
+                OnboardingState state = OnboardingStateStore.Current;
+                if (state.HasCompletedOnboarding)
+                {
+                    _showOnboardingWalkthrough = false;
+                    _onboardingProjectCreated = true;
+                    _onboardingTypedEnough = true;
+                    _onboardingSavedOnce = true;
+                    _onboardingAiRequirementMet = true;
+                    return;
+                }
+
+                _showOnboardingWalkthrough = true;
+                _onboardingProjectCreated = ProjectId != Guid.Empty || state.OnboardingStep >= 3;
+                _onboardingAiRequirementMet = state.OnboardingStep >= 8;
+                _onboardingWalkthroughIndex = ResolveWalkthroughIndex(state.OnboardingStep);
+                _onboardingWalkthroughStatus = null;
+
+                if (!_onboardingAiRequirementMet && (AuthMeStateService.AiMonthlyTokenBudget <= 0 || !IsAiEntitled || !IsAiUiEnabled))
+                {
+                    await MarkOnboardingAiSignalAsync("onboarding_first_ai_blocked", "free_plan");
+                    await OnboardingService.SetStepAsync(8);
+                    await OnboardingStateStore.RefreshAsync();
+                }
+
+                await EnsureWalkthroughContextAsync();
+                await EvaluateOnboardingCompletionAsync(forceTypingProbe: true);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogDebug(ex, "Failed to refresh onboarding walkthrough state.");
+                _showOnboardingWalkthrough = false;
+            }
+            finally
+            {
+                SyncOnboardingOverlayState();
+            }
+        }
+
+        private static int ResolveWalkthroughIndex(int onboardingStep)
+        {
+            if (onboardingStep <= 3)
+            {
+                return 0;
+            }
+
+            if (onboardingStep <= 4)
+            {
+                return 1;
+            }
+
+            if (onboardingStep <= 5)
+            {
+                return 2;
+            }
+
+            return 3;
+        }
+
+        private async Task EnsureWalkthroughContextAsync()
+        {
+            OnboardingWalkthroughTip tip = CurrentOnboardingWalkthroughTip;
+            if (string.Equals(tip.TargetSelector, "#onboarding-tab-ai", StringComparison.Ordinal))
+            {
+                await SetContextTabAsync(ContextTab.Ai);
+            }
+            else if (string.Equals(tip.TargetSelector, "#onboarding-tab-continuity", StringComparison.Ordinal))
+            {
+                if (CanShowContinuityCoach)
+                {
+                    await SetContextTabAsync(ContextTab.Continuity);
+                }
+                else
+                {
+                    await SetContextTabAsync(ContextTab.Quality);
+                }
+            }
+        }
+
+        private async Task OnOnboardingWalkthroughNextAsync()
+        {
+            if (_onboardingWalkthroughBusy || !_showOnboardingWalkthrough)
+            {
+                return;
+            }
+
+            _onboardingWalkthroughBusy = true;
+            SyncOnboardingOverlayState();
+            try
+            {
+                int persistedStep = CurrentOnboardingWalkthroughTip.ServerStep;
+                await OnboardingService.SetStepAsync(persistedStep);
+
+                if (_onboardingWalkthroughIndex >= _onboardingWalkthroughTips.Count - 1)
+                {
+                    await OnboardingStateStore.RefreshAsync();
+                    _onboardingWalkthroughStatus = "Write 100+ characters and run one AI action to finish onboarding.";
+                    await EvaluateOnboardingCompletionAsync(forceTypingProbe: true);
+                    return;
+                }
+
+                _onboardingWalkthroughIndex++;
+                _onboardingWalkthroughStatus = null;
+                await EnsureWalkthroughContextAsync();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogDebug(ex, "Failed to advance onboarding walkthrough step.");
+                _onboardingWalkthroughStatus = "Could not save onboarding progress. Please try again.";
+            }
+            finally
+            {
+                _onboardingWalkthroughBusy = false;
+                SyncOnboardingOverlayState();
+            }
+        }
+
+        private async Task OnOnboardingWalkthroughSkipAsync()
+        {
+            if (_onboardingWalkthroughBusy)
+            {
+                return;
+            }
+
+            _onboardingWalkthroughBusy = true;
+            SyncOnboardingOverlayState();
+            try
+            {
+                _showOnboardingWalkthrough = false;
+                _onboardingWalkthroughStatus = null;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogDebug(ex, "Failed to skip onboarding walkthrough.");
+                _onboardingWalkthroughStatus = "Could not complete onboarding right now. You can keep editing.";
+            }
+            finally
+            {
+                _onboardingWalkthroughBusy = false;
+                SyncOnboardingOverlayState();
+            }
+        }
+
+        private async Task EnsureOnboardingStarterTextAsync()
+        {
+            if (_onboardingStarterTextEnsured || !_showOnboardingWalkthrough || _activePage is null)
+            {
+                return;
+            }
+
+            string plain = await GetCurrentAiPlainTextAsync();
+            if (!string.IsNullOrWhiteSpace(plain))
+            {
+                _onboardingStarterTextEnsured = true;
+                return;
+            }
+
+            string starterHtml = "<p>Your protagonist enters a place they should never have returned to, and something immediately feels wrong.</p>";
+            try
+            {
+                using HttpResponseMessage response = await Http.PutAsJsonAsync(
+                    $"api/pages/{_activePage.Id}",
+                    new PageUpdateRequest(_activePage.Title, starterHtml));
+                if (!response.IsSuccessStatusCode)
+                {
+                    return;
+                }
+
+                _activePage = _activePage with { Content = starterHtml, UpdatedAt = DateTimeOffset.UtcNow };
+                if (_pagesBySection.TryGetValue(_activePage.SectionId, out List<PageDto>? pages))
+                {
+                    int pageIndex = pages.FindIndex(item => item.Id == _activePage.Id);
+                    if (pageIndex >= 0)
+                    {
+                        pages[pageIndex] = _activePage;
+                    }
+                }
+
+                if (_pageEditor is not null)
+                {
+                    await _pageEditor.SetContentAsync(starterHtml, markDirty: false);
+                }
+
+                _onboardingStarterTextEnsured = true;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogDebug(ex, "Failed to initialize onboarding starter scene text.");
+            }
+        }
+
+        private async Task OnOnboardingAiExpandAsync()
+        {
+            if (_onboardingWalkthroughBusy)
+            {
+                return;
+            }
+
+            _onboardingWalkthroughBusy = true;
+            SyncOnboardingOverlayState();
+            try
+            {
+                await SetContextTabAsync(ContextTab.Ai);
+
+                if (AuthMeStateService.AiMonthlyTokenBudget <= 0 || !IsAiEntitled || !IsAiUiEnabled)
+                {
+                    _onboardingWalkthroughStatus = "AI is not available on Free. See plans.";
+                    await MarkOnboardingAiSignalAsync("onboarding_first_ai_blocked", "free_plan");
+                    await OnboardingService.SetStepAsync(8);
+                    await OnboardingStateStore.RefreshAsync();
+                    await EvaluateOnboardingCompletionAsync(forceTypingProbe: false);
+                    return;
+                }
+
+                if (!HasAction("expand.section"))
+                {
+                    _onboardingWalkthroughStatus = "AI expand is not available right now.";
+                    return;
+                }
+
+                await EnsureOnboardingStarterTextAsync();
+                Guid beforeProposalId = _pendingAiProposal?.ProposalId ?? Guid.Empty;
+
+                AiActionOption onboardingExpand = new(
+                    "expand.section",
+                    "Expand scene with AI",
+                    "Expand this scene into one concise paragraph (maximum 120 words). Keep the same tone and events.",
+                    false,
+                    new Dictionary<string, object?>
+                    {
+                        ["max_output_tokens"] = 180,
+                        ["temperature"] = 0.4,
+                        ["length"] = "Shorter"
+                    },
+                    "Generate a bounded starter expansion.",
+                    false);
+
+                await OnAiActionSelected(onboardingExpand);
+
+                bool aiSucceeded = _pendingAiProposal is not null
+                    && _pendingAiProposal.ProposalId != beforeProposalId
+                    && !string.IsNullOrWhiteSpace(_pendingAiProposal.ProposedText);
+
+                if (aiSucceeded)
+                {
+                    await OnboardingService.SetStepAsync(8);
+                    await OnboardingStateStore.RefreshAsync();
+                    await EvaluateOnboardingCompletionAsync(forceTypingProbe: false);
+                    _onboardingWalkthroughStatus = "AI suggestion ready below. Review and apply when you are ready.";
+                }
+                else if (IsAiQuotaExceeded)
+                {
+                    _onboardingWalkthroughStatus = "AI is not available on Free. See plans.";
+                }
+                else
+                {
+                    _onboardingWalkthroughStatus = "AI expansion did not complete. You can continue without AI.";
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Onboarding AI expand action failed.");
+                _onboardingWalkthroughStatus = "AI expansion failed. You can continue onboarding.";
+            }
+            finally
+            {
+                _onboardingWalkthroughBusy = false;
+                SyncOnboardingOverlayState();
+            }
+        }
+
+        private async Task MarkOnboardingAiSignalAsync(string eventName, string source)
+        {
+            if (_onboardingAiRequirementMet)
+            {
+                return;
+            }
+
+            _onboardingAiRequirementMet = true;
+            try
+            {
+                await OnboardingService.TrackEventAsync(
+                    eventName,
+                    new Dictionary<string, object?>
+                    {
+                        ["source"] = source
+                    });
+            }
+            catch (Exception ex)
+            {
+                Logger.LogDebug(ex, "Failed to track onboarding AI signal event {EventName}.", eventName);
+            }
+
+            await EvaluateOnboardingCompletionAsync(forceTypingProbe: false);
+        }
+
+        private async Task EvaluateOnboardingCompletionAsync(bool forceTypingProbe)
+        {
+            if (_onboardingCompletionInFlight || !_showOnboardingWalkthrough)
+            {
+                return;
+            }
+
+            if (OnboardingStateStore.Current.HasCompletedOnboarding)
+            {
+                return;
+            }
+
+            if (!_onboardingProjectCreated)
+            {
+                return;
+            }
+
+            if (!_onboardingSavedOnce && !_onboardingTypedEnough)
+            {
+                DateTimeOffset now = DateTimeOffset.UtcNow;
+                if (forceTypingProbe || now - _onboardingLastTypingProbeUtc >= TimeSpan.FromSeconds(2))
+                {
+                    _onboardingLastTypingProbeUtc = now;
+                    string plainText = await GetCurrentAiPlainTextAsync();
+                    _onboardingMeasuredCharacterCount = plainText?.Trim().Length ?? 0;
+                    _onboardingTypedEnough = _onboardingMeasuredCharacterCount >= OnboardingMinTypedCharacters;
+                }
+            }
+
+            bool hasWritingSignal = _onboardingSavedOnce || _onboardingTypedEnough;
+            if (!hasWritingSignal || !_onboardingAiRequirementMet)
+            {
+                return;
+            }
+
+            _onboardingCompletionInFlight = true;
+            try
+            {
+                await OnboardingService.CompleteAsync();
+                await OnboardingStateStore.RefreshAsync();
+                _showOnboardingWalkthrough = false;
+                _onboardingWalkthroughStatus = null;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogDebug(ex, "Failed to complete onboarding after criteria evaluation.");
+            }
+            finally
+            {
+                _onboardingCompletionInFlight = false;
+                SyncOnboardingOverlayState();
+            }
         }
 
         private async Task<string?> EnsureMeaningfulTightenAsync(
@@ -8582,6 +9009,17 @@ private const string PreviewBootstrapScript = @"
         private bool IsAiEntitled => _aiUsageStatus?.AiEnabled == true;
 
         private bool IsAiQuotaExceeded => _aiUsageStatus is not null && _aiUsageStatus.QuotaRemaining <= 0;
+
+        private string? GetOnboardingContextTabId(ContextTab tab)
+        {
+            return tab switch
+            {
+                ContextTab.Ai => "onboarding-tab-ai",
+                ContextTab.Continuity => "onboarding-tab-continuity",
+                ContextTab.Quality => "onboarding-tab-quality",
+                _ => null
+            };
+        }
 
         private string PlanStatusLabel => $"Plan: {AuthMeStateService.PlanKey}";
 
@@ -12249,6 +12687,13 @@ private const string PreviewBootstrapScript = @"
         {
             public static DiffSummary Empty => new(0, 0, 0, 0, 0);
         }
+
+        private sealed record OnboardingWalkthroughTip(
+            int ServerStep,
+            string Title,
+            string Description,
+            string? TargetSelector,
+            bool ShowAiAction);
 
         private sealed record QualityProposalPreview(
             string Before,

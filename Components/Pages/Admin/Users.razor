@@ -1,5 +1,6 @@
 @page "/admin/users"
 @using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Hosting
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.WebUtilities
 @using WriterApp.Shared
@@ -8,6 +9,7 @@
 @inject HttpClient Http
 @inject NavigationManager Navigation
 @inject IConfiguration Configuration
+@inject IWebHostEnvironment HostEnvironment
 @inject IJSRuntime JS
 @inject ILogger<Users> Logger
 
@@ -346,6 +348,14 @@
             <div class="drawer-actions">
                 <button class="btn btn-outline-secondary" @onclick="AdjustTokensAsync">Apply adjustment</button>
             </div>
+
+            @if (_isDevelopment)
+            {
+                <h3>Development tools</h3>
+                <div class="drawer-actions">
+                    <button class="btn btn-outline-warning" @onclick="ResetOnboardingAsync">Reset onboarding</button>
+                </div>
+            }
         }
     </aside>
 }
@@ -371,6 +381,7 @@
     private AdminApiClient? _adminApi;
 
     private bool _adminApiEnabled;
+    private bool _isDevelopment;
     private bool _loading;
     private bool _hasNextPage;
     private string? _error;
@@ -420,6 +431,7 @@
     protected override async Task OnInitializedAsync()
     {
         _adminApiEnabled = Configuration.GetValue<bool?>("Admin:EnableAdminApi") ?? false;
+        _isDevelopment = HostEnvironment.IsDevelopment();
         ApplyQueryStringToState();
         if (_adminApiEnabled)
         {
@@ -697,6 +709,33 @@
                 new AdminAdjustTokensRequest(deltaTokens, _deltaTokensReason));
             AddToast("Token adjustment applied.", "success");
             _selectedUser = await AdminApi.GetUserAsync(_selectedUser.UserId);
+            await LoadUsersAsync(updateQueryString: false);
+        }
+        catch (Exception ex)
+        {
+            AddToast(ex.Message, "error");
+        }
+    }
+
+    private async Task ResetOnboardingAsync()
+    {
+        if (_selectedUser is null || !_isDevelopment)
+        {
+            return;
+        }
+
+        bool confirmed = await JS.InvokeAsync<bool>(
+            "confirm",
+            $"Reset onboarding for user '{_selectedUser.UserId}'?");
+        if (!confirmed)
+        {
+            return;
+        }
+
+        try
+        {
+            _selectedUser = await AdminApi.ResetOnboardingAsync(_selectedUser.UserId);
+            AddToast("Onboarding reset.", "success");
             await LoadUsersAsync(updateQueryString: false);
         }
         catch (Exception ex)

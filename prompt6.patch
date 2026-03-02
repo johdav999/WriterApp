@@ -1,0 +1,1722 @@
+﻿diff --git a/Data/AppDbContext.cs b/Data/AppDbContext.cs
+index aeefb08..1e7b4f5 100644
+--- a/Data/AppDbContext.cs
++++ b/Data/AppDbContext.cs
+@@ -30,6 +30,7 @@ namespace WriterApp.Data
+         public DbSet<UserPlanAssignment> UserPlanAssignments => Set<UserPlanAssignment>();
+         public DbSet<TokenAdjustment> TokenAdjustments => Set<TokenAdjustment>();
+         public DbSet<UsageEvent> UsageEvents => Set<UsageEvent>();
++        public DbSet<UserEvent> UserEvents => Set<UserEvent>();
+         public DbSet<UsageAggregate> UsageAggregates => Set<UsageAggregate>();
+         public DbSet<DocumentRecord> Documents => Set<DocumentRecord>();
+         public DbSet<SectionRecord> Sections => Set<SectionRecord>();
+@@ -106,7 +107,13 @@ namespace WriterApp.Data
+                 entity.HasKey(profile => profile.UserId);
+                 entity.Property(profile => profile.CreatedUtc).IsRequired();
+                 entity.Property(profile => profile.HasOnboarded).IsRequired();
++                entity.Property(profile => profile.HasCompletedOnboarding).HasDefaultValue(false).IsRequired();
++                entity.Property(profile => profile.OnboardingStep).HasDefaultValue(0).IsRequired();
++                entity.Property(profile => profile.OnboardingStartedUtc);
++                entity.Property(profile => profile.OnboardingCompletedUtc);
++                entity.Property(profile => profile.PrimaryWritingIntent);
+                 entity.Property(profile => profile.UpdatedUtc).IsRequired();
++                entity.HasIndex(profile => profile.HasCompletedOnboarding);
+             });
+ 
+             builder.Entity<UserEntitlement>(entity =>
+@@ -214,6 +221,18 @@ namespace WriterApp.Data
+                 entity.Property(usage => usage.TimestampUtc).IsRequired();
+             });
+ 
++            builder.Entity<UserEvent>(entity =>
++            {
++                entity.HasKey(item => item.Id);
++                entity.Property(item => item.UserId).IsRequired();
++                entity.Property(item => item.EventName).IsRequired();
++                entity.Property(item => item.MetadataJson);
++                entity.Property(item => item.CreatedUtc).IsRequired();
++                entity.HasIndex(item => item.UserId);
++                entity.HasIndex(item => item.EventName);
++                entity.HasIndex(item => item.CreatedUtc);
++            });
++
+             builder.Entity<UsageAggregate>(entity =>
+             {
+                 entity.HasKey(aggregate => new { aggregate.UserId, aggregate.PeriodStartUtc, aggregate.PeriodEndUtc, aggregate.Kind });
+@@ -964,6 +983,8 @@ namespace WriterApp.Data
+                     DisplayName = "System",
+                     CreatedUtc = seededUtc,
+                     HasOnboarded = true,
++                    HasCompletedOnboarding = true,
++                    OnboardingStep = 0,
+                     UpdatedUtc = seededUtc
+                 }
+             );
+diff --git a/Migrations/AppDbContextModelSnapshot.cs b/Migrations/AppDbContextModelSnapshot.cs
+index ad9ab2a..a5b1f1a 100644
+--- a/Migrations/AppDbContextModelSnapshot.cs
++++ b/Migrations/AppDbContextModelSnapshot.cs
+@@ -1748,14 +1748,35 @@ namespace BlazorApp.Migrations
+                     b.Property<string>("DisplayName")
+                         .HasColumnType("TEXT");
+ 
++                    b.Property<bool>("HasCompletedOnboarding")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("INTEGER")
++                        .HasDefaultValue(false);
++
+                     b.Property<bool>("HasOnboarded")
+                         .HasColumnType("INTEGER");
+ 
++                    b.Property<DateTimeOffset?>("OnboardingCompletedUtc")
++                        .HasColumnType("TEXT");
++
++                    b.Property<DateTimeOffset?>("OnboardingStartedUtc")
++                        .HasColumnType("TEXT");
++
++                    b.Property<int>("OnboardingStep")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("INTEGER")
++                        .HasDefaultValue(0);
++
++                    b.Property<string>("PrimaryWritingIntent")
++                        .HasColumnType("TEXT");
++
+                     b.Property<DateTime>("UpdatedUtc")
+                         .HasColumnType("TEXT");
+ 
+                     b.HasKey("UserId");
+ 
++                    b.HasIndex("HasCompletedOnboarding");
++
+                     b.ToTable("UserProfiles");
+ 
+                     b.HasData(
+@@ -1764,7 +1785,9 @@ namespace BlazorApp.Migrations
+                             UserId = "seed-system",
+                             CreatedUtc = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
+                             DisplayName = "System",
++                            HasCompletedOnboarding = true,
+                             HasOnboarded = true,
++                            OnboardingStep = 0,
+                             UpdatedUtc = new DateTime(2025, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc)
+                         });
+                 });
+@@ -1848,6 +1871,37 @@ namespace BlazorApp.Migrations
+                     b.ToTable("UsageEvents");
+                 });
+ 
++            modelBuilder.Entity("WriterApp.Data.Usage.UserEvent", b =>
++                {
++                    b.Property<long>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("INTEGER");
++
++                    b.Property<DateTimeOffset>("CreatedUtc")
++                        .HasColumnType("TEXT");
++
++                    b.Property<string>("EventName")
++                        .IsRequired()
++                        .HasColumnType("TEXT");
++
++                    b.Property<string>("MetadataJson")
++                        .HasColumnType("TEXT");
++
++                    b.Property<string>("UserId")
++                        .IsRequired()
++                        .HasColumnType("TEXT");
++
++                    b.HasKey("Id");
++
++                    b.HasIndex("CreatedUtc");
++
++                    b.HasIndex("EventName");
++
++                    b.HasIndex("UserId");
++
++                    b.ToTable("UserEvents");
++                });
++
+             modelBuilder.Entity("WriterApp.Data.AI.AiActionAppliedEventRecord", b =>
+                 {
+                     b.HasOne("WriterApp.Data.AI.AiActionHistoryEntryRecord", "HistoryEntry")
+diff --git a/Program.cs b/Program.cs
+index 91d6cb6..894e9c4 100644
+--- a/Program.cs
++++ b/Program.cs
+@@ -211,6 +211,7 @@ builder.Services.AddScoped<IUserIdResolver, UserIdResolver>();
+ builder.Services.AddScoped<IPlanAssignmentService, PlanAssignmentService>();
+ builder.Services.AddScoped<AdminPlanOverrideService>();
+ builder.Services.AddScoped<AdminAuditService>();
++builder.Services.AddScoped<UserEventService>();
+ builder.Services.AddScoped<IUserLookupService, UserLookupService>();
+ builder.Services.AddScoped<AdminUsersService>();
+ builder.Services.AddSingleton<AdminEndpointRateLimiter>();
+diff --git a/WriterApp.Client/Pages/DocumentEditor.razor.cs b/WriterApp.Client/Pages/DocumentEditor.razor.cs
+index 204bbeb..0e9aff1 100644
+--- a/WriterApp.Client/Pages/DocumentEditor.razor.cs
++++ b/WriterApp.Client/Pages/DocumentEditor.razor.cs
+@@ -34,6 +34,7 @@ namespace WriterApp.Client.Pages
+     public partial class DocumentEditor : ComponentBase, IDisposable
+     {
+         private const string ContextPanelStateStoragePrefix = "writerapp.editor.contextpanel.v1";
++        private const int OnboardingMinTypedCharacters = 100;
+ 
+         [Parameter]
+         public Guid DocumentId { get; set; }
+@@ -83,6 +84,12 @@ namespace WriterApp.Client.Pages
+         [Inject]
+         public CoachRecommendationService CoachRecommendationService { get; set; } = default!;
+ 
++        [Inject]
++        public OnboardingService OnboardingService { get; set; } = default!;
++
++        [Inject]
++        public OnboardingStateStore OnboardingStateStore { get; set; } = default!;
++
+         private readonly List<SectionDto> _sections = new();
+         private readonly Dictionary<Guid, List<PageDto>> _pagesBySection = new();
+         private SectionDto? _activeSection;
+@@ -417,6 +424,25 @@ namespace WriterApp.Client.Pages
+         private TranslateContext? _pendingTranslateContext;
+         private ContextTab _activeContextTab = ContextTab.Ai;
+         private PanelCategory _activePanelCategory = PanelCategory.Coach;
++        private bool _showOnboardingWalkthrough;
++        private int _onboardingWalkthroughIndex;
++        private bool _onboardingWalkthroughBusy;
++        private string? _onboardingWalkthroughStatus;
++        private bool _onboardingStarterTextEnsured;
++        private bool _onboardingProjectCreated;
++        private bool _onboardingTypedEnough;
++        private bool _onboardingSavedOnce;
++        private bool _onboardingAiRequirementMet;
++        private bool _onboardingCompletionInFlight;
++        private DateTimeOffset _onboardingLastTypingProbeUtc = DateTimeOffset.MinValue;
++        private int _onboardingMeasuredCharacterCount;
++        private readonly IReadOnlyList<OnboardingWalkthroughTip> _onboardingWalkthroughTips = new List<OnboardingWalkthroughTip>
++        {
++            new(4, "This is your scene editor", "Write, revise, and structure your draft in this scene editor.", "#onboarding-editor-scene", false),
++            new(5, "Open AI Coach", "Use Writing tools to expand, rewrite, or continue your scene.", "#onboarding-tab-ai", true),
++            new(6, "Continuity & Quality checks", "Run consistency and style checks while you draft.", "#onboarding-tab-continuity", false),
++            new(7, "Token budget indicator", "Track your current AI usage and plan budget here.", "#onboarding-token-budget", false)
++        };
+         private readonly List<PageVersionListItemDto> _pageVersions = new();
+         private bool _versionsLoading;
+         private string? _versionsError;
+@@ -702,6 +728,8 @@ namespace WriterApp.Client.Pages
+ 
+             CurrentDocumentStateService.SetCurrent(DocumentId, SectionId);
+             await LoadDocumentAsync();
++            await RefreshOnboardingWalkthroughAsync();
++            await EnsureOnboardingStarterTextAsync();
+         }
+ 
+         private async Task<bool> EnsureLegacySectionTargetForSceneRouteAsync()
+@@ -1834,13 +1862,16 @@ namespace WriterApp.Client.Pages
+                 await RefreshNavigatorInspectorAsync();
+             }
+ 
++            _onboardingSavedOnce = true;
++            await EvaluateOnboardingCompletionAsync(forceTypingProbe: false);
+             await InvokeAsync(StateHasChanged);
+         }
+ 
+-        private Task OnEditorStatusChanged(PageEditor.EditorStatusSnapshot status)
++        private async Task OnEditorStatusChanged(PageEditor.EditorStatusSnapshot status)
+         {
+             _editorStatus = status;
+-            return InvokeAsync(StateHasChanged);
++            await EvaluateOnboardingCompletionAsync(forceTypingProbe: false);
++            await InvokeAsync(StateHasChanged);
+         }
+         private bool IsContextPanelCollapsed()
+         {
+@@ -7627,10 +7658,371 @@ private const string PreviewBootstrapScript = @"
+                     _activePage?.Id,
+                     selectionSnapshot));
+             _pendingDetailsExpanded = false;
++            await MarkOnboardingAiSignalAsync("onboarding_first_ai_success", action.ActionKey);
+             await LoadAiHistoryAsync();
+             await InvokeAsync(StateHasChanged);
+         }
+ 
++        private OnboardingWalkthroughTip CurrentOnboardingWalkthroughTip
++        {
++            get
++            {
++                if (_onboardingWalkthroughTips.Count == 0)
++                {
++                    return new OnboardingWalkthroughTip(4, "Onboarding", "Continue onboarding.", null, false);
++                }
++
++                int index = Math.Clamp(_onboardingWalkthroughIndex, 0, _onboardingWalkthroughTips.Count - 1);
++                return _onboardingWalkthroughTips[index];
++            }
++        }
++
++        private bool ShowOnboardingAiActionCta =>
++            _showOnboardingWalkthrough && CurrentOnboardingWalkthroughTip.ShowAiAction;
++
++        private async Task RefreshOnboardingWalkthroughAsync()
++        {
++            try
++            {
++                await OnboardingStateStore.RefreshAsync();
++                OnboardingState state = OnboardingStateStore.Current;
++                if (state.HasCompletedOnboarding)
++                {
++                    _showOnboardingWalkthrough = false;
++                    _onboardingProjectCreated = true;
++                    _onboardingTypedEnough = true;
++                    _onboardingSavedOnce = true;
++                    _onboardingAiRequirementMet = true;
++                    return;
++                }
++
++                _showOnboardingWalkthrough = true;
++                _onboardingProjectCreated = ProjectId != Guid.Empty || state.OnboardingStep >= 3;
++                _onboardingAiRequirementMet = state.OnboardingStep >= 8;
++                _onboardingWalkthroughIndex = ResolveWalkthroughIndex(state.OnboardingStep);
++                _onboardingWalkthroughStatus = null;
++
++                if (!_onboardingAiRequirementMet && (AuthMeStateService.AiMonthlyTokenBudget <= 0 || !IsAiEntitled || !IsAiUiEnabled))
++                {
++                    await MarkOnboardingAiSignalAsync("onboarding_first_ai_blocked", "free_plan");
++                    await OnboardingService.SetStepAsync(8);
++                    await OnboardingStateStore.RefreshAsync();
++                }
++
++                await EnsureWalkthroughContextAsync();
++                await EvaluateOnboardingCompletionAsync(forceTypingProbe: true);
++            }
++            catch (Exception ex)
++            {
++                Logger.LogDebug(ex, "Failed to refresh onboarding walkthrough state.");
++                _showOnboardingWalkthrough = false;
++            }
++        }
++
++        private static int ResolveWalkthroughIndex(int onboardingStep)
++        {
++            if (onboardingStep <= 3)
++            {
++                return 0;
++            }
++
++            if (onboardingStep <= 4)
++            {
++                return 1;
++            }
++
++            if (onboardingStep <= 5)
++            {
++                return 2;
++            }
++
++            return 3;
++        }
++
++        private async Task EnsureWalkthroughContextAsync()
++        {
++            OnboardingWalkthroughTip tip = CurrentOnboardingWalkthroughTip;
++            if (string.Equals(tip.TargetSelector, "#onboarding-tab-ai", StringComparison.Ordinal))
++            {
++                await SetContextTabAsync(ContextTab.Ai);
++            }
++            else if (string.Equals(tip.TargetSelector, "#onboarding-tab-continuity", StringComparison.Ordinal))
++            {
++                if (CanShowContinuityCoach)
++                {
++                    await SetContextTabAsync(ContextTab.Continuity);
++                }
++                else
++                {
++                    await SetContextTabAsync(ContextTab.Quality);
++                }
++            }
++        }
++
++        private async Task OnOnboardingWalkthroughNextAsync()
++        {
++            if (_onboardingWalkthroughBusy || !_showOnboardingWalkthrough)
++            {
++                return;
++            }
++
++            _onboardingWalkthroughBusy = true;
++            try
++            {
++                int persistedStep = CurrentOnboardingWalkthroughTip.ServerStep;
++                await OnboardingService.SetStepAsync(persistedStep);
++
++                if (_onboardingWalkthroughIndex >= _onboardingWalkthroughTips.Count - 1)
++                {
++                    await OnboardingStateStore.RefreshAsync();
++                    _onboardingWalkthroughStatus = "Write 100+ characters and run one AI action to finish onboarding.";
++                    await EvaluateOnboardingCompletionAsync(forceTypingProbe: true);
++                    return;
++                }
++
++                _onboardingWalkthroughIndex++;
++                _onboardingWalkthroughStatus = null;
++                await EnsureWalkthroughContextAsync();
++            }
++            catch (Exception ex)
++            {
++                Logger.LogDebug(ex, "Failed to advance onboarding walkthrough step.");
++                _onboardingWalkthroughStatus = "Could not save onboarding progress. Please try again.";
++            }
++            finally
++            {
++                _onboardingWalkthroughBusy = false;
++            }
++        }
++
++        private async Task OnOnboardingWalkthroughSkipAsync()
++        {
++            if (_onboardingWalkthroughBusy)
++            {
++                return;
++            }
++
++            _onboardingWalkthroughBusy = true;
++            try
++            {
++                _showOnboardingWalkthrough = false;
++                _onboardingWalkthroughStatus = null;
++            }
++            catch (Exception ex)
++            {
++                Logger.LogDebug(ex, "Failed to skip onboarding walkthrough.");
++                _onboardingWalkthroughStatus = "Could not complete onboarding right now. You can keep editing.";
++            }
++            finally
++            {
++                _onboardingWalkthroughBusy = false;
++            }
++        }
++
++        private async Task EnsureOnboardingStarterTextAsync()
++        {
++            if (_onboardingStarterTextEnsured || !_showOnboardingWalkthrough || _activePage is null)
++            {
++                return;
++            }
++
++            string plain = await GetCurrentAiPlainTextAsync();
++            if (!string.IsNullOrWhiteSpace(plain))
++            {
++                _onboardingStarterTextEnsured = true;
++                return;
++            }
++
++            string starterHtml = "<p>Your protagonist enters a place they should never have returned to, and something immediately feels wrong.</p>";
++            try
++            {
++                using HttpResponseMessage response = await Http.PutAsJsonAsync(
++                    $"api/pages/{_activePage.Id}",
++                    new PageUpdateRequest(_activePage.Title, starterHtml));
++                if (!response.IsSuccessStatusCode)
++                {
++                    return;
++                }
++
++                _activePage = _activePage with { Content = starterHtml, UpdatedAt = DateTimeOffset.UtcNow };
++                if (_pagesBySection.TryGetValue(_activePage.SectionId, out List<PageDto>? pages))
++                {
++                    int pageIndex = pages.FindIndex(item => item.Id == _activePage.Id);
++                    if (pageIndex >= 0)
++                    {
++                        pages[pageIndex] = _activePage;
++                    }
++                }
++
++                if (_pageEditor is not null)
++                {
++                    await _pageEditor.SetContentAsync(starterHtml, markDirty: false);
++                }
++
++                _onboardingStarterTextEnsured = true;
++            }
++            catch (Exception ex)
++            {
++                Logger.LogDebug(ex, "Failed to initialize onboarding starter scene text.");
++            }
++        }
++
++        private async Task OnOnboardingAiExpandAsync()
++        {
++            if (_onboardingWalkthroughBusy)
++            {
++                return;
++            }
++
++            _onboardingWalkthroughBusy = true;
++            try
++            {
++                await SetContextTabAsync(ContextTab.Ai);
++
++                if (AuthMeStateService.AiMonthlyTokenBudget <= 0 || !IsAiEntitled || !IsAiUiEnabled)
++                {
++                    _onboardingWalkthroughStatus = "AI is not available on Free. See plans.";
++                    await MarkOnboardingAiSignalAsync("onboarding_first_ai_blocked", "free_plan");
++                    await OnboardingService.SetStepAsync(8);
++                    await OnboardingStateStore.RefreshAsync();
++                    await EvaluateOnboardingCompletionAsync(forceTypingProbe: false);
++                    return;
++                }
++
++                if (!HasAction("expand.section"))
++                {
++                    _onboardingWalkthroughStatus = "AI expand is not available right now.";
++                    return;
++                }
++
++                await EnsureOnboardingStarterTextAsync();
++                Guid beforeProposalId = _pendingAiProposal?.ProposalId ?? Guid.Empty;
++
++                AiActionOption onboardingExpand = new(
++                    "expand.section",
++                    "Expand scene with AI",
++                    "Expand this scene into one concise paragraph (maximum 120 words). Keep the same tone and events.",
++                    false,
++                    new Dictionary<string, object?>
++                    {
++                        ["max_output_tokens"] = 180,
++                        ["temperature"] = 0.4,
++                        ["length"] = "Shorter"
++                    },
++                    "Generate a bounded starter expansion.",
++                    false);
++
++                await OnAiActionSelected(onboardingExpand);
++
++                bool aiSucceeded = _pendingAiProposal is not null
++                    && _pendingAiProposal.ProposalId != beforeProposalId
++                    && !string.IsNullOrWhiteSpace(_pendingAiProposal.ProposedText);
++
++                if (aiSucceeded)
++                {
++                    await OnboardingService.SetStepAsync(8);
++                    await OnboardingStateStore.RefreshAsync();
++                    await EvaluateOnboardingCompletionAsync(forceTypingProbe: false);
++                    _onboardingWalkthroughStatus = "AI suggestion ready below. Review and apply when you are ready.";
++                }
++                else if (IsAiQuotaExceeded)
++                {
++                    _onboardingWalkthroughStatus = "AI is not available on Free. See plans.";
++                }
++                else
++                {
++                    _onboardingWalkthroughStatus = "AI expansion did not complete. You can continue without AI.";
++                }
++            }
++            catch (Exception ex)
++            {
++                Logger.LogWarning(ex, "Onboarding AI expand action failed.");
++                _onboardingWalkthroughStatus = "AI expansion failed. You can continue onboarding.";
++            }
++            finally
++            {
++                _onboardingWalkthroughBusy = false;
++            }
++        }
++
++        private async Task MarkOnboardingAiSignalAsync(string eventName, string source)
++        {
++            if (_onboardingAiRequirementMet)
++            {
++                return;
++            }
++
++            _onboardingAiRequirementMet = true;
++            try
++            {
++                await OnboardingService.TrackEventAsync(
++                    eventName,
++                    new Dictionary<string, object?>
++                    {
++                        ["source"] = source
++                    });
++            }
++            catch (Exception ex)
++            {
++                Logger.LogDebug(ex, "Failed to track onboarding AI signal event {EventName}.", eventName);
++            }
++
++            await EvaluateOnboardingCompletionAsync(forceTypingProbe: false);
++        }
++
++        private async Task EvaluateOnboardingCompletionAsync(bool forceTypingProbe)
++        {
++            if (_onboardingCompletionInFlight || !_showOnboardingWalkthrough)
++            {
++                return;
++            }
++
++            if (OnboardingStateStore.Current.HasCompletedOnboarding)
++            {
++                return;
++            }
++
++            if (!_onboardingProjectCreated)
++            {
++                return;
++            }
++
++            if (!_onboardingSavedOnce && !_onboardingTypedEnough)
++            {
++                DateTimeOffset now = DateTimeOffset.UtcNow;
++                if (forceTypingProbe || now - _onboardingLastTypingProbeUtc >= TimeSpan.FromSeconds(2))
++                {
++                    _onboardingLastTypingProbeUtc = now;
++                    string plainText = await GetCurrentAiPlainTextAsync();
++                    _onboardingMeasuredCharacterCount = plainText?.Trim().Length ?? 0;
++                    _onboardingTypedEnough = _onboardingMeasuredCharacterCount >= OnboardingMinTypedCharacters;
++                }
++            }
++
++            bool hasWritingSignal = _onboardingSavedOnce || _onboardingTypedEnough;
++            if (!hasWritingSignal || !_onboardingAiRequirementMet)
++            {
++                return;
++            }
++
++            _onboardingCompletionInFlight = true;
++            try
++            {
++                await OnboardingService.CompleteAsync();
++                await OnboardingStateStore.RefreshAsync();
++                _showOnboardingWalkthrough = false;
++                _onboardingWalkthroughStatus = null;
++            }
++            catch (Exception ex)
++            {
++                Logger.LogDebug(ex, "Failed to complete onboarding after criteria evaluation.");
++            }
++            finally
++            {
++                _onboardingCompletionInFlight = false;
++            }
++        }
++
+         private async Task<string?> EnsureMeaningfulTightenAsync(
+             AiActionOption action,
+             AiActionExecuteRequestDto request,
+@@ -8583,6 +8975,17 @@ private const string PreviewBootstrapScript = @"
+ 
+         private bool IsAiQuotaExceeded => _aiUsageStatus is not null && _aiUsageStatus.QuotaRemaining <= 0;
+ 
++        private string? GetOnboardingContextTabId(ContextTab tab)
++        {
++            return tab switch
++            {
++                ContextTab.Ai => "onboarding-tab-ai",
++                ContextTab.Continuity => "onboarding-tab-continuity",
++                ContextTab.Quality => "onboarding-tab-quality",
++                _ => null
++            };
++        }
++
+         private string PlanStatusLabel => $"Plan: {AuthMeStateService.PlanKey}";
+ 
+         private string AiUsageStatusLabel =>
+@@ -12250,6 +12653,13 @@ private const string PreviewBootstrapScript = @"
+             public static DiffSummary Empty => new(0, 0, 0, 0, 0);
+         }
+ 
++        private sealed record OnboardingWalkthroughTip(
++            int ServerStep,
++            string Title,
++            string Description,
++            string? TargetSelector,
++            bool ShowAiAction);
++
+         private sealed record QualityProposalPreview(
+             string Before,
+             string After,
+diff --git a/WriterApp.Client/Pages/Onboarding.razor b/WriterApp.Client/Pages/Onboarding.razor
+index 5ca6a78..4725a5d 100644
+--- a/WriterApp.Client/Pages/Onboarding.razor
++++ b/WriterApp.Client/Pages/Onboarding.razor
+@@ -1,64 +1,185 @@
+ @page "/app/onboarding"
++@using System
++@using System.Collections.Generic
++@using System.Linq
+ @using System.Net.Http.Json
+ @using WriterApp.Application.Documents
++@using WriterApp.Client.Services
++@using WriterApp.Client.State
+ @inject HttpClient Http
+ @inject NavigationManager Navigation
++@inject OnboardingService OnboardingService
++@inject OnboardingStateStore OnboardingStateStore
+ 
+-<PageTitle>Welcome</PageTitle>
++<PageTitle>Onboarding</PageTitle>
+ 
+ <section class="onboarding-shell">
+     <header class="onboarding-header">
+-        <h1>Create your first project</h1>
++        <h1>Onboarding</h1>
+         <p>Set up your workspace and start writing right away.</p>
++        <p>Step @_uiStep of 2</p>
+     </header>
+ 
+     <div class="onboarding-card">
+-        <div class="onboarding-field">
+-            <label for="onboarding-project-name">Project name</label>
+-            <input id="onboarding-project-name"
+-                   class="onboarding-input"
+-                   @bind="_projectName"
+-                   @bind:event="oninput"
+-                   placeholder="My first novel" />
+-        </div>
+-
+-        <div class="onboarding-field">
+-            <label for="onboarding-template">Create from template (optional)</label>
+-            <select id="onboarding-template" class="onboarding-select" @bind="_template">
+-                <option value="none">None</option>
+-                <option value="3-act">3-Act</option>
+-                <option value="hero-journey">Hero's Journey</option>
+-            </select>
+-        </div>
++        @if (_uiStep == 0)
++        {
++            <div class="onboarding-field">
++                <p>Welcome to WriterApp. We will create a starter project for you.</p>
++            </div>
++            <div class="onboarding-actions">
++                <button type="button" class="primary" @onclick="StartAsync" disabled="@_isBusy">Start</button>
++            </div>
++        }
++        else if (_uiStep == 1)
++        {
++            <div class="onboarding-field">
++                <label>What are you writing?</label>
++                <div class="onboarding-actions">
++                    @foreach (IntentOption option in _intentOptions)
++                    {
++                        <button type="button"
++                                class="secondary"
++                                disabled="@_isBusy"
++                                @onclick="() => SelectIntentAsync(option.Key)">
++                            @option.Label
++                        </button>
++                    }
++                </div>
++            </div>
++        }
++        else
++        {
++            <div class="onboarding-field">
++                <label for="onboarding-project-name">Project name</label>
++                <input id="onboarding-project-name"
++                       class="onboarding-input"
++                       @bind="_projectName"
++                       @bind:event="oninput"
++                       placeholder="My first project" />
++            </div>
++            <div class="onboarding-field">
++                <p>Template: @_selectedIntentLabel</p>
++            </div>
++            <div class="onboarding-actions">
++                <button type="button"
++                        class="primary"
++                        @onclick="CreateProjectAsync"
++                        disabled="@_isBusy">
++                    @(_isBusy ? "Creating..." : "Create my first project")
++                </button>
++            </div>
++        }
+ 
+         @if (!string.IsNullOrWhiteSpace(_status))
+         {
+             <div class="onboarding-status">@_status</div>
+         }
+-
+-        <div class="onboarding-actions">
+-            <button type="button"
+-                    class="primary"
+-                    @onclick="CreateProjectAsync"
+-                    disabled="@_creatingProject">
+-                @(_creatingProject ? "Creating..." : "Create project")
+-            </button>
+-            <button type="button" class="secondary" @onclick="SkipAsync" disabled="@_creatingProject">
+-                Skip
+-            </button>
+-        </div>
+     </div>
+ </section>
+ 
+ @code {
++    [SupplyParameterFromQuery(Name = "returnUrl")]
++    public string? ReturnUrl { get; set; }
++
+     private string _projectName = "Untitled project";
+-    private string _template = "none";
+-    private bool _creatingProject;
++    private int _uiStep;
+     private string? _status;
++    private bool _isBusy;
++    private string _selectedIntent = "Other";
++
++    private readonly IReadOnlyList<IntentOption> _intentOptions = new List<IntentOption>
++    {
++        new("Novel", "Novel"),
++        new("ShortStory", "Short story"),
++        new("NonFiction", "Non-fiction"),
++        new("Blog", "Blog"),
++        new("Other", "Other")
++    };
++
++    private string _selectedIntentLabel =>
++        _intentOptions.FirstOrDefault(item => string.Equals(item.Key, _selectedIntent, StringComparison.Ordinal))?.Label
++        ?? "Other";
++
++    protected override async Task OnInitializedAsync()
++    {
++        try
++        {
++            await OnboardingStateStore.RefreshAsync();
++
++            if (OnboardingStateStore.Current.HasCompletedOnboarding)
++            {
++                Navigation.NavigateTo("/projects", replace: true);
++                return;
++            }
++
++            _selectedIntent = string.IsNullOrWhiteSpace(OnboardingStateStore.Current.PrimaryWritingIntent)
++                ? "Other"
++                : NormalizeIntent(OnboardingStateStore.Current.PrimaryWritingIntent!);
++            _uiStep = ResolveUiStep(OnboardingStateStore.Current.OnboardingStep, OnboardingStateStore.Current.PrimaryWritingIntent);
++        }
++        catch
++        {
++            _uiStep = 0;
++        }
++    }
++
++    private async Task StartAsync()
++    {
++        if (_isBusy)
++        {
++            return;
++        }
++
++        _isBusy = true;
++        _status = null;
++        try
++        {
++            await OnboardingService.SetStepAsync(1);
++            await OnboardingStateStore.RefreshAsync();
++            _uiStep = 1;
++        }
++        catch (Exception ex)
++        {
++            Console.Error.WriteLine(ex);
++            _status = "Could not continue onboarding right now. Please try again.";
++        }
++        finally
++        {
++            _isBusy = false;
++        }
++    }
++
++    private async Task SelectIntentAsync(string intent)
++    {
++        if (_isBusy)
++        {
++            return;
++        }
++
++        _isBusy = true;
++        _status = null;
++        try
++        {
++            _selectedIntent = NormalizeIntent(intent);
++            await OnboardingService.SetIntentAsync(_selectedIntent);
++            await OnboardingService.SetStepAsync(2);
++            await OnboardingStateStore.RefreshAsync();
++            _uiStep = 2;
++        }
++        catch (Exception ex)
++        {
++            Console.Error.WriteLine(ex);
++            _status = "Could not save your writing intent. Please try again.";
++        }
++        finally
++        {
++            _isBusy = false;
++        }
++    }
+ 
+     private async Task CreateProjectAsync()
+     {
+-        if (_creatingProject)
++        if (_isBusy)
+         {
+             return;
+         }
+@@ -69,12 +190,12 @@
+             return;
+         }
+ 
+-        string projectName = _projectName.Trim();
+-
+-        _creatingProject = true;
++        _isBusy = true;
+         _status = null;
++
+         try
+         {
++            string projectName = _projectName.Trim();
+             ProjectCreateRequest request = new(projectName, null, null, null, null, null);
+             using HttpResponseMessage response = await Http.PostAsJsonAsync("/api/projects", request);
+             response.EnsureSuccessStatusCode();
+@@ -86,33 +207,49 @@
+                 return;
+             }
+ 
+-            await CompleteOnboardingAsync();
++            Guid? firstSceneNodeId = await BuildInitialStructureAsync(created.Id, _selectedIntent);
++            if (!firstSceneNodeId.HasValue)
++            {
++                firstSceneNodeId = await TryGetFirstSceneIdAsync(created.Id);
++            }
++
++            await OnboardingService.SetStepAsync(3);
++            try
++            {
++                await OnboardingService.TrackEventAsync(
++                    "onboarding_project_created",
++                    new Dictionary<string, object?>
++                    {
++                        ["projectId"] = created.Id.ToString(),
++                        ["intent"] = _selectedIntent
++                    });
++            }
++            catch (Exception ex)
++            {
++                Console.Error.WriteLine(ex);
++            }
++
++            await OnboardingStateStore.RefreshAsync();
+ 
+-            Guid? firstSceneId = await TryGetFirstSceneIdAsync(created.Id);
+-            if (firstSceneId.HasValue)
++            if (firstSceneNodeId.HasValue)
+             {
+-                Navigation.NavigateTo($"projects/{created.Id}/scenes/{firstSceneId.Value}", replace: true);
++                Navigation.NavigateTo($"projects/{created.Id}/scenes/{firstSceneNodeId.Value}", replace: true);
+                 return;
+             }
+ 
+-            Navigation.NavigateTo($"projects/{created.Id}", replace: true);
++            Navigation.NavigateTo(ResolveFallbackRoute(created.Id), replace: true);
+         }
+         catch (Exception ex)
+         {
+-            _status = ex.Message;
++            Console.Error.WriteLine(ex);
++            _status = "We couldn't create your first project. Please try again.";
+         }
+         finally
+         {
+-            _creatingProject = false;
++            _isBusy = false;
+         }
+     }
+ 
+-    private async Task SkipAsync()
+-    {
+-        await CompleteOnboardingAsync();
+-        Navigation.NavigateTo("/projects");
+-    }
+-
+     private async Task<Guid?> TryGetFirstSceneIdAsync(Guid projectId)
+     {
+         try
+@@ -133,6 +270,107 @@
+         }
+     }
+ 
++    private async Task<Guid?> BuildInitialStructureAsync(Guid projectId, string intent)
++    {
++        string normalized = NormalizeIntent(intent);
++        return normalized switch
++        {
++            "Novel" => await BuildNovelStructureAsync(projectId),
++            "Blog" => await BuildBlogStructureAsync(projectId),
++            "NonFiction" => await BuildNonFictionStructureAsync(projectId),
++            "ShortStory" => await BuildShortStoryStructureAsync(projectId),
++            _ => await BuildOtherStructureAsync(projectId)
++        };
++    }
++
++    private async Task<Guid?> BuildNovelStructureAsync(Guid projectId)
++    {
++        ProjectNodeDto? act1 = await CreateNodeAsync(projectId, null, "part", "Act I");
++        await CreateNodeAsync(projectId, null, "part", "Act II");
++        await CreateNodeAsync(projectId, null, "part", "Act III");
++        if (act1 is null)
++        {
++            return null;
++        }
++
++        ProjectNodeDto? chapter1 = await CreateNodeAsync(projectId, act1.Id, "chapter", "Chapter 1");
++        if (chapter1 is null)
++        {
++            return null;
++        }
++
++        ProjectNodeDto? scene1 = await CreateNodeAsync(projectId, chapter1.Id, "scene", "Scene 1");
++        return scene1?.Id;
++    }
++
++    private async Task<Guid?> BuildBlogStructureAsync(Guid projectId)
++    {
++        ProjectNodeDto? draft = await CreateNodeAsync(projectId, null, "chapter", "Draft");
++        await CreateNodeAsync(projectId, null, "chapter", "Intro");
++        await CreateNodeAsync(projectId, null, "chapter", "Main");
++        await CreateNodeAsync(projectId, null, "chapter", "Conclusion");
++        if (draft is null)
++        {
++            return null;
++        }
++
++        ProjectNodeDto? scene = await CreateNodeAsync(projectId, draft.Id, "scene", "Scene 1");
++        return scene?.Id;
++    }
++
++    private async Task<Guid?> BuildNonFictionStructureAsync(Guid projectId)
++    {
++        ProjectNodeDto? chapter1 = await CreateNodeAsync(projectId, null, "chapter", "Chapter 1");
++        await CreateNodeAsync(projectId, null, "chapter", "Notes");
++        if (chapter1 is null)
++        {
++            return null;
++        }
++
++        ProjectNodeDto? scene = await CreateNodeAsync(projectId, chapter1.Id, "scene", "Scene 1");
++        return scene?.Id;
++    }
++
++    private async Task<Guid?> BuildShortStoryStructureAsync(Guid projectId)
++    {
++        ProjectNodeDto? section = await CreateNodeAsync(projectId, null, "chapter", "Section 1");
++        if (section is null)
++        {
++            return null;
++        }
++
++        ProjectNodeDto? scene = await CreateNodeAsync(projectId, section.Id, "scene", "Scene 1");
++        return scene?.Id;
++    }
++
++    private async Task<Guid?> BuildOtherStructureAsync(Guid projectId)
++    {
++        ProjectNodeDto? section = await CreateNodeAsync(projectId, null, "chapter", "Section 1");
++        if (section is null)
++        {
++            return null;
++        }
++
++        ProjectNodeDto? scene = await CreateNodeAsync(projectId, section.Id, "scene", "Scene 1");
++        return scene?.Id;
++    }
++
++    private async Task<ProjectNodeDto?> CreateNodeAsync(
++        Guid projectId,
++        Guid? parentId,
++        string nodeType,
++        string title)
++    {
++        ProjectNodeCreateRequest request = new(parentId, nodeType, title, null, null, null);
++        using HttpResponseMessage response = await Http.PostAsJsonAsync($"api/projects/{projectId}/nodes", request);
++        if (!response.IsSuccessStatusCode)
++        {
++            return null;
++        }
++
++        return await response.Content.ReadFromJsonAsync<ProjectNodeDto>();
++    }
++
+     private static ProjectNodeDto? FindFirstScene(IReadOnlyList<ProjectNodeDto> nodes)
+     {
+         return nodes
+@@ -141,16 +379,46 @@
+             .FirstOrDefault();
+     }
+ 
+-    private async Task CompleteOnboardingAsync()
++    private static int ResolveUiStep(int onboardingStep, string? intent)
+     {
+-        try
++        if (onboardingStep >= 2 || !string.IsNullOrWhiteSpace(intent))
+         {
+-            using HttpResponseMessage response = await Http.PostAsync("/api/user/profile/complete-onboarding", null);
+-            response.EnsureSuccessStatusCode();
++            return 2;
+         }
+-        catch
++
++        if (onboardingStep >= 1)
+         {
+-            // onboarding completion should not block navigation in v1
++            return 1;
+         }
++
++        return 0;
+     }
++
++    private static string NormalizeIntent(string raw)
++    {
++        string normalized = (raw ?? string.Empty).Trim().ToLowerInvariant();
++        return normalized switch
++        {
++            "novel" => "Novel",
++            "short story" => "ShortStory",
++            "shortstory" => "ShortStory",
++            "non-fiction" => "NonFiction",
++            "non fiction" => "NonFiction",
++            "nonfiction" => "NonFiction",
++            "blog" => "Blog",
++            _ => "Other"
++        };
++    }
++
++    private string ResolveFallbackRoute(Guid projectId)
++    {
++        if (!string.IsNullOrWhiteSpace(ReturnUrl))
++        {
++            return ReturnUrl!;
++        }
++
++        return $"projects/{projectId}";
++    }
++
++    private sealed record IntentOption(string Key, string Label);
+ }
+diff --git a/Data/Usage/UserEvent.cs b/Data/Usage/UserEvent.cs
+new file mode 100644
+index 0000000..47115b7
+--- /dev/null
++++ b/Data/Usage/UserEvent.cs
+@@ -0,0 +1,13 @@
++using System;
++
++namespace WriterApp.Data.Usage
++{
++    public sealed class UserEvent
++    {
++        public long Id { get; set; }
++        public string UserId { get; set; } = string.Empty;
++        public string EventName { get; set; } = string.Empty;
++        public string? MetadataJson { get; set; }
++        public DateTimeOffset CreatedUtc { get; set; }
++    }
++}
+diff --git a/Application/Users/UserEventService.cs b/Application/Users/UserEventService.cs
+new file mode 100644
+index 0000000..59a53a1
+--- /dev/null
++++ b/Application/Users/UserEventService.cs
+@@ -0,0 +1,97 @@
++using System;
++using System.Diagnostics;
++using System.Text.Json;
++using System.Threading;
++using System.Threading.Tasks;
++using Microsoft.Data.Sqlite;
++using Microsoft.EntityFrameworkCore;
++using Microsoft.Extensions.Logging;
++using WriterApp.Data;
++using WriterApp.Data.Usage;
++
++namespace WriterApp.Application.Users
++{
++    public sealed class UserEventService
++    {
++        private readonly AppDbContext _dbContext;
++        private readonly ILogger<UserEventService> _logger;
++
++        public UserEventService(AppDbContext dbContext, ILogger<UserEventService> logger)
++        {
++            _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
++            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
++        }
++
++        public async Task TrackAsync(
++            string userId,
++            string eventName,
++            object? metadata = null,
++            CancellationToken ct = default)
++        {
++            ct.ThrowIfCancellationRequested();
++
++            string normalizedUserId = string.IsNullOrWhiteSpace(userId) ? "unknown" : userId.Trim();
++            string normalizedEventName = string.IsNullOrWhiteSpace(eventName) ? "unknown" : eventName.Trim();
++            string? metadataJson = metadata is null ? null : JsonSerializer.Serialize(metadata);
++
++            UserEvent userEvent = new()
++            {
++                UserId = normalizedUserId,
++                EventName = normalizedEventName,
++                MetadataJson = metadataJson,
++                CreatedUtc = DateTimeOffset.UtcNow
++            };
++
++            try
++            {
++                _dbContext.UserEvents.Add(userEvent);
++                await _dbContext.SaveChangesAsync(ct);
++            }
++            catch (OperationCanceledException)
++            {
++                throw;
++            }
++            catch (DbUpdateException ex)
++            {
++                if (ct.IsCancellationRequested)
++                {
++                    throw new OperationCanceledException(ct);
++                }
++
++                LogWriteFailure(ex, normalizedUserId, normalizedEventName, metadataJson);
++            }
++            catch (SqliteException ex)
++            {
++                if (ct.IsCancellationRequested)
++                {
++                    throw new OperationCanceledException(ct);
++                }
++
++                LogWriteFailure(ex, normalizedUserId, normalizedEventName, metadataJson);
++            }
++            catch (Exception ex)
++            {
++                if (ct.IsCancellationRequested)
++                {
++                    throw new OperationCanceledException(ct);
++                }
++
++                LogWriteFailure(ex, normalizedUserId, normalizedEventName, metadataJson);
++            }
++        }
++
++        private void LogWriteFailure(Exception ex, string userId, string eventName, string? metadataJson)
++        {
++            string? traceId = Activity.Current?.TraceId.ToString();
++            int metadataBytes = metadataJson?.Length ?? 0;
++
++            _logger.LogWarning(
++                ex,
++                "User event write failed (best-effort). userId={UserId} eventName={EventName} traceId={TraceId} metadataBytes={MetadataBytes}",
++                userId,
++                eventName,
++                traceId,
++                metadataBytes);
++        }
++    }
++}
+diff --git a/Migrations/20260302223000_AddUserEvents.cs b/Migrations/20260302223000_AddUserEvents.cs
+new file mode 100644
+index 0000000..23a267c
+--- /dev/null
++++ b/Migrations/20260302223000_AddUserEvents.cs
+@@ -0,0 +1,54 @@
++using System;
++using Microsoft.EntityFrameworkCore.Infrastructure;
++using Microsoft.EntityFrameworkCore.Migrations;
++using WriterApp.Data;
++
++#nullable disable
++
++namespace BlazorApp.Migrations
++{
++    [DbContext(typeof(AppDbContext))]
++    [Migration("20260302223000_AddUserEvents")]
++    public partial class AddUserEvents : Migration
++    {
++        protected override void Up(MigrationBuilder migrationBuilder)
++        {
++            migrationBuilder.CreateTable(
++                name: "UserEvents",
++                columns: table => new
++                {
++                    Id = table.Column<long>(type: "INTEGER", nullable: false)
++                        .Annotation("Sqlite:Autoincrement", true),
++                    UserId = table.Column<string>(type: "TEXT", nullable: false),
++                    EventName = table.Column<string>(type: "TEXT", nullable: false),
++                    MetadataJson = table.Column<string>(type: "TEXT", nullable: true),
++                    CreatedUtc = table.Column<DateTimeOffset>(type: "TEXT", nullable: false)
++                },
++                constraints: table =>
++                {
++                    table.PrimaryKey("PK_UserEvents", x => x.Id);
++                });
++
++            migrationBuilder.CreateIndex(
++                name: "IX_UserEvents_CreatedUtc",
++                table: "UserEvents",
++                column: "CreatedUtc");
++
++            migrationBuilder.CreateIndex(
++                name: "IX_UserEvents_EventName",
++                table: "UserEvents",
++                column: "EventName");
++
++            migrationBuilder.CreateIndex(
++                name: "IX_UserEvents_UserId",
++                table: "UserEvents",
++                column: "UserId");
++        }
++
++        protected override void Down(MigrationBuilder migrationBuilder)
++        {
++            migrationBuilder.DropTable(
++                name: "UserEvents");
++        }
++    }
++}
+diff --git a/Controllers/OnboardingController.cs b/Controllers/OnboardingController.cs
+new file mode 100644
+index 0000000..a30b50f
+--- /dev/null
++++ b/Controllers/OnboardingController.cs
+@@ -0,0 +1,324 @@
++using Microsoft.AspNetCore.Authorization;
++using Microsoft.AspNetCore.Mvc;
++using Microsoft.EntityFrameworkCore;
++using WriterApp.Application.Security;
++using WriterApp.Application.Users;
++using WriterApp.Data;
++using WriterApp.Data.Subscriptions;
++
++namespace WriterApp.Controllers
++{
++    [ApiController]
++    [Route("api/onboarding")]
++    [Authorize]
++    public sealed class OnboardingController : ControllerBase
++    {
++        private const int MaxOnboardingStep = 10;
++        private const int MaxIntentLength = 100;
++
++        private readonly AppDbContext _dbContext;
++        private readonly IUserIdResolver _userIdResolver;
++        private readonly UserEventService _userEventService;
++        private readonly ILogger<OnboardingController> _logger;
++        private static readonly HashSet<string> AllowedEventNames = new(StringComparer.OrdinalIgnoreCase)
++        {
++            "onboarding_started",
++            "onboarding_intent_set",
++            "onboarding_project_created",
++            "onboarding_first_ai_success",
++            "onboarding_first_ai_blocked",
++            "onboarding_completed"
++        };
++
++        public OnboardingController(
++            AppDbContext dbContext,
++            IUserIdResolver userIdResolver,
++            UserEventService userEventService,
++            ILogger<OnboardingController> logger)
++        {
++            _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
++            _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
++            _userEventService = userEventService ?? throw new ArgumentNullException(nameof(userEventService));
++            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
++        }
++
++        [HttpGet("state")]
++        public async Task<ActionResult<OnboardingStateResponse>> GetState(CancellationToken ct)
++        {
++            string userId = _userIdResolver.ResolveUserId(User);
++            UserProfile profile = await GetOrCreateProfileAsync(userId, ct);
++            return Ok(ToStateResponse(profile));
++        }
++
++        [HttpPost("intent")]
++        public async Task<ActionResult<OnboardingStateResponse>> SetIntent(
++            [FromBody] SetOnboardingIntentRequest? request,
++            CancellationToken ct)
++        {
++            if (request is null)
++            {
++                return BadRequest(new { message = "Request body is required." });
++            }
++
++            string normalizedIntent = (request.PrimaryWritingIntent ?? string.Empty).Trim();
++            if (string.IsNullOrWhiteSpace(normalizedIntent))
++            {
++                return BadRequest(new { message = "primaryWritingIntent is required." });
++            }
++
++            if (normalizedIntent.Length > MaxIntentLength)
++            {
++                return BadRequest(new { message = $"primaryWritingIntent must be {MaxIntentLength} characters or fewer." });
++            }
++
++            string userId = _userIdResolver.ResolveUserId(User);
++            UserProfile profile = await GetOrCreateProfileAsync(userId, ct);
++            DateTimeOffset now = DateTimeOffset.UtcNow;
++            DateTime nowUtc = now.UtcDateTime;
++
++            bool changed = false;
++            if (!string.Equals(profile.PrimaryWritingIntent, normalizedIntent, StringComparison.Ordinal))
++            {
++                profile.PrimaryWritingIntent = normalizedIntent;
++                changed = true;
++            }
++
++            if (profile.OnboardingStartedUtc is null)
++            {
++                profile.OnboardingStartedUtc = now;
++                changed = true;
++            }
++
++            if (changed)
++            {
++                profile.UpdatedUtc = nowUtc;
++                await _dbContext.SaveChangesAsync(ct);
++            }
++
++            _logger.LogInformation(
++                "Onboarding intent set. UserId={UserId} PrimaryWritingIntent={PrimaryWritingIntent}",
++                userId,
++                normalizedIntent);
++
++            if (changed)
++            {
++                await _userEventService.TrackAsync(
++                    userId,
++                    "onboarding_intent_set",
++                    new { primaryWritingIntent = normalizedIntent },
++                    ct);
++            }
++
++            return Ok(ToStateResponse(profile));
++        }
++
++        [HttpPost("step")]
++        public async Task<ActionResult<OnboardingStateResponse>> SetStep(
++            [FromBody] SetOnboardingStepRequest? request,
++            CancellationToken ct)
++        {
++            if (request is null)
++            {
++                return BadRequest(new { message = "Request body is required." });
++            }
++
++            if (request.Step < 0 || request.Step > MaxOnboardingStep)
++            {
++                return BadRequest(new { message = $"step must be between 0 and {MaxOnboardingStep}." });
++            }
++
++            string userId = _userIdResolver.ResolveUserId(User);
++            UserProfile profile = await GetOrCreateProfileAsync(userId, ct);
++            DateTimeOffset now = DateTimeOffset.UtcNow;
++            DateTime nowUtc = now.UtcDateTime;
++
++            bool changed = false;
++            if (profile.OnboardingStep != request.Step)
++            {
++                profile.OnboardingStep = request.Step;
++                changed = true;
++            }
++
++            if (profile.OnboardingStartedUtc is null)
++            {
++                profile.OnboardingStartedUtc = now;
++                changed = true;
++            }
++
++            if (changed)
++            {
++                profile.UpdatedUtc = nowUtc;
++                await _dbContext.SaveChangesAsync(ct);
++            }
++
++            _logger.LogInformation(
++                "Onboarding step set. UserId={UserId} Step={Step}",
++                userId,
++                request.Step);
++
++            return Ok(ToStateResponse(profile));
++        }
++
++        [HttpPost("complete")]
++        public async Task<ActionResult<OnboardingStateResponse>> Complete(CancellationToken ct)
++        {
++            string userId = _userIdResolver.ResolveUserId(User);
++            UserProfile profile = await GetOrCreateProfileAsync(userId, ct);
++            DateTimeOffset now = DateTimeOffset.UtcNow;
++            DateTime nowUtc = now.UtcDateTime;
++            bool completedBeforeRequest = profile.HasCompletedOnboarding;
++
++            bool changed = false;
++            if (!profile.HasCompletedOnboarding)
++            {
++                profile.HasCompletedOnboarding = true;
++                changed = true;
++            }
++
++            if (!profile.HasOnboarded)
++            {
++                profile.HasOnboarded = true;
++                changed = true;
++            }
++
++            if (profile.OnboardingStep != MaxOnboardingStep)
++            {
++                profile.OnboardingStep = MaxOnboardingStep;
++                changed = true;
++            }
++
++            if (profile.OnboardingStartedUtc is null)
++            {
++                profile.OnboardingStartedUtc = now;
++                changed = true;
++            }
++
++            if (profile.OnboardingCompletedUtc is null)
++            {
++                profile.OnboardingCompletedUtc = now;
++                changed = true;
++            }
++
++            if (changed)
++            {
++                profile.UpdatedUtc = nowUtc;
++                await _dbContext.SaveChangesAsync(ct);
++            }
++
++            _logger.LogInformation(
++                "Onboarding completed. UserId={UserId} Step={Step}",
++                userId,
++                profile.OnboardingStep);
++
++            if (!completedBeforeRequest)
++            {
++                await _userEventService.TrackAsync(
++                    userId,
++                    "onboarding_completed",
++                    new { step = profile.OnboardingStep },
++                    ct);
++            }
++
++            return Ok(ToStateResponse(profile));
++        }
++
++        [HttpPost("event")]
++        public async Task<IActionResult> TrackEvent([FromBody] OnboardingTrackEventRequest? request, CancellationToken ct)
++        {
++            if (request is null || string.IsNullOrWhiteSpace(request.EventName))
++            {
++                return BadRequest(new { message = "eventName is required." });
++            }
++
++            string eventName = request.EventName.Trim();
++            if (!AllowedEventNames.Contains(eventName))
++            {
++                return BadRequest(new { message = "Unsupported onboarding event." });
++            }
++
++            string userId = _userIdResolver.ResolveUserId(User);
++            await GetOrCreateProfileAsync(userId, ct);
++            await _userEventService.TrackAsync(userId, eventName, request.Metadata, ct);
++
++            _logger.LogInformation(
++                "Onboarding event tracked. UserId={UserId} EventName={EventName}",
++                userId,
++                eventName);
++
++            return Ok(new { ok = true });
++        }
++
++        private async Task<UserProfile> GetOrCreateProfileAsync(string userId, CancellationToken ct)
++        {
++            UserProfile? profile = await _dbContext.UserProfiles
++                .FirstOrDefaultAsync(item => item.UserId == userId, ct);
++
++            if (profile is not null)
++            {
++                return profile;
++            }
++
++            DateTimeOffset now = DateTimeOffset.UtcNow;
++            DateTime nowUtc = now.UtcDateTime;
++            ExternalIdentityClaims.UserProfileIdentity identity =
++                ExternalIdentityClaims.MapToUserProfileIdentity(User.Claims, userId);
++
++            profile = new UserProfile
++            {
++                UserId = userId,
++                DisplayName = identity.DisplayName,
++                HasOnboarded = false,
++                HasCompletedOnboarding = false,
++                OnboardingStep = 0,
++                OnboardingStartedUtc = now,
++                CreatedUtc = nowUtc,
++                UpdatedUtc = nowUtc
++            };
++
++            _dbContext.UserProfiles.Add(profile);
++            try
++            {
++                await _dbContext.SaveChangesAsync(ct);
++                await _userEventService.TrackAsync(
++                    userId,
++                    "onboarding_started",
++                    new { primaryWritingIntent = profile.PrimaryWritingIntent },
++                    ct);
++                return profile;
++            }
++            catch (DbUpdateException)
++            {
++                _dbContext.Entry(profile).State = EntityState.Detached;
++                UserProfile? existing = await _dbContext.UserProfiles
++                    .FirstOrDefaultAsync(item => item.UserId == userId, ct);
++                if (existing is not null)
++                {
++                    return existing;
++                }
++
++                throw;
++            }
++        }
++
++        private static OnboardingStateResponse ToStateResponse(UserProfile profile)
++        {
++            return new OnboardingStateResponse(
++                profile.HasCompletedOnboarding,
++                profile.OnboardingStep,
++                profile.PrimaryWritingIntent,
++                profile.OnboardingStartedUtc,
++                profile.OnboardingCompletedUtc);
++        }
++
++        public sealed record OnboardingStateResponse(
++            bool HasCompletedOnboarding,
++            int OnboardingStep,
++            string? PrimaryWritingIntent,
++            DateTimeOffset? OnboardingStartedUtc,
++            DateTimeOffset? OnboardingCompletedUtc);
++
++        public sealed record SetOnboardingIntentRequest(string? PrimaryWritingIntent);
++        public sealed record SetOnboardingStepRequest(int Step);
++        public sealed record OnboardingTrackEventRequest(string? EventName, Dictionary<string, object?>? Metadata);
++    }
++}
+diff --git a/WriterApp.Client/Services/OnboardingService.cs b/WriterApp.Client/Services/OnboardingService.cs
+new file mode 100644
+index 0000000..8b1f975
+--- /dev/null
++++ b/WriterApp.Client/Services/OnboardingService.cs
+@@ -0,0 +1,103 @@
++using System.Net;
++using System.Net.Http.Json;
++
++namespace WriterApp.Client.Services
++{
++    public sealed class OnboardingService
++    {
++        private readonly HttpClient _http;
++
++        public OnboardingService(HttpClient http)
++        {
++            _http = http ?? throw new ArgumentNullException(nameof(http));
++        }
++
++        public async Task<OnboardingState> GetStateAsync()
++        {
++            using HttpResponseMessage response = await _http.GetAsync("/api/onboarding/state");
++            if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
++            {
++                return OnboardingState.Default;
++            }
++
++            response.EnsureSuccessStatusCode();
++            OnboardingStateResponse? payload = await response.Content.ReadFromJsonAsync<OnboardingStateResponse>();
++            if (payload is null)
++            {
++                return OnboardingState.Default;
++            }
++
++            return payload.ToState();
++        }
++
++        public async Task SetIntentAsync(string intent)
++        {
++            SetOnboardingIntentRequest request = new(intent);
++            using HttpResponseMessage response = await _http.PostAsJsonAsync("/api/onboarding/intent", request);
++            response.EnsureSuccessStatusCode();
++        }
++
++        public async Task SetStepAsync(int step)
++        {
++            SetOnboardingStepRequest request = new(step);
++            using HttpResponseMessage response = await _http.PostAsJsonAsync("/api/onboarding/step", request);
++            response.EnsureSuccessStatusCode();
++        }
++
++        public async Task CompleteAsync()
++        {
++            using HttpResponseMessage response = await _http.PostAsync("/api/onboarding/complete", content: null);
++            response.EnsureSuccessStatusCode();
++        }
++
++        public async Task TrackEventAsync(string eventName, object? metadata = null)
++        {
++            if (string.IsNullOrWhiteSpace(eventName))
++            {
++                return;
++            }
++
++            TrackOnboardingEventRequest request = new(eventName.Trim(), metadata);
++            using HttpResponseMessage response = await _http.PostAsJsonAsync("/api/onboarding/event", request);
++            response.EnsureSuccessStatusCode();
++        }
++
++        private sealed record OnboardingStateResponse(
++            bool HasCompletedOnboarding,
++            int OnboardingStep,
++            string? PrimaryWritingIntent,
++            DateTimeOffset? OnboardingStartedUtc,
++            DateTimeOffset? OnboardingCompletedUtc)
++        {
++            public OnboardingState ToState()
++            {
++                return new OnboardingState(
++                    HasCompletedOnboarding,
++                    OnboardingStep,
++                    PrimaryWritingIntent,
++                    OnboardingStartedUtc,
++                    OnboardingCompletedUtc);
++            }
++        }
++
++        private sealed record SetOnboardingIntentRequest(string PrimaryWritingIntent);
++        private sealed record SetOnboardingStepRequest(int Step);
++        private sealed record TrackOnboardingEventRequest(string EventName, object? Metadata);
++    }
++
++    public sealed record OnboardingState(
++        bool HasCompletedOnboarding,
++        int OnboardingStep,
++        string? PrimaryWritingIntent,
++        DateTimeOffset? OnboardingStartedUtc,
++        DateTimeOffset? OnboardingCompletedUtc)
++    {
++        public static OnboardingState Default { get; } =
++            new(
++                HasCompletedOnboarding: false,
++                OnboardingStep: 0,
++                PrimaryWritingIntent: null,
++                OnboardingStartedUtc: null,
++                OnboardingCompletedUtc: null);
++    }
++}

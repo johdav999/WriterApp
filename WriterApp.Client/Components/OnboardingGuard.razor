@@ -1,0 +1,120 @@
+@using System.Net
+@using System.Net.Http.Json
+@using System.Threading
+@using WriterApp.Application.Documents
+@using WriterApp.Client.State
+@using WriterApp.Client.Utilities
+@inject NavigationManager Navigation
+@inject HttpClient Http
+@inject AuthMeStateService AuthMeStateService
+@inject OnboardingStateStore OnboardingStateStore
+@inject ILogger<OnboardingGuard> Logger
+@implements IDisposable
+
+@ChildContent
+
+@code {
+    [Parameter]
+    public RenderFragment ChildContent { get; set; } = default!;
+
+    private readonly SemaphoreSlim _guardLock = new(1, 1);
+
+    protected override async Task OnInitializedAsync()
+    {
+        Navigation.LocationChanged += OnLocationChanged;
+        await EvaluateAndRedirectAsync();
+    }
+
+    public void Dispose()
+    {
+        Navigation.LocationChanged -= OnLocationChanged;
+        _guardLock.Dispose();
+    }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        _ = InvokeAsync(EvaluateAndRedirectAsync);
+    }
+
+    private async Task EvaluateAndRedirectAsync()
+    {
+        await _guardLock.WaitAsync();
+        try
+        {
+            string currentPath = BuildCurrentPathAndQuery();
+            if (AuthFlowRoute.IsAuthFlowPath(currentPath)
+                || currentPath.StartsWith("/onboarding", StringComparison.OrdinalIgnoreCase)
+                || currentPath.StartsWith("/app/onboarding", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            await AuthMeStateService.RefreshAsync();
+            if (!AuthMeStateService.IsAuthenticated)
+            {
+                return;
+            }
+
+            await OnboardingStateStore.RefreshAsync();
+            if (OnboardingStateStore.Current.HasCompletedOnboarding)
+            {
+                return;
+            }
+
+            bool hasProjects = await HasProjectsAsync();
+            if (hasProjects)
+            {
+                return;
+            }
+
+            string returnUrl = Uri.EscapeDataString(currentPath);
+            Navigation.NavigateTo($"/app/onboarding?returnUrl={returnUrl}", replace: true);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Onboarding guard evaluation failed. Continuing without redirect.");
+        }
+        finally
+        {
+            _guardLock.Release();
+        }
+    }
+
+    private async Task<bool> HasProjectsAsync()
+    {
+        try
+        {
+            using HttpResponseMessage response = await Http.GetAsync("/api/projects/list-items");
+            if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+            {
+                return true;
+            }
+
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                return false;
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return true;
+            }
+
+            List<ProjectListItemDto>? items = await response.Content.ReadFromJsonAsync<List<ProjectListItemDto>>();
+            return items is not null && items.Count > 0;
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    private string BuildCurrentPathAndQuery()
+    {
+        Uri current = Navigation.ToAbsoluteUri(Navigation.Uri);
+        string pathAndQuery = current.PathAndQuery + current.Fragment;
+        return string.IsNullOrWhiteSpace(pathAndQuery)
+            ? "/"
+            : pathAndQuery;
+    }
+}

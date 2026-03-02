@@ -1,0 +1,55 @@
+.guided-walkthrough-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.42);
+    z-index: 9000;
+    pointer-events: auto;
+}
+
+.guided-walkthrough-card {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    width: min(420px, calc(100vw - 32px));
+    background: var(--color-surface-1, #ffffff);
+    border: 1px solid var(--color-border, #d1d5db);
+    border-radius: var(--radius-lg, 14px);
+    box-shadow: var(--shadow-xl, 0 20px 40px rgba(15, 23, 42, 0.18));
+    z-index: 9010;
+    pointer-events: auto;
+    padding: 16px;
+    display: grid;
+    gap: 10px;
+}
+
+.guided-walkthrough-step {
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-text-muted, #6b7280);
+}
+
+.guided-walkthrough-card h3 {
+    margin: 0;
+    font-size: 1.05rem;
+}
+
+.guided-walkthrough-card p {
+    margin: 0;
+    color: var(--color-text, #111827);
+}
+
+.guided-walkthrough-status {
+    font-size: 0.875rem;
+    color: var(--color-text-muted, #4b5563);
+    background: var(--color-surface-2, #f8fafc);
+    border: 1px solid var(--color-border, #d1d5db);
+    border-radius: 10px;
+    padding: 8px 10px;
+}
+
+.guided-walkthrough-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}

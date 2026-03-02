@@ -1,5 +1,6 @@
 ﻿@inherits LayoutComponentBase
 @using WriterApp.Client.State
+@using WriterApp.Client.Components
 @using WriterApp.Client.Components.Search
 @using System.Net.Http.Json
 @using WriterApp.Application.Documents
@@ -10,6 +11,7 @@
 @inject CurrentProjectStateService CurrentProjectStateService
 @inject LastOpenedDocumentStateService LastOpenedDocumentStateService
 @inject AuthMeStateService AuthMeStateService
+@inject OnboardingOverlayStateService OnboardingOverlayStateService
 @inject HttpClient Http
 @inject NavigationManager Navigation
 
@@ -68,6 +70,20 @@
     </main>
 </div>
 
+<GuidedWalkthroughOverlay IsVisible="@OnboardingOverlayStateService.IsVisible"
+                          StepIndex="@OnboardingOverlayStateService.StepIndex"
+                          TotalSteps="@OnboardingOverlayStateService.TotalSteps"
+                          Title="@OnboardingOverlayStateService.Title"
+                          Description="@OnboardingOverlayStateService.Description"
+                          TargetSelector="@OnboardingOverlayStateService.TargetSelector"
+                          StatusMessage="@OnboardingOverlayStateService.StatusMessage"
+                          IsBusy="@OnboardingOverlayStateService.IsBusy"
+                          ShowActionButton="@OnboardingOverlayStateService.ShowActionButton"
+                          ActionButtonText="@OnboardingOverlayStateService.ActionButtonText"
+                          NextButtonText="@OnboardingOverlayStateService.NextButtonText"
+                          OnAction="OnOverlayActionAsync"
+                          OnNext="OnOverlayNextAsync"
+                          OnSkip="OnOverlaySkipAsync" />
 <div id="blazor-error-ui" data-nosnippet>
     An unhandled error has occurred.
     <a href="." class="reload">Reload</a>
@@ -81,6 +97,7 @@
         CurrentDocumentStateService.Changed += HandleDocumentStateChange;
         CurrentSceneStateService.Changed += HandleSceneStateChange;
         CurrentProjectStateService.Changed += HandleProjectStateChange;
+        OnboardingOverlayStateService.Changed += HandleOnboardingOverlayChange;
         Navigation.LocationChanged += HandleLocationChanged;
         await LayoutStateService.InitializeAsync();
         await LastOpenedDocumentStateService.LoadAsync();
@@ -94,6 +111,7 @@
         CurrentDocumentStateService.Changed -= HandleDocumentStateChange;
         CurrentSceneStateService.Changed -= HandleSceneStateChange;
         CurrentProjectStateService.Changed -= HandleProjectStateChange;
+        OnboardingOverlayStateService.Changed -= HandleOnboardingOverlayChange;
         Navigation.LocationChanged -= HandleLocationChanged;
     }
 
@@ -123,6 +141,29 @@
     {
         _ = RefreshProjectBreadcrumbAsync();
         InvokeAsync(StateHasChanged);
+    }
+
+    private void HandleOnboardingOverlayChange()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private Task OnOverlayNextAsync()
+    {
+        Func<Task>? action = OnboardingOverlayStateService.OnNextAsync;
+        return action is null ? Task.CompletedTask : action();
+    }
+
+    private Task OnOverlaySkipAsync()
+    {
+        Func<Task>? action = OnboardingOverlayStateService.OnSkipAsync;
+        return action is null ? Task.CompletedTask : action();
+    }
+
+    private Task OnOverlayActionAsync()
+    {
+        Func<Task>? action = OnboardingOverlayStateService.OnActionAsync;
+        return action is null ? Task.CompletedTask : action();
     }
 
     private string GetLayoutClass()
