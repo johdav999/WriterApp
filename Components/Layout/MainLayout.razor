@@ -4,7 +4,6 @@
 @using WriterApp.Application.State
 @implements IDisposable
 @inject AppHeaderState HeaderState
-@inject NavigationManager Navigation
 @inject LayoutStateService LayoutStateService
 
 <div class="app-shell @GetLayoutClass()">
@@ -41,9 +40,6 @@
                     }
                 }
             </div>
-        </div>
-        <div class="app-header-right">
-            <button type="button" class="app-link app-link-button" @onclick="OnAboutClicked">About</button>
         </div>
     </header>
 
@@ -180,11 +176,6 @@
         return string.IsNullOrWhiteSpace(HeaderState.DocumentId)
             ? "/synopsis"
             : $"/synopsis/{HeaderState.DocumentId}";
-    }
-
-    private void OnAboutClicked()
-    {
-        Navigation.NavigateTo("https://learn.microsoft.com/aspnet/core/", forceLoad: true);
     }
 
     private bool _isEditingTitle;

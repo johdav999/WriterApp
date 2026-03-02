@@ -4,7 +4,7 @@
     {
       "name": "Server + WASM",
       "configurations": [
-        "BlazorApp (Server)",
+        "BlazorApp (dotnet run)",
         "WriterApp.Client (WASM)"
       ],
       "stopAll": true
@@ -12,12 +12,17 @@
   ],
   "configurations": [
     {
-      "name": "BlazorApp (Server)",
+      "name": "BlazorApp (dotnet run)",
       "type": "coreclr",
       "request": "launch",
-      "preLaunchTask": "build",
-      "program": "${workspaceFolder}/bin/Debug/net9.0/BlazorApp.dll",
+      "program": "dotnet",
+      "args": [
+        "run",
+        "--project",
+        "${workspaceFolder}/BlazorApp.csproj"
+      ],
       "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
       "stopAtEntry": false,
       "serverReadyAction": {
         "action": "openExternally",

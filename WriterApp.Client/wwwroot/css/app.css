@@ -1,5 +1,31 @@
 @import url("design-tokens.css");
 
+:root {
+    --app-brand-logo-height: 44px;
+    --app-brand-logo-height-mobile: 38px;
+}
+
+.wa-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    font-size: 18px;
+    width: 1em;
+    height: 1em;
+    color: currentColor;
+    vertical-align: middle;
+    font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
+}
+
+.btn-inline-icon {
+    font-size: 18px;
+    line-height: 1;
+    vertical-align: middle;
+    margin-right: 6px;
+    color: currentColor;
+}
+
 html, body {
     font-family: var(--font-sans);
     height: 100%;
@@ -30,12 +56,19 @@ a, .btn-link {
 
 .app-header a.app-brand > img.app-brand-logo,
 .app-header .app-brand > img.app-brand-logo {
-    height: clamp(72px, 7vw, 140px);
+    height: var(--app-brand-logo-height);
     width: auto;
     max-width: none;
     display: block;
     object-fit: contain;
     flex-shrink: 0;
+}
+
+@media (max-width: 900px) {
+    .app-header a.app-brand > img.app-brand-logo,
+    .app-header .app-brand > img.app-brand-logo {
+        height: var(--app-brand-logo-height-mobile);
+    }
 }
 
 .btn-primary {

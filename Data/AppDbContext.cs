@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -65,24 +66,28 @@ namespace WriterApp.Data
 
         public override int SaveChanges()
         {
+            NormalizeStringIds();
             SyncDocumentUnixTimestamps();
             return base.SaveChanges();
         }
 
         public override int SaveChanges(bool acceptAllChangesOnSuccess)
         {
+            NormalizeStringIds();
             SyncDocumentUnixTimestamps();
             return base.SaveChanges(acceptAllChangesOnSuccess);
         }
 
         public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
         {
+            NormalizeStringIds();
             SyncDocumentUnixTimestamps();
             return base.SaveChangesAsync(cancellationToken);
         }
 
         public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
         {
+            NormalizeStringIds();
             SyncDocumentUnixTimestamps();
             return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
         }
@@ -826,6 +831,51 @@ namespace WriterApp.Data
                 DateTimeKind.Local => value.Value.ToUniversalTime(),
                 _ => DateTime.SpecifyKind(value.Value, DateTimeKind.Utc)
             };
+        }
+
+        private void NormalizeStringIds()
+        {
+            foreach (var entry in ChangeTracker.Entries()
+                         .Where(item => item.State is EntityState.Added or EntityState.Modified))
+            {
+                foreach (var property in entry.Properties)
+                {
+                    if (property.Metadata.ClrType != typeof(string))
+                    {
+                        continue;
+                    }
+
+                    if (!ShouldNormalizeIdProperty(property.Metadata.Name))
+                    {
+                        continue;
+                    }
+
+                    if (property.CurrentValue is not string value)
+                    {
+                        continue;
+                    }
+
+                    if (!IdNorm.TryNormGuidString(value, out string normalized))
+                    {
+                        continue;
+                    }
+
+                    if (!string.Equals(value, normalized, StringComparison.Ordinal))
+                    {
+                        property.CurrentValue = normalized;
+                    }
+                }
+            }
+        }
+
+        private static bool ShouldNormalizeIdProperty(string propertyName)
+        {
+            return propertyName.EndsWith("Id", StringComparison.Ordinal)
+                   || propertyName.EndsWith("UserId", StringComparison.Ordinal)
+                   || propertyName.EndsWith("ProjectId", StringComparison.Ordinal)
+                   || propertyName.EndsWith("DocumentId", StringComparison.Ordinal)
+                   || propertyName.EndsWith("SectionId", StringComparison.Ordinal)
+                   || propertyName.EndsWith("PageId", StringComparison.Ordinal);
         }
 
         private static void SeedSubscriptionData(ModelBuilder builder)

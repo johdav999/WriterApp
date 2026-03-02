@@ -1078,6 +1078,9 @@
 .editor-toolbar button.icon-only {
     min-width: var(--control-height);
     padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .editor-toolbar button.is-active {
@@ -1125,6 +1128,15 @@
 .editor-actions button.icon-only {
     min-width: var(--control-height);
     padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.editor-toolbar button.icon-only .wa-icon,
+.editor-actions button.icon-only .wa-icon,
+.editor-toolbar-overflow-panel button.icon-only .wa-icon {
+    font-size: 20px;
 }
 
 .toolbar-icon {
@@ -3082,6 +3094,14 @@
     color: #166534;
 }
 
+.history-command-status.is-succeeded {
+    color: #166534;
+}
+
+.history-command-status.is-pending {
+    color: #92400e;
+}
+
 .history-command-status.is-failed {
     color: #b91c1c;
 }
@@ -3911,4 +3931,33 @@
 
 .editor-navigator-host ::deep .tree-list {
     max-height: none;
+}
+
+/* Embedded navigator has less horizontal space than /projects.
+   Collapse badge/fixed columns so title text keeps visible width. */
+.editor-navigator-host ::deep .tree-row {
+    grid-template-columns: calc(var(--depth) * 10px) 24px 24px minmax(0, 1fr) 28px;
+    column-gap: var(--space-1);
+}
+
+.editor-navigator-host ::deep .tree-node-badge {
+    display: none;
+}
+
+.editor-navigator-host ::deep .tree-select {
+    grid-column: 4;
+    min-width: 0;
+    color: var(--color-text);
+}
+
+.editor-navigator-host ::deep .tree-select-title {
+    min-width: 0;
+    max-width: 100%;
+    color: var(--color-text);
+    opacity: 1;
+    visibility: visible;
+}
+
+.editor-navigator-host ::deep .tree-row-actions {
+    grid-column: 5;
 }

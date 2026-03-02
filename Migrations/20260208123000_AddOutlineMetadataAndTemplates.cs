@@ -1,10 +1,14 @@
 using System;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
+using WriterApp.Data;
 
 #nullable disable
 
 namespace BlazorApp.Migrations
 {
+    [DbContext(typeof(AppDbContext))]
+    [Migration("20260208123000_AddOutlineMetadataAndTemplates")]
     public partial class AddOutlineMetadataAndTemplates : Migration
     {
         protected override void Up(MigrationBuilder migrationBuilder)

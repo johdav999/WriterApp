@@ -1,0 +1,29 @@
+@using Microsoft.AspNetCore.Components
+
+<span class="@BuildClass()"
+      style="@BuildStyle()"
+      title="@Title"
+      aria-hidden="true">@Name</span>
+
+@code {
+    [Parameter, EditorRequired] public string Name { get; set; } = string.Empty;
+    [Parameter] public bool Filled { get; set; }
+    [Parameter] public int? SizePx { get; set; }
+    [Parameter] public string? Title { get; set; }
+    [Parameter] public string? Class { get; set; }
+
+    private string BuildClass()
+    {
+        string baseClass = "material-symbols-rounded wa-icon";
+        return string.IsNullOrWhiteSpace(Class)
+            ? baseClass
+            : $"{baseClass} {Class}";
+    }
+
+    private string BuildStyle()
+    {
+        int fill = Filled ? 1 : 0;
+        string size = SizePx.HasValue ? $"font-size:{SizePx.Value}px;" : string.Empty;
+        return $"font-variation-settings:'FILL' {fill}, 'wght' 400, 'GRAD' 0, 'opsz' 24;{size}";
+    }
+}
