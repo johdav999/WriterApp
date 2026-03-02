@@ -10,6 +10,7 @@
                placeholder="Search documents, pages, notes..."
                value="@_query"
                @oninput="OnQueryInput"
+               @onkeydown="OnQueryKeyDown"
                @onfocus="OpenResults" />
         <button type="button" class="global-search-clear" @onclick="ClearQuery" disabled="@string.IsNullOrWhiteSpace(_query)">
             Clear
@@ -29,6 +30,10 @@
             @if (_isLoading)
             {
                 <div class="global-search-status">Searching...</div>
+            }
+            else if (!string.IsNullOrWhiteSpace(_searchInfoMessage))
+            {
+                <div class="global-search-status">@_searchInfoMessage</div>
             }
             else if (_results.Count == 0)
             {
@@ -70,6 +75,8 @@
     private bool _isLoading;
     private bool _isOpen;
     private List<SearchResultDto> _results = new();
+    private readonly Dictionary<Guid, Guid> _projectIdByDocumentId = new();
+    private string? _searchInfoMessage;
 
     private void OpenResults()
     {
@@ -80,6 +87,7 @@
     {
         _query = string.Empty;
         _results.Clear();
+        _searchInfoMessage = null;
         _isOpen = false;
         _searchCts?.Cancel();
         _searchCts?.Dispose();
@@ -95,37 +103,58 @@
     private void OnQueryInput(ChangeEventArgs args)
     {
         _query = args.Value?.ToString() ?? string.Empty;
+        _searchInfoMessage = null;
         _isOpen = true;
         ScheduleSearch();
     }
 
-    private void ScheduleSearch()
+    private async Task OnQueryKeyDown(KeyboardEventArgs args)
     {
-        _searchCts?.Cancel();
-        _searchCts?.Dispose();
-        _searchCts = new CancellationTokenSource();
-        _ = DebouncedSearchAsync(_searchCts);
+        if (!string.Equals(args.Key, "Enter", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        await TriggerImmediateSearchAsync();
     }
 
-    private async Task DebouncedSearchAsync(CancellationTokenSource cts)
+    private void ScheduleSearch()
+    {
+        CancelPendingSearch();
+        CancellationTokenSource cts = new();
+        _searchCts = cts;
+        string query = _query;
+        _ = DebouncedSearchAsync(query, cts.Token);
+    }
+
+    private async Task DebouncedSearchAsync(string query, CancellationToken ct)
     {
         try
         {
-            await Task.Delay(DebounceMs, cts.Token);
+            await Task.Delay(DebounceMs, ct);
         }
         catch (TaskCanceledException)
         {
             return;
         }
 
-        await PerformSearchAsync(cts.Token);
+        await PerformSearchAsync(query, ct);
     }
 
-    private async Task PerformSearchAsync(CancellationToken ct)
+    private async Task TriggerImmediateSearchAsync()
     {
-        if (string.IsNullOrWhiteSpace(_query))
+        CancelPendingSearch();
+        CancellationTokenSource cts = new();
+        _searchCts = cts;
+        await PerformSearchAsync(_query, cts.Token);
+    }
+
+    private async Task PerformSearchAsync(string query, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(query))
         {
             _results.Clear();
+            _searchInfoMessage = null;
             _isLoading = false;
             await InvokeAsync(StateHasChanged);
             return;
@@ -136,19 +165,85 @@
 
         try
         {
-            string url = $"api/search?q={Uri.EscapeDataString(_query)}&includeMeta={_includeMeta.ToString().ToLowerInvariant()}&limit=100";
+            Guid? projectId = await ResolveCurrentProjectIdAsync(ct);
+            if (!projectId.HasValue || projectId.Value == Guid.Empty)
+            {
+                _results.Clear();
+                _searchInfoMessage = "Search is disabled until a project is open.";
+                return;
+            }
+
+            string url = SearchRequestBuilder.BuildUrl(query, projectId.Value, _includeMeta, 100);
             List<SearchResultDto>? results = await Http.GetFromJsonAsync<List<SearchResultDto>>(url, ct);
             _results = results ?? new List<SearchResultDto>();
+            _searchInfoMessage = null;
         }
         catch
         {
             _results.Clear();
+            _searchInfoMessage = null;
         }
         finally
         {
             _isLoading = false;
             await InvokeAsync(StateHasChanged);
         }
+    }
+
+    private void CancelPendingSearch()
+    {
+        _searchCts?.Cancel();
+        _searchCts?.Dispose();
+        _searchCts = null;
+    }
+
+    private async Task<Guid?> ResolveCurrentProjectIdAsync(CancellationToken ct)
+    {
+        string[] segments = GetRouteSegments();
+
+        if (segments.Length >= 2 &&
+            string.Equals(segments[0], "projects", StringComparison.OrdinalIgnoreCase) &&
+            Guid.TryParse(segments[1], out Guid routeProjectId) &&
+            routeProjectId != Guid.Empty)
+        {
+            return routeProjectId;
+        }
+
+        if (segments.Length >= 2 &&
+            string.Equals(segments[0], "documents", StringComparison.OrdinalIgnoreCase) &&
+            Guid.TryParse(segments[1], out Guid routeDocumentId) &&
+            routeDocumentId != Guid.Empty)
+        {
+            if (_projectIdByDocumentId.TryGetValue(routeDocumentId, out Guid cachedProjectId))
+            {
+                return cachedProjectId;
+            }
+
+            DocumentDetailDto? document = await Http.GetFromJsonAsync<DocumentDetailDto>(
+                $"api/documents/{routeDocumentId:D}",
+                ct);
+            if (document is not null && document.ProjectId != Guid.Empty)
+            {
+                _projectIdByDocumentId[routeDocumentId] = document.ProjectId;
+                return document.ProjectId;
+            }
+        }
+
+        return null;
+    }
+
+    private string[] GetRouteSegments()
+    {
+        string relative = Navigation.ToBaseRelativePath(Navigation.Uri);
+        int queryStart = relative.IndexOfAny(['?', '#']);
+        if (queryStart >= 0)
+        {
+            relative = relative[..queryStart];
+        }
+
+        return string.IsNullOrWhiteSpace(relative)
+            ? Array.Empty<string>()
+            : relative.Split('/', StringSplitOptions.RemoveEmptyEntries);
     }
 
     private async Task OnResultClickedAsync(SearchResultDto item)

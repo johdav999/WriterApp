@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.ComponentModel.DataAnnotations;
 using System.Linq;
 using System.Net;
 using System.Net.Mail;
@@ -45,21 +46,34 @@ namespace WriterApp.Controllers
         {
             if (request is null)
             {
-                return BadRequest(new { message = "Request body is required." });
+                ModelState.AddModelError(string.Empty, "Request body is required.");
+                LogModelStateErrors();
+                return BadRequest(ModelState);
             }
 
             string type = (request.Type ?? string.Empty).Trim();
             if (!string.Equals(type, "bug", StringComparison.OrdinalIgnoreCase)
                 && !string.Equals(type, "enhancement", StringComparison.OrdinalIgnoreCase))
             {
-                return BadRequest(new { message = "Type must be Bug or Enhancement." });
+                ModelState.AddModelError(nameof(FeedbackSubmitRequest.Type), "Type must be Bug or Enhancement.");
             }
 
             string subject = (request.Subject ?? string.Empty).Trim();
             string description = (request.Description ?? string.Empty).Trim();
-            if (string.IsNullOrWhiteSpace(subject) || string.IsNullOrWhiteSpace(description))
+            if (string.IsNullOrWhiteSpace(subject))
             {
-                return BadRequest(new { message = "Subject and description are required." });
+                ModelState.AddModelError(nameof(FeedbackSubmitRequest.Subject), "Subject is required.");
+            }
+
+            if (string.IsNullOrWhiteSpace(description))
+            {
+                ModelState.AddModelError(nameof(FeedbackSubmitRequest.Description), "Description is required.");
+            }
+
+            if (!ModelState.IsValid)
+            {
+                LogModelStateErrors();
+                return BadRequest(ModelState);
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
@@ -122,7 +136,26 @@ namespace WriterApp.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Feedback email send failed for user {UserId}.", userId);
-                return StatusCode((int)HttpStatusCode.InternalServerError, new { message = "Feedback send failed." });
+                return StatusCode((int)HttpStatusCode.InternalServerError, $"Feedback send failed: {ex.Message}");
+            }
+        }
+
+        private void LogModelStateErrors()
+        {
+            foreach ((string key, Microsoft.AspNetCore.Mvc.ModelBinding.ModelStateEntry? entry) in ModelState)
+            {
+                if (entry?.Errors is null || entry.Errors.Count == 0)
+                {
+                    continue;
+                }
+
+                foreach (Microsoft.AspNetCore.Mvc.ModelBinding.ModelError error in entry.Errors)
+                {
+                    _logger.LogWarning(
+                        "Feedback validation error. Field={Field} Error={Error}",
+                        key,
+                        error.ErrorMessage);
+                }
             }
         }
 
@@ -175,9 +208,9 @@ namespace WriterApp.Controllers
         }
 
         public sealed record FeedbackSubmitRequest(
-            string? Type,
-            string? Subject,
-            string? Description,
+            [Required] string? Type,
+            [Required] string? Subject,
+            [Required] string? Description,
             bool IncludeDiagnostics,
             FeedbackDiagnosticsDto? Diagnostics);
 

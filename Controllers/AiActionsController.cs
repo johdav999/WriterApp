@@ -124,7 +124,8 @@ namespace WriterApp.Controllers
                         entry.CreatedUtc,
                         entry.IsApplied,
                         entry.LastAppliedAt,
-                        entry.AppliedCount))
+                        entry.AppliedCount,
+                        entry.IsApplied ? AiCommandStatusDto.Applied : AiCommandStatusDto.Succeeded))
                     .ToList();
 
                 _logger.LogInformation(

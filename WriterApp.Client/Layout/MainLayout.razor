@@ -17,7 +17,7 @@
     <header class="app-header">
         <div class="app-header-left">
             <NavLink class="app-brand" href="documents" Match="NavLinkMatch.All" aria-label="Prosa home">
-                <img class="app-brand-logo" src="logo.png" alt="Prosa" />
+                <img class="app-brand-logo" src="logo.png" alt="Prosa" height="132" loading="eager" decoding="async" />
             </NavLink>
         </div>
         <div class="app-header-center">
@@ -33,7 +33,6 @@
         </div>
         <div class="app-header-right">
             <UserBadge />
-            <button type="button" class="app-link app-link-button" @onclick="OnAboutClicked">About</button>
         </div>
     </header>
 
@@ -377,11 +376,6 @@
         return string.IsNullOrWhiteSpace(relative)
             ? Array.Empty<string>()
             : relative.Split('/', StringSplitOptions.RemoveEmptyEntries);
-    }
-
-    private void OnAboutClicked()
-    {
-        Navigation.NavigateTo("https://learn.microsoft.com/aspnet/core/", forceLoad: true);
     }
 
     private string _documentTitle = string.Empty;

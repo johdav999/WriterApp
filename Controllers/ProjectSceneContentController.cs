@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using WriterApp.Application.Documents;
+using WriterApp.Application.Search;
 using WriterApp.Application.Security;
 using WriterApp.Data;
 using WriterApp.Data.Documents;
@@ -22,17 +23,20 @@ namespace WriterApp.Controllers
         private readonly AppDbContext _dbContext;
         private readonly IUserIdResolver _userIdResolver;
         private readonly IProjectWordCountService _projectWordCountService;
+        private readonly ISearchIndexService _searchIndexService;
         private readonly ILogger<ProjectSceneContentController> _logger;
 
         public ProjectSceneContentController(
             AppDbContext dbContext,
             IUserIdResolver userIdResolver,
             IProjectWordCountService projectWordCountService,
+            ISearchIndexService searchIndexService,
             ILogger<ProjectSceneContentController> logger)
         {
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
             _projectWordCountService = projectWordCountService ?? throw new ArgumentNullException(nameof(projectWordCountService));
+            _searchIndexService = searchIndexService ?? throw new ArgumentNullException(nameof(searchIndexService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -203,10 +207,12 @@ namespace WriterApp.Controllers
 
             pages[0].Content = contentHtml ?? string.Empty;
             pages[0].UpdatedAt = updatedAtUtc;
+            await _searchIndexService.UpsertPageAsync(pages[0], ct);
             for (int i = 1; i < pages.Count; i++)
             {
                 pages[i].Content = string.Empty;
                 pages[i].UpdatedAt = updatedAtUtc;
+                await _searchIndexService.UpsertPageAsync(pages[i], ct);
             }
         }
     }

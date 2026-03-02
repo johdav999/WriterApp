@@ -9,5 +9,6 @@ namespace WriterApp.Application.Documents
         string Title,
         string Snippet,
         double Score,
-        string DocumentTitle);
+        string DocumentTitle,
+        string MatchKind);
 }

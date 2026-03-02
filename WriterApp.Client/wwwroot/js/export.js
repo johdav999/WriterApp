@@ -179,12 +179,20 @@ function renderPageBreaks(doc, pageHeightPx, show, bodyOffsetTop, totalPages) {
     }
     const count = Math.max(1, Number(totalPages) || 1);
     const offset = Number(bodyOffsetTop) || 0;
+    const breakTops = [];
     for (let i = 1; i < count; i += 1) {
+        const top = offset + i * pageHeightPx;
+        breakTops.push({ pageAfter: i, top });
         const line = doc.createElement("div");
         line.className = "preview-pagebreak-line";
-        line.style.top = `${offset + i * pageHeightPx}px`;
+        line.style.top = `${top}px`;
         overlay.appendChild(line);
     }
+    console.debug("[export-preview] renderPageBreaks", {
+        totalPages: count,
+        renderOrder: Array.from({ length: count }, (_, idx) => idx + 1),
+        breakTops
+    });
     return count;
 }
 
@@ -200,6 +208,22 @@ export function initPreviewFrame(frameId, pageWidthMm, pageHeightMm, showBreaks)
     const pageHeightPx = mmToPx(pageHeightMm || 297);
     const metrics = computeBodyMetrics(doc, pageHeightPx);
     renderPageBreaks(doc, pageHeightPx, !!showBreaks, metrics.bodyOffsetTop, metrics.totalPages);
+    const domPageNodes = Array.from(doc.querySelectorAll("[id^='page-']")).map(node => node.id);
+    console.debug("[export-preview] initPreviewFrame", {
+        frameId,
+        pageWidthMm,
+        pageHeightMm,
+        totalPages: metrics.totalPages,
+        currentPage: metrics.currentPage,
+        renderOrder: Array.from({ length: metrics.totalPages }, (_, idx) => idx + 1),
+        pageIndexMapping: Array.from({ length: metrics.totalPages }, (_, idx) => ({
+            uiPage: idx + 1,
+            zeroBasedIndex: idx
+        })),
+        domIdMapping: domPageNodes.length > 0
+            ? domPageNodes.map((id, idx) => ({ id, zeroBasedIndex: idx, uiPage: idx + 1 }))
+            : "No page-* ids found in preview DOM"
+    });
     return { pageCount: metrics.totalPages, currentPage: metrics.currentPage, hasFrontMatter: metrics.hasFrontMatter };
 }
 
@@ -227,6 +251,11 @@ export function registerPreviewScroll(frameId, dotNetRef) {
         }
         const pageHeightPx = mmToPx(doc.body.dataset.pageHeightMm || 297);
         const metrics = computeBodyMetrics(doc, pageHeightPx);
+        console.debug("[export-preview] scroll", {
+            totalPages: metrics.totalPages,
+            currentPage: metrics.currentPage,
+            scrollTop: root.scrollTop
+        });
         dotNetRef.invokeMethodAsync("OnPreviewScroll", metrics.totalPages, metrics.currentPage, metrics.hasFrontMatter);
     };
     root.addEventListener("scroll", handler, { passive: true });
@@ -294,6 +323,14 @@ export function scrollPreviewToPage(frameId, pageNumber) {
     }
     const metrics = computeBodyMetrics(doc, pageHeightPx);
     const targetTop = Math.max(0, metrics.bodyOffsetTop + (page - 1) * pageHeightPx);
+    // Temporary mapping diagnostics for page navigation verification.
+    console.debug("[export-preview] scrollPreviewToPage", {
+        requestedPage: pageNumber,
+        mappedPage: page,
+        totalPages: metrics.totalPages,
+        bodyOffsetTop: metrics.bodyOffsetTop,
+        targetTop
+    });
     if (doc.body) {
         doc.body.dataset.previewProgrammatic = "true";
     }

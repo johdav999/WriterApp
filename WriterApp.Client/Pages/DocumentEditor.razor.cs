@@ -2093,14 +2093,17 @@ namespace WriterApp.Client.Pages
                             userAgent)
                         : null);
 
-                using HttpResponseMessage response = await Http.PostAsJsonAsync("api/feedback", payload);
+                using HttpResponseMessage response = await Http.PostAsJsonAsync("/api/feedback", payload);
                 if (!response.IsSuccessStatusCode)
                 {
-                    _feedbackErrorMessage = "Could not send feedback. Please retry.";
+                    string responseBody = await response.Content.ReadAsStringAsync();
+                    await LogFeedbackErrorToConsoleAsync(response, responseBody);
+                    _feedbackErrorMessage = ExtractFeedbackErrorMessage(response, responseBody)
+                        ?? "Could not send feedback. Please retry.";
                     return;
                 }
 
-                _feedbackBannerMessage = "Thanks—feedback sent.";
+                _feedbackBannerMessage = "Thanks - feedback sent.";
                 _isFeedbackDialogOpen = false;
                 _feedbackSubject = string.Empty;
                 _feedbackDescription = string.Empty;
@@ -2110,12 +2113,90 @@ namespace WriterApp.Client.Pages
             catch (Exception ex)
             {
                 Logger.LogWarning(ex, "Feedback submit failed.");
+                await LogFeedbackExceptionToConsoleAsync(ex);
                 _feedbackErrorMessage = "Could not send feedback. Please retry.";
             }
             finally
             {
                 _feedbackSubmitting = false;
             }
+        }
+
+        private async Task LogFeedbackErrorToConsoleAsync(HttpResponseMessage response, string? responseBody)
+        {
+            string status = $"{(int)response.StatusCode} {response.ReasonPhrase}";
+            string body = string.IsNullOrWhiteSpace(responseBody) ? "<empty>" : responseBody;
+            Logger.LogWarning("Feedback request failed. Status={Status} Body={Body}", status, body);
+            try
+            {
+                await JSRuntime.InvokeVoidAsync("console.error", $"Feedback request failed: {status}", body);
+            }
+            catch
+            {
+            }
+        }
+
+        private async Task LogFeedbackExceptionToConsoleAsync(Exception exception)
+        {
+            try
+            {
+                await JSRuntime.InvokeVoidAsync("console.error", "Feedback request threw an exception.", exception.ToString());
+            }
+            catch
+            {
+            }
+        }
+
+        private static string? ExtractFeedbackErrorMessage(HttpResponseMessage response, string? responseBody)
+        {
+            if (string.IsNullOrWhiteSpace(responseBody))
+            {
+                return $"{(int)response.StatusCode} {response.ReasonPhrase}".Trim();
+            }
+
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(responseBody);
+                JsonElement root = document.RootElement;
+
+                if (root.ValueKind == JsonValueKind.Object)
+                {
+                    if (root.TryGetProperty("message", out JsonElement messageElement)
+                        && messageElement.ValueKind == JsonValueKind.String)
+                    {
+                        return messageElement.GetString();
+                    }
+
+                    if (root.TryGetProperty("title", out JsonElement titleElement)
+                        && titleElement.ValueKind == JsonValueKind.String)
+                    {
+                        if (root.TryGetProperty("errors", out JsonElement errorsElement)
+                            && errorsElement.ValueKind == JsonValueKind.Object)
+                        {
+                            foreach (JsonProperty property in errorsElement.EnumerateObject())
+                            {
+                                if (property.Value.ValueKind == JsonValueKind.Array)
+                                {
+                                    foreach (JsonElement arrayItem in property.Value.EnumerateArray())
+                                    {
+                                        if (arrayItem.ValueKind == JsonValueKind.String)
+                                        {
+                                            return $"{titleElement.GetString()}: {arrayItem.GetString()}";
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        return titleElement.GetString();
+                    }
+                }
+            }
+            catch
+            {
+            }
+
+            return responseBody.Trim();
         }
 
         private async Task ToggleContextPanel()
@@ -2925,7 +3006,7 @@ namespace WriterApp.Client.Pages
             }
 
             return new CoachCardRecommendation(
-                "Consistency",
+                "Consistency Coach",
                 observations.Take(3).ToList(),
                 "Run continuity check",
                 "Continuity checks protect timeline, location, and entity consistency.",
@@ -2951,7 +3032,7 @@ namespace WriterApp.Client.Pages
             observations.Add("Use scope/severity filters to narrow findings before applying changes.");
 
             return new CoachCardRecommendation(
-                "Style & quality",
+                "Style & quality Coach",
                 observations.Take(3).ToList(),
                 "Run quality check",
                 "Short quality loops keep tone and readability consistent.",
@@ -3325,9 +3406,9 @@ namespace WriterApp.Client.Pages
             return tab switch
             {
                 ContextTab.Ai => "Writing tools",
-                ContextTab.Continuity => "Consistency",
-                ContextTab.Quality => "Style & quality",
-                ContextTab.Scene => "Scene card",
+                ContextTab.Continuity => "Consistency Coach",
+                ContextTab.Quality => "Style & quality Coach",
+                ContextTab.Scene => "Scene card Coach",
                 ContextTab.Navigator => "Project navigator",
                 ContextTab.PromptLibrary => "Prompt Library",
                 _ => tab.ToString()
@@ -6233,6 +6314,11 @@ namespace WriterApp.Client.Pages
             _previewHasFrontMatter = hasFrontMatter;
             _previewPageCount = nextCount;
             _previewCurrentPage = currentPage <= 0 ? 0 : Math.Clamp(currentPage, 1, nextCount);
+            Logger.LogInformation(
+                "Export preview scroll update. PageCount={PageCount} CurrentPage={CurrentPage} HasFrontMatter={HasFrontMatter}",
+                _previewPageCount,
+                _previewCurrentPage,
+                _previewHasFrontMatter);
             return InvokeAsync(StateHasChanged);
         }
 
@@ -6305,6 +6391,12 @@ namespace WriterApp.Client.Pages
             _previewHasFrontMatter = metrics.HasFrontMatter;
             _previewPageCount = Math.Max(1, metrics.PageCount);
             _previewCurrentPage = metrics.CurrentPage <= 0 ? 0 : Math.Clamp(metrics.CurrentPage, 1, _previewPageCount);
+            Logger.LogInformation(
+                "Export preview initialized. PageCount={PageCount} CurrentPage={CurrentPage} HasFrontMatter={HasFrontMatter} RenderOrder={RenderOrder}",
+                _previewPageCount,
+                _previewCurrentPage,
+                _previewHasFrontMatter,
+                string.Join(",", Enumerable.Range(1, _previewPageCount)));
             await RefreshPreviewFitAsync(width, height);
         }
 
@@ -6378,8 +6470,15 @@ namespace WriterApp.Client.Pages
                 return;
             }
 
-            await _exportModule.InvokeVoidAsync("scrollPreviewToPage", "export-preview-frame", page);
-            _previewCurrentPage = page;
+            int targetPage = Math.Clamp(page, 1, Math.Max(1, _previewPageCount));
+            Logger.LogInformation(
+                "Export preview jump request. RequestedPage={RequestedPage} TargetPage={TargetPage} ZeroBasedIndex={ZeroBasedIndex} TotalPages={TotalPages}",
+                page,
+                targetPage,
+                targetPage - 1,
+                _previewPageCount);
+            await _exportModule.InvokeVoidAsync("scrollPreviewToPage", "export-preview-frame", targetPage);
+            _previewCurrentPage = targetPage;
         }
 
         private async Task JumpToFrontMatterAsync()
@@ -8897,6 +8996,7 @@ private const string PreviewBootstrapScript = @"
                 _aiHistoryEntries[index] = current with
                 {
                     IsApplied = true,
+                    Status = CommandHistoryStatus.Applied,
                     AppliedCount = nextCount,
                     LastAppliedAt = nextAppliedAt
                 };
@@ -8912,6 +9012,7 @@ private const string PreviewBootstrapScript = @"
                 null,
                 appliedAt,
                 true,
+                CommandHistoryStatus.Applied,
                 appliedAt,
                 1));
         }
@@ -9104,6 +9205,7 @@ private const string PreviewBootstrapScript = @"
                             entry.ProposedText,
                             entry.CreatedUtc,
                             entry.IsApplied,
+                            ResolveHistoryStatus(entry),
                             entry.LastAppliedAt,
                             entry.AppliedCount));
                     }
@@ -11137,12 +11239,42 @@ private const string PreviewBootstrapScript = @"
 
         private static string GetCommandStatusLabel(AiHistoryEntry entry)
         {
-            return entry.IsApplied ? "Applied" : "Failed";
+            return entry.Status switch
+            {
+                CommandHistoryStatus.Applied => "Applied",
+                CommandHistoryStatus.Succeeded => "Succeeded",
+                CommandHistoryStatus.Pending => "Pending",
+                CommandHistoryStatus.Failed => "Failed",
+                _ => "Pending"
+            };
         }
 
         private static string GetCommandStatusClass(AiHistoryEntry entry)
         {
-            return entry.IsApplied ? "is-applied" : "is-failed";
+            return entry.Status switch
+            {
+                CommandHistoryStatus.Applied => "is-applied",
+                CommandHistoryStatus.Succeeded => "is-succeeded",
+                CommandHistoryStatus.Pending => "is-pending",
+                CommandHistoryStatus.Failed => "is-failed",
+                _ => "is-pending"
+            };
+        }
+
+        private static CommandHistoryStatus ResolveHistoryStatus(AiActionHistoryEntryDto entry)
+        {
+            if (entry.IsApplied)
+            {
+                return CommandHistoryStatus.Applied;
+            }
+
+            return entry.Status switch
+            {
+                AiCommandStatusDto.Applied => CommandHistoryStatus.Applied,
+                AiCommandStatusDto.Succeeded => CommandHistoryStatus.Succeeded,
+                AiCommandStatusDto.Failed => CommandHistoryStatus.Failed,
+                _ => CommandHistoryStatus.Pending
+            };
         }
 
         private static string GetSnapshotDisplayLabel(string reason)
@@ -11845,8 +11977,17 @@ private const string PreviewBootstrapScript = @"
             string? AfterText,
             DateTimeOffset Timestamp,
             bool IsApplied = false,
+            CommandHistoryStatus Status = CommandHistoryStatus.Pending,
             DateTimeOffset? LastAppliedAt = null,
             int AppliedCount = 0);
+
+        private enum CommandHistoryStatus
+        {
+            Pending = 0,
+            Succeeded = 1,
+            Applied = 2,
+            Failed = 3
+        }
 
         private sealed record CombinedHistoryItem(
             HistoryItemType Type,

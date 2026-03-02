@@ -525,6 +525,16 @@ using (IServiceScope scope = app.Services.CreateScope())
     {
         LogTablePresence(dbContext, logger, "PageVersions");
         LogTablePresence(dbContext, logger, "OutlineTemplates");
+        LogRequiredSqliteColumns(dbContext, logger, "SectionSceneCards", new[]
+        {
+            "PlaceId",
+            "PovCharacterId",
+            "TimelineEventId",
+            "TimeRef",
+            "TagsJson",
+            "ReferencesJson"
+        });
+        LogRequiredSqliteColumns(dbContext, logger, "DocumentOutlineNodes", new[] { "MetadataJson" });
         LogSqliteTables(dbContext, logger, "post-migrate");
     }
 
@@ -1946,6 +1956,52 @@ static void LogTablePresence(AppDbContext dbContext, ILogger logger, string tabl
     catch (Exception ex)
     {
         logger.LogWarning(ex, "SQLite table check failed for {Table}.", tableName);
+    }
+    finally
+    {
+        dbContext.Database.CloseConnection();
+    }
+}
+
+static void LogRequiredSqliteColumns(AppDbContext dbContext, ILogger logger, string tableName, IReadOnlyList<string> requiredColumns)
+{
+    if (!dbContext.Database.IsSqlite())
+    {
+        return;
+    }
+
+    try
+    {
+        dbContext.Database.OpenConnection();
+        using var command = dbContext.Database.GetDbConnection().CreateCommand();
+        string escapedTableName = tableName.Replace("'", "''", StringComparison.Ordinal);
+        command.CommandText = $"SELECT name FROM pragma_table_info('{escapedTableName}');";
+
+        HashSet<string> existing = new(StringComparer.OrdinalIgnoreCase);
+        using DbDataReader reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            if (!reader.IsDBNull(0))
+            {
+                existing.Add(reader.GetString(0));
+            }
+        }
+
+        List<string> missing = requiredColumns
+            .Where(column => !existing.Contains(column))
+            .ToList();
+
+        if (missing.Count == 0)
+        {
+            logger.LogInformation("SQLite column check: {Table} includes required columns [{Columns}].", tableName, string.Join(", ", requiredColumns));
+            return;
+        }
+
+        logger.LogWarning("SQLite column check: {Table} is missing required columns [{Columns}].", tableName, string.Join(", ", missing));
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning(ex, "SQLite column check failed for {Table}.", tableName);
     }
     finally
     {

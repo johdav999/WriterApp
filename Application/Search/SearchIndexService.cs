@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
+using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
@@ -23,7 +25,7 @@ namespace WriterApp.Application.Search
         Task UpsertSceneCardAsync(SectionRecord section, SectionSceneCardRecord card, CancellationToken ct);
         Task ReplaceOutlineAsync(DocumentRecord document, string outlineText, IReadOnlyList<DocumentOutlineNodeRecord> nodes, CancellationToken ct);
         Task DeleteByEntityAsync(string entityType, Guid entityId, CancellationToken ct);
-        Task<IReadOnlyList<SearchResultDto>> SearchAsync(string userId, string query, bool includeMeta, int limit, CancellationToken ct);
+        Task<IReadOnlyList<SearchResultDto>> SearchAsync(string userId, Guid projectId, string query, bool includeMeta, int limit, string? correlationId, CancellationToken ct);
     }
 
     public interface ISearchIndexBackfillWorker
@@ -217,16 +219,19 @@ namespace WriterApp.Application.Search
 
         public async Task<IReadOnlyList<SearchResultDto>> SearchAsync(
             string userId,
+            Guid projectId,
             string query,
             bool includeMeta,
             int limit,
+            string? correlationId,
             CancellationToken ct)
         {
             using IDisposable? scope = _logger.BeginScope(new Dictionary<string, object?>
             {
                 ["SearchUserId"] = userId,
                 ["IncludeMeta"] = includeMeta,
-                ["Limit"] = limit
+                ["Limit"] = limit,
+                ["CorrelationId"] = correlationId
             });
 
             if (string.IsNullOrWhiteSpace(userId))
@@ -234,10 +239,21 @@ namespace WriterApp.Application.Search
                 throw new ArgumentException("userId is required.", nameof(userId));
             }
 
-            string normalizedQuery = NormalizeQuery(query);
-            _logger.LogDebug("Search normalized query. RawLength={RawLength} Normalized='{NormalizedQuery}'.",
+            userId = userId.Trim();
+            if (IdNorm.TryNormGuidString(userId, out string normalizedUserId))
+            {
+                userId = normalizedUserId;
+            }
+            if (projectId == Guid.Empty)
+            {
+                throw new ArgumentException("projectId is required.", nameof(projectId));
+            }
+
+            string normalizedQuery = NormalizeText(query);
+            _logger.LogDebug("Search normalized query. RawLength={RawLength} Normalized='{NormalizedQuery}'. ProjectId={ProjectId}",
                 query?.Length ?? 0,
-                normalizedQuery);
+                normalizedQuery,
+                projectId);
             if (string.IsNullOrWhiteSpace(normalizedQuery))
             {
                 _logger.LogDebug("Search skipped: normalized query was empty.");
@@ -260,14 +276,37 @@ namespace WriterApp.Application.Search
             }
 
             _logger.LogDebug("Search check existing entries for user.");
-            bool hasUserEntries = await HasEntriesForUserAsync(userId, ct);
+            bool hasUserEntries = await HasEntriesForUserProjectAsync(userId, projectId, ct);
             if (!hasUserEntries)
             {
                 bool enqueued = _backfillQueue.Enqueue(userId);
                 _logger.LogInformation(enqueued
                     ? "BACKFILL_START queued for user."
                     : "BACKFILL_ALREADY_RUNNING backfill already queued or in progress for user.");
-                return Array.Empty<SearchResultDto>();
+
+                try
+                {
+                    await BackfillUserAsync(userId, ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    return Array.Empty<SearchResultDto>();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(
+                        ex,
+                        "Search backfill failed. CorrelationId={CorrelationId} UserId={UserId} ProjectId={ProjectId}. Returning available index data only.",
+                        correlationId ?? string.Empty,
+                        userId,
+                        projectId);
+                }
+
+                hasUserEntries = await HasEntriesForUserProjectAsync(userId, projectId, ct);
+                if (!hasUserEntries)
+                {
+                    return Array.Empty<SearchResultDto>();
+                }
             }
             else
             {
@@ -283,18 +322,24 @@ SELECT
     e.PageId,
     e.Title,
     d.Title as DocumentTitle,
-    snippet(SearchIndexFts, 1, '<mark>', '</mark>', '...', 10) AS Snippet,
-    bm25(SearchIndexFts, 1.2, 0.8) AS Score
-FROM SearchIndexFts
-JOIN SearchIndexEntries e ON e.Id = SearchIndexFts.rowid
+    e.Content
+FROM SearchIndexEntries e
 JOIN Documents d ON (
-    d.Id = e.DocumentId
-    OR lower(d.Id) = lower(e.DocumentId)
-    OR lower(hex(d.Id)) = replace(lower(e.DocumentId), '-', '')
+    lower(d.Id) = e.DocumentId
 )
-WHERE SearchIndexFts MATCH $query
-  AND d.OwnerUserId = $userId
-  AND ($includeMeta = 1 OR e.EntityType = 'page')
+WHERE d.OwnerUserId = $userId
+  AND lower(d.ProjectId) = $projectId
+  AND (
+        (e.EntityType = 'page' AND lower(e.Content) LIKE '%' || lower($query) || '%')
+        OR (
+            $includeMeta = 1
+            AND e.EntityType <> 'page'
+            AND (
+                lower(e.Title) LIKE '%' || lower($query) || '%'
+                OR lower(e.Content) LIKE '%' || lower($query) || '%'
+            )
+        )
+    )
 ORDER BY
     CASE
         WHEN e.EntityType = 'page' THEN 0
@@ -304,7 +349,7 @@ ORDER BY
         WHEN e.EntityType = 'outline' THEN 4
         ELSE 5
     END,
-    Score
+    e.UpdatedAt DESC
 LIMIT $limit;
 ";
 
@@ -322,6 +367,7 @@ LIMIT $limit;
                 command.CommandText = sql;
                 AddParameter(command, "$query", normalizedQuery);
                 AddParameter(command, "$userId", userId);
+                AddParameter(command, "$projectId", IdNorm.Norm(projectId));
                 AddParameter(command, "$includeMeta", includeMeta ? 1 : 0);
                 AddParameter(command, "$limit", clampedLimit);
 
@@ -335,8 +381,10 @@ LIMIT $limit;
                     Guid? pageId = ParseNullableGuid(reader.IsDBNull(4) ? null : reader.GetString(4));
                     string title = reader.IsDBNull(5) ? string.Empty : reader.GetString(5);
                     string documentTitle = reader.IsDBNull(6) ? string.Empty : reader.GetString(6);
-                    string snippet = reader.IsDBNull(7) ? string.Empty : reader.GetString(7);
-                    double score = reader.IsDBNull(8) ? 0 : reader.GetDouble(8);
+                    string content = reader.IsDBNull(7) ? string.Empty : reader.GetString(7);
+                    bool isContentMatch = string.Equals(entityType, SearchEntityTypes.Page, StringComparison.OrdinalIgnoreCase);
+                    string snippet = BuildSnippet(title, content, normalizedQuery, isContentMatch);
+                    string matchKind = isContentMatch ? "content" : "meta";
 
                     results.Add(new SearchResultDto(
                         DocumentId: documentId,
@@ -346,15 +394,22 @@ LIMIT $limit;
                         EntityId: entityId,
                         Title: title,
                         Snippet: snippet,
-                        Score: score,
-                        DocumentTitle: documentTitle));
+                        Score: isContentMatch ? 0 : 1,
+                        DocumentTitle: documentTitle,
+                        MatchKind: matchKind));
                 }
 
                 _logger.LogDebug("Search complete. ResultCount={ResultCount}.", results.Count);
                 if (results.Count == 0)
                 {
-                    long entryCount = await CountEntriesForUserAsync(userId, ct);
+                    long entryCount = await CountEntriesForUserProjectAsync(userId, projectId, ct);
                     _logger.LogDebug("Search returned 0 results. UserEntryCount={UserEntryCount}.", entryCount);
+                }
+                else
+                {
+                    int contentCount = results.Count(result => string.Equals(result.MatchKind, "content", StringComparison.OrdinalIgnoreCase));
+                    int metaCount = results.Count - contentCount;
+                    _logger.LogDebug("Search category counts. Content={ContentCount} Meta={MetaCount}", contentCount, metaCount);
                 }
                 return results;
             }
@@ -386,7 +441,7 @@ LIMIT $limit;
                 }
 
                 await using var transaction = await connection.BeginTransactionAsync(ct);
-                long? existingId = await TryGetEntryIdAsync(connection, transaction, entry.EntityType, entry.EntityId.ToString("D"), ct);
+                long? existingId = await TryGetEntryIdAsync(connection, transaction, entry.EntityType, IdNorm.Norm(entry.EntityId), ct);
                 if (existingId.HasValue)
                 {
                     await UpdateEntryAsync(connection, transaction, existingId.Value, entry, ct);
@@ -421,7 +476,7 @@ LIMIT $limit;
                 }
 
                 await using var transaction = await connection.BeginTransactionAsync(ct);
-                long? existingId = await TryGetEntryIdAsync(connection, transaction, entityType, entityId.ToString("D"), ct);
+                long? existingId = await TryGetEntryIdAsync(connection, transaction, entityType, IdNorm.Norm(entityId), ct);
                 if (!existingId.HasValue)
                 {
                     await transaction.CommitAsync(ct);
@@ -461,7 +516,7 @@ SELECT Id
 FROM SearchIndexEntries
 WHERE EntityType = 'outline' AND DocumentId = $documentId;
 ";
-                AddParameter(command, "$documentId", documentId.ToString("D"));
+                AddParameter(command, "$documentId", IdNorm.Norm(documentId));
 
                 List<long> ids = new();
                 await using (var reader = await command.ExecuteReaderAsync(ct))
@@ -544,10 +599,10 @@ VALUES (
 SELECT last_insert_rowid();
 ";
             AddParameter(command, "$entityType", entry.EntityType);
-            AddParameter(command, "$entityId", entry.EntityId.ToString("D"));
-            AddParameter(command, "$documentId", entry.DocumentId.ToString("D"));
-            AddParameter(command, "$sectionId", entry.SectionId?.ToString("D"));
-            AddParameter(command, "$pageId", entry.PageId?.ToString("D"));
+            AddParameter(command, "$entityId", IdNorm.Norm(entry.EntityId));
+            AddParameter(command, "$documentId", IdNorm.Norm(entry.DocumentId));
+            AddParameter(command, "$sectionId", entry.SectionId.HasValue ? IdNorm.Norm(entry.SectionId.Value) : null);
+            AddParameter(command, "$pageId", entry.PageId.HasValue ? IdNorm.Norm(entry.PageId.Value) : null);
             AddParameter(command, "$title", entry.Title ?? string.Empty);
             AddParameter(command, "$content", entry.Content ?? string.Empty);
             AddParameter(command, "$updatedAt", DateTimeOffset.UtcNow.ToString("O"));
@@ -576,9 +631,9 @@ SET
     UpdatedAt = $updatedAt
 WHERE Id = $id;
 ";
-            AddParameter(command, "$documentId", entry.DocumentId.ToString("D"));
-            AddParameter(command, "$sectionId", entry.SectionId?.ToString("D"));
-            AddParameter(command, "$pageId", entry.PageId?.ToString("D"));
+            AddParameter(command, "$documentId", IdNorm.Norm(entry.DocumentId));
+            AddParameter(command, "$sectionId", entry.SectionId.HasValue ? IdNorm.Norm(entry.SectionId.Value) : null);
+            AddParameter(command, "$pageId", entry.PageId.HasValue ? IdNorm.Norm(entry.PageId.Value) : null);
             AddParameter(command, "$title", entry.Title ?? string.Empty);
             AddParameter(command, "$content", entry.Content ?? string.Empty);
             AddParameter(command, "$updatedAt", DateTimeOffset.UtcNow.ToString("O"));
@@ -624,10 +679,10 @@ VALUES (
             AddParameter(command, "$title", entry.Title ?? string.Empty);
             AddParameter(command, "$content", entry.Content ?? string.Empty);
             AddParameter(command, "$entityType", entry.EntityType);
-            AddParameter(command, "$entityId", entry.EntityId.ToString("D"));
-            AddParameter(command, "$documentId", entry.DocumentId.ToString("D"));
-            AddParameter(command, "$sectionId", entry.SectionId?.ToString("D"));
-            AddParameter(command, "$pageId", entry.PageId?.ToString("D"));
+            AddParameter(command, "$entityId", IdNorm.Norm(entry.EntityId));
+            AddParameter(command, "$documentId", IdNorm.Norm(entry.DocumentId));
+            AddParameter(command, "$sectionId", entry.SectionId.HasValue ? IdNorm.Norm(entry.SectionId.Value) : null);
+            AddParameter(command, "$pageId", entry.PageId.HasValue ? IdNorm.Norm(entry.PageId.Value) : null);
             await command.ExecuteNonQueryAsync(ct);
         }
 
@@ -672,10 +727,118 @@ VALUES (
                 return string.Empty;
             }
 
+            string trimmed = value.Trim();
+            if (LooksLikeJson(trimmed) && TryExtractPlainTextFromJson(trimmed, out string jsonText))
+            {
+                return NormalizeWhitespace(jsonText);
+            }
+
             string decoded = System.Net.WebUtility.HtmlDecode(value);
             string withoutTags = Regex.Replace(decoded, "<.*?>", " ");
-            string normalized = Regex.Replace(withoutTags, "\\s+", " ").Trim();
-            return normalized;
+            return NormalizeWhitespace(withoutTags);
+        }
+
+        private static string BuildSnippet(string title, string content, string query, bool contentMatch)
+        {
+            string source = contentMatch ? content : string.Join(" ", new[] { title, content });
+            if (string.IsNullOrWhiteSpace(source))
+            {
+                return string.Empty;
+            }
+
+            int index = source.IndexOf(query, StringComparison.OrdinalIgnoreCase);
+            if (index < 0)
+            {
+                string head = source.Length > 120 ? source[..120] + "..." : source;
+                return System.Net.WebUtility.HtmlEncode(head);
+            }
+
+            int start = Math.Max(0, index - 40);
+            int length = Math.Min(source.Length - start, query.Length + 80);
+            string snippet = source.Substring(start, length);
+            string encoded = System.Net.WebUtility.HtmlEncode(snippet);
+            string encodedQuery = System.Net.WebUtility.HtmlEncode(query);
+            string highlighted = Regex.Replace(
+                encoded,
+                Regex.Escape(encodedQuery),
+                "<mark>$0</mark>",
+                RegexOptions.IgnoreCase);
+
+            if (start > 0)
+            {
+                highlighted = "..." + highlighted;
+            }
+            if (start + length < source.Length)
+            {
+                highlighted += "...";
+            }
+
+            return highlighted;
+        }
+
+        private static bool LooksLikeJson(string value)
+        {
+            return value.StartsWith("{", StringComparison.Ordinal) || value.StartsWith("[", StringComparison.Ordinal);
+        }
+
+        private static bool TryExtractPlainTextFromJson(string json, out string text)
+        {
+            text = string.Empty;
+            try
+            {
+                using JsonDocument doc = JsonDocument.Parse(json);
+                StringBuilder builder = new();
+                AppendJsonText(doc.RootElement, builder);
+                text = builder.ToString();
+                return true;
+            }
+            catch (JsonException)
+            {
+                return false;
+            }
+        }
+
+        private static void AppendJsonText(JsonElement element, StringBuilder builder)
+        {
+            switch (element.ValueKind)
+            {
+                case JsonValueKind.Array:
+                    foreach (JsonElement child in element.EnumerateArray())
+                    {
+                        AppendJsonText(child, builder);
+                    }
+                    return;
+                case JsonValueKind.Object:
+                    string? nodeType = null;
+                    if (element.TryGetProperty("type", out JsonElement typeElement) &&
+                        typeElement.ValueKind == JsonValueKind.String)
+                    {
+                        nodeType = typeElement.GetString();
+                    }
+
+                    if (string.Equals(nodeType, "hardBreak", StringComparison.OrdinalIgnoreCase))
+                    {
+                        builder.Append(' ');
+                    }
+
+                    if (element.TryGetProperty("text", out JsonElement textElement) &&
+                        textElement.ValueKind == JsonValueKind.String)
+                    {
+                        builder.Append(textElement.GetString());
+                        builder.Append(' ');
+                    }
+
+                    if (element.TryGetProperty("content", out JsonElement contentElement))
+                    {
+                        AppendJsonText(contentElement, builder);
+                    }
+                    return;
+            }
+        }
+
+        private static string NormalizeWhitespace(string value)
+        {
+            return Regex.Replace(value, "\\s+", " ").Trim();
         }
 
         private static string NormalizeQuery(string? query)
@@ -828,7 +991,7 @@ USING fts5(
             _logger.LogError(ex, "Search index disabled: {Reason}", _disabledReason);
         }
 
-        private async Task<bool> HasEntriesForUserAsync(string userId, CancellationToken ct)
+        private async Task<bool> HasEntriesForUserProjectAsync(string userId, Guid projectId, CancellationToken ct)
         {
             try
             {
@@ -847,14 +1010,14 @@ USING fts5(
 SELECT 1
 FROM SearchIndexEntries e
 JOIN Documents d ON (
-    d.Id = e.DocumentId
-    OR lower(d.Id) = lower(e.DocumentId)
-    OR lower(hex(d.Id)) = replace(lower(e.DocumentId), '-', '')
+    lower(d.Id) = e.DocumentId
 )
 WHERE d.OwnerUserId = $userId
+  AND lower(d.ProjectId) = $projectId
 LIMIT 1;
 ";
                 AddParameter(command, "$userId", userId);
+                AddParameter(command, "$projectId", IdNorm.Norm(projectId));
                 object? result = await command.ExecuteScalarAsync(ct);
                 if (result is null || result == DBNull.Value)
                 {
@@ -979,6 +1142,30 @@ LIMIT 1;
                 processedOutlineNodes);
         }
 
+        private async Task<long> CountEntriesForUserProjectAsync(string userId, Guid projectId, CancellationToken ct)
+        {
+            await using var countConnection = _dbContext.Database.GetDbConnection();
+            if (countConnection.State != ConnectionState.Open)
+            {
+                await countConnection.OpenAsync(ct);
+            }
+
+            await using var countCommand = countConnection.CreateCommand();
+            countCommand.CommandText = @"
+SELECT COUNT(*)
+FROM SearchIndexEntries e
+JOIN Documents d ON (
+    lower(d.Id) = e.DocumentId
+)
+WHERE d.OwnerUserId = $userId
+  AND lower(d.ProjectId) = $projectId;
+";
+            AddParameter(countCommand, "$userId", userId);
+            AddParameter(countCommand, "$projectId", IdNorm.Norm(projectId));
+            object? countResult = await countCommand.ExecuteScalarAsync(ct);
+            return countResult is null || countResult == DBNull.Value ? 0 : Convert.ToInt64(countResult);
+        }
+
         private async Task<long> CountEntriesForUserAsync(string userId, CancellationToken ct)
         {
             await using var countConnection = _dbContext.Database.GetDbConnection();
@@ -992,9 +1179,7 @@ LIMIT 1;
 SELECT COUNT(*)
 FROM SearchIndexEntries e
 JOIN Documents d ON (
-    d.Id = e.DocumentId
-    OR lower(d.Id) = lower(e.DocumentId)
-    OR lower(hex(d.Id)) = replace(lower(e.DocumentId), '-', '')
+    lower(d.Id) = e.DocumentId
 )
 WHERE d.OwnerUserId = $userId;
 ";

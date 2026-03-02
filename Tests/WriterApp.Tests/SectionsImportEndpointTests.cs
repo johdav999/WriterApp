@@ -170,7 +170,7 @@ namespace WriterApp.Tests
             public Task UpsertSceneCardAsync(SectionRecord section, SectionSceneCardRecord card, CancellationToken ct) => Task.CompletedTask;
             public Task ReplaceOutlineAsync(DocumentRecord document, string outlineText, IReadOnlyList<DocumentOutlineNodeRecord> nodes, CancellationToken ct) => Task.CompletedTask;
             public Task DeleteByEntityAsync(string entityType, Guid entityId, CancellationToken ct) => Task.CompletedTask;
-            public Task<IReadOnlyList<SearchResultDto>> SearchAsync(string userId, string query, bool includeMeta, int limit, CancellationToken ct)
+            public Task<IReadOnlyList<SearchResultDto>> SearchAsync(string userId, Guid projectId, string query, bool includeMeta, int limit, string? correlationId, CancellationToken ct)
                 => Task.FromResult<IReadOnlyList<SearchResultDto>>(Array.Empty<SearchResultDto>());
         }
 

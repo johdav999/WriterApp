@@ -4,7 +4,8 @@
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <DefaultItemExcludes>$(DefaultItemExcludes);publish/**;publish\**;.azure-publish/**;.azure-publish\**</DefaultItemExcludes>
+    <BaseOutputPath>artifacts\bin\</BaseOutputPath>
+    <DefaultItemExcludes>$(DefaultItemExcludes);publish/**;publish\**;.azure-publish/**;.azure-publish\**;artifacts/**;artifacts\**</DefaultItemExcludes>
 
     <!-- Let the host decide -->
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>

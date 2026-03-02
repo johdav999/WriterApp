@@ -29,14 +29,14 @@ namespace WriterApp.Application.Users
                 return null;
             }
 
-            string normalized = email.Trim().ToLowerInvariant();
+            string normalized = IdNorm.Norm(email);
 
             // UserProfile currently stores display name and user id; match email-like display names case-insensitively.
             List<UserLookupUser> matches = await _dbContext.UserProfiles
                 .AsNoTracking()
                 .Where(item =>
-                    item.DisplayName != null && item.DisplayName.ToLower() == normalized
-                    || item.UserId.ToLower() == normalized)
+                    item.DisplayName != null && EF.Functions.Like(item.DisplayName, normalized)
+                    || EF.Functions.Like(item.UserId, normalized))
                 .OrderBy(item => item.UserId)
                 .Select(item => new UserLookupUser(
                     item.UserId,
@@ -56,7 +56,7 @@ namespace WriterApp.Application.Users
                 return null;
             }
 
-            string normalized = userId.Trim();
+            string normalized = IdNorm.Norm(userId);
             UserLookupUser? user = await _dbContext.UserProfiles
                 .AsNoTracking()
                 .Where(item => item.UserId == normalized)

@@ -4,6 +4,14 @@ using WriterApp.Application.Documents;
 
 namespace WriterApp.Application.AI
 {
+    public enum AiCommandStatusDto
+    {
+        Pending = 0,
+        Succeeded = 1,
+        Applied = 2,
+        Failed = 3
+    }
+
     public sealed record AiTextOperationDto(
         string Type,
         int From,
@@ -52,7 +60,8 @@ namespace WriterApp.Application.AI
         DateTimeOffset CreatedUtc,
         bool IsApplied = false,
         DateTimeOffset? LastAppliedAt = null,
-        int AppliedCount = 0);
+        int AppliedCount = 0,
+        AiCommandStatusDto Status = AiCommandStatusDto.Pending);
 
     public sealed record AiActionUndoRedoRequestDto(
         Guid? DocumentId,
