@@ -162,3 +162,20 @@ Use this to test billing webhook handling locally without deploying.
    - `stripe trigger customer.subscription.updated`
    - `stripe trigger invoice.paid`
    - `stripe trigger invoice.payment_failed`
+
+## Admin Audit Events migration
+- Runtime writes to `AdminAuditEvents` for admin actions (plan override, user ops, token ops, sync actions).
+- If you see `SQLite Error 1: 'no such table: AdminAuditEvents'`, apply pending EF migrations.
+
+### Local
+1. Run: `dotnet ef database update --project BlazorApp.csproj`
+2. Confirm startup logs show migration state when `Admin:EnableAdminApi=true`:
+   - `Admin API migration check. CurrentMigration=..., PendingCount=...`
+
+### Azure App Service
+1. Preferred: call the guarded migrate endpoint (staging/admin only):
+   - `POST /api/admin/db/migrate`
+   - include `X-DB-MIGRATE-KEY` if `DB_MIGRATE_KEY` is configured.
+2. Database path is typically `/home/site/data/writerapp.db`; the migration must be applied to that deployed file.
+3. After migration, verify logs show:
+   - `Admin API migration check... PendingCount=0`

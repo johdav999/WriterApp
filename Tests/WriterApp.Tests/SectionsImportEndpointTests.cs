@@ -163,6 +163,7 @@ namespace WriterApp.Tests
 
         private sealed class StubSearchIndexService : ISearchIndexService
         {
+            public string? DisabledReason => null;
             public Task UpsertDocumentAsync(DocumentRecord document, CancellationToken ct) => Task.CompletedTask;
             public Task UpsertSectionAsync(SectionRecord section, CancellationToken ct) => Task.CompletedTask;
             public Task UpsertPageAsync(PageRecord page, CancellationToken ct) => Task.CompletedTask;
@@ -170,6 +171,10 @@ namespace WriterApp.Tests
             public Task UpsertSceneCardAsync(SectionRecord section, SectionSceneCardRecord card, CancellationToken ct) => Task.CompletedTask;
             public Task ReplaceOutlineAsync(DocumentRecord document, string outlineText, IReadOnlyList<DocumentOutlineNodeRecord> nodes, CancellationToken ct) => Task.CompletedTask;
             public Task DeleteByEntityAsync(string entityType, Guid entityId, CancellationToken ct) => Task.CompletedTask;
+            public Task<int> GetProjectEntryCountAsync(string ownerUserId, Guid projectId, CancellationToken ct) => Task.FromResult(0);
+            public Task RebuildProjectIndexAsync(string ownerUserId, Guid projectId, CancellationToken ct) => Task.CompletedTask;
+            public Task<bool> TryProbeAndRecoverAsync(CancellationToken ct = default) => Task.FromResult(true);
+            public Task RebuildSearchIndexAsync(CancellationToken ct = default) => Task.CompletedTask;
             public Task<IReadOnlyList<SearchResultDto>> SearchAsync(string userId, Guid projectId, string query, bool includeMeta, int limit, string? correlationId, CancellationToken ct)
                 => Task.FromResult<IReadOnlyList<SearchResultDto>>(Array.Empty<SearchResultDto>());
         }

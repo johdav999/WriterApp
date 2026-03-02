@@ -12,6 +12,11 @@ namespace WriterApp.Application.Security
             return configuration.GetValue<bool?>("Admin:EnablePlanOverride") ?? false;
         }
 
+        public static bool IsAdminApiEnabled(IConfiguration configuration)
+        {
+            return configuration.GetValue<bool?>("Admin:EnableAdminApi") ?? false;
+        }
+
         public static bool IsAuthorized(ClaimsPrincipal user)
         {
             if (user.Identity?.IsAuthenticated != true)

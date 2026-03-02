@@ -52,6 +52,8 @@ namespace WriterApp.Controllers
             {
                 return BadRequest("projectId is required.");
             }
+            string projectIdLower = projectId.Value.ToString("D").ToLowerInvariant();
+            Guid normalizedProjectId = Guid.Parse(projectIdLower);
 
             if (string.IsNullOrWhiteSpace(q))
             {
@@ -59,10 +61,25 @@ namespace WriterApp.Controllers
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
+            if (!await _searchIndex.TryProbeAndRecoverAsync(ct))
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                {
+                    disabled = true,
+                    reason = _searchIndex.DisabledReason
+                });
+            }
+
+            int projectEntryCount = await _searchIndex.GetProjectEntryCountAsync(userId, normalizedProjectId, ct);
+            if (projectEntryCount == 0)
+            {
+                await _searchIndex.RebuildProjectIndexAsync(userId, normalizedProjectId, ct);
+            }
+
             IReadOnlyList<SearchResultDto> results;
             try
             {
-                results = await _searchIndex.SearchAsync(userId, projectId.Value, q, includeMeta, limit, correlationId, ct);
+                results = await _searchIndex.SearchAsync(userId, normalizedProjectId, q, includeMeta, limit, correlationId, ct);
             }
             catch (OperationCanceledException)
             {
@@ -97,7 +114,7 @@ namespace WriterApp.Controllers
                     "Search request: queryString={QueryString} q='{Query}' projectId={ProjectId} includeMeta={IncludeMeta} limit={Limit} results={ResultCount} content={ContentCount} meta={MetaCount}",
                     Request.QueryString.Value,
                     q,
-                    projectId.Value,
+                    projectIdLower,
                     includeMeta,
                     limit,
                     results.Count,
@@ -106,6 +123,22 @@ namespace WriterApp.Controllers
             }
 
             return Ok(results);
+        }
+
+        [HttpPost("rebuild")]
+        public async Task<IActionResult> Rebuild([FromQuery] Guid? projectId, CancellationToken ct = default)
+        {
+            string userId = _userIdResolver.ResolveUserId(User);
+            if (projectId.HasValue && projectId.Value != Guid.Empty)
+            {
+                string projectIdLower = projectId.Value.ToString("D").ToLowerInvariant();
+                Guid normalizedProjectId = Guid.Parse(projectIdLower);
+                await _searchIndex.RebuildProjectIndexAsync(userId, normalizedProjectId, ct);
+                return Ok(new { ok = true, projectId = projectIdLower });
+            }
+
+            await _searchIndex.RebuildSearchIndexAsync(ct);
+            return Ok(new { ok = true });
         }
     }
 }

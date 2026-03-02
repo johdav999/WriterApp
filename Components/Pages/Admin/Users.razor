@@ -1,0 +1,1031 @@
+@page "/admin/users"
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.WebUtilities
+@using WriterApp.Shared
+@attribute [Authorize(Policy = "AdminOnly")]
+@implements IDisposable
+@inject HttpClient Http
+@inject NavigationManager Navigation
+@inject IConfiguration Configuration
+@inject IJSRuntime JS
+@inject ILogger<Users> Logger
+
+<PageTitle>Admin - Users</PageTitle>
+
+<div class="admin-users-page">
+    <div class="page-header">
+        <h1>Users</h1>
+        <div class="header-actions">
+            <button class="btn btn-outline-secondary" @onclick="ExportCsvAsync">Export CSV</button>
+            <button class="btn btn-primary" @onclick="OpenAddUserModal">Add user</button>
+        </div>
+    </div>
+
+    @if (!_adminApiEnabled)
+    {
+        <div class="admin-disabled">
+            <h2>Admin tools disabled</h2>
+            <p>Set <code>Admin:EnableAdminApi=true</code> to enable this page.</p>
+        </div>
+    }
+    else
+    {
+        <div class="admin-tabs">
+            <button class="btn @(_activeTab == "users" ? "btn-primary" : "btn-outline-primary")" @onclick="SelectUsersTabAsync">Users</button>
+            <button class="btn @(_activeTab == "audit" ? "btn-primary" : "btn-outline-primary")" @onclick="SelectAuditTabAsync">Audit</button>
+        </div>
+
+        @if (_activeTab == "users")
+        {
+        <div class="filters">
+            <div class="filter-row">
+                <input type="text"
+                       class="form-control"
+                       placeholder="Search email, name, or userId"
+                       value="@_searchText"
+                       @oninput="OnSearchInput" />
+
+                <select class="form-select" @bind="_planFilter">
+                    <option value="">All plans</option>
+                    <option value="Free">Free</option>
+                    <option value="Standard">Standard</option>
+                    <option value="Pro">Pro</option>
+                </select>
+
+                <select class="form-select" @bind="_subscriptionStatusFilter">
+                    <option value="">All statuses</option>
+                    <option value="Active">Active</option>
+                    <option value="active">active</option>
+                    <option value="past_due">past_due</option>
+                    <option value="incomplete">incomplete</option>
+                    <option value="unpaid">unpaid</option>
+                    <option value="canceled">canceled</option>
+                </select>
+
+                <label class="toggle">
+                    <input type="checkbox" @bind="_overrideOnly" />
+                    Override only
+                </label>
+            </div>
+
+            <div class="filter-row">
+                <input type="number"
+                       class="form-control"
+                       placeholder="Tokens left min"
+                       @bind="_tokensLeftMinInput"
+                       @bind:event="oninput" />
+                <input type="number"
+                       class="form-control"
+                       placeholder="Tokens left max"
+                       @bind="_tokensLeftMaxInput"
+                       @bind:event="oninput" />
+
+                <select class="form-select" @bind="_pageSize">
+                    <option value="20">20</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                </select>
+
+                <select class="form-select" @bind="_sort">
+                    <option value="createdAt desc">Newest</option>
+                    <option value="createdAt asc">Oldest</option>
+                    <option value="email asc">Email A-Z</option>
+                    <option value="email desc">Email Z-A</option>
+                    <option value="tokensLeft asc">Tokens left low-high</option>
+                    <option value="tokensLeft desc">Tokens left high-low</option>
+                    <option value="lastSeen desc">Last seen newest</option>
+                </select>
+
+                <button class="btn btn-primary" @onclick="ApplyFiltersAsync">Apply</button>
+                <button class="btn btn-secondary" @onclick="ResetFiltersAsync">Reset</button>
+            </div>
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(_error))
+        {
+            <div class="error-bar">
+                <span>@_error</span>
+                <button class="btn btn-link" @onclick="RetryAsync">Retry</button>
+            </div>
+        }
+
+        <div class="table-wrap">
+            <table class="table users-table">
+                <thead>
+                    <tr>
+                        <th>Email</th>
+                        <th>Name</th>
+                        <th>UserId</th>
+                        <th>Current plan</th>
+                        <th>Override</th>
+                        <th>Tokens left</th>
+                        <th>Status</th>
+                        <th>Updated</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (_loading)
+                    {
+                        @for (int i = 0; i < 8; i++)
+                        {
+                            <tr>
+                                <td colspan="9"><div class="skeleton-row"></div></td>
+                            </tr>
+                        }
+                    }
+                    else if (_items.Count == 0)
+                    {
+                        <tr>
+                            <td colspan="9">No users found.</td>
+                        </tr>
+                    }
+                    else
+                    {
+                        @foreach (AdminUserListItemDto item in _items)
+                        {
+                            <tr>
+                                <td>@(item.Email ?? "-")</td>
+                                <td>@(item.DisplayName ?? "-")</td>
+                                <td>
+                                    <span>@item.UserId</span>
+                                    <button class="btn btn-link btn-sm" @onclick="() => CopyUserIdAsync(item.UserId)">Copy</button>
+                                </td>
+                                <td><span class="chip chip-plan">@item.PlanKey</span></td>
+                                <td><span class="chip @(item.IsManuallyOverridden ? "chip-override" : "chip-muted")">@(item.IsManuallyOverridden ? "Manual" : "None")</span></td>
+                                <td>@($"{item.TokensLeft} ({item.AiMonthlyTokenBudget}-{item.AiTokensUsedThisPeriod})")</td>
+                                <td><span class="chip chip-status">@item.SubscriptionStatus</span></td>
+                                <td>@item.LastSeenUtc.ToString("u")</td>
+                                <td class="actions">
+                                    <button class="btn btn-sm btn-outline-primary" @onclick="() => ViewUserAsync(item.UserId)">View</button>
+                                    <select class="form-select form-select-sm override-select"
+                                            value="@GetOverrideSelection(item.UserId)"
+                                            @onchange="(e) => OnOverrideSelectionChanged(item.UserId, e)">
+                                        <option value="">None</option>
+                                        <option value="Free">Free</option>
+                                        <option value="Standard">Standard</option>
+                                        <option value="Pro">Pro</option>
+                                    </select>
+                                    <button class="btn btn-sm btn-outline-success" @onclick="() => SetOverrideAsync(item.UserId)">Set</button>
+                                    <button class="btn btn-sm btn-outline-secondary" @onclick="() => ResetTokensStubAsync(item.UserId)">Reset tokens</button>
+                                    <button class="btn btn-sm btn-outline-danger" @onclick="() => PromptDelete(item)">Delete</button>
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <div class="pager">
+            <span>Total: @_totalCount</span>
+            <button class="btn btn-secondary" disabled="@(_page <= 1 || _loading)" @onclick="PrevPageAsync">Prev</button>
+            <span>Page @_page</span>
+            <button class="btn btn-secondary" disabled="@(_loading || !_hasNextPage)" @onclick="NextPageAsync">Next</button>
+        </div>
+        }
+        else
+        {
+            <div class="filters">
+                <div class="filter-row">
+                    <input class="form-control" placeholder="Admin userId" @bind="_auditAdminFilter" @bind:event="oninput" />
+                    <input class="form-control" placeholder="Target userId" @bind="_auditTargetFilter" @bind:event="oninput" />
+                    <input class="form-control" placeholder="Action" @bind="_auditActionFilter" @bind:event="oninput" />
+                    <input type="date" class="form-control" @bind="_auditFromDate" />
+                </div>
+                <div class="filter-row">
+                    <input type="date" class="form-control" @bind="_auditToDate" />
+                    <select class="form-select" @bind="_auditPageSize">
+                        <option value="50">50</option>
+                        <option value="100">100</option>
+                        <option value="200">200</option>
+                    </select>
+                    <button class="btn btn-primary" @onclick="ApplyAuditFiltersAsync">Apply</button>
+                </div>
+            </div>
+
+            <div class="table-wrap">
+                <table class="table users-table">
+                    <thead>
+                        <tr>
+                            <th>When (UTC)</th>
+                            <th>Admin</th>
+                            <th>Action</th>
+                            <th>Target user</th>
+                            <th>Details</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (_auditLoading)
+                        {
+                            @for (int i = 0; i < 6; i++)
+                            {
+                                <tr><td colspan="5"><div class="skeleton-row"></div></td></tr>
+                            }
+                        }
+                        else if (_auditItems.Count == 0)
+                        {
+                            <tr><td colspan="5">No audit events found.</td></tr>
+                        }
+                        else
+                        {
+                            @foreach (AdminAuditEventDto evt in _auditItems)
+                            {
+                                <tr>
+                                    <td>@evt.OccurredAtUtc.ToString("u")</td>
+                                    <td>@evt.AdminUserId</td>
+                                    <td><span class="chip chip-status">@evt.Action</span></td>
+                                    <td>@(evt.TargetUserId ?? "-")</td>
+                                    <td class="details-cell"><code>@(evt.DetailsJson ?? "-")</code></td>
+                                </tr>
+                            }
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="pager">
+                <span>Total: @_auditTotalCount</span>
+                <button class="btn btn-secondary" disabled="@(_auditPage <= 1 || _auditLoading)" @onclick="PrevAuditPageAsync">Prev</button>
+                <span>Page @_auditPage</span>
+                <button class="btn btn-secondary" disabled="@(_auditLoading || !_auditHasNextPage)" @onclick="NextAuditPageAsync">Next</button>
+            </div>
+        }
+    }
+</div>
+
+@if (_showAddUserModal)
+{
+    <div class="modal-backdrop">
+        <div class="modal-panel">
+            <h2>Add user</h2>
+            <label>Email</label>
+            <input type="email" class="form-control" @bind="_newEmail" @bind:event="oninput" />
+            <label>Display name</label>
+            <input type="text" class="form-control" @bind="_newDisplayName" @bind:event="oninput" />
+            <label>UserId (optional)</label>
+            <input type="text" class="form-control" @bind="_newUserId" @bind:event="oninput" />
+            <div class="modal-actions">
+                <button class="btn btn-primary" @onclick="CreateUserAsync">Create</button>
+                <button class="btn btn-secondary" @onclick="CloseAddUserModal">Cancel</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_showDeleteConfirm && _deleteTarget is not null)
+{
+    <div class="modal-backdrop">
+        <div class="modal-panel">
+            <h2>Remove user</h2>
+            <p>Delete user <strong>@_deleteTarget.UserId</strong>?</p>
+            <div class="modal-actions">
+                <button class="btn btn-danger" @onclick="ConfirmDeleteAsync">Delete</button>
+                <button class="btn btn-secondary" @onclick="CancelDelete">Cancel</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_detailOpen)
+{
+    <div class="drawer-backdrop" @onclick="CloseDetailDrawer"></div>
+    <aside class="detail-drawer">
+        <div class="drawer-header">
+            <h2>User detail</h2>
+            <button class="btn btn-link" @onclick="CloseDetailDrawer">Close</button>
+        </div>
+        @if (_detailLoading)
+        {
+            <div class="skeleton-row"></div>
+            <div class="skeleton-row"></div>
+            <div class="skeleton-row"></div>
+        }
+        else if (!string.IsNullOrWhiteSpace(_detailError))
+        {
+            <p class="error-text">@_detailError</p>
+        }
+        else if (_selectedUser is not null)
+        {
+            <div class="detail-grid">
+                <label>UserId</label><div>@_selectedUser.UserId</div>
+                <label>Email</label><div>@(_selectedUser.Email ?? "-")</div>
+                <label>Plan</label><div>@_selectedUser.PlanKey</div>
+                <label>Status</label><div>@_selectedUser.SubscriptionStatus</div>
+                <label>Override</label><div>@(_selectedUser.IsManuallyOverridden ? _selectedUser.OverridePlanKey : "None")</div>
+                <label>Stripe customer</label><div>@(_selectedUser.StripeCustomerId ?? "-")</div>
+                <label>Stripe subscription</label><div>@(_selectedUser.StripeSubscriptionId ?? "-")</div>
+            </div>
+
+            <div class="drawer-actions">
+                <button class="btn btn-outline-primary" disabled="@string.IsNullOrWhiteSpace(_selectedUser.StripeCustomerId)" @onclick="OpenStripeCustomer">Open customer</button>
+                <button class="btn btn-outline-primary" disabled="@string.IsNullOrWhiteSpace(_selectedUser.StripeSubscriptionId)" @onclick="OpenStripeSubscription">Open subscription</button>
+                <button class="btn btn-outline-secondary" @onclick="SyncStripeAsync">Sync Stripe</button>
+            </div>
+            <small>Webhook replay can be done in Stripe Dashboard Developers -> Events.</small>
+
+            <h3>Update profile</h3>
+            <label>Display name</label>
+            <input type="text" class="form-control" @bind="_editDisplayName" @bind:event="oninput" />
+            <label>Email</label>
+            <input type="email" class="form-control" @bind="_editEmail" @bind:event="oninput" disabled />
+            <small>Email updates are disabled in this build.</small>
+            <div class="drawer-actions">
+                <button class="btn btn-primary" @onclick="UpdateUserAsync">Save</button>
+            </div>
+
+            <h3>Token tools</h3>
+            <div class="drawer-actions">
+                <button class="btn btn-outline-secondary" @onclick="ResetTokensAsync">Reset period</button>
+            </div>
+            <label>Adjust delta tokens</label>
+            <input type="number" class="form-control" @bind="_deltaTokensInput" @bind:event="oninput" />
+            <label>Reason</label>
+            <input type="text" class="form-control" @bind="_deltaTokensReason" @bind:event="oninput" />
+            <div class="drawer-actions">
+                <button class="btn btn-outline-secondary" @onclick="AdjustTokensAsync">Apply adjustment</button>
+            </div>
+        }
+    </aside>
+}
+
+@if (_toasts.Count > 0)
+{
+    <div class="toast-stack">
+        @foreach (ToastMessage toast in _toasts)
+        {
+            <div class="toast-item @($"toast-{toast.Kind}")">
+                <span>@toast.Text</span>
+                <button class="btn btn-link btn-sm" @onclick="() => DismissToast(toast.Id)">x</button>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    private readonly List<AdminUserListItemDto> _items = new();
+    private readonly Dictionary<string, string?> _overrideSelections = new(StringComparer.Ordinal);
+    private readonly List<ToastMessage> _toasts = new();
+    private readonly List<AdminAuditEventDto> _auditItems = new();
+    private AdminApiClient? _adminApi;
+
+    private bool _adminApiEnabled;
+    private bool _loading;
+    private bool _hasNextPage;
+    private string? _error;
+
+    private int _page = 1;
+    private int _pageSize = 20;
+    private int _totalCount;
+    private string? _searchText;
+    private string? _planFilter;
+    private string? _subscriptionStatusFilter;
+    private bool _overrideOnly;
+    private string? _tokensLeftMinInput;
+    private string? _tokensLeftMaxInput;
+    private string _sort = "createdAt desc";
+    private string _activeTab = "users";
+
+    private bool _showAddUserModal;
+    private string? _newEmail;
+    private string? _newDisplayName;
+    private string? _newUserId;
+
+    private bool _showDeleteConfirm;
+    private AdminUserListItemDto? _deleteTarget;
+
+    private bool _detailOpen;
+    private bool _detailLoading;
+    private string? _detailError;
+    private AdminUserDetailDto? _selectedUser;
+    private string? _editDisplayName;
+    private string? _editEmail;
+    private string? _deltaTokensInput;
+    private string? _deltaTokensReason;
+
+    private bool _auditLoading;
+    private bool _auditHasNextPage;
+    private int _auditPage = 1;
+    private int _auditPageSize = 50;
+    private int _auditTotalCount;
+    private string? _auditAdminFilter;
+    private string? _auditTargetFilter;
+    private string? _auditActionFilter;
+    private DateTime? _auditFromDate;
+    private DateTime? _auditToDate;
+
+    private CancellationTokenSource? _searchDebounceCts;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _adminApiEnabled = Configuration.GetValue<bool?>("Admin:EnableAdminApi") ?? false;
+        ApplyQueryStringToState();
+        if (_adminApiEnabled)
+        {
+            await LoadUsersAsync(updateQueryString: false);
+        }
+    }
+
+    private async Task SelectTabAsync(string tab)
+    {
+        _activeTab = tab;
+        if (_activeTab == "audit")
+        {
+            await LoadAuditAsync();
+        }
+    }
+
+    private Task SelectUsersTabAsync() => SelectTabAsync("users");
+
+    private Task SelectAuditTabAsync() => SelectTabAsync("audit");
+
+    private void ApplyQueryStringToState()
+    {
+        Dictionary<string, Microsoft.Extensions.Primitives.StringValues> query =
+            QueryHelpers.ParseQuery(new Uri(Navigation.Uri).Query);
+
+        _page = ReadInt(query, "page", 1);
+        _pageSize = ReadInt(query, "pageSize", 20);
+        _searchText = ReadString(query, "q");
+        _planFilter = ReadString(query, "plan");
+        _subscriptionStatusFilter = ReadString(query, "status");
+        _overrideOnly = ReadBool(query, "overrideOnly");
+        _tokensLeftMinInput = ReadString(query, "tokensMin");
+        _tokensLeftMaxInput = ReadString(query, "tokensMax");
+        _sort = ReadString(query, "sort") ?? "createdAt desc";
+
+        if (_pageSize is not (20 or 50 or 100))
+        {
+            _pageSize = 20;
+        }
+    }
+
+    private async Task LoadUsersAsync(bool updateQueryString)
+    {
+        _loading = true;
+        _error = null;
+
+        if (updateQueryString)
+        {
+            SyncQueryString();
+        }
+
+        try
+        {
+            AdminUserQueryDto query = new(
+                Page: _page,
+                PageSize: _pageSize,
+                Q: _searchText,
+                PlanKey: string.IsNullOrWhiteSpace(_planFilter) ? null : _planFilter,
+                SubscriptionStatus: string.IsNullOrWhiteSpace(_subscriptionStatusFilter) ? null : _subscriptionStatusFilter,
+                OverrideOnly: _overrideOnly,
+                TokensLeftLt: ParseNullableInt(_tokensLeftMaxInput),
+                TokensLeftGt: ParseNullableInt(_tokensLeftMinInput),
+                Sort: _sort);
+
+            AdminUserListResponseDto response = await AdminApi.GetUsersAsync(query);
+
+            _items.Clear();
+            _items.AddRange(response.Items);
+            _totalCount = response.TotalCount;
+            _hasNextPage = (_page * _pageSize) < _totalCount;
+
+            foreach (AdminUserListItemDto item in _items)
+            {
+                if (!_overrideSelections.ContainsKey(item.UserId))
+                {
+                    _overrideSelections[item.UserId] = item.IsManuallyOverridden ? item.PlanKey : null;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+            Logger.LogError(ex, "Failed to load admin users list.");
+        }
+        finally
+        {
+            _loading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ApplyFiltersAsync()
+    {
+        _page = 1;
+        await LoadUsersAsync(updateQueryString: true);
+    }
+
+    private async Task ResetFiltersAsync()
+    {
+        _searchText = null;
+        _planFilter = null;
+        _subscriptionStatusFilter = null;
+        _overrideOnly = false;
+        _tokensLeftMinInput = null;
+        _tokensLeftMaxInput = null;
+        _pageSize = 20;
+        _sort = "createdAt desc";
+        _page = 1;
+        await LoadUsersAsync(updateQueryString: true);
+    }
+
+    private async Task RetryAsync()
+    {
+        if (_activeTab == "audit")
+        {
+            await LoadAuditAsync();
+            return;
+        }
+
+        await LoadUsersAsync(updateQueryString: false);
+    }
+
+    private async Task PrevPageAsync()
+    {
+        if (_page <= 1)
+        {
+            return;
+        }
+
+        _page--;
+        await LoadUsersAsync(updateQueryString: true);
+    }
+
+    private async Task NextPageAsync()
+    {
+        if (!_hasNextPage)
+        {
+            return;
+        }
+
+        _page++;
+        await LoadUsersAsync(updateQueryString: true);
+    }
+
+    private async Task OnSearchInput(ChangeEventArgs args)
+    {
+        _searchText = args.Value?.ToString();
+        _searchDebounceCts?.Cancel();
+        _searchDebounceCts?.Dispose();
+        _searchDebounceCts = new CancellationTokenSource();
+        try
+        {
+            await Task.Delay(400, _searchDebounceCts.Token);
+            _page = 1;
+            await LoadUsersAsync(updateQueryString: true);
+        }
+        catch (OperationCanceledException)
+        {
+            // no-op
+        }
+    }
+
+    private async Task ViewUserAsync(string userId)
+    {
+        _detailOpen = true;
+        _detailLoading = true;
+        _detailError = null;
+        _selectedUser = null;
+
+        try
+        {
+            _selectedUser = await AdminApi.GetUserAsync(userId);
+            _editDisplayName = _selectedUser?.DisplayName;
+            _editEmail = _selectedUser?.Email;
+        }
+        catch (Exception ex)
+        {
+            _detailError = ex.Message;
+            Logger.LogError(ex, "Failed to load user detail for {UserId}.", userId);
+        }
+        finally
+        {
+            _detailLoading = false;
+        }
+    }
+
+    private void CloseDetailDrawer()
+    {
+        _detailOpen = false;
+        _detailError = null;
+        _selectedUser = null;
+    }
+
+    private async Task UpdateUserAsync()
+    {
+        if (_selectedUser is null)
+        {
+            return;
+        }
+
+        try
+        {
+            AdminUserDetailDto updated = await AdminApi.UpdateUserAsync(
+                _selectedUser.UserId,
+                new AdminUpdateUserRequest(
+                    Email: null,
+                    DisplayName: _editDisplayName));
+
+            _selectedUser = updated;
+            AddToast("User updated.", "success");
+            await LoadUsersAsync(updateQueryString: false);
+        }
+        catch (Exception ex)
+        {
+            AddToast(ex.Message, "error");
+        }
+    }
+
+    private async Task SyncStripeAsync()
+    {
+        if (_selectedUser is null)
+        {
+            return;
+        }
+
+        try
+        {
+            _selectedUser = await AdminApi.SyncStripeAsync(_selectedUser.UserId);
+            AddToast("Stripe sync completed.", "success");
+            await LoadUsersAsync(updateQueryString: false);
+        }
+        catch (Exception ex)
+        {
+            AddToast(ex.Message, "error");
+        }
+    }
+
+    private async Task ResetTokensAsync()
+    {
+        if (_selectedUser is null)
+        {
+            return;
+        }
+
+        try
+        {
+            _ = await AdminApi.ResetTokensPeriodAsync(_selectedUser.UserId);
+            AddToast("Token period reset.", "success");
+            _selectedUser = await AdminApi.GetUserAsync(_selectedUser.UserId);
+            await LoadUsersAsync(updateQueryString: false);
+        }
+        catch (Exception ex)
+        {
+            AddToast(ex.Message, "error");
+        }
+    }
+
+    private async Task AdjustTokensAsync()
+    {
+        if (_selectedUser is null)
+        {
+            return;
+        }
+
+        if (!int.TryParse(_deltaTokensInput, out int deltaTokens))
+        {
+            AddToast("Enter a numeric delta.", "error");
+            return;
+        }
+
+        try
+        {
+            _ = await AdminApi.AdjustTokensAsync(
+                _selectedUser.UserId,
+                new AdminAdjustTokensRequest(deltaTokens, _deltaTokensReason));
+            AddToast("Token adjustment applied.", "success");
+            _selectedUser = await AdminApi.GetUserAsync(_selectedUser.UserId);
+            await LoadUsersAsync(updateQueryString: false);
+        }
+        catch (Exception ex)
+        {
+            AddToast(ex.Message, "error");
+        }
+    }
+
+    private Task OpenStripeCustomer()
+    {
+        if (string.IsNullOrWhiteSpace(_selectedUser?.StripeCustomerId))
+        {
+            return Task.CompletedTask;
+        }
+
+        string url = $"https://dashboard.stripe.com/customers/{Uri.EscapeDataString(_selectedUser.StripeCustomerId)}";
+        return JS.InvokeVoidAsync("open", url, "_blank").AsTask();
+    }
+
+    private Task OpenStripeSubscription()
+    {
+        if (string.IsNullOrWhiteSpace(_selectedUser?.StripeSubscriptionId))
+        {
+            return Task.CompletedTask;
+        }
+
+        string url = $"https://dashboard.stripe.com/subscriptions/{Uri.EscapeDataString(_selectedUser.StripeSubscriptionId)}";
+        return JS.InvokeVoidAsync("open", url, "_blank").AsTask();
+    }
+
+    private async Task ExportCsvAsync()
+    {
+        try
+        {
+            AdminUserQueryDto query = new(
+                Page: _page,
+                PageSize: Math.Max(_pageSize, 200),
+                Q: _searchText,
+                PlanKey: _planFilter,
+                SubscriptionStatus: _subscriptionStatusFilter,
+                OverrideOnly: _overrideOnly,
+                TokensLeftLt: ParseNullableInt(_tokensLeftMaxInput),
+                TokensLeftGt: ParseNullableInt(_tokensLeftMinInput),
+                Sort: _sort);
+            string csv = await AdminApi.ExportUsersCsvAsync(query);
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", csv);
+            AddToast("CSV copied to clipboard.", "success");
+        }
+        catch (Exception ex)
+        {
+            AddToast(ex.Message, "error");
+        }
+    }
+
+    private async Task ApplyAuditFiltersAsync()
+    {
+        _auditPage = 1;
+        await LoadAuditAsync();
+    }
+
+    private async Task PrevAuditPageAsync()
+    {
+        if (_auditPage <= 1)
+        {
+            return;
+        }
+
+        _auditPage--;
+        await LoadAuditAsync();
+    }
+
+    private async Task NextAuditPageAsync()
+    {
+        if (!_auditHasNextPage)
+        {
+            return;
+        }
+
+        _auditPage++;
+        await LoadAuditAsync();
+    }
+
+    private async Task LoadAuditAsync()
+    {
+        _auditLoading = true;
+        try
+        {
+            DateTime? fromUtc = ParseDate(_auditFromDate, endOfDay: false);
+            DateTime? toUtc = ParseDate(_auditToDate, endOfDay: true);
+            AdminAuditListResponseDto response = await AdminApi.GetAuditAsync(
+                new AdminAuditQueryDto(
+                    _auditPage,
+                    _auditPageSize,
+                    _auditAdminFilter,
+                    _auditTargetFilter,
+                    _auditActionFilter,
+                    fromUtc,
+                    toUtc));
+            _auditItems.Clear();
+            _auditItems.AddRange(response.Items);
+            _auditTotalCount = response.TotalCount;
+            _auditHasNextPage = (_auditPage * _auditPageSize) < _auditTotalCount;
+        }
+        catch (Exception ex)
+        {
+            AddToast(ex.Message, "error");
+            Logger.LogError(ex, "Failed to load audit events.");
+        }
+        finally
+        {
+            _auditLoading = false;
+        }
+    }
+
+    private void OpenAddUserModal()
+    {
+        _newEmail = null;
+        _newDisplayName = null;
+        _newUserId = null;
+        _showAddUserModal = true;
+    }
+
+    private void CloseAddUserModal()
+    {
+        _showAddUserModal = false;
+    }
+
+    private async Task CreateUserAsync()
+    {
+        try
+        {
+            _ = await AdminApi.CreateUserAsync(new AdminCreateUserRequest(_newUserId, _newEmail, _newDisplayName));
+            _showAddUserModal = false;
+            AddToast("User created.", "success");
+            await LoadUsersAsync(updateQueryString: false);
+        }
+        catch (Exception ex)
+        {
+            AddToast(ex.Message, "error");
+        }
+    }
+
+    private void PromptDelete(AdminUserListItemDto user)
+    {
+        _deleteTarget = user;
+        _showDeleteConfirm = true;
+    }
+
+    private void CancelDelete()
+    {
+        _showDeleteConfirm = false;
+        _deleteTarget = null;
+    }
+
+    private async Task ConfirmDeleteAsync()
+    {
+        if (_deleteTarget is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await AdminApi.DeleteUserAsync(_deleteTarget.UserId);
+            AddToast("User removed.", "success");
+            _showDeleteConfirm = false;
+            _deleteTarget = null;
+            await LoadUsersAsync(updateQueryString: false);
+        }
+        catch (Exception ex)
+        {
+            AddToast(ex.Message, "error");
+        }
+    }
+
+    private async Task SetOverrideAsync(string userId)
+    {
+        try
+        {
+            string? selected = GetOverrideSelection(userId);
+            await AdminApi.SetPlanOverrideAsync(userId, new AdminSetPlanOverrideRequest(selected, "Admin UI"));
+            AddToast("Plan override updated.", "success");
+            await LoadUsersAsync(updateQueryString: false);
+            if (_selectedUser?.UserId == userId)
+            {
+                await ViewUserAsync(userId);
+            }
+        }
+        catch (Exception ex)
+        {
+            AddToast(ex.Message, "error");
+        }
+    }
+
+    private Task ResetTokensStubAsync(string userId)
+    {
+        AddToast($"Reset tokens for {userId} is not implemented yet.", "info");
+        return Task.CompletedTask;
+    }
+
+    private string? GetOverrideSelection(string userId)
+    {
+        if (_overrideSelections.TryGetValue(userId, out string? value))
+        {
+            return value;
+        }
+
+        return null;
+    }
+
+    private void OnOverrideSelectionChanged(string userId, ChangeEventArgs args)
+    {
+        string? value = args.Value?.ToString();
+        _overrideSelections[userId] = string.IsNullOrWhiteSpace(value) ? null : value;
+    }
+
+    private async Task CopyUserIdAsync(string userId)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", userId);
+            AddToast("UserId copied.", "success");
+        }
+        catch
+        {
+            AddToast("Could not copy UserId.", "error");
+        }
+    }
+
+    private void AddToast(string text, string kind)
+    {
+        _toasts.Add(new ToastMessage(Guid.NewGuid(), text, kind));
+        if (_toasts.Count > 4)
+        {
+            _toasts.RemoveAt(0);
+        }
+    }
+
+    private void DismissToast(Guid id)
+    {
+        int index = _toasts.FindIndex(item => item.Id == id);
+        if (index >= 0)
+        {
+            _toasts.RemoveAt(index);
+        }
+    }
+
+    private void SyncQueryString()
+    {
+        Dictionary<string, string?> values = new(StringComparer.Ordinal)
+        {
+            ["page"] = _page.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["pageSize"] = _pageSize.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["q"] = _searchText,
+            ["plan"] = _planFilter,
+            ["status"] = _subscriptionStatusFilter,
+            ["overrideOnly"] = _overrideOnly ? "true" : null,
+            ["tokensMin"] = _tokensLeftMinInput,
+            ["tokensMax"] = _tokensLeftMaxInput,
+            ["sort"] = _sort
+        };
+
+        string next = QueryHelpers.AddQueryString("/admin/users", values);
+        if (!string.Equals(Navigation.ToBaseRelativePath(Navigation.Uri), next.TrimStart('/'), StringComparison.Ordinal))
+        {
+            Navigation.NavigateTo(next, replace: true);
+        }
+    }
+
+    private static int ReadInt(IReadOnlyDictionary<string, Microsoft.Extensions.Primitives.StringValues> query, string key, int fallback)
+    {
+        if (!query.TryGetValue(key, out Microsoft.Extensions.Primitives.StringValues values))
+        {
+            return fallback;
+        }
+
+        return int.TryParse(values.ToString(), out int parsed) ? parsed : fallback;
+    }
+
+    private static string? ReadString(IReadOnlyDictionary<string, Microsoft.Extensions.Primitives.StringValues> query, string key)
+    {
+        if (!query.TryGetValue(key, out Microsoft.Extensions.Primitives.StringValues values))
+        {
+            return null;
+        }
+
+        string value = values.ToString();
+        return string.IsNullOrWhiteSpace(value) ? null : value;
+    }
+
+    private static bool ReadBool(IReadOnlyDictionary<string, Microsoft.Extensions.Primitives.StringValues> query, string key)
+    {
+        if (!query.TryGetValue(key, out Microsoft.Extensions.Primitives.StringValues values))
+        {
+            return false;
+        }
+
+        string raw = values.ToString();
+        return raw.Equals("true", StringComparison.OrdinalIgnoreCase) || raw == "1";
+    }
+
+    private static int? ParseNullableInt(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        return int.TryParse(raw, out int parsed) ? parsed : null;
+    }
+
+    private static DateTime? ParseDate(DateTime? raw, bool endOfDay)
+    {
+        if (!raw.HasValue)
+        {
+            return null;
+        }
+
+        DateTime utc = DateTime.SpecifyKind(raw.Value.Date, DateTimeKind.Utc);
+        return endOfDay ? utc.AddDays(1).AddTicks(-1) : utc;
+    }
+
+    public void Dispose()
+    {
+        _searchDebounceCts?.Cancel();
+        _searchDebounceCts?.Dispose();
+    }
+
+    private sealed record ToastMessage(Guid Id, string Text, string Kind);
+
+    private AdminApiClient AdminApi => _adminApi ??= new AdminApiClient(Http);
+}
