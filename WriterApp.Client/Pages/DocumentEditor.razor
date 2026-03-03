@@ -29,7 +29,7 @@ else
 
             <section class="editor-main" id="onboarding-editor-scene">
                 <div class="editor-main-header">
-                    <div class="editor-section-info">
+                    <div class="editor-section-info" id="onboarding-project-structure">
                         <div class="editor-section-label">Section</div>
                         <div class="editor-section-title">@_activeSection.Title</div>
                     </div>
@@ -938,6 +938,27 @@ else
                                 else
                                 {
                                     <div class="ai-actions-list">
+                                        @if (RecommendedAiActions.Any())
+                                        {
+                                            <div class="ai-action-group">
+                                                <div class="ai-action-group-title">Recommended</div>
+                                                @foreach (AiActionOption action in RecommendedAiActions)
+                                                {
+                                                    <div class="ai-action-item">
+                                                        <button type="button"
+                                                                disabled="@IsAiQuotaExceeded"
+                                                                title='@GetAiActionTooltip(action)'
+                                                                @onclick="() => OnAiActionSelected(action)">
+                                                            <span class="ai-action-label">@action.Label</span>
+                                                            @if (!string.IsNullOrWhiteSpace(action.RecommendationBadge))
+                                                            {
+                                                                <span class="ai-recommended-badge">@action.RecommendationBadge</span>
+                                                            }
+                                                        </button>
+                                                    </div>
+                                                }
+                                            </div>
+                                        }
                                         <div class="ai-action-group">
                                             <div class="ai-action-group-title">Selection actions</div>
                                             @if (!SelectionAiActions.Any())
@@ -954,7 +975,11 @@ else
                                                                 title='@GetAiActionTooltip(action)'
                                                                 @onmousedown:preventDefault="true"
                                                                 @onclick="() => OnAiActionSelected(action)">
-                                                            @action.Label
+                                                            <span class="ai-action-label">@action.Label</span>
+                                                            @if (!string.IsNullOrWhiteSpace(action.RecommendationBadge))
+                                                            {
+                                                                <span class="ai-recommended-badge">@action.RecommendationBadge</span>
+                                                            }
                                                         </button>
                                                     </div>
                                                 }
@@ -969,7 +994,11 @@ else
                                                             disabled="@IsAiQuotaExceeded"
                                                             title='@GetAiActionTooltip(action)'
                                                             @onclick="() => OnAiActionSelected(action)">
-                                                        @action.Label
+                                                        <span class="ai-action-label">@action.Label</span>
+                                                        @if (!string.IsNullOrWhiteSpace(action.RecommendationBadge))
+                                                        {
+                                                            <span class="ai-recommended-badge">@action.RecommendationBadge</span>
+                                                        }
                                                     </button>
                                                 </div>
                                             }

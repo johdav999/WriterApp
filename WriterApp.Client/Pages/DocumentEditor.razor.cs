@@ -439,12 +439,11 @@ namespace WriterApp.Client.Pages
         private bool _onboardingCompletionInFlight;
         private DateTimeOffset _onboardingLastTypingProbeUtc = DateTimeOffset.MinValue;
         private int _onboardingMeasuredCharacterCount;
-        private readonly IReadOnlyList<OnboardingWalkthroughTip> _onboardingWalkthroughTips = new List<OnboardingWalkthroughTip>
+        private IReadOnlyList<OnboardingWalkthroughTip> _onboardingWalkthroughTips = new List<OnboardingWalkthroughTip>
         {
-            new(4, "This is your scene editor", "Write, revise, and structure your draft in this scene editor.", "#onboarding-editor-scene", false),
-            new(5, "Open AI Coach", "Use Writing tools to expand, rewrite, or continue your scene.", "#onboarding-tab-ai", true),
-            new(6, "Continuity & Quality checks", "Run consistency and style checks while you draft.", "#onboarding-tab-continuity", false),
-            new(7, "Token budget indicator", "Track your current AI usage and plan budget here.", "#onboarding-token-budget", false)
+            new(3, "Welcome", "Welcome — let's start writing.", "#onboarding-editor-scene", false),
+            new(4, "Project structure", "Your starter structure is ready in this project.", "#onboarding-project-structure", false),
+            new(5, "AI Coach example", "Use Writing tools to try a rewrite or guided AI action.", "#onboarding-tab-ai", true)
         };
         private readonly List<PageVersionListItemDto> _pageVersions = new();
         private bool _versionsLoading;
@@ -586,10 +585,12 @@ namespace WriterApp.Client.Pages
                     debug);
             }
         }
+        private IEnumerable<AiActionOption> RecommendedAiActions =>
+            _aiActions.Where(action => action.IsRecommended && action.IncludeInLists);
         private IEnumerable<AiActionOption> SelectionAiActions =>
-            _aiActions.Where(action => action.RequiresSelection && action.IncludeInLists);
+            _aiActions.Where(action => action.RequiresSelection && action.IncludeInLists && !action.IsRecommended);
         private IEnumerable<AiActionOption> SectionAiActions =>
-            _aiActions.Where(action => !action.RequiresSelection && action.IncludeInLists);
+            _aiActions.Where(action => !action.RequiresSelection && action.IncludeInLists && !action.IsRecommended);
         private bool CanShowContinuityCoach =>
             HasAction("continuity.extract_character_bible")
             || HasAction("continuity.extract_place_bible")
@@ -2966,59 +2967,58 @@ namespace WriterApp.Client.Pages
             List<string> observations = new();
             if (context.HasSelection)
             {
-                observations.Add("Selection is active, so targeted rewrite commands are ready.");
+                observations.Add("Selection is active, so targeted rewrite actions are ready.");
             }
             else
             {
-                observations.Add("No selection is active yet. Selection actions stay disabled until you highlight text.");
-            }
-
-            if (context.IsSceneContext && context.MissingSceneCardFields >= 3)
-            {
-                observations.Add("Scene card context is sparse and can be bootstrapped from the current text.");
-            }
-            else if (context.IsSceneContext)
-            {
-                observations.Add("Scene card context is present and supports focused drafting decisions.");
-            }
-            else
-            {
-                observations.Add("You are editing section content in document mode.");
+                observations.Add("Select a paragraph to enable rewrite actions.");
             }
 
             if (context.QualityIssueCount > 0)
             {
-                observations.Add($"Quality checks currently list {context.QualityIssueCount} issue(s).");
+                observations.Add($"{context.QualityIssueCount} quality issue(s) are available for quick fixes.");
             }
-
-            CoachPrimaryAction primaryAction;
-            string primaryLabel;
-            string why;
-            if (context.IsSceneContext && context.MissingSceneCardFields >= 3)
+            else if (context.WordCount >= 120)
             {
-                primaryAction = CoachPrimaryAction.SuggestSceneCardFromText;
-                primaryLabel = "Suggest scene card from text";
-                why = "A stronger scene card clarifies intent before line edits.";
-            }
-            else if (context.QualityIssueCount > 0 || context.WordCount >= 160)
-            {
-                primaryAction = CoachPrimaryAction.RunQualityCheck;
-                primaryLabel = "Run quality check";
-                why = "A quality pass catches style and readability friction quickly.";
+                observations.Add("Use Rewrite/Shorten actions to shape tone and pacing.");
             }
             else
             {
-                primaryAction = CoachPrimaryAction.OpenOutline;
-                primaryLabel = "Open navigator";
-                why = "Use structure to choose your next target before applying rewrites.";
+                observations.Add("Use the prompt box to request the next paragraph.");
             }
+
+            if (context.IsSceneContext)
+            {
+                observations.Add("Writing tools apply directly to your current scene text.");
+            }
+            else
+            {
+                observations.Add("Writing tools apply directly to the active section.");
+            }
+
+            List<CoachTipCandidate> candidates = new()
+            {
+                new(
+                    CoachTipScope.WritingTools,
+                    CoachPrimaryAction.RunQualityCheck,
+                    "Run quality check",
+                    "A quick quality pass gives concrete rewrite targets in Writing tools.",
+                    context.QualityIssueCount > 0 ? 120 : 80),
+                new(
+                    CoachTipScope.GenericWriting,
+                    CoachPrimaryAction.RunQualityCheck,
+                    "Run quality check",
+                    "Use short quality loops to improve clarity while staying in Writing tools.",
+                    60)
+            };
+            CoachTipCandidate selected = SelectCoachTipCandidate(candidates, CoachTipScope.WritingTools);
 
             return new CoachCardRecommendation(
                 context.IsSceneContext ? "Writing" : "Writing tools",
                 observations.Take(3).ToList(),
-                primaryLabel,
-                why,
-                primaryAction,
+                selected.PrimaryActionLabel,
+                selected.Why,
+                selected.PrimaryAction,
                 null,
                 null);
         }
@@ -3152,19 +3152,61 @@ namespace WriterApp.Client.Pages
             }
 
             observations.Add("Use purpose, emotional beat, and key events to anchor revisions.");
-            CoachPrimaryAction action = context.IsSceneContext
-                ? CoachPrimaryAction.SuggestSceneCardFromText
-                : CoachPrimaryAction.OpenOutline;
-            string label = context.IsSceneContext ? "Suggest scene card from text" : "Open navigator";
+            List<CoachTipCandidate> candidates = new()
+            {
+                new(
+                    CoachTipScope.Story,
+                    context.IsSceneContext ? CoachPrimaryAction.SuggestSceneCardFromText : CoachPrimaryAction.OpenOutline,
+                    context.IsSceneContext ? "Suggest scene card from text" : "Open navigator",
+                    "Story metadata keeps chapter-level intent visible while drafting.",
+                    context.IsSceneContext ? 120 : 80),
+                new(
+                    CoachTipScope.GenericWriting,
+                    CoachPrimaryAction.OpenOutline,
+                    "Open navigator",
+                    "Use structure context to keep story beats aligned.",
+                    40)
+            };
+            CoachTipCandidate selected = SelectCoachTipCandidate(candidates, CoachTipScope.Story);
 
             return new CoachCardRecommendation(
                 "Story",
                 observations.Take(3).ToList(),
-                label,
-                "Story metadata keeps chapter-level intent visible while drafting.",
-                action,
+                selected.PrimaryActionLabel,
+                selected.Why,
+                selected.PrimaryAction,
                 null,
                 null);
+        }
+
+        private static CoachTipCandidate SelectCoachTipCandidate(
+            IReadOnlyList<CoachTipCandidate> candidates,
+            CoachTipScope activeScope)
+        {
+            CoachTipCandidate? scoped = candidates
+                .Where(candidate => candidate.Scope == activeScope)
+                .OrderByDescending(candidate => candidate.Priority)
+                .FirstOrDefault();
+            if (scoped is not null)
+            {
+                return scoped;
+            }
+
+            CoachTipCandidate? generic = candidates
+                .Where(candidate => candidate.Scope == CoachTipScope.GenericWriting)
+                .OrderByDescending(candidate => candidate.Priority)
+                .FirstOrDefault();
+            if (generic is not null)
+            {
+                return generic;
+            }
+
+            return new CoachTipCandidate(
+                CoachTipScope.GenericWriting,
+                CoachPrimaryAction.RunQualityCheck,
+                "Run quality check",
+                "Keep revision loops small and actionable.",
+                0);
         }
 
         private CoachCardRecommendation BuildNotesTasksCoachRecommendation(RightPanelCoachContext context)
@@ -7646,6 +7688,8 @@ private const string PreviewBootstrapScript = @"
                 proposedText = await EnsureMeaningfulTightenAsync(action, request, originalForProposal, proposedText);
             }
 
+            bool appendOnly = IsAppendOnlyCustomTransform(action);
+            string scope = ResolveActionScope(action);
             _translationApplyMode = "replace";
             _pendingAiProposal = new PendingAiProposal(
                 response.ProposalId,
@@ -7660,7 +7704,10 @@ private const string PreviewBootstrapScript = @"
                     action.RequiresSelection,
                     _activeSection.Id,
                     _activePage?.Id,
-                    selectionSnapshot));
+                    selectionSnapshot,
+                    scope,
+                    appendOnly,
+                    plain));
             _pendingDetailsExpanded = false;
             await MarkOnboardingAiSignalAsync("onboarding_first_ai_success", action.ActionKey);
             await LoadAiHistoryAsync();
@@ -7721,6 +7768,7 @@ private const string PreviewBootstrapScript = @"
                 }
 
                 _showOnboardingWalkthrough = true;
+                _onboardingWalkthroughTips = BuildOnboardingWalkthroughTips(ResolveOnboardingIntentKey(state.PrimaryWritingIntent));
                 _onboardingProjectCreated = ProjectId != Guid.Empty || state.OnboardingStep >= 3;
                 _onboardingAiRequirementMet = state.OnboardingStep >= 8;
                 _onboardingWalkthroughIndex = ResolveWalkthroughIndex(state.OnboardingStep);
@@ -7749,22 +7797,176 @@ private const string PreviewBootstrapScript = @"
 
         private static int ResolveWalkthroughIndex(int onboardingStep)
         {
-            if (onboardingStep <= 3)
+            if (onboardingStep <= 2)
             {
                 return 0;
             }
 
-            if (onboardingStep <= 4)
+            if (onboardingStep <= 3)
             {
                 return 1;
             }
 
-            if (onboardingStep <= 5)
+            return 2;
+        }
+
+        private static string ResolveOnboardingIntentKey(string? raw)
+        {
+            string normalized = (raw ?? string.Empty).Trim().ToLowerInvariant();
+            return normalized switch
             {
-                return 2;
+                "novel" => "Novel",
+                "short story" => "ShortStory",
+                "shortstory" => "ShortStory",
+                "non-fiction" => "NonFiction",
+                "non fiction" => "NonFiction",
+                "nonfiction" => "NonFiction",
+                "blog" => "Blog",
+                _ => "Other"
+            };
+        }
+
+        private static AiActionOption CreateRecommendedToolOption(WritingToolDefinition definition)
+        {
+            return new AiActionOption(
+                "custom_transform",
+                definition.DisplayName,
+                definition.PromptTemplate.UserTemplate,
+                false,
+                new Dictionary<string, object?>
+                {
+                    ["template"] = definition.PromptTemplate.UserTemplate,
+                    ["systemTemplate"] = definition.PromptTemplate.SystemTemplate,
+                    ["scope"] = "section",
+                    ["tone"] = "Neutral",
+                    ["length"] = "Same",
+                    ["strictTokens"] = false,
+                    ["recommendedToolId"] = definition.Id
+                },
+                definition.Description,
+                true,
+                definition.IsIntentRecommended,
+                definition.IsIntentRecommended ? "Recommended" : null);
+        }
+
+        private static string ResolveWritingToolsIntentKey(string? raw)
+        {
+            string normalized = (raw ?? string.Empty).Trim().ToLowerInvariant();
+            return normalized switch
+            {
+                "novel" => "Novel",
+                "short story" => "ShortStory",
+                "shortstory" => "ShortStory",
+                "non-fiction" => "NonFiction",
+                "non fiction" => "NonFiction",
+                "nonfiction" => "NonFiction",
+                "blog" => "Blog",
+                _ => "Other"
+            };
+        }
+
+        private static class PromptStrategyResolver
+        {
+            private const string WritingToolsCategory = "WritingTools";
+            private static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> IntentToolOrder =
+                new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["Novel"] = new[] { "novel.continue_scene", "novel.deepen_character", "novel.raise_stakes" },
+                    ["ShortStory"] = new[] { "short_story.tighten_prose", "short_story.sharpen_ending", "short_story.heighten_theme" },
+                    ["NonFiction"] = new[] { "non_fiction.clarify_simplify", "non_fiction.strengthen_argument", "non_fiction.add_structure" },
+                    ["Blog"] = new[] { "blog.improve_hook", "blog.improve_readability", "blog.generate_headlines" },
+                    ["Other"] = new[] { "other.improve_flow", "other.expand_idea", "other.summarize_clearly" }
+                };
+
+            private static readonly IReadOnlyDictionary<string, WritingToolDefinition> Registry =
+                new Dictionary<string, WritingToolDefinition>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["novel.continue_scene"] = Create("novel.continue_scene", "Continue Scene", "Continue the scene while preserving POV and momentum.", "You are a fiction writing assistant focused on scene-level craft and continuity.", "Write ONLY the next paragraph that should follow this scene context. Do NOT repeat, paraphrase, or recap any existing text from context. Do NOT include any preamble, labels, or explanation. Return exactly one new paragraph only.\n\nContext:\n{context}"),
+                    ["novel.deepen_character"] = Create("novel.deepen_character", "Deepen Character", "Increase character motivation and internal conflict signals.", "You are a fiction writing assistant focused on character depth and emotional clarity.", "Revise this section to deepen the main character's motivation and inner conflict using concrete cues. Context:\n{context}"),
+                    ["novel.raise_stakes"] = Create("novel.raise_stakes", "Raise Stakes", "Increase urgency and consequences while preserving events.", "You are a fiction writing assistant focused on narrative stakes and tension.", "Revise this section to raise narrative stakes with clearer consequences and urgency while preserving events. Context:\n{context}"),
+                    ["short_story.tighten_prose"] = Create("short_story.tighten_prose", "Tighten Prose", "Compress language while keeping tone and intent.", "You are a short-story writing assistant focused on economy and precision.", "Tighten this section by removing filler, sharpening verbs, and keeping the same meaning and tone. Context:\n{context}"),
+                    ["short_story.sharpen_ending"] = Create("short_story.sharpen_ending", "Sharpen Ending", "Strengthen the final beat and emotional impact.", "You are a short-story writing assistant focused on strong endings and resonance.", "Revise this section to sharpen ending momentum and leave a stronger final emotional beat. Context:\n{context}"),
+                    ["short_story.heighten_theme"] = Create("short_story.heighten_theme", "Heighten Theme", "Make thematic through-lines clearer in concrete prose.", "You are a short-story writing assistant focused on thematic clarity through scene detail.", "Revise this section to make the core theme more visible through concrete phrasing, not exposition. Context:\n{context}"),
+                    ["non_fiction.clarify_simplify"] = Create("non_fiction.clarify_simplify", "Clarify & Simplify", "Improve clarity with concise, plain language.", "You are a non-fiction writing assistant focused on clarity and reader comprehension.", "Rewrite this section for clarity and simplicity with short precise sentences and plain language. Context:\n{context}"),
+                    ["non_fiction.strengthen_argument"] = Create("non_fiction.strengthen_argument", "Strengthen Argument", "Improve logical flow and evidence framing.", "You are a non-fiction writing assistant focused on argument quality and structure.", "Revise this section to strengthen logic with clearer claims, support, and transitions. Context:\n{context}"),
+                    ["non_fiction.add_structure"] = Create("non_fiction.add_structure", "Add Structure", "Improve organization using clear signposting.", "You are a non-fiction writing assistant focused on structure and readability.", "Re-structure this section with a clearer flow using concise headings or signpost transitions. Context:\n{context}"),
+                    ["blog.improve_hook"] = Create("blog.improve_hook", "Improve Hook", "Create a stronger opening for audience attention.", "You are a blog writing assistant focused on engagement and retention.", "Rewrite the opening to create a stronger hook in 1-3 sentences while preserving topic and voice. Context:\n{context}"),
+                    ["blog.improve_readability"] = Create("blog.improve_readability", "Improve Readability", "Make content easier to scan and read online.", "You are a blog writing assistant focused on scannability and readability.", "Revise this section for web readability with shorter sentences and scannable phrasing. Context:\n{context}"),
+                    ["blog.generate_headlines"] = Create("blog.generate_headlines", "Generate Headlines", "Generate title ideas tailored to topic and audience.", "You are a blog writing assistant focused on compelling headline options.", "Generate 5 concise headline options tailored to this section's topic and audience. Context:\n{context}"),
+                    ["other.improve_flow"] = Create("other.improve_flow", "Improve Flow", "Smooth transitions and coherence across ideas.", "You are a writing assistant focused on clarity, flow, and coherence.", "Revise this section to improve flow between ideas and sentence transitions. Context:\n{context}"),
+                    ["other.expand_idea"] = Create("other.expand_idea", "Expand Idea", "Develop the strongest point with concise detail.", "You are a writing assistant focused on developing ideas with concise support.", "Expand the strongest idea in this section with one concise supporting paragraph. Context:\n{context}"),
+                    ["other.summarize_clearly"] = Create("other.summarize_clearly", "Summarize Clearly", "Provide concise summaries with clear wording.", "You are a writing assistant focused on concise, accurate summaries.", "Produce a clear concise summary of this section in 2-3 sentences. Context:\n{context}")
+                };
+
+            public static IReadOnlyList<WritingToolDefinition> GetTopWritingToolsForIntent(string? intent)
+            {
+                string intentKey = ResolveWritingToolsIntentKey(intent);
+                if (!IntentToolOrder.TryGetValue(intentKey, out IReadOnlyList<string>? toolIds))
+                {
+                    toolIds = IntentToolOrder["Other"];
+                }
+
+                List<WritingToolDefinition> result = new(toolIds.Count);
+                foreach (string id in toolIds)
+                {
+                    if (Registry.TryGetValue(id, out WritingToolDefinition? definition))
+                    {
+                        result.Add(definition);
+                    }
+                }
+
+                return result;
             }
 
-            return 3;
+            private static WritingToolDefinition Create(
+                string id,
+                string displayName,
+                string description,
+                string systemTemplate,
+                string userTemplate)
+            {
+                return new WritingToolDefinition(
+                    id,
+                    displayName,
+                    description,
+                    new WritingToolPromptTemplate(systemTemplate, userTemplate),
+                    WritingToolsCategory,
+                    true);
+            }
+        }
+
+        private static IReadOnlyList<OnboardingWalkthroughTip> BuildOnboardingWalkthroughTips(string intentKey)
+        {
+            (string welcome, string structure, string coach) = intentKey switch
+            {
+                "Novel" => (
+                    "Welcome — let's start your novel.",
+                    "We created Act I with Scene 1 so you can begin drafting right away.",
+                    "Try Continue Scene or Deepen Character in Writing tools."),
+                "ShortStory" => (
+                    "Welcome — let's start your short story.",
+                    "We created a Draft with Scene 1 and an Ending Notes section for your closing idea.",
+                    "Try Tighten Prose to refine your opening."),
+                "NonFiction" => (
+                    "Welcome — let's start your non-fiction draft.",
+                    "We created Chapter 1 with Scene 1 and a Research section for source notes.",
+                    "Try Clarify & Simplify to tighten your explanation."),
+                "Blog" => (
+                    "Welcome — let's start your blog post.",
+                    "We created a Draft with Scene 1 plus a Headline Ideas section.",
+                    "Try Improve Hook, then Generate Headlines."),
+                _ => (
+                    "Welcome — let's start writing.",
+                    "We created a clean Draft with Scene 1 so you can jump in quickly.",
+                    "Try Improve Flow to explore your direction.")
+            };
+
+            return new List<OnboardingWalkthroughTip>
+            {
+                new(3, "Welcome", welcome, "#onboarding-editor-scene", false),
+                new(4, "Project structure", structure, "#onboarding-project-structure", false),
+                new(5, "AI Coach example", coach, "#onboarding-tab-ai", true)
+            };
         }
 
         private async Task EnsureWalkthroughContextAsync()
@@ -7773,17 +7975,6 @@ private const string PreviewBootstrapScript = @"
             if (string.Equals(tip.TargetSelector, "#onboarding-tab-ai", StringComparison.Ordinal))
             {
                 await SetContextTabAsync(ContextTab.Ai);
-            }
-            else if (string.Equals(tip.TargetSelector, "#onboarding-tab-continuity", StringComparison.Ordinal))
-            {
-                if (CanShowContinuityCoach)
-                {
-                    await SetContextTabAsync(ContextTab.Continuity);
-                }
-                else
-                {
-                    await SetContextTabAsync(ContextTab.Quality);
-                }
             }
         }
 
@@ -8264,7 +8455,8 @@ private const string PreviewBootstrapScript = @"
                     action.RequiresSelection,
                     _activeSection!.Id,
                     _activePage?.Id,
-                    context.SelectionSnapshot));
+                    context.SelectionSnapshot,
+                    ResolveActionScope(action)));
             _pendingDetailsExpanded = false;
             await LoadAiHistoryAsync();
             await InvokeAsync(StateHasChanged);
@@ -8678,17 +8870,41 @@ private const string PreviewBootstrapScript = @"
             }
 
             string? beforeContent = _pageEditor is null ? null : await _pageEditor.GetContentAsync();
-            bool appendParagraph = string.Equals(
+            bool appendAtEnd = string.Equals(
                 pending.ActionKey,
                 "propose.next-paragraph",
-                StringComparison.OrdinalIgnoreCase);
-            string proposedText = appendParagraph
+                StringComparison.OrdinalIgnoreCase)
+                || pending.Context?.AppendAtEnd == true;
+            string applyMode = ResolveAiApplyMode(
+                pending.Context?.Scope,
+                pending.ActionKey,
+                appendAtEnd);
+            string proposedText = appendAtEnd
                 ? NormalizeSingleParagraph(pending.ProposedText)
                 : pending.ProposedText;
 
-            if (appendParagraph)
+            if (string.Equals(applyMode, "section", StringComparison.OrdinalIgnoreCase))
             {
-                await InvokePageCommandAsync("appendParagraph", proposedText);
+                string sectionPlainText = await GetCurrentAiPlainTextAsync();
+                await InvokePageCommandAsync("replaceTextRange", 0, sectionPlainText.Length, proposedText);
+            }
+            else if (string.Equals(applyMode, "cursor", StringComparison.OrdinalIgnoreCase))
+            {
+                string contextText = pending.Context?.ContextText ?? await GetCurrentAiPlainTextAsync();
+                if (appendAtEnd)
+                {
+                    proposedText = TrimLeadingEchoFromGeneratedParagraph(proposedText, contextText);
+                    if (string.IsNullOrWhiteSpace(proposedText))
+                    {
+                        proposedText = NormalizeSingleParagraph(pending.ProposedText);
+                    }
+
+                    await InvokePageCommandAsync("appendParagraph", proposedText);
+                }
+                else
+                {
+                    await InvokePageCommandAsync("replaceSelection", proposedText);
+                }
             }
             else if (pending.Context?.RequiresSelection == true && pending.Context.SelectionSnapshot is not null)
             {
@@ -9605,16 +9821,45 @@ private const string PreviewBootstrapScript = @"
                 Logger.LogWarning(ex, "AI actions load failed.");
             }
 
+            string writingIntent = "Other";
+            try
+            {
+                await OnboardingStateStore.RefreshAsync();
+                writingIntent = ResolveWritingToolsIntentKey(OnboardingStateStore.Current.PrimaryWritingIntent);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogDebug(ex, "Onboarding intent resolution failed for writing tools.");
+            }
+
             _aiActions.Clear();
             if (_availableActionKeys.Count == 0)
             {
                 return;
             }
 
+            IReadOnlyList<WritingToolDefinition> recommendedDefinitions =
+                PromptStrategyResolver.GetTopWritingToolsForIntent(writingIntent);
+            List<AiActionOption> recommendedTools = recommendedDefinitions
+                .Select(CreateRecommendedToolOption)
+                .Where(tool => _availableActionKeys.Contains(tool.ActionKey))
+                .ToList();
+            foreach (AiActionOption tool in recommendedTools)
+            {
+                _aiActions.Add(tool);
+            }
+
             foreach (AiActionOption preset in _aiActionPresets)
             {
                 if (_availableActionKeys.Contains(preset.ActionKey))
                 {
+                    if (recommendedTools.Any(tool =>
+                        string.Equals(tool.ActionKey, preset.ActionKey, StringComparison.Ordinal)
+                        && string.Equals(tool.Label, preset.Label, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        continue;
+                    }
+
                     _aiActions.Add(preset);
                 }
             }
@@ -11288,6 +11533,51 @@ private const string PreviewBootstrapScript = @"
             return actionKey.EndsWith(".section", StringComparison.OrdinalIgnoreCase);
         }
 
+        private static string ResolveActionScope(AiActionOption action)
+        {
+            if (action.Parameters.TryGetValue("scope", out object? rawScope))
+            {
+                string? scope = rawScope?.ToString();
+                if (!string.IsNullOrWhiteSpace(scope))
+                {
+                    return scope.Trim().ToLowerInvariant();
+                }
+            }
+
+            if (action.RequiresSelection)
+            {
+                return "selection";
+            }
+
+            return IsSectionScopeAction(action.ActionKey) ? "section" : "selection";
+        }
+
+        public static string ResolveAiApplyMode(string? scope, string actionKey, bool appendAtEnd = false)
+        {
+            if (appendAtEnd)
+            {
+                return "cursor";
+            }
+
+            string normalizedScope = (scope ?? string.Empty).Trim().ToLowerInvariant();
+            if (string.Equals(normalizedScope, "section", StringComparison.Ordinal))
+            {
+                return "section";
+            }
+
+            if (string.Equals(normalizedScope, "selection", StringComparison.Ordinal))
+            {
+                return "selection";
+            }
+
+            if (string.Equals(normalizedScope, "cursor", StringComparison.Ordinal))
+            {
+                return "cursor";
+            }
+
+            return IsSectionScopeAction(actionKey) ? "section" : "selection";
+        }
+
         private async Task ScrollAnnotationIntoViewAsync(Guid annotationId)
         {
             string elementId = $"annotation-item-{annotationId}";
@@ -12364,6 +12654,47 @@ private const string PreviewBootstrapScript = @"
             return normalized.Trim();
         }
 
+        private static string TrimLeadingEchoFromGeneratedParagraph(string generatedParagraph, string contextText)
+        {
+            string candidate = NormalizeSingleParagraph(generatedParagraph);
+            if (string.IsNullOrWhiteSpace(candidate) || string.IsNullOrWhiteSpace(contextText))
+            {
+                return candidate;
+            }
+
+            string context = NormalizeSingleParagraph(contextText);
+            const int minOverlap = 80;
+            int maxOverlap = Math.Min(context.Length, candidate.Length);
+            for (int overlap = maxOverlap; overlap >= minOverlap; overlap--)
+            {
+                if (!context.EndsWith(candidate.Substring(0, overlap), StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                string trimmed = candidate.Substring(overlap).TrimStart();
+                return string.IsNullOrWhiteSpace(trimmed) ? candidate : trimmed;
+            }
+
+            return candidate;
+        }
+
+        private static bool IsAppendOnlyCustomTransform(AiActionOption action)
+        {
+            if (!string.Equals(action.ActionKey, "custom_transform", StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            if (action.Parameters.TryGetValue("recommendedToolId", out object? recommendedToolId)
+                && string.Equals(recommendedToolId?.ToString(), "novel.continue_scene", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return string.Equals(action.Label, "Continue Scene", StringComparison.OrdinalIgnoreCase);
+        }
+
         private static bool IsSupportedImageMimeType(string? mimeType)
         {
             return string.Equals(mimeType, "image/png", StringComparison.OrdinalIgnoreCase)
@@ -12404,7 +12735,21 @@ private const string PreviewBootstrapScript = @"
             bool RequiresSelection,
             Dictionary<string, object?> Parameters,
             string? Description = null,
-            bool IncludeInLists = true);
+            bool IncludeInLists = true,
+            bool IsRecommended = false,
+            string? RecommendationBadge = null);
+
+        private sealed record WritingToolPromptTemplate(
+            string SystemTemplate,
+            string UserTemplate);
+
+        private sealed record WritingToolDefinition(
+            string Id,
+            string DisplayName,
+            string Description,
+            WritingToolPromptTemplate PromptTemplate,
+            string Category,
+            bool IsIntentRecommended);
 
         private sealed record AiHistoryEntry(
             Guid Id,
@@ -12448,7 +12793,10 @@ private const string PreviewBootstrapScript = @"
             bool RequiresSelection,
             Guid SectionId,
             Guid? PageId,
-            AiSelectionSnapshot? SelectionSnapshot);
+            AiSelectionSnapshot? SelectionSnapshot,
+            string? Scope = null,
+            bool AppendAtEnd = false,
+            string? ContextText = null);
 
         private sealed record TranslationApplyOption(string Value, string Label);
 
@@ -12694,6 +13042,20 @@ private const string PreviewBootstrapScript = @"
             string Description,
             string? TargetSelector,
             bool ShowAiAction);
+
+        private enum CoachTipScope
+        {
+            WritingTools,
+            Story,
+            GenericWriting
+        }
+
+        private sealed record CoachTipCandidate(
+            CoachTipScope Scope,
+            CoachPrimaryAction PrimaryAction,
+            string PrimaryActionLabel,
+            string Why,
+            int Priority);
 
         private sealed record QualityProposalPreview(
             string Before,

@@ -94,6 +94,30 @@ namespace WriterApp.Tests
         }
 
         [Fact]
+        public void BuildRequest_DefaultsContextFromSectionTextOverride()
+        {
+            Document document = DocumentFactory.CreateNewDocument();
+            Guid sectionId = document.Chapters[0].Sections[0].SectionId;
+            CustomTransformAction action = new();
+
+            AiRequest request = action.BuildRequest(new AiActionInput(
+                document,
+                sectionId,
+                new TextRange(0, 0),
+                string.Empty,
+                "Custom transform",
+                new Dictionary<string, object?>
+                {
+                    ["template"] = "Context => {context}",
+                    ["section_text_override"] = "OVERRIDE CONTEXT",
+                    ["scope"] = "section"
+                }));
+
+            string instruction = Assert.IsType<string>(request.Inputs["instruction"]);
+            Assert.Contains("Context => OVERRIDE CONTEXT", instruction, StringComparison.Ordinal);
+        }
+
+        [Fact]
         public async Task ProposalApplyUndo_Works_ThroughCommandProcessor()
         {
             Document document = DocumentFactory.CreateNewDocument();

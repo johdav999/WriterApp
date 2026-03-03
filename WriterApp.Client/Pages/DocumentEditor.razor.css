@@ -2521,12 +2521,32 @@
 }
 
 .ai-actions-list button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
     padding: 6px 8px;
     border-radius: 10px;
     border: 1px solid #d0d0d0;
     background: var(--surface);
     text-align: left;
     cursor: pointer;
+    width: 100%;
+}
+
+.ai-action-label {
+    min-width: 0;
+}
+
+.ai-recommended-badge {
+    font-size: 0.68rem;
+    line-height: 1;
+    padding: 3px 6px;
+    border-radius: 999px;
+    border: 1px solid #bfdbfe;
+    background: #eff6ff;
+    color: #1d4ed8;
+    white-space: nowrap;
 }
 
 .ai-actions-list button:disabled {

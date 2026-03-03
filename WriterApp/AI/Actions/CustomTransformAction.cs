@@ -56,7 +56,9 @@ namespace WriterApp.AI.Actions
             string normalizedTemplate = NormalizeTemplate(template);
             ValidateTemplate(normalizedTemplate);
             bool strictTokens = GetOptionBool(input.Options, "strictTokens", false);
-            string expanded = ExpandTemplate(normalizedTemplate, input.Options, strictTokens);
+            Dictionary<string, object?> optionsWithDefaults =
+                BuildTemplateOptions(input.Options, sectionText, sourceText, input.SelectionText);
+            string expanded = ExpandTemplate(normalizedTemplate, optionsWithDefaults, strictTokens);
             string instruction =
                 $"{expanded}\n\nReturn only revised text. Preserve names, POV, facts, and paragraph breaks. Keep the same language as input. No markdown. No commentary.";
 
@@ -79,8 +81,8 @@ namespace WriterApp.AI.Actions
             Dictionary<string, object> inputs = new()
             {
                 ["instruction"] = instruction,
-                ["tone"] = GetOption(input.Options, "tone", "Neutral"),
-                ["length"] = GetOption(input.Options, "length", "Same"),
+                ["tone"] = GetOption(optionsWithDefaults, "tone", "Neutral"),
+                ["length"] = GetOption(optionsWithDefaults, "length", "Same"),
                 ["preserve_terms"] = true
             };
 
@@ -92,6 +94,37 @@ namespace WriterApp.AI.Actions
                 inputs,
                 new Dictionary<string, object>(),
                 new Dictionary<string, object>());
+        }
+
+        private static Dictionary<string, object?> BuildTemplateOptions(
+            Dictionary<string, object?>? inputOptions,
+            string sectionText,
+            string sourceText,
+            string selectionText)
+        {
+            Dictionary<string, object?> options = inputOptions is null
+                ? new Dictionary<string, object?>()
+                : new Dictionary<string, object?>(inputOptions);
+
+            string? explicitContext = GetOption(options, "context", null);
+            if (!string.IsNullOrWhiteSpace(explicitContext))
+            {
+                return options;
+            }
+
+            string? sectionOverride = GetOption(options, "section_text_override", null);
+            string? resolvedContext = FirstNonEmpty(
+                sectionOverride,
+                selectionText,
+                sourceText,
+                sectionText);
+
+            if (!string.IsNullOrWhiteSpace(resolvedContext))
+            {
+                options["context"] = resolvedContext;
+            }
+
+            return options;
         }
 
         public static string ExpandTemplate(string template, Dictionary<string, object?>? options, bool strictTokens = false)
@@ -238,6 +271,19 @@ namespace WriterApp.AI.Actions
             }
 
             return fallback;
+        }
+
+        private static string? FirstNonEmpty(params string?[] candidates)
+        {
+            foreach (string? candidate in candidates)
+            {
+                if (!string.IsNullOrWhiteSpace(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            return null;
         }
     }
 }
