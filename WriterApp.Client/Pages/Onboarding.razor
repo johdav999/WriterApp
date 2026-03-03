@@ -16,70 +16,41 @@
 <section class="onboarding-shell">
     <header class="onboarding-header">
         <h1>Onboarding</h1>
-        <p>Set up your workspace and start writing right away.</p>
-        <p>Step @_uiStep of 2</p>
+        <p>Choose what you are writing. We will set up your first project and open the editor.</p>
+        <p>Step 1 of 1</p>
     </header>
 
     <div class="onboarding-card">
-        @if (_uiStep == 0)
-        {
-            <div class="onboarding-field">
-                <p>Welcome to WriterApp. We will create a starter project for you.</p>
+        <div class="onboarding-field">
+            <label>What are you writing?</label>
+            <div class="onboarding-intent-grid" role="listbox" aria-label="Writing intent options">
+                @foreach (IntentOption option in _intentOptions)
+                {
+                    bool isSelected = string.Equals(_selectedIntent, option.Key, StringComparison.Ordinal);
+                    <button type="button"
+                            class="onboarding-intent-tile @(isSelected ? "is-selected" : string.Empty)"
+                            disabled="@_isBusy"
+                            aria-selected="@isSelected"
+                            aria-pressed="@isSelected"
+                            @onclick="() => SelectIntentAsync(option.Key)">
+                        <span class="intent-icon" aria-hidden="true">@option.Icon</span>
+                        <span class="intent-content">
+                            <span class="intent-title">@option.Label</span>
+                            <span class="intent-subtitle">@option.Subtitle</span>
+                        </span>
+                        <span class="intent-check" aria-hidden="true">&#10003;</span>
+                    </button>
+                }
             </div>
-            <div class="onboarding-actions">
-                <button type="button" class="primary" @onclick="StartAsync" disabled="@_isBusy">Start</button>
-            </div>
-        }
-        else if (_uiStep == 1)
-        {
-            <div class="onboarding-field">
-                <label>What are you writing?</label>
-                <div class="onboarding-intent-grid" role="listbox" aria-label="Writing intent options">
-                    @foreach (IntentOption option in _intentOptions)
-                    {
-                        bool isSelected = string.Equals(_selectedIntent, option.Key, StringComparison.Ordinal);
-                        <button type="button"
-                                class="onboarding-intent-tile @(isSelected ? "is-selected" : string.Empty)"
-                                disabled="@_isBusy"
-                                aria-selected="@isSelected"
-                                @onclick="() => SelectIntentAsync(option.Key)">
-                            <span class="intent-icon" aria-hidden="true">@option.Icon</span>
-                            <span class="intent-content">
-                                <span class="intent-title">@option.Label</span>
-                                <span class="intent-subtitle">@option.Subtitle</span>
-                            </span>
-                            <span class="intent-check" aria-hidden="true">✓</span>
-                        </button>
-                    }
-                </div>
-            </div>
-        }
-        else
-        {
-            <div class="onboarding-field">
-                <label for="onboarding-project-name">Project name</label>
-                <input id="onboarding-project-name"
-                       class="onboarding-input"
-                       @bind="_projectName"
-                       @bind:event="oninput"
-                       placeholder="My first project" />
-            </div>
-            <div class="onboarding-field">
-                <p>Template: @_selectedIntentLabel</p>
-            </div>
-            <div class="onboarding-actions">
-                <button type="button"
-                        class="primary"
-                        @onclick="CreateProjectAsync"
-                        disabled="@_isBusy">
-                    @(_isBusy ? "Creating..." : "Create my first project")
-                </button>
-            </div>
-        }
+        </div>
 
-        @if (!string.IsNullOrWhiteSpace(_status))
+        @if (_isBusy)
         {
-            <div class="onboarding-status">@_status</div>
+            <div class="onboarding-status is-info">Creating your project and opening the editor...</div>
+        }
+        else if (!string.IsNullOrWhiteSpace(_status))
+        {
+            <div class="onboarding-status @(_statusIsError ? "is-error" : "is-info")">@_status</div>
         }
     </div>
 </section>
@@ -88,9 +59,8 @@
     [SupplyParameterFromQuery(Name = "returnUrl")]
     public string? ReturnUrl { get; set; }
 
-    private string _projectName = "Untitled project";
-    private int _uiStep;
     private string? _status;
+    private bool _statusIsError;
     private bool _isBusy;
     private string _selectedIntent = "Other";
 
@@ -102,10 +72,6 @@
         new("Blog", "Blog", "Posts, essays, and web publishing", "📝"),
         new("Other", "Other", "Custom structure and flexible workflow", "✨")
     };
-
-    private string _selectedIntentLabel =>
-        _intentOptions.FirstOrDefault(item => string.Equals(item.Key, _selectedIntent, StringComparison.Ordinal))?.Label
-        ?? "Other";
 
     protected override async Task OnInitializedAsync()
     {
@@ -119,40 +85,11 @@
                 return;
             }
 
-            _selectedIntent = string.IsNullOrWhiteSpace(OnboardingStateStore.Current.PrimaryWritingIntent)
-                ? "Other"
-                : NormalizeIntent(OnboardingStateStore.Current.PrimaryWritingIntent!);
-            _uiStep = ResolveUiStep(OnboardingStateStore.Current.OnboardingStep, OnboardingStateStore.Current.PrimaryWritingIntent);
+            _selectedIntent = ResolveIntentKey(OnboardingStateStore.Current.PrimaryWritingIntent);
         }
         catch
         {
-            _uiStep = 0;
-        }
-    }
-
-    private async Task StartAsync()
-    {
-        if (_isBusy)
-        {
-            return;
-        }
-
-        _isBusy = true;
-        _status = null;
-        try
-        {
-            await OnboardingService.SetStepAsync(1);
-            await OnboardingStateStore.RefreshAsync();
-            _uiStep = 1;
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine(ex);
-            _status = "Could not continue onboarding right now. Please try again.";
-        }
-        finally
-        {
-            _isBusy = false;
+            _selectedIntent = "Other";
         }
     }
 
@@ -165,70 +102,41 @@
 
         _isBusy = true;
         _status = null;
-        try
-        {
-            _selectedIntent = NormalizeIntent(intent);
-            await OnboardingService.SetIntentAsync(_selectedIntent);
-            await OnboardingService.SetStepAsync(2);
-            await OnboardingStateStore.RefreshAsync();
-            _uiStep = 2;
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine(ex);
-            _status = "Could not save your writing intent. Please try again.";
-        }
-        finally
-        {
-            _isBusy = false;
-        }
-    }
-
-    private async Task CreateProjectAsync()
-    {
-        if (_isBusy)
-        {
-            return;
-        }
-
-        if (string.IsNullOrWhiteSpace(_projectName))
-        {
-            _status = "Project name is required.";
-            return;
-        }
-
-        _isBusy = true;
-        _status = null;
+        _statusIsError = false;
 
         try
         {
-            string projectName = _projectName.Trim();
-            ProjectCreateRequest request = new(projectName, null, null, null, null, null);
-            using HttpResponseMessage response = await Http.PostAsJsonAsync("/api/projects", request);
-            response.EnsureSuccessStatusCode();
+            string normalizedIntent = ResolveIntentKey(intent);
+            _selectedIntent = normalizedIntent;
 
-            ProjectDto? created = await response.Content.ReadFromJsonAsync<ProjectDto>();
-            if (created is null)
+            await OnboardingService.SetIntentAsync(normalizedIntent);
+            await OnboardingService.SetStepAsync(1);
+
+            (ProjectDto? project, Guid? firstSceneNodeId) = await CreateFirstProjectAsync(normalizedIntent);
+            if (project is null)
             {
-                _status = "Create project failed.";
+                _status = "Could not create your first project.";
+                _statusIsError = true;
                 return;
             }
 
-            Guid? firstSceneNodeId = await BuildInitialStructureAsync(created.Id, _selectedIntent);
-            if (!firstSceneNodeId.HasValue)
+            Guid? sceneNodeId = firstSceneNodeId ?? await TryGetFirstSceneIdAsync(project.Id);
+            if (!sceneNodeId.HasValue)
             {
-                firstSceneNodeId = await TryGetFirstSceneIdAsync(created.Id);
+                _status = "Project created, but opening the first scene failed.";
+                _statusIsError = true;
+                return;
             }
 
-            await OnboardingService.SetStepAsync(3);
+            await OnboardingService.SetStepAsync(2);
             try
             {
                 await OnboardingService.TrackEventAsync(
                     "onboarding_project_created",
                     new Dictionary<string, object?>
                     {
-                        ["projectId"] = created.Id.ToString(),
-                        ["intent"] = _selectedIntent
+                        ["projectId"] = project.Id.ToString(),
+                        ["intent"] = normalizedIntent
                     });
             }
             catch (Exception ex)
@@ -237,24 +145,35 @@
             }
 
             await OnboardingStateStore.RefreshAsync();
-
-            if (firstSceneNodeId.HasValue)
-            {
-                Navigation.NavigateTo($"projects/{created.Id}/scenes/{firstSceneNodeId.Value}", replace: true);
-                return;
-            }
-
-            Navigation.NavigateTo(ResolveFallbackRoute(created.Id), replace: true);
+            Navigation.NavigateTo($"projects/{project.Id}/scenes/{sceneNodeId.Value}", replace: true);
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine(ex);
-            _status = "We couldn't create your first project. Please try again.";
+            _status = "We couldn't set up onboarding right now. Please try again.";
+            _statusIsError = true;
         }
         finally
         {
             _isBusy = false;
         }
+    }
+
+    private async Task<(ProjectDto? Project, Guid? FirstSceneNodeId)> CreateFirstProjectAsync(string intent)
+    {
+        string projectName = GetDefaultProjectName(intent);
+        ProjectCreateRequest request = new(projectName, null, null, null, null, null);
+        using HttpResponseMessage response = await Http.PostAsJsonAsync("/api/projects", request);
+        response.EnsureSuccessStatusCode();
+
+        ProjectDto? created = await response.Content.ReadFromJsonAsync<ProjectDto>();
+        if (created is null)
+        {
+            return (null, null);
+        }
+
+        Guid? firstSceneNodeId = await BuildInitialStructureAsync(created.Id, intent);
+        return (created, firstSceneNodeId);
     }
 
     private async Task<Guid?> TryGetFirstSceneIdAsync(Guid projectId)
@@ -293,29 +212,19 @@
     private async Task<Guid?> BuildNovelStructureAsync(Guid projectId)
     {
         ProjectNodeDto? act1 = await CreateNodeAsync(projectId, null, "part", "Act I");
-        await CreateNodeAsync(projectId, null, "part", "Act II");
-        await CreateNodeAsync(projectId, null, "part", "Act III");
         if (act1 is null)
         {
             return null;
         }
 
-        ProjectNodeDto? chapter1 = await CreateNodeAsync(projectId, act1.Id, "chapter", "Chapter 1");
-        if (chapter1 is null)
-        {
-            return null;
-        }
-
-        ProjectNodeDto? scene1 = await CreateNodeAsync(projectId, chapter1.Id, "scene", "Scene 1");
+        ProjectNodeDto? scene1 = await CreateNodeAsync(projectId, act1.Id, "scene", "Scene 1");
         return scene1?.Id;
     }
 
     private async Task<Guid?> BuildBlogStructureAsync(Guid projectId)
     {
         ProjectNodeDto? draft = await CreateNodeAsync(projectId, null, "chapter", "Draft");
-        await CreateNodeAsync(projectId, null, "chapter", "Intro");
-        await CreateNodeAsync(projectId, null, "chapter", "Main");
-        await CreateNodeAsync(projectId, null, "chapter", "Conclusion");
+        await CreateNodeAsync(projectId, null, "chapter", "Headline Ideas");
         if (draft is null)
         {
             return null;
@@ -328,7 +237,7 @@
     private async Task<Guid?> BuildNonFictionStructureAsync(Guid projectId)
     {
         ProjectNodeDto? chapter1 = await CreateNodeAsync(projectId, null, "chapter", "Chapter 1");
-        await CreateNodeAsync(projectId, null, "chapter", "Notes");
+        await CreateNodeAsync(projectId, null, "chapter", "Research");
         if (chapter1 is null)
         {
             return null;
@@ -340,25 +249,26 @@
 
     private async Task<Guid?> BuildShortStoryStructureAsync(Guid projectId)
     {
-        ProjectNodeDto? section = await CreateNodeAsync(projectId, null, "chapter", "Section 1");
-        if (section is null)
+        ProjectNodeDto? draft = await CreateNodeAsync(projectId, null, "chapter", "Draft");
+        await CreateNodeAsync(projectId, null, "chapter", "Ending Notes");
+        if (draft is null)
         {
             return null;
         }
 
-        ProjectNodeDto? scene = await CreateNodeAsync(projectId, section.Id, "scene", "Scene 1");
+        ProjectNodeDto? scene = await CreateNodeAsync(projectId, draft.Id, "scene", "Scene 1");
         return scene?.Id;
     }
 
     private async Task<Guid?> BuildOtherStructureAsync(Guid projectId)
     {
-        ProjectNodeDto? section = await CreateNodeAsync(projectId, null, "chapter", "Section 1");
-        if (section is null)
+        ProjectNodeDto? draft = await CreateNodeAsync(projectId, null, "chapter", "Draft");
+        if (draft is null)
         {
             return null;
         }
 
-        ProjectNodeDto? scene = await CreateNodeAsync(projectId, section.Id, "scene", "Scene 1");
+        ProjectNodeDto? scene = await CreateNodeAsync(projectId, draft.Id, "scene", "Scene 1");
         return scene?.Id;
     }
 
@@ -386,21 +296,6 @@
             .FirstOrDefault();
     }
 
-    private static int ResolveUiStep(int onboardingStep, string? intent)
-    {
-        if (onboardingStep >= 2 || !string.IsNullOrWhiteSpace(intent))
-        {
-            return 2;
-        }
-
-        if (onboardingStep >= 1)
-        {
-            return 1;
-        }
-
-        return 0;
-    }
-
     private static string NormalizeIntent(string raw)
     {
         string normalized = (raw ?? string.Empty).Trim().ToLowerInvariant();
@@ -417,14 +312,29 @@
         };
     }
 
-    private string ResolveFallbackRoute(Guid projectId)
+    private static string GetDefaultProjectName(string intent)
     {
-        if (!string.IsNullOrWhiteSpace(ReturnUrl))
+        return NormalizeIntent(intent) switch
         {
-            return ReturnUrl!;
+            "Novel" => "My Novel",
+            "ShortStory" => "My Short Story",
+            "NonFiction" => "My Non-fiction Draft",
+            "Blog" => "My Blog Post",
+            _ => "My First Project"
+        };
+    }
+
+    private string ResolveIntentKey(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return "Other";
         }
 
-        return $"projects/{projectId}";
+        string normalized = NormalizeIntent(raw);
+        IntentOption? match = _intentOptions.FirstOrDefault(option =>
+            string.Equals(option.Key, normalized, StringComparison.Ordinal));
+        return match?.Key ?? "Other";
     }
 
     private sealed record IntentOption(string Key, string Label, string Subtitle, string Icon);
