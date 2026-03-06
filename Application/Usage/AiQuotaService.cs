@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using WriterApp.AI.Abstractions;
 using WriterApp.Application.Subscriptions;
 using WriterApp.Data;
@@ -22,15 +24,21 @@ namespace WriterApp.Application.Usage
         private readonly AppDbContext _dbContext;
         private readonly IUserEntitlementStore _userEntitlementStore;
         private readonly IClock _clock;
+        private readonly ILogger<AiQuotaService>? _logger;
+        private readonly IHttpContextAccessor? _httpContextAccessor;
 
         public AiQuotaService(
             AppDbContext dbContext,
             IUserEntitlementStore userEntitlementStore,
-            IClock clock)
+            IClock clock,
+            ILogger<AiQuotaService>? logger = null,
+            IHttpContextAccessor? httpContextAccessor = null)
         {
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _userEntitlementStore = userEntitlementStore ?? throw new ArgumentNullException(nameof(userEntitlementStore));
             _clock = clock ?? throw new ArgumentNullException(nameof(clock));
+            _logger = logger;
+            _httpContextAccessor = httpContextAccessor;
         }
 
         public async Task<AiQuotaDecision> EnsureAiAllowedAsync(string userId, int estimatedTokens, CancellationToken ct)
@@ -62,6 +70,7 @@ namespace WriterApp.Application.Usage
         public async Task<AiQuotaChargeResult> ChargeActualUsageAsync(string userId, AiRequest request, AiResult result, CancellationToken ct)
         {
             int chargedTokens = ResolveChargedTokens(request, result);
+            (string traceId, string correlationId) = ResolveTraceAndCorrelationIds();
             if (chargedTokens <= 0)
             {
                 UserEntitlement entitlement = await _userEntitlementStore.GetOrCreateAsync(userId, ct);
@@ -69,35 +78,45 @@ namespace WriterApp.Application.Usage
                 return new AiQuotaChargeResult(true, 0, ToSnapshot(entitlement), null, null, null);
             }
 
-            const int maxRetries = 3;
-            for (int attempt = 1; attempt <= maxRetries; attempt++)
+            try
             {
-                await using var transaction = await _dbContext.Database.BeginTransactionAsync(ct);
-                UserEntitlement entitlement = await _userEntitlementStore.GetOrCreateAsync(userId, ct);
-                await ResetWindowIfExpiredAsync(entitlement, ct);
+                AiQuotaChargeResult? chargeResult = null;
+                var strategy = _dbContext.Database.CreateExecutionStrategy();
 
-                AiQuotaSnapshot snapshot = ToSnapshot(entitlement);
-                string normalizedPlan = UserEntitlementDefaults.NormalizePlanKey(entitlement.PlanKey);
-                string normalizedStatus = NormalizeSubscriptionStatus(entitlement.SubscriptionStatus);
-                bool paidPlan = IsPaidPlan(normalizedPlan);
-                if (paidPlan && !string.Equals(normalizedStatus, "active", StringComparison.Ordinal))
+                // SQL Server retry strategy requires the explicit transaction to be created/executed inside ExecuteAsync.
+                await strategy.ExecuteAsync(async () =>
                 {
-                    await transaction.RollbackAsync(ct);
-                    AiAccessError inactiveError = BuildAccessError(snapshot, upgradeRequired: true);
-                    return new AiQuotaChargeResult(false, 0, snapshot, SubscriptionInactiveCode, SubscriptionInactiveMessage, inactiveError);
-                }
+                    const int maxOptimisticRetries = 3;
+                    for (int attempt = 1; attempt <= maxOptimisticRetries; attempt++)
+                    {
+                        await using var transaction = await _dbContext.Database.BeginTransactionAsync(ct);
+                        UserEntitlement entitlement = await _userEntitlementStore.GetOrCreateAsync(userId, ct);
+                        await ResetWindowIfExpiredAsync(entitlement, ct);
 
-                if (snapshot.Used + chargedTokens > snapshot.Budget)
-                {
-                    await transaction.RollbackAsync(ct);
-                    AiAccessError accessError = BuildAccessError(snapshot, upgradeRequired: true);
-                    return new AiQuotaChargeResult(false, 0, snapshot, QuotaExceededCode, QuotaExceededMessage, accessError);
-                }
+                        AiQuotaSnapshot snapshot = ToSnapshot(entitlement);
+                        string normalizedPlan = UserEntitlementDefaults.NormalizePlanKey(entitlement.PlanKey);
+                        string normalizedStatus = NormalizeSubscriptionStatus(entitlement.SubscriptionStatus);
+                        bool paidPlan = IsPaidPlan(normalizedPlan);
+                        if (paidPlan && !string.Equals(normalizedStatus, "active", StringComparison.Ordinal))
+                        {
+                            await transaction.RollbackAsync(ct);
+                            AiAccessError inactiveError = BuildAccessError(snapshot, upgradeRequired: true);
+                            chargeResult = new AiQuotaChargeResult(false, 0, snapshot, SubscriptionInactiveCode, SubscriptionInactiveMessage, inactiveError);
+                            return;
+                        }
 
-                int originalUsed = entitlement.AiTokensUsedThisPeriod;
-                DateTimeOffset originalPeriodStart = entitlement.PeriodStartUtc;
-                DateTimeOffset now = _clock.UtcNow;
-                int affectedRows = await _dbContext.Database.ExecuteSqlInterpolatedAsync($@"
+                        if (snapshot.Used + chargedTokens > snapshot.Budget)
+                        {
+                            await transaction.RollbackAsync(ct);
+                            AiAccessError accessError = BuildAccessError(snapshot, upgradeRequired: true);
+                            chargeResult = new AiQuotaChargeResult(false, 0, snapshot, QuotaExceededCode, QuotaExceededMessage, accessError);
+                            return;
+                        }
+
+                        int originalUsed = entitlement.AiTokensUsedThisPeriod;
+                        DateTimeOffset originalPeriodStart = entitlement.PeriodStartUtc;
+                        DateTimeOffset now = _clock.UtcNow;
+                        int affectedRows = await _dbContext.Database.ExecuteSqlInterpolatedAsync($@"
 UPDATE UserEntitlements
 SET AiTokensUsedThisPeriod = {originalUsed + chargedTokens},
     UpdatedUtc = {now}
@@ -105,20 +124,56 @@ WHERE UserId = {userId}
   AND AiTokensUsedThisPeriod = {originalUsed}
   AND PeriodStartUtc = {originalPeriodStart};", ct);
 
-                if (affectedRows > 0)
+                        if (affectedRows > 0)
+                        {
+                            await transaction.CommitAsync(ct);
+                            UserEntitlement updated = await _userEntitlementStore.GetOrCreateAsync(userId, ct);
+                            chargeResult = new AiQuotaChargeResult(true, chargedTokens, ToSnapshot(updated), null, null, null);
+                            return;
+                        }
+
+                        await transaction.RollbackAsync(ct);
+                    }
+
+                    UserEntitlement latest = await _userEntitlementStore.GetOrCreateAsync(userId, ct);
+                    AiQuotaSnapshot latestSnapshot = ToSnapshot(latest);
+                    AiAccessError retryError = BuildAccessError(latestSnapshot, upgradeRequired: true);
+                    chargeResult = new AiQuotaChargeResult(false, 0, latestSnapshot, QuotaExceededCode, QuotaExceededMessage, retryError);
+                });
+
+                if (chargeResult is null)
                 {
-                    await transaction.CommitAsync(ct);
-                    UserEntitlement updated = await _userEntitlementStore.GetOrCreateAsync(userId, ct);
-                    return new AiQuotaChargeResult(true, chargedTokens, ToSnapshot(updated), null, null, null);
+                    UserEntitlement latest = await _userEntitlementStore.GetOrCreateAsync(userId, ct);
+                    AiQuotaSnapshot latestSnapshot = ToSnapshot(latest);
+                    AiAccessError unexpectedError = BuildAccessError(latestSnapshot, upgradeRequired: true);
+                    chargeResult = new AiQuotaChargeResult(false, 0, latestSnapshot, QuotaExceededCode, QuotaExceededMessage, unexpectedError);
                 }
 
-                await transaction.RollbackAsync(ct);
-            }
+                if (chargeResult.Applied)
+                {
+                    _logger?.LogInformation(
+                        "AI quota charge succeeded. TraceId={TraceId}, CorrelationId={CorrelationId}, UserId={UserId}, ChargedTokens={ChargedTokens}, Used={Used}, Budget={Budget}",
+                        traceId,
+                        correlationId,
+                        userId,
+                        chargeResult.ChargedTokens,
+                        chargeResult.Snapshot.Used,
+                        chargeResult.Snapshot.Budget);
+                }
 
-            UserEntitlement latest = await _userEntitlementStore.GetOrCreateAsync(userId, ct);
-            AiQuotaSnapshot latestSnapshot = ToSnapshot(latest);
-            AiAccessError error = BuildAccessError(latestSnapshot, upgradeRequired: true);
-            return new AiQuotaChargeResult(false, 0, latestSnapshot, QuotaExceededCode, QuotaExceededMessage, error);
+                return chargeResult;
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError(
+                    ex,
+                    "AI quota charge failed. TraceId={TraceId}, CorrelationId={CorrelationId}, UserId={UserId}, ChargedTokens={ChargedTokens}",
+                    traceId,
+                    correlationId,
+                    userId,
+                    chargedTokens);
+                throw;
+            }
         }
 
         private async Task ResetWindowIfExpiredAsync(UserEntitlement entitlement, CancellationToken ct)
@@ -215,6 +270,14 @@ WHERE UserId = {userId}
                 snapshot.Budget,
                 snapshot.Used,
                 resetAt);
+        }
+
+        private (string TraceId, string CorrelationId) ResolveTraceAndCorrelationIds()
+        {
+            HttpContext? context = _httpContextAccessor?.HttpContext;
+            string traceId = context?.TraceIdentifier ?? string.Empty;
+            string correlationId = context?.Request?.Headers["X-Correlation-ID"].FirstOrDefault() ?? traceId;
+            return (traceId, correlationId);
         }
     }
 }

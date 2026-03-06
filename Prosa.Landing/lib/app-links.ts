@@ -1,5 +1,5 @@
 const DEFAULT_PROD_APP_URL =
-  "https://prosa-fgg2cxhbdja2hwee.swedencentral-01.azurewebsites.net"
+  "https://app.prosa-app.com"
 const DEFAULT_DEV_APP_URL = "http://localhost:5387"
 const DEFAULT_LOCAL_APP_PORT = "5387"
 const APP_URL_LOG_KEY = "__prosaLandingAppUrlLogged"
@@ -124,3 +124,4 @@ export const APP_LINKS = {
   startStandard: `${APP_URL}/start?plan=standard`,
   startPro: `${APP_URL}/start?plan=pro`,
 } as const
+

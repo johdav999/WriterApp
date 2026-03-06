@@ -14,9 +14,9 @@ using WriterApp.Data.Usage;
 
 namespace WriterApp.Data
 {
-    public sealed class AppDbContext : DbContext
+    public class AppDbContext : DbContext
     {
-        public AppDbContext(DbContextOptions<AppDbContext> options)
+        public AppDbContext(DbContextOptions options)
             : base(options)
         {
         }
@@ -67,6 +67,7 @@ namespace WriterApp.Data
         public DbSet<ExportTemplate> ExportTemplates => Set<ExportTemplate>();
         public DbSet<ExportPreset> ExportPresets => Set<ExportPreset>();
         public DbSet<ProjectExportSettings> ProjectExportSettings => Set<ProjectExportSettings>();
+        public DbSet<SearchIndexEntryRecord> SearchIndexEntries => Set<SearchIndexEntryRecord>();
 
         public override int SaveChanges()
         {
@@ -102,6 +103,10 @@ namespace WriterApp.Data
                 value => NormalizeUtc(value),
                 value => NormalizeUtc(value));
 
+            // SQL Server hardening:
+            // - Explicit precision avoids provider-dependent decimal defaults.
+            // - Explicit max lengths prevent nvarchar(max) for indexed/key columns.
+            // - Composite indexes align with frequent query predicates/sorts.
             builder.Entity<UserProfile>(entity =>
             {
                 entity.HasKey(profile => profile.UserId);
@@ -137,8 +142,9 @@ namespace WriterApp.Data
             {
                 entity.HasKey(audit => audit.Id);
                 entity.Property(audit => audit.OccurredAtUtc).IsRequired();
-                entity.Property(audit => audit.AdminUserId).IsRequired();
-                entity.Property(audit => audit.Action).IsRequired();
+                entity.Property(audit => audit.AdminUserId).HasMaxLength(128).IsRequired();
+                entity.Property(audit => audit.Action).HasMaxLength(128).IsRequired();
+                entity.Property(audit => audit.TargetUserId).HasMaxLength(128);
                 entity.HasIndex(audit => audit.OccurredAtUtc);
                 entity.HasIndex(audit => audit.AdminUserId);
                 entity.HasIndex(audit => audit.TargetUserId);
@@ -224,8 +230,8 @@ namespace WriterApp.Data
             builder.Entity<UserEvent>(entity =>
             {
                 entity.HasKey(item => item.Id);
-                entity.Property(item => item.UserId).IsRequired();
-                entity.Property(item => item.EventName).IsRequired();
+                entity.Property(item => item.UserId).HasMaxLength(128).IsRequired();
+                entity.Property(item => item.EventName).HasMaxLength(128).IsRequired();
                 entity.Property(item => item.MetadataJson);
                 entity.Property(item => item.CreatedUtc).IsRequired();
                 entity.HasIndex(item => item.UserId);
@@ -245,7 +251,7 @@ namespace WriterApp.Data
             {
                 entity.HasKey(document => document.Id);
                 entity.Property(document => document.ProjectId).IsRequired();
-                entity.Property(document => document.OwnerUserId).IsRequired();
+                entity.Property(document => document.OwnerUserId).HasMaxLength(128).IsRequired();
                 entity.Property(document => document.Title).IsRequired();
                 entity.Property(document => document.DocumentKind).IsRequired();
                 entity.Property(document => document.CreatedAt).IsRequired();
@@ -258,6 +264,7 @@ namespace WriterApp.Data
                     .HasConversion(nullableUtcDateTimeConverter);
                 entity.HasIndex(document => document.ProjectId);
                 entity.HasIndex(document => new { document.ProjectId, document.UpdatedAtUnixSeconds });
+                entity.HasIndex(document => new { document.OwnerUserId, document.UpdatedAtUnixSeconds });
                 entity.HasIndex(document => document.DocumentKind);
                 entity.HasIndex(document => new { document.ProjectId, document.DocumentKind })
                     .IsUnique()
@@ -281,7 +288,7 @@ namespace WriterApp.Data
             builder.Entity<ProjectRecord>(entity =>
             {
                 entity.HasKey(project => project.Id);
-                entity.Property(project => project.OwnerUserId).IsRequired();
+                entity.Property(project => project.OwnerUserId).HasMaxLength(128).IsRequired();
                 entity.Property(project => project.Title).IsRequired();
                 entity.Property(project => project.CreatedUtc).IsRequired();
                 entity.Property(project => project.UpdatedUtc).IsRequired();
@@ -482,7 +489,7 @@ namespace WriterApp.Data
                 entity.Property(issue => issue.DocumentId).IsRequired();
                 entity.Property(issue => issue.PageId).IsRequired();
                 entity.Property(issue => issue.Scope).IsRequired();
-                entity.Property(issue => issue.IssueKey).IsRequired();
+                entity.Property(issue => issue.IssueKey).HasMaxLength(128).IsRequired();
                 entity.Property(issue => issue.RuleId).IsRequired();
                 entity.Property(issue => issue.Kind).IsRequired();
                 entity.Property(issue => issue.Severity).IsRequired();
@@ -507,9 +514,9 @@ namespace WriterApp.Data
             builder.Entity<PageQualityIssueDismissalRecord>(entity =>
             {
                 entity.HasKey(dismissal => new { dismissal.UserId, dismissal.PageId, dismissal.IssueKey });
-                entity.Property(dismissal => dismissal.UserId).IsRequired();
+                entity.Property(dismissal => dismissal.UserId).HasMaxLength(128).IsRequired();
                 entity.Property(dismissal => dismissal.PageId).IsRequired();
-                entity.Property(dismissal => dismissal.IssueKey).IsRequired();
+                entity.Property(dismissal => dismissal.IssueKey).HasMaxLength(128).IsRequired();
                 entity.Property(dismissal => dismissal.DismissedAt).IsRequired();
                 entity.HasIndex(dismissal => dismissal.PageId);
                 entity.HasOne(dismissal => dismissal.Page)
@@ -632,7 +639,7 @@ namespace WriterApp.Data
                 entity.HasKey(item => item.Id);
                 entity.Property(item => item.SceneNodeId).IsRequired();
                 entity.Property(item => item.Scope).IsRequired();
-                entity.Property(item => item.IssueKey).IsRequired();
+                entity.Property(item => item.IssueKey).HasMaxLength(128).IsRequired();
                 entity.Property(item => item.RuleId).IsRequired();
                 entity.Property(item => item.Kind).IsRequired();
                 entity.Property(item => item.Severity).IsRequired();
@@ -670,7 +677,7 @@ namespace WriterApp.Data
             builder.Entity<OutlineTemplateRecord>(entity =>
             {
                 entity.HasKey(template => template.Id);
-                entity.Property(template => template.OwnerUserId).IsRequired();
+                entity.Property(template => template.OwnerUserId).HasMaxLength(128).IsRequired();
                 entity.Property(template => template.Name).IsRequired();
                 entity.Property(template => template.TemplateJson).IsRequired();
                 entity.Property(template => template.CreatedUtc).IsRequired();
@@ -716,7 +723,7 @@ namespace WriterApp.Data
                 entity.HasKey(entry => entry.Id);
                 entity.Property(entry => entry.DocumentId).IsRequired();
                 entity.Property(entry => entry.Term).IsRequired();
-                entity.Property(entry => entry.NormalizedTerm).IsRequired();
+                entity.Property(entry => entry.NormalizedTerm).HasMaxLength(256).IsRequired();
                 entity.Property(entry => entry.CreatedAt).IsRequired();
                 entity.Property(entry => entry.UpdatedAt).IsRequired();
                 entity.HasIndex(entry => entry.DocumentId);
@@ -730,8 +737,8 @@ namespace WriterApp.Data
             builder.Entity<AiActionHistoryEntryRecord>(entity =>
             {
                 entity.HasKey(entry => entry.Id);
-                entity.Property(entry => entry.OwnerUserId).IsRequired();
-                entity.Property(entry => entry.ActionKey).IsRequired();
+                entity.Property(entry => entry.OwnerUserId).HasMaxLength(128).IsRequired();
+                entity.Property(entry => entry.ActionKey).HasMaxLength(128).IsRequired();
                 entity.Property(entry => entry.RequestJson).IsRequired();
                 entity.Property(entry => entry.ResultJson).IsRequired();
                 entity.Property(entry => entry.CreatedAt).IsRequired();
@@ -744,7 +751,7 @@ namespace WriterApp.Data
             builder.Entity<AiActionAppliedEventRecord>(entity =>
             {
                 entity.HasKey(applied => applied.Id);
-                entity.Property(applied => applied.OwnerUserId).IsRequired();
+                entity.Property(applied => applied.OwnerUserId).HasMaxLength(128).IsRequired();
                 entity.Property(applied => applied.AppliedAt).IsRequired();
                 entity.Property(applied => applied.BeforeContent);
                 entity.Property(applied => applied.AfterContent);
@@ -761,9 +768,9 @@ namespace WriterApp.Data
             builder.Entity<PromptPresetRecord>(entity =>
             {
                 entity.HasKey(preset => preset.Id);
-                entity.Property(preset => preset.OwnerUserId).IsRequired();
+                entity.Property(preset => preset.OwnerUserId).HasMaxLength(128).IsRequired();
                 entity.Property(preset => preset.Name).IsRequired();
-                entity.Property(preset => preset.Kind).IsRequired();
+                entity.Property(preset => preset.Kind).HasMaxLength(64).IsRequired();
                 entity.Property(preset => preset.ParametersJson).IsRequired();
                 entity.Property(preset => preset.CreatedUtc).IsRequired();
                 entity.Property(preset => preset.UpdatedUtc).IsRequired();
@@ -796,9 +803,11 @@ namespace WriterApp.Data
             builder.Entity<ExportTemplate>(entity =>
             {
                 entity.HasKey(template => template.Id);
-                entity.Property(template => template.OwnerUserId).IsRequired();
+                entity.Property(template => template.OwnerUserId).HasMaxLength(128).IsRequired();
                 entity.Property(template => template.Name).IsRequired();
+                entity.Property(template => template.PresetKey).HasMaxLength(64);
                 entity.Property(template => template.FontFamily).IsRequired();
+                entity.Property(template => template.LineHeight).HasPrecision(5, 2);
                 entity.Property(template => template.CreatedAt).IsRequired();
                 entity.Property(template => template.UpdatedAt).IsRequired();
                 entity.HasIndex(template => template.OwnerUserId);
@@ -808,7 +817,7 @@ namespace WriterApp.Data
             builder.Entity<ExportPreset>(entity =>
             {
                 entity.HasKey(preset => preset.Id);
-                entity.Property(preset => preset.OwnerUserId).IsRequired();
+                entity.Property(preset => preset.OwnerUserId).HasMaxLength(128).IsRequired();
                 entity.Property(preset => preset.Name).IsRequired();
                 entity.Property(preset => preset.SettingsJson).IsRequired();
                 entity.Property(preset => preset.CreatedAt).IsRequired();
@@ -821,7 +830,7 @@ namespace WriterApp.Data
             builder.Entity<ProjectExportSettings>(entity =>
             {
                 entity.HasKey(settings => new { settings.DocumentId, settings.UserId });
-                entity.Property(settings => settings.UserId).IsRequired();
+                entity.Property(settings => settings.UserId).HasMaxLength(128).IsRequired();
                 entity.Property(settings => settings.UpdatedAt).IsRequired();
                 entity.HasIndex(settings => settings.UserId);
                 entity.HasOne<DocumentRecord>()
@@ -832,6 +841,24 @@ namespace WriterApp.Data
                     .WithMany()
                     .HasForeignKey(settings => settings.DefaultPresetId)
                     .OnDelete(DeleteBehavior.SetNull);
+            });
+
+            builder.Entity<SearchIndexEntryRecord>(entity =>
+            {
+                entity.ToTable("SearchIndexEntries");
+                entity.HasKey(entry => entry.Id);
+                entity.Property(entry => entry.EntityType).HasMaxLength(32).IsRequired();
+                entity.Property(entry => entry.EntityId).HasMaxLength(64).IsRequired();
+                entity.Property(entry => entry.DocumentId).HasMaxLength(64).IsRequired();
+                entity.Property(entry => entry.ProjectId).HasMaxLength(64).IsRequired();
+                entity.Property(entry => entry.SectionId).HasMaxLength(64);
+                entity.Property(entry => entry.PageId).HasMaxLength(64);
+                entity.Property(entry => entry.Title).IsRequired();
+                entity.Property(entry => entry.Content).IsRequired();
+                entity.Property(entry => entry.UpdatedAt).IsRequired();
+                entity.HasIndex(entry => new { entry.EntityType, entry.EntityId, entry.DocumentId }).IsUnique();
+                entity.HasIndex(entry => entry.DocumentId);
+                entity.HasIndex(entry => entry.ProjectId);
             });
 
             SeedSubscriptionData(builder);
@@ -989,5 +1016,19 @@ namespace WriterApp.Data
                 }
             );
         }
+    }
+
+    public sealed class SearchIndexEntryRecord
+    {
+        public long Id { get; set; }
+        public string EntityType { get; set; } = string.Empty;
+        public string EntityId { get; set; } = string.Empty;
+        public string DocumentId { get; set; } = string.Empty;
+        public string ProjectId { get; set; } = string.Empty;
+        public string? SectionId { get; set; }
+        public string? PageId { get; set; }
+        public string Title { get; set; } = string.Empty;
+        public string Content { get; set; } = string.Empty;
+        public string UpdatedAt { get; set; } = string.Empty;
     }
 }

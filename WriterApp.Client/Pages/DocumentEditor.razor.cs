@@ -8695,7 +8695,7 @@ private const string PreviewBootstrapScript = @"
                 string? problemType = GetJsonString(root, "type");
                 bool isEntitlementDenied =
                     string.Equals(code, "entitlement_denied", StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(problemType, "https://prosa.app/problems/entitlement-denied", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(problemType, "https://prosa-app.com/problems/entitlement-denied", StringComparison.OrdinalIgnoreCase)
                     || !string.IsNullOrWhiteSpace(GetJsonString(root, "featureKey"));
                 if (!isEntitlementDenied)
                 {
@@ -13110,6 +13110,7 @@ private const string PreviewBootstrapScript = @"
         }
     }
 }
+
 
 
 

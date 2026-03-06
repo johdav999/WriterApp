@@ -66,7 +66,7 @@
   - `NEXT_PUBLIC_APP_URL=http://localhost:5387`
 - If not set:
   - development defaults to local host URL with port
-  - production defaults to Azure host URL
+  - production defaults to https://app.prosa-app.com
 - Restart `npm run dev` in `Prosa.Landing` after env var changes.
 
 ## Stripe configuration contract
@@ -162,3 +162,4 @@ Use this to test billing webhook handling locally without deploying.
    - `stripe trigger customer.subscription.updated`
    - `stripe trigger invoice.paid`
    - `stripe trigger invoice.payment_failed`
+

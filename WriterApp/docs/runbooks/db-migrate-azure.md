@@ -20,7 +20,7 @@ Important:
 
 ## Prerequisites
 
-- App Service URL, for example: `https://<app-name>.azurewebsites.net`
+- App Service URL, for example: `https://app.prosa-app.com`
 - Tenant ID: `8acf7923-17e5-492d-a8c6-756ca23599af`
 - API audience (App ID URI): `api://ae53fb2e-6d24-4811-9fff-3d35165f46ac`
 - A user that can satisfy app-level admin authorization (see troubleshooting section for `401/403`)
@@ -61,7 +61,7 @@ if ($claims.aud -ne "api://ae53fb2e-6d24-4811-9fff-3d35165f46ac") {
 ## 2) Call migrate endpoint (PowerShell)
 
 ```powershell
-$appUrl = "https://<app-name>.azurewebsites.net"
+$appUrl = "https://app.prosa-app.com"
 $migrateKey = "<your-db-migrate-key>"  # if DB_MIGRATE_KEY is enabled in app settings
 
 $headers = @{
@@ -92,7 +92,7 @@ Expected JSON shape:
 Use `Invoke-WebRequest` with redirects disabled so you can quickly see if EasyAuth intercepted the request:
 
 ```powershell
-$appUrl = "https://<app-name>.azurewebsites.net"
+$appUrl = "https://app.prosa-app.com"
 $migrateKey = "<your-db-migrate-key>"
 $headers = @{
   Authorization      = "Bearer $token"
@@ -190,3 +190,4 @@ Also verify:
 - Confirm response has `success: true`.
 - Confirm `appliedNow` includes expected migration(s) (or empty if already up to date).
 - Re-run the previously failing workflow and confirm schema errors are gone.
+

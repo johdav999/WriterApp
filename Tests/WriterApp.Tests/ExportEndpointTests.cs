@@ -12,7 +12,6 @@ using Microsoft.Extensions.Logging.Abstractions;
 using System.Net.Http;
 using WriterApp.Application.Exporting;
 using WriterApp.Application.Security;
-using WriterApp.Application.Documents;
 using WriterApp.Controllers;
 using WriterApp.Data;
 using WriterApp.Data.Documents;
@@ -299,7 +298,7 @@ namespace WriterApp.Tests
             DocumentExportController controller = new(
                 context,
                 new StubUserIdResolver(),
-                new StubProjectSceneLinkingService(),
+                new StubOutlineOrderResolver(),
                 exportService,
                 configuration,
                 NullLogger<DocumentExportController>.Instance);
@@ -327,20 +326,13 @@ namespace WriterApp.Tests
                 throw new InvalidOperationException("Templates are not used for DOCX/EPUB exports.");
             }
         }
-
-        private sealed class StubProjectSceneLinkingService : IProjectSceneLinkingService
+        private sealed class StubOutlineOrderResolver : IOutlineOrderResolver
         {
-            public Task<DocumentRecord?> GetOrCreateManuscriptDocumentAsync(Guid projectId, string ownerUserId, CancellationToken ct)
-                => Task.FromResult<DocumentRecord?>(null);
-
-            public Task<SceneLinkResult?> EnsureSceneLinkedSectionAsync(Guid projectId, Guid sceneNodeId, string ownerUserId, CancellationToken ct)
-                => Task.FromResult<SceneLinkResult?>(null);
-
-            public Task<SceneLinkResult?> EnsureSceneLinkedSectionAsync(ProjectRecord project, ProjectNodeRecord sceneNode, string ownerUserId, CancellationToken ct)
-                => Task.FromResult<SceneLinkResult?>(null);
-
-            public Task<IReadOnlyList<ManuscriptSceneSectionItem>> GetManuscriptSceneSectionsAsync(Guid projectId, string ownerUserId, CancellationToken ct)
-                => Task.FromResult<IReadOnlyList<ManuscriptSceneSectionItem>>(Array.Empty<ManuscriptSceneSectionItem>());
+            public Task<OutlineSectionOrderResult> ResolveForManuscriptAsync(
+                Guid projectId,
+                Guid manuscriptDocumentId,
+                CancellationToken ct)
+                => Task.FromResult(new OutlineSectionOrderResult(Array.Empty<Guid>(), new Dictionary<Guid, string>()));
         }
 
         private sealed class StubHttpClientFactory : IHttpClientFactory
@@ -349,3 +341,5 @@ namespace WriterApp.Tests
         }
     }
 }
+
+
