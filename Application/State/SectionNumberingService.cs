@@ -9,18 +9,27 @@ namespace WriterApp.Application.State
     {
         public IReadOnlyDictionary<Guid, SectionNumberingInfo> BuildIndex(Document document)
         {
-            Dictionary<Guid, SectionNumberingInfo> results = new();
             if (document is null)
+            {
+                return new Dictionary<Guid, SectionNumberingInfo>();
+            }
+
+            IEnumerable<Section> ordered = document.Chapters
+                .OrderBy(chapter => chapter.Order)
+                .SelectMany(chapter => chapter.Sections.OrderBy(section => section.Order));
+            return BuildIndex(ordered);
+        }
+
+        public IReadOnlyDictionary<Guid, SectionNumberingInfo> BuildIndex(IEnumerable<Section> orderedSections)
+        {
+            Dictionary<Guid, SectionNumberingInfo> results = new();
+            if (orderedSections is null)
             {
                 return results;
             }
 
             int chapterNumber = 0;
-            IEnumerable<Section> ordered = document.Chapters
-                .OrderBy(chapter => chapter.Order)
-                .SelectMany(chapter => chapter.Sections.OrderBy(section => section.Order));
-
-            foreach (Section section in ordered)
+            foreach (Section section in orderedSections)
             {
                 if (section.Kind == SectionKind.Chapter
                     && section.IncludeInNumbering

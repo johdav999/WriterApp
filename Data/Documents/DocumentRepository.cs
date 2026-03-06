@@ -61,7 +61,7 @@ namespace WriterApp.Data.Documents
         public async Task<DocumentRecord> CreateAsync(DocumentRecord document, CancellationToken ct)
         {
             _dbContext.Documents.Add(document);
-            await SqliteRetryHelper.ExecuteAsync(() => _dbContext.SaveChangesAsync(ct), ct);
+            await DatabaseRetryHelper.ExecuteAsync(_dbContext, () => _dbContext.SaveChangesAsync(ct), ct);
             _logger.LogInformation("Created document {DocumentId} for user {UserId}.", document.Id, document.OwnerUserId);
             return document;
         }
@@ -86,7 +86,7 @@ namespace WriterApp.Data.Documents
             document.Title = nextTitle;
             document.UpdatedAt = DateTimeOffset.UtcNow;
             document.UpdatedAtUnixSeconds = document.UpdatedAt.ToUnixTimeSeconds();
-            await SqliteRetryHelper.ExecuteAsync(() => _dbContext.SaveChangesAsync(ct), ct);
+            await DatabaseRetryHelper.ExecuteAsync(_dbContext, () => _dbContext.SaveChangesAsync(ct), ct);
             return document;
         }
 

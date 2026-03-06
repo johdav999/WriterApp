@@ -20,7 +20,7 @@ namespace WriterApp.Tests
 
             Microsoft.AspNetCore.Mvc.ProblemDetails problem = EntitlementDeniedApiError.ToProblemDetails(ex);
 
-            Assert.Equal("https://prosa.app/problems/entitlement-denied", problem.Type);
+            Assert.Equal("https://prosa-app.com/problems/entitlement-denied", problem.Type);
             Assert.Equal("Upgrade required", problem.Title);
             Assert.Equal(402, problem.Status);
             Assert.Equal("Upgrade to enable Bible refresh.", problem.Detail);
@@ -29,3 +29,4 @@ namespace WriterApp.Tests
         }
     }
 }
+

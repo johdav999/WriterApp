@@ -69,7 +69,7 @@ namespace WriterApp.Data.Documents
         {
             _dbContext.Sections.Add(section);
             await TouchDocumentAsync(section.DocumentId, ct);
-            await SqliteRetryHelper.ExecuteAsync(() => _dbContext.SaveChangesAsync(ct), ct);
+            await DatabaseRetryHelper.ExecuteAsync(_dbContext, () => _dbContext.SaveChangesAsync(ct), ct);
             return section;
         }
 
@@ -113,7 +113,7 @@ namespace WriterApp.Data.Documents
 
             section.UpdatedAt = DateTimeOffset.UtcNow;
             await TouchDocumentAsync(section.DocumentId, ct);
-            await SqliteRetryHelper.ExecuteAsync(() => _dbContext.SaveChangesAsync(ct), ct);
+            await DatabaseRetryHelper.ExecuteAsync(_dbContext, () => _dbContext.SaveChangesAsync(ct), ct);
             return section;
         }
 
@@ -136,7 +136,7 @@ namespace WriterApp.Data.Documents
 
             _dbContext.Sections.Remove(section);
             await TouchDocumentAsync(section.DocumentId, ct);
-            await SqliteRetryHelper.ExecuteAsync(() => _dbContext.SaveChangesAsync(ct), ct);
+            await DatabaseRetryHelper.ExecuteAsync(_dbContext, () => _dbContext.SaveChangesAsync(ct), ct);
             return section;
         }
 

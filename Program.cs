@@ -16,6 +16,7 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Primitives;
+using Microsoft.Data.SqlClient;
 using Microsoft.Data.Sqlite;
 using System.IO;
 using System.Security;
@@ -103,11 +104,37 @@ if (useExternalIdAuth
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
-builder.Services.AddDbContext<AppDbContext>(options =>
+string databaseProvider = builder.Configuration["DatabaseProvider"]?.Trim() ?? "Sqlite";
+bool useSqlServerProvider = string.Equals(databaseProvider, "SqlServer", StringComparison.OrdinalIgnoreCase);
+bool useSqliteProvider = !useSqlServerProvider;
+
+if (useSqlServerProvider)
 {
-    string connectionString = ResolveSqliteConnectionString(builder.Configuration, builder.Environment);
-    options.UseSqlite(connectionString);
-});
+    string connectionString = ResolveSqlServerConnectionString(builder.Configuration)
+        ?? throw new InvalidOperationException(
+            "DatabaseProvider is set to SqlServer, but no SQL Server connection string was found. Set ConnectionStrings:SqlServer or DefaultConnection.");
+
+    builder.Services.AddDbContext<SqlServerMigrationsDbContext>(options =>
+    {
+        options.UseSqlServer(connectionString, sqlOptions =>
+        {
+            sqlOptions.EnableRetryOnFailure(
+                maxRetryCount: 5,
+                maxRetryDelay: TimeSpan.FromSeconds(10),
+                errorNumbersToAdd: null);
+        });
+    });
+
+    builder.Services.AddScoped<AppDbContext>(sp => sp.GetRequiredService<SqlServerMigrationsDbContext>());
+}
+else
+{
+    builder.Services.AddDbContext<AppDbContext>(options =>
+    {
+        string connectionString = ResolveSqliteConnectionString(builder.Configuration, builder.Environment);
+        options.UseSqlite(connectionString);
+    });
+}
 
 if (builder.Environment.IsDevelopment())
 {
@@ -245,6 +272,7 @@ builder.Services.AddScoped<WriterApp.Application.Documents.IQualityCheckService,
 builder.Services.AddScoped<WriterApp.Application.Documents.IProjectWordCountService, WriterApp.Application.Documents.ProjectWordCountService>();
 builder.Services.AddScoped<WriterApp.Application.Documents.IProjectGoalsService, WriterApp.Application.Documents.ProjectGoalsService>();
 builder.Services.AddScoped<WriterApp.Application.Documents.IProjectSceneLinkingService, WriterApp.Application.Documents.ProjectSceneLinkingService>();
+builder.Services.AddScoped<WriterApp.Application.Exporting.IOutlineOrderResolver, WriterApp.Application.Exporting.OutlineOrderResolver>();
 builder.Services.AddScoped<WriterApp.Application.Documents.ISceneContentBackfillService, WriterApp.Application.Documents.SceneContentBackfillService>();
 builder.Services.AddSingleton<WriterApp.Application.Commands.IStructureCommandProcessor, WriterApp.Application.Commands.StructureCommandProcessor>();
 builder.Services.AddSingleton<ISearchIndexBackfillQueue, SearchIndexBackfillQueue>();
@@ -397,52 +425,6 @@ if (!app.Environment.IsDevelopment())
     };
 }
 
-using (var scope = app.Services.CreateScope())
-{
-    var env = scope.ServiceProvider.GetRequiredService<IHostEnvironment>();
-    var logger = scope.ServiceProvider
-        .GetRequiredService<ILoggerFactory>()
-        .CreateLogger("StartupMigrations");
-
-    if (!env.IsDevelopment())
-    {
-        try
-        {
-            logger.LogInformation("Applying EF Core migrations at startup...");
-
-            var db = scope.ServiceProvider
-                .GetRequiredService<WriterApp.Data.AppDbContext>();
-
-            db.Database.Migrate();
-
-            if (db.Database.IsSqlite())
-            {
-                int updatedRows = db.Database.ExecuteSqlRaw(
-                    """
-                    UPDATE "Documents"
-                    SET "DeletedAtUtc" = STRFTIME('%Y-%m-%d %H:%M:%f', "DeletedAt")
-                    WHERE "DeletedAtUtc" IS NULL
-                      AND "DeletedAt" IS NOT NULL
-                      AND EXISTS (SELECT 1 FROM pragma_table_info('Documents') WHERE name = 'DeletedAt')
-                      AND EXISTS (SELECT 1 FROM pragma_table_info('Documents') WHERE name = 'DeletedAtUtc');
-                    """);
-
-                if (updatedRows > 0)
-                {
-                    logger.LogInformation("Backfilled DeletedAtUtc for {Count} document rows.", updatedRows);
-                }
-            }
-
-            logger.LogInformation("EF Core migrations applied successfully.");
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Failed to apply EF Core migrations at startup.");
-            throw; // fail fast in Azure if DB is broken
-        }
-    }
-}
-
 QualityRewriteOutputValidator.Configure(app.Services.GetRequiredService<IOptions<QualityRewriteValidationOptions>>().Value);
 
 AdminPolicyDiagnostics.Configure(app.Services.GetRequiredService<ILoggerFactory>());
@@ -511,30 +493,40 @@ using (IServiceScope scope = app.Services.CreateScope())
     var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
 
     LogRuntimeProbe(logger);
-    ProbeSqlite(logger);
 
     AppDbContext dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    if (dbContext.Database.IsSqlServer())
+    {
+        await WarmUpSqlServerConnectionAsync(dbContext, logger, CancellationToken.None);
+    }
+    if (dbContext.Database.IsSqlite())
+    {
+        ProbeSqlite(logger);
+    }
     LogSqliteConnectionDetails(dbContext, logger);
 
     bool diagnosticsDb =
         app.Environment.IsDevelopment()
         || app.Configuration.GetValue<bool?>("DIAGNOSTICS_DB") == true;
-    if (diagnosticsDb)
+    if (diagnosticsDb && dbContext.Database.IsSqlite())
     {
         LogSqliteTables(dbContext, logger, "pre-migrate");
     }
 
     LogSchemaHistoryMismatchWarning(dbContext, logger);
 
-    bool autoMigrate = app.Configuration.GetValue<bool?>("AUTO_MIGRATE") ?? true;
-    if (autoMigrate)
+    bool autoMigrateOnStartup =
+        app.Configuration.GetValue<bool?>("WriterApp:Database:AutoMigrateOnStartup")
+        ?? app.Configuration.GetValue<bool?>("AUTO_MIGRATE")
+        ?? false;
+    if (autoMigrateOnStartup)
     {
         await ApplyDatabaseMigrationsAsync(dbContext, logger, CancellationToken.None);
         logger.LogInformation("Migrations ok; schema up to date.");
     }
     else
     {
-        logger.LogWarning("AUTO_MIGRATE is disabled. Skipping Database.Migrate().");
+        logger.LogInformation("Database auto-migrate on startup is disabled. Skipping EF migrations.");
     }
 
     bool adminApiEnabled = app.Configuration.GetValue<bool?>("Admin:EnableAdminApi") ?? false;
@@ -550,7 +542,7 @@ using (IServiceScope scope = app.Services.CreateScope())
             string.Join(", ", pendingMigrations));
     }
 
-    if (diagnosticsDb)
+    if (diagnosticsDb && dbContext.Database.IsSqlite())
     {
         LogTablePresence(dbContext, logger, "PageVersions");
         LogTablePresence(dbContext, logger, "OutlineTemplates");
@@ -571,7 +563,7 @@ using (IServiceScope scope = app.Services.CreateScope())
         app.Configuration.GetValue<bool?>("Workflow:GoalsEnabled")
         ?? app.Configuration.GetValue<bool?>("WriterApp:Workflow:GoalsEnabled")
         ?? false;
-    if (goalsEnabled)
+    if (goalsEnabled && dbContext.Database.IsSqlite())
     {
         bool hasProjectGoals = SqliteTableExists(dbContext, "ProjectGoals");
         bool hasProjectProgressDaily = SqliteTableExists(dbContext, "ProjectProgressDaily");
@@ -609,7 +601,10 @@ using (IServiceScope scope = app.Services.CreateScope())
         }
     }
 
-    ApplySqlitePragmas(dbContext, logger);
+    if (dbContext.Database.IsSqlite())
+    {
+        ApplySqlitePragmas(dbContext, logger);
+    }
 
     bool runSceneContentBackfillOnStartup =
         app.Configuration.GetValue<bool?>("Workflow:SceneContentBackfillRunOnStartup")
@@ -867,7 +862,7 @@ app.Use(async (context, next) =>
             return;
         }
 
-        if (IsSqliteBusyException(ex))
+        if (useSqliteProvider && IsSqliteBusyException(ex))
         {
             logger.LogError(
                 ex,
@@ -1061,7 +1056,7 @@ app.MapGet("/api/admin/users", async (
         string? sort = null) =>
 {
     if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
-        || !AdminPlanOverrideAccess.IsAuthorized(context.User))
+        || !AdminPlanOverrideAccess.IsAuthorized(context.User, configuration))
     {
         return Results.NotFound();
     }
@@ -1097,7 +1092,7 @@ app.MapGet("/api/admin/users/{userId}", async (
         ILoggerFactory loggerFactory) =>
 {
     if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
-        || !AdminPlanOverrideAccess.IsAuthorized(context.User))
+        || !AdminPlanOverrideAccess.IsAuthorized(context.User, configuration))
     {
         return Results.NotFound();
     }
@@ -1123,7 +1118,7 @@ app.MapPost("/api/admin/users", async (
         ILoggerFactory loggerFactory) =>
 {
     if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
-        || !AdminPlanOverrideAccess.IsAuthorized(context.User))
+        || !AdminPlanOverrideAccess.IsAuthorized(context.User, configuration))
     {
         return Results.NotFound();
     }
@@ -1165,7 +1160,7 @@ app.MapPut("/api/admin/users/{userId}", async (
         ILoggerFactory loggerFactory) =>
 {
     if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
-        || !AdminPlanOverrideAccess.IsAuthorized(context.User))
+        || !AdminPlanOverrideAccess.IsAuthorized(context.User, configuration))
     {
         return Results.NotFound();
     }
@@ -1207,7 +1202,7 @@ app.MapDelete("/api/admin/users/{userId}", async (
         ILoggerFactory loggerFactory) =>
 {
     if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
-        || !AdminPlanOverrideAccess.IsAuthorized(context.User))
+        || !AdminPlanOverrideAccess.IsAuthorized(context.User, configuration))
     {
         return Results.NotFound();
     }
@@ -1251,7 +1246,7 @@ app.MapPost("/api/admin/users/{userId}/plan-override", async (
         ILoggerFactory loggerFactory) =>
 {
     if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
-        || !AdminPlanOverrideAccess.IsAuthorized(context.User))
+        || !AdminPlanOverrideAccess.IsAuthorized(context.User, configuration))
     {
         return Results.NotFound();
     }
@@ -1318,7 +1313,7 @@ app.MapPost("/api/admin/users/{userId}/stripe/sync", async (
         ILoggerFactory loggerFactory) =>
 {
     if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
-        || !AdminPlanOverrideAccess.IsAuthorized(context.User))
+        || !AdminPlanOverrideAccess.IsAuthorized(context.User, configuration))
     {
         return Results.NotFound();
     }
@@ -1359,7 +1354,7 @@ app.MapPost("/api/admin/users/{userId}/tokens/reset-period", async (
         ILoggerFactory loggerFactory) =>
 {
     if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
-        || !AdminPlanOverrideAccess.IsAuthorized(context.User))
+        || !AdminPlanOverrideAccess.IsAuthorized(context.User, configuration))
     {
         return Results.NotFound();
     }
@@ -1394,7 +1389,7 @@ app.MapPost("/api/admin/users/{userId}/tokens/adjust", async (
         ILoggerFactory loggerFactory) =>
 {
     if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
-        || !AdminPlanOverrideAccess.IsAuthorized(context.User))
+        || !AdminPlanOverrideAccess.IsAuthorized(context.User, configuration))
     {
         return Results.NotFound();
     }
@@ -1449,7 +1444,7 @@ app.MapGet("/api/admin/audit", async (
         DateTime? toUtc = null) =>
 {
     if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
-        || !AdminPlanOverrideAccess.IsAuthorized(context.User))
+        || !AdminPlanOverrideAccess.IsAuthorized(context.User, configuration))
     {
         return Results.NotFound();
     }
@@ -1485,7 +1480,7 @@ app.MapGet("/api/admin/users/export.csv", async (
         string? sort = null) =>
 {
     if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
-        || !AdminPlanOverrideAccess.IsAuthorized(context.User))
+        || !AdminPlanOverrideAccess.IsAuthorized(context.User, configuration))
     {
         return Results.NotFound();
     }
@@ -1831,100 +1826,134 @@ app.MapGet("/api/auth/me", async (
     ExternalIdentityClaims.UserProfileIdentity profileIdentity =
         ExternalIdentityClaims.MapToUserProfileIdentity(user.Claims, userId);
 
-    UserProfile? userProfile = await dbContext.UserProfiles
-        .FirstOrDefaultAsync(item => item.UserId == userId, ct);
-    bool createdProfile = false;
-    if (userProfile is null)
-    {
-        DateTime now = DateTime.UtcNow;
-        userProfile = new UserProfile
-        {
-            UserId = userId,
-            DisplayName = profileIdentity.DisplayName,
-            HasOnboarded = false,
-            CreatedUtc = now,
-            UpdatedUtc = now
-        };
-
-        dbContext.UserProfiles.Add(userProfile);
-        try
-        {
-            await dbContext.SaveChangesAsync(ct);
-            createdProfile = true;
-        }
-        catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
-        {
-            dbContext.Entry(userProfile).State = EntityState.Detached;
-            userProfile = await dbContext.UserProfiles
-                .FirstOrDefaultAsync(item => item.UserId == userId, ct);
-            createdProfile = false;
-        }
-    }
-    else
-    {
-        DateTime now = DateTime.UtcNow;
-        string? nextDisplayName = string.IsNullOrWhiteSpace(profileIdentity.DisplayName)
-            ? userProfile.DisplayName
-            : profileIdentity.DisplayName;
-        bool changed =
-            !string.Equals(userProfile.DisplayName, nextDisplayName, StringComparison.Ordinal)
-            || userProfile.UpdatedUtc != now;
-        if (changed)
-        {
-            userProfile.DisplayName = nextDisplayName;
-            userProfile.UpdatedUtc = now;
-            await dbContext.SaveChangesAsync(ct);
-        }
-    }
-
-    bool hadEntitlement = await dbContext.UserEntitlements
-        .AsNoTracking()
-        .AnyAsync(item => item.UserId == userId, ct);
-
     List<string> roles = user.FindAll(ClaimTypes.Role)
         .Select(c => c.Value)
         .Concat(user.FindAll("roles").Select(c => c.Value))
         .Distinct(StringComparer.OrdinalIgnoreCase)
         .ToList();
 
-    UserEntitlement entitlement = await userEntitlementStore.GetOrCreateAsync(userId, ct);
-
-    if (createdProfile || !hadEntitlement)
-    {
-        logger.LogInformation(
-            "Created new user records. UserId={UserId}, CreatedProfile={CreatedProfile}, CreatedEntitlement={CreatedEntitlement}, Email={Email}, DisplayName={DisplayName}, PlanKey={PlanKey}",
-            userId,
-            createdProfile,
-            !hadEntitlement,
-            profileIdentity.Email ?? string.Empty,
-            profileIdentity.DisplayName,
-            entitlement.PlanKey);
-    }
-    else
-    {
-        logger.LogInformation(
-            "Existing user login. UserId={UserId}, Email={Email}, DisplayName={DisplayName}, PlanKey={PlanKey}",
-            userId,
-            profileIdentity.Email ?? string.Empty,
-            profileIdentity.DisplayName,
-            entitlement.PlanKey);
-    }
-
-    return Results.Ok(new WriterApp.Application.Security.AuthMeDto
+    WriterApp.Application.Security.AuthMeDto minimalResponse = new()
     {
         IsAuthenticated = true,
         Name = profileIdentity.DisplayName,
         Email = profileIdentity.Email,
         UserId = userId,
         Roles = roles,
-        PlanKey = entitlement.PlanKey,
-        SubscriptionStatus = entitlement.SubscriptionStatus,
-        StripeCustomerId = entitlement.StripeCustomerId,
-        AiMonthlyTokenBudget = entitlement.AiMonthlyTokenBudget,
-        AiTokensUsedThisPeriod = entitlement.AiTokensUsedThisPeriod,
-        PeriodStartUtc = entitlement.PeriodStartUtc,
-        EntitlementUpdatedUtc = entitlement.UpdatedUtc
-    });
+        PlanKey = UserEntitlementDefaults.FreePlanKey,
+        SubscriptionStatus = "Unknown",
+        StripeCustomerId = null,
+        AiMonthlyTokenBudget = 0,
+        AiTokensUsedThisPeriod = 0,
+        PeriodStartUtc = DateTimeOffset.MinValue,
+        EntitlementUpdatedUtc = DateTimeOffset.MinValue
+    };
+
+    try
+    {
+        var strategy = dbContext.Database.CreateExecutionStrategy();
+        WriterApp.Application.Security.AuthMeDto? enrichedResponse = null;
+
+        await strategy.ExecuteAsync(async () =>
+        {
+            UserProfile? userProfile = await dbContext.UserProfiles
+                .FirstOrDefaultAsync(item => item.UserId == userId, ct);
+            bool createdProfile = false;
+            if (userProfile is null)
+            {
+                DateTime now = DateTime.UtcNow;
+                userProfile = new UserProfile
+                {
+                    UserId = userId,
+                    DisplayName = profileIdentity.DisplayName,
+                    HasOnboarded = false,
+                    CreatedUtc = now,
+                    UpdatedUtc = now
+                };
+
+                dbContext.UserProfiles.Add(userProfile);
+                try
+                {
+                    await dbContext.SaveChangesAsync(ct);
+                    createdProfile = true;
+                }
+                catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
+                {
+                    dbContext.Entry(userProfile).State = EntityState.Detached;
+                    userProfile = await dbContext.UserProfiles
+                        .FirstOrDefaultAsync(item => item.UserId == userId, ct);
+                    createdProfile = false;
+                }
+            }
+            else
+            {
+                DateTime now = DateTime.UtcNow;
+                string? nextDisplayName = string.IsNullOrWhiteSpace(profileIdentity.DisplayName)
+                    ? userProfile.DisplayName
+                    : profileIdentity.DisplayName;
+                bool changed =
+                    !string.Equals(userProfile.DisplayName, nextDisplayName, StringComparison.Ordinal)
+                    || userProfile.UpdatedUtc != now;
+                if (changed)
+                {
+                    userProfile.DisplayName = nextDisplayName;
+                    userProfile.UpdatedUtc = now;
+                    await dbContext.SaveChangesAsync(ct);
+                }
+            }
+
+            bool hadEntitlement = await dbContext.UserEntitlements
+                .AsNoTracking()
+                .AnyAsync(item => item.UserId == userId, ct);
+
+            UserEntitlement entitlement = await userEntitlementStore.GetOrCreateAsync(userId, ct);
+
+            if (createdProfile || !hadEntitlement)
+            {
+                logger.LogInformation(
+                    "Created new user records. UserId={UserId}, CreatedProfile={CreatedProfile}, CreatedEntitlement={CreatedEntitlement}, Email={Email}, DisplayName={DisplayName}, PlanKey={PlanKey}",
+                    userId,
+                    createdProfile,
+                    !hadEntitlement,
+                    profileIdentity.Email ?? string.Empty,
+                    profileIdentity.DisplayName,
+                    entitlement.PlanKey);
+            }
+            else
+            {
+                logger.LogInformation(
+                    "Existing user login. UserId={UserId}, Email={Email}, DisplayName={DisplayName}, PlanKey={PlanKey}",
+                    userId,
+                    profileIdentity.Email ?? string.Empty,
+                    profileIdentity.DisplayName,
+                    entitlement.PlanKey);
+            }
+
+            enrichedResponse = new WriterApp.Application.Security.AuthMeDto
+            {
+                IsAuthenticated = true,
+                Name = profileIdentity.DisplayName,
+                Email = profileIdentity.Email,
+                UserId = userId,
+                Roles = roles,
+                PlanKey = entitlement.PlanKey,
+                SubscriptionStatus = entitlement.SubscriptionStatus,
+                StripeCustomerId = entitlement.StripeCustomerId,
+                AiMonthlyTokenBudget = entitlement.AiMonthlyTokenBudget,
+                AiTokensUsedThisPeriod = entitlement.AiTokensUsedThisPeriod,
+                PeriodStartUtc = entitlement.PeriodStartUtc,
+                EntitlementUpdatedUtc = entitlement.UpdatedUtc
+            };
+        });
+
+        return Results.Ok(enrichedResponse ?? minimalResponse);
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning(
+            ex,
+            "Azure SQL connection failed during AuthMe. Likely cold start or transient failure. Returning minimal identity.");
+        return Results.Ok(minimalResponse);
+    }
 });
 
 app.MapControllers().RequireAuthorization();
@@ -2270,43 +2299,46 @@ static async Task<(string Provider, string Database, string[] PendingBefore, str
 
     bool projectsExists = false;
     int migrationsHistoryCount = 0;
-    try
+    if (dbContext.Database.IsSqlite())
     {
-        dbContext.Database.OpenConnection();
-        using DbCommand projectsCommand = dbContext.Database.GetDbConnection().CreateCommand();
-        projectsCommand.CommandText = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = $tableName LIMIT 1;";
-        DbParameter projectsParameter = projectsCommand.CreateParameter();
-        projectsParameter.ParameterName = "$tableName";
-        projectsParameter.Value = "Projects";
-        projectsCommand.Parameters.Add(projectsParameter);
-        object? projectsResult = projectsCommand.ExecuteScalar();
-        projectsExists = projectsResult is not null;
-
-        using DbCommand historyCommand = dbContext.Database.GetDbConnection().CreateCommand();
-        historyCommand.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '__EFMigrationsHistory';";
-        object? historyTableExistsResult = historyCommand.ExecuteScalar();
-        bool historyTableExists = historyTableExistsResult is long countLong && countLong > 0
-            || historyTableExistsResult is int countInt && countInt > 0;
-        if (historyTableExists)
+        try
         {
-            using DbCommand countCommand = dbContext.Database.GetDbConnection().CreateCommand();
-            countCommand.CommandText = "SELECT COUNT(*) FROM __EFMigrationsHistory;";
-            object? historyCountResult = countCommand.ExecuteScalar();
-            migrationsHistoryCount = historyCountResult switch
+            dbContext.Database.OpenConnection();
+            using DbCommand projectsCommand = dbContext.Database.GetDbConnection().CreateCommand();
+            projectsCommand.CommandText = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = $tableName LIMIT 1;";
+            DbParameter projectsParameter = projectsCommand.CreateParameter();
+            projectsParameter.ParameterName = "$tableName";
+            projectsParameter.Value = "Projects";
+            projectsCommand.Parameters.Add(projectsParameter);
+            object? projectsResult = projectsCommand.ExecuteScalar();
+            projectsExists = projectsResult is not null;
+
+            using DbCommand historyCommand = dbContext.Database.GetDbConnection().CreateCommand();
+            historyCommand.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '__EFMigrationsHistory';";
+            object? historyTableExistsResult = historyCommand.ExecuteScalar();
+            bool historyTableExists = historyTableExistsResult is long countLong && countLong > 0
+                || historyTableExistsResult is int countInt && countInt > 0;
+            if (historyTableExists)
             {
-                long value => (int)value,
-                int value => value,
-                _ => 0
-            };
+                using DbCommand countCommand = dbContext.Database.GetDbConnection().CreateCommand();
+                countCommand.CommandText = "SELECT COUNT(*) FROM __EFMigrationsHistory;";
+                object? historyCountResult = countCommand.ExecuteScalar();
+                migrationsHistoryCount = historyCountResult switch
+                {
+                    long value => (int)value,
+                    int value => value,
+                    _ => 0
+                };
+            }
         }
-    }
-    catch (Exception ex)
-    {
-        logger.LogWarning(ex, "Pre-migration SQLite schema diagnostics failed.");
-    }
-    finally
-    {
-        dbContext.Database.CloseConnection();
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Pre-migration SQLite schema diagnostics failed.");
+        }
+        finally
+        {
+            dbContext.Database.CloseConnection();
+        }
     }
 
     string[] pendingBefore = (await dbContext.Database.GetPendingMigrationsAsync(ct)).ToArray();
@@ -2387,6 +2419,11 @@ static string RedactConnectionString(string connectionString)
 
 static void LogTablePresence(AppDbContext dbContext, ILogger logger, string tableName)
 {
+    if (!dbContext.Database.IsSqlite())
+    {
+        return;
+    }
+
     try
     {
         dbContext.Database.OpenConnection();
@@ -2654,6 +2691,44 @@ static string ResolveSqliteConnectionString(IConfiguration configuration, IHostE
     return sqliteBuilder.ToString();
 }
 
+static string? ResolveSqlServerConnectionString(IConfiguration configuration)
+{
+    // Preferred key is ConnectionStrings:SqlServer, but allow DefaultConnection for Azure App Service compatibility.
+    string? rawConnectionString = configuration.GetConnectionString("SqlServer")
+        ?? configuration.GetConnectionString("DefaultConnection")
+        ?? configuration["DefaultConnection"]
+        ?? Environment.GetEnvironmentVariable("DefaultConnection");
+    if (string.IsNullOrWhiteSpace(rawConnectionString))
+    {
+        return rawConnectionString;
+    }
+
+    var sqlBuilder = new SqlConnectionStringBuilder(rawConnectionString)
+    {
+        ConnectTimeout = 60
+    };
+
+    return sqlBuilder.ToString();
+}
+
+
+static async Task WarmUpSqlServerConnectionAsync(AppDbContext dbContext, ILogger logger, CancellationToken ct)
+{
+    try
+    {
+        var strategy = dbContext.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
+        {
+            await dbContext.Database.ExecuteSqlRawAsync("SELECT 1;", ct);
+        });
+
+        logger.LogInformation("SQL warmup probe succeeded.");
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning(ex, "SQL warmup probe failed at startup. App will continue; retries happen per request.");
+    }
+}
 static string? ResolveAppIndexPath(string runtimeAppIndex, string sourceAppIndex)
 {
     if (File.Exists(runtimeAppIndex))
@@ -2730,3 +2805,11 @@ static async Task WriteApiProblemDetailsAsync(
     problem.Extensions["correlationId"] = correlationId;
     await context.Response.WriteAsJsonAsync(problem);
 }
+
+
+
+
+
+
+
+

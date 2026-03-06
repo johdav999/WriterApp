@@ -66,7 +66,7 @@
   - `NEXT_PUBLIC_APP_URL=http://localhost:5387`
 - If not set:
   - development defaults to local host URL with port
-  - production defaults to Azure host URL
+  - production defaults to https://app.prosa-app.com
 - Restart `npm run dev` in `Prosa.Landing` after env var changes.
 
 ## Stripe configuration contract
@@ -179,3 +179,4 @@ Use this to test billing webhook handling locally without deploying.
 2. Database path is typically `/home/site/data/writerapp.db`; the migration must be applied to that deployed file.
 3. After migration, verify logs show:
    - `Admin API migration check... PendingCount=0`
+

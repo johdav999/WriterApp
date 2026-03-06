@@ -33,7 +33,7 @@ namespace WriterApp.Application.Subscriptions
 
             ProblemDetails problem = new()
             {
-                Type = "https://prosa.app/problems/entitlement-denied",
+                Type = "https://prosa-app.com/problems/entitlement-denied",
                 Title = "Upgrade required",
                 Status = 402,
                 Detail = detail
@@ -52,3 +52,4 @@ namespace WriterApp.Application.Subscriptions
         }
     }
 }
+

@@ -44,6 +44,53 @@ namespace WriterApp.Tests
         }
 
         [Fact]
+        public void AdminApiAccess_BootstrapOidMatch_ReturnsTrue()
+        {
+            const string oid = "00000000-0000-0000-151c-3ba2d7110bfa";
+            IConfiguration configuration = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["BOOTSTRAP_ADMIN_ENABLED"] = "true",
+                    ["BOOTSTRAP_ADMIN_OID"] = oid
+                })
+                .Build();
+
+            ClaimsPrincipal principal = new(new ClaimsIdentity(
+                new[]
+                {
+                    new Claim("oid", oid)
+                },
+                authenticationType: "Test"));
+
+            bool allowed = AdminPlanOverrideAccess.IsAuthorized(principal, configuration);
+
+            Assert.True(allowed);
+        }
+
+        [Fact]
+        public void AdminApiAccess_BootstrapOidMismatch_ReturnsFalse()
+        {
+            IConfiguration configuration = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["BOOTSTRAP_ADMIN_ENABLED"] = "true",
+                    ["BOOTSTRAP_ADMIN_OID"] = "00000000-0000-0000-151c-3ba2d7110bfa"
+                })
+                .Build();
+
+            ClaimsPrincipal principal = new(new ClaimsIdentity(
+                new[]
+                {
+                    new Claim("oid", "00000000-0000-0000-1111-111111111111")
+                },
+                authenticationType: "Test"));
+
+            bool allowed = AdminPlanOverrideAccess.IsAuthorized(principal, configuration);
+
+            Assert.False(allowed);
+        }
+
+        [Fact]
         public async Task SetOverride_ToPro_RefreshesResolvedEntitlementsImmediately()
         {
             await using SqliteConnection connection = new("Data Source=:memory:");

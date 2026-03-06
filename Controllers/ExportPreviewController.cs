@@ -7,7 +7,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
-using WriterApp.Application.Documents;
 using WriterApp.Application.Exporting;
 using WriterApp.Application.Security;
 using WriterApp.Data;
@@ -24,7 +23,7 @@ namespace WriterApp.Controllers
     {
         private readonly AppDbContext _dbContext;
         private readonly IUserIdResolver _userIdResolver;
-        private readonly IProjectSceneLinkingService _projectSceneLinkingService;
+        private readonly IOutlineOrderResolver _outlineOrderResolver;
         private readonly ExportService _exportService;
         private readonly IExportTemplateResolver _templateResolver;
         private readonly ILogger<ExportPreviewController> _logger;
@@ -32,14 +31,14 @@ namespace WriterApp.Controllers
         public ExportPreviewController(
             AppDbContext dbContext,
             IUserIdResolver userIdResolver,
-            IProjectSceneLinkingService projectSceneLinkingService,
+            IOutlineOrderResolver outlineOrderResolver,
             ExportService exportService,
             IExportTemplateResolver templateResolver,
             ILogger<ExportPreviewController> logger)
         {
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
-            _projectSceneLinkingService = projectSceneLinkingService ?? throw new ArgumentNullException(nameof(projectSceneLinkingService));
+            _outlineOrderResolver = outlineOrderResolver ?? throw new ArgumentNullException(nameof(outlineOrderResolver));
             _exportService = exportService ?? throw new ArgumentNullException(nameof(exportService));
             _templateResolver = templateResolver ?? throw new ArgumentNullException(nameof(templateResolver));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -171,30 +170,39 @@ namespace WriterApp.Controllers
                 List<SectionRecord> allSections = await _dbContext.Sections
                     .AsNoTracking()
                     .Where(section => section.DocumentId == documentRecord.Id)
-                    .OrderBy(section => section.OrderIndex)
                     .ToListAsync(ct);
                 if (allSections.Count == 0)
                 {
                     return allSections;
                 }
 
-                IReadOnlyList<ManuscriptSceneSectionItem> sceneSections =
-                    await _projectSceneLinkingService.GetManuscriptSceneSectionsAsync(documentRecord.ProjectId, userId, ct);
-                Dictionary<Guid, string> outlineTitleBySectionId = sceneSections
-                    .Where(item => !string.IsNullOrWhiteSpace(item.SceneNode.Title))
-                    .GroupBy(item => item.Section.Id)
-                    .ToDictionary(group => group.Key, group => group.First().SceneNode.Title);
+                OutlineSectionOrderResult outlineOrder = await _outlineOrderResolver.ResolveForManuscriptAsync(
+                    documentRecord.ProjectId,
+                    documentRecord.Id,
+                    ct);
+                HashSet<Guid> orderedIds = outlineOrder.OrderedSectionIds.ToHashSet();
+                Dictionary<Guid, SectionRecord> sectionsById = allSections.ToDictionary(section => section.Id);
+                List<SectionRecord> orderedSections = outlineOrder.OrderedSectionIds
+                    .Where(sectionId => sectionsById.ContainsKey(sectionId))
+                    .Select(sectionId => sectionsById[sectionId])
+                    .ToList();
+                orderedSections.AddRange(
+                    allSections
+                        .Where(section => !orderedIds.Contains(section.Id))
+                        .OrderBy(section => section.OrderIndex));
 
-                foreach (SectionRecord section in allSections)
+                for (int index = 0; index < orderedSections.Count; index++)
                 {
-                    if (outlineTitleBySectionId.TryGetValue(section.Id, out string? outlineTitle)
+                    SectionRecord section = orderedSections[index];
+                    section.OrderIndex = index;
+                    if (outlineOrder.TitleBySectionId.TryGetValue(section.Id, out string? outlineTitle)
                         && !string.IsNullOrWhiteSpace(outlineTitle))
                     {
                         section.Title = outlineTitle.Trim();
                     }
                 }
 
-                return allSections;
+                return orderedSections;
             }
 
             IQueryable<SectionRecord> sectionQuery = _dbContext.Sections
