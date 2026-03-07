@@ -14,6 +14,8 @@
 @inject ILogger<Projects> Logger
 @inject OutlineTemplatesClient OutlineTemplatesClient
 @inject WriterApp.Client.State.CurrentDocumentStateService CurrentDocumentStateService
+@inject WriterApp.Client.State.CurrentSceneStateService CurrentSceneStateService
+@inject WriterApp.Client.State.CurrentProjectStateService CurrentProjectStateService
 @inject WriterApp.Client.Services.CoachRecommendationService CoachRecommendationService
 @implements IAsyncDisposable
 
@@ -790,6 +792,7 @@ else
         }
 
         _activeProject = tree.Project;
+        CurrentProjectStateService.SetCurrent(_activeProject.Id, _activeProject.Title);
         _projectNameDraft = _activeProject.Title;
         _projectNameOriginal = _activeProject.Title;
         _projectNameStatus = null;
@@ -811,6 +814,8 @@ else
         {
             _renameDraft = _selectedNode.Title;
         }
+
+        SyncCurrentSceneSelectionState();
 
         if (_goalsEnabled)
         {
@@ -1228,6 +1233,7 @@ else
         CloseNodeMenu();
         ProjectNodeDto? node = _selectedNode;
         _renameDraft = node?.Title ?? string.Empty;
+        SyncCurrentSceneSelectionState();
     }
 
     private void OnNodeRowKeyDown(KeyboardEventArgs args, Guid nodeId)
@@ -1737,6 +1743,7 @@ else
             UpdatedUtc = DateTimeOffset.UtcNow
         };
         _activeProject = optimistic;
+        CurrentProjectStateService.SetCurrent(optimistic.Id, optimistic.Title);
         if (projectIndex >= 0)
         {
             _projects[projectIndex] = optimistic;
@@ -1749,6 +1756,7 @@ else
             if (!response.IsSuccessStatusCode)
             {
                 _activeProject = snapshot;
+                CurrentProjectStateService.SetCurrent(snapshot.Id, snapshot.Title);
                 if (projectIndex >= 0)
                 {
                     _projects[projectIndex] = snapshot;
@@ -1765,6 +1773,7 @@ else
         catch (Exception ex)
         {
             _activeProject = snapshot;
+            CurrentProjectStateService.SetCurrent(snapshot.Id, snapshot.Title);
             if (projectIndex >= 0)
             {
                 _projects[projectIndex] = snapshot;
@@ -2652,6 +2661,34 @@ else
         await SaveResumeTargetAsync(_activeProject.Id, target);
         Navigation.NavigateTo(target);
         await Task.CompletedTask;
+    }
+
+    private void SyncCurrentSceneSelectionState()
+    {
+        if (_activeProject is null)
+        {
+            return;
+        }
+
+        if (CurrentSceneStateService.ProjectId == _activeProject.Id
+            && CurrentSceneStateService.SceneNodeId.HasValue)
+        {
+            ProjectNodeDto? activeScene = _nodes.FirstOrDefault(node =>
+                node.Id == CurrentSceneStateService.SceneNodeId.Value
+                && string.Equals(node.NodeType, "scene", StringComparison.OrdinalIgnoreCase));
+            if (activeScene is not null)
+            {
+                _selectedNodeId = activeScene.Id;
+                _renameDraft = activeScene.Title;
+                CurrentSceneStateService.SetCurrent(_activeProject.Id, activeScene.Id, activeScene.Title);
+                return;
+            }
+        }
+
+        if (_selectedNode is not null && string.Equals(_selectedNode.NodeType, "scene", StringComparison.OrdinalIgnoreCase))
+        {
+            CurrentSceneStateService.SetCurrent(_activeProject.Id, _selectedNode.Id, _selectedNode.Title);
+        }
     }
 
     private async Task ResumeActiveProjectAsync()

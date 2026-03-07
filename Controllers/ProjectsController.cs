@@ -1532,7 +1532,7 @@ namespace WriterApp.Controllers
                     .FirstOrDefaultAsync(ct);
             }
 
-            return Ok(new ProjectSceneOpenTargetDto(projectId, nodeId, documentId, sectionId));
+            return Ok(new ProjectSceneOpenTargetDto(projectId, nodeId, documentId, sectionId, node.Title));
         }
 
         private async Task EnsureSceneContentExistsAsync(ProjectRecord project, ProjectNodeRecord sceneNode, CancellationToken ct)

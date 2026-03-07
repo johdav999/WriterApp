@@ -238,7 +238,7 @@ namespace WriterApp.AI.Actions
 
             Dictionary<string, object> inputs = new()
             {
-                ["instruction"] = "Update character bible incrementally from changed sections.",
+                ["instruction"] = "Update character bible incrementally from changed sections. Return valid JSON only with no prose, markdown, or commentary.",
                 ["existing_bible_json"] = existingJson,
                 ["delta_sections_json"] = deltaJson,
                 ["full_rebuild"] = fullRebuild,

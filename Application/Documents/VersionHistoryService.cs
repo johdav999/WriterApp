@@ -10,29 +10,28 @@ using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using WriterApp.Application.State;
-using WriterApp.Application.Subscriptions;
 using WriterApp.Data;
 using WriterApp.Data.Documents;
 
 namespace WriterApp.Application.Documents
 {
-    public sealed class PageVersionService : IPageVersionService
+    public sealed class VersionHistoryService : IVersionHistoryService
     {
         private readonly AppDbContext _dbContext;
-        private readonly IEntitlementService _entitlementService;
-        private readonly ILogger<PageVersionService> _logger;
+        private readonly IVersionHistoryPolicyService _policyService;
+        private readonly ILogger<VersionHistoryService> _logger;
 
-        public PageVersionService(
+        public VersionHistoryService(
             AppDbContext dbContext,
-            IEntitlementService entitlementService,
-            ILogger<PageVersionService> logger)
+            IVersionHistoryPolicyService policyService,
+            ILogger<VersionHistoryService> logger)
         {
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
-            _entitlementService = entitlementService ?? throw new ArgumentNullException(nameof(entitlementService));
+            _policyService = policyService ?? throw new ArgumentNullException(nameof(policyService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
-        public async Task<PageVersionRecord?> CreateSnapshotAsync(
+        public async Task<PageVersionRecord?> CreateCheckpointAsync(
             string userId,
             PageRecord page,
             string content,
@@ -40,7 +39,8 @@ namespace WriterApp.Application.Documents
             bool allowDuplicate,
             CancellationToken ct)
         {
-            if (!await _entitlementService.HasAsync(userId, "history.enabled"))
+            VersionHistoryPolicy policy = await _policyService.GetPolicyAsync(userId);
+            if (!policy.Enabled)
             {
                 return null;
             }
@@ -53,9 +53,9 @@ namespace WriterApp.Application.Documents
                 if (latest is not null && string.Equals(latest.ContentTextHash, hash, StringComparison.Ordinal))
                 {
                     _logger.LogInformation(
-                        "PageVersion snapshot skipped: duplicate content PageId={PageId} Reason={Reason}",
+                        "Version history checkpoint skipped: duplicate content PageId={PageId} Reason={Reason}",
                         page.Id,
-                        reason ?? "autosnap");
+                        reason ?? "autosave");
                     return null;
                 }
             }
@@ -70,7 +70,7 @@ namespace WriterApp.Application.Documents
                 PageId = page.Id,
                 DocumentId = page.DocumentId,
                 CreatedAt = DateTimeOffset.UtcNow,
-                Reason = reason ?? "autosnap",
+                Reason = string.IsNullOrWhiteSpace(reason) ? "autosave" : reason.Trim(),
                 ContentCompressed = compressed,
                 ContentTextHash = hash,
                 SizeBytes = compressed.Length,
@@ -80,28 +80,29 @@ namespace WriterApp.Application.Documents
             _dbContext.PageVersions.Add(version);
             await _dbContext.SaveChangesAsync(ct);
             _logger.LogInformation(
-                "PageVersion saved PageId={PageId} DocumentId={DocumentId} Reason={Reason} SizeBytes={SizeBytes} WordCount={WordCount}",
+                "Version history checkpoint saved PageId={PageId} DocumentId={DocumentId} Reason={Reason} SizeBytes={SizeBytes} WordCount={WordCount}",
                 version.PageId,
                 version.DocumentId,
                 version.Reason,
                 version.SizeBytes,
                 version.WordCount);
 
-            await CleanupAsync(userId, page.Id, ct);
+            await PruneAsync(userId, page.Id, ct);
             return version;
         }
 
-        public async Task<PageVersionRecord?> CreateAutosnapshotIfDueAsync(
+        public async Task<PageVersionRecord?> CreateCheckpointIfDueAsync(
             string userId,
             PageRecord page,
             string content,
             TimeSpan minAge,
             CancellationToken ct)
         {
-            if (!await _entitlementService.HasAsync(userId, "history.enabled"))
+            VersionHistoryPolicy policy = await _policyService.GetPolicyAsync(userId);
+            if (!policy.Enabled)
             {
                 _logger.LogInformation(
-                    "PageVersion autosnap skipped: history disabled UserId={UserId} PageId={PageId}",
+                    "Version history checkpoint skipped: history disabled UserId={UserId} PageId={PageId}",
                     userId,
                     page.Id);
                 return null;
@@ -114,7 +115,7 @@ namespace WriterApp.Application.Documents
                 if (age < minAge)
                 {
                     _logger.LogInformation(
-                        "PageVersion autosnap skipped: minAge not met PageId={PageId} AgeSeconds={AgeSeconds} MinSeconds={MinSeconds}",
+                        "Version history checkpoint skipped: minAge not met PageId={PageId} AgeSeconds={AgeSeconds} MinSeconds={MinSeconds}",
                         page.Id,
                         Math.Round(age.TotalSeconds, 2),
                         Math.Round(minAge.TotalSeconds, 2));
@@ -125,13 +126,13 @@ namespace WriterApp.Application.Documents
                 if (string.Equals(latest.ContentTextHash, hash, StringComparison.Ordinal))
                 {
                     _logger.LogInformation(
-                        "PageVersion autosnap skipped: content unchanged PageId={PageId}",
+                        "Version history checkpoint skipped: content unchanged PageId={PageId}",
                         page.Id);
                     return null;
                 }
             }
 
-            return await CreateSnapshotAsync(userId, page, content ?? string.Empty, "autosnap", allowDuplicate: false, ct);
+            return await CreateCheckpointAsync(userId, page, content ?? string.Empty, "autosave", allowDuplicate: false, ct);
         }
 
         public async Task<IReadOnlyList<PageVersionRecord>> ListVersionsAsync(
@@ -139,6 +140,14 @@ namespace WriterApp.Application.Documents
             Guid pageId,
             CancellationToken ct)
         {
+            VersionHistoryPolicy policy = await _policyService.GetPolicyAsync(userId);
+            if (!policy.Enabled)
+            {
+                return Array.Empty<PageVersionRecord>();
+            }
+
+            await PruneAsync(userId, pageId, ct);
+
             List<PageVersionRecord> versions = await _dbContext.PageVersions
                 .AsNoTracking()
                 .Join(_dbContext.Documents.AsNoTracking(),
@@ -149,7 +158,6 @@ namespace WriterApp.Application.Documents
                 .Select(pair => pair.version)
                 .ToListAsync(ct);
 
-            // SQLite doesn't support ORDER BY on DateTimeOffset, so order in-memory.
             return versions
                 .OrderByDescending(version => version.CreatedAt)
                 .ToList();
@@ -160,13 +168,35 @@ namespace WriterApp.Application.Documents
             Guid versionId,
             CancellationToken ct)
         {
-            return await _dbContext.PageVersions
+            VersionHistoryPolicy policy = await _policyService.GetPolicyAsync(userId);
+            if (!policy.Enabled)
+            {
+                return null;
+            }
+
+            PageVersionRecord? version = await _dbContext.PageVersions
                 .Join(_dbContext.Documents,
                     version => version.DocumentId,
                     document => document.Id,
                     (version, document) => new { version, document })
                 .Where(pair => pair.version.Id == versionId && pair.document.OwnerUserId == userId)
                 .Select(pair => pair.version)
+                .FirstOrDefaultAsync(ct);
+            if (version is null)
+            {
+                return null;
+            }
+
+            await PruneAsync(userId, version.PageId, ct);
+
+            return await _dbContext.PageVersions
+                .AsNoTracking()
+                .Join(_dbContext.Documents.AsNoTracking(),
+                    item => item.DocumentId,
+                    document => document.Id,
+                    (item, document) => new { item, document })
+                .Where(pair => pair.item.Id == versionId && pair.document.OwnerUserId == userId)
+                .Select(pair => pair.item)
                 .FirstOrDefaultAsync(ct);
         }
 
@@ -184,58 +214,61 @@ namespace WriterApp.Application.Documents
             return Encoding.UTF8.GetString(output.ToArray());
         }
 
-        public async Task CleanupAsync(string userId, Guid pageId, CancellationToken ct)
+        public async Task PruneAsync(string userId, Guid pageId, CancellationToken ct)
         {
-            int? maxVersions = await _entitlementService.GetIntAsync(userId, "history.max_versions");
-            int? retentionDays = await _entitlementService.GetIntAsync(userId, "history.retention_days");
+            VersionHistoryPolicy policy = await _policyService.GetPolicyAsync(userId);
+            if (!policy.Enabled)
+            {
+                return;
+            }
+
+            int? maxVersions = policy.MaxVersions;
+            int? retentionDays = policy.RetentionDays;
 
             if (maxVersions is null && retentionDays is null)
             {
                 return;
             }
 
-            bool deleted = false;
             DateTimeOffset now = DateTimeOffset.UtcNow;
+            List<PageVersionRecord> pageVersions = await _dbContext.PageVersions
+                .Where(version => version.PageId == pageId)
+                .OrderByDescending(version => version.CreatedAt)
+                .ThenByDescending(version => version.Id)
+                .ToListAsync(ct);
+            if (pageVersions.Count == 0)
+            {
+                return;
+            }
+
+            HashSet<Guid> deleteIds = new();
 
             if (retentionDays.HasValue && retentionDays.Value > 0)
             {
                 DateTimeOffset cutoff = now.AddDays(-retentionDays.Value);
-                List<PageVersionRecord> expired = await _dbContext.PageVersions
-                    .Where(version => version.PageId == pageId && version.CreatedAt < cutoff)
-                    .ToListAsync(ct);
-                if (expired.Count > 0)
+                foreach (PageVersionRecord version in pageVersions)
                 {
-                    _dbContext.PageVersions.RemoveRange(expired);
-                    deleted = true;
+                    if (version.CreatedAt < cutoff)
+                    {
+                        deleteIds.Add(version.Id);
+                    }
                 }
             }
 
             if (maxVersions.HasValue && maxVersions.Value > 0)
             {
-                List<PageVersionRecord> pageVersions = await _dbContext.PageVersions
-                    .Where(version => version.PageId == pageId)
-                    .ToListAsync(ct);
-
-                List<Guid> overflowIds = pageVersions
-                    .OrderByDescending(version => version.CreatedAt)
+                foreach (PageVersionRecord overflow in pageVersions
+                    .Where(version => !deleteIds.Contains(version.Id))
                     .Skip(maxVersions.Value)
-                    .Select(version => version.Id)
-                    .ToList();
-                if (overflowIds.Count > 0)
+                    .ToList())
                 {
-                    List<PageVersionRecord> overflow = await _dbContext.PageVersions
-                        .Where(version => overflowIds.Contains(version.Id))
-                        .ToListAsync(ct);
-                    if (overflow.Count > 0)
-                    {
-                        _dbContext.PageVersions.RemoveRange(overflow);
-                        deleted = true;
-                    }
+                    deleteIds.Add(overflow.Id);
                 }
             }
 
-            if (deleted)
+            if (deleteIds.Count > 0)
             {
+                _dbContext.PageVersions.RemoveRange(pageVersions.Where(version => deleteIds.Contains(version.Id)));
                 await _dbContext.SaveChangesAsync(ct);
             }
         }
@@ -251,49 +284,36 @@ namespace WriterApp.Application.Documents
                 .FirstOrDefault();
         }
 
-        private static byte[] Compress(string content)
-        {
-            byte[] input = Encoding.UTF8.GetBytes(content ?? string.Empty);
-            using MemoryStream output = new();
-            using (GZipStream gzip = new(output, CompressionMode.Compress, leaveOpen: true))
-            {
-                gzip.Write(input, 0, input.Length);
-            }
-            return output.ToArray();
-        }
-
         private static string ComputeHash(string content)
         {
+            using SHA256 sha = SHA256.Create();
             byte[] bytes = Encoding.UTF8.GetBytes(content ?? string.Empty);
-            byte[] hash = SHA256.HashData(bytes);
+            byte[] hash = sha.ComputeHash(bytes);
             return Convert.ToHexString(hash);
         }
 
-        private static int CountWords(string text)
+        private static byte[] Compress(string content)
         {
-            if (string.IsNullOrWhiteSpace(text))
+            byte[] bytes = Encoding.UTF8.GetBytes(content ?? string.Empty);
+            using MemoryStream output = new();
+            using (GZipStream gzip = new(output, CompressionLevel.SmallestSize, leaveOpen: true))
+            {
+                gzip.Write(bytes, 0, bytes.Length);
+            }
+
+            return output.ToArray();
+        }
+
+        private static int CountWords(string plain)
+        {
+            if (string.IsNullOrWhiteSpace(plain))
             {
                 return 0;
             }
 
-            int count = 0;
-            bool inWord = false;
-            foreach (char ch in text)
-            {
-                if (char.IsLetterOrDigit(ch))
-                {
-                    if (!inWord)
-                    {
-                        inWord = true;
-                        count++;
-                    }
-                }
-                else
-                {
-                    inWord = false;
-                }
-            }
-            return count;
+            return plain
+                .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                .Length;
         }
     }
 }

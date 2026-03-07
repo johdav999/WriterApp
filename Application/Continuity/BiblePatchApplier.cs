@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text;
+using System.Globalization;
 
 namespace WriterApp.Application.Continuity
 {
@@ -23,10 +24,20 @@ namespace WriterApp.Application.Continuity
     public sealed class BiblePatchApplier
     {
         public bool TryApply(BibleType bibleType, string existingJson, string patchOrContentJson, out BiblePatchApplyResult result)
+            => TryApply(bibleType, existingJson, patchOrContentJson, out result, out _);
+
+        public bool TryApply(
+            BibleType bibleType,
+            string existingJson,
+            string patchOrContentJson,
+            out BiblePatchApplyResult result,
+            out string failureReason)
         {
             result = new BiblePatchApplyResult(existingJson, BibleJson.EmptyStats());
+            failureReason = string.Empty;
             if (string.IsNullOrWhiteSpace(patchOrContentJson))
             {
+                failureReason = "Payload was empty.";
                 return false;
             }
 
@@ -34,8 +45,9 @@ namespace WriterApp.Application.Continuity
 
             try
             {
-                if (!TryParseCandidateObject(patchOrContentJson, out JsonObject? candidate) || candidate is null)
+                if (!TryParseCandidateObject(patchOrContentJson, out JsonObject? candidate, out string parseFailureReason) || candidate is null)
                 {
+                    failureReason = parseFailureReason;
                     return false;
                 }
 
@@ -54,23 +66,27 @@ namespace WriterApp.Application.Continuity
                     return true;
                 }
 
+                failureReason = BuildShapeFailureReason(candidate);
                 return false;
             }
-            catch (JsonException)
+            catch (JsonException ex)
             {
+                failureReason = BuildJsonExceptionReason("Patch application failed while reading JSON.", ex);
                 return false;
             }
         }
 
-        private static bool TryParseCandidateObject(string payload, out JsonObject? candidate)
+        private static bool TryParseCandidateObject(string payload, out JsonObject? candidate, out string failureReason)
         {
             candidate = null;
+            failureReason = string.Empty;
             if (string.IsNullOrWhiteSpace(payload))
             {
+                failureReason = "Payload was empty.";
                 return false;
             }
 
-            JsonNode? parsed = TryParseNode(payload);
+            JsonNode? parsed = TryParseNode(payload, out JsonException? parseException);
             if (parsed is JsonObject parsedObject)
             {
                 candidate = parsedObject;
@@ -84,19 +100,25 @@ namespace WriterApp.Application.Continuity
             if (start >= 0 && end > start)
             {
                 string objectSlice = trimmed.Substring(start, end - start + 1);
-                JsonNode? sliced = TryParseNode(objectSlice);
+                JsonNode? sliced = TryParseNode(objectSlice, out JsonException? slicedException);
                 if (sliced is JsonObject slicedObject)
                 {
                     candidate = slicedObject;
                     return true;
                 }
+
+                parseException ??= slicedException;
             }
 
+            failureReason = parseException is not null
+                ? BuildJsonExceptionReason("JSON could not be parsed into an object.", parseException)
+                : $"Payload was not a JSON object. {DescribeTopLevelKeys(null)}";
             return false;
         }
 
-        private static JsonNode? TryParseNode(string json)
+        private static JsonNode? TryParseNode(string json, out JsonException? failure)
         {
+            failure = null;
             if (string.IsNullOrWhiteSpace(json))
             {
                 return null;
@@ -112,8 +134,9 @@ namespace WriterApp.Application.Continuity
             {
                 return JsonNode.Parse(json, documentOptions: options);
             }
-            catch (JsonException)
+            catch (JsonException ex)
             {
+                failure = ex;
                 // Retry once with lightweight cleanup for common model formatting mistakes.
                 string normalized = NormalizeJsonCandidate(json);
                 if (string.Equals(normalized, json, StringComparison.Ordinal))
@@ -125,8 +148,9 @@ namespace WriterApp.Application.Continuity
                 {
                     return JsonNode.Parse(normalized, documentOptions: options);
                 }
-                catch (JsonException)
+                catch (JsonException retryEx)
                 {
+                    failure = retryEx;
                     return null;
                 }
             }
@@ -365,6 +389,73 @@ namespace WriterApp.Application.Continuity
         {
             string key = ResolveCollectionKey(bibleType);
             return payload[key] is JsonArray;
+        }
+
+        private static string BuildShapeFailureReason(JsonObject? candidate)
+        {
+            return $"JSON object did not match a supported bible payload shape. {DescribeTopLevelKeys(candidate)} {DescribeNodeType(candidate, "ops", "$.ops")} {DescribeNodeType(candidate, "characters", "$.characters")} {DescribeNodeType(candidate, "places", "$.places")} {DescribeNodeType(candidate, "events", "$.events")}";
+        }
+
+        private static string DescribeTopLevelKeys(JsonObject? candidate)
+        {
+            if (candidate is null)
+            {
+                return "Top-level keys: <unavailable>.";
+            }
+
+            string[] keys = candidate.Select(property => property.Key).OrderBy(key => key, StringComparer.Ordinal).ToArray();
+            return keys.Length == 0
+                ? "Top-level keys: <none>."
+                : $"Top-level keys: [{string.Join(", ", keys)}].";
+        }
+
+        private static string DescribeNodeType(JsonObject? candidate, string propertyName, string path)
+        {
+            if (candidate is null || !candidate.TryGetPropertyValue(propertyName, out JsonNode? node))
+            {
+                return $"{path} missing.";
+            }
+
+            return node switch
+            {
+                JsonArray => $"{path} is array.",
+                JsonObject => $"{path} is object.",
+                JsonValue value => $"{path} is value ({DescribeValue(value)}).",
+                null => $"{path} is null.",
+                _ => $"{path} is {node.GetType().Name}."
+            };
+        }
+
+        private static string DescribeValue(JsonValue value)
+        {
+            JsonElement element = value.GetValue<JsonElement>();
+            return element.ValueKind switch
+            {
+                JsonValueKind.String => $"string '{Truncate(element.GetString())}'",
+                JsonValueKind.Number => $"number {element.GetRawText()}",
+                JsonValueKind.True => "boolean true",
+                JsonValueKind.False => "boolean false",
+                JsonValueKind.Null => "null",
+                _ => element.ValueKind.ToString()
+            };
+        }
+
+        private static string BuildJsonExceptionReason(string prefix, JsonException ex)
+        {
+            return string.Create(
+                CultureInfo.InvariantCulture,
+                $"{prefix} {ex.Message} Line={ex.LineNumber?.ToString(CultureInfo.InvariantCulture) ?? "?"} BytePositionInLine={ex.BytePositionInLine?.ToString(CultureInfo.InvariantCulture) ?? "?"}.");
+        }
+
+        private static string? Truncate(string? value, int maxLength = 80)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return value;
+            }
+
+            string normalized = value.Replace('\r', ' ').Replace('\n', ' ').Trim();
+            return normalized.Length <= maxLength ? normalized : normalized[..maxLength] + "...";
         }
 
         private static string ResolveCollectionKey(BibleType bibleType)

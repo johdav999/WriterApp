@@ -52,7 +52,7 @@ namespace WriterApp.Controllers
                 .Select(section => (Guid?)section.DocumentId)
                 .FirstOrDefaultAsync(ct);
 
-            return Ok(new ProjectSceneOpenTargetDto(scene.ProjectId, scene.Id, documentId, sectionId));
+            return Ok(new ProjectSceneOpenTargetDto(scene.ProjectId, scene.Id, documentId, sectionId, scene.Title));
         }
     }
 }

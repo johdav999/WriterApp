@@ -1,3 +1,4 @@
+title: Ai Tools
 # Prosa AI Tools
 
 This page lists the AI features available in Prosa for writers.
@@ -39,7 +40,7 @@ This page lists the AI features available in Prosa for writers.
   3. Review and apply.
 - Example outcome: Formal language becomes warmer and more conversational.
 
-## 5. Show, don’t tell
+## 5. Show, donï¿½t tell
 - What it does: Converts abstract statements into concrete prose.
 - When to use it: When writing feels explanatory instead of vivid.
 - How to use it:
@@ -120,7 +121,7 @@ This page lists the AI features available in Prosa for writers.
   2. Create a preset (builtin or custom template).
   3. Save and optionally pin it.
   4. Run it on selection or section.
-- Example outcome: One-click “Deepen Character” preset used across scenes.
+- Example outcome: One-click ï¿½Deepen Characterï¿½ preset used across scenes.
 
 ## 13. AI history and undo/redo
 - What it does: Tracks AI commands and supports AI-specific undo/redo.

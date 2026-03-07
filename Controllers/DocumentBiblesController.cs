@@ -149,6 +149,24 @@ namespace WriterApp.Controllers
                 result.ContentTypes.Add("application/problem+json");
                 return result;
             }
+            catch (BibleRefreshInvalidPayloadException ex)
+            {
+                ProblemDetails payload = new()
+                {
+                    Status = StatusCodes.Status502BadGateway,
+                    Title = "Bible refresh failed",
+                    Detail = "The AI returned an invalid refresh payload. Please retry."
+                };
+                payload.Extensions["code"] = "bible_refresh_invalid_payload";
+                payload.Extensions["traceId"] = HttpContext.TraceIdentifier;
+                payload.Extensions["bibleType"] = ex.BibleType.ToString();
+                ObjectResult result = new(payload)
+                {
+                    StatusCode = payload.Status
+                };
+                result.ContentTypes.Add("application/problem+json");
+                return result;
+            }
 
             int changedSections = CountChangedSections(snapshot.Cursor, document);
             return Ok(BibleSnapshotDto.FromState(snapshot, changedSections));

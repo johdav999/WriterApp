@@ -100,7 +100,12 @@ namespace WriterApp.Application.Continuity
                 throw new InvalidOperationException(aiResult.ErrorMessage ?? $"{bibleType} bible refresh failed.");
             }
 
-            if (!_patchApplier.TryApply(bibleType, existingJson, aiResult.Proposal.ProposedText!, out BiblePatchApplyResult patchResult))
+            if (!_patchApplier.TryApply(
+                bibleType,
+                existingJson,
+                aiResult.Proposal.ProposedText!,
+                out BiblePatchApplyResult patchResult,
+                out string failureReason))
             {
                 string preview = CreatePreview(aiResult.Proposal.ProposedText!);
                 IReadOnlyList<SectionDeltaPayload> fallbackSections = changedSections.Count > 0
@@ -117,7 +122,19 @@ namespace WriterApp.Application.Continuity
                 }
                 else
                 {
-                    throw new InvalidOperationException($"{bibleType} bible patch validation failed. Response preview: {preview}");
+                    _logger.LogWarning(
+                        "[BIBLE] Invalid refresh payload. BibleType={BibleType} DocumentId={DocumentId} ActionId={ActionId} Reason={Reason} Preview={Preview}",
+                        bibleType,
+                        document.DocumentId,
+                        actionId,
+                        failureReason,
+                        preview);
+                    throw new BibleRefreshInvalidPayloadException(
+                        bibleType,
+                        document.DocumentId,
+                        actionId,
+                        failureReason,
+                        preview);
                 }
             }
 

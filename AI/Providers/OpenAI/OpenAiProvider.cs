@@ -1126,11 +1126,16 @@ namespace WriterApp.AI.Providers.OpenAI
                 "output_contract",
                 "Return strict JSON patch: {\"bibleType\":\"Character|Place|Timeline\",\"schemaVersion\":1,\"ops\":[],\"stats\":{}}");
 
-            string systemPrompt = "You are a continuity analyst. Return strict JSON patch only.";
+            bool isCharacterRefresh = string.Equals(request.ActionId, ActionRefreshCharacterBible, StringComparison.Ordinal);
+            string systemPrompt = isCharacterRefresh
+                ? "You are a continuity analyst. Return one valid JSON object only. No markdown, no prose, no code fences, no trailing commentary."
+                : "You are a continuity analyst. Return strict JSON patch only.";
             string userPrompt =
-                $"{instruction}\n\n{outputContract}\n\nRules:\n- Output valid JSON only.\n- Use ops list with deterministic updates.\n- Preserve existing IDs.\n- Add flagReview when evidence is conflicting or missing.\n\nExisting bible JSON:\n{existingBibleJson}\n\nChanged/new section deltas:\n{deltaSectionsJson}";
+                $"{instruction}\n\n{outputContract}\n\nRules:\n- Output valid JSON only.\n- Return exactly one JSON object and nothing before or after it.\n- Do not wrap JSON in markdown fences.\n- Use double-quoted JSON strings and escape embedded quotes.\n- Use ops list with deterministic updates.\n- Preserve existing IDs.\n- Add flagReview when evidence is conflicting or missing.{(isCharacterRefresh ? "\n- For character refresh, do not return analysis text or partial/truncated JSON." : string.Empty)}\n\nExisting bible JSON:\n{existingBibleJson}\n\nChanged/new section deltas:\n{deltaSectionsJson}";
 
-            int maxTokens = Math.Max(_options.MaxOutputTokens, 1800);
+            int maxTokens = isCharacterRefresh
+                ? Math.Max(_options.MaxOutputTokens, 2400)
+                : Math.Max(_options.MaxOutputTokens, 1800);
             return BuildStrictJsonRequest(systemPrompt, userPrompt, apiKey, maxTokens);
         }
 

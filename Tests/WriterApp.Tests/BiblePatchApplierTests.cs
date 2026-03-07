@@ -7,6 +7,58 @@ namespace WriterApp.Tests
     public sealed class BiblePatchApplierTests
     {
         [Fact]
+        public void TryApply_CharacterFullPayload_AcceptsAsFullPayload()
+        {
+            BiblePatchApplier applier = new();
+            string existing = BibleJson.EmptyBibleContent(BibleType.Character);
+            string payload = """
+            {
+              "schemaVersion":"1.0",
+              "characters":[
+                {
+                  "name":"Anna",
+                  "facts":[
+                    {
+                      "fact":"Carries a brass key",
+                      "evidence":{"sectionId":"11111111-1111-1111-1111-111111111111","quote":"Anna pressed the brass key into her palm."}
+                    }
+                  ],
+                  "traits":["guarded"]
+                }
+              ]
+            }
+            """;
+
+            bool ok = applier.TryApply(BibleType.Character, existing, payload, out BiblePatchApplyResult result, out string failureReason);
+
+            Assert.True(ok);
+            Assert.True(string.IsNullOrWhiteSpace(failureReason));
+            using JsonDocument doc = JsonDocument.Parse(result.ContentJson);
+            JsonElement characters = doc.RootElement.GetProperty("characters");
+            Assert.Equal(1, characters.GetArrayLength());
+            Assert.Equal("Anna", characters[0].GetProperty("name").GetString());
+        }
+
+        [Fact]
+        public void TryApply_MalformedJson_ReturnsUsefulFailureReason()
+        {
+            BiblePatchApplier applier = new();
+            string existing = BibleJson.EmptyBibleContent(BibleType.Character);
+            string payload = """
+            {
+              "schemaVersion":"1.0",
+              "characters":[{"name":"Anna","facts":[{"fact":"Broken "quote""}]}]
+            }
+            """;
+
+            bool ok = applier.TryApply(BibleType.Character, existing, payload, out BiblePatchApplyResult _, out string failureReason);
+
+            Assert.False(ok);
+            Assert.Contains("JSON could not be parsed into an object", failureReason);
+            Assert.Contains("BytePositionInLine", failureReason);
+        }
+
+        [Fact]
         public void TryApply_TimelinePatchWithOperationsAlias_AppliesSuccessfully()
         {
             BiblePatchApplier applier = new();

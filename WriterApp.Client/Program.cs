@@ -34,6 +34,8 @@ builder.Services.AddScoped<WriterApp.Client.State.OnboardingStateStore>();
 builder.Services.AddScoped<WriterApp.Client.State.OnboardingOverlayStateService>();
 builder.Services.AddScoped<AuthStateService>();
 builder.Services.AddScoped<EasyAuthMeClient>();
+builder.Services.AddScoped<RecoveryDraftService>();
+builder.Services.AddTransient<EditorSaveCoordinator>();
 builder.Services.AddSingleton<WriterApp.Client.State.LastOpenedDocumentStateService>();
 builder.Services.AddScoped<WriterApp.Client.Services.CoachRecommendationService>();
 

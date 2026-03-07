@@ -31,7 +31,7 @@ else
                 <div class="editor-main-header">
                     <div class="editor-section-info" id="onboarding-project-structure">
                         <div class="editor-section-label">Section</div>
-                        <div class="editor-section-title">@_activeSection.Title</div>
+                        <div class="editor-section-title">@GetActiveEditorTitle()</div>
                     </div>
                     @if (ShowTranslationSwitcher)
                     {
@@ -507,7 +507,7 @@ else
                             }
                             @if (!string.IsNullOrWhiteSpace(_editorStatus.VersionStatusMessage))
                             {
-                                <span class="version-status" title="A version snapshot was saved.">@_editorStatus.VersionStatusMessage</span>
+                                <span class="version-status" title="A version history checkpoint was saved.">@_editorStatus.VersionStatusMessage</span>
                             }
                             @if (!string.IsNullOrWhiteSpace(_continuityStatus))
                             {

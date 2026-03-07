@@ -6,9 +6,9 @@ using WriterApp.Data.Documents;
 
 namespace WriterApp.Application.Documents
 {
-    public interface IPageVersionService
+    public interface IVersionHistoryService
     {
-        Task<PageVersionRecord?> CreateSnapshotAsync(
+        Task<PageVersionRecord?> CreateCheckpointAsync(
             string userId,
             PageRecord page,
             string content,
@@ -16,7 +16,7 @@ namespace WriterApp.Application.Documents
             bool allowDuplicate,
             CancellationToken ct);
 
-        Task<PageVersionRecord?> CreateAutosnapshotIfDueAsync(
+        Task<PageVersionRecord?> CreateCheckpointIfDueAsync(
             string userId,
             PageRecord page,
             string content,
@@ -35,6 +35,6 @@ namespace WriterApp.Application.Documents
 
         string DecompressContent(PageVersionRecord version);
 
-        Task CleanupAsync(string userId, Guid pageId, CancellationToken ct);
+        Task PruneAsync(string userId, Guid pageId, CancellationToken ct);
     }
 }

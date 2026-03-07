@@ -70,6 +70,9 @@ namespace WriterApp.Client.Pages
         public CurrentSceneStateService CurrentSceneStateService { get; set; } = default!;
 
         [Inject]
+        public CurrentProjectStateService CurrentProjectStateService { get; set; } = default!;
+
+        [Inject]
         public AuthMeStateService AuthMeStateService { get; set; } = default!;
 
         [Inject]
@@ -625,6 +628,7 @@ namespace WriterApp.Client.Pages
         protected override async Task OnInitializedAsync()
         {
             AuthMeStateService.Changed += OnAuthMeStateChanged;
+            CurrentSceneStateService.Changed += HandleCurrentSceneStateChanged;
             await AuthMeStateService.RefreshAsync();
             await LoadAiUsageStatusAsync();
             await LoadAiActionsAsync();
@@ -710,6 +714,7 @@ namespace WriterApp.Client.Pages
         {
             if (ProjectId != Guid.Empty && SceneNodeId != Guid.Empty)
             {
+                CurrentProjectStateService.SetCurrent(ProjectId);
                 CurrentSceneStateService.SetCurrent(ProjectId, SceneNodeId);
                 bool resolved = await EnsureLegacySectionTargetForSceneRouteAsync();
                 if (!resolved)
@@ -759,6 +764,7 @@ namespace WriterApp.Client.Pages
                     return false;
                 }
 
+                CurrentSceneStateService.SetCurrent(ProjectId, SceneNodeId, target.SceneTitle);
                 DocumentId = target.DocumentId.Value;
                 SectionId = target.SectionId.Value;
                 return true;
@@ -830,6 +836,18 @@ namespace WriterApp.Client.Pages
                 _documentTitle = document.Title;
                 _documentLanguageCode = document.LanguageCode;
                 _documentTranslationGroupId = document.TranslationGroupId;
+                if (IsSceneRoute && ProjectId != Guid.Empty)
+                {
+                    CurrentProjectStateService.SetCurrent(ProjectId);
+                }
+                else if (document.ProjectId != Guid.Empty)
+                {
+                    CurrentProjectStateService.SetCurrent(document.ProjectId);
+                }
+                else
+                {
+                    CurrentProjectStateService.Clear();
+                }
 
                 if (_loadedDocumentId != DocumentId)
                 {
@@ -890,6 +908,7 @@ namespace WriterApp.Client.Pages
                 {
                     await LoadSceneContentIntoActivePageAsync();
                 }
+                SyncActiveSceneTitle();
                 ResetVersionStatusTracking();
 
                 Logger.LogDebug(
@@ -1028,10 +1047,7 @@ namespace WriterApp.Client.Pages
         {
             await FlushNotesSaveAsync();
 
-            if (_pageEditor is not null)
-            {
-                await _pageEditor.ForceSaveIfDifferentAsync("navigate");
-            }
+            await FlushActiveEditorAsync("navigate");
 
             await LastOpenedDocumentStateService.SaveAsync(DocumentId, sectionId);
             Navigation.NavigateTo($"documents/{DocumentId}/sections/{sectionId}");
@@ -1871,6 +1887,16 @@ namespace WriterApp.Client.Pages
             await InvokeAsync(StateHasChanged);
         }
 
+        private async Task FlushActiveEditorAsync(string reason)
+        {
+            if (_pageEditor is null)
+            {
+                return;
+            }
+
+            await _pageEditor.ForceSaveIfDifferentAsync(reason);
+        }
+
         private async Task OnEditorStatusChanged(PageEditor.EditorStatusSnapshot status)
         {
             _editorStatus = status;
@@ -2244,6 +2270,7 @@ namespace WriterApp.Client.Pages
         {
             LayoutStateService.Changed -= OnLayoutStateChanged;
             AuthMeStateService.Changed -= OnAuthMeStateChanged;
+            CurrentSceneStateService.Changed -= HandleCurrentSceneStateChanged;
             OnboardingOverlayStateService.Clear();
             _notesAutosaveCts?.Cancel();
             _notesAutosaveCts?.Dispose();
@@ -2275,6 +2302,11 @@ namespace WriterApp.Client.Pages
                     _exportModule = null;
                 }
             }
+        }
+
+        private void HandleCurrentSceneStateChanged()
+        {
+            _ = InvokeAsync(StateHasChanged);
         }
 
         private void OnLayoutStateChanged(LayoutState state)
@@ -3090,11 +3122,11 @@ namespace WriterApp.Client.Pages
 
             if (context.VersionCount > 0)
             {
-                observations.Add($"Version history contains {context.VersionCount} snapshot(s).");
+                observations.Add($"Version history contains {context.VersionCount} saved version(s).");
             }
             else
             {
-                observations.Add("No page snapshots are available yet.");
+                observations.Add("No saved versions are available yet.");
             }
 
             observations.Add("Use AI undo/redo or diff compare to apply or roll back safely.");
@@ -3354,13 +3386,36 @@ namespace WriterApp.Client.Pages
             }
 
             await FlushNotesSaveAsync();
-            if (_pageEditor is not null)
-            {
-                await _pageEditor.ForceSaveIfDifferentAsync("navigate");
-            }
+            await FlushActiveEditorAsync("navigate");
 
             string target = SceneRouteBuilder.BuildRelativeSceneEditorPath(projectId.Value, sceneNodeId);
             Navigation.NavigateTo(target);
+        }
+
+        private string GetActiveEditorTitle()
+        {
+            if (IsSceneRoute
+                && CurrentSceneStateService.ProjectId == ProjectId
+                && CurrentSceneStateService.SceneNodeId == SceneNodeId
+                && !string.IsNullOrWhiteSpace(CurrentSceneStateService.SceneTitle))
+            {
+                return CurrentSceneStateService.SceneTitle!;
+            }
+
+            return _activeSection?.Title ?? "Section";
+        }
+
+        private void SyncActiveSceneTitle()
+        {
+            if (!IsSceneRoute || ProjectId == Guid.Empty || SceneNodeId == Guid.Empty)
+            {
+                return;
+            }
+
+            string title = !string.IsNullOrWhiteSpace(CurrentSceneStateService.SceneTitle)
+                ? CurrentSceneStateService.SceneTitle!
+                : _activeSection?.Title ?? string.Empty;
+            CurrentSceneStateService.SetCurrent(ProjectId, SceneNodeId, title);
         }
 
         private async Task RefreshNavigatorInspectorAsync(bool force = false)
@@ -4095,6 +4150,8 @@ namespace WriterApp.Client.Pages
             {
                 return false;
             }
+
+            await FlushActiveEditorAsync("continuity-apply");
 
             string beforePlain = await _pageEditor.GetPlainTextAsync() ?? string.Empty;
             ContinuityApplyRange? applyRange = proposalRange ?? await BuildContinuityApplyRangeAsync(issue, beforePlain);
@@ -6116,6 +6173,8 @@ namespace WriterApp.Client.Pages
             _isDocumentMenuOpen = false;
             try
             {
+                await FlushActiveEditorAsync("export");
+
                 if (!string.Equals(kind, "document", StringComparison.OrdinalIgnoreCase))
                 {
                     string templateQuery = string.Empty;
@@ -6199,6 +6258,8 @@ namespace WriterApp.Client.Pages
             _isDocumentMenuOpen = false;
             try
             {
+                await FlushActiveEditorAsync("export-pdf");
+
                 if (!ValidateScope(out string? error))
                 {
                     _templateActionError = error;
@@ -6255,6 +6316,8 @@ namespace WriterApp.Client.Pages
             _previewHasFrontMatter = false;
             try
             {
+                await FlushActiveEditorAsync("export-preview");
+
                 if (string.Equals(_exportContentSelection, "synopsis", StringComparison.OrdinalIgnoreCase))
                 {
                     _previewSidebarOpen = false;
@@ -7575,6 +7638,8 @@ private const string PreviewBootstrapScript = @"
                 return;
             }
 
+            await FlushActiveEditorAsync($"ai-request:{action.ActionKey}");
+
             string plain = await GetCurrentAiPlainTextAsync();
             TextRange selectionRange = new(0, 0);
             string selection = string.Empty;
@@ -8852,6 +8917,7 @@ private const string PreviewBootstrapScript = @"
             }
 
             PendingAiProposal pending = _pendingAiProposal;
+            await FlushActiveEditorAsync($"ai-apply:{pending.ActionKey}");
             if (IsTranslationActionKey(pending.ActionKey))
             {
                 await ApplyTranslationProposalAsync(pending);
@@ -9958,8 +10024,8 @@ private const string PreviewBootstrapScript = @"
             }
 
             _lastVersionSeenAt = latest.CreatedAt;
-            string reason = string.IsNullOrWhiteSpace(latest.Reason) ? "snapshot" : latest.Reason.Trim();
-            _versionStatusMessage = $"Version saved ({reason})";
+            string reasonLabel = GetVersionReasonLabel(latest.Reason);
+            _versionStatusMessage = $"{reasonLabel} saved";
 
             _versionStatusCts?.Cancel();
             _versionStatusCts?.Dispose();
@@ -10538,6 +10604,8 @@ private const string PreviewBootstrapScript = @"
 
             try
             {
+                await FlushActiveEditorAsync($"quality-apply:{issue.IssueKey}");
+
                 PageQualityIssueDto effectiveIssue = await EnsureAutoProposableFixAsync(issue);
                 if (effectiveIssue.Fix is null)
                 {
@@ -11865,6 +11933,8 @@ private const string PreviewBootstrapScript = @"
 
             try
             {
+                await FlushActiveEditorAsync("restore-version");
+
                 using HttpResponseMessage response = await Http.PostAsync(
                     $"api/pages/{_activePage.Id}/versions/{_pendingRestoreVersion.Id}/restore",
                     null);
@@ -12009,15 +12079,16 @@ private const string PreviewBootstrapScript = @"
         {
             if (string.IsNullOrWhiteSpace(reason))
             {
-                return "Snapshot (Manual)";
+                return "Version (Manual)";
             }
 
             return reason.Trim().ToLowerInvariant() switch
             {
-                "pre-ai" => "Snapshot (Pre-AI)",
-                "autosnap" => "Snapshot (Auto)",
-                "auto" => "Snapshot (Auto)",
-                _ => "Snapshot (Manual)"
+                "pre-ai" => "Version (Pre-AI)",
+                "autosave" => "Version (Autosave)",
+                "autosnap" => "Version (Autosave)",
+                "auto" => "Version (Autosave)",
+                _ => "Version (Manual)"
             };
         }
 
@@ -12511,6 +12582,8 @@ private const string PreviewBootstrapScript = @"
             _aiUndoRedoInFlight = true;
             try
             {
+                await FlushActiveEditorAsync("ai-undo");
+
                 AiActionUndoRedoRequestDto request = new(DocumentId, _activeSection.Id, _activePage?.Id);
                 using HttpResponseMessage response = await Http.PostAsJsonAsync("api/ai/actions/history/undo", request);
                 if (response.StatusCode == System.Net.HttpStatusCode.NoContent)
@@ -12555,6 +12628,8 @@ private const string PreviewBootstrapScript = @"
             _aiUndoRedoInFlight = true;
             try
             {
+                await FlushActiveEditorAsync("ai-redo");
+
                 AiActionUndoRedoRequestDto request = new(DocumentId, _activeSection.Id, _activePage?.Id);
                 using HttpResponseMessage response = await Http.PostAsJsonAsync("api/ai/actions/history/redo", request);
                 if (response.StatusCode == System.Net.HttpStatusCode.NoContent)

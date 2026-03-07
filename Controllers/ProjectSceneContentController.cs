@@ -113,8 +113,22 @@ namespace WriterApp.Controllers
                 _dbContext.SceneContents.Add(content);
             }
 
-            content.ContentJson = request.ContentJson ?? string.Empty;
-            content.LanguageCode = string.IsNullOrWhiteSpace(request.LanguageCode) ? null : request.LanguageCode.Trim();
+            string nextContent = request.ContentJson ?? string.Empty;
+            string? nextLanguage = string.IsNullOrWhiteSpace(request.LanguageCode) ? null : request.LanguageCode.Trim();
+            bool contentChanged = !string.Equals(content.ContentJson ?? string.Empty, nextContent, StringComparison.Ordinal);
+            bool languageChanged = !string.Equals(content.LanguageCode, nextLanguage, StringComparison.Ordinal);
+            if (!contentChanged && !languageChanged && content.UpdatedAtUtc != default)
+            {
+                return Ok(new SceneContentDto(
+                    sceneNodeId,
+                    projectId,
+                    content.ContentJson ?? string.Empty,
+                    content.LanguageCode,
+                    content.UpdatedAtUtc));
+            }
+
+            content.ContentJson = nextContent;
+            content.LanguageCode = nextLanguage;
             content.UpdatedAtUtc = DateTimeOffset.UtcNow;
             await SyncLinkedSectionPagesAsync(scene, content.ContentJson, content.UpdatedAtUtc, ct);
             await _dbContext.SaveChangesAsync(ct);

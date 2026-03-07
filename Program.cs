@@ -266,7 +266,8 @@ builder.Services.Configure<QualityRewriteValidationOptions>(builder.Configuratio
 builder.Services.AddScoped<WriterApp.Application.Documents.IDocumentRepository, WriterApp.Data.Documents.DocumentRepository>();
 builder.Services.AddScoped<WriterApp.Application.Documents.ISectionRepository, WriterApp.Data.Documents.SectionRepository>();
 builder.Services.AddScoped<WriterApp.Application.Documents.IPageRepository, WriterApp.Data.Documents.PageRepository>();
-builder.Services.AddScoped<WriterApp.Application.Documents.IPageVersionService, WriterApp.Application.Documents.PageVersionService>();
+builder.Services.AddScoped<WriterApp.Application.Documents.IVersionHistoryPolicyService, WriterApp.Application.Documents.VersionHistoryPolicyService>();
+builder.Services.AddScoped<WriterApp.Application.Documents.IVersionHistoryService, WriterApp.Application.Documents.VersionHistoryService>();
 builder.Services.AddScoped<WriterApp.Application.Documents.IPageVersionDiffService, WriterApp.Application.Documents.PageVersionDiffService>();
 builder.Services.AddScoped<WriterApp.Application.Documents.IQualityCheckService, WriterApp.Application.Documents.QualityCheckService>();
 builder.Services.AddScoped<WriterApp.Application.Documents.IProjectWordCountService, WriterApp.Application.Documents.ProjectWordCountService>();
@@ -380,6 +381,7 @@ builder.Services.AddScoped<IAiOrchestrator, AiOrchestrator>();
 builder.Services.AddScoped<WriterApp.Application.AI.IAiActionHistoryStore, WriterApp.Application.AI.EfCoreAiActionHistoryStore>();
 
 builder.Services.AddScoped<DocumentStorageService>();
+builder.Services.AddScoped<RecoveryDraftService>();
 builder.Services.AddScoped<LegacyDocumentMigrationService>();
 builder.Services.AddScoped<AppHeaderState>();
 builder.Services.AddScoped<LayoutStateService>();

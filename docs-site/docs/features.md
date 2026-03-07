@@ -1,3 +1,5 @@
+title: Feature Overview
+
 # Prosa Feature Overview
 
 ## Core writing workflow

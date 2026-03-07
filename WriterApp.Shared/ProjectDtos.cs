@@ -108,7 +108,8 @@ namespace WriterApp.Application.Documents
         Guid ProjectId,
         Guid SceneNodeId,
         Guid? DocumentId,
-        Guid? SectionId);
+        Guid? SectionId,
+        string? SceneTitle = null);
 
     public sealed record ProjectStatsDto(
         Guid ProjectId,

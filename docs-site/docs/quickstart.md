@@ -1,3 +1,4 @@
+title: Quick Start
 # Prosa Quick Start
 
 ## 1. What Prosa is

@@ -39,6 +39,7 @@
 @inject IArtifactStore ArtifactStore
 @inject IAiAttachmentStore AiAttachmentStore
 @inject DocumentStorageService DocumentStorage
+@inject RecoveryDraftService RecoveryDrafts
 @inject ExportService ExportService
 @inject NavigationManager Navigation
 @inject AppHeaderState HeaderState
@@ -1584,7 +1585,7 @@
     private bool _isManualSaveInProgress;
     private string _documentTitleDraft = string.Empty;
     private bool _hasRecoveryCandidate;
-    private DocumentStorageService.DocumentAutosave? _recoveryCandidate;
+    private RecoveryDraftService.RecoveryDraft? _recoveryCandidate;
     private bool _suppressDirtyUpdate;
     private Guid? _draggingSectionId;
     private Guid? _dropTargetSectionId;
@@ -4257,7 +4258,7 @@
             Document withTitle = ApplyTitle(_state.Document, title);
             Document normalized = NormalizeDocumentForSave(withTitle);
             await DocumentStorage.SaveDocumentAsync(normalized);
-            await DocumentStorage.ClearAutosaveAsync(normalized.DocumentId);
+            await RecoveryDrafts.ClearDraftAsync(normalized.DocumentId);
             _state.ReplaceDocument(normalized, notify: false);
             RefreshFromDocument(normalized);
             _lastSavedUtc = normalized.Metadata.ModifiedUtc;
@@ -4441,15 +4442,15 @@
 
     private async Task CheckForRecoveryAsync(string documentId, Document document)
     {
-        DocumentStorageService.DocumentAutosave? autosave = await DocumentStorage.LoadAutosaveAsync(documentId);
-        if (autosave is null || autosave.AutosavedUtc <= document.Metadata.ModifiedUtc)
+        RecoveryDraftService.RecoveryDraft? recoveryDraft = await RecoveryDrafts.GetRestoreCandidateAsync(documentId, document);
+        if (recoveryDraft is null)
         {
             _hasRecoveryCandidate = false;
             _recoveryCandidate = null;
             return;
         }
 
-        _recoveryCandidate = autosave;
+        _recoveryCandidate = recoveryDraft;
         _hasRecoveryCandidate = true;
         await InvokeAsync(StateHasChanged);
     }
@@ -4465,7 +4466,7 @@
 
             InitializeState(NormalizeDocumentForLoad(_recoveryCandidate.Document));
             _hasRecoveryCandidate = false;
-            _lastAutosaveUtc = _recoveryCandidate.AutosavedUtc;
+            _lastAutosaveUtc = _recoveryCandidate.SavedAtUtc;
             _recoveryCandidate = null;
             _autosaveStatus = AutosaveStatus.Idle;
             _isDirty = true;
@@ -4484,7 +4485,7 @@
                 return;
             }
 
-            await DocumentStorage.ClearAutosaveAsync(_recoveryCandidate.Document.DocumentId);
+            await RecoveryDrafts.ClearDraftAsync(_recoveryCandidate.Document.DocumentId);
             _hasRecoveryCandidate = false;
             _recoveryCandidate = null;
             _autosaveStatus = AutosaveStatus.Idle;
@@ -4554,7 +4555,7 @@
         await InvokeAsync(StateHasChanged);
 
         Document autosaveDocument = BuildAutosaveDocument(_state.Document);
-        bool saved = await DocumentStorage.SaveAutosaveAsync(autosaveDocument.DocumentId, autosaveDocument, DateTime.UtcNow);
+        bool saved = await RecoveryDrafts.SaveDraftAsync(autosaveDocument.DocumentId, autosaveDocument, DateTime.UtcNow);
         if (saved)
         {
             _autosaveStatus = AutosaveStatus.Idle;
