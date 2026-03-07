@@ -1,0 +1,53 @@
+.heroBanner {
+  background: linear-gradient(135deg, #2f855a 0%, #276749 100%);
+  color: #f7fafc;
+  padding: 4rem 0;
+  text-align: center;
+}
+
+.heroTitle {
+  margin: 0;
+}
+
+.heroSubtitle {
+  margin: 1rem auto 0;
+  max-width: 44rem;
+  font-size: 1.1rem;
+}
+
+.mainSection {
+  background-color: #f7fafc;
+  padding: 3rem 0 4rem;
+}
+
+.linkGrid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.linkCard {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.75rem;
+  padding: 1.25rem;
+}
+
+.cardTitle {
+  margin-bottom: 0.5rem;
+}
+
+.cardText {
+  color: #1a202c;
+  margin-bottom: 1rem;
+}
+
+@media screen and (max-width: 996px) {
+  .heroBanner {
+    padding: 2.5rem 0;
+  }
+
+  .linkGrid {
+    grid-template-columns: 1fr;
+  }
+}

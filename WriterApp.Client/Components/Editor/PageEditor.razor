@@ -5,11 +5,13 @@
 @using System.Globalization
 @using Microsoft.JSInterop
 @using WriterApp.Application.Documents
+@using WriterApp.Client.Services
 @using WriterApp.Client.State
 @inject HttpClient Http
 @inject NavigationManager Navigation
 @inject IJSRuntime JSRuntime
 @inject ILogger<PageEditor> Logger
+@inject EditorSaveCoordinator SaveCoordinator
 @implements IDisposable
 
 @if (Page is null)
@@ -36,17 +38,15 @@ else
             <span class="@GetSaveStatusClass()" title="Your work is saved automatically.">@GetSaveStatusLabel()</span>
             @if (!string.IsNullOrWhiteSpace(VersionStatusMessage))
             {
-                <span class="version-status" title="A version snapshot was saved.">@VersionStatusMessage</span>
+                <span class="version-status" title="A version history checkpoint was saved.">@VersionStatusMessage</span>
             }
         </div>
     }
 }
 
 @code {
-    private const int AutosaveDebounceMs = 800;
     private const string CommandsModuleVersion = "20260216.1";
     private SectionEditor? _editorRef;
-    private CancellationTokenSource? _autosaveCts;
     private PageDto? _currentPage;
     private string _content = string.Empty;
     private SaveState _saveState = SaveState.Idle;
@@ -59,8 +59,10 @@ else
     private bool _pendingSetContent;
     private IJSObjectReference? _editorInstance;
     private IJSObjectReference? _commandsModule;
+    private IJSObjectReference? _saveEventsModule;
     private CancellationTokenSource? _pageBreakCts;
     private DotNetObjectReference<PageEditor>? _dotNetRef;
+    private DateTimeOffset _lastLifecycleForcedSaveUtc = DateTimeOffset.MinValue;
     private bool _pageBreakObserverAttached;
     private string? _lastAppliedPageBreakModeKey;
     private int _pageCount = 1;
@@ -174,6 +176,11 @@ else
     private IReadOnlyList<int>? _lastHeadingNumberingPrefix;
     private string _lastHeadingTraceId = string.Empty;
 
+    protected override void OnInitialized()
+    {
+        SaveCoordinator.StateChanged += HandleSaveCoordinatorStateChangedAsync;
+    }
+
     protected override async Task OnParametersSetAsync()
     {
         if (Page is null)
@@ -191,6 +198,9 @@ else
             _saveState = SaveState.Idle;
             _wordCount = CountWords(_content);
             _lastLoadedHash = ComputeShortHash(_content);
+            _pendingAutosavePageId = Page.Id;
+            SaveCoordinator.StartSession(CreateRecoveryDraftKey(Page), _content, SaveContentAsync);
+            SyncSaveStateFromCoordinator();
             _pendingSetContent = true;
             await DebugLogAsync("PAGE_FETCH_SUCCESS", new
             {
@@ -204,6 +214,7 @@ else
             }
             SchedulePageBreakUpdate();
             _isLoadingPage = false;
+            await PromptRecoveryDraftIfAvailableAsync(Page);
             await NotifyStatusChangedAsync();
         }
 
@@ -250,23 +261,25 @@ else
         await NotifyStatusChangedAsync();
     }
 
-    protected override Task OnAfterRenderAsync(bool firstRender)
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender)
         {
             _dotNetRef = DotNetObjectReference.Create(this);
+            _saveEventsModule = await JSRuntime.InvokeAsync<IJSObjectReference>(
+                "import",
+                $"{Navigation.BaseUri}js/editor-save-events.js");
+            await _saveEventsModule.InvokeVoidAsync("registerEditorSaveEvents", nameof(PageEditor), _dotNetRef);
             if (_editorInstance is not null)
             {
-                _ = AttachAnnotationClicksAsync();
+                await AttachAnnotationClicksAsync();
             }
         }
 
         if (_pendingSetContent && _editorRef is not null)
         {
-            _ = ApplyContentToEditorAsync("afterRender");
+            await ApplyContentToEditorAsync("afterRender");
         }
-
-        return Task.CompletedTask;
     }
 
     private Task OnEditorReady(IJSObjectReference editor)
@@ -332,12 +345,14 @@ else
 
         _isDirty = true;
         _hasUserEditedSinceLoad = true;
+        _pendingAutosavePageId = _currentPage?.Id;
         _wordCount = CountWords(_content);
         if (_searchHighlightActive)
         {
             await ClearSearchHighlightAsync();
         }
-        ScheduleAutosave();
+        await SaveCoordinator.NotifyContentChangedAsync(_content);
+        SyncSaveStateFromCoordinator();
         await NotifyStatusChangedAsync();
         await InvokeAsync(StateHasChanged);
     }
@@ -536,92 +551,92 @@ else
         }
     }
 
-    private void ScheduleAutosave()
+    private async Task SaveAsync(bool force = false)
     {
-        _autosaveCts?.Cancel();
-        _autosaveCts?.Dispose();
-        _autosaveCts = new CancellationTokenSource();
-        _pendingAutosavePageId = _currentPage?.Id;
-        _ = DebouncedAutosaveAsync(_autosaveCts);
+        if (_currentPage is null || (_isLoadingPage && !force))
+        {
+            return;
+        }
+
+        await SaveCoordinator.SaveNowAsync(_content, force);
+        SyncSaveStateFromCoordinator();
+        await NotifyStatusChangedAsync();
+        await InvokeAsync(StateHasChanged);
     }
 
-    private async Task DebouncedAutosaveAsync(CancellationTokenSource cts)
+    private RecoveryDraftKey CreateRecoveryDraftKey(PageDto page)
     {
-        try
+        if (UseSceneContentPersistence
+            && SceneProjectId.HasValue
+            && SceneProjectId.Value != Guid.Empty
+            && SceneNodeId.HasValue
+            && SceneNodeId.Value != Guid.Empty)
         {
-            await Task.Delay(AutosaveDebounceMs, cts.Token);
-        }
-        catch (TaskCanceledException)
-        {
-            return;
+            return RecoveryDraftKey.ForScene(SceneProjectId.Value, SceneNodeId.Value);
         }
 
-        if (cts.IsCancellationRequested)
+        return RecoveryDraftKey.ForPage(page.Id);
+    }
+
+    private async Task<EditorSaveResult> SaveContentAsync(string content, CancellationToken ct)
+    {
+        if (_currentPage is null)
         {
-            return;
+            return EditorSaveResult.Failed("No active page.");
         }
+
+        PageDto activePage = _currentPage;
+        Guid? activeSceneProjectId = SceneProjectId;
+        Guid? activeSceneNodeId = SceneNodeId;
 
         if (_isLoadingPage)
         {
             await DebugLogAsync("AUTOSAVE_SKIPPED", new { traceId = HeadingNumberingTraceId, reason = "loading" });
-            return;
+            return EditorSaveResult.Failed("Page is still loading.");
         }
 
-        if (_pendingAutosavePageId != _currentPage?.Id)
+        if (_pendingAutosavePageId.HasValue && _pendingAutosavePageId.Value != activePage.Id)
         {
             await DebugLogAsync("AUTOSAVE_SKIPPED", new { traceId = HeadingNumberingTraceId, reason = "pageChanged" });
-            return;
+            return EditorSaveResult.Failed("Active page changed.");
         }
 
-        if (string.IsNullOrWhiteSpace(_content)
+        if (string.IsNullOrWhiteSpace(content)
             && !string.Equals(_lastLoadedHash, "0", StringComparison.Ordinal)
             && !_hasUserEditedSinceLoad)
         {
             await DebugLogAsync("AUTOSAVE_SKIPPED", new { traceId = HeadingNumberingTraceId, reason = "emptyGuard" });
-            return;
+            return EditorSaveResult.Failed("Empty editor guard.");
         }
-
-        await SaveAsync();
-    }
-
-    private async Task SaveAsync()
-    {
-        if (_currentPage is null)
-        {
-            return;
-        }
-
-        _saveState = SaveState.Saving;
-        await NotifyStatusChangedAsync();
-        await InvokeAsync(StateHasChanged);
 
         try
         {
             await DebugLogAsync("AUTOSAVE_START", new
             {
                 traceId = HeadingNumberingTraceId,
-                pageId = _currentPage.Id,
-                fingerprint = BuildFingerprint(_content)
+                pageId = activePage.Id,
+                fingerprint = BuildFingerprint(content)
             });
 
             HttpResponseMessage response;
             if (UseSceneContentPersistence
-                && SceneProjectId.HasValue
-                && SceneProjectId.Value != Guid.Empty
-                && SceneNodeId.HasValue
-                && SceneNodeId.Value != Guid.Empty)
+                && activeSceneProjectId.HasValue
+                && activeSceneProjectId.Value != Guid.Empty
+                && activeSceneNodeId.HasValue
+                && activeSceneNodeId.Value != Guid.Empty)
             {
-                SceneContentUpdateRequest request = new(_content, null);
+                SceneContentUpdateRequest request = new(content, null);
                 response = await Http.PutAsJsonAsync(
-                    $"api/projects/{SceneProjectId.Value}/scenes/{SceneNodeId.Value}/content",
-                    request);
+                    $"api/projects/{activeSceneProjectId.Value}/scenes/{activeSceneNodeId.Value}/content",
+                    request,
+                    ct);
             }
             else
             {
-                PageUpdateRequest request = new(null, _content);
+                PageUpdateRequest request = new(null, content);
                 using HttpRequestMessage message = new(
                     HttpMethod.Put,
-                    $"api/pages/{_currentPage.Id}")
+                    $"api/pages/{activePage.Id}")
                 {
                     Content = JsonContent.Create(request)
                 };
@@ -630,80 +645,164 @@ else
                     message.Headers.Add("X-Trace-Id", HeadingNumberingTraceId);
                 }
 
-                response = await Http.SendAsync(message);
+                response = await Http.SendAsync(message, ct);
             }
 
-            if (!response.IsSuccessStatusCode)
+            using (response)
             {
-                _saveState = SaveState.Failed;
-                await InvokeAsync(StateHasChanged);
-                await DebugLogAsync("AUTOSAVE_FAIL", new
+                if (!response.IsSuccessStatusCode)
                 {
-                    traceId = HeadingNumberingTraceId,
-                    pageId = _currentPage.Id,
-                    status = (int)response.StatusCode
-                });
-                return;
-            }
-
-            PageDto updated;
-            if (UseSceneContentPersistence)
-            {
-                SceneContentDto? sceneUpdated = await response.Content.ReadFromJsonAsync<SceneContentDto>();
-                string updatedContent = sceneUpdated?.ContentJson ?? _content;
-                DateTimeOffset updatedAt = sceneUpdated?.UpdatedAtUtc ?? DateTimeOffset.UtcNow;
-                updated = _currentPage with { Content = updatedContent, UpdatedAt = updatedAt };
-            }
-            else
-            {
-                PageDto? pageUpdated = await response.Content.ReadFromJsonAsync<PageDto>();
-                if (pageUpdated is null)
-                {
-                    _saveState = SaveState.Failed;
-                    await InvokeAsync(StateHasChanged);
-                    await DebugLogAsync("AUTOSAVE_FAIL", new
-                    {
-                        traceId = HeadingNumberingTraceId,
-                        pageId = _currentPage.Id,
-                        status = "null"
-                    });
-                    return;
+                        await DebugLogAsync("AUTOSAVE_FAIL", new
+                        {
+                            traceId = HeadingNumberingTraceId,
+                            pageId = activePage.Id,
+                            status = (int)response.StatusCode
+                        });
+                        return EditorSaveResult.Failed($"HTTP {(int)response.StatusCode}");
                 }
 
-                updated = pageUpdated;
-            }
+                PageDto updated;
+                if (UseSceneContentPersistence)
+                {
+                    SceneContentDto? sceneUpdated = await response.Content.ReadFromJsonAsync<SceneContentDto>(cancellationToken: ct);
+                    string updatedContent = sceneUpdated?.ContentJson ?? content;
+                    DateTimeOffset updatedAt = sceneUpdated?.UpdatedAtUtc ?? DateTimeOffset.UtcNow;
+                    updated = _currentPage with { Content = updatedContent, UpdatedAt = updatedAt };
+                }
+                else
+                {
+                    PageDto? pageUpdated = await response.Content.ReadFromJsonAsync<PageDto>(cancellationToken: ct);
+                    if (pageUpdated is null)
+                    {
+                        await DebugLogAsync("AUTOSAVE_FAIL", new
+                        {
+                            traceId = HeadingNumberingTraceId,
+                            pageId = activePage.Id,
+                            status = "null"
+                        });
+                        return EditorSaveResult.Failed("Empty save response.");
+                    }
 
-            _currentPage = updated;
-            _isDirty = false;
-            _saveState = SaveState.Idle;
-            _lastLoadedHash = ComputeShortHash(updated.Content ?? string.Empty);
-            await OnPageSaved.InvokeAsync(updated);
-            await NotifyStatusChangedAsync();
-            await DebugLogAsync("AUTOSAVE_SUCCESS", new
-            {
-                traceId = HeadingNumberingTraceId,
-                pageId = _currentPage.Id,
-                fingerprint = BuildFingerprint(updated.Content ?? string.Empty)
-            });
-            await SaveDebugBackupAsync(updated.Id, updated.Content ?? string.Empty);
+                    updated = pageUpdated;
+                }
+
+                bool stalePage = _currentPage?.Id != activePage.Id;
+                bool staleScene = UseSceneContentPersistence
+                    && (SceneProjectId != activeSceneProjectId || SceneNodeId != activeSceneNodeId);
+                if (stalePage || staleScene)
+                {
+                    return EditorSaveResult.Failed("Save result became stale after page switch.");
+                }
+
+                _currentPage = updated;
+                _content = updated.Content ?? string.Empty;
+                _wordCount = CountWords(_content);
+                _lastLoadedHash = ComputeShortHash(_content);
+                await OnPageSaved.InvokeAsync(updated);
+                await DebugLogAsync("AUTOSAVE_SUCCESS", new
+                {
+                    traceId = HeadingNumberingTraceId,
+                    pageId = activePage.Id,
+                    fingerprint = BuildFingerprint(_content)
+                });
+                await SaveDebugBackupAsync(updated.Id, _content);
+                return new EditorSaveResult(true, _content, updated.UpdatedAt);
+            }
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Page save failed.");
-            _saveState = SaveState.Failed;
-            await NotifyStatusChangedAsync();
             await DebugLogAsync("AUTOSAVE_FAIL", new
             {
                 traceId = HeadingNumberingTraceId,
-                pageId = _currentPage.Id,
+                pageId = activePage.Id,
                 error = ex.Message
             });
+            return EditorSaveResult.Failed(ex.Message);
         }
-        finally
+    }
+
+    private async Task HandleSaveCoordinatorStateChangedAsync()
+    {
+        SyncSaveStateFromCoordinator();
+        await NotifyStatusChangedAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void SyncSaveStateFromCoordinator()
+    {
+        _isDirty = SaveCoordinator.IsDirty;
+        _saveState = SaveCoordinator.State switch
         {
-            await NotifyStatusChangedAsync();
-            await InvokeAsync(StateHasChanged);
+            EditorSaveState.Saving => SaveState.Saving,
+            EditorSaveState.Failed => SaveState.Failed,
+            _ => SaveState.Idle
+        };
+    }
+
+    private async Task PromptRecoveryDraftIfAvailableAsync(PageDto page)
+    {
+        RecoveryDraft? recoveryDraft = await SaveCoordinator.GetRestoreCandidateAsync(
+            page.Content ?? string.Empty,
+            page.UpdatedAt);
+        if (recoveryDraft is null)
+        {
+            return;
         }
+
+        bool useRecovery = false;
+        try
+        {
+            string timestamp = recoveryDraft.SavedAtUtc.ToLocalTime().ToString("g", CultureInfo.CurrentCulture);
+            useRecovery = await JSRuntime.InvokeAsync<bool>(
+                "confirm",
+                $"A newer recovery draft from {timestamp} is available. Restore it?");
+        }
+        catch (JSException)
+        {
+            return;
+        }
+
+        if (useRecovery)
+        {
+            await SetContentAsync(recoveryDraft.Content, markDirty: true);
+            await SaveCoordinator.MarkRecoveryDraftRestoredAsync(recoveryDraft.Content);
+            SyncSaveStateFromCoordinator();
+        }
+        else
+        {
+            await SaveCoordinator.DiscardRecoveryDraftAsync();
+        }
+    }
+
+    [JSInvokable]
+    public Task OnWindowBlurred()
+    {
+        return ForceSaveForLifecycleEventAsync("window-blur");
+    }
+
+    [JSInvokable]
+    public Task OnDocumentHidden()
+    {
+        return ForceSaveForLifecycleEventAsync("tab-hidden");
+    }
+
+    [JSInvokable]
+    public Task OnPageHide()
+    {
+        return ForceSaveForLifecycleEventAsync("page-hide");
+    }
+
+    private async Task ForceSaveForLifecycleEventAsync(string reason)
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        if (now - _lastLifecycleForcedSaveUtc < TimeSpan.FromSeconds(3))
+        {
+            return;
+        }
+
+        _lastLifecycleForcedSaveUtc = now;
+        await ForceSaveIfDifferentAsync(reason);
     }
 
     private string GetSaveStatusLabel()
@@ -742,9 +841,8 @@ else
 
     public void Dispose()
     {
-        _autosaveCts?.Cancel();
-        _autosaveCts?.Dispose();
-        _autosaveCts = null;
+        SaveCoordinator.StateChanged -= HandleSaveCoordinatorStateChangedAsync;
+        _ = SaveCoordinator.DisposeAsync();
 
         _pageBreakCts?.Cancel();
         _pageBreakCts?.Dispose();
@@ -753,6 +851,25 @@ else
         if (_editorInstance is not null)
         {
             _ = InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync("tiptapEditor.detachAnnotationClicks", _editorInstance));
+        }
+
+        if (_saveEventsModule is not null)
+        {
+            try
+            {
+                _ = _saveEventsModule.InvokeVoidAsync("unregisterEditorSaveEvents", nameof(PageEditor));
+                _ = _saveEventsModule.DisposeAsync();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+            finally
+            {
+                _saveEventsModule = null;
+            }
         }
 
         _dotNetRef?.Dispose();
@@ -796,7 +913,7 @@ else
     {
         if (_isDirty)
         {
-            return SaveAsync();
+            return SaveAsync(force: true);
         }
 
         return Task.CompletedTask;
@@ -825,14 +942,17 @@ else
         _content = html ?? string.Empty;
         _hasUserEditedSinceLoad = true;
         _isDirty = true;
+        _pendingAutosavePageId = _currentPage?.Id;
         await DebugLogAsync("AUTOSAVE_START", new
         {
             traceId = HeadingNumberingTraceId,
-            pageId = _currentPage.Id,
+            pageId = _currentPage?.Id,
             reason = $"force:{reason}",
             fingerprint = BuildFingerprint(_content)
         });
-        await SaveAsync();
+        await SaveCoordinator.NotifyContentChangedAsync(_content);
+        SyncSaveStateFromCoordinator();
+        await SaveAsync(force: true);
     }
 
     public string GetContent()
@@ -869,7 +989,9 @@ else
 
         if (markDirty)
         {
-            ScheduleAutosave();
+            _pendingAutosavePageId = _currentPage?.Id;
+            await SaveCoordinator.NotifyContentChangedAsync(_content);
+            SyncSaveStateFromCoordinator();
         }
 
         await NotifyStatusChangedAsync();

@@ -36,7 +36,7 @@ namespace WriterApp.Controllers
         private readonly AppDbContext _dbContext;
         private readonly ILogger<SectionsController> _logger;
         private readonly IConfiguration _configuration;
-        private readonly IPageVersionService _pageVersionService;
+        private readonly IVersionHistoryService _versionHistory;
         private readonly ISectionImportService _sectionImportService;
 
         public SectionsController(
@@ -48,7 +48,7 @@ namespace WriterApp.Controllers
             AppDbContext dbContext,
             ILogger<SectionsController> logger,
             IConfiguration configuration,
-            IPageVersionService pageVersionService,
+            IVersionHistoryService versionHistory,
             ISectionImportService sectionImportService)
         {
             _documents = documents ?? throw new ArgumentNullException(nameof(documents));
@@ -59,7 +59,7 @@ namespace WriterApp.Controllers
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
-            _pageVersionService = pageVersionService ?? throw new ArgumentNullException(nameof(pageVersionService));
+            _versionHistory = versionHistory ?? throw new ArgumentNullException(nameof(versionHistory));
             _sectionImportService = sectionImportService ?? throw new ArgumentNullException(nameof(sectionImportService));
         }
 
@@ -571,7 +571,7 @@ namespace WriterApp.Controllers
             DateTimeOffset now = DateTimeOffset.UtcNow;
             PageRecord primaryPage = pages[0];
 
-            await _pageVersionService.CreateSnapshotAsync(
+            await _versionHistory.CreateCheckpointAsync(
                 userId,
                 primaryPage,
                 existingHtml,
@@ -596,7 +596,7 @@ namespace WriterApp.Controllers
             await SyncLinkedSceneContentAsync(targetSectionId, finalHtml, targetSection.LanguageCode, now, ct);
             await _dbContext.SaveChangesAsync(ct);
             await _searchIndex.UpsertPageAsync(primaryPage, ct);
-            await _pageVersionService.CreateSnapshotAsync(
+            await _versionHistory.CreateCheckpointAsync(
                 userId,
                 primaryPage,
                 finalHtml,

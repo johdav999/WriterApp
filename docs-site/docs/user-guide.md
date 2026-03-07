@@ -98,7 +98,7 @@ Open any scene from a project.
 Organization tools help you keep story intent, structure, and notes aligned.
 
 ### Where to find it
-In the editor’s right panel categories.
+In the editorï¿½s right panel categories.
 
 ### How to use it
 1. Open **Story tools > Scene card Coach**.

@@ -25,7 +25,7 @@ namespace WriterApp.Controllers
         private readonly IPageRepository _pages;
         private readonly IUserIdResolver _userIdResolver;
         private readonly ISearchIndexService _searchIndex;
-        private readonly IPageVersionService _pageVersions;
+        private readonly IVersionHistoryService _versionHistory;
         private readonly IProjectWordCountService _projectWordCounts;
         private readonly IProjectGoalsService _projectGoals;
         private readonly AppDbContext _dbContext;
@@ -37,7 +37,7 @@ namespace WriterApp.Controllers
             IPageRepository pages,
             IUserIdResolver userIdResolver,
             ISearchIndexService searchIndex,
-            IPageVersionService pageVersions,
+            IVersionHistoryService versionHistory,
             IProjectWordCountService projectWordCounts,
             IProjectGoalsService projectGoals,
             AppDbContext dbContext,
@@ -48,7 +48,7 @@ namespace WriterApp.Controllers
             _pages = pages ?? throw new ArgumentNullException(nameof(pages));
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
             _searchIndex = searchIndex ?? throw new ArgumentNullException(nameof(searchIndex));
-            _pageVersions = pageVersions ?? throw new ArgumentNullException(nameof(pageVersions));
+            _versionHistory = versionHistory ?? throw new ArgumentNullException(nameof(versionHistory));
             _projectWordCounts = projectWordCounts ?? throw new ArgumentNullException(nameof(projectWordCounts));
             _projectGoals = projectGoals ?? throw new ArgumentNullException(nameof(projectGoals));
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
@@ -164,11 +164,11 @@ namespace WriterApp.Controllers
 
             await _pages.CreateAsync(page, ct);
             await _searchIndex.UpsertPageAsync(page, ct);
-            await _pageVersions.CreateAutosnapshotIfDueAsync(
+            await _versionHistory.CreateCheckpointIfDueAsync(
                 userId,
                 page,
                 page.Content ?? string.Empty,
-                TimeSpan.FromSeconds(30),
+                TimeSpan.FromSeconds(60),
                 ct);
             await _projectWordCounts.RefreshForSectionAsync(sectionId, ct);
             await _projectGoals.TrackPageDeltaAsync(
@@ -234,12 +234,29 @@ namespace WriterApp.Controllers
                 return NotFound();
             }
 
+            bool contentChanged = !string.Equals(before.Content ?? string.Empty, page.Content ?? string.Empty, StringComparison.Ordinal);
+            bool titleChanged = !string.Equals(before.Title ?? string.Empty, page.Title ?? string.Empty, StringComparison.Ordinal);
+            if (!contentChanged && !titleChanged)
+            {
+                PageDto unchangedDto = new(
+                    page.Id,
+                    page.DocumentId,
+                    page.SectionId,
+                    page.Title,
+                    page.Content ?? string.Empty,
+                    page.OrderIndex,
+                    page.CreatedAt,
+                    page.UpdatedAt);
+
+                return Ok(unchangedDto);
+            }
+
             await _searchIndex.UpsertPageAsync(page, ct);
-            await _pageVersions.CreateAutosnapshotIfDueAsync(
+            await _versionHistory.CreateCheckpointIfDueAsync(
                 userId,
                 page,
                 page.Content ?? string.Empty,
-                TimeSpan.FromSeconds(30),
+                TimeSpan.FromSeconds(60),
                 ct);
             await _projectWordCounts.RefreshForSectionAsync(page.SectionId, ct);
             await _projectGoals.TrackPageDeltaAsync(

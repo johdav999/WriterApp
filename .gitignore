@@ -3,6 +3,8 @@ bin/
 obj/
 *.user
 *.suo
+*.log
+
 
 # build/publish output
 publish/

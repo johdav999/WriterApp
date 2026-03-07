@@ -152,7 +152,7 @@ namespace WriterApp.Tests
                 db,
                 new StubUserIdResolver(),
                 new InMemoryAiActionHistoryStore(),
-                new StubPageVersionService(),
+                new StubVersionHistoryService(),
                 NullLogger<AiActionsController>.Instance);
 
             controller.ControllerContext = new ControllerContext
@@ -256,12 +256,12 @@ namespace WriterApp.Tests
             public string ResolveUserId(ClaimsPrincipal user) => "user-1";
         }
 
-        private sealed class StubPageVersionService : IPageVersionService
+        private sealed class StubVersionHistoryService : IVersionHistoryService
         {
-            public Task<PageVersionRecord?> CreateSnapshotAsync(string userId, PageRecord page, string content, string reason, bool allowDuplicate, CancellationToken ct)
+            public Task<PageVersionRecord?> CreateCheckpointAsync(string userId, PageRecord page, string content, string reason, bool allowDuplicate, CancellationToken ct)
                 => Task.FromResult<PageVersionRecord?>(null);
 
-            public Task<PageVersionRecord?> CreateAutosnapshotIfDueAsync(string userId, PageRecord page, string content, TimeSpan minAge, CancellationToken ct)
+            public Task<PageVersionRecord?> CreateCheckpointIfDueAsync(string userId, PageRecord page, string content, TimeSpan minAge, CancellationToken ct)
                 => Task.FromResult<PageVersionRecord?>(null);
 
             public Task<IReadOnlyList<PageVersionRecord>> ListVersionsAsync(string userId, Guid pageId, CancellationToken ct)
@@ -272,7 +272,7 @@ namespace WriterApp.Tests
 
             public string DecompressContent(PageVersionRecord version) => string.Empty;
 
-            public Task CleanupAsync(string userId, Guid pageId, CancellationToken ct) => Task.CompletedTask;
+            public Task PruneAsync(string userId, Guid pageId, CancellationToken ct) => Task.CompletedTask;
         }
 
         private sealed class StubAiOrchestrator : IAiOrchestrator

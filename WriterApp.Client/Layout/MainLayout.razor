@@ -25,7 +25,7 @@
         <div class="app-header-center">
             <div class="app-breadcrumb">
                 <NavLink class="app-breadcrumb-link" href="@GetProjectBreadcrumbHref()" Match="NavLinkMatch.Prefix">@GetProjectBreadcrumbLabel()</NavLink>
-                @if (!string.IsNullOrWhiteSpace(_documentTitle))
+                @if (ShouldShowDocumentBreadcrumb())
                 {
                     <span class="app-breadcrumb-separator">-&gt;</span>
                     <span class="app-document-title">@_documentTitle</span>
@@ -276,7 +276,31 @@
 
         _breadcrumbProjectTitle = string.Empty;
         _isProjectBreadcrumbLoading = true;
-        await Task.CompletedTask;
+        try
+        {
+            ProjectTreeDto? tree = await Http.GetFromJsonAsync<ProjectTreeDto>($"api/projects/{resolvedProjectId}/tree");
+            string title = tree?.Project?.Title?.Trim() ?? string.Empty;
+            if (_breadcrumbProjectId != resolvedProjectId)
+            {
+                return;
+            }
+
+            _breadcrumbProjectTitle = title;
+            _isProjectBreadcrumbLoading = false;
+            if (!string.IsNullOrWhiteSpace(title))
+            {
+                CurrentProjectStateService.CacheProject(resolvedProjectId, title);
+                CurrentProjectStateService.SetCurrent(resolvedProjectId, title);
+            }
+        }
+        catch
+        {
+            if (_breadcrumbProjectId == resolvedProjectId)
+            {
+                _breadcrumbProjectTitle = string.Empty;
+                _isProjectBreadcrumbLoading = false;
+            }
+        }
     }
 
     protected override async Task OnParametersSetAsync()
@@ -315,6 +339,18 @@
     private async Task OnDocumentsNavClicked()
     {
         await NavigateDocumentsAsync();
+    }
+
+    private bool ShouldShowDocumentBreadcrumb()
+    {
+        if (string.IsNullOrWhiteSpace(_documentTitle))
+        {
+            return false;
+        }
+
+        string[] segments = GetRouteSegments();
+        return !(segments.Length > 0
+            && string.Equals(segments[0], "projects", StringComparison.OrdinalIgnoreCase));
     }
 
     private async Task NavigateDocumentsAsync()

@@ -38,7 +38,7 @@ namespace WriterApp.Controllers
         private readonly AppDbContext _dbContext;
         private readonly IUserIdResolver _userIdResolver;
         private readonly IAiActionHistoryStore _historyStore;
-        private readonly IPageVersionService _pageVersions;
+        private readonly IVersionHistoryService _versionHistory;
         private readonly ILogger<AiActionsController> _logger;
         private const int OutlineMaxSectionChars = 2000;
         private const int OutlineMaxSections = 60;
@@ -58,7 +58,7 @@ namespace WriterApp.Controllers
             AppDbContext dbContext,
             IUserIdResolver userIdResolver,
             IAiActionHistoryStore historyStore,
-            IPageVersionService pageVersions,
+            IVersionHistoryService versionHistory,
             ILogger<AiActionsController> logger)
         {
             _orchestrator = orchestrator ?? throw new ArgumentNullException(nameof(orchestrator));
@@ -68,7 +68,7 @@ namespace WriterApp.Controllers
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
             _historyStore = historyStore ?? throw new ArgumentNullException(nameof(historyStore));
-            _pageVersions = pageVersions ?? throw new ArgumentNullException(nameof(pageVersions));
+            _versionHistory = versionHistory ?? throw new ArgumentNullException(nameof(versionHistory));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -185,7 +185,7 @@ namespace WriterApp.Controllers
                     PageRecord? page = await _pages.GetAsync(request.PageId.Value, userId, ct);
                     if (page is not null)
                     {
-                        await _pageVersions.CreateSnapshotAsync(
+                        await _versionHistory.CreateCheckpointAsync(
                             userId,
                             page,
                             request.BeforeContent,

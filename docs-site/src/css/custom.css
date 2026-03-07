@@ -1,0 +1,46 @@
+:root {
+  --ifm-color-primary: #2f855a;
+  --ifm-color-primary-dark: #276749;
+  --ifm-color-primary-darker: #22543d;
+  --ifm-color-primary-darkest: #1c4532;
+  --ifm-color-primary-light: #38a169;
+  --ifm-color-primary-lighter: #48bb78;
+  --ifm-color-primary-lightest: #68d391;
+  --ifm-background-color: #f7fafc;
+  --ifm-font-color-base: #1a202c;
+  --ifm-link-color: #2f855a;
+  --ifm-code-font-size: 95%;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.08);
+}
+
+a {
+  color: var(--ifm-color-primary);
+}
+
+a:hover {
+  color: var(--ifm-color-primary-dark);
+}
+
+.button.button--primary {
+  background-color: var(--ifm-color-primary);
+  border-color: var(--ifm-color-primary);
+}
+
+.button.button--primary:hover {
+  background-color: var(--ifm-color-primary-dark);
+  border-color: var(--ifm-color-primary-dark);
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #68d391;
+  --ifm-color-primary-dark: #48bb78;
+  --ifm-color-primary-darker: #38a169;
+  --ifm-color-primary-darkest: #2f855a;
+  --ifm-color-primary-light: #9ae6b4;
+  --ifm-color-primary-lighter: #c6f6d5;
+  --ifm-color-primary-lightest: #f0fff4;
+  --ifm-background-color: #1a202c;
+  --ifm-font-color-base: #edf2f7;
+  --ifm-link-color: #9ae6b4;
+  --docusaurus-highlighted-code-line-bg: rgba(255, 255, 255, 0.08);
+}
