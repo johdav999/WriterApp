@@ -258,6 +258,208 @@ function debugHeading(stage, payload) {
     }
 }
 
+function isTableSelectionDebugEnabled() {
+    try {
+        return window?.localStorage?.getItem("writerapp.tableSelectionDebug") === "true"
+            || window?.localStorage?.getItem("writerapp.debug") === "true";
+    } catch {
+        return false;
+    }
+}
+
+function getSelectionTypeName(selection) {
+    return selection?.constructor?.name
+        || selection?.jsonID
+        || selection?.type
+        || typeof selection;
+}
+
+function isCellSelection(selection) {
+    return !!selection
+        && (selection?.constructor?.name === "CellSelection"
+            || !!selection?.$anchorCell
+            || !!selection?.$headCell
+            || !!selection?.anchorCell
+            || !!selection?.headCell);
+}
+
+function isSelectionInTable(editor, selection = editor?.state?.selection) {
+    if (!editor || !selection) {
+        return false;
+    }
+
+    if (isCellSelection(selection)) {
+        return true;
+    }
+
+    return editor.isActive("table")
+        || editor.isActive("tableCell")
+        || editor.isActive("tableHeader");
+}
+
+function isTablePointerSelectionInProgress(editor) {
+    const pointerState = editor?.__writerPointerState;
+    return !!pointerState?.isPointerDown && !!pointerState?.startedInTable;
+}
+
+function getCurrentTableCellInfo(editor, selection = editor?.state?.selection) {
+    const $from = selection?.$from;
+    if (!$from) {
+        return null;
+    }
+
+    for (let depth = $from.depth; depth >= 0; depth -= 1) {
+        const node = $from.node(depth);
+        const role = node?.type?.spec?.tableRole;
+        if (role === "cell" || role === "header_cell") {
+            return {
+                depth,
+                nodeType: node.type?.name ?? null,
+                tableRole: role,
+                attrs: {
+                    colspan: Number(node.attrs?.colspan ?? 1),
+                    rowspan: Number(node.attrs?.rowspan ?? 1),
+                    colwidth: Array.isArray(node.attrs?.colwidth) ? [...node.attrs.colwidth] : node.attrs?.colwidth ?? null
+                }
+            };
+        }
+    }
+
+    return null;
+}
+
+function buildSelectionDebugPayload(editor, reason) {
+    const selection = editor?.state?.selection;
+    return {
+        reason,
+        selectionType: getSelectionTypeName(selection),
+        from: Number(selection?.from ?? -1),
+        to: Number(selection?.to ?? -1),
+        empty: !!selection?.empty,
+        inTable: isSelectionInTable(editor, selection),
+        cellSelection: isCellSelection(selection),
+        anchorCell: !!selection?.$anchorCell || !!selection?.anchorCell,
+        headCell: !!selection?.$headCell || !!selection?.headCell,
+        pointerDownInTable: isTablePointerSelectionInProgress(editor)
+    };
+}
+
+function debugTableSelection(editor, reason, extra = null) {
+    if (!isTableSelectionDebugEnabled()) {
+        return;
+    }
+
+    try {
+        console.debug("[table-selection]", {
+            ...buildSelectionDebugPayload(editor, reason),
+            ...(extra || {})
+        });
+    } catch {
+    }
+}
+
+function debugSplitCellState(editor, reason, extra = null) {
+    if (!isTableSelectionDebugEnabled() || !editor) {
+        return;
+    }
+
+    const selection = editor.state?.selection;
+    const canChain = editor.can?.().chain?.();
+    const canSplitChainExists = typeof canChain?.splitCell === "function";
+    const canMergeChainExists = typeof canChain?.mergeCells === "function";
+    const payload = {
+        ...buildSelectionDebugPayload(editor, reason),
+        splitCommandExists: typeof editor.commands?.splitCell === "function",
+        splitCanChainExists: canSplitChainExists,
+        mergeCanChainExists: canMergeChainExists,
+        canSplitTableCell: canSplitChainExists ? editor.can().chain().splitCell().run() : null,
+        canMergeTableCells: canMergeChainExists ? editor.can().chain().mergeCells().run() : null,
+        activeTable: editor.isActive?.("table") ?? false,
+        activeTableCell: editor.isActive?.("tableCell") ?? false,
+        activeTableHeader: editor.isActive?.("tableHeader") ?? false,
+        currentCell: getCurrentTableCellInfo(editor, selection),
+        ...(extra || {})
+    };
+
+    try {
+        console.debug("[split-cell]", payload);
+    } catch {
+    }
+}
+
+function shouldShowSelectionBubble(editor) {
+    const selection = editor?.state?.selection;
+    if (!selection || selection.empty) {
+        debugTableSelection(editor, "bubble-hide-empty");
+        return false;
+    }
+
+    if (isSelectionInTable(editor, selection)) {
+        debugTableSelection(editor, "bubble-hide-table-selection");
+        return false;
+    }
+
+    if (isTablePointerSelectionInProgress(editor)) {
+        debugTableSelection(editor, "bubble-hide-table-drag");
+        return false;
+    }
+
+    if (getSelectionTypeName(selection) !== "TextSelection") {
+        debugTableSelection(editor, "bubble-hide-non-text-selection");
+        return false;
+    }
+
+    debugTableSelection(editor, "bubble-show");
+    return true;
+}
+
+function installTablePointerTracking(editor) {
+    if (!editor?.view?.dom || editor.__writerPointerStateInstalled) {
+        return;
+    }
+
+    const root = editor.view.dom;
+    const pointerState = editor.__writerPointerState = editor.__writerPointerState || {
+        isPointerDown: false,
+        startedInTable: false
+    };
+
+    const onPointerDown = event => {
+        const target = event?.target instanceof Element ? event.target : null;
+        pointerState.isPointerDown = true;
+        pointerState.startedInTable = !!target?.closest?.("table");
+        debugTableSelection(editor, "pointer-down", {
+            targetInTable: pointerState.startedInTable
+        });
+    };
+
+    const clearPointerState = () => {
+        if (!pointerState.isPointerDown && !pointerState.startedInTable) {
+            return;
+        }
+
+        pointerState.isPointerDown = false;
+        pointerState.startedInTable = false;
+        debugTableSelection(editor, "pointer-clear");
+    };
+
+    root.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("pointerup", clearPointerState, true);
+    document.addEventListener("pointercancel", clearPointerState, true);
+    document.addEventListener("dragend", clearPointerState, true);
+    window.addEventListener("blur", clearPointerState);
+
+    editor.__writerPointerStateInstalled = true;
+    editor.__writerPointerCleanup = () => {
+        root.removeEventListener("pointerdown", onPointerDown, true);
+        document.removeEventListener("pointerup", clearPointerState, true);
+        document.removeEventListener("pointercancel", clearPointerState, true);
+        document.removeEventListener("dragend", clearPointerState, true);
+        window.removeEventListener("blur", clearPointerState);
+        editor.__writerPointerStateInstalled = false;
+    };
+}
+
 // Debug: localStorage.setItem("writerapp.debug","true"); location.reload();
 // Disable: localStorage.removeItem("writerapp.debug"); location.reload();
 
@@ -2129,6 +2331,13 @@ function buildFormattingState(editor) {
     const canInsertImage = editor.can().chain().setImage({ src: "data:image/gif;base64,R0lGODlhAQABAAAAACw=" }).run();
     const canRemoveImage = editor.isActive("image");
 
+    if (isTableSelectionDebugEnabled() && (editor.isActive("table") || editor.isActive("tableCell") || editor.isActive("tableHeader") || canMergeTableCells || canSplitTableCell)) {
+        debugSplitCellState(editor, "formatting-state", {
+            formattingCanMergeTableCells: canMergeTableCells,
+            formattingCanSplitTableCell: canSplitTableCell
+        });
+    }
+
     return {
         isBold: editor.isActive("bold"),
         isItalic: editor.isActive("italic"),
@@ -2437,6 +2646,7 @@ window.tiptapEditor = {
             throw error;
         }
 
+        installTablePointerTracking(editor);
         console.log("[pagination] extensions:", editor.extensionManager.extensions.map(extension => extension.name));
 
         try {
@@ -2514,8 +2724,8 @@ window.tiptapEditor = {
                 return;
             }
 
-            const { from, to, empty } = editor.state.selection;
-            if (empty) {
+            const { from, to } = editor.state.selection;
+            if (!shouldShowSelectionBubble(editor)) {
                 if (lastBubbleState !== "hidden") {
                     lastBubbleState = "hidden";
                     safeInvoke(dotNetRef, interopState, "OnEditorSelectionBubble", 0, 0, false);
@@ -3065,6 +3275,10 @@ window.tiptapEditor = {
     destroy: function (editor) {
         if (editor && editor.__interopState) {
             editor.__interopState.enabled = false;
+        }
+        if (editor && typeof editor.__writerPointerCleanup === "function") {
+            editor.__writerPointerCleanup();
+            editor.__writerPointerCleanup = null;
         }
 
         if (editor && editor.__pageBreakResizeHandler) {

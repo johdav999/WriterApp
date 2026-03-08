@@ -88,6 +88,7 @@ namespace WriterApp.Application.Users
                 select new AdminUserRow
                 {
                     UserId = profile.UserId,
+                    Email = profile.Email,
                     DisplayName = profile.DisplayName,
                     CreatedUtc = profile.CreatedUtc,
                     UpdatedUtc = profile.UpdatedUtc,
@@ -102,7 +103,8 @@ namespace WriterApp.Application.Users
             {
                 string search = q.Trim();
                 query = query.Where(item =>
-                    item.UserId.Contains(search)
+                    (item.Email != null && item.Email.Contains(search))
+                    || item.UserId.Contains(search)
                     || (item.DisplayName != null && item.DisplayName.Contains(search)));
             }
 
@@ -152,7 +154,7 @@ namespace WriterApp.Application.Users
             IReadOnlyList<AdminUserListItemDto> items = rows
                 .Select(row => new AdminUserListItemDto(
                     row.UserId,
-                    ResolveEmail(row.DisplayName, row.UserId),
+                    ResolveEmail(row.Email, row.DisplayName, row.UserId),
                     row.DisplayName,
                     row.CreatedUtc,
                     row.UpdatedUtc,
@@ -200,7 +202,7 @@ namespace WriterApp.Application.Users
             int used = entitlement?.AiTokensUsedThisPeriod ?? 0;
             return new AdminUserDetailDto(
                 profile.UserId,
-                ResolveEmail(profile.DisplayName, profile.UserId),
+                ResolveEmail(profile.Email, profile.DisplayName, profile.UserId),
                 profile.DisplayName,
                 profile.CreatedUtc,
                 profile.UpdatedUtc,
@@ -235,6 +237,11 @@ namespace WriterApp.Application.Users
                 throw new ArgumentException("Either displayName or email is required.", nameof(request));
             }
 
+            if (!string.IsNullOrWhiteSpace(email) && !EmailRegex.IsMatch(email))
+            {
+                throw new ArgumentException("Email is invalid.", nameof(request));
+            }
+
             bool exists = await _dbContext.UserProfiles.AnyAsync(item => item.UserId == userId, ct);
             if (exists)
             {
@@ -247,6 +254,7 @@ namespace WriterApp.Application.Users
             UserProfile profile = new()
             {
                 UserId = userId,
+                Email = email,
                 DisplayName = string.IsNullOrWhiteSpace(displayName) ? email : displayName,
                 HasOnboarded = false,
                 CreatedUtc = now,
@@ -296,7 +304,13 @@ namespace WriterApp.Application.Users
 
             if (!string.IsNullOrWhiteSpace(request.Email))
             {
-                throw new ArgumentException("Email edits are not supported because email is not stored as a dedicated column.");
+                string normalizedEmail = request.Email.Trim();
+                if (!EmailRegex.IsMatch(normalizedEmail))
+                {
+                    throw new ArgumentException("Email is invalid.", nameof(request));
+                }
+
+                profile.Email = normalizedEmail;
             }
 
             string? nextDisplayName = request.DisplayName?.Trim();
@@ -310,9 +324,10 @@ namespace WriterApp.Application.Users
                     adminEmail,
                     "UpdateUser",
                     profile.UserId,
-                    ResolveEmail(profile.DisplayName, profile.UserId),
+                    ResolveEmail(profile.Email, profile.DisplayName, profile.UserId),
                     new
                     {
+                        request.Email,
                         request.DisplayName
                     },
                     ct);
@@ -376,7 +391,7 @@ namespace WriterApp.Application.Users
                 adminEmail,
                 "SoftDeleteUser",
                 normalizedUserId,
-                ResolveEmail(profile?.DisplayName, normalizedUserId),
+                ResolveEmail(profile?.Email, profile?.DisplayName, normalizedUserId),
                 new
                 {
                     allowDeleteWithActiveSubscription
@@ -436,6 +451,7 @@ namespace WriterApp.Application.Users
                 profile = new UserProfile
                 {
                     UserId = normalizedUserId,
+                    Email = null,
                     DisplayName = ResolveEmail(null, normalizedUserId),
                     HasOnboarded = false,
                     CreatedUtc = now,
@@ -462,7 +478,7 @@ namespace WriterApp.Application.Users
                 adminEmail,
                 "ResetOnboardingState",
                 normalizedUserId,
-                ResolveEmail(profile.DisplayName, normalizedUserId),
+                ResolveEmail(profile.Email, profile.DisplayName, normalizedUserId),
                 new { reset = true },
                 ct);
 
@@ -725,8 +741,8 @@ namespace WriterApp.Application.Users
             return field.ToLowerInvariant() switch
             {
                 "email" => desc
-                    ? query.OrderByDescending(item => item.DisplayName).ThenBy(item => item.UserId)
-                    : query.OrderBy(item => item.DisplayName).ThenBy(item => item.UserId),
+                    ? query.OrderByDescending(item => item.Email).ThenBy(item => item.UserId)
+                    : query.OrderBy(item => item.Email).ThenBy(item => item.UserId),
                 "tokensleft" => desc
                     ? query.OrderByDescending(item => item.AiMonthlyTokenBudget - item.AiTokensUsedThisPeriod).ThenBy(item => item.UserId)
                     : query.OrderBy(item => item.AiMonthlyTokenBudget - item.AiTokensUsedThisPeriod).ThenBy(item => item.UserId),
@@ -764,6 +780,16 @@ namespace WriterApp.Application.Users
                        || status.Equals("unpaid", StringComparison.OrdinalIgnoreCase));
         }
 
+        private static string? ResolveEmail(string? email, string? displayName, string userId)
+        {
+            if (!string.IsNullOrWhiteSpace(email) && EmailRegex.IsMatch(email))
+            {
+                return email;
+            }
+
+            return ResolveEmail(displayName, userId);
+        }
+
         private static string? ResolveEmail(string? displayName, string userId)
         {
             if (!string.IsNullOrWhiteSpace(displayName) && EmailRegex.IsMatch(displayName))
@@ -793,6 +819,7 @@ namespace WriterApp.Application.Users
         private sealed class AdminUserRow
         {
             public string UserId { get; set; } = string.Empty;
+            public string? Email { get; set; }
             public string? DisplayName { get; set; }
             public DateTime CreatedUtc { get; set; }
             public DateTime UpdatedUtc { get; set; }

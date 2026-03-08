@@ -1820,10 +1820,10 @@
 
 .context-subtabs {
     display: flex;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     gap: 6px;
-    overflow-x: auto;
-    scrollbar-width: thin;
+    overflow-x: hidden;
+    scrollbar-width: none;
 }
 
 .context-tab-primary.is-active {
@@ -1834,6 +1834,8 @@
 
 .context-tab-category,
 .context-tab-subview {
+    display: flex;
+    align-items: center;
     justify-content: center;
 }
 
@@ -1860,13 +1862,18 @@
 }
 
 .context-tab-secondary {
+    flex: 1 1 132px;
+    min-width: 0;
     min-height: 28px;
     border-radius: 8px;
     background: var(--color-surface-1);
     border-color: var(--color-border);
     font-size: 0.78rem;
-    padding: 0 10px;
-    white-space: nowrap;
+    padding: 6px 10px;
+    line-height: 1.2;
+    text-align: center;
+    white-space: normal;
+    overflow-wrap: anywhere;
 }
 
 .context-tab-secondary.is-active {

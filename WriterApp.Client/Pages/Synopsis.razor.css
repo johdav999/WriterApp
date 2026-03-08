@@ -1,9 +1,8 @@
 .synopsis-shell {
     display: grid;
     gap: 24px;
-    max-width: 1100px;
-    margin: 0 auto;
-    padding: 24px 20px 48px;
+    width: 100%;
+    padding: 28px clamp(20px, 2.5vw, 36px) 56px;
 }
 
 .synopsis-header {
@@ -22,7 +21,7 @@
 .synopsis-subtitle {
     margin: 6px 0 0;
     color: #556070;
-    max-width: 520px;
+    max-width: 680px;
 }
 
 .synopsis-loading,
@@ -52,14 +51,18 @@
 
 .synopsis-layout {
     display: grid;
-    gap: 24px;
-    grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+    gap: clamp(28px, 3vw, 56px);
+    width: min(100%, 1440px);
+    grid-template-columns: minmax(720px, 1fr) clamp(320px, 24vw, 380px);
     align-items: start;
 }
 
 .synopsis-form {
     display: grid;
     gap: 20px;
+    width: 100%;
+    min-width: 0;
+    max-width: 980px;
 }
 
 .synopsis-field {
@@ -78,6 +81,7 @@
 }
 
 .synopsis-input {
+    width: 100%;
     min-height: 120px;
     padding: 12px 14px;
     border-radius: 12px;
@@ -102,6 +106,15 @@
 .synopsis-ai {
     position: sticky;
     top: 24px;
+    justify-self: end;
+    width: 100%;
+    max-width: 380px;
+}
+
+@media (min-width: 1181px) {
+    .synopsis-shell {
+        padding-right: clamp(28px, 3vw, 48px);
+    }
 }
 
 .ai-card {
@@ -205,13 +218,20 @@ button.secondary:disabled {
     cursor: not-allowed;
 }
 
-@media (max-width: 980px) {
+@media (max-width: 1180px) {
     .synopsis-layout {
         grid-template-columns: 1fr;
     }
 
+    .synopsis-form,
+    .synopsis-ai {
+        max-width: none;
+        width: 100%;
+    }
+
     .synopsis-ai {
         position: static;
+        justify-self: stretch;
     }
 }
 

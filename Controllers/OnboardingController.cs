@@ -253,19 +253,30 @@ namespace WriterApp.Controllers
             UserProfile? profile = await _dbContext.UserProfiles
                 .FirstOrDefaultAsync(item => item.UserId == userId, ct);
 
+            ExternalIdentityClaims.UserProfileIdentity identity =
+                ExternalIdentityClaims.MapToUserProfileIdentity(User.Claims, userId);
+
             if (profile is not null)
             {
+                if (!string.IsNullOrWhiteSpace(identity.Email))
+                {
+                    if (!string.Equals(profile.Email, identity.Email, StringComparison.OrdinalIgnoreCase))
+                    {
+                        profile.Email = identity.Email;
+                        await _dbContext.SaveChangesAsync(ct);
+                    }
+                }
+
                 return profile;
             }
 
             DateTimeOffset now = DateTimeOffset.UtcNow;
             DateTime nowUtc = now.UtcDateTime;
-            ExternalIdentityClaims.UserProfileIdentity identity =
-                ExternalIdentityClaims.MapToUserProfileIdentity(User.Claims, userId);
 
             profile = new UserProfile
             {
                 UserId = userId,
+                Email = identity.Email,
                 DisplayName = identity.DisplayName,
                 HasOnboarded = false,
                 HasCompletedOnboarding = false,

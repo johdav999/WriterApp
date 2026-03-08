@@ -160,6 +160,7 @@ namespace WriterApp.Tests
                 new StubProjectWordCountService(),
                 new StubProjectGoalsService(),
                 new ProjectSceneLinkingService(db),
+                new StubProjectDeletionService(),
                 config,
                 NullLogger<ProjectsController>.Instance);
 
@@ -447,6 +448,12 @@ namespace WriterApp.Tests
 
             public Task TrackPageDeltaAsync(PageRecord? beforePage, PageRecord? afterPage, string eventKey, CancellationToken ct)
                 => Task.CompletedTask;
+        }
+
+        private sealed class StubProjectDeletionService : IProjectDeletionService
+        {
+            public Task<ProjectDeletionResult> DeleteOwnedProjectAsync(Guid incomingId, string ownerUserId, CancellationToken ct)
+                => Task.FromResult(new ProjectDeletionResult(false, null, null));
         }
     }
 }

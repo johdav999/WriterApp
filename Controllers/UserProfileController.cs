@@ -26,8 +26,19 @@ namespace WriterApp.Controllers
         {
             string userId = _userIdResolver.ResolveUserId(User);
             UserProfile? profile = await _dbContext.UserProfiles
-                .AsNoTracking()
                 .FirstOrDefaultAsync(item => item.UserId == userId, ct);
+
+            ExternalIdentityClaims.UserProfileIdentity identity =
+                ExternalIdentityClaims.MapToUserProfileIdentity(User.Claims, userId);
+
+            if (profile is not null
+                && !string.IsNullOrWhiteSpace(identity.Email)
+                && !string.Equals(profile.Email, identity.Email, StringComparison.OrdinalIgnoreCase))
+            {
+                profile.Email = identity.Email;
+                profile.UpdatedUtc = DateTime.UtcNow;
+                await _dbContext.SaveChangesAsync(ct);
+            }
 
             return Ok(new UserProfileDto(
                 HasOnboarded: profile?.HasOnboarded ?? false,
@@ -51,6 +62,7 @@ namespace WriterApp.Controllers
                 profile = new UserProfile
                 {
                     UserId = userId,
+                    Email = identity.Email,
                     DisplayName = identity.DisplayName,
                     CreatedUtc = now,
                     HasOnboarded = true,
@@ -60,6 +72,14 @@ namespace WriterApp.Controllers
             }
             else
             {
+                ExternalIdentityClaims.UserProfileIdentity identity =
+                    ExternalIdentityClaims.MapToUserProfileIdentity(User.Claims, userId);
+                if (!string.IsNullOrWhiteSpace(identity.Email)
+                    && !string.Equals(profile.Email, identity.Email, StringComparison.OrdinalIgnoreCase))
+                {
+                    profile.Email = identity.Email;
+                }
+
                 profile.HasOnboarded = true;
                 profile.UpdatedUtc = now;
             }

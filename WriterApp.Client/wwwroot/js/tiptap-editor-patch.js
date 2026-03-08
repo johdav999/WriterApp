@@ -25,6 +25,104 @@
     }
   };
 
+  const isTableSelectionDebugEnabled = () => {
+    try {
+      return window?.localStorage?.getItem("writerapp.tableSelectionDebug") === "true"
+        || window?.localStorage?.getItem("writerapp.debug") === "true";
+    } catch {
+      return false;
+    }
+  };
+
+  const getSelectionTypeName = (selection) => selection?.constructor?.name
+    || selection?.jsonID
+    || selection?.type
+    || typeof selection;
+
+  const isCellSelection = (selection) => !!selection
+    && (selection?.constructor?.name === "CellSelection"
+      || !!selection?.$anchorCell
+      || !!selection?.$headCell
+      || !!selection?.anchorCell
+      || !!selection?.headCell);
+
+  const isSelectionInTable = (editor, selection = editor?.state?.selection) => {
+    if (!editor || !selection) {
+      return false;
+    }
+
+    if (isCellSelection(selection)) {
+      return true;
+    }
+
+    return editor.isActive?.("table")
+      || editor.isActive?.("tableCell")
+      || editor.isActive?.("tableHeader");
+  };
+
+  const isTablePointerSelectionInProgress = (editor) => {
+    const pointerState = editor?.__writerPointerState;
+    return !!pointerState?.isPointerDown && !!pointerState?.startedInTable;
+  };
+
+  const debugTableSelection = (editor, reason, extra = null) => {
+    if (!isTableSelectionDebugEnabled()) {
+      return;
+    }
+
+    const selection = editor?.state?.selection;
+    try {
+      console.debug("[table-selection]", {
+        reason,
+        selectionType: getSelectionTypeName(selection),
+        from: Number(selection?.from ?? -1),
+        to: Number(selection?.to ?? -1),
+        empty: !!selection?.empty,
+        inTable: isSelectionInTable(editor, selection),
+        cellSelection: isCellSelection(selection),
+        anchorCell: !!selection?.$anchorCell || !!selection?.anchorCell,
+        headCell: !!selection?.$headCell || !!selection?.headCell,
+        pointerDownInTable: isTablePointerSelectionInProgress(editor),
+        ...(extra || {})
+      });
+    } catch {
+    }
+  };
+
+  const applyTextSelectionSafely = (editor, selectionOrPos, reason, options = null) => {
+    if (!editor?.chain || !editor?.commands) {
+      return false;
+    }
+
+    const force = options?.force === true;
+    const preserveCellSelection = !force && (isCellSelection(editor?.state?.selection)
+      || isTablePointerSelectionInProgress(editor));
+
+    debugTableSelection(editor, "set-text-selection", {
+      requested: selectionOrPos,
+      source: reason,
+      force,
+      preservedCellSelection: preserveCellSelection
+    });
+
+    if (preserveCellSelection) {
+      return false;
+    }
+
+    editor.commands.focus();
+    try {
+      editor.chain().focus().setTextSelection(selectionOrPos).run();
+      return true;
+    } catch {
+      if (typeof selectionOrPos === "number") {
+        editor.chain().focus().setTextSelection(selectionOrPos).run();
+        return true;
+      }
+    }
+
+    return false;
+  };
+
   if (!api.getSelectionDocRange) {
     api.getSelectionDocRange = function (editor) {
       if (!editor?.state?.selection) {
@@ -164,11 +262,12 @@
       const clampedFrom = clampPos(Math.min(from, to), 1, docSize);
       const clampedTo = clampPos(Math.max(from, to), clampedFrom, docSize);
 
-      editor.commands.focus();
-      try {
-        editor.chain().focus().setTextSelection({ from: clampedFrom, to: clampedTo }).run();
-      } catch {
-        editor.chain().focus().setTextSelection(clampedFrom).run();
+      const applied = applyTextSelectionSafely(
+        editor,
+        { from: clampedFrom, to: clampedTo },
+        "scrollToAnnotation");
+      if (!applied) {
+        return false;
       }
 
       if (editor.view?.state?.tr && editor.view?.dispatch) {
@@ -409,11 +508,12 @@
         return false;
       }
 
-      editor.commands.focus();
-      try {
-        editor.chain().focus().setTextSelection({ from: docFrom, to: docTo }).run();
-      } catch {
-        editor.chain().focus().setTextSelection(docFrom).run();
+      const applied = applyTextSelectionSafely(
+        editor,
+        { from: docFrom, to: docTo },
+        "focusAndScrollRange");
+      if (!applied) {
+        return false;
       }
 
       const tr = editor.state.tr.scrollIntoView();
@@ -803,8 +903,7 @@
 
       if (editor?.view?.state?.selection) {
         const { from } = editor.view.state.selection;
-        editor.commands.focus();
-        editor.chain().focus().setTextSelection(from).run();
+        applyTextSelectionSafely(editor, from, "clearQualityIssueHighlight");
       }
     };
 

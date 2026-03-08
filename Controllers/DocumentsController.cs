@@ -14,6 +14,7 @@ using WriterApp.Application.Search;
 using WriterApp.Application.Security;
 using WriterApp.Application.State;
 using WriterApp.Data.Documents;
+using WriterApp.Shared.Localization;
 
 namespace WriterApp.Controllers
 {
@@ -286,6 +287,9 @@ namespace WriterApp.Controllers
                 return NotFound();
             }
 
+            string? normalizedSourceLanguage = TranslationLanguages.NormalizeRequestedLanguage(request.SourceLanguage, allowAuto: true);
+            string? normalizedTargetLanguage = TranslationLanguages.NormalizeRequestedLanguage(request.TargetLanguage);
+
             List<SectionRecord> sourceSections = await _dbContext.Sections
                 .Where(section => section.DocumentId == source.Id)
                 .OrderBy(section => section.OrderIndex)
@@ -297,9 +301,9 @@ namespace WriterApp.Controllers
                 source.TranslationGroupId = translationGroupId;
             }
 
-            if (string.IsNullOrWhiteSpace(source.LanguageCode) && !string.IsNullOrWhiteSpace(request.SourceLanguage))
+            if (string.IsNullOrWhiteSpace(source.LanguageCode) && !string.IsNullOrWhiteSpace(normalizedSourceLanguage))
             {
-                source.LanguageCode = request.SourceLanguage;
+                source.LanguageCode = normalizedSourceLanguage;
             }
 
             DateTimeOffset now = DateTimeOffset.UtcNow;
@@ -311,7 +315,7 @@ namespace WriterApp.Controllers
                 Id = Guid.NewGuid(),
                 ProjectId = source.ProjectId,
                 OwnerUserId = userId,
-                Title = BuildTranslatedTitle(source.Title, request.TargetLanguage, request.Title),
+                Title = BuildTranslatedTitle(source.Title, normalizedTargetLanguage, request.Title),
                 DocumentKind = translatedKind,
                 CreatedAt = now,
                 UpdatedAt = now,
@@ -320,7 +324,7 @@ namespace WriterApp.Controllers
                 IsArchived = false,
                 ArchivedAt = null,
                 DeletedAtUtc = null,
-                LanguageCode = request.TargetLanguage,
+                LanguageCode = normalizedTargetLanguage,
                 TranslationGroupId = translationGroupId
             };
 
@@ -355,7 +359,7 @@ namespace WriterApp.Controllers
                     OrderIndex = sourceSection.OrderIndex,
                     CreatedAt = now,
                     UpdatedAt = now,
-                    LanguageCode = request.TargetLanguage,
+                    LanguageCode = normalizedTargetLanguage,
                     TranslationGroupId = translationGroupId
                 };
                 _dbContext.Sections.Add(newSection);
@@ -753,7 +757,7 @@ namespace WriterApp.Controllers
             }
 
             string normalized = string.IsNullOrWhiteSpace(originalTitle) ? "Untitled" : originalTitle.Trim();
-            string lang = string.IsNullOrWhiteSpace(languageCode) ? string.Empty : languageCode.Trim().ToUpperInvariant();
+            string lang = TranslationLanguages.GetDisplayNameOrValue(languageCode);
             return string.IsNullOrWhiteSpace(lang) ? normalized : $"{normalized} ({lang})";
         }
 

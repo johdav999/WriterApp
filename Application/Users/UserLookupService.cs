@@ -31,17 +31,17 @@ namespace WriterApp.Application.Users
 
             string normalized = IdNorm.Norm(email);
 
-            // UserProfile currently stores display name and user id; match email-like display names case-insensitively.
             List<UserLookupUser> matches = await _dbContext.UserProfiles
                 .AsNoTracking()
                 .Where(item =>
-                    item.DisplayName != null && EF.Functions.Like(item.DisplayName, normalized)
+                    item.Email != null && EF.Functions.Like(item.Email, normalized)
+                    || item.DisplayName != null && EF.Functions.Like(item.DisplayName, normalized)
                     || EF.Functions.Like(item.UserId, normalized))
                 .OrderBy(item => item.UserId)
                 .Select(item => new UserLookupUser(
                     item.UserId,
                     item.DisplayName,
-                    ResolveEmail(item.DisplayName, item.UserId)))
+                    ResolveEmail(item.Email, item.DisplayName, item.UserId)))
                 .ToListAsync(ct);
 
             return matches.Count == 0
@@ -63,7 +63,7 @@ namespace WriterApp.Application.Users
                 .Select(item => new UserLookupUser(
                     item.UserId,
                     item.DisplayName,
-                    ResolveEmail(item.DisplayName, item.UserId)))
+                    ResolveEmail(item.Email, item.DisplayName, item.UserId)))
                 .FirstOrDefaultAsync(ct);
 
             if (user is not null)
@@ -74,6 +74,16 @@ namespace WriterApp.Application.Users
             return EmailRegex.IsMatch(normalized)
                 ? new UserLookupUser(normalized, normalized, normalized)
                 : null;
+        }
+
+        private static string? ResolveEmail(string? email, string? displayName, string userId)
+        {
+            if (!string.IsNullOrWhiteSpace(email) && EmailRegex.IsMatch(email))
+            {
+                return email;
+            }
+
+            return ResolveEmail(displayName, userId);
         }
 
         private static string? ResolveEmail(string? displayName, string userId)
