@@ -20,6 +20,7 @@ using WriterApp.Application.Importing;
 using WriterApp.Application.Commands;
 using WriterApp.Application.State;
 using WriterApp.Application.Diagnostics;
+using WriterApp.Shared.Localization;
 
 namespace WriterApp.Controllers
 {
@@ -236,15 +237,18 @@ namespace WriterApp.Controllers
                 return NotFound();
             }
 
+            string? normalizedSourceLanguage = TranslationLanguages.NormalizeRequestedLanguage(request.SourceLanguage, allowAuto: true);
+            string? normalizedTargetLanguage = TranslationLanguages.NormalizeRequestedLanguage(request.TargetLanguage);
+
             Guid translationGroupId = source.TranslationGroupId ?? Guid.NewGuid();
             if (source.TranslationGroupId != translationGroupId)
             {
                 source.TranslationGroupId = translationGroupId;
             }
 
-            if (string.IsNullOrWhiteSpace(source.LanguageCode) && !string.IsNullOrWhiteSpace(request.SourceLanguage))
+            if (string.IsNullOrWhiteSpace(source.LanguageCode) && !string.IsNullOrWhiteSpace(normalizedSourceLanguage))
             {
-                source.LanguageCode = request.SourceLanguage;
+                source.LanguageCode = normalizedSourceLanguage;
             }
 
             DateTimeOffset now = DateTimeOffset.UtcNow;
@@ -263,12 +267,12 @@ namespace WriterApp.Controllers
             {
                 Id = Guid.NewGuid(),
                 DocumentId = source.DocumentId,
-                Title = BuildTranslatedTitle(source.Title, request.TargetLanguage, request.Title),
+                Title = BuildTranslatedTitle(source.Title, normalizedTargetLanguage, request.Title),
                 NarrativePurpose = source.NarrativePurpose,
                 OrderIndex = insertIndex,
                 CreatedAt = now,
                 UpdatedAt = now,
-                LanguageCode = request.TargetLanguage,
+                LanguageCode = normalizedTargetLanguage,
                 TranslationGroupId = translationGroupId
             };
 
@@ -895,7 +899,7 @@ namespace WriterApp.Controllers
             }
 
             string normalized = string.IsNullOrWhiteSpace(originalTitle) ? "Section" : originalTitle.Trim();
-            string lang = string.IsNullOrWhiteSpace(languageCode) ? string.Empty : languageCode.Trim().ToUpperInvariant();
+            string lang = TranslationLanguages.GetDisplayNameOrValue(languageCode);
             return string.IsNullOrWhiteSpace(lang) ? normalized : $"{normalized} ({lang})";
         }
 

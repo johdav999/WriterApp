@@ -273,6 +273,7 @@ builder.Services.AddScoped<WriterApp.Application.Documents.IQualityCheckService,
 builder.Services.AddScoped<WriterApp.Application.Documents.IProjectWordCountService, WriterApp.Application.Documents.ProjectWordCountService>();
 builder.Services.AddScoped<WriterApp.Application.Documents.IProjectGoalsService, WriterApp.Application.Documents.ProjectGoalsService>();
 builder.Services.AddScoped<WriterApp.Application.Documents.IProjectSceneLinkingService, WriterApp.Application.Documents.ProjectSceneLinkingService>();
+builder.Services.AddScoped<WriterApp.Application.Documents.IProjectDeletionService, WriterApp.Application.Documents.ProjectDeletionService>();
 builder.Services.AddScoped<WriterApp.Application.Exporting.IOutlineOrderResolver, WriterApp.Application.Exporting.OutlineOrderResolver>();
 builder.Services.AddScoped<WriterApp.Application.Documents.ISceneContentBackfillService, WriterApp.Application.Documents.SceneContentBackfillService>();
 builder.Services.AddSingleton<WriterApp.Application.Commands.IStructureCommandProcessor, WriterApp.Application.Commands.StructureCommandProcessor>();

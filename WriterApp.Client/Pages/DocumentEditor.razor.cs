@@ -27,6 +27,7 @@ using WriterApp.Client.State;
 using WriterApp.Application.Usage;
 using WriterApp.Client.Components.Editor;
 using WriterApp.Client.Services;
+using WriterApp.Shared.Localization;
 using SelectionDocRange = WriterApp.Client.Components.Editor.PageEditor.SelectionDocRange;
 
 namespace WriterApp.Client.Pages
@@ -424,6 +425,8 @@ namespace WriterApp.Client.Pages
         private AiActionOption? _pendingTranslateAction;
         private string _translateSourceLanguage = "auto";
         private string _translateTargetLanguage = "en";
+        private string _translateSourceLanguageQuery = string.Empty;
+        private string _translateTargetLanguageQuery = string.Empty;
         private string _translateStyle = "natural";
         private string _translationAlignmentMode = "paragraph";
         private string _translationApplyMode = "replace";
@@ -535,6 +538,8 @@ namespace WriterApp.Client.Pages
         private Guid? _sceneAiProposalId;
         private string? _sceneAiError;
         private bool _sceneAiInFlight;
+
+        private bool IsExportDialogLoading => _isTemplatesLoading || _isPresetsLoading;
         private PendingAiProposal? _pendingAiProposal;
         private AiSelectionSnapshot? _lastAiSelectionSnapshot;
         private bool _pendingDetailsExpanded;
@@ -3059,9 +3064,9 @@ namespace WriterApp.Client.Pages
         {
             List<string> observations = new()
             {
-                $"Character bible: {GetBibleStatusLabel(_characterBibleSnapshot)}",
-                $"Place bible: {GetBibleStatusLabel(_placeBibleSnapshot)}",
-                $"Timeline bible: {GetBibleStatusLabel(_timelineBibleSnapshot)}"
+                $"Character canon: {GetBibleStatusLabel(_characterBibleSnapshot)}",
+                $"Place canon: {GetBibleStatusLabel(_placeBibleSnapshot)}",
+                $"Timeline canon: {GetBibleStatusLabel(_timelineBibleSnapshot)}"
             };
             if (context.HasContinuityIssues)
             {
@@ -3796,7 +3801,7 @@ namespace WriterApp.Client.Pages
                     (string bibleType, Func<BibleSnapshotDto?> getSnapshot) = steps[index];
                     bool fullRebuild = NeedsFullBibleBuild(getSnapshot());
                     string phase = fullRebuild ? "building" : "refreshing";
-                    _continuityStatus = $"Updating bibles: {CultureInfo.InvariantCulture.TextInfo.ToTitleCase(bibleType)} ({index + 1}/{steps.Length})...";
+                    _continuityStatus = $"Updating Story Canon: {CultureInfo.InvariantCulture.TextInfo.ToTitleCase(bibleType)} ({index + 1}/{steps.Length})...";
                     await InvokeAsync(StateHasChanged);
 
                     try
@@ -3807,7 +3812,7 @@ namespace WriterApp.Client.Pages
                             request);
                         if (!response.IsSuccessStatusCode)
                         {
-                            if (await TryHandleEntitlementDeniedAsync(response, "ai.bibles.refresh", "Upgrade to enable Bible refresh."))
+                            if (await TryHandleEntitlementDeniedAsync(response, "ai.bibles.refresh", "Upgrade to enable Story Canon updates."))
                             {
                                 _continuityStatus = _entitlementUserMessage;
                                 return;
@@ -3815,7 +3820,7 @@ namespace WriterApp.Client.Pages
 
                             failures.Add($"{bibleType} ({(int)response.StatusCode})");
                             Logger.LogWarning(
-                                "Update Bible request failed. Type={BibleType}, Phase={Phase}, Status={Status}",
+                                "Update Story Canon request failed. Type={BibleType}, Phase={Phase}, Status={Status}",
                                 bibleType,
                                 phase,
                                 response.StatusCode);
@@ -3831,13 +3836,13 @@ namespace WriterApp.Client.Pages
                     catch (Exception ex)
                     {
                         failures.Add(bibleType);
-                        Logger.LogWarning(ex, "Update Bible request failed. Type={BibleType}, Phase={Phase}", bibleType, phase);
+                        Logger.LogWarning(ex, "Update Story Canon request failed. Type={BibleType}, Phase={Phase}", bibleType, phase);
                     }
                 }
 
                 _continuityStatus = failures.Count == 0
-                    ? "Bibles updated successfully."
-                    : $"Bible update completed with errors: {string.Join(", ", failures)}";
+                    ? "Story Canon updated successfully."
+                    : $"Story Canon update completed with errors: {string.Join(", ", failures)}";
                 await LoadAiHistoryAsync();
             }
             finally
@@ -3869,13 +3874,13 @@ namespace WriterApp.Client.Pages
                     request);
                 if (!response.IsSuccessStatusCode)
                 {
-                    if (await TryHandleEntitlementDeniedAsync(response, "ai.bibles.refresh", "Upgrade to enable Bible refresh."))
+                    if (await TryHandleEntitlementDeniedAsync(response, "ai.bibles.refresh", "Upgrade to enable Story Canon updates."))
                     {
                         _continuityStatus = _entitlementUserMessage;
                         return;
                     }
 
-                    _continuityStatus = $"Bible refresh failed ({response.StatusCode}).";
+                    _continuityStatus = $"Story Canon update failed ({response.StatusCode}).";
                     return;
                 }
 
@@ -3886,14 +3891,14 @@ namespace WriterApp.Client.Pages
                 }
 
                 _continuityStatus = fullRebuild
-                    ? $"{bibleType} bible rebuilt."
-                    : $"{bibleType} bible refreshed incrementally.";
+                    ? $"{bibleType} Story Canon rebuilt."
+                    : $"{bibleType} Story Canon updated incrementally.";
                 await LoadAiHistoryAsync();
             }
             catch (Exception ex)
             {
-                Logger.LogWarning(ex, "Bible refresh failed for type {BibleType}.", bibleType);
-                _continuityStatus = $"{bibleType} bible refresh failed.";
+                Logger.LogWarning(ex, "Story Canon update failed for type {BibleType}.", bibleType);
+                _continuityStatus = $"{bibleType} Story Canon update failed.";
             }
             finally
             {
@@ -8400,6 +8405,88 @@ private const string PreviewBootstrapScript = @"
             _isTranslateModalOpen = false;
         }
 
+        private IEnumerable<TranslationLanguageOption> GetPopularTranslationLanguages(string? query, string? selectedCode, bool includeAuto = false)
+        {
+            HashSet<string> popularCodes = TranslationLanguages.Popular
+                .Select(item => item.Code)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            return GetFilteredTranslationLanguages(query, selectedCode, includeAuto)
+                .Where(item => popularCodes.Contains(item.Code));
+        }
+
+        private IEnumerable<TranslationLanguageOption> GetAdditionalTranslationLanguages(string? query, string? selectedCode, bool includeAuto = false)
+        {
+            HashSet<string> popularCodes = TranslationLanguages.Popular
+                .Select(item => item.Code)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            return GetFilteredTranslationLanguages(query, selectedCode, includeAuto)
+                .Where(item => !popularCodes.Contains(item.Code));
+        }
+
+        private IEnumerable<TranslationLanguageOption> GetFilteredTranslationLanguages(string? query, string? selectedCode, bool includeAuto = false)
+        {
+            string normalizedQuery = query?.Trim() ?? string.Empty;
+            string normalizedSelected = NormalizeTranslationLanguageSelection(selectedCode, allowAuto: includeAuto, fallbackCode: includeAuto ? "auto" : "en");
+
+            IEnumerable<TranslationLanguageOption> matches = TranslationLanguages.All
+                .Where(item =>
+                    string.IsNullOrWhiteSpace(normalizedQuery)
+                    || item.Code.Contains(normalizedQuery, StringComparison.OrdinalIgnoreCase)
+                    || item.DisplayName.Contains(normalizedQuery, StringComparison.OrdinalIgnoreCase)
+                    || (!string.IsNullOrWhiteSpace(item.NativeName) && item.NativeName.Contains(normalizedQuery, StringComparison.OrdinalIgnoreCase)));
+
+            List<TranslationLanguageOption> result = matches.ToList();
+            if (!string.IsNullOrWhiteSpace(normalizedSelected)
+                && !string.Equals(normalizedSelected, "auto", StringComparison.OrdinalIgnoreCase)
+                && result.All(item => !string.Equals(item.Code, normalizedSelected, StringComparison.OrdinalIgnoreCase)))
+            {
+                TranslationLanguageOption? selected = TranslationLanguages.Find(normalizedSelected);
+                if (selected is not null)
+                {
+                    result.Insert(0, selected);
+                }
+                else
+                {
+                    result.Insert(0, new TranslationLanguageOption(normalizedSelected, TranslationLanguages.GetDisplayNameOrValue(normalizedSelected)));
+                }
+            }
+
+            return result
+                .GroupBy(item => item.Code, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .OrderBy(item => item.DisplayName, StringComparer.OrdinalIgnoreCase);
+        }
+
+        private static string GetTranslationLanguageOptionLabel(TranslationLanguageOption language)
+        {
+            return string.IsNullOrWhiteSpace(language.NativeName)
+                ? language.DisplayName
+                : $"{language.DisplayName} ({language.NativeName})";
+        }
+
+        private static bool ShouldShowTranslationLanguagePlaceholder(string? selectedCode)
+        {
+            return string.IsNullOrWhiteSpace(TranslationLanguages.NormalizeRequestedLanguage(selectedCode));
+        }
+
+        private static string NormalizeTranslationLanguageSelection(string? value, bool allowAuto, string fallbackCode)
+        {
+            string? normalized = TranslationLanguages.NormalizeRequestedLanguage(value, allowAuto);
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                return fallbackCode;
+            }
+
+            if (allowAuto && string.Equals(normalized, "auto", StringComparison.OrdinalIgnoreCase))
+            {
+                return "auto";
+            }
+
+            return normalized;
+        }
+
         private async Task ConfirmTranslateAsync()
         {
             if (_pendingTranslateAction is null || _pendingTranslateContext is null || _activeSection is null)
@@ -8407,6 +8494,9 @@ private const string PreviewBootstrapScript = @"
                 CloseTranslateModal();
                 return;
             }
+
+            _translateSourceLanguage = NormalizeTranslationLanguageSelection(_translateSourceLanguage, allowAuto: true, fallbackCode: "auto");
+            _translateTargetLanguage = NormalizeTranslationLanguageSelection(_translateTargetLanguage, allowAuto: false, fallbackCode: "en");
 
             if (_pendingTranslateAction.RequiresSelection && string.IsNullOrWhiteSpace(_pendingTranslateContext.SelectionText))
             {
@@ -8430,11 +8520,20 @@ private const string PreviewBootstrapScript = @"
                 return;
             }
 
+            string sourceLanguageCode = NormalizeTranslationLanguageSelection(_translateSourceLanguage, allowAuto: true, fallbackCode: "auto");
+            string targetLanguageCode = NormalizeTranslationLanguageSelection(_translateTargetLanguage, allowAuto: false, fallbackCode: "en");
+            string sourceLanguagePrompt = TranslationLanguages.GetDisplayNameOrValue(sourceLanguageCode, allowAuto: true);
+            string targetLanguagePrompt = TranslationLanguages.GetDisplayNameOrValue(targetLanguageCode);
+            _translateSourceLanguage = sourceLanguageCode;
+            _translateTargetLanguage = targetLanguageCode;
+
             Dictionary<string, object?> parameters = new(action.Parameters)
             {
                 ["instruction"] = action.Instruction,
-                ["source_language"] = _translateSourceLanguage,
-                ["target_language"] = _translateTargetLanguage,
+                ["source_language"] = sourceLanguageCode,
+                ["target_language"] = targetLanguageCode,
+                ["source_language_display"] = sourceLanguagePrompt,
+                ["target_language_display"] = targetLanguagePrompt,
                 ["style"] = _translateStyle
             };
 
@@ -9087,11 +9186,13 @@ private const string PreviewBootstrapScript = @"
             }
 
             string html = PlainTextToHtml(translatedText);
+            string targetLanguageCode = NormalizeTranslationLanguageSelection(_translateTargetLanguage, allowAuto: false, fallbackCode: "en");
+            string sourceLanguageCode = NormalizeTranslationLanguageSelection(_translateSourceLanguage, allowAuto: true, fallbackCode: "auto");
             TranslationDuplicateSectionRequest payload = new(
                 html,
-                _translateTargetLanguage,
-                _translateSourceLanguage,
-                BuildTranslatedTitle(_activeSection.Title, _translateTargetLanguage));
+                targetLanguageCode,
+                sourceLanguageCode,
+                BuildTranslatedTitle(_activeSection.Title, targetLanguageCode));
 
             using HttpResponseMessage response =
                 await Http.PostAsJsonAsync($"api/sections/{_activeSection.Id}/translations", payload);
@@ -9119,10 +9220,12 @@ private const string PreviewBootstrapScript = @"
             }
 
             List<TranslatedSectionPayload> sections = BuildTranslatedSectionsPayload(translatedText);
+            string targetLanguageCode = NormalizeTranslationLanguageSelection(_translateTargetLanguage, allowAuto: false, fallbackCode: "en");
+            string sourceLanguageCode = NormalizeTranslationLanguageSelection(_translateSourceLanguage, allowAuto: true, fallbackCode: "auto");
             TranslationDuplicateDocumentRequest payload = new(
-                BuildTranslatedTitle(_documentTitle, _translateTargetLanguage),
-                _translateTargetLanguage,
-                _translateSourceLanguage,
+                BuildTranslatedTitle(_documentTitle, targetLanguageCode),
+                targetLanguageCode,
+                sourceLanguageCode,
                 sections);
 
             using HttpResponseMessage response =
@@ -9198,12 +9301,13 @@ private const string PreviewBootstrapScript = @"
         {
             Dictionary<Guid, string> mapping = ParseTranslatedSections(translatedText);
             List<TranslatedSectionPayload> result = new();
+            string targetLanguageCode = NormalizeTranslationLanguageSelection(_translateTargetLanguage, allowAuto: false, fallbackCode: "en");
             foreach (SectionDto section in _sections.OrderBy(item => item.OrderIndex))
             {
                 string content = mapping.TryGetValue(section.Id, out string? sectionText)
                     ? PlainTextToHtml(sectionText)
                     : string.Empty;
-                result.Add(new TranslatedSectionPayload(section.Id, content, BuildTranslatedTitle(section.Title, _translateTargetLanguage)));
+                result.Add(new TranslatedSectionPayload(section.Id, content, BuildTranslatedTitle(section.Title, targetLanguageCode)));
             }
 
             return result;
@@ -9272,7 +9376,7 @@ private const string PreviewBootstrapScript = @"
         private static string BuildTranslatedTitle(string title, string? languageCode)
         {
             string normalized = string.IsNullOrWhiteSpace(title) ? "Untitled" : title.Trim();
-            string lang = string.IsNullOrWhiteSpace(languageCode) ? "" : languageCode.Trim().ToUpperInvariant();
+            string lang = TranslationLanguages.GetDisplayNameOrValue(languageCode);
             return string.IsNullOrWhiteSpace(lang) ? normalized : $"{normalized} ({lang})";
         }
 
@@ -9454,32 +9558,32 @@ private const string PreviewBootstrapScript = @"
 
             if (string.Equals(actionKey, "continuity.extract_character_bible", StringComparison.OrdinalIgnoreCase))
             {
-                return "Build character bible";
+                return "Build character canon";
             }
 
             if (string.Equals(actionKey, "continuity.extract_place_bible", StringComparison.OrdinalIgnoreCase))
             {
-                return "Build place bible";
+                return "Build place canon";
             }
 
             if (string.Equals(actionKey, "continuity.extract_timeline_bible", StringComparison.OrdinalIgnoreCase))
             {
-                return "Build timeline bible";
+                return "Build timeline canon";
             }
 
             if (string.Equals(actionKey, "continuity.refresh_character_bible", StringComparison.OrdinalIgnoreCase))
             {
-                return "Refresh character bible";
+                return "Refresh character canon";
             }
 
             if (string.Equals(actionKey, "continuity.refresh_place_bible", StringComparison.OrdinalIgnoreCase))
             {
-                return "Refresh place bible";
+                return "Refresh place canon";
             }
 
             if (string.Equals(actionKey, "continuity.refresh_timeline_bible", StringComparison.OrdinalIgnoreCase))
             {
-                return "Refresh timeline bible";
+                return "Refresh timeline canon";
             }
 
             if (string.Equals(actionKey, "continuity.check_section", StringComparison.OrdinalIgnoreCase))
@@ -12567,9 +12671,7 @@ private const string PreviewBootstrapScript = @"
 
         private static string BuildLanguageLabel(string? languageCode)
         {
-            return string.IsNullOrWhiteSpace(languageCode)
-                ? "??"
-                : languageCode.Trim().ToUpperInvariant();
+            return TranslationLanguages.GetDisplayLabel(languageCode);
         }
 
         private async Task OnAiUndoRequested()

@@ -110,6 +110,7 @@ namespace WriterApp.Data
             builder.Entity<UserProfile>(entity =>
             {
                 entity.HasKey(profile => profile.UserId);
+                entity.Property(profile => profile.Email).HasMaxLength(320);
                 entity.Property(profile => profile.CreatedUtc).IsRequired();
                 entity.Property(profile => profile.HasOnboarded).IsRequired();
                 entity.Property(profile => profile.HasCompletedOnboarding).HasDefaultValue(false).IsRequired();

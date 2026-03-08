@@ -33,6 +33,7 @@ namespace WriterApp.Controllers
         private readonly IProjectWordCountService _wordCounts;
         private readonly IProjectGoalsService _goals;
         private readonly IProjectSceneLinkingService _sceneLinking;
+        private readonly IProjectDeletionService _projectDeletion;
         private readonly IConfiguration _configuration;
         private readonly ILogger<ProjectsController> _logger;
 
@@ -42,6 +43,7 @@ namespace WriterApp.Controllers
             IProjectWordCountService wordCounts,
             IProjectGoalsService goals,
             IProjectSceneLinkingService sceneLinking,
+            IProjectDeletionService projectDeletion,
             IConfiguration configuration,
             ILogger<ProjectsController> logger)
         {
@@ -50,6 +52,7 @@ namespace WriterApp.Controllers
             _wordCounts = wordCounts ?? throw new ArgumentNullException(nameof(wordCounts));
             _goals = goals ?? throw new ArgumentNullException(nameof(goals));
             _sceneLinking = sceneLinking ?? throw new ArgumentNullException(nameof(sceneLinking));
+            _projectDeletion = projectDeletion ?? throw new ArgumentNullException(nameof(projectDeletion));
             _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
@@ -341,81 +344,20 @@ namespace WriterApp.Controllers
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
-            ProjectRecord? project = await ResolveProjectForDeleteAsync(projectId, userId, ct);
-
-            if (project is null)
+            ProjectDeletionResult result = await _projectDeletion.DeleteOwnedProjectAsync(projectId, userId, ct);
+            if (!result.Deleted || !result.ProjectId.HasValue)
             {
                 _logger.LogWarning("Projects delete not found: incomingId={IncomingId} userId={UserId}", projectId, userId);
                 return NotFound();
             }
 
-            _logger.LogInformation("Projects delete resolved: incomingId={IncomingId} resolvedProjectId={ResolvedProjectId}", projectId, project.Id);
-
-            List<DocumentRecord> documents = await _dbContext.Documents
-                .Where(item => item.ProjectId == project.Id && item.OwnerUserId == userId)
-                .ToListAsync(ct);
-            _dbContext.Documents.RemoveRange(documents);
-            _dbContext.Projects.Remove(project);
-            await _dbContext.SaveChangesAsync(ct);
-            _logger.LogInformation("Projects delete success: projectId={ProjectId} removedDocuments={DocumentCount}", project.Id, documents.Count);
+            _logger.LogInformation(
+                "Projects delete success: projectId={ProjectId} removedDocuments={DocumentCount} removedSections={SectionCount} removedPages={PageCount}",
+                result.ProjectId.Value,
+                result.Counts?.Documents ?? 0,
+                result.Counts?.Sections ?? 0,
+                result.Counts?.Pages ?? 0);
             return NoContent();
-        }
-
-        private async Task<ProjectRecord?> ResolveProjectForDeleteAsync(Guid incomingId, string userId, CancellationToken ct)
-        {
-            ProjectRecord? project = await _dbContext.Projects
-                .FirstOrDefaultAsync(item => item.Id == incomingId && item.OwnerUserId == userId, ct);
-            if (project is not null)
-            {
-                return project;
-            }
-
-            Guid? projectIdFromDocument = await _dbContext.Documents
-                .AsNoTracking()
-                .Where(item => item.Id == incomingId && item.OwnerUserId == userId)
-                .Select(item => (Guid?)item.ProjectId)
-                .FirstOrDefaultAsync(ct);
-            if (projectIdFromDocument.HasValue)
-            {
-                return await _dbContext.Projects
-                    .FirstOrDefaultAsync(item => item.Id == projectIdFromDocument.Value && item.OwnerUserId == userId, ct);
-            }
-
-            Guid? projectIdFromNode = await _dbContext.ProjectNodes
-                .AsNoTracking()
-                .Where(item => item.Id == incomingId)
-                .Join(
-                    _dbContext.Projects.AsNoTracking(),
-                    node => node.ProjectId,
-                    row => row.Id,
-                    (node, row) => new { row.Id, row.OwnerUserId })
-                .Where(item => item.OwnerUserId == userId)
-                .Select(item => (Guid?)item.Id)
-                .FirstOrDefaultAsync(ct);
-            if (projectIdFromNode.HasValue)
-            {
-                return await _dbContext.Projects
-                    .FirstOrDefaultAsync(item => item.Id == projectIdFromNode.Value && item.OwnerUserId == userId, ct);
-            }
-
-            Guid projectIdFromSection = await _dbContext.Sections
-                .AsNoTracking()
-                .Where(item => item.Id == incomingId)
-                .Join(
-                    _dbContext.Documents.AsNoTracking(),
-                    section => section.DocumentId,
-                    document => document.Id,
-                    (section, document) => new { document.ProjectId, document.OwnerUserId })
-                .Where(item => item.OwnerUserId == userId)
-                .Select(item => item.ProjectId)
-                .FirstOrDefaultAsync(ct);
-            if (projectIdFromSection != Guid.Empty)
-            {
-                return await _dbContext.Projects
-                    .FirstOrDefaultAsync(item => item.Id == projectIdFromSection && item.OwnerUserId == userId, ct);
-            }
-
-            return null;
         }
 
         [HttpGet("with-documents")]

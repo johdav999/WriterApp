@@ -1,16 +1,23 @@
 @page "/admin/users"
+@using System.Security
+@using System.Security.Claims
 @using Microsoft.AspNetCore.Authorization
 @using Microsoft.AspNetCore.Hosting
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.WebUtilities
+@using WriterApp.Application.Security
+@using WriterApp.Application.Users
 @using WriterApp.Shared
 @attribute [Authorize(Policy = "AdminOnly")]
 @implements IDisposable
-@inject HttpClient Http
+@inject AuthenticationStateProvider AuthenticationStateProvider
 @inject NavigationManager Navigation
 @inject IConfiguration Configuration
 @inject IWebHostEnvironment HostEnvironment
 @inject IJSRuntime JS
+@inject IUserIdResolver UserIdResolver
+@inject AdminUsersService AdminUsersService
+@inject AdminAuditService AdminAuditService
 @inject ILogger<Users> Logger
 
 <PageTitle>Admin - Users</PageTitle>
@@ -331,8 +338,7 @@
             <label>Display name</label>
             <input type="text" class="form-control" @bind="_editDisplayName" @bind:event="oninput" />
             <label>Email</label>
-            <input type="email" class="form-control" @bind="_editEmail" @bind:event="oninput" disabled />
-            <small>Email updates are disabled in this build.</small>
+            <input type="email" class="form-control" @bind="_editEmail" @bind:event="oninput" />
             <div class="drawer-actions">
                 <button class="btn btn-primary" @onclick="UpdateUserAsync">Save</button>
             </div>
@@ -378,7 +384,6 @@
     private readonly Dictionary<string, string?> _overrideSelections = new(StringComparer.Ordinal);
     private readonly List<ToastMessage> _toasts = new();
     private readonly List<AdminAuditEventDto> _auditItems = new();
-    private AdminApiClient? _adminApi;
 
     private bool _adminApiEnabled;
     private bool _isDevelopment;
@@ -496,7 +501,16 @@
                 TokensLeftGt: ParseNullableInt(_tokensLeftMinInput),
                 Sort: _sort);
 
-            AdminUserListResponseDto response = await AdminApi.GetUsersAsync(query);
+            AdminUserListResponseDto response = await AdminUsersService.QueryUsersAsync(
+                query.Page,
+                query.PageSize,
+                query.Q,
+                query.PlanKey,
+                query.OverrideOnly,
+                query.SubscriptionStatus,
+                query.TokensLeftLt,
+                query.TokensLeftGt,
+                query.Sort);
 
             _items.Clear();
             _items.AddRange(response.Items);
@@ -603,7 +617,7 @@
 
         try
         {
-            _selectedUser = await AdminApi.GetUserAsync(userId);
+            _selectedUser = await AdminUsersService.GetUserAsync(userId);
             _editDisplayName = _selectedUser?.DisplayName;
             _editEmail = _selectedUser?.Email;
         }
@@ -634,11 +648,14 @@
 
         try
         {
-            AdminUserDetailDto updated = await AdminApi.UpdateUserAsync(
+            AdminActorContext adminActor = await GetAdminActorAsync();
+            AdminUserDetailDto? updated = await AdminUsersService.UpdateUserAsync(
                 _selectedUser.UserId,
                 new AdminUpdateUserRequest(
-                    Email: null,
-                    DisplayName: _editDisplayName));
+                    Email: _editEmail,
+                    DisplayName: _editDisplayName),
+                adminActor.UserId,
+                adminActor.Email);
 
             _selectedUser = updated;
             AddToast("User updated.", "success");
@@ -659,7 +676,11 @@
 
         try
         {
-            _selectedUser = await AdminApi.SyncStripeAsync(_selectedUser.UserId);
+            AdminActorContext adminActor = await GetAdminActorAsync();
+            _selectedUser = await AdminUsersService.SyncStripeForUserAsync(
+                _selectedUser.UserId,
+                adminActor.UserId,
+                adminActor.Email);
             AddToast("Stripe sync completed.", "success");
             await LoadUsersAsync(updateQueryString: false);
         }
@@ -678,9 +699,13 @@
 
         try
         {
-            _ = await AdminApi.ResetTokensPeriodAsync(_selectedUser.UserId);
+            AdminActorContext adminActor = await GetAdminActorAsync();
+            _ = await AdminUsersService.ResetTokensPeriodAsync(
+                _selectedUser.UserId,
+                adminActor.UserId,
+                adminActor.Email);
             AddToast("Token period reset.", "success");
-            _selectedUser = await AdminApi.GetUserAsync(_selectedUser.UserId);
+            _selectedUser = await AdminUsersService.GetUserAsync(_selectedUser.UserId);
             await LoadUsersAsync(updateQueryString: false);
         }
         catch (Exception ex)
@@ -702,13 +727,24 @@
             return;
         }
 
+        bool tokenAdjustEnabled = Configuration.GetValue<bool?>("Admin:EnableTokenAdjust") ?? false;
+        if (!tokenAdjustEnabled)
+        {
+            AddToast("Token adjustments are disabled.", "error");
+            return;
+        }
+
         try
         {
-            _ = await AdminApi.AdjustTokensAsync(
+            AdminActorContext adminActor = await GetAdminActorAsync();
+            _ = await AdminUsersService.AdjustTokensAsync(
                 _selectedUser.UserId,
-                new AdminAdjustTokensRequest(deltaTokens, _deltaTokensReason));
+                deltaTokens,
+                _deltaTokensReason ?? string.Empty,
+                adminActor.UserId,
+                adminActor.Email);
             AddToast("Token adjustment applied.", "success");
-            _selectedUser = await AdminApi.GetUserAsync(_selectedUser.UserId);
+            _selectedUser = await AdminUsersService.GetUserAsync(_selectedUser.UserId);
             await LoadUsersAsync(updateQueryString: false);
         }
         catch (Exception ex)
@@ -734,7 +770,11 @@
 
         try
         {
-            _selectedUser = await AdminApi.ResetOnboardingAsync(_selectedUser.UserId);
+            AdminActorContext adminActor = await GetAdminActorAsync();
+            _selectedUser = await AdminUsersService.ResetOnboardingAsync(
+                _selectedUser.UserId,
+                adminActor.UserId,
+                adminActor.Email);
             AddToast("Onboarding reset.", "success");
             await LoadUsersAsync(updateQueryString: false);
         }
@@ -770,6 +810,7 @@
     {
         try
         {
+            AdminActorContext adminActor = await GetAdminActorAsync();
             AdminUserQueryDto query = new(
                 Page: _page,
                 PageSize: Math.Max(_pageSize, 200),
@@ -780,7 +821,18 @@
                 TokensLeftLt: ParseNullableInt(_tokensLeftMaxInput),
                 TokensLeftGt: ParseNullableInt(_tokensLeftMinInput),
                 Sort: _sort);
-            string csv = await AdminApi.ExportUsersCsvAsync(query);
+            string csv = await AdminUsersService.ExportCsvAsync(
+                query.Page,
+                query.PageSize,
+                query.Q,
+                query.PlanKey,
+                query.OverrideOnly,
+                query.SubscriptionStatus,
+                query.TokensLeftLt,
+                query.TokensLeftGt,
+                query.Sort,
+                adminActor.UserId,
+                adminActor.Email);
             await JS.InvokeVoidAsync("navigator.clipboard.writeText", csv);
             AddToast("CSV copied to clipboard.", "success");
         }
@@ -825,7 +877,7 @@
         {
             DateTime? fromUtc = ParseDate(_auditFromDate, endOfDay: false);
             DateTime? toUtc = ParseDate(_auditToDate, endOfDay: true);
-            AdminAuditListResponseDto response = await AdminApi.GetAuditAsync(
+            AdminAuditListResponseDto response = await AdminAuditService.QueryAsync(
                 new AdminAuditQueryDto(
                     _auditPage,
                     _auditPageSize,
@@ -867,7 +919,11 @@
     {
         try
         {
-            _ = await AdminApi.CreateUserAsync(new AdminCreateUserRequest(_newUserId, _newEmail, _newDisplayName));
+            AdminActorContext adminActor = await GetAdminActorAsync();
+            _ = await AdminUsersService.CreateUserAsync(
+                new AdminCreateUserRequest(_newUserId, _newEmail, _newDisplayName),
+                adminActor.UserId,
+                adminActor.Email);
             _showAddUserModal = false;
             AddToast("User created.", "success");
             await LoadUsersAsync(updateQueryString: false);
@@ -899,7 +955,13 @@
 
         try
         {
-            await AdminApi.DeleteUserAsync(_deleteTarget.UserId);
+            AdminActorContext adminActor = await GetAdminActorAsync();
+            bool allowDeleteWithActiveSubscription = Configuration.GetValue<bool?>("Admin:AllowDeleteWithActiveSubscription") ?? false;
+            await AdminUsersService.DeleteUserAsync(
+                _deleteTarget.UserId,
+                allowDeleteWithActiveSubscription,
+                adminActor.UserId,
+                adminActor.Email);
             AddToast("User removed.", "success");
             _showDeleteConfirm = false;
             _deleteTarget = null;
@@ -916,7 +978,12 @@
         try
         {
             string? selected = GetOverrideSelection(userId);
-            await AdminApi.SetPlanOverrideAsync(userId, new AdminSetPlanOverrideRequest(selected, "Admin UI"));
+            AdminActorContext adminActor = await GetAdminActorAsync();
+            await AdminUsersService.SetPlanOverrideAsync(
+                userId,
+                new AdminSetPlanOverrideRequest(selected, "Admin UI"),
+                adminActor.UserId,
+                adminActor.Email);
             AddToast("Plan override updated.", "success");
             await LoadUsersAsync(updateQueryString: false);
             if (_selectedUser?.UserId == userId)
@@ -1058,6 +1125,31 @@
         return endOfDay ? utc.AddDays(1).AddTicks(-1) : utc;
     }
 
+    private async Task<AdminActorContext> GetAdminActorAsync()
+    {
+        AuthenticationState authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        ClaimsPrincipal user = authState.User;
+        string? callerName = user.Identity?.Name;
+
+        string adminUserId;
+        try
+        {
+            adminUserId = UserIdResolver.ResolveUserId(user);
+        }
+        catch (SecurityException ex)
+        {
+            Logger.LogWarning(ex, "Admin action missing oid claim.");
+            adminUserId = callerName ?? "admin";
+        }
+
+        string? adminEmail = user.FindFirstValue(ClaimTypes.Email)
+            ?? user.FindFirstValue("emails")
+            ?? user.FindFirstValue("preferred_username")
+            ?? callerName;
+
+        return new AdminActorContext(adminUserId, adminEmail);
+    }
+
     public void Dispose()
     {
         _searchDebounceCts?.Cancel();
@@ -1065,6 +1157,5 @@
     }
 
     private sealed record ToastMessage(Guid Id, string Text, string Kind);
-
-    private AdminApiClient AdminApi => _adminApi ??= new AdminApiClient(Http);
+    private sealed record AdminActorContext(string UserId, string? Email);
 }

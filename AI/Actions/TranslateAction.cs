@@ -5,6 +5,7 @@ using WriterApp.AI.Abstractions;
 using WriterApp.Application.Commands;
 using WriterApp.Application.State;
 using WriterApp.Domain.Documents;
+using WriterApp.Shared.Localization;
 
 namespace WriterApp.AI.Actions
 {
@@ -146,10 +147,14 @@ namespace WriterApp.AI.Actions
         private static string BuildInstruction(string sourceLanguage, string targetLanguage, string style, TranslateScope scope)
         {
             string scopeLabel = scope == TranslateScope.Document ? "document" : scope == TranslateScope.Section ? "section" : "selection";
-            string source = string.IsNullOrWhiteSpace(sourceLanguage) ? "auto" : sourceLanguage;
-            string target = string.IsNullOrWhiteSpace(targetLanguage) ? "en" : targetLanguage;
+            string source = string.IsNullOrWhiteSpace(sourceLanguage)
+                ? "Auto-detect"
+                : TranslationLanguages.GetDisplayNameOrValue(sourceLanguage, allowAuto: true);
+            string target = string.IsNullOrWhiteSpace(targetLanguage)
+                ? "English"
+                : TranslationLanguages.GetDisplayNameOrValue(targetLanguage);
             string tone = string.IsNullOrWhiteSpace(style) ? "natural" : style;
-            return $"Translate the {scopeLabel} from {source} to {target}. Style: {tone}. Preserve paragraph breaks and whitespace. Keep any [[SECTION:...]] marker lines unchanged.";
+            return $"Translate the {scopeLabel} into {target} from {source}. Style: {tone}. Preserve paragraph breaks and whitespace. Keep any [[SECTION:...]] marker lines unchanged.";
         }
 
         private static string ResolveSectionText(Document document, Guid sectionId, Dictionary<string, object?>? options)

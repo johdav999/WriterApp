@@ -180,12 +180,88 @@ export function mergeTableCells(editor) {
     editor.chain().focus().mergeCells().run();
 }
 
+function isTableSelectionDebugEnabled() {
+    try {
+        return window?.localStorage?.getItem("writerapp.tableSelectionDebug") === "true"
+            || window?.localStorage?.getItem("writerapp.debug") === "true";
+    } catch {
+        return false;
+    }
+}
+
+function getSelectionTypeName(selection) {
+    return selection?.constructor?.name
+        || selection?.jsonID
+        || selection?.type
+        || typeof selection;
+}
+
+function getCurrentTableCellInfo(editor, selection = editor?.state?.selection) {
+    const $from = selection?.$from;
+    if (!$from) {
+        return null;
+    }
+
+    for (let depth = $from.depth; depth >= 0; depth -= 1) {
+        const node = $from.node(depth);
+        const role = node?.type?.spec?.tableRole;
+        if (role === "cell" || role === "header_cell") {
+            return {
+                depth,
+                nodeType: node.type?.name ?? null,
+                tableRole: role,
+                attrs: {
+                    colspan: Number(node.attrs?.colspan ?? 1),
+                    rowspan: Number(node.attrs?.rowspan ?? 1),
+                    colwidth: Array.isArray(node.attrs?.colwidth) ? [...node.attrs.colwidth] : node.attrs?.colwidth ?? null
+                }
+            };
+        }
+    }
+
+    return null;
+}
+
+function debugSplitCellCommand(editor, reason, extra = null) {
+    if (!isTableSelectionDebugEnabled() || !editor) {
+        return;
+    }
+
+    const selection = editor.state?.selection;
+    let canSplitTableCell = null;
+    let canSplitChainExists = false;
+    try {
+        const canChain = editor.can?.().chain?.();
+        canSplitChainExists = typeof canChain?.splitCell === "function";
+        canSplitTableCell = canSplitChainExists ? editor.can().chain().splitCell().run() : null;
+    } catch {
+    }
+
+    try {
+        console.debug("[split-cell-command]", {
+            reason,
+            selectionType: getSelectionTypeName(selection),
+            splitCommandExists: typeof editor.commands?.splitCell === "function",
+            splitCanChainExists: canSplitChainExists,
+            canSplitTableCell,
+            activeTable: editor.isActive?.("table") ?? false,
+            activeTableCell: editor.isActive?.("tableCell") ?? false,
+            activeTableHeader: editor.isActive?.("tableHeader") ?? false,
+            currentCell: getCurrentTableCellInfo(editor, selection),
+            ...(extra || {})
+        });
+    } catch {
+    }
+}
+
 export function splitTableCell(editor) {
     if (!editor) {
         return;
     }
 
-    editor.chain().focus().splitCell().run();
+    debugSplitCellCommand(editor, "before-command");
+    const result = editor.chain().focus().splitCell().run();
+    debugSplitCellCommand(editor, "after-command", { commandResult: result });
 }
 
 export function insertImageFromUrl(editor, url, alt = "", title = "", width = null, assetUrl = null, assetId = null) {
