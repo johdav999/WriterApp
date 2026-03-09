@@ -96,20 +96,20 @@ namespace WriterApp.Data
 
         internal static (string SourceName, string ConnectionString) ResolveConnectionString(IConfiguration configuration)
         {
-            string? defaultConnection = configuration.GetConnectionString("DefaultConnection");
-            if (!string.IsNullOrWhiteSpace(defaultConnection))
-            {
-                return ("DefaultConnection", defaultConnection);
-            }
-
             string? sqlServerConnection = configuration.GetConnectionString("SqlServer");
             if (!string.IsNullOrWhiteSpace(sqlServerConnection))
             {
                 return ("SqlServer", sqlServerConnection);
             }
 
+            string? defaultConnection = configuration.GetConnectionString("DefaultConnection");
+            if (!string.IsNullOrWhiteSpace(defaultConnection))
+            {
+                return ("DefaultConnection", defaultConnection);
+            }
+
             throw new InvalidOperationException(
-                "No SQL Server connection string found for design-time EF. Set ConnectionStrings:DefaultConnection or ConnectionStrings:SqlServer.");
+                "No SQL Server connection string found for design-time EF. Set ConnectionStrings:SqlServer or ConnectionStrings:DefaultConnection.");
         }
 
         internal static (string ConnectionString, bool ForcedSqlPassword) PrepareConnectionString(string connectionString)

@@ -1915,6 +1915,10 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
                     b.Property<DateTime>("CreatedUtc")
                         .HasColumnType("datetime2");
 
+                    b.Property<string>("Email")
+                        .HasMaxLength(320)
+                        .HasColumnType("nvarchar(320)");
+
                     b.Property<string>("DisplayName")
                         .HasColumnType("nvarchar(max)");
 
