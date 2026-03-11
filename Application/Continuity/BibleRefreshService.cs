@@ -18,6 +18,7 @@ namespace WriterApp.Application.Continuity
 {
     public sealed class BibleRefreshService
     {
+        private const int MaxDiagnosticPayloadLength = 4000;
         private readonly IAiOrchestrator _aiOrchestrator;
         private readonly IEntitlementService _entitlementService;
         private readonly IBibleStore _bibleStore;
@@ -100,19 +101,68 @@ namespace WriterApp.Application.Continuity
                 throw new InvalidOperationException(aiResult.ErrorMessage ?? $"{bibleType} bible refresh failed.");
             }
 
+            string payloadForDiagnostics = aiResult.Proposal.ProposedText!;
+            bool repairAttempted = false;
             if (!_patchApplier.TryApply(
                 bibleType,
                 existingJson,
-                aiResult.Proposal.ProposedText!,
+                payloadForDiagnostics,
                 out BiblePatchApplyResult patchResult,
                 out string failureReason))
             {
-                string preview = CreatePreview(aiResult.Proposal.ProposedText!);
+                string preview = CreatePreview(payloadForDiagnostics);
                 IReadOnlyList<SectionDeltaPayload> fallbackSections = changedSections.Count > 0
                     ? changedSections
                     : ResolveAllSections(document);
 
-                if (bibleType == BibleType.Timeline
+                if (ShouldAttemptCharacterRepair(bibleType, failureReason))
+                {
+                    repairAttempted = true;
+                    _logger.LogWarning(
+                        "[BIBLE] Character refresh payload parse failed; attempting JSON repair. BibleType={BibleType} DocumentId={DocumentId} ActionId={ActionId} Reason={Reason} Preview={Preview}",
+                        bibleType,
+                        document.DocumentId,
+                        actionId,
+                        failureReason,
+                        preview);
+
+                    CharacterRepairAttemptResult repairResult = await TryRepairCharacterPayloadAsync(
+                        actionId,
+                        input,
+                        existingJson,
+                        payloadForDiagnostics,
+                        failureReason,
+                        ct);
+
+                    if (repairResult.Succeeded)
+                    {
+                        patchResult = repairResult.PatchResult;
+                        payloadForDiagnostics = repairResult.Payload;
+                    }
+                    else
+                    {
+                        failureReason = repairResult.FailureReason;
+                        preview = CreatePreview(repairResult.Payload);
+                        payloadForDiagnostics = repairResult.Payload;
+
+                        _logger.LogWarning(
+                            "[BIBLE] Invalid refresh payload after repair attempt. BibleType={BibleType} DocumentId={DocumentId} ActionId={ActionId} Reason={Reason} Preview={Preview}",
+                            bibleType,
+                            document.DocumentId,
+                            actionId,
+                            failureReason,
+                            preview);
+                        throw new BibleRefreshInvalidPayloadException(
+                            bibleType,
+                            document.DocumentId,
+                            actionId,
+                            failureReason,
+                            preview,
+                            CreateDiagnosticPayload(payloadForDiagnostics),
+                            repairAttempted);
+                    }
+                }
+                else if (bibleType == BibleType.Timeline
                     && TryApplyTimelineFallbackPatch(existingJson, fallbackSections, out patchResult))
                 {
                     _logger.LogWarning(
@@ -134,7 +184,9 @@ namespace WriterApp.Application.Continuity
                         document.DocumentId,
                         actionId,
                         failureReason,
-                        preview);
+                        preview,
+                        CreateDiagnosticPayload(payloadForDiagnostics),
+                        repairAttempted);
                 }
             }
 
@@ -160,10 +212,63 @@ namespace WriterApp.Application.Continuity
                 bibleType,
                 document.DocumentId,
                 changedSections.Count,
-                aiResult.Proposal.ProposedText!.Length,
+                payloadForDiagnostics.Length,
                 saved.ContentJson.Length);
 
             return saved;
+        }
+
+        private async Task<CharacterRepairAttemptResult> TryRepairCharacterPayloadAsync(
+            string actionId,
+            AiActionInput originalInput,
+            string existingJson,
+            string invalidPayload,
+            string failureReason,
+            CancellationToken ct)
+        {
+            Dictionary<string, object?> repairOptions = originalInput.Options is null
+                ? new Dictionary<string, object?>()
+                : new Dictionary<string, object?>(originalInput.Options);
+
+            repairOptions["repair_invalid_json"] = true;
+            repairOptions["invalid_json_payload"] = invalidPayload;
+            repairOptions["invalid_json_failure_reason"] = failureReason;
+
+            AiActionInput repairInput = originalInput with
+            {
+                Instruction = "Re-emit the prior character bible response as one valid JSON object only.",
+                Options = repairOptions
+            };
+
+            AiExecutionResult repairResult = await _aiOrchestrator.ExecuteActionAsync(actionId, repairInput, ct);
+            if (!repairResult.Succeeded || repairResult.Proposal is null || string.IsNullOrWhiteSpace(repairResult.Proposal.ProposedText))
+            {
+                return new CharacterRepairAttemptResult(
+                    false,
+                    new BiblePatchApplyResult(existingJson, BibleJson.EmptyStats()),
+                    invalidPayload,
+                    repairResult.ErrorMessage ?? "AI repair attempt did not return structured output.");
+            }
+
+            string repairedPayload = repairResult.Proposal.ProposedText!;
+            bool ok = _patchApplier.TryApply(
+                BibleType.Character,
+                existingJson,
+                repairedPayload,
+                out BiblePatchApplyResult patchResult,
+                out string repairFailureReason);
+            return new CharacterRepairAttemptResult(ok, patchResult, repairedPayload, repairFailureReason);
+        }
+
+        private static bool ShouldAttemptCharacterRepair(BibleType bibleType, string failureReason)
+        {
+            if (bibleType != BibleType.Character || string.IsNullOrWhiteSpace(failureReason))
+            {
+                return false;
+            }
+
+            return failureReason.Contains("JSON could not be parsed into an object", StringComparison.OrdinalIgnoreCase)
+                || failureReason.Contains("Patch application failed while reading JSON", StringComparison.OrdinalIgnoreCase);
         }
 
         private static string ResolveRefreshActionId(BibleType bibleType, bool fullRebuild)
@@ -274,6 +379,19 @@ namespace WriterApp.Application.Continuity
             return normalized.Substring(0, maxLength) + "...";
         }
 
+        private static string CreateDiagnosticPayload(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return string.Empty;
+            }
+
+            string normalized = value.Trim();
+            return normalized.Length <= MaxDiagnosticPayloadLength
+                ? normalized
+                : normalized[..MaxDiagnosticPayloadLength];
+        }
+
         private bool TryApplyTimelineFallbackPatch(
             string existingJson,
             IReadOnlyList<SectionDeltaPayload> changedSections,
@@ -357,5 +475,11 @@ namespace WriterApp.Application.Continuity
             int Order,
             string Content,
             bool IsNew);
+
+        private sealed record CharacterRepairAttemptResult(
+            bool Succeeded,
+            BiblePatchApplyResult PatchResult,
+            string Payload,
+            string FailureReason);
     }
 }

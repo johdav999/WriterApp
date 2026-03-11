@@ -14,6 +14,7 @@ using WriterApp.AI.Actions;
 using WriterApp.Application.AI;
 using WriterApp.Application.Documents;
 using WriterApp.Application.Security;
+using WriterApp.Application.Subscriptions;
 using WriterApp.Controllers;
 using WriterApp.Data;
 using WriterApp.Data.Documents;
@@ -151,6 +152,7 @@ namespace WriterApp.Tests
                 new PageRepository(db),
                 db,
                 new StubUserIdResolver(),
+                new StubEntitlementService(),
                 new InMemoryAiActionHistoryStore(),
                 new StubVersionHistoryService(),
                 NullLogger<AiActionsController>.Instance);
@@ -254,6 +256,29 @@ namespace WriterApp.Tests
         private sealed class StubUserIdResolver : IUserIdResolver
         {
             public string ResolveUserId(ClaimsPrincipal user) => "user-1";
+        }
+
+        private sealed class StubEntitlementService : IEntitlementService
+        {
+            public Task<UserEntitlements> GetEntitlementsAsync(string userId)
+            {
+                Dictionary<string, string> entitlements = new(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["ai.enabled"] = "true"
+                };
+
+                return Task.FromResult(new UserEntitlements(userId, "professional", "professional", entitlements));
+            }
+
+            public PlanTier GetUserTier(UserEntitlements entitlements) => PlanTier.Professional;
+
+            public Task<bool> HasAsync(string userId, string entitlementKey) => Task.FromResult(true);
+
+            public Task<int?> GetIntAsync(string userId, string entitlementKey) => Task.FromResult<int?>(null);
+
+            public void InvalidateForUser(string userId)
+            {
+            }
         }
 
         private sealed class StubVersionHistoryService : IVersionHistoryService

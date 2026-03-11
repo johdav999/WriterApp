@@ -5,12 +5,15 @@
 @using System.Text.Json
 @using System.Net.Http.Json
 @using WriterApp.Application.Synopsis
+@using WriterApp.Application.Subscriptions
+@using WriterApp.Client.Services
 @using WriterApp.Client.State
 @inject HttpClient Http
 @inject NavigationManager Navigation
 @inject AuthMeStateService AuthMeStateService
 @inject WriterApp.Client.State.CurrentDocumentStateService CurrentDocumentStateService
 @inject ILogger<Synopsis> Logger
+@inject FeatureAccessService FeatureAccessService
 
 <PageTitle>Synopsis</PageTitle>
 
@@ -72,7 +75,15 @@
 
                     <div class="ai-actions">
                         <button type="button" class="primary" disabled="@_aiInFlight" @onclick="RunEvaluateAsync">Evaluate synopsis</button>
-                        <button type="button" class="secondary" disabled="@_aiInFlight" @onclick="RunQuestionsAsync">Ask guiding questions</button>
+                        <button type="button"
+                                class="secondary"
+                                disabled="@(_aiInFlight || !FeatureAccessService.CanUse(FeatureKey.AiGuidingQuestions))"
+                                title='@(!FeatureAccessService.CanUse(FeatureKey.AiGuidingQuestions) ? FeatureAccessService.GetUpgradeMessage(FeatureKey.AiGuidingQuestions) : string.Empty)'
+                                @onclick="RunQuestionsAsync">Ask guiding questions</button>
+                        @if (!FeatureAccessService.CanUse(FeatureKey.AiGuidingQuestions))
+                        {
+                            <a class="link-button" href="@FeatureAccessService.GetUpgradePath()">Upgrade</a>
+                        }
                     </div>
 
                     <div class="ai-suggest">
@@ -88,7 +99,15 @@
                                   value="@_aiUserNotes"
                                   @oninput="OnAiNotesInput"
                                   placeholder="Add constraints or intent for this suggestion..."></textarea>
-                        <button type="button" class="primary" disabled="@_aiInFlight" @onclick="RunSuggestAsync">Suggest alternative</button>
+                        <button type="button"
+                                class="primary"
+                                disabled="@(_aiInFlight || !FeatureAccessService.CanUse(FeatureKey.AiSynopsisSuggestions))"
+                                title='@(!FeatureAccessService.CanUse(FeatureKey.AiSynopsisSuggestions) ? FeatureAccessService.GetUpgradeMessage(FeatureKey.AiSynopsisSuggestions) : string.Empty)'
+                                @onclick="RunSuggestAsync">Suggest alternative</button>
+                        @if (!FeatureAccessService.CanUse(FeatureKey.AiSynopsisSuggestions))
+                        {
+                            <a class="link-button" href="@FeatureAccessService.GetUpgradePath()">Upgrade</a>
+                        }
                     </div>
 
                     @if (!string.IsNullOrWhiteSpace(_aiError))

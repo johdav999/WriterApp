@@ -3986,6 +3986,28 @@
     color: var(--color-text);
 }
 
+.editor-navigator-host ::deep .tree-rename {
+    grid-column: 4;
+    min-width: 0;
+    width: 100%;
+}
+
+.editor-navigator-host ::deep .tree-rename-input {
+    width: 100%;
+    min-width: 0;
+    color: var(--color-text);
+    background: var(--color-surface-1);
+    caret-color: var(--color-text);
+    -webkit-text-fill-color: var(--color-text);
+    opacity: 1;
+    font: inherit;
+}
+
+.editor-navigator-host ::deep .tree-rename-input::selection {
+    color: var(--color-text);
+    background: rgba(55, 114, 255, 0.22);
+}
+
 .editor-navigator-host ::deep .tree-select-title {
     min-width: 0;
     max-width: 100%;

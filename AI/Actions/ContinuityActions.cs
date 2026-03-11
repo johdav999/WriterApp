@@ -41,6 +41,9 @@ namespace WriterApp.AI.Actions
             return value.ToString() ?? string.Empty;
         }
 
+        protected static bool HasOption(Dictionary<string, object?>? options, string key)
+            => !string.IsNullOrWhiteSpace(GetOption(options, key));
+
         protected static string BuildSectionContext(Document document, int maxSectionChars = 2200, int maxSections = 40)
         {
             IEnumerable<Section> sections = document.Chapters
@@ -86,12 +89,22 @@ namespace WriterApp.AI.Actions
             }
 
             string context = BuildSectionContext(input.Document);
+            bool repairMode = HasOption(input.Options, "repair_invalid_json");
+            string repairPayload = GetOption(input.Options, "invalid_json_payload");
+            string repairFailureReason = GetOption(input.Options, "invalid_json_failure_reason");
             Dictionary<string, object> inputs = new()
             {
-                ["instruction"] = "Extract a character bible from manuscript context.",
+                ["instruction"] = repairMode
+                    ? "Re-emit the previous character bible output as one valid JSON object only."
+                    : "Extract a character bible from manuscript context. Return valid JSON only with no prose, markdown, or commentary.",
                 ["context"] = context,
                 ["output_contract"] = "Return strict JSON only: {\"schemaVersion\":\"1.0\",\"characters\":[{\"name\":\"...\",\"facts\":[{\"fact\":\"...\",\"evidence\":{\"sectionId\":\"<guid>\",\"quote\":\"...\"}}],\"traits\":[\"...\"]}]}"
             };
+            if (repairMode)
+            {
+                inputs["invalid_json_payload"] = repairPayload;
+                inputs["invalid_json_failure_reason"] = repairFailureReason;
+            }
 
             return new AiRequest(
                 Guid.NewGuid(),
@@ -235,15 +248,25 @@ namespace WriterApp.AI.Actions
             string existingJson = GetOption(input.Options, "existing_bible_json");
             string deltaJson = GetOption(input.Options, "delta_sections_json");
             string fullRebuild = GetOption(input.Options, "full_rebuild");
+            bool repairMode = HasOption(input.Options, "repair_invalid_json");
+            string repairPayload = GetOption(input.Options, "invalid_json_payload");
+            string repairFailureReason = GetOption(input.Options, "invalid_json_failure_reason");
 
             Dictionary<string, object> inputs = new()
             {
-                ["instruction"] = "Update character bible incrementally from changed sections. Return valid JSON only with no prose, markdown, or commentary.",
+                ["instruction"] = repairMode
+                    ? "Re-emit the previous character bible refresh result as one valid JSON object only."
+                    : "Update character bible incrementally from changed sections. Return valid JSON only with no prose, markdown, or commentary.",
                 ["existing_bible_json"] = existingJson,
                 ["delta_sections_json"] = deltaJson,
                 ["full_rebuild"] = fullRebuild,
                 ["output_contract"] = "Return strict JSON patch only: {\"bibleType\":\"Character\",\"schemaVersion\":1,\"ops\":[{\"op\":\"upsertCharacter\",\"id\":\"chr_...\",\"data\":{...}},{\"op\":\"mergeCharacterFacts\",\"id\":\"chr_...\",\"addFacts\":[...]},{\"op\":\"flagReview\",\"target\":{\"type\":\"character\",\"id\":\"chr_...\"},\"reason\":\"...\"}],\"stats\":{\"updatedEntries\":0,\"newEntries\":0,\"flags\":0}}"
             };
+            if (repairMode)
+            {
+                inputs["invalid_json_payload"] = repairPayload;
+                inputs["invalid_json_failure_reason"] = repairFailureReason;
+            }
 
             return new AiRequest(
                 Guid.NewGuid(),

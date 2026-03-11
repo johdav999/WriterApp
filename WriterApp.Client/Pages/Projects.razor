@@ -6,7 +6,9 @@
 @using System.Text.Json
 @using Microsoft.AspNetCore.Components
 @using WriterApp.Application.Documents
+@using WriterApp.Application.Subscriptions
 @using WriterApp.Client.Services
+@using WriterApp.Client.Utilities
 @inject HttpClient Http
 @inject NavigationManager Navigation
 @inject IConfiguration Configuration
@@ -17,6 +19,7 @@
 @inject WriterApp.Client.State.CurrentSceneStateService CurrentSceneStateService
 @inject WriterApp.Client.State.CurrentProjectStateService CurrentProjectStateService
 @inject WriterApp.Client.Services.CoachRecommendationService CoachRecommendationService
+@inject FeatureAccessService FeatureAccessService
 @implements IAsyncDisposable
 
 <PageTitle>Projects</PageTitle>
@@ -63,9 +66,14 @@
                     <button type="button"
                             class="secondary"
                             @onclick="OpenOutlineTemplatesModalAsync"
-                            disabled="@_isOutlineTemplateActionInFlight">
+                            disabled="@(_isOutlineTemplateActionInFlight || !FeatureAccessService.CanUse(FeatureKey.OutlineTemplates))"
+                            title='@(!FeatureAccessService.CanUse(FeatureKey.OutlineTemplates) ? FeatureAccessService.GetUpgradeMessage(FeatureKey.OutlineTemplates) : string.Empty)'>
                         Templates...
                     </button>
+                    @if (!FeatureAccessService.CanUse(FeatureKey.OutlineTemplates))
+                    {
+                        <a class="link-button" href="@FeatureAccessService.GetUpgradePath()">Upgrade</a>
+                    }
                 }
             </div>
             <ul class="tree-list">
@@ -102,6 +110,13 @@ else
         @if (!string.IsNullOrWhiteSpace(_error))
         {
             <div class="projects-error">@_error</div>
+        }
+        @if (_activeProject is not null && !CanEditProjectStructure)
+        {
+            <div class="projects-status">
+                Existing projects remain available after downgrade. Node renaming still works on Free, but structure changes are locked.
+                <a class="link-button" href="@FeatureAccessService.GetUpgradePath()">Upgrade</a>
+            </div>
         }
 
         <div class="projects-toolbar">
@@ -194,10 +209,15 @@ else
                 {
                     <button type="button"
                             class="@GetTabClass("progress")"
-                            title="Open project progress and goals."
+                            title='@(!FeatureAccessService.CanUse(FeatureKey.ProjectProgressDashboard) ? FeatureAccessService.GetUpgradeMessage(FeatureKey.ProjectProgressDashboard) : "Open project progress and goals.")'
+                            disabled="@(!FeatureAccessService.CanUse(FeatureKey.ProjectProgressDashboard))"
                             @onclick='() => SelectTab("progress")'>
                         Progress
                     </button>
+                    @if (!FeatureAccessService.CanUse(FeatureKey.ProjectProgressDashboard))
+                    {
+                        <a class="link-button" href="@FeatureAccessService.GetUpgradePath()">Upgrade</a>
+                    }
                 }
             </div>
         }
@@ -215,7 +235,14 @@ else
             @if (_activeTab == "progress" && _goalsEnabled)
             {
                 <div class="projects-progress">
-                    @if (_progress is null)
+                    @if (!FeatureAccessService.CanUse(FeatureKey.ProjectProgressDashboard))
+                    {
+                        <div class="projects-empty">
+                            <div>@FeatureAccessService.GetUpgradeMessage(FeatureKey.ProjectProgressDashboard)</div>
+                            <a class="link-button" href="@FeatureAccessService.GetUpgradePath()">Upgrade</a>
+                        </div>
+                    }
+                    else if (_progress is null)
                     {
                         <div class="projects-loading">Loading progress...</div>
                     }
@@ -381,7 +408,8 @@ else
                             <button type="button"
                                     class="secondary"
                                     @onclick="AddSelectedNodeTypeAsync"
-                                    disabled="@(!CanAddSelectedNodeType())">
+                                    disabled="@(!CanAddSelectedNodeType())"
+                                    title='@(!CanEditProjectStructure ? ProjectStructureLockedMessage : string.Empty)'>
                                 Add
                             </button>
                             @if (_outlineTemplatesEnabled)
@@ -389,9 +417,14 @@ else
                                 <button type="button"
                                         class="secondary"
                                         @onclick="OpenOutlineTemplatesModalAsync"
-                                        disabled="@_isOutlineTemplateActionInFlight">
+                                        disabled="@(_isOutlineTemplateActionInFlight || !FeatureAccessService.CanUse(FeatureKey.OutlineTemplates))"
+                                        title='@(!FeatureAccessService.CanUse(FeatureKey.OutlineTemplates) ? FeatureAccessService.GetUpgradeMessage(FeatureKey.OutlineTemplates) : string.Empty)'>
                                     Templates...
                                 </button>
+                                @if (!FeatureAccessService.CanUse(FeatureKey.OutlineTemplates))
+                                {
+                                    <a class="link-button" href="@FeatureAccessService.GetUpgradePath()">Upgrade</a>
+                                }
                             }
                         </div>
                         <ul class="tree-list">
@@ -420,12 +453,25 @@ else
                                     <div class="inspector-name-row">
                                         <input id="node-title-input"
                                                class="node-title-input"
-                                               value="@_renameDraft"
-                                               @oninput="OnRenameInput"
+                                               value="@_inspectorRenameDraft"
+                                               @oninput="OnInspectorRenameInput"
                                                @onblur="SaveRenameAsync" />
-                                        <button type="button" class="secondary" @onclick="SaveRenameAsync">Save</button>
+                                        <button type="button"
+                                                class="secondary"
+                                                @onclick="SaveRenameAsync">
+                                            Save
+                                        </button>
                                     </div>
-                                    <div class="inspector-help">Autosaves on blur. Use Save to commit immediately.</div>
+                                    <div class="inspector-help">
+                                        @if (CanEditProjectStructure)
+                                        {
+                                            <span>Autosaves on blur. Use Save to commit immediately.</span>
+                                        }
+                                        else
+                                        {
+                                            <span>Rename is available on Free. Adding, deleting, and reordering nodes still require an upgrade.</span>
+                                        }
+                                    </div>
                                 </div>
                                 <div class="inspector-field">
                                     <label>Type</label>
@@ -451,7 +497,13 @@ else
                             <div class="node-actions">
                                 @if (IsChapter(_selectedNode))
                                 {
-                                    <button type="button" class="secondary" @onclick="() => AddSceneUnderAsync(_selectedNode.Id)">Add scene under chapter</button>
+                                    <button type="button"
+                                            class="secondary"
+                                            @onclick="() => AddSceneUnderAsync(_selectedNode.Id)"
+                                            disabled="@(!CanEditProjectStructure)"
+                                            title='@(!CanEditProjectStructure ? ProjectStructureLockedMessage : string.Empty)'>
+                                        Add scene under chapter
+                                    </button>
                                 }
                                 @if (IsScene(_selectedNode))
                                 {
@@ -488,17 +540,32 @@ else
              @ref="_nodeMenuRef"
              @onkeydown="OnNodeMenuKeyDown"
              @onclick:stopPropagation="true">
-            <button type="button" role="menuitem" @onclick="OnNodeMenuRenameAsync" disabled="@_duplicateNodeInFlight">Rename</button>
-            <button type="button" role="menuitem" @onclick="OnNodeMenuDuplicateAsync" disabled="@_duplicateNodeInFlight">
+            <button type="button"
+                    role="menuitem"
+                    @onclick="OnNodeMenuRenameAsync"
+                    disabled="@_duplicateNodeInFlight">Rename</button>
+            <button type="button"
+                    role="menuitem"
+                    @onclick="OnNodeMenuDuplicateAsync"
+                    disabled="@(_duplicateNodeInFlight || !CanEditProjectStructure)"
+                    title='@(!CanEditProjectStructure ? ProjectStructureLockedMessage : string.Empty)'>
                 @(_duplicateNodeInFlight ? "Duplicating..." : "Duplicate")
             </button>
             @if (IsPart(OpenNodeMenuNode))
             {
-                <button type="button" role="menuitem" @onclick="OnNodeMenuAddChapterAsync" disabled="@_duplicateNodeInFlight">Add chapter</button>
+                <button type="button"
+                        role="menuitem"
+                        @onclick="OnNodeMenuAddChapterAsync"
+                        disabled="@(_duplicateNodeInFlight || !CanEditProjectStructure)"
+                        title='@(!CanEditProjectStructure ? ProjectStructureLockedMessage : string.Empty)'>Add chapter</button>
             }
             else if (IsChapter(OpenNodeMenuNode))
             {
-                <button type="button" role="menuitem" @onclick="OnNodeMenuAddSceneAsync" disabled="@_duplicateNodeInFlight">Add scene</button>
+                <button type="button"
+                        role="menuitem"
+                        @onclick="OnNodeMenuAddSceneAsync"
+                        disabled="@(_duplicateNodeInFlight || !CanEditProjectStructure)"
+                        title='@(!CanEditProjectStructure ? ProjectStructureLockedMessage : string.Empty)'>Add scene</button>
             }
             else if (IsScene(OpenNodeMenuNode))
             {
@@ -506,9 +573,18 @@ else
             }
             @if (_outlineTemplatesEnabled)
             {
-                <button type="button" role="menuitem" @onclick="OnNodeMenuTemplatesAsync" disabled="@_duplicateNodeInFlight">Templates...</button>
+                <button type="button"
+                        role="menuitem"
+                        @onclick="OnNodeMenuTemplatesAsync"
+                        disabled="@(_duplicateNodeInFlight || !FeatureAccessService.CanUse(FeatureKey.OutlineTemplates))"
+                        title='@(!FeatureAccessService.CanUse(FeatureKey.OutlineTemplates) ? FeatureAccessService.GetUpgradeMessage(FeatureKey.OutlineTemplates) : string.Empty)'>Templates...</button>
             }
-            <button type="button" role="menuitem" class="danger" @onclick="OnNodeMenuDeleteAsync" disabled="@_duplicateNodeInFlight">Delete</button>
+            <button type="button"
+                    role="menuitem"
+                    class="danger"
+                    @onclick="OnNodeMenuDeleteAsync"
+                    disabled="@(_duplicateNodeInFlight || !CanEditProjectStructure)"
+                    title='@(!CanEditProjectStructure ? ProjectStructureLockedMessage : string.Empty)'>Delete</button>
         </div>
     </div>
 }
@@ -642,7 +718,8 @@ else
     private double _openNodeMenuX;
     private double _openNodeMenuY;
     private bool _shouldFocusNodeMenu;
-    private string _renameDraft = string.Empty;
+    private string _inspectorRenameDraft = string.Empty;
+    private string _inlineRenameDraft = string.Empty;
     private bool _isProjectNameEditing;
     private bool _isProjectNameSaving;
     private string _projectNameDraft = string.Empty;
@@ -669,6 +746,9 @@ else
     private CancellationTokenSource? _sessionTickerCts;
     private int _sessionElapsedSeconds;
     private int _sessionLiveDelta;
+    private bool CanEditProjectStructure => FeatureAccessService.CanUse(FeatureKey.ProjectStructureEditing);
+    private string ProjectStructureLockedMessage => $"{FeatureAccessService.GetUpgradeMessage(FeatureKey.ProjectStructureEditing)}. Existing projects stay readable, but structure changes are locked.";
+    private bool IsInlineRenameActive => _renamingNodeId.HasValue;
 
     private ProjectNodeDto? _selectedNode =>
         _selectedNodeId.HasValue ? _nodes.FirstOrDefault(node => node.Id == _selectedNodeId.Value) : null;
@@ -740,7 +820,12 @@ else
                 return;
             }
 
-            response.EnsureSuccessStatusCode();
+            if (!response.IsSuccessStatusCode)
+            {
+                _error = await ReadApiErrorMessageAsync(response, "Failed to load projects.");
+                return;
+            }
+
             List<ProjectDto>? projects = await response.Content.ReadFromJsonAsync<List<ProjectDto>>();
             _projects.Clear();
             _projects.AddRange((projects ?? new List<ProjectDto>()).OrderByDescending(project => project.UpdatedUtc));
@@ -764,9 +849,9 @@ else
                 RestartSessionTicker();
             }
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _error = ex.Message;
+            _error = "Failed to load projects.";
         }
         finally
         {
@@ -780,7 +865,7 @@ else
         using HttpResponseMessage response = await Http.GetAsync($"api/projects/{projectId}/tree");
         if (!response.IsSuccessStatusCode)
         {
-            _error = "Failed to load project tree.";
+            _error = await ReadApiErrorMessageAsync(response, "Failed to load project tree.");
             return;
         }
 
@@ -810,10 +895,7 @@ else
             _selectedNodeId = _nodes[0].Id;
         }
 
-        if (_selectedNode is not null)
-        {
-            _renameDraft = _selectedNode.Title;
-        }
+        SyncInspectorRenameDraft();
 
         SyncCurrentSceneSelectionState();
 
@@ -1099,6 +1181,7 @@ else
         string displayTitle = GetDisplayNodeTitle(node.Title, node.NodeType);
 
         builder.OpenElement(seq++, "li");
+        builder.SetKey(node.Id);
         builder.AddAttribute(seq++, "class", isPointerDropTarget ? "tree-node is-drop-target" : "tree-node");
         builder.AddAttribute(seq++, "onmouseenter", EventCallback.Factory.Create<MouseEventArgs>(this, () => OnNodePointerEnter(node.Id)));
         builder.AddAttribute(seq++, "onmouseup", EventCallback.Factory.Create<MouseEventArgs>(this, () => OnNodePointerDropAsync(node.Id)));
@@ -1110,11 +1193,14 @@ else
         builder.AddAttribute(seq++, "class", isSelected ? "tree-row is-selected" : "tree-row");
         builder.AddAttribute(seq++, "style", $"--depth:{depth}");
         builder.AddAttribute(seq++, "title", displayTitle);
-        builder.AddAttribute(seq++, "tabindex", "0");
+        builder.AddAttribute(seq++, "tabindex", isRenaming ? "-1" : "0");
         builder.AddAttribute(seq++, "role", "treeitem");
         builder.AddAttribute(seq++, "aria-selected", isSelected ? "true" : "false");
-        builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => OnNodeSelected(node.Id)));
-        builder.AddAttribute(seq++, "onkeydown", EventCallback.Factory.Create<KeyboardEventArgs>(this, (args) => OnNodeRowKeyDown(args, node.Id)));
+        if (!isRenaming)
+        {
+            builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => OnNodeSelected(node.Id)));
+            builder.AddAttribute(seq++, "onkeydown", EventCallback.Factory.Create<KeyboardEventArgs>(this, (args) => OnNodeRowKeyDown(args, node.Id)));
+        }
 
         builder.OpenElement(seq++, "span");
         builder.AddAttribute(seq++, "class", "tree-indent");
@@ -1138,15 +1224,19 @@ else
         builder.CloseElement();
 
         builder.OpenElement(seq++, "span");
-        builder.AddAttribute(seq++, "class", "tree-drag");
-        builder.AddAttribute(seq++, "draggable", true);
+        builder.AddAttribute(seq++, "class", CanEditProjectStructure ? "tree-drag" : "tree-drag is-disabled");
+        builder.AddAttribute(seq++, "draggable", CanEditProjectStructure);
         builder.AddAttribute(seq++, "role", "button");
         builder.AddAttribute(seq++, "tabindex", "0");
         builder.AddAttribute(seq++, "aria-label", "Drag to reorder");
-        builder.AddEventStopPropagationAttribute(seq++, "onmousedown", true);
-        builder.AddAttribute(seq++, "onmousedown", EventCallback.Factory.Create<MouseEventArgs>(this, () => OnNodeDragHandleMouseDown(node.Id)));
-        builder.AddAttribute(seq++, "ondragstart", EventCallback.Factory.Create<DragEventArgs>(this, (args) => OnNodeDragStart(node.Id, args)));
-        builder.AddAttribute(seq++, "ondragend", EventCallback.Factory.Create<DragEventArgs>(this, (args) => OnNodeDragEnd(node.Id, args)));
+        builder.AddAttribute(seq++, "title", CanEditProjectStructure ? "Drag to reorder" : ProjectStructureLockedMessage);
+        if (CanEditProjectStructure)
+        {
+            builder.AddEventStopPropagationAttribute(seq++, "onmousedown", true);
+            builder.AddAttribute(seq++, "onmousedown", EventCallback.Factory.Create<MouseEventArgs>(this, () => OnNodeDragHandleMouseDown(node.Id)));
+            builder.AddAttribute(seq++, "ondragstart", EventCallback.Factory.Create<DragEventArgs>(this, (args) => OnNodeDragStart(node.Id, args)));
+            builder.AddAttribute(seq++, "ondragend", EventCallback.Factory.Create<DragEventArgs>(this, (args) => OnNodeDragEnd(node.Id, args)));
+        }
         builder.AddContent(seq++, "::");
         builder.CloseElement();
 
@@ -1161,13 +1251,17 @@ else
             builder.OpenElement(seq++, "div");
             builder.AddAttribute(seq++, "class", "tree-rename");
             builder.OpenElement(seq++, "input");
+            builder.SetKey($"rename:{node.Id:D}");
             builder.AddAttribute(seq++, "class", "tree-rename-input");
-            builder.AddAttribute(seq++, "value", _renameDraft);
+            builder.AddAttribute(seq++, "value", _inlineRenameDraft);
             builder.AddAttribute(seq++, "autofocus", "autofocus");
-            builder.AddAttribute(seq++, "oninput", EventCallback.Factory.Create<ChangeEventArgs>(this, OnRenameInput));
+            builder.AddAttribute(seq++, "oninput", EventCallback.Factory.Create<ChangeEventArgs>(this, OnInlineRenameInput));
             builder.AddAttribute(seq++, "onkeydown", EventCallback.Factory.Create<KeyboardEventArgs>(this, (args) => OnTreeRenameKeyDown(args, node.Id)));
-            builder.AddAttribute(seq++, "onblur", EventCallback.Factory.Create<FocusEventArgs>(this, async (_) => await SaveRenameForNodeAsync(node.Id)));
+            builder.AddAttribute(seq++, "onblur", EventCallback.Factory.Create<FocusEventArgs>(this, async (_) => await SaveInlineRenameForNodeAsync(node.Id)));
+            builder.AddEventStopPropagationAttribute(seq++, "onkeydown", true);
             builder.AddEventStopPropagationAttribute(seq++, "onclick", true);
+            builder.AddEventStopPropagationAttribute(seq++, "onmousedown", true);
+            builder.AddEventStopPropagationAttribute(seq++, "onmouseup", true);
             builder.CloseElement();
             builder.CloseElement();
         }
@@ -1231,13 +1325,17 @@ else
         _selectedNodeId = nodeId;
         _renamingNodeId = null;
         CloseNodeMenu();
-        ProjectNodeDto? node = _selectedNode;
-        _renameDraft = node?.Title ?? string.Empty;
+        SyncInspectorRenameDraft();
         SyncCurrentSceneSelectionState();
     }
 
     private void OnNodeRowKeyDown(KeyboardEventArgs args, Guid nodeId)
     {
+        if (IsInlineRenameActive)
+        {
+            return;
+        }
+
         if (string.Equals(args.Key, "Enter", StringComparison.Ordinal)
             || string.Equals(args.Key, " ", StringComparison.Ordinal))
         {
@@ -1249,9 +1347,14 @@ else
         }
     }
 
-    private void OnRenameInput(ChangeEventArgs args)
+    private void OnInspectorRenameInput(ChangeEventArgs args)
     {
-        _renameDraft = args.Value?.ToString() ?? string.Empty;
+        _inspectorRenameDraft = args.Value?.ToString() ?? string.Empty;
+    }
+
+    private void OnInlineRenameInput(ChangeEventArgs args)
+    {
+        _inlineRenameDraft = args.Value?.ToString() ?? string.Empty;
     }
 
     private void StartInlineRename(Guid nodeId)
@@ -1259,8 +1362,8 @@ else
         CloseNodeMenu();
         _selectedNodeId = nodeId;
         _renamingNodeId = nodeId;
-        ProjectNodeDto? node = _nodes.FirstOrDefault(item => item.Id == nodeId);
-        _renameDraft = node?.Title ?? string.Empty;
+        _inlineRenameDraft = GetNodeTitle(nodeId);
+        SyncInspectorRenameDraft();
     }
 
     private async Task SaveRenameAsync()
@@ -1270,10 +1373,15 @@ else
             return;
         }
 
-        await SaveRenameForNodeAsync(_selectedNode.Id);
+        await SaveRenameForNodeAsync(_selectedNode.Id, _inspectorRenameDraft, clearInlineRename: false);
     }
 
-    private async Task SaveRenameForNodeAsync(Guid nodeId)
+    private async Task SaveInlineRenameForNodeAsync(Guid nodeId)
+    {
+        await SaveRenameForNodeAsync(nodeId, _inlineRenameDraft, clearInlineRename: true);
+    }
+
+    private async Task SaveRenameForNodeAsync(Guid nodeId, string draft, bool clearInlineRename)
     {
         if (_activeProject is null)
         {
@@ -1286,10 +1394,16 @@ else
             return;
         }
 
-        string next = _renameDraft.Trim();
+        string next = draft.Trim();
         if (string.IsNullOrWhiteSpace(next) || string.Equals(next, node.Title, StringComparison.Ordinal))
         {
-            _renamingNodeId = null;
+            if (clearInlineRename)
+            {
+                _renamingNodeId = null;
+                _inlineRenameDraft = node.Title;
+            }
+
+            SyncInspectorRenameDraft();
             return;
         }
 
@@ -1304,11 +1418,15 @@ else
             payload);
         if (!response.IsSuccessStatusCode)
         {
-            _error = "Rename failed.";
+            _error = await ReadApiErrorMessageAsync(response, "Rename failed.");
             return;
         }
 
-        _renamingNodeId = null;
+        if (clearInlineRename)
+        {
+            _renamingNodeId = null;
+        }
+
         await RefreshProjectAsync(_activeProject.Id);
     }
 
@@ -1316,7 +1434,7 @@ else
     {
         if (string.Equals(args.Key, "Enter", StringComparison.Ordinal))
         {
-            await SaveRenameForNodeAsync(nodeId);
+            await SaveInlineRenameForNodeAsync(nodeId);
         }
         else if (string.Equals(args.Key, "Escape", StringComparison.Ordinal))
         {
@@ -1327,8 +1445,8 @@ else
     private void CancelInlineRename(Guid nodeId)
     {
         _renamingNodeId = null;
-        ProjectNodeDto? node = _nodes.FirstOrDefault(item => item.Id == nodeId);
-        _renameDraft = node?.Title ?? string.Empty;
+        _inlineRenameDraft = GetNodeTitle(nodeId);
+        SyncInspectorRenameDraft();
     }
 
     private async Task ToggleNodeMenuAsync(Guid nodeId, MouseEventArgs args)
@@ -1518,6 +1636,12 @@ else
             return;
         }
 
+        if (!CanEditProjectStructure)
+        {
+            _error = ProjectStructureLockedMessage;
+            return;
+        }
+
         ProjectNodeDto? node = _nodes.FirstOrDefault(item => item.Id == nodeId);
         if (node is null)
         {
@@ -1544,7 +1668,7 @@ else
         using HttpResponseMessage response = await Http.DeleteAsync($"api/projects/{_activeProject.Id}/nodes/{nodeId}");
         if (!response.IsSuccessStatusCode)
         {
-            _error = "Delete node failed.";
+            _error = await ReadApiErrorMessageAsync(response, "Delete node failed.");
             return;
         }
 
@@ -1556,6 +1680,12 @@ else
     {
         if (_activeProject is null || _duplicateNodeInFlight)
         {
+            return;
+        }
+
+        if (!CanEditProjectStructure)
+        {
+            _error = ProjectStructureLockedMessage;
             return;
         }
 
@@ -1578,7 +1708,7 @@ else
 
             if (!response.IsSuccessStatusCode)
             {
-                _error = "Duplicate node failed.";
+                _error = await ReadApiErrorMessageAsync(response, "Duplicate node failed.");
                 return;
             }
 
@@ -1613,10 +1743,7 @@ else
             }
 
             _selectedNodeId = result.RootNodeId;
-            if (_selectedNode is not null)
-            {
-                _renameDraft = _selectedNode.Title;
-            }
+            SyncInspectorRenameDraft();
 
             int totalWords = _nodes.Where(item => item.ParentId is null).Sum(item => item.WordCountCache);
             _activeProject = _activeProject with
@@ -1795,7 +1922,12 @@ else
         {
             ProjectCreateRequest request = new("Untitled project", null, null, null, null, null);
             using HttpResponseMessage response = await Http.PostAsJsonAsync("api/projects", request);
-            response.EnsureSuccessStatusCode();
+            if (!response.IsSuccessStatusCode)
+            {
+                _error = await ReadApiErrorMessageAsync(response, "Create project failed.");
+                return;
+            }
+
             ProjectDto? created = await response.Content.ReadFromJsonAsync<ProjectDto>();
             if (created is null)
             {
@@ -1808,9 +1940,9 @@ else
             await LoadTreeAsync(created.Id);
             Navigation.NavigateTo($"projects/{created.Id}", replace: true);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _error = ex.Message;
+            _error = "Create project failed.";
         }
         finally
         {
@@ -1831,7 +1963,12 @@ else
         try
         {
             using HttpResponseMessage response = await Http.PostAsync($"api/projects/from-document/{documentId.Value}", null);
-            response.EnsureSuccessStatusCode();
+            if (!response.IsSuccessStatusCode)
+            {
+                _error = await ReadApiErrorMessageAsync(response, "Create from document failed.");
+                return;
+            }
+
             ProjectTreeDto? tree = await response.Content.ReadFromJsonAsync<ProjectTreeDto>();
             if (tree is null)
             {
@@ -1844,9 +1981,9 @@ else
             await LoadTreeAsync(tree.Project.Id);
             Navigation.NavigateTo($"projects/{tree.Project.Id}", replace: true);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _error = ex.Message;
+            _error = "Create from document failed.";
         }
         finally
         {
@@ -1892,6 +2029,12 @@ else
 
     private async Task AddSelectedNodeTypeAsync()
     {
+        if (!CanEditProjectStructure)
+        {
+            _error = ProjectStructureLockedMessage;
+            return;
+        }
+
         switch (_addNodeType)
         {
             case "chapter":
@@ -1908,6 +2051,11 @@ else
 
     private bool CanAddSelectedNodeType()
     {
+        if (!CanEditProjectStructure)
+        {
+            return false;
+        }
+
         if (string.Equals(_addNodeType, "scene", StringComparison.OrdinalIgnoreCase))
         {
             return _selectedNode is not null;
@@ -2391,11 +2539,17 @@ else
             return;
         }
 
+        if (!CanEditProjectStructure)
+        {
+            _error = ProjectStructureLockedMessage;
+            return;
+        }
+
         ProjectNodeCreateRequest request = new(parentId, nodeType, title, null, null, null);
         using HttpResponseMessage response = await Http.PostAsJsonAsync($"api/projects/{_activeProject.Id}/nodes", request);
         if (!response.IsSuccessStatusCode)
         {
-            _error = "Add node failed.";
+            _error = await ReadApiErrorMessageAsync(response, "Add node failed.");
             return;
         }
 
@@ -2420,7 +2574,8 @@ else
         {
             _selectedNodeId = createdId.Value;
             ProjectNodeDto? selected = _nodes.FirstOrDefault(node => node.Id == createdId.Value);
-            _renameDraft = selected?.Title ?? title;
+            _inspectorRenameDraft = selected?.Title ?? title;
+            _inlineRenameDraft = selected?.Title ?? title;
             _renamingNodeId = createdId.Value;
         }
     }
@@ -2580,6 +2735,12 @@ else
             return;
         }
 
+        if (!CanEditProjectStructure)
+        {
+            _error = ProjectStructureLockedMessage;
+            return;
+        }
+
         Guid parentRoute = parentId ?? Guid.Empty;
         ProjectNodeReorderRequest request = new(order);
         using HttpResponseMessage response = await Http.PostAsJsonAsync(
@@ -2587,14 +2748,20 @@ else
             request);
         if (!response.IsSuccessStatusCode)
         {
-            string? message = await OutlineTemplatesClient.ReadErrorMessageAsync(response);
+            string message = await ReadApiErrorMessageAsync(response, "Reorder failed.");
             LogDnd($"reorder failed parent={parentRoute} status={(int)response.StatusCode} detail={message}");
-            _error = string.IsNullOrWhiteSpace(message) ? "Reorder failed." : message;
+            _error = message;
         }
         else
         {
             LogDnd($"reorder saved parent={parentRoute} count={order.Count}");
         }
+    }
+
+    private static async Task<string> ReadApiErrorMessageAsync(HttpResponseMessage response, string fallback)
+    {
+        ApiErrorDetails? error = await ApiErrorDetailsReader.ReadAsync(response);
+        return string.IsNullOrWhiteSpace(error?.UserMessage) ? fallback : error.UserMessage!;
     }
 
     private void LogDnd(string message)
@@ -2665,6 +2832,11 @@ else
 
     private void SyncCurrentSceneSelectionState()
     {
+        if (IsInlineRenameActive)
+        {
+            return;
+        }
+
         if (_activeProject is null)
         {
             return;
@@ -2679,7 +2851,7 @@ else
             if (activeScene is not null)
             {
                 _selectedNodeId = activeScene.Id;
-                _renameDraft = activeScene.Title;
+                SyncInspectorRenameDraft();
                 CurrentSceneStateService.SetCurrent(_activeProject.Id, activeScene.Id, activeScene.Title);
                 return;
             }
@@ -2892,10 +3064,7 @@ else
         }
 
         _selectedNodeId = nodeId.Value;
-        if (_selectedNode is not null)
-        {
-            _renameDraft = _selectedNode.Title;
-        }
+        SyncInspectorRenameDraft();
 
         await SelectTab("structure");
         StateHasChanged();
@@ -2942,7 +3111,7 @@ else
 
             if (_selectedNode is not null)
             {
-                _renameDraft = _selectedNode.Title;
+                SyncInspectorRenameDraft();
             }
         }
     }
@@ -3096,21 +3265,17 @@ else
             return $"New {GetNodeTypeLabel(nodeType)}";
         }
 
-        string lower = trimmed.ToLowerInvariant();
-        if (lower.StartsWith("part") || lower.StartsWith("chapter") || lower.StartsWith("scene"))
-        {
-            bool suffixLooksAuto = lower.SkipWhile(c => !char.IsDigit(c)).Any(char.IsDigit)
-                || lower.EndsWith("0", StringComparison.Ordinal)
-                || string.Equals(lower, "new part", StringComparison.Ordinal)
-                || string.Equals(lower, "new chapter", StringComparison.Ordinal)
-                || string.Equals(lower, "new scene", StringComparison.Ordinal);
-            if (suffixLooksAuto && lower.Count(char.IsLetter) <= 7)
-            {
-                return $"New {GetNodeTypeLabel(nodeType)}";
-            }
-        }
-
         return trimmed;
+    }
+
+    private string GetNodeTitle(Guid nodeId)
+    {
+        return _nodes.FirstOrDefault(item => item.Id == nodeId)?.Title ?? string.Empty;
+    }
+
+    private void SyncInspectorRenameDraft()
+    {
+        _inspectorRenameDraft = _selectedNode?.Title ?? string.Empty;
     }
 
     private static string GetNodeBadgeClass(string nodeType)

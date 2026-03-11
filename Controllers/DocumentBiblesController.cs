@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 using WriterApp.Application.Continuity;
 using WriterApp.Application.Documents;
 using WriterApp.Application.Security;
@@ -29,6 +30,8 @@ namespace WriterApp.Controllers
         private readonly IUserIdResolver _userIdResolver;
         private readonly IBibleStore _bibleStore;
         private readonly BibleRefreshService _refreshService;
+        private readonly IEntitlementService _entitlementService;
+        private readonly ILogger<DocumentBiblesController> _logger;
 
         public DocumentBiblesController(
             IDocumentRepository documents,
@@ -36,7 +39,9 @@ namespace WriterApp.Controllers
             IPageRepository pages,
             IUserIdResolver userIdResolver,
             IBibleStore bibleStore,
-            BibleRefreshService refreshService)
+            BibleRefreshService refreshService,
+            IEntitlementService entitlementService,
+            ILogger<DocumentBiblesController> logger)
         {
             _documents = documents ?? throw new ArgumentNullException(nameof(documents));
             _sections = sections ?? throw new ArgumentNullException(nameof(sections));
@@ -44,6 +49,8 @@ namespace WriterApp.Controllers
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
             _bibleStore = bibleStore ?? throw new ArgumentNullException(nameof(bibleStore));
             _refreshService = refreshService ?? throw new ArgumentNullException(nameof(refreshService));
+            _entitlementService = entitlementService ?? throw new ArgumentNullException(nameof(entitlementService));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         [HttpGet("{bibleType}")]
@@ -65,6 +72,12 @@ namespace WriterApp.Controllers
             catch (SecurityException)
             {
                 return Unauthorized();
+            }
+
+            ActionResult? gate = await EnsureFeatureAllowedAsync(userId, FeatureKey.StoryCanon, "story.canon");
+            if (gate is not null)
+            {
+                return gate;
             }
 
             DocumentRecord? documentRecord = await _documents.GetAsync(documentId, userId, ct);
@@ -105,6 +118,12 @@ namespace WriterApp.Controllers
             catch (SecurityException)
             {
                 return Unauthorized();
+            }
+
+            ActionResult? gate = await EnsureFeatureAllowedAsync(userId, FeatureKey.CanonRefresh, "story.canon.refresh");
+            if (gate is not null)
+            {
+                return gate;
             }
 
             DocumentRecord? documentRecord = await _documents.GetAsync(documentId, userId, ct);
@@ -151,13 +170,34 @@ namespace WriterApp.Controllers
             }
             catch (BibleRefreshInvalidPayloadException ex)
             {
+                _logger.LogWarning(
+                    "Bible refresh returned invalid structured AI output. CorrelationId={CorrelationId} BibleType={BibleType} DocumentId={DocumentId} ActionId={ActionId} RepairAttempted={RepairAttempted} Reason={Reason} RawPayload={RawPayload}",
+                    HttpContext.TraceIdentifier,
+                    ex.BibleType,
+                    ex.DocumentId,
+                    ex.ActionId,
+                    ex.RepairAttempted,
+                    ex.FailureReason,
+                    ex.RawPayload);
+
+                bool isCharacterInvalidStructuredData = ex.BibleType == BibleType.Character;
                 ProblemDetails payload = new()
                 {
-                    Status = StatusCodes.Status502BadGateway,
-                    Title = "Bible refresh failed",
-                    Detail = "The AI returned an invalid refresh payload. Please retry."
+                    Status = isCharacterInvalidStructuredData
+                        ? StatusCodes.Status422UnprocessableEntity
+                        : StatusCodes.Status502BadGateway,
+                    Title = isCharacterInvalidStructuredData
+                        ? "AI returned invalid structured data"
+                        : "Bible refresh failed",
+                    Detail = isCharacterInvalidStructuredData
+                        ? (ex.RepairAttempted
+                            ? "The AI returned invalid structured data for the character bible after one repair attempt. Please retry."
+                            : "The AI returned invalid structured data for the character bible. Please retry.")
+                        : "The AI returned an invalid refresh payload. Please retry."
                 };
-                payload.Extensions["code"] = "bible_refresh_invalid_payload";
+                payload.Extensions["code"] = isCharacterInvalidStructuredData
+                    ? "ai_invalid_structured_data"
+                    : "bible_refresh_invalid_payload";
                 payload.Extensions["traceId"] = HttpContext.TraceIdentifier;
                 payload.Extensions["bibleType"] = ex.BibleType.ToString();
                 ObjectResult result = new(payload)
@@ -259,6 +299,36 @@ namespace WriterApp.Controllers
         {
             byte[] bytes = SHA256.HashData(Encoding.UTF8.GetBytes(input ?? string.Empty));
             return Convert.ToHexString(bytes);
+        }
+
+        private async Task<ActionResult?> EnsureFeatureAllowedAsync(string userId, FeatureKey feature, string featureCode)
+        {
+            UserEntitlements entitlements = await _entitlementService.GetEntitlementsAsync(userId);
+            PlanTier userTier = _entitlementService.GetUserTier(entitlements);
+            if (FeatureRegistry.IsFeatureAllowed(feature, userTier))
+            {
+                return null;
+            }
+
+            PlanTier requiredTier = FeatureRegistry.FeatureMinimumTier[feature];
+            _logger.LogInformation(
+                "FeatureAccessDenied FeatureKey={FeatureKey} UserTier={UserTier} RequiredTier={RequiredTier}",
+                feature,
+                userTier,
+                requiredTier);
+
+            ProblemDetails problem = EntitlementDeniedApiError.ForFeature(
+                featureCode,
+                $"Available in {requiredTier} plan.");
+            problem.Extensions["code"] = "entitlement_denied";
+            problem.Extensions["traceId"] = HttpContext.TraceIdentifier;
+
+            ObjectResult result = new(problem)
+            {
+                StatusCode = StatusCodes.Status402PaymentRequired
+            };
+            result.ContentTypes.Add("application/problem+json");
+            return result;
         }
     }
 

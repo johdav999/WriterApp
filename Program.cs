@@ -46,6 +46,7 @@ using WriterApp.Application.AI.StoryCoach;
 using WriterApp.Application.Synopsis;
 using WriterApp.Application.Diagnostics;
 using WriterApp.Application.Diagnostics.Circuits;
+using WriterApp.Application.Feedback;
 using WriterApp.Application.Importing;
 using WriterApp.Application.Search;
 using WriterApp.Application.Continuity;
@@ -55,10 +56,14 @@ using WriterApp.Data.Subscriptions;
 using WriterApp.Shared;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Configuration.AddEnvironmentVariables();
 builder.Logging.AddFilter("Microsoft.AspNetCore.Components.Server.Circuits", LogLevel.Information);
 builder.Logging.AddFilter(
     "Microsoft.AspNetCore.SignalR",
     builder.Environment.IsDevelopment() ? LogLevel.Debug : LogLevel.Information);
+
+ILogger startupBootLogger = LoggerFactory.Create(logging => logging.AddConsole()).CreateLogger("Startup");
+LogMailgunConfigurationProbe(startupBootLogger, builder.Configuration);
 
 StripeConfigurationResult stripeConfiguration = StripeOptions.Load(
     builder.Configuration,
@@ -392,6 +397,7 @@ builder.Services.AddSingleton<CircuitHandler, CircuitLoggingHandler>();
 builder.Services.AddSingleton<IExportRenderer, MarkdownExportRenderer>();
 builder.Services.AddSingleton<IExportRenderer, TemplatedHtmlExportRenderer>();
 builder.Services.AddHttpClient();
+builder.Services.AddHttpClient<IFeedbackEmailSender, MailgunFeedbackEmailSender>();
 builder.Services.AddSingleton<IExportRenderer, DocxExportRenderer>();
 builder.Services.AddSingleton<IExportRenderer, EpubExportRenderer>();
 builder.Services.AddSingleton<IExportRenderer, SynopsisDocxExportRenderer>();
@@ -2229,6 +2235,63 @@ static void LogRuntimeProbe(ILogger logger)
     {
         logger.LogError(ex, "Runtime probe failed.");
     }
+}
+
+static void LogMailgunConfigurationProbe(ILogger logger, IConfiguration configuration)
+{
+    try
+    {
+        string apiKey = ResolveMailgunApiKey(configuration);
+        string baseUrl = (configuration["MailGunBaseUrl"] ?? string.Empty).Trim();
+        string domain = (configuration["MailGunDomain"] ?? string.Empty).Trim();
+        string fromEmail = (configuration["MailGunFromEmail"] ?? string.Empty).Trim();
+        string toEmail = (configuration["FeedbackToEmail"] ?? string.Empty).Trim();
+
+        logger.LogInformation(
+            "Mailgun config probe: ApiKeyPresent={ApiKeyPresent} ApiKeyLength={ApiKeyLength} ApiKeyFingerprint={ApiKeyFingerprint} BaseUrlPresent={BaseUrlPresent} BaseUrl={BaseUrl} DomainPresent={DomainPresent} Domain={Domain} FromEmailPresent={FromEmailPresent} FeedbackToEmailPresent={FeedbackToEmailPresent}",
+            !string.IsNullOrWhiteSpace(apiKey),
+            apiKey.Length,
+            BuildMailgunKeyFingerprint(apiKey),
+            !string.IsNullOrWhiteSpace(baseUrl),
+            string.IsNullOrWhiteSpace(baseUrl) ? "https://api.mailgun.net" : baseUrl,
+            !string.IsNullOrWhiteSpace(domain),
+            domain,
+            !string.IsNullOrWhiteSpace(fromEmail),
+            !string.IsNullOrWhiteSpace(toEmail));
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning(ex, "Mailgun config probe failed.");
+    }
+}
+
+static string ResolveMailgunApiKey(IConfiguration configuration)
+{
+    string configuredValue = (configuration["MailGunAPIKey"] ?? string.Empty).Trim();
+    if (!string.IsNullOrWhiteSpace(configuredValue))
+    {
+        return configuredValue;
+    }
+
+    string userValue = (Environment.GetEnvironmentVariable("MailGunAPIKey", EnvironmentVariableTarget.User) ?? string.Empty).Trim();
+    if (!string.IsNullOrWhiteSpace(userValue))
+    {
+        return userValue;
+    }
+
+    return (Environment.GetEnvironmentVariable("MailGunAPIKey", EnvironmentVariableTarget.Machine) ?? string.Empty).Trim();
+}
+
+static string BuildMailgunKeyFingerprint(string apiKey)
+{
+    if (string.IsNullOrWhiteSpace(apiKey))
+    {
+        return "<empty>";
+    }
+
+    string prefix = apiKey.Length >= 4 ? apiKey[..4] : apiKey;
+    string suffix = apiKey.Length >= 4 ? apiKey[^4..] : apiKey;
+    return $"{prefix}...{suffix}";
 }
 
 static void LogFilePresence(ILogger logger, string baseDir, string filePath)

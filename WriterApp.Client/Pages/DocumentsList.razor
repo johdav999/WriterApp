@@ -3,6 +3,7 @@
 @using System.Net
 @using Microsoft.AspNetCore.Components.Web
 @using WriterApp.Application.Documents
+@using WriterApp.Client.Utilities
 @inject HttpClient Http
 @inject NavigationManager Navigation
 @inject IConfiguration Configuration
@@ -443,15 +444,21 @@
                 return;
             }
 
-            response.EnsureSuccessStatusCode();
+            if (!response.IsSuccessStatusCode)
+            {
+                ApiErrorDetails? error = await ApiErrorDetailsReader.ReadAsync(response);
+                _projectErrorMessage = error?.UserMessage ?? "Projects are unavailable right now.";
+                return;
+            }
+
             List<ProjectListItemDto>? items = await response.Content.ReadFromJsonAsync<List<ProjectListItemDto>>();
             _projectItems.Clear();
             _projectItems.AddRange((items ?? new List<ProjectListItemDto>()).OrderByDescending(item => item.LastEditedUtc));
             _continueProject = _projectItems.FirstOrDefault();
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _projectErrorMessage = ex.Message;
+            _projectErrorMessage = "Projects are unavailable right now.";
         }
         finally
         {
@@ -472,7 +479,13 @@
         {
             ProjectCreateRequest request = new("Untitled project", null, null, null, null, null);
             using HttpResponseMessage response = await Http.PostAsJsonAsync("/api/projects", request);
-            response.EnsureSuccessStatusCode();
+            if (!response.IsSuccessStatusCode)
+            {
+                ApiErrorDetails? error = await ApiErrorDetailsReader.ReadAsync(response);
+                _projectErrorMessage = error?.UserMessage ?? "Failed to create project.";
+                return;
+            }
+
             ProjectDto? created = await response.Content.ReadFromJsonAsync<ProjectDto>();
             if (created is null)
             {
@@ -483,9 +496,9 @@
             await LoadProjectItemsAsync();
             Navigation.NavigateTo($"projects/{created.Id}");
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _projectErrorMessage = ex.Message;
+            _projectErrorMessage = "Failed to create project.";
         }
         finally
         {

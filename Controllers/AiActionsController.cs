@@ -37,6 +37,7 @@ namespace WriterApp.Controllers
         private readonly IPageRepository _pages;
         private readonly AppDbContext _dbContext;
         private readonly IUserIdResolver _userIdResolver;
+        private readonly IEntitlementService _entitlementService;
         private readonly IAiActionHistoryStore _historyStore;
         private readonly IVersionHistoryService _versionHistory;
         private readonly ILogger<AiActionsController> _logger;
@@ -57,6 +58,7 @@ namespace WriterApp.Controllers
             IPageRepository pages,
             AppDbContext dbContext,
             IUserIdResolver userIdResolver,
+            IEntitlementService entitlementService,
             IAiActionHistoryStore historyStore,
             IVersionHistoryService versionHistory,
             ILogger<AiActionsController> logger)
@@ -67,6 +69,7 @@ namespace WriterApp.Controllers
             _pages = pages ?? throw new ArgumentNullException(nameof(pages));
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
+            _entitlementService = entitlementService ?? throw new ArgumentNullException(nameof(entitlementService));
             _historyStore = historyStore ?? throw new ArgumentNullException(nameof(historyStore));
             _versionHistory = versionHistory ?? throw new ArgumentNullException(nameof(versionHistory));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -107,6 +110,12 @@ namespace WriterApp.Controllers
             catch (SecurityException)
             {
                 return Unauthorized();
+            }
+
+            ActionResult? gate = await EnsureFeatureAllowedAsync(userId, FeatureKey.AiActionHistory, "ai.history");
+            if (gate is not null)
+            {
+                return gate;
             }
 
             string correlationId = Request.Headers["X-Correlation-ID"].FirstOrDefault() ?? HttpContext.TraceIdentifier;
@@ -234,6 +243,12 @@ namespace WriterApp.Controllers
                 return Unauthorized();
             }
 
+            ActionResult? gate = await EnsureFeatureAllowedAsync(userId, FeatureKey.AiUndoRedo, "ai.undo");
+            if (gate is not null)
+            {
+                return gate;
+            }
+
             AiActionUndoRedoResult? result = await _historyStore.UndoAsync(
                 userId,
                 request.DocumentId.Value,
@@ -267,6 +282,12 @@ namespace WriterApp.Controllers
             catch (SecurityException)
             {
                 return Unauthorized();
+            }
+
+            ActionResult? gate = await EnsureFeatureAllowedAsync(userId, FeatureKey.AiUndoRedo, "ai.redo");
+            if (gate is not null)
+            {
+                return gate;
             }
 
             AiActionUndoRedoResult? result = await _historyStore.RedoAsync(
@@ -317,6 +338,16 @@ namespace WriterApp.Controllers
             catch (SecurityException)
             {
                 return Unauthorized();
+            }
+
+            FeatureKey? gatedFeature = ResolveFeatureForAction(actionKey);
+            if (gatedFeature.HasValue)
+            {
+                ActionResult? gate = await EnsureFeatureAllowedAsync(userId, gatedFeature.Value, actionKey);
+                if (gate is not null)
+                {
+                    return gate;
+                }
             }
 
             DocumentRecord? documentRecord = await _documents.GetAsync(documentId, userId, ct);
@@ -1844,6 +1875,64 @@ namespace WriterApp.Controllers
             }
 
             return value.ToString();
+        }
+
+        private async Task<ActionResult?> EnsureFeatureAllowedAsync(string userId, FeatureKey feature, string featureCode)
+        {
+            UserEntitlements entitlements = await _entitlementService.GetEntitlementsAsync(userId);
+            PlanTier userTier = _entitlementService.GetUserTier(entitlements);
+            if (FeatureRegistry.IsFeatureAllowed(feature, userTier))
+            {
+                return null;
+            }
+
+            PlanTier requiredTier = FeatureRegistry.FeatureMinimumTier[feature];
+            _logger.LogInformation(
+                "FeatureAccessDenied FeatureKey={FeatureKey} UserTier={UserTier} RequiredTier={RequiredTier}",
+                feature,
+                userTier,
+                requiredTier);
+
+            ProblemDetails problem = EntitlementDeniedApiError.ForFeature(
+                featureCode,
+                $"Available in {requiredTier} plan.");
+            problem.Extensions["code"] = "entitlement_denied";
+            problem.Extensions["traceId"] = HttpContext.TraceIdentifier;
+
+            ObjectResult result = new(problem)
+            {
+                StatusCode = StatusCodes.Status402PaymentRequired
+            };
+            result.ContentTypes.Add("application/problem+json");
+            return result;
+        }
+
+        private static FeatureKey? ResolveFeatureForAction(string actionKey)
+        {
+            return actionKey switch
+            {
+                RewriteSelectionAction.ActionIdValue => FeatureKey.RewriteSelection,
+                TranslateSelectionAction.ActionIdValue => FeatureKey.TranslateText,
+                TranslateSectionAction.ActionIdValue => FeatureKey.TranslateText,
+                TranslateDocumentAction.ActionIdValue => FeatureKey.TranslateText,
+                ProposeNextParagraphAction.ActionIdValue => FeatureKey.NextParagraph,
+                StoryCoachAction.ActionIdValue => FeatureKey.StoryCoach,
+                GenerateOutlineAction.ActionIdValue => FeatureKey.GenerateOutline,
+                GenerateOutlineFromSynopsisAction.ActionIdValue => FeatureKey.GenerateOutline,
+                SceneSuggestAction.ActionIdValue => FeatureKey.SceneAiSuggestions,
+                SceneRefineAction.ActionIdValue => FeatureKey.SceneAiSuggestions,
+                SceneFindOpenQuestionsAction.ActionIdValue => FeatureKey.SceneAiSuggestions,
+                "custom_transform" => FeatureKey.PromptLibrary,
+                "expand.selection" => FeatureKey.AdvancedReviseTools,
+                "expand.section" => FeatureKey.AdvancedReviseTools,
+                "tighten.selection" => FeatureKey.AdvancedReviseTools,
+                "tighten.section" => FeatureKey.AdvancedReviseTools,
+                "change_tone.selection" => FeatureKey.AdvancedReviseTools,
+                "change_tone.section" => FeatureKey.AdvancedReviseTools,
+                "show_dont_tell.selection" => FeatureKey.AdvancedReviseTools,
+                "show_dont_tell.section" => FeatureKey.AdvancedReviseTools,
+                _ => null
+            };
         }
 
         public sealed record AiActionAppliedRequest(

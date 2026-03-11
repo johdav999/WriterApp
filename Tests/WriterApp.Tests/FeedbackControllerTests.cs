@@ -5,9 +5,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
+using WriterApp.Application.Feedback;
 using WriterApp.Application.Security;
 using WriterApp.Controllers;
 using Xunit;
@@ -52,15 +51,10 @@ namespace WriterApp.Tests
 
         private static FeedbackController BuildController(bool isDevelopment)
         {
-            IConfiguration configuration = new ConfigurationBuilder()
-                .AddInMemoryCollection(new Dictionary<string, string?>())
-                .Build();
-
             FeedbackController controller = new(
-                configuration,
                 NullLogger<FeedbackController>.Instance,
                 new StubUserIdResolver(),
-                new StubHostEnvironment(isDevelopment));
+                new StubFeedbackEmailSender(isDevelopment));
 
             controller.ControllerContext = new ControllerContext
             {
@@ -78,27 +72,22 @@ namespace WriterApp.Tests
             public string ResolveUserId(ClaimsPrincipal user) => "user-1";
         }
 
-        private sealed class StubHostEnvironment : IHostEnvironment
+        private sealed class StubFeedbackEmailSender : IFeedbackEmailSender
         {
             private readonly bool _isDevelopment;
 
-            public StubHostEnvironment(bool isDevelopment)
+            public StubFeedbackEmailSender(bool isDevelopment)
             {
                 _isDevelopment = isDevelopment;
             }
 
-            public string EnvironmentName
+            public Task<FeedbackEmailSendResult> SendAsync(FeedbackEmailRequest request, CancellationToken ct)
             {
-                get => _isDevelopment ? Environments.Development : Environments.Production;
-                set { }
+                string message = _isDevelopment
+                    ? "Feedback captured locally (Mailgun not configured)."
+                    : "Feedback sent.";
+                return Task.FromResult(FeedbackEmailSendResult.Success(message));
             }
-
-            public string ApplicationName { get; set; } = "WriterApp.Tests";
-
-            public string ContentRootPath { get; set; } = AppContext.BaseDirectory;
-
-            public Microsoft.Extensions.FileProviders.IFileProvider ContentRootFileProvider { get; set; } =
-                new Microsoft.Extensions.FileProviders.NullFileProvider();
         }
     }
 }

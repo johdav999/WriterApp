@@ -22,6 +22,7 @@ using WriterApp.Application.AI;
 using WriterApp.Application.Continuity;
 using WriterApp.Application.Documents;
 using WriterApp.Application.Exporting;
+using WriterApp.Application.Subscriptions;
 using WriterApp.Client.Diagnostics;
 using WriterApp.Client.State;
 using WriterApp.Application.Usage;
@@ -75,6 +76,9 @@ namespace WriterApp.Client.Pages
 
         [Inject]
         public AuthMeStateService AuthMeStateService { get; set; } = default!;
+
+        [Inject]
+        internal FeatureAccessService FeatureAccessService { get; set; } = default!;
 
         [Inject]
         public LastOpenedDocumentStateService LastOpenedDocumentStateService { get; set; } = default!;
@@ -615,7 +619,8 @@ namespace WriterApp.Client.Pages
             && CanRunExtractPlaceBible
             && CanRunExtractTimelineBible;
         private bool CanShowPromptLibrary =>
-            HasAction("custom_transform");
+            HasAction("custom_transform")
+            && CanUseFeature(FeatureKey.PromptLibrary);
         private IReadOnlyList<PromptPresetDto> PinnedPromptPresets =>
             _pinnedPromptPresetIds
                 .Select(id => _promptPresets.FirstOrDefault(preset => preset.Id == id))
@@ -5272,6 +5277,7 @@ namespace WriterApp.Client.Pages
         {
             if (!CanShowPromptLibrary)
             {
+                _promptStatus = GetFeatureTooltip(FeatureKey.PromptLibrary);
                 return;
             }
 
@@ -5662,6 +5668,13 @@ namespace WriterApp.Client.Pages
 
         private async Task RunSceneAiAsync(string actionKey, string instruction)
         {
+            if (!CanUseFeature(FeatureKey.SceneAiSuggestions))
+            {
+                _sceneAiError = GetFeatureTooltip(FeatureKey.SceneAiSuggestions);
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
             if (_sceneAiInFlight || _activeSection is null)
             {
                 return;
@@ -6737,6 +6750,12 @@ private const string PreviewBootstrapScript = @"
 
         private async Task OpenTemplateManagerAsync()
         {
+            if (!CanUseFeature(FeatureKey.ExportTemplates))
+            {
+                _templateActionError = GetFeatureTooltip(FeatureKey.ExportTemplates);
+                return;
+            }
+
             _isExportDialogOpen = false;
             _isTemplateManagerOpen = true;
             _templateActionError = null;
@@ -7147,6 +7166,12 @@ private const string PreviewBootstrapScript = @"
 
         private void OpenPresetSave()
         {
+            if (!CanUseFeature(FeatureKey.ExportPresets))
+            {
+                _presetActionError = GetFeatureTooltip(FeatureKey.ExportPresets);
+                return;
+            }
+
             _presetActionError = null;
             _isPresetSaveOpen = true;
             _presetNameDraft = string.Empty;
@@ -7634,6 +7659,13 @@ private const string PreviewBootstrapScript = @"
             if (!IsAiAvailable)
             {
                 ShowAiMessage(GetAiBlockedMessage());
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+
+            if (!CanUseAiAction(action))
+            {
+                ShowAiMessage(GetAiActionUpgradeTooltip(action));
                 await InvokeAsync(StateHasChanged);
                 return;
             }
@@ -9408,6 +9440,53 @@ private const string PreviewBootstrapScript = @"
         }
 
         private string PlanStatusLabel => $"Plan: {AuthMeStateService.PlanKey}";
+
+        private bool CanUseFeature(FeatureKey feature)
+        {
+            return FeatureAccessService.CanUse(feature);
+        }
+
+        private bool CanUseAiAction(AiActionOption action)
+        {
+            FeatureKey? feature = ResolveFeatureForAction(action.ActionKey);
+            return !feature.HasValue || CanUseFeature(feature.Value);
+        }
+
+        private string GetFeatureTooltip(FeatureKey feature)
+        {
+            return FeatureAccessService.GetUpgradeMessage(feature);
+        }
+
+        private string GetAiActionUpgradeTooltip(AiActionOption action)
+        {
+            FeatureKey? feature = ResolveFeatureForAction(action.ActionKey);
+            return feature.HasValue ? GetFeatureTooltip(feature.Value) : string.Empty;
+        }
+
+        private static FeatureKey? ResolveFeatureForAction(string actionKey)
+        {
+            return actionKey switch
+            {
+                "rewrite.selection" => FeatureKey.RewriteSelection,
+                "translate.selection" => FeatureKey.TranslateText,
+                "translate.section" => FeatureKey.TranslateText,
+                "translate.document" => FeatureKey.TranslateText,
+                "propose.next-paragraph" => FeatureKey.NextParagraph,
+                "scene.suggest" => FeatureKey.SceneAiSuggestions,
+                "scene.refine" => FeatureKey.SceneAiSuggestions,
+                "scene.find-open-questions" => FeatureKey.SceneAiSuggestions,
+                "custom_transform" => FeatureKey.PromptLibrary,
+                "expand.selection" => FeatureKey.AdvancedReviseTools,
+                "expand.section" => FeatureKey.AdvancedReviseTools,
+                "tighten.selection" => FeatureKey.AdvancedReviseTools,
+                "tighten.section" => FeatureKey.AdvancedReviseTools,
+                "change_tone.selection" => FeatureKey.AdvancedReviseTools,
+                "change_tone.section" => FeatureKey.AdvancedReviseTools,
+                "show_dont_tell.selection" => FeatureKey.AdvancedReviseTools,
+                "show_dont_tell.section" => FeatureKey.AdvancedReviseTools,
+                _ => null
+            };
+        }
 
         private string AiUsageStatusLabel =>
             AuthMeStateService.AiMonthlyTokenBudget <= 0

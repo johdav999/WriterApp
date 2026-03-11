@@ -1,5 +1,9 @@
 # Auth And Public Link Flows
 
+## Feedback email
+- Mailgun feedback delivery setup:
+  - [feedback-mailgun.md](/c:/Users/Johan/source/repos/WriterApp/docs/feedback-mailgun.md)
+
 ## Public routes and SPA redirects
 - Public top-level links are handled by server redirects:
   - `/login` -> `/app/login` (302, query preserved)
