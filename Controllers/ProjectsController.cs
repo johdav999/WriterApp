@@ -17,6 +17,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using WriterApp.Application.Documents;
 using WriterApp.Application.Security;
+using WriterApp.Application.Subscriptions;
 using WriterApp.Data;
 using WriterApp.Data.Documents;
 
@@ -34,6 +35,7 @@ namespace WriterApp.Controllers
         private readonly IProjectGoalsService _goals;
         private readonly IProjectSceneLinkingService _sceneLinking;
         private readonly IProjectDeletionService _projectDeletion;
+        private readonly IEntitlementService _entitlementService;
         private readonly IConfiguration _configuration;
         private readonly ILogger<ProjectsController> _logger;
 
@@ -44,6 +46,7 @@ namespace WriterApp.Controllers
             IProjectGoalsService goals,
             IProjectSceneLinkingService sceneLinking,
             IProjectDeletionService projectDeletion,
+            IEntitlementService entitlementService,
             IConfiguration configuration,
             ILogger<ProjectsController> logger)
         {
@@ -53,6 +56,7 @@ namespace WriterApp.Controllers
             _goals = goals ?? throw new ArgumentNullException(nameof(goals));
             _sceneLinking = sceneLinking ?? throw new ArgumentNullException(nameof(sceneLinking));
             _projectDeletion = projectDeletion ?? throw new ArgumentNullException(nameof(projectDeletion));
+            _entitlementService = entitlementService ?? throw new ArgumentNullException(nameof(entitlementService));
             _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
@@ -66,6 +70,12 @@ namespace WriterApp.Controllers
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
+            ActionResult? gate = await EnsureFeatureAllowedAsync(userId, FeatureKey.ProjectNavigator, "projects.navigator");
+            if (gate is not null)
+            {
+                return gate;
+            }
+
             List<ProjectRecord> projects = await _dbContext.Projects
                 .AsNoTracking()
                 .Where(project => project.OwnerUserId == userId)
@@ -98,6 +108,12 @@ namespace WriterApp.Controllers
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
+            ActionResult? gate = await EnsureFeatureAllowedAsync(userId, FeatureKey.ProjectNavigator, "projects.navigator");
+            if (gate is not null)
+            {
+                return gate;
+            }
+
             List<ProjectRecord> projects = await _dbContext.Projects
                 .AsNoTracking()
                 .Where(project => project.OwnerUserId == userId)
@@ -547,6 +563,12 @@ namespace WriterApp.Controllers
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
+            ActionResult? gate = await EnsureFeatureAllowedAsync(userId, FeatureKey.ConvertDocumentToProject, "projects.convert");
+            if (gate is not null)
+            {
+                return gate;
+            }
+
             DocumentRecord? document = await _dbContext.Documents
                 .AsNoTracking()
                 .FirstOrDefaultAsync(item => item.Id == documentId && item.OwnerUserId == userId, ct);
@@ -659,6 +681,12 @@ namespace WriterApp.Controllers
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
+            ActionResult? gate = await EnsureFeatureAllowedAsync(userId, FeatureKey.ProjectNavigator, "projects.navigator");
+            if (gate is not null)
+            {
+                return gate;
+            }
+
             ProjectRecord? project = await _dbContext.Projects
                 .AsNoTracking()
                 .FirstOrDefaultAsync(item => item.Id == projectId && item.OwnerUserId == userId, ct);
@@ -690,6 +718,12 @@ namespace WriterApp.Controllers
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
+            ActionResult? gate = await EnsureFeatureAllowedAsync(userId, FeatureKey.ProjectStructureEditing, "projects.structure");
+            if (gate is not null)
+            {
+                return gate;
+            }
+
             ProjectRecord? project = await _dbContext.Projects
                 .FirstOrDefaultAsync(item => item.Id == projectId && item.OwnerUserId == userId, ct);
             if (project is null)
@@ -793,6 +827,15 @@ namespace WriterApp.Controllers
                 return NotFound();
             }
 
+            if (!IsTitleOnlyNodeRename(request, node))
+            {
+                ActionResult? gate = await EnsureFeatureAllowedAsync(userId, FeatureKey.ProjectStructureEditing, "projects.structure");
+                if (gate is not null)
+                {
+                    return gate;
+                }
+            }
+
             Guid? originalParentId = node.ParentId;
             if (!string.IsNullOrWhiteSpace(request.Title))
             {
@@ -870,6 +913,12 @@ namespace WriterApp.Controllers
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
+            ActionResult? gate = await EnsureFeatureAllowedAsync(userId, FeatureKey.ProjectStructureEditing, "projects.structure");
+            if (gate is not null)
+            {
+                return gate;
+            }
+
             ProjectRecord? project = await _dbContext.Projects
                 .FirstOrDefaultAsync(item => item.Id == projectId && item.OwnerUserId == userId, ct);
             if (project is null)
@@ -1236,6 +1285,12 @@ namespace WriterApp.Controllers
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
+            ActionResult? gate = await EnsureFeatureAllowedAsync(userId, FeatureKey.ProjectStructureEditing, "projects.reorder");
+            if (gate is not null)
+            {
+                return gate;
+            }
+
             string correlationId = Request.Headers["X-Correlation-ID"].FirstOrDefault() ?? HttpContext.TraceIdentifier;
             ProjectRecord? project = await _dbContext.Projects
                 .FirstOrDefaultAsync(item => item.Id == projectId && item.OwnerUserId == userId, ct);
@@ -1390,6 +1445,12 @@ namespace WriterApp.Controllers
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
+            ActionResult? gate = await EnsureFeatureAllowedAsync(userId, FeatureKey.ProjectStructureEditing, "projects.structure");
+            if (gate is not null)
+            {
+                return gate;
+            }
+
             ProjectRecord? project = await _dbContext.Projects
                 .FirstOrDefaultAsync(item => item.Id == projectId && item.OwnerUserId == userId, ct);
             if (project is null)
@@ -1440,6 +1501,12 @@ namespace WriterApp.Controllers
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
+            ActionResult? gate = await EnsureFeatureAllowedAsync(userId, FeatureKey.OpenSceneInEditor, "projects.open-scene");
+            if (gate is not null)
+            {
+                return gate;
+            }
+
             ProjectRecord? project = await _dbContext.Projects
                 .FirstOrDefaultAsync(item => item.Id == projectId && item.OwnerUserId == userId, ct);
             if (project is null)
@@ -1550,6 +1617,12 @@ namespace WriterApp.Controllers
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
+            ActionResult? gate = await EnsureFeatureAllowedAsync(userId, FeatureKey.WritingGoals, "projects.goals");
+            if (gate is not null)
+            {
+                return gate;
+            }
+
             ProjectProgressDashboardDto? dashboard = await _goals.GetDashboardAsync(userId, projectId, ct);
             if (dashboard is null)
             {
@@ -1571,6 +1644,12 @@ namespace WriterApp.Controllers
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
+            ActionResult? gate = await EnsureFeatureAllowedAsync(userId, FeatureKey.WritingGoals, "projects.goals");
+            if (gate is not null)
+            {
+                return gate;
+            }
+
             ProjectGoalDto? goal = await _goals.UpsertGoalAsync(userId, projectId, request, ct);
             if (goal is null)
             {
@@ -1589,6 +1668,12 @@ namespace WriterApp.Controllers
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
+            ActionResult? gate = await EnsureFeatureAllowedAsync(userId, FeatureKey.ProjectProgressDashboard, "projects.progress");
+            if (gate is not null)
+            {
+                return gate;
+            }
+
             ProjectProgressDashboardDto? dashboard = await _goals.GetDashboardAsync(userId, projectId, ct);
             if (dashboard is null)
             {
@@ -1610,6 +1695,12 @@ namespace WriterApp.Controllers
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
+            ActionResult? gate = await EnsureFeatureAllowedAsync(userId, FeatureKey.Milestones, "projects.milestones");
+            if (gate is not null)
+            {
+                return gate;
+            }
+
             ProjectMilestoneDto? result = await _goals.CreateMilestoneAsync(userId, projectId, request, ct);
             if (result is null)
             {
@@ -1632,6 +1723,12 @@ namespace WriterApp.Controllers
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
+            ActionResult? gate = await EnsureFeatureAllowedAsync(userId, FeatureKey.Milestones, "projects.milestones");
+            if (gate is not null)
+            {
+                return gate;
+            }
+
             ProjectMilestoneDto? result = await _goals.UpdateMilestoneAsync(userId, projectId, milestoneId, request, ct);
             if (result is null)
             {
@@ -1650,6 +1747,12 @@ namespace WriterApp.Controllers
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
+            ActionResult? gate = await EnsureFeatureAllowedAsync(userId, FeatureKey.Milestones, "projects.milestones");
+            if (gate is not null)
+            {
+                return gate;
+            }
+
             bool removed = await _goals.DeleteMilestoneAsync(userId, projectId, milestoneId, ct);
             return removed ? NoContent() : NotFound();
         }
@@ -1663,6 +1766,12 @@ namespace WriterApp.Controllers
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
+            ActionResult? gate = await EnsureFeatureAllowedAsync(userId, FeatureKey.WritingSessionTracking, "projects.sessions");
+            if (gate is not null)
+            {
+                return gate;
+            }
+
             WritingSessionDto? session = await _goals.StartSessionAsync(userId, projectId, ct);
             if (session is null)
             {
@@ -1685,6 +1794,12 @@ namespace WriterApp.Controllers
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
+            ActionResult? gate = await EnsureFeatureAllowedAsync(userId, FeatureKey.WritingSessionTracking, "projects.sessions");
+            if (gate is not null)
+            {
+                return gate;
+            }
+
             WritingSessionDto? session = await _goals.StopSessionAsync(userId, projectId, sessionId, request?.Notes, ct);
             if (session is null)
             {
@@ -1754,6 +1869,58 @@ namespace WriterApp.Controllers
             return _configuration.GetValue<bool?>("Workflow:GoalsEnabled")
                 ?? _configuration.GetValue<bool?>("WriterApp:Workflow:GoalsEnabled")
                 ?? false;
+        }
+
+        private async Task<ActionResult?> EnsureFeatureAllowedAsync(string userId, FeatureKey feature, string featureCode)
+        {
+            UserEntitlements entitlements = await _entitlementService.GetEntitlementsAsync(userId);
+            PlanTier userTier = _entitlementService.GetUserTier(entitlements);
+            if (FeatureRegistry.IsFeatureAllowed(feature, userTier))
+            {
+                return null;
+            }
+
+            PlanTier requiredTier = FeatureRegistry.FeatureMinimumTier[feature];
+            _logger.LogInformation(
+                "FeatureAccessDenied FeatureKey={FeatureKey} UserTier={UserTier} RequiredTier={RequiredTier}",
+                feature,
+                userTier,
+                requiredTier);
+
+            ProblemDetails problem = EntitlementDeniedApiError.ForFeature(
+                featureCode,
+                $"Available in {requiredTier} plan.");
+            problem.Extensions["code"] = "entitlement_denied";
+            problem.Extensions["traceId"] = HttpContext.TraceIdentifier;
+
+            ObjectResult result = new(problem)
+            {
+                StatusCode = StatusCodes.Status402PaymentRequired
+            };
+            result.ContentTypes.Add("application/problem+json");
+            return result;
+        }
+
+        private static bool IsTitleOnlyNodeRename(ProjectNodePatchRequest request, ProjectNodeRecord node)
+        {
+            if (string.IsNullOrWhiteSpace(request.Title))
+            {
+                return false;
+            }
+
+            string nextTitle = request.Title.Trim();
+            if (string.Equals(node.Title, nextTitle, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            bool sameParent = request.ParentId == node.ParentId;
+            bool sameLinkedSection = request.LinkedSectionId == node.LinkedSectionId;
+            bool sameMetadata = string.Equals(request.MetadataJson, node.MetadataJson, StringComparison.Ordinal);
+            bool sameNodeType = string.IsNullOrWhiteSpace(request.NodeType)
+                || string.Equals(request.NodeType.Trim(), node.NodeType.ToString(), StringComparison.OrdinalIgnoreCase);
+
+            return sameParent && sameLinkedSection && sameMetadata && sameNodeType;
         }
 
         private async Task<bool> GoalsTablesExistAsync(CancellationToken ct)

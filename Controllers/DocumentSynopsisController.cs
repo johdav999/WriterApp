@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using WriterApp.AI.Abstractions;
 using WriterApp.AI.Actions;
 using WriterApp.Application.AI;
@@ -33,7 +34,9 @@ namespace WriterApp.Controllers
         private readonly IAiOrchestrator _orchestrator;
         private readonly SynopsisAiContextBuilder _synopsisContextBuilder;
         private readonly StoryCoachContextBuilder _storyCoachContextBuilder;
+        private readonly IEntitlementService _entitlementService;
         private readonly IAiActionHistoryStore _historyStore;
+        private readonly ILogger<DocumentSynopsisController> _logger;
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
         public DocumentSynopsisController(
@@ -43,7 +46,9 @@ namespace WriterApp.Controllers
             IAiOrchestrator orchestrator,
             SynopsisAiContextBuilder synopsisContextBuilder,
             StoryCoachContextBuilder storyCoachContextBuilder,
-            IAiActionHistoryStore historyStore)
+            IEntitlementService entitlementService,
+            IAiActionHistoryStore historyStore,
+            ILogger<DocumentSynopsisController> logger)
         {
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _documents = documents ?? throw new ArgumentNullException(nameof(documents));
@@ -51,7 +56,9 @@ namespace WriterApp.Controllers
             _orchestrator = orchestrator ?? throw new ArgumentNullException(nameof(orchestrator));
             _synopsisContextBuilder = synopsisContextBuilder ?? throw new ArgumentNullException(nameof(synopsisContextBuilder));
             _storyCoachContextBuilder = storyCoachContextBuilder ?? throw new ArgumentNullException(nameof(storyCoachContextBuilder));
+            _entitlementService = entitlementService ?? throw new ArgumentNullException(nameof(entitlementService));
             _historyStore = historyStore ?? throw new ArgumentNullException(nameof(historyStore));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         [HttpGet]
@@ -188,6 +195,24 @@ namespace WriterApp.Controllers
             catch (SecurityException)
             {
                 return Unauthorized();
+            }
+
+            FeatureKey feature = mode switch
+            {
+                "questions" => FeatureKey.AiGuidingQuestions,
+                "suggest" => FeatureKey.AiSynopsisSuggestions,
+                _ => FeatureKey.AiSynopsisEvaluation
+            };
+            string featureCode = mode switch
+            {
+                "questions" => "synopsis.questions",
+                "suggest" => "synopsis.suggest",
+                _ => "synopsis.evaluate"
+            };
+            ActionResult? gate = await EnsureFeatureAllowedAsync(userId, feature, featureCode);
+            if (gate is not null)
+            {
+                return gate;
             }
 
             DocumentRecord? document = await _documents.GetAsync(documentId, userId, ct);
@@ -399,6 +424,36 @@ namespace WriterApp.Controllers
             record.EndingIntent = request.EndingIntent ?? string.Empty;
             record.OpenQuestions = request.OpenQuestions ?? string.Empty;
             record.Notes = request.Notes ?? string.Empty;
+        }
+
+        private async Task<ActionResult?> EnsureFeatureAllowedAsync(string userId, FeatureKey feature, string featureCode)
+        {
+            UserEntitlements entitlements = await _entitlementService.GetEntitlementsAsync(userId);
+            PlanTier userTier = _entitlementService.GetUserTier(entitlements);
+            if (FeatureRegistry.IsFeatureAllowed(feature, userTier))
+            {
+                return null;
+            }
+
+            PlanTier requiredTier = FeatureRegistry.FeatureMinimumTier[feature];
+            _logger.LogInformation(
+                "FeatureAccessDenied FeatureKey={FeatureKey} UserTier={UserTier} RequiredTier={RequiredTier}",
+                feature,
+                userTier,
+                requiredTier);
+
+            ProblemDetails problem = EntitlementDeniedApiError.ForFeature(
+                featureCode,
+                $"Available in {requiredTier} plan.");
+            problem.Extensions["code"] = "entitlement_denied";
+            problem.Extensions["traceId"] = HttpContext.TraceIdentifier;
+
+            ObjectResult result = new(problem)
+            {
+                StatusCode = StatusCodes.Status402PaymentRequired
+            };
+            result.ContentTypes.Add("application/problem+json");
+            return result;
         }
     }
 }

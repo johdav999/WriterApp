@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -17,39 +16,141 @@ namespace WriterApp.Tests
     public sealed class BibleRefreshServiceTests
     {
         [Fact]
+        public async Task RefreshAsync_CharacterValidJson_Succeeds()
+        {
+            Document document = BuildDocument(out Guid sectionId);
+            SequenceAiOrchestrator orchestrator = new("""
+            {
+              "schemaVersion":"1.0",
+              "characters":[
+                {
+                  "name":"Mira",
+                  "facts":[{"fact":"Carries a brass key","evidence":{"sectionId":"11111111-1111-1111-1111-111111111111","quote":"Mira carries a brass key."}}],
+                  "traits":["observant"]
+                }
+              ]
+            }
+            """);
+
+            BibleRefreshService service = BuildService(orchestrator);
+
+            BibleSnapshotState snapshot = await service.RefreshAsync(
+                document,
+                "user-1",
+                sectionId,
+                BibleType.Character,
+                fullRebuild: false,
+                CancellationToken.None);
+
+            using JsonDocument json = JsonDocument.Parse(snapshot.ContentJson);
+            Assert.Equal("Mira", json.RootElement.GetProperty("characters")[0].GetProperty("name").GetString());
+            Assert.Equal(1, orchestrator.CallCount);
+        }
+
+        [Fact]
+        public async Task RefreshAsync_CharacterMarkdownFencedJson_SucceedsWithoutRetry()
+        {
+            Document document = BuildDocument(out Guid sectionId);
+            SequenceAiOrchestrator orchestrator = new(
+                """
+                ```json
+                {"schemaVersion":"1.0","characters":[{"name":"Mira","facts":[],"traits":["observant"]}]}
+                ```
+                """);
+
+            BibleRefreshService service = BuildService(orchestrator);
+
+            BibleSnapshotState snapshot = await service.RefreshAsync(
+                document,
+                "user-1",
+                sectionId,
+                BibleType.Character,
+                fullRebuild: false,
+                CancellationToken.None);
+
+            using JsonDocument json = JsonDocument.Parse(snapshot.ContentJson);
+            Assert.Equal("Mira", json.RootElement.GetProperty("characters")[0].GetProperty("name").GetString());
+            Assert.Equal(1, orchestrator.CallCount);
+        }
+
+        [Fact]
+        public async Task RefreshAsync_CharacterJsonWithExtraProse_SucceedsWithoutRetry()
+        {
+            Document document = BuildDocument(out Guid sectionId);
+            SequenceAiOrchestrator orchestrator = new(
+                """
+                Here is the repaired payload:
+                {"schemaVersion":"1.0","characters":[{"name":"Mira","facts":[],"traits":["observant"]}]}
+                End of payload.
+                """);
+
+            BibleRefreshService service = BuildService(orchestrator);
+
+            BibleSnapshotState snapshot = await service.RefreshAsync(
+                document,
+                "user-1",
+                sectionId,
+                BibleType.Character,
+                fullRebuild: false,
+                CancellationToken.None);
+
+            using JsonDocument json = JsonDocument.Parse(snapshot.ContentJson);
+            Assert.Equal("Mira", json.RootElement.GetProperty("characters")[0].GetProperty("name").GetString());
+            Assert.Equal(1, orchestrator.CallCount);
+        }
+
+        [Fact]
+        public async Task RefreshAsync_CharacterTruncatedJson_ThrowsAfterRepairFails()
+        {
+            Document document = BuildDocument(out Guid sectionId);
+            SequenceAiOrchestrator orchestrator = new(
+                "{\"schemaVersion\":\"1.0\",\"characters\":[{\"name\":\"Mira\"",
+                "{\"schemaVersion\":\"1.0\",\"characters\":[{\"name\":\"Mira\"");
+
+            BibleRefreshService service = BuildService(orchestrator);
+
+            BibleRefreshInvalidPayloadException ex = await Assert.ThrowsAsync<BibleRefreshInvalidPayloadException>(() => service.RefreshAsync(
+                document,
+                "user-1",
+                sectionId,
+                BibleType.Character,
+                fullRebuild: false,
+                CancellationToken.None));
+
+            Assert.True(ex.RepairAttempted);
+            Assert.Contains("JSON could not be parsed into an object", ex.FailureReason);
+            Assert.Equal(2, orchestrator.CallCount);
+        }
+
+        [Fact]
+        public async Task RefreshAsync_CharacterRetrySuccessAfterParseFailure_Succeeds()
+        {
+            Document document = BuildDocument(out Guid sectionId);
+            SequenceAiOrchestrator orchestrator = new(
+                "{\"schemaVersion\":\"1.0\",\"characters\":[{\"name\":\"Mira\"",
+                "{\"schemaVersion\":\"1.0\",\"characters\":[{\"name\":\"Mira\",\"facts\":[],\"traits\":[\"observant\"]}]}");
+
+            BibleRefreshService service = BuildService(orchestrator);
+
+            BibleSnapshotState snapshot = await service.RefreshAsync(
+                document,
+                "user-1",
+                sectionId,
+                BibleType.Character,
+                fullRebuild: false,
+                CancellationToken.None);
+
+            using JsonDocument json = JsonDocument.Parse(snapshot.ContentJson);
+            Assert.Equal("Mira", json.RootElement.GetProperty("characters")[0].GetProperty("name").GetString());
+            Assert.Equal(2, orchestrator.CallCount);
+            Assert.True(orchestrator.SawRepairAttempt);
+        }
+
+        [Fact]
         public async Task RefreshAsync_TimelineMalformedPatch_UsesFallbackAndSucceeds()
         {
-            Guid documentId = Guid.NewGuid();
-            Guid sectionId = Guid.NewGuid();
+            Document document = BuildDocument(out Guid sectionId, "<p>Test quote \"inside\" content.</p>");
 
-            Document document = new()
-            {
-                DocumentId = documentId,
-                Chapters = new List<Chapter>
-                {
-                    new()
-                    {
-                        Order = 0,
-                        Title = "Draft",
-                        Sections = new List<Section>
-                        {
-                            new()
-                            {
-                                SectionId = sectionId,
-                                Order = 0,
-                                Title = "New Scene",
-                                Content = new SectionContent
-                                {
-                                    Format = "html",
-                                    Value = "<p>Test quote \"inside\" content.</p>"
-                                }
-                            }
-                        }
-                    }
-                }
-            };
-
-            // Intentionally malformed JSON (unescaped inner quotes in content value).
             string malformedPatch = """
             {
               "bibleType":"Timeline",
@@ -64,14 +165,8 @@ namespace WriterApp.Tests
             }
             """;
 
-            FakeAiOrchestrator orchestrator = new(malformedPatch);
-            InMemoryBibleStore store = new();
-            BibleRefreshService service = new(
-                orchestrator,
-                new StubEntitlementService(aiEnabled: true, planKey: "professional"),
-                store,
-                new BiblePatchApplier(),
-                NullLogger<BibleRefreshService>.Instance);
+            SequenceAiOrchestrator orchestrator = new(malformedPatch);
+            BibleRefreshService service = BuildService(orchestrator);
 
             BibleSnapshotState snapshot = await service.RefreshAsync(
                 document,
@@ -90,35 +185,7 @@ namespace WriterApp.Tests
         [Fact]
         public async Task RefreshAsync_ThrowsEntitlementDenied_WhenAiDisabled()
         {
-            Guid documentId = Guid.NewGuid();
-            Guid sectionId = Guid.NewGuid();
-            Document document = new()
-            {
-                DocumentId = documentId,
-                Chapters = new List<Chapter>
-                {
-                    new()
-                    {
-                        Order = 0,
-                        Title = "Draft",
-                        Sections = new List<Section>
-                        {
-                            new()
-                            {
-                                SectionId = sectionId,
-                                Order = 0,
-                                Title = "Scene",
-                                Content = new SectionContent
-                                {
-                                    Format = "html",
-                                    Value = "<p>Sample</p>"
-                                }
-                            }
-                        }
-                    }
-                }
-            };
-
+            Document document = BuildDocument(out Guid sectionId);
             CountingAiOrchestrator orchestrator = new();
             BibleRefreshService service = new(
                 orchestrator,
@@ -140,14 +207,60 @@ namespace WriterApp.Tests
             Assert.Equal(0, orchestrator.CallCount);
         }
 
-        private sealed class FakeAiOrchestrator : IAiOrchestrator
+        private static Document BuildDocument(out Guid sectionId, string content = "<p>Sample</p>")
         {
-            private readonly string _payload;
-
-            public FakeAiOrchestrator(string payload)
+            Guid documentId = Guid.NewGuid();
+            sectionId = Guid.NewGuid();
+            return new Document
             {
-                _payload = payload;
+                DocumentId = documentId,
+                Chapters = new List<Chapter>
+                {
+                    new()
+                    {
+                        Order = 0,
+                        Title = "Draft",
+                        Sections = new List<Section>
+                        {
+                            new()
+                            {
+                                SectionId = sectionId,
+                                Order = 0,
+                                Title = "Scene",
+                                Content = new SectionContent
+                                {
+                                    Format = "html",
+                                    Value = content
+                                }
+                            }
+                        }
+                    }
+                }
+            };
+        }
+
+        private static BibleRefreshService BuildService(IAiOrchestrator orchestrator)
+        {
+            return new BibleRefreshService(
+                orchestrator,
+                new StubEntitlementService(aiEnabled: true, planKey: "professional"),
+                new InMemoryBibleStore(),
+                new BiblePatchApplier(),
+                NullLogger<BibleRefreshService>.Instance);
+        }
+
+        private sealed class SequenceAiOrchestrator : IAiOrchestrator
+        {
+            private readonly Queue<string> _payloads;
+
+            public SequenceAiOrchestrator(params string[] payloads)
+            {
+                _payloads = new Queue<string>(payloads);
             }
+
+            public int CallCount { get; private set; }
+
+            public bool SawRepairAttempt { get; private set; }
 
             public IReadOnlyList<IAiAction> Actions => Array.Empty<IAiAction>();
 
@@ -159,10 +272,16 @@ namespace WriterApp.Tests
 
             public Task<AiExecutionResult> ExecuteActionAsync(string actionId, AiActionInput input, CancellationToken ct)
             {
+                CallCount++;
+                SawRepairAttempt |= input.Options is not null
+                    && input.Options.TryGetValue("repair_invalid_json", out object? value)
+                    && string.Equals(value?.ToString(), bool.TrueString, StringComparison.OrdinalIgnoreCase);
+
+                string payload = _payloads.Count > 0 ? _payloads.Dequeue() : "{}";
                 AiProposal proposal = new(
                     Guid.NewGuid(),
                     input.ActiveSectionId,
-                    "Refresh timeline bible",
+                    "Refresh bible",
                     actionId,
                     "test",
                     Guid.NewGuid(),
@@ -170,11 +289,11 @@ namespace WriterApp.Tests
                     null,
                     new List<ProposedOperation>(),
                     new List<Guid>(),
-                    "Refresh timeline bible",
+                    "Refresh bible",
                     "Document",
                     "refresh",
                     null,
-                    _payload);
+                    payload);
 
                 return Task.FromResult(AiExecutionResult.Success(proposal));
             }
@@ -242,6 +361,16 @@ namespace WriterApp.Tests
                 };
 
                 return Task.FromResult(new UserEntitlements(userId, _planKey, _planKey, entitlements));
+            }
+
+            public PlanTier GetUserTier(UserEntitlements entitlements)
+            {
+                return _planKey.ToLowerInvariant() switch
+                {
+                    "professional" => PlanTier.Professional,
+                    "standard" => PlanTier.Standard,
+                    _ => PlanTier.Free
+                };
             }
 
             public Task<bool> HasAsync(string userId, string entitlementKey)

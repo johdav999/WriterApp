@@ -5,6 +5,7 @@ namespace WriterApp.Application.Subscriptions
     public interface IEntitlementService
     {
         Task<UserEntitlements> GetEntitlementsAsync(string userId);
+        PlanTier GetUserTier(UserEntitlements entitlements);
         Task<bool> HasAsync(string userId, string entitlementKey);
         Task<int?> GetIntAsync(string userId, string entitlementKey);
         void InvalidateForUser(string userId);

@@ -29,6 +29,7 @@ builder.Services.AddScoped<WriterApp.Client.State.CurrentDocumentStateService>()
 builder.Services.AddScoped<WriterApp.Client.State.CurrentSceneStateService>();
 builder.Services.AddScoped<WriterApp.Client.State.CurrentProjectStateService>();
 builder.Services.AddScoped<WriterApp.Client.State.AuthMeStateService>();
+builder.Services.AddScoped<FeatureAccessService>();
 builder.Services.AddScoped<WriterApp.Client.Services.OnboardingService>();
 builder.Services.AddScoped<WriterApp.Client.State.OnboardingStateStore>();
 builder.Services.AddScoped<WriterApp.Client.State.OnboardingOverlayStateService>();

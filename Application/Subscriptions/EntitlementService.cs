@@ -101,6 +101,22 @@ namespace WriterApp.Application.Subscriptions
             return result;
         }
 
+        public PlanTier GetUserTier(UserEntitlements entitlements)
+        {
+            if (entitlements is null)
+            {
+                throw new ArgumentNullException(nameof(entitlements));
+            }
+
+            string normalizedPlanKey = UserEntitlementDefaults.ToPlanLookupKey(entitlements.PlanKey);
+            return normalizedPlanKey switch
+            {
+                "standard" => PlanTier.Standard,
+                "professional" => PlanTier.Professional,
+                _ => PlanTier.Free
+            };
+        }
+
         public async Task<bool> HasAsync(string userId, string entitlementKey)
         {
             if (string.IsNullOrWhiteSpace(entitlementKey))

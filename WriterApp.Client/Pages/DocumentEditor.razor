@@ -3,6 +3,7 @@
 @using WriterApp.Application.Documents
 @using WriterApp.Application.AI
 @using WriterApp.Application.Exporting
+@using WriterApp.Application.Subscriptions
 @using WriterApp.Client.Components.Editor
 @using WriterApp.Client.Components.AI
 @using WriterApp.Client.Components
@@ -149,7 +150,10 @@ else
                         <div class="revise-tools">
                             @foreach (PromptPresetDto preset in PinnedPromptPresets)
                             {
-                                <button type="button" disabled="@IsAiQuotaExceeded" @onclick="() => RunPromptPresetAsync(preset)">
+                                <button type="button"
+                                        disabled="@(IsAiQuotaExceeded || !CanUseFeature(FeatureKey.PromptLibrary))"
+                                        title='@(!CanUseFeature(FeatureKey.PromptLibrary) ? GetFeatureTooltip(FeatureKey.PromptLibrary) : string.Empty)'
+                                        @onclick="() => RunPromptPresetAsync(preset)">
                                     @preset.Name
                                 </button>
                             }
@@ -748,25 +752,29 @@ else
                                 <div class="scene-card-actions">
                                     <button type="button"
                                             class="btn btn-secondary"
-                                            disabled="@_sceneAiInFlight"
-                                            title='@GetTooltip("Generate scene details from the current text.")'
+                                            disabled="@(_sceneAiInFlight || !CanUseFeature(FeatureKey.SceneAiSuggestions))"
+                                            title='@(!CanUseFeature(FeatureKey.SceneAiSuggestions) ? GetFeatureTooltip(FeatureKey.SceneAiSuggestions) : GetTooltip("Generate scene details from the current text."))'
                                             @onclick="@(() => RunSceneAiAsync("scene.suggest", "Suggest scene card fields based on the section text."))">
                                         Suggest from text
                                     </button>
                                     <button type="button"
                                             class="btn btn-secondary"
-                                            disabled="@_sceneAiInFlight"
-                                            title='@GetTooltip("Improve or clarify this scene card.")'
+                                            disabled="@(_sceneAiInFlight || !CanUseFeature(FeatureKey.SceneAiSuggestions))"
+                                            title='@(!CanUseFeature(FeatureKey.SceneAiSuggestions) ? GetFeatureTooltip(FeatureKey.SceneAiSuggestions) : GetTooltip("Improve or clarify this scene card."))'
                                             @onclick="@(() => RunSceneAiAsync("scene.refine", "Refine the scene card fields while keeping intent."))">
                                         Refine
                                     </button>
                                     <button type="button"
                                             class="btn btn-secondary"
-                                            disabled="@_sceneAiInFlight"
-                                            title='@GetTooltip("Identify unresolved story questions.")'
+                                            disabled="@(_sceneAiInFlight || !CanUseFeature(FeatureKey.SceneAiSuggestions))"
+                                            title='@(!CanUseFeature(FeatureKey.SceneAiSuggestions) ? GetFeatureTooltip(FeatureKey.SceneAiSuggestions) : GetTooltip("Identify unresolved story questions."))'
                                             @onclick="@(() => RunSceneAiAsync("scene.find-open-questions", "Find open questions in this section."))">
                                         Find open questions
                                     </button>
+                                    @if (!CanUseFeature(FeatureKey.SceneAiSuggestions))
+                                    {
+                                        <a class="link-button" href="@FeatureAccessService.GetUpgradePath()">Upgrade</a>
+                                    }
                                 </div>
                                 @if (!string.IsNullOrWhiteSpace(_sceneAiError))
                                 {
@@ -951,8 +959,8 @@ else
                                                 {
                                                     <div class="ai-action-item">
                                                         <button type="button"
-                                                                disabled="@IsAiQuotaExceeded"
-                                                                title='@GetAiActionTooltip(action)'
+                                                                disabled="@(IsAiQuotaExceeded || !CanUseAiAction(action))"
+                                                                title='@(!CanUseAiAction(action) ? GetAiActionUpgradeTooltip(action) : GetAiActionTooltip(action))'
                                                                 @onclick="() => OnAiActionSelected(action)">
                                                             <span class="ai-action-label">@action.Label</span>
                                                             @if (!string.IsNullOrWhiteSpace(action.RecommendationBadge))
@@ -960,6 +968,10 @@ else
                                                                 <span class="ai-recommended-badge">@action.RecommendationBadge</span>
                                                             }
                                                         </button>
+                                                        @if (!CanUseAiAction(action))
+                                                        {
+                                                            <a class="link-button" href="@FeatureAccessService.GetUpgradePath()">Upgrade</a>
+                                                        }
                                                     </div>
                                                 }
                                             </div>
@@ -976,8 +988,8 @@ else
                                                 {
                                                     <div class="ai-action-item">
                                                         <button type="button"
-                                                                disabled="@(_currentSelectionRange is null || IsAiQuotaExceeded)"
-                                                                title='@GetAiActionTooltip(action)'
+                                                                disabled="@(_currentSelectionRange is null || IsAiQuotaExceeded || !CanUseAiAction(action))"
+                                                                title='@(!CanUseAiAction(action) ? GetAiActionUpgradeTooltip(action) : GetAiActionTooltip(action))'
                                                                 @onmousedown:preventDefault="true"
                                                                 @onclick="() => OnAiActionSelected(action)">
                                                             <span class="ai-action-label">@action.Label</span>
@@ -986,6 +998,10 @@ else
                                                                 <span class="ai-recommended-badge">@action.RecommendationBadge</span>
                                                             }
                                                         </button>
+                                                        @if (!CanUseAiAction(action))
+                                                        {
+                                                            <a class="link-button" href="@FeatureAccessService.GetUpgradePath()">Upgrade</a>
+                                                        }
                                                     </div>
                                                 }
                                             }
@@ -996,8 +1012,8 @@ else
                                             {
                                                 <div class="ai-action-item">
                                                     <button type="button"
-                                                            disabled="@IsAiQuotaExceeded"
-                                                            title='@GetAiActionTooltip(action)'
+                                                            disabled="@(IsAiQuotaExceeded || !CanUseAiAction(action))"
+                                                            title='@(!CanUseAiAction(action) ? GetAiActionUpgradeTooltip(action) : GetAiActionTooltip(action))'
                                                             @onclick="() => OnAiActionSelected(action)">
                                                         <span class="ai-action-label">@action.Label</span>
                                                         @if (!string.IsNullOrWhiteSpace(action.RecommendationBadge))
@@ -1005,6 +1021,10 @@ else
                                                             <span class="ai-recommended-badge">@action.RecommendationBadge</span>
                                                         }
                                                     </button>
+                                                    @if (!CanUseAiAction(action))
+                                                    {
+                                                        <a class="link-button" href="@FeatureAccessService.GetUpgradePath()">Upgrade</a>
+                                                    }
                                                 </div>
                                             }
                                         </div>
@@ -1185,7 +1205,10 @@ else
                             <div class="drawer-panel ai-panel">
                                 @if (!CanShowPromptLibrary)
                                 {
-                                    <div class="drawer-empty">Prompt Library is disabled.</div>
+                                    <div class="drawer-empty">
+                                        <div>@GetFeatureTooltip(FeatureKey.PromptLibrary)</div>
+                                        <a class="link-button" href="@FeatureAccessService.GetUpgradePath()">Upgrade</a>
+                                    </div>
                                 }
                                 else
                                 {
@@ -1970,10 +1993,26 @@ else
             </div>
             <div class="export-panel-row export-panel-actions">
                 <div class="export-panel-action-group">
-                    <button type="button" class="link-button" @onclick="OpenPresetSave">Save as preset...</button>
-                    <button type="button" class="link-button" @onclick="UpdateSelectedPresetAsync" disabled="@(_selectedExportPresetId is null)">Update preset</button>
+                    <button type="button"
+                            class="link-button"
+                            @onclick="OpenPresetSave"
+                            disabled="@(!CanUseFeature(FeatureKey.ExportPresets))"
+                            title='@(!CanUseFeature(FeatureKey.ExportPresets) ? GetFeatureTooltip(FeatureKey.ExportPresets) : string.Empty)'>Save as preset...</button>
+                    <button type="button"
+                            class="link-button"
+                            @onclick="UpdateSelectedPresetAsync"
+                            disabled="@(_selectedExportPresetId is null || !CanUseFeature(FeatureKey.ExportPresets))"
+                            title='@(!CanUseFeature(FeatureKey.ExportPresets) ? GetFeatureTooltip(FeatureKey.ExportPresets) : string.Empty)'>Update preset</button>
                 </div>
-                <button type="button" class="link-button" @onclick="SetProjectDefaultPresetAsync" disabled="@(_selectedExportPresetId is null)">Set as project default</button>
+                <button type="button"
+                        class="link-button"
+                        @onclick="SetProjectDefaultPresetAsync"
+                        disabled="@(_selectedExportPresetId is null || !CanUseFeature(FeatureKey.ExportPresets))"
+                        title='@(!CanUseFeature(FeatureKey.ExportPresets) ? GetFeatureTooltip(FeatureKey.ExportPresets) : string.Empty)'>Set as project default</button>
+                @if (!CanUseFeature(FeatureKey.ExportPresets))
+                {
+                    <a class="link-button" href="@FeatureAccessService.GetUpgradePath()">Upgrade</a>
+                }
             </div>
             @if (_isPresetSaveOpen)
             {
@@ -2158,8 +2197,16 @@ else
                 </div>
             </div>
             <div class="export-panel-row export-panel-actions">
-                <button type="button" class="link-button" @onclick="OpenTemplateManagerAsync">Manage templates...</button>
+                <button type="button"
+                        class="link-button"
+                        @onclick="OpenTemplateManagerAsync"
+                        disabled="@(!CanUseFeature(FeatureKey.ExportTemplates))"
+                        title='@(!CanUseFeature(FeatureKey.ExportTemplates) ? GetFeatureTooltip(FeatureKey.ExportTemplates) : string.Empty)'>Manage templates...</button>
                 <span class="export-panel-hint">Templates apply to HTML/PDF/DOCX exports.</span>
+                @if (!CanUseFeature(FeatureKey.ExportTemplates))
+                {
+                    <a class="link-button" href="@FeatureAccessService.GetUpgradePath()">Upgrade</a>
+                }
             </div>
             }
             @if (!string.IsNullOrWhiteSpace(_templateLoadError))

@@ -43,9 +43,9 @@ namespace WriterApp.Tests
                 CancellationToken.None);
 
             ObjectResult objectResult = Assert.IsType<ObjectResult>(result.Result);
-            Assert.Equal(StatusCodes.Status502BadGateway, objectResult.StatusCode);
+            Assert.Equal(StatusCodes.Status422UnprocessableEntity, objectResult.StatusCode);
             ProblemDetails problem = Assert.IsType<ProblemDetails>(objectResult.Value);
-            Assert.Equal("bible_refresh_invalid_payload", problem.Extensions["code"]?.ToString());
+            Assert.Equal("ai_invalid_structured_data", problem.Extensions["code"]?.ToString());
         }
 
         private static DocumentBiblesController BuildController(AppDbContext db, string payload)
@@ -63,7 +63,9 @@ namespace WriterApp.Tests
                 new PageRepository(db),
                 new StubUserIdResolver(),
                 new InMemoryBibleStore(),
-                refreshService);
+                refreshService,
+                new StubEntitlementService(),
+                NullLogger<DocumentBiblesController>.Instance);
 
             controller.ControllerContext = new ControllerContext
             {
@@ -156,6 +158,8 @@ namespace WriterApp.Tests
 
                 return Task.FromResult(new UserEntitlements(userId, "professional", "professional", entitlements));
             }
+
+            public PlanTier GetUserTier(UserEntitlements entitlements) => PlanTier.Professional;
 
             public Task<bool> HasAsync(string userId, string entitlementKey)
                 => Task.FromResult(string.Equals(entitlementKey, "ai.enabled", StringComparison.OrdinalIgnoreCase));

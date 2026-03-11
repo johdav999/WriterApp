@@ -11,6 +11,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using WriterApp.Application.Exporting;
 using WriterApp.Application.Security;
+using WriterApp.Application.Subscriptions;
 using WriterApp.Data;
 using WriterApp.Data.Documents;
 using WriterApp.Domain.Documents;
@@ -26,6 +27,7 @@ namespace WriterApp.Controllers
         private readonly IUserIdResolver _userIdResolver;
         private readonly IOutlineOrderResolver _outlineOrderResolver;
         private readonly ExportService _exportService;
+        private readonly IEntitlementService _entitlementService;
         private readonly IConfiguration _configuration;
         private readonly ILogger<DocumentExportController> _logger;
 
@@ -34,6 +36,7 @@ namespace WriterApp.Controllers
             IUserIdResolver userIdResolver,
             IOutlineOrderResolver outlineOrderResolver,
             ExportService exportService,
+            IEntitlementService entitlementService,
             IConfiguration configuration,
             ILogger<DocumentExportController> logger)
         {
@@ -41,6 +44,7 @@ namespace WriterApp.Controllers
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
             _outlineOrderResolver = outlineOrderResolver ?? throw new ArgumentNullException(nameof(outlineOrderResolver));
             _exportService = exportService ?? throw new ArgumentNullException(nameof(exportService));
+            _entitlementService = entitlementService ?? throw new ArgumentNullException(nameof(entitlementService));
             _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
@@ -69,6 +73,12 @@ namespace WriterApp.Controllers
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
+            ActionResult? gate = await EnsureExportAllowedAsync(userId, exportFormat, templateId, requiresPreview: false);
+            if (gate is not null)
+            {
+                return gate;
+            }
+
             Document? document = await BuildExportDocumentAsync(documentId, userId, ct);
             if (document is null)
             {
@@ -132,6 +142,12 @@ namespace WriterApp.Controllers
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
+            ActionResult? gate = await EnsureExportAllowedAsync(userId, exportFormat, request.TemplateId, requiresPreview: false);
+            if (gate is not null)
+            {
+                return gate;
+            }
+
             Document? document = await BuildExportDocumentAsync(
                 documentId,
                 userId,
@@ -186,6 +202,12 @@ namespace WriterApp.Controllers
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
+            ActionResult? gate = await EnsureExportAllowedAsync(userId, ExportFormat.Html, templateId, requiresPreview: true);
+            if (gate is not null)
+            {
+                return gate;
+            }
+
             Document? document = await BuildExportDocumentAsync(documentId, userId, ct);
             if (document is null)
             {
@@ -229,6 +251,12 @@ namespace WriterApp.Controllers
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
+            ActionResult? gate = await EnsureExportAllowedAsync(userId, ExportFormat.Html, request.TemplateId, requiresPreview: true);
+            if (gate is not null)
+            {
+                return gate;
+            }
+
             Document? document = await BuildExportDocumentAsync(
                 documentId,
                 userId,
@@ -745,6 +773,75 @@ namespace WriterApp.Controllers
                 ExportFormat.Epub => _configuration.GetValue<bool?>("Exports:EpubEnabled") ?? false,
                 _ => true
             };
+        }
+
+        private async Task<ActionResult?> EnsureExportAllowedAsync(
+            string userId,
+            ExportFormat exportFormat,
+            Guid? templateId,
+            bool requiresPreview)
+        {
+            ActionResult? gate = await EnsureFeatureAllowedAsync(userId, FeatureKey.ExportDocument, "export.document");
+            if (gate is not null)
+            {
+                return gate;
+            }
+
+            gate = await EnsureFeatureAllowedAsync(userId, FeatureKey.ExportFormats, $"export.{exportFormat.ToString().ToLowerInvariant()}");
+            if (gate is not null)
+            {
+                return gate;
+            }
+
+            if (requiresPreview)
+            {
+                gate = await EnsureFeatureAllowedAsync(userId, FeatureKey.ExportPreview, "export.preview");
+                if (gate is not null)
+                {
+                    return gate;
+                }
+            }
+
+            if (templateId.HasValue)
+            {
+                gate = await EnsureFeatureAllowedAsync(userId, FeatureKey.ExportTemplates, "export.templates");
+                if (gate is not null)
+                {
+                    return gate;
+                }
+            }
+
+            return null;
+        }
+
+        private async Task<ActionResult?> EnsureFeatureAllowedAsync(string userId, FeatureKey feature, string featureCode)
+        {
+            UserEntitlements entitlements = await _entitlementService.GetEntitlementsAsync(userId);
+            PlanTier userTier = _entitlementService.GetUserTier(entitlements);
+            if (FeatureRegistry.IsFeatureAllowed(feature, userTier))
+            {
+                return null;
+            }
+
+            PlanTier requiredTier = FeatureRegistry.FeatureMinimumTier[feature];
+            _logger.LogInformation(
+                "FeatureAccessDenied FeatureKey={FeatureKey} UserTier={UserTier} RequiredTier={RequiredTier}",
+                feature,
+                userTier,
+                requiredTier);
+
+            ProblemDetails problem = EntitlementDeniedApiError.ForFeature(
+                featureCode,
+                $"Available in {requiredTier} plan.");
+            problem.Extensions["code"] = "entitlement_denied";
+            problem.Extensions["traceId"] = HttpContext.TraceIdentifier;
+
+            ObjectResult result = new(problem)
+            {
+                StatusCode = StatusCodes.Status402PaymentRequired
+            };
+            result.ContentTypes.Add("application/problem+json");
+            return result;
         }
 
         public sealed record ExportPrintPayload(string Html);

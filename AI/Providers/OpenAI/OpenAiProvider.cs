@@ -1070,11 +1070,26 @@ namespace WriterApp.AI.Providers.OpenAI
         {
             string context = GetInputValue(request, "context", string.Empty);
             string instruction = GetInputValue(request, "instruction", "Extract character bible.");
-            string systemPrompt = "You are a continuity analyst. Return strict JSON only.";
-            string userPrompt =
-                $"{instruction}\n\nReturn JSON schema: {{\"schemaVersion\":\"1.0\",\"characters\":[{{\"name\":\"...\",\"facts\":[{{\"fact\":\"...\",\"evidence\":{{\"sectionId\":\"<guid>\",\"quote\":\"...\"}}}}],\"traits\":[\"...\"]}}]}}\n\nContext:\n{context}";
+            string outputContract = GetInputValue(
+                request,
+                "output_contract",
+                "Return strict JSON only: {\"schemaVersion\":\"1.0\",\"characters\":[{\"name\":\"...\",\"facts\":[{\"fact\":\"...\",\"evidence\":{\"sectionId\":\"<guid>\",\"quote\":\"...\"}}],\"traits\":[\"...\"]}]}");
+            string invalidJsonPayload = GetInputValue(request, "invalid_json_payload", string.Empty);
+            string invalidJsonFailureReason = GetInputValue(request, "invalid_json_failure_reason", string.Empty);
+            bool repairMode = !string.IsNullOrWhiteSpace(invalidJsonPayload);
 
-            return BuildStrictJsonRequest(systemPrompt, userPrompt, apiKey);
+            string systemPrompt = repairMode
+                ? "You repair malformed JSON for a continuity pipeline. Return exactly one valid JSON object, with no markdown, no prose, no comments, and no surrounding text. Preserve the original meaning and match the schema exactly."
+                : "You are a continuity analyst. Return exactly one valid JSON object matching the requested schema. No markdown, no prose, no comments, and no surrounding text.";
+
+            string userPrompt = repairMode
+                ? $"{instruction}\n\nSchema:\n{outputContract}\n\nRepair rules:\n- Re-emit the content below as valid JSON only.\n- Preserve meaning; do not invent new facts.\n- Remove markdown fences and prose.\n- Ensure all strings are valid JSON strings.\n- Return exactly one JSON object.\n\nPrevious parse failure:\n{invalidJsonFailureReason}\n\nMalformed payload to repair:\n{invalidJsonPayload}"
+                : $"{instruction}\n\nSchema:\n{outputContract}\n\nRules:\n- Return JSON only.\n- Return exactly one JSON object and nothing else.\n- Keep evidence quotes short, direct, and under 160 characters.\n- Keep only the strongest facts needed for continuity.\n- Keep traits to short phrases.\n- Do not include duplicate facts or speculative claims.\n\nContext:\n{context}";
+
+            int maxTokens = repairMode
+                ? Math.Min(Math.Max(_options.MaxOutputTokens, 1000), 1400)
+                : _options.MaxOutputTokens;
+            return BuildStrictJsonRequest(systemPrompt, userPrompt, apiKey, maxTokens);
         }
 
         private HttpRequestMessage BuildPlaceBibleRequest(AiRequest request, string apiKey)
@@ -1125,16 +1140,24 @@ namespace WriterApp.AI.Providers.OpenAI
                 request,
                 "output_contract",
                 "Return strict JSON patch: {\"bibleType\":\"Character|Place|Timeline\",\"schemaVersion\":1,\"ops\":[],\"stats\":{}}");
+            string invalidJsonPayload = GetInputValue(request, "invalid_json_payload", string.Empty);
+            string invalidJsonFailureReason = GetInputValue(request, "invalid_json_failure_reason", string.Empty);
 
             bool isCharacterRefresh = string.Equals(request.ActionId, ActionRefreshCharacterBible, StringComparison.Ordinal);
-            string systemPrompt = isCharacterRefresh
-                ? "You are a continuity analyst. Return one valid JSON object only. No markdown, no prose, no code fences, no trailing commentary."
-                : "You are a continuity analyst. Return strict JSON patch only.";
-            string userPrompt =
-                $"{instruction}\n\n{outputContract}\n\nRules:\n- Output valid JSON only.\n- Return exactly one JSON object and nothing before or after it.\n- Do not wrap JSON in markdown fences.\n- Use double-quoted JSON strings and escape embedded quotes.\n- Use ops list with deterministic updates.\n- Preserve existing IDs.\n- Add flagReview when evidence is conflicting or missing.{(isCharacterRefresh ? "\n- For character refresh, do not return analysis text or partial/truncated JSON." : string.Empty)}\n\nExisting bible JSON:\n{existingBibleJson}\n\nChanged/new section deltas:\n{deltaSectionsJson}";
+            bool repairMode = isCharacterRefresh && !string.IsNullOrWhiteSpace(invalidJsonPayload);
+            string systemPrompt = repairMode
+                ? "You repair malformed JSON patches for a continuity pipeline. Return exactly one valid JSON object, with no markdown, no prose, no comments, and no surrounding text. Preserve the original meaning and schema."
+                : isCharacterRefresh
+                    ? "You are a continuity analyst. Return exactly one valid JSON object only. No markdown, no prose, no code fences, and no trailing commentary."
+                    : "You are a continuity analyst. Return strict JSON patch only.";
+            string userPrompt = repairMode
+                ? $"{instruction}\n\nSchema:\n{outputContract}\n\nRepair rules:\n- Re-emit the content below as valid JSON only.\n- Preserve the same continuity changes; do not add commentary.\n- Use one JSON object only.\n- Ensure all strings are properly escaped.\n- Do not wrap JSON in markdown fences.\n\nPrevious parse failure:\n{invalidJsonFailureReason}\n\nMalformed payload to repair:\n{invalidJsonPayload}"
+                : $"{instruction}\n\n{outputContract}\n\nRules:\n- Output valid JSON only.\n- Return exactly one JSON object and nothing before or after it.\n- Do not wrap JSON in markdown fences.\n- Use double-quoted JSON strings and escape embedded quotes.\n- Use ops list with deterministic updates.\n- Preserve existing IDs.\n- Add flagReview when evidence is conflicting or missing.{(isCharacterRefresh ? "\n- Include only characters directly changed by the provided deltas.\n- Keep evidence quotes under 160 characters.\n- Prefer concise facts over exhaustive lists.\n- Do not return analysis text or partial/truncated JSON." : string.Empty)}\n\nExisting bible JSON:\n{existingBibleJson}\n\nChanged/new section deltas:\n{deltaSectionsJson}";
 
-            int maxTokens = isCharacterRefresh
-                ? Math.Max(_options.MaxOutputTokens, 2400)
+            int maxTokens = repairMode
+                ? Math.Min(Math.Max(_options.MaxOutputTokens, 1000), 1400)
+                : isCharacterRefresh
+                ? Math.Min(Math.Max(_options.MaxOutputTokens, 1400), 1800)
                 : Math.Max(_options.MaxOutputTokens, 1800);
             return BuildStrictJsonRequest(systemPrompt, userPrompt, apiKey, maxTokens);
         }

@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <StaticWebAssetBasePath>app</StaticWebAssetBasePath>
+    <DefineConstants>$(DefineConstants);CLIENT_FEATURE_REGISTRY_INTERNAL</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
@@ -14,6 +15,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\WriterApp.Shared\WriterApp.Shared.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Application\Subscriptions\FeatureRegistry.cs" Link="Application\Subscriptions\FeatureRegistry.cs" />
   </ItemGroup>
 
 </Project>

@@ -11,6 +11,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using WriterApp.Application.Documents;
 using WriterApp.Application.Security;
+using WriterApp.Application.Subscriptions;
 using WriterApp.Controllers;
 using WriterApp.Data;
 using WriterApp.Data.Documents;
@@ -93,6 +94,7 @@ namespace WriterApp.Tests
                 new StubProjectGoalsService(),
                 new ProjectSceneLinkingService(db),
                 new StubProjectDeletionService(),
+                new StubEntitlementService(),
                 config,
                 NullLogger<ProjectsController>.Instance);
 
@@ -208,6 +210,28 @@ namespace WriterApp.Tests
         private sealed class StubUserIdResolver : IUserIdResolver
         {
             public string ResolveUserId(ClaimsPrincipal user) => "user-1";
+        }
+
+        private sealed class StubEntitlementService : IEntitlementService
+        {
+            public Task<UserEntitlements> GetEntitlementsAsync(string userId)
+            {
+                return Task.FromResult(new UserEntitlements(
+                    userId,
+                    "professional",
+                    "professional",
+                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)));
+            }
+
+            public PlanTier GetUserTier(UserEntitlements entitlements) => PlanTier.Professional;
+
+            public Task<bool> HasAsync(string userId, string entitlementKey) => Task.FromResult(true);
+
+            public Task<int?> GetIntAsync(string userId, string entitlementKey) => Task.FromResult<int?>(null);
+
+            public void InvalidateForUser(string userId)
+            {
+            }
         }
 
         private sealed class StubProjectWordCountService : IProjectWordCountService

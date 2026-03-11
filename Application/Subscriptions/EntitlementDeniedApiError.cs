@@ -50,6 +50,23 @@ namespace WriterApp.Application.Subscriptions
                 : featureKey.Trim();
             return $"/upgrade?feature={Uri.EscapeDataString(resolvedFeature)}";
         }
+
+        public static ProblemDetails ForFeature(string featureKey, string? userMessage = null)
+        {
+            string resolvedFeature = string.IsNullOrWhiteSpace(featureKey) ? "ai.feature" : featureKey.Trim();
+            ProblemDetails problem = new()
+            {
+                Type = "https://prosa-app.com/problems/entitlement-denied",
+                Title = "Upgrade required",
+                Status = 402,
+                Detail = string.IsNullOrWhiteSpace(userMessage)
+                    ? "Upgrade to access this feature."
+                    : userMessage
+            };
+            problem.Extensions["featureKey"] = resolvedFeature;
+            problem.Extensions["upgradePath"] = BuildUpgradePath(resolvedFeature);
+            return problem;
+        }
     }
 }
 
