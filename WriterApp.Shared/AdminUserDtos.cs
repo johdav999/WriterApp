@@ -95,4 +95,39 @@ namespace WriterApp.Shared
         int AiTokensUsedThisPeriod,
         int TokensLeft,
         DateTimeOffset PeriodStartUtc);
+
+    public sealed record AdminResetToFirstRunResponse(
+        string UserId,
+        int DeletedProjects,
+        int DeletedOutlineTemplates,
+        int DeletedExportTemplates,
+        int DeletedExportPresets,
+        int DeletedPromptPresets,
+        int DeletedUsageEvents,
+        int DeletedUsageAggregates,
+        int DeletedUserEvents,
+        int RemovedPlanOverrides,
+        bool ResetToFreePlan,
+        bool ExternalIdentityPreserved,
+        AdminUserDetailDto User);
+
+    public sealed record AdminDeleteCustomerResponse(
+        string UserId,
+        bool AlreadyDeleted,
+        int DeletedProjects,
+        int DeletedOutlineTemplates,
+        int DeletedExportTemplates,
+        int DeletedExportPresets,
+        int DeletedPromptPresets,
+        int DeletedAiActionHistoryEntries,
+        int DeletedAiActionAppliedEvents,
+        int DeletedUsageEvents,
+        int DeletedUsageAggregates,
+        int DeletedUserEvents,
+        int DeletedTokenAdjustments,
+        int RemovedPlanOverrides,
+        bool DeletedUserProfile,
+        bool DeletedEntitlement,
+        bool ExternalIdentityPreserved,
+        bool PreservedAuditTrail);
 }

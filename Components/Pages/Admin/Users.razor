@@ -2,7 +2,6 @@
 @using System.Security
 @using System.Security.Claims
 @using Microsoft.AspNetCore.Authorization
-@using Microsoft.AspNetCore.Hosting
 @using Microsoft.AspNetCore.Components.Authorization
 @using Microsoft.AspNetCore.WebUtilities
 @using WriterApp.Application.Security
@@ -13,7 +12,6 @@
 @inject AuthenticationStateProvider AuthenticationStateProvider
 @inject NavigationManager Navigation
 @inject IConfiguration Configuration
-@inject IWebHostEnvironment HostEnvironment
 @inject IJSRuntime JS
 @inject IUserIdResolver UserIdResolver
 @inject AdminUsersService AdminUsersService
@@ -178,7 +176,7 @@
                                     </select>
                                     <button class="btn btn-sm btn-outline-success" @onclick="() => SetOverrideAsync(item.UserId)">Set</button>
                                     <button class="btn btn-sm btn-outline-secondary" @onclick="() => ResetTokensStubAsync(item.UserId)">Reset tokens</button>
-                                    <button class="btn btn-sm btn-outline-danger" @onclick="() => PromptDelete(item)">Delete</button>
+                                    <button class="btn btn-sm btn-outline-danger" @onclick="() => PromptDelete(item)">Delete customer</button>
                                 </td>
                             </tr>
                         }
@@ -287,11 +285,30 @@
 {
     <div class="modal-backdrop">
         <div class="modal-panel">
-            <h2>Remove user</h2>
-            <p>Delete user <strong>@_deleteTarget.UserId</strong>?</p>
+            <h2>Delete customer</h2>
+            <p>This permanently deletes the user's application data in Prosa. It does not delete their Microsoft/Google account.</p>
+            <p><strong>User:</strong> @_deleteTarget.UserId</p>
+            <label>Type DELETE to confirm</label>
+            <input type="text" class="form-control" @bind="_deleteConfirmationInput" @bind:event="oninput" />
             <div class="modal-actions">
-                <button class="btn btn-danger" @onclick="ConfirmDeleteAsync">Delete</button>
+                <button class="btn btn-danger" disabled="@(!CanConfirmDelete)" @onclick="ConfirmDeleteAsync">Delete customer</button>
                 <button class="btn btn-secondary" @onclick="CancelDelete">Cancel</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_showResetFirstRunConfirm && _selectedUser is not null)
+{
+    <div class="modal-backdrop">
+        <div class="modal-panel">
+            <h2>Reset to first-run</h2>
+            <p>This keeps the user account, but resets onboarding and app state so the next login behaves like a new user.</p>
+            <p><strong>User:</strong> @_selectedUser.UserId</p>
+            <p>This will remove the user's owned projects and reset the plan to Free.</p>
+            <div class="modal-actions">
+                <button class="btn btn-warning" disabled="@_resetFirstRunBusy" @onclick="ConfirmResetToFirstRunAsync">Reset to first-run</button>
+                <button class="btn btn-secondary" disabled="@_resetFirstRunBusy" @onclick="CancelResetToFirstRun">Cancel</button>
             </div>
         </div>
     </div>
@@ -355,13 +372,16 @@
                 <button class="btn btn-outline-secondary" @onclick="AdjustTokensAsync">Apply adjustment</button>
             </div>
 
-            @if (_isDevelopment)
-            {
-                <h3>Development tools</h3>
-                <div class="drawer-actions">
-                    <button class="btn btn-outline-warning" @onclick="ResetOnboardingAsync">Reset onboarding</button>
-                </div>
-            }
+            <h3>Reset state</h3>
+            <div class="drawer-actions">
+                <button class="btn btn-outline-warning" @onclick="PromptResetToFirstRun">Reset to first-run</button>
+            </div>
+
+            <h3>Delete customer</h3>
+            <p class="error-text">This permanently deletes the user's Prosa application data. Their external sign-in account is not deleted.</p>
+            <div class="drawer-actions">
+                <button class="btn btn-danger" @onclick="PromptDeleteSelectedUser">Delete customer</button>
+            </div>
         }
     </aside>
 }
@@ -386,7 +406,6 @@
     private readonly List<AdminAuditEventDto> _auditItems = new();
 
     private bool _adminApiEnabled;
-    private bool _isDevelopment;
     private bool _loading;
     private bool _hasNextPage;
     private string? _error;
@@ -410,6 +429,9 @@
 
     private bool _showDeleteConfirm;
     private AdminUserListItemDto? _deleteTarget;
+    private string? _deleteConfirmationInput;
+    private bool _showResetFirstRunConfirm;
+    private bool _resetFirstRunBusy;
 
     private bool _detailOpen;
     private bool _detailLoading;
@@ -433,10 +455,12 @@
 
     private CancellationTokenSource? _searchDebounceCts;
 
+    private bool CanConfirmDelete =>
+        string.Equals(_deleteConfirmationInput?.Trim(), "DELETE", StringComparison.Ordinal);
+
     protected override async Task OnInitializedAsync()
     {
         _adminApiEnabled = Configuration.GetValue<bool?>("Admin:EnableAdminApi") ?? false;
-        _isDevelopment = HostEnvironment.IsDevelopment();
         ApplyQueryStringToState();
         if (_adminApiEnabled)
         {
@@ -753,34 +777,48 @@
         }
     }
 
-    private async Task ResetOnboardingAsync()
+    private void PromptResetToFirstRun()
     {
-        if (_selectedUser is null || !_isDevelopment)
+        if (_selectedUser is null)
         {
             return;
         }
 
-        bool confirmed = await JS.InvokeAsync<bool>(
-            "confirm",
-            $"Reset onboarding for user '{_selectedUser.UserId}'?");
-        if (!confirmed)
+        _showResetFirstRunConfirm = true;
+    }
+
+    private void CancelResetToFirstRun()
+    {
+        _showResetFirstRunConfirm = false;
+    }
+
+    private async Task ConfirmResetToFirstRunAsync()
+    {
+        if (_selectedUser is null)
         {
             return;
         }
 
+        _resetFirstRunBusy = true;
         try
         {
             AdminActorContext adminActor = await GetAdminActorAsync();
-            _selectedUser = await AdminUsersService.ResetOnboardingAsync(
+            AdminResetToFirstRunResponse result = await AdminUsersService.ResetToFirstRunAsync(
                 _selectedUser.UserId,
                 adminActor.UserId,
                 adminActor.Email);
-            AddToast("Onboarding reset.", "success");
+            _selectedUser = result.User;
+            _showResetFirstRunConfirm = false;
+            AddToast($"Reset complete. Deleted {result.DeletedProjects} project(s) and returned the user to Free.", "success");
             await LoadUsersAsync(updateQueryString: false);
         }
         catch (Exception ex)
         {
             AddToast(ex.Message, "error");
+        }
+        finally
+        {
+            _resetFirstRunBusy = false;
         }
     }
 
@@ -937,13 +975,36 @@
     private void PromptDelete(AdminUserListItemDto user)
     {
         _deleteTarget = user;
+        _deleteConfirmationInput = null;
         _showDeleteConfirm = true;
+    }
+
+    private void PromptDeleteSelectedUser()
+    {
+        if (_selectedUser is null)
+        {
+            return;
+        }
+
+        PromptDelete(new AdminUserListItemDto(
+            _selectedUser.UserId,
+            _selectedUser.Email,
+            _selectedUser.DisplayName,
+            _selectedUser.CreatedAtUtc,
+            _selectedUser.LastSeenUtc,
+            _selectedUser.PlanKey,
+            _selectedUser.SubscriptionStatus,
+            _selectedUser.AiMonthlyTokenBudget,
+            _selectedUser.AiTokensUsedThisPeriod,
+            _selectedUser.TokensLeft,
+            _selectedUser.IsManuallyOverridden));
     }
 
     private void CancelDelete()
     {
         _showDeleteConfirm = false;
         _deleteTarget = null;
+        _deleteConfirmationInput = null;
     }
 
     private async Task ConfirmDeleteAsync()
@@ -957,14 +1018,17 @@
         {
             AdminActorContext adminActor = await GetAdminActorAsync();
             bool allowDeleteWithActiveSubscription = Configuration.GetValue<bool?>("Admin:AllowDeleteWithActiveSubscription") ?? false;
-            await AdminUsersService.DeleteUserAsync(
+            AdminDeleteCustomerResponse response = await AdminUsersService.DeleteUserAsync(
                 _deleteTarget.UserId,
                 allowDeleteWithActiveSubscription,
                 adminActor.UserId,
                 adminActor.Email);
-            AddToast("User removed.", "success");
+            AddToast(response.AlreadyDeleted ? "Customer data was already deleted." : "Customer application data deleted.", "success");
             _showDeleteConfirm = false;
             _deleteTarget = null;
+            _deleteConfirmationInput = null;
+            _detailOpen = false;
+            _selectedUser = null;
             await LoadUsersAsync(updateQueryString: false);
         }
         catch (Exception ex)

@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using WriterApp.Application.Billing;
+using WriterApp.Application.Documents;
 using WriterApp.Application.Subscriptions;
 using WriterApp.Data;
 using WriterApp.Data.Subscriptions;
@@ -27,6 +28,7 @@ namespace WriterApp.Application.Users
         private readonly AdminAuditService _adminAuditService;
         private readonly IUserEntitlementStore? _userEntitlementStore;
         private readonly IEntitlementService? _entitlementService;
+        private readonly IProjectDeletionService? _projectDeletionService;
         private readonly StripeApiClient? _stripeApiClient;
         private readonly StripeEntitlementSyncService? _stripeEntitlementSyncService;
         private readonly StripeOptions? _stripeOptions;
@@ -38,6 +40,7 @@ namespace WriterApp.Application.Users
             AdminAuditService adminAuditService,
             IUserEntitlementStore userEntitlementStore,
             IEntitlementService entitlementService,
+            IProjectDeletionService projectDeletionService,
             StripeApiClient stripeApiClient,
             StripeEntitlementSyncService stripeEntitlementSyncService,
             StripeOptions stripeOptions,
@@ -48,9 +51,28 @@ namespace WriterApp.Application.Users
             _adminAuditService = adminAuditService ?? throw new ArgumentNullException(nameof(adminAuditService));
             _userEntitlementStore = userEntitlementStore ?? throw new ArgumentNullException(nameof(userEntitlementStore));
             _entitlementService = entitlementService ?? throw new ArgumentNullException(nameof(entitlementService));
+            _projectDeletionService = projectDeletionService ?? throw new ArgumentNullException(nameof(projectDeletionService));
             _stripeApiClient = stripeApiClient ?? throw new ArgumentNullException(nameof(stripeApiClient));
             _stripeEntitlementSyncService = stripeEntitlementSyncService ?? throw new ArgumentNullException(nameof(stripeEntitlementSyncService));
             _stripeOptions = stripeOptions ?? throw new ArgumentNullException(nameof(stripeOptions));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        }
+
+        public AdminUsersService(
+            AppDbContext dbContext,
+            AdminPlanOverrideService adminPlanOverrideService,
+            AdminAuditService adminAuditService,
+            IUserEntitlementStore userEntitlementStore,
+            IEntitlementService entitlementService,
+            IProjectDeletionService projectDeletionService,
+            ILogger<AdminUsersService> logger)
+        {
+            _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
+            _adminPlanOverrideService = adminPlanOverrideService ?? throw new ArgumentNullException(nameof(adminPlanOverrideService));
+            _adminAuditService = adminAuditService ?? throw new ArgumentNullException(nameof(adminAuditService));
+            _userEntitlementStore = userEntitlementStore ?? throw new ArgumentNullException(nameof(userEntitlementStore));
+            _entitlementService = entitlementService ?? throw new ArgumentNullException(nameof(entitlementService));
+            _projectDeletionService = projectDeletionService ?? throw new ArgumentNullException(nameof(projectDeletionService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -336,7 +358,7 @@ namespace WriterApp.Application.Users
             return await GetUserAsync(normalizedUserId, ct);
         }
 
-        public async Task<bool> DeleteUserAsync(
+        public async Task<AdminDeleteCustomerResponse> DeleteUserAsync(
             string userId,
             bool allowDeleteWithActiveSubscription,
             string adminUserId,
@@ -345,59 +367,184 @@ namespace WriterApp.Application.Users
         {
             if (string.IsNullOrWhiteSpace(userId))
             {
-                return false;
+                throw new ArgumentException("userId is required.", nameof(userId));
             }
 
             string normalizedUserId = IdNorm.Norm(userId);
-            UserProfile? profile = await _dbContext.UserProfiles
-                .FirstOrDefaultAsync(item => item.UserId == normalizedUserId, ct);
-            UserEntitlement? entitlement = await _dbContext.UserEntitlements
-                .FirstOrDefaultAsync(item => item.UserId == normalizedUserId, ct);
+            Microsoft.EntityFrameworkCore.Storage.IExecutionStrategy strategy = _dbContext.Database.CreateExecutionStrategy();
+            AdminDeleteCustomerResponse? response = null;
 
-            if (profile is null && entitlement is null)
+            await strategy.ExecuteAsync(async () =>
             {
-                return false;
-            }
+                await using Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction transaction = await _dbContext.Database.BeginTransactionAsync(ct);
 
-            if (!allowDeleteWithActiveSubscription && HasActiveSubscription(entitlement))
-            {
-                throw new InvalidOperationException("Cannot delete user with active subscription when Admin:AllowDeleteWithActiveSubscription is false.");
-            }
+                UserProfile? profile = await _dbContext.UserProfiles.FirstOrDefaultAsync(item => item.UserId == normalizedUserId, ct);
+                UserEntitlement? entitlement = await _dbContext.UserEntitlements.FirstOrDefaultAsync(item => item.UserId == normalizedUserId, ct);
+                string? targetEmail = ResolveEmail(profile?.Email, profile?.DisplayName, normalizedUserId);
 
-            if (profile is not null)
-            {
-                profile.DisplayName = "Deleted user";
-                profile.HasOnboarded = false;
-                profile.UpdatedUtc = DateTime.UtcNow;
-            }
-
-            UserPlanAssignment[] assignments = await _dbContext.UserPlanAssignments
-                .Where(item => item.UserId == normalizedUserId)
-                .ToArrayAsync(ct);
-            if (assignments.Length > 0)
-            {
-                _dbContext.UserPlanAssignments.RemoveRange(assignments);
-            }
-
-            if (entitlement is not null)
-            {
-                _dbContext.UserEntitlements.Remove(entitlement);
-            }
-
-            await _dbContext.SaveChangesAsync(ct);
-            _logger.LogInformation("Admin soft-delete applied for user {UserId}.", normalizedUserId);
-            await _adminAuditService.WriteAsync(
-                adminUserId,
-                adminEmail,
-                "SoftDeleteUser",
-                normalizedUserId,
-                ResolveEmail(profile?.Email, profile?.DisplayName, normalizedUserId),
-                new
+                if (!allowDeleteWithActiveSubscription && HasActiveSubscription(entitlement))
                 {
-                    allowDeleteWithActiveSubscription
-                },
-                ct);
-            return true;
+                    throw new InvalidOperationException("Cannot delete user with active subscription when Admin:AllowDeleteWithActiveSubscription is false.");
+                }
+
+                List<Guid> projectIds = await _dbContext.Projects
+                    .AsNoTracking()
+                    .Where(item => item.OwnerUserId == normalizedUserId)
+                    .Select(item => item.Id)
+                    .ToListAsync(ct);
+
+                int deletedProjects = 0;
+                if (_projectDeletionService is not null)
+                {
+                    foreach (Guid projectId in projectIds)
+                    {
+                        ProjectDeletionResult deletion = await _projectDeletionService.DeleteOwnedProjectInExistingTransactionAsync(projectId, normalizedUserId, ct);
+                        if (deletion.Deleted)
+                        {
+                            deletedProjects++;
+                        }
+                    }
+                }
+
+                int deletedAiActionAppliedEvents = await _dbContext.AiActionAppliedEvents
+                    .Where(item => item.OwnerUserId == normalizedUserId)
+                    .ExecuteDeleteAsync(ct);
+
+                int deletedAiActionHistoryEntries = await _dbContext.AiActionHistoryEntries
+                    .Where(item => item.OwnerUserId == normalizedUserId)
+                    .ExecuteDeleteAsync(ct);
+
+                int deletedPromptPresets = await _dbContext.PromptPresets
+                    .Where(item => item.OwnerUserId == normalizedUserId)
+                    .ExecuteDeleteAsync(ct);
+
+                int deletedOutlineTemplates = await _dbContext.OutlineTemplates
+                    .Where(item => item.OwnerUserId == normalizedUserId)
+                    .ExecuteDeleteAsync(ct);
+
+                int deletedExportTemplates = await _dbContext.ExportTemplates
+                    .Where(item => item.OwnerUserId == normalizedUserId)
+                    .ExecuteDeleteAsync(ct);
+
+                int deletedExportPresets = await _dbContext.ExportPresets
+                    .Where(item => item.OwnerUserId == normalizedUserId)
+                    .ExecuteDeleteAsync(ct);
+
+                int deletedUsageEvents = await _dbContext.UsageEvents
+                    .Where(item => item.UserId == normalizedUserId)
+                    .ExecuteDeleteAsync(ct);
+
+                int deletedUsageAggregates = await _dbContext.UsageAggregates
+                    .Where(item => item.UserId == normalizedUserId)
+                    .ExecuteDeleteAsync(ct);
+
+                int deletedUserEvents = await _dbContext.UserEvents
+                    .Where(item => item.UserId == normalizedUserId)
+                    .ExecuteDeleteAsync(ct);
+
+                int deletedTokenAdjustments = await _dbContext.TokenAdjustments
+                    .Where(item => item.UserId == normalizedUserId)
+                    .ExecuteDeleteAsync(ct);
+
+                int removedPlanOverrides = await _dbContext.UserPlanAssignments
+                    .Where(item => item.UserId == normalizedUserId)
+                    .ExecuteDeleteAsync(ct);
+
+                bool deletedEntitlement = false;
+                if (entitlement is not null)
+                {
+                    _dbContext.UserEntitlements.Remove(entitlement);
+                    deletedEntitlement = true;
+                }
+
+                bool deletedUserProfile = false;
+                if (profile is not null)
+                {
+                    _dbContext.UserProfiles.Remove(profile);
+                    deletedUserProfile = true;
+                }
+
+                await _dbContext.SaveChangesAsync(ct);
+
+                bool alreadyDeleted =
+                    deletedProjects == 0
+                    && deletedOutlineTemplates == 0
+                    && deletedExportTemplates == 0
+                    && deletedExportPresets == 0
+                    && deletedPromptPresets == 0
+                    && deletedAiActionHistoryEntries == 0
+                    && deletedAiActionAppliedEvents == 0
+                    && deletedUsageEvents == 0
+                    && deletedUsageAggregates == 0
+                    && deletedUserEvents == 0
+                    && deletedTokenAdjustments == 0
+                    && removedPlanOverrides == 0
+                    && !deletedUserProfile
+                    && !deletedEntitlement;
+
+                await _adminAuditService.WriteAsync(
+                    adminUserId,
+                    adminEmail,
+                    "DeleteCustomerApplicationData",
+                    normalizedUserId,
+                    targetEmail,
+                    new
+                    {
+                        alreadyDeleted,
+                        allowDeleteWithActiveSubscription,
+                        deletedProjects,
+                        deletedOutlineTemplates,
+                        deletedExportTemplates,
+                        deletedExportPresets,
+                        deletedPromptPresets,
+                        deletedAiActionHistoryEntries,
+                        deletedAiActionAppliedEvents,
+                        deletedUsageEvents,
+                        deletedUsageAggregates,
+                        deletedUserEvents,
+                        deletedTokenAdjustments,
+                        removedPlanOverrides,
+                        deletedUserProfile,
+                        deletedEntitlement,
+                        externalIdentityPreserved = true,
+                        preservedAuditTrail = true
+                    },
+                    ct);
+
+                await transaction.CommitAsync(ct);
+
+                response = new AdminDeleteCustomerResponse(
+                    normalizedUserId,
+                    alreadyDeleted,
+                    deletedProjects,
+                    deletedOutlineTemplates,
+                    deletedExportTemplates,
+                    deletedExportPresets,
+                    deletedPromptPresets,
+                    deletedAiActionHistoryEntries,
+                    deletedAiActionAppliedEvents,
+                    deletedUsageEvents,
+                    deletedUsageAggregates,
+                    deletedUserEvents,
+                    deletedTokenAdjustments,
+                    removedPlanOverrides,
+                    deletedUserProfile,
+                    deletedEntitlement,
+                    ExternalIdentityPreserved: true,
+                    PreservedAuditTrail: true);
+            });
+
+            _entitlementService?.InvalidateForUser(normalizedUserId);
+
+            // EasyAuth / external IdP accounts are intentionally not touched here.
+            // Without a separate tombstone/block mechanism, a later sign-in can reprovision a new app user.
+            _logger.LogInformation(
+                "Admin deleted customer application data. UserId={UserId} AlreadyDeleted={AlreadyDeleted} DeletedProjects={DeletedProjects}",
+                normalizedUserId,
+                response!.AlreadyDeleted,
+                response.DeletedProjects);
+
+            return response!;
         }
 
         public async Task<AdminPlanOverrideResponse> SetPlanOverrideAsync(
@@ -484,6 +631,200 @@ namespace WriterApp.Application.Users
 
             AdminUserDetailDto? snapshot = await GetUserAsync(normalizedUserId, ct);
             return snapshot ?? throw new InvalidOperationException("Failed to load user after onboarding reset.");
+        }
+
+        public async Task<AdminResetToFirstRunResponse> ResetToFirstRunAsync(
+            string userId,
+            string adminUserId,
+            string? adminEmail,
+            CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(userId))
+            {
+                throw new ArgumentException("userId is required.", nameof(userId));
+            }
+
+            if (_userEntitlementStore is null || _entitlementService is null || _projectDeletionService is null)
+            {
+                throw new InvalidOperationException("First-run reset is not configured.");
+            }
+
+            string normalizedUserId = IdNorm.Norm(userId);
+            DateTime now = DateTime.UtcNow;
+            DateTimeOffset nowOffset = DateTimeOffset.UtcNow;
+            Microsoft.EntityFrameworkCore.Storage.IExecutionStrategy strategy = _dbContext.Database.CreateExecutionStrategy();
+            AdminResetToFirstRunResponse? response = null;
+
+            try
+            {
+                await strategy.ExecuteAsync(async () =>
+                {
+                    await using Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction transaction = await _dbContext.Database.BeginTransactionAsync(ct);
+
+                    List<Guid> projectIds = await _dbContext.Projects
+                        .AsNoTracking()
+                        .Where(item => item.OwnerUserId == normalizedUserId)
+                        .Select(item => item.Id)
+                        .ToListAsync(ct);
+
+                    int deletedProjects = 0;
+                    foreach (Guid projectId in projectIds)
+                    {
+                        ProjectDeletionResult result = await _projectDeletionService.DeleteOwnedProjectInExistingTransactionAsync(projectId, normalizedUserId, ct);
+                        if (result.Deleted)
+                        {
+                            deletedProjects++;
+                        }
+                    }
+
+                    UserProfile? profile = await _dbContext.UserProfiles
+                        .FirstOrDefaultAsync(item => item.UserId == normalizedUserId, ct);
+
+                    if (profile is null)
+                    {
+                        profile = new UserProfile
+                        {
+                            UserId = normalizedUserId,
+                            Email = null,
+                            DisplayName = ResolveEmail(null, normalizedUserId),
+                            CreatedUtc = now,
+                            UpdatedUtc = now
+                        };
+                        _dbContext.UserProfiles.Add(profile);
+                    }
+
+                    profile.HasOnboarded = false;
+                    profile.HasCompletedOnboarding = false;
+                    profile.OnboardingStep = 0;
+                    profile.OnboardingStartedUtc = null;
+                    profile.OnboardingCompletedUtc = null;
+                    profile.PrimaryWritingIntent = null;
+                    profile.UpdatedUtc = now;
+
+                    int deletedOutlineTemplates = await _dbContext.OutlineTemplates
+                        .Where(item => item.OwnerUserId == normalizedUserId)
+                        .ExecuteDeleteAsync(ct);
+
+                    int deletedExportTemplates = await _dbContext.ExportTemplates
+                        .Where(item => item.OwnerUserId == normalizedUserId)
+                        .ExecuteDeleteAsync(ct);
+
+                    int deletedExportPresets = await _dbContext.ExportPresets
+                        .Where(item => item.OwnerUserId == normalizedUserId)
+                        .ExecuteDeleteAsync(ct);
+
+                    int deletedPromptPresets = await _dbContext.PromptPresets
+                        .Where(item => item.OwnerUserId == normalizedUserId)
+                        .ExecuteDeleteAsync(ct);
+
+                    int deletedUsageEvents = await _dbContext.UsageEvents
+                        .Where(item => item.UserId == normalizedUserId)
+                        .ExecuteDeleteAsync(ct);
+
+                    int deletedUsageAggregates = await _dbContext.UsageAggregates
+                        .Where(item => item.UserId == normalizedUserId)
+                        .ExecuteDeleteAsync(ct);
+
+                    int deletedUserEvents = await _dbContext.UserEvents
+                        .Where(item => item.UserId == normalizedUserId)
+                        .ExecuteDeleteAsync(ct);
+
+                    int removedPlanOverrides = await _dbContext.UserPlanAssignments
+                        .Where(item => item.UserId == normalizedUserId)
+                        .ExecuteDeleteAsync(ct);
+
+                    UserEntitlement? entitlement = await _dbContext.UserEntitlements
+                        .FirstOrDefaultAsync(item => item.UserId == normalizedUserId, ct);
+
+                    if (entitlement is null)
+                    {
+                        entitlement = new UserEntitlement
+                        {
+                            UserId = normalizedUserId,
+                            CreatedAt = nowOffset,
+                            StripeCustomerId = null
+                        };
+                        _dbContext.UserEntitlements.Add(entitlement);
+                    }
+
+                    entitlement.PlanKey = UserEntitlementDefaults.FreePlanKey;
+                    entitlement.SubscriptionStatus = UserEntitlementDefaults.ActiveSubscriptionStatus;
+                    entitlement.AiMonthlyTokenBudget = UserEntitlementDefaults.FreeMonthlyTokenBudget;
+                    entitlement.AiTokensUsedThisPeriod = 0;
+                    entitlement.PeriodStartUtc = nowOffset;
+                    entitlement.StripeSubscriptionId = null;
+                    entitlement.StripePriceId = null;
+                    entitlement.CurrentPeriodEndUtc = null;
+                    entitlement.CancelAtPeriodEnd = false;
+                    entitlement.UpdatedUtc = nowOffset;
+
+                    await _dbContext.SaveChangesAsync(ct);
+
+                    await _adminAuditService.WriteAsync(
+                        adminUserId,
+                        adminEmail,
+                        "ResetToFirstRun",
+                        normalizedUserId,
+                        ResolveEmail(profile.Email, profile.DisplayName, normalizedUserId),
+                        new
+                        {
+                            deletedProjects,
+                            deletedOutlineTemplates,
+                            deletedExportTemplates,
+                            deletedExportPresets,
+                            deletedPromptPresets,
+                            deletedUsageEvents,
+                            deletedUsageAggregates,
+                            deletedUserEvents,
+                            removedPlanOverrides,
+                            planKey = entitlement.PlanKey,
+                            externalIdentityPreserved = true
+                        },
+                        ct);
+
+                    await transaction.CommitAsync(ct);
+
+                    AdminUserDetailDto? snapshot = await GetUserAsync(normalizedUserId, ct);
+                    if (snapshot is null)
+                    {
+                        throw new InvalidOperationException("Failed to load user after first-run reset.");
+                    }
+
+                    response = new AdminResetToFirstRunResponse(
+                        normalizedUserId,
+                        deletedProjects,
+                        deletedOutlineTemplates,
+                        deletedExportTemplates,
+                        deletedExportPresets,
+                        deletedPromptPresets,
+                        deletedUsageEvents,
+                        deletedUsageAggregates,
+                        deletedUserEvents,
+                        removedPlanOverrides,
+                        ResetToFreePlan: true,
+                        ExternalIdentityPreserved: true,
+                        snapshot);
+                });
+
+                _entitlementService.InvalidateForUser(normalizedUserId);
+
+                _logger.LogInformation(
+                    "Admin reset user to first run. AdminUserId={AdminUserId} TargetUserId={TargetUserId} DeletedProjects={DeletedProjects} RemovedPlanOverrides={RemovedPlanOverrides}",
+                    adminUserId,
+                    normalizedUserId,
+                    response!.DeletedProjects,
+                    response.RemovedPlanOverrides);
+
+                return response!;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "Admin first-run reset failed. AdminUserId={AdminUserId} TargetUserId={TargetUserId}",
+                    adminUserId,
+                    normalizedUserId);
+                throw;
+            }
         }
 
         public async Task<AdminTokenOperationResponse> ResetTokensPeriodAsync(

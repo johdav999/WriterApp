@@ -1245,17 +1245,21 @@ app.MapDelete("/api/admin/users/{userId}", async (
     bool allowDeleteWithActiveSubscription = configuration.GetValue<bool?>("Admin:AllowDeleteWithActiveSubscription") ?? false;
     try
     {
-        bool deleted = await adminUsersService.DeleteUserAsync(
+        AdminDeleteCustomerResponse response = await adminUsersService.DeleteUserAsync(
             userId,
             allowDeleteWithActiveSubscription,
             adminUserId,
             adminEmail,
             context.RequestAborted);
-        return deleted ? Results.NoContent() : Results.NotFound();
+        return Results.Ok(response);
     }
     catch (InvalidOperationException ex)
     {
         return Results.Conflict(new { message = ex.Message });
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(new { message = ex.Message });
     }
 });
 
@@ -1324,6 +1328,56 @@ app.MapPost("/api/admin/users/{userId}/plan-override", async (
             title: "Plan override failed.",
             detail: "An unexpected error occurred while persisting the override.",
             statusCode: StatusCodes.Status500InternalServerError);
+    }
+});
+
+app.MapPost("/api/admin/users/{userId}/reset-first-run", async (
+        HttpContext context,
+        string userId,
+        IConfiguration configuration,
+        AdminEndpointRateLimiter adminRateLimiter,
+        AdminUsersService adminUsersService,
+        IUserIdResolver userIdResolver,
+        ILoggerFactory loggerFactory) =>
+{
+    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
+        || !AdminPlanOverrideAccess.IsAuthorized(context.User, configuration))
+    {
+        return Results.NotFound();
+    }
+
+    if (string.IsNullOrWhiteSpace(userId))
+    {
+        return Results.BadRequest(new { message = "userId is required." });
+    }
+
+    ILogger logger = loggerFactory.CreateLogger("AdminResetFirstRun");
+    string adminUserId = ResolveAssignedBy(context.User, userIdResolver, logger, out _);
+    string? adminEmail = context.User.FindFirstValue(ClaimTypes.Email)
+        ?? context.User.FindFirstValue("emails")
+        ?? context.User.FindFirstValue("preferred_username")
+        ?? context.User.Identity?.Name;
+    if (!adminRateLimiter.TryAcquire($"{adminUserId}:reset-first-run", 20))
+    {
+        return Results.StatusCode(StatusCodes.Status429TooManyRequests);
+    }
+
+    try
+    {
+        AdminResetToFirstRunResponse response = await adminUsersService.ResetToFirstRunAsync(
+            userId,
+            adminUserId,
+            adminEmail,
+            context.RequestAborted);
+        return Results.Ok(response);
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(new { message = ex.Message });
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new { message = ex.Message });
     }
 });
 

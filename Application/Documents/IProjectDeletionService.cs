@@ -7,6 +7,7 @@ namespace WriterApp.Application.Documents
     public interface IProjectDeletionService
     {
         Task<ProjectDeletionResult> DeleteOwnedProjectAsync(Guid incomingId, string ownerUserId, CancellationToken ct);
+        Task<ProjectDeletionResult> DeleteOwnedProjectInExistingTransactionAsync(Guid incomingId, string ownerUserId, CancellationToken ct);
     }
 
     public sealed record ProjectDeletionResult(

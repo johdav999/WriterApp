@@ -341,6 +341,9 @@ namespace WriterApp.Tests
         {
             public Task<ProjectDeletionResult> DeleteOwnedProjectAsync(Guid incomingId, string ownerUserId, CancellationToken ct)
                 => Task.FromResult(new ProjectDeletionResult(false, null, null));
+
+            public Task<ProjectDeletionResult> DeleteOwnedProjectInExistingTransactionAsync(Guid incomingId, string ownerUserId, CancellationToken ct)
+                => Task.FromResult(new ProjectDeletionResult(false, null, null));
         }
     }
 }
