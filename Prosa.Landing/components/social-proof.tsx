@@ -7,7 +7,7 @@ const items = [
   },
   {
     icon: RefreshCw,
-    text: "Built for revision-heavy workflows",
+    text: "Story-aware coaching from synopsis through revision",
   },
   {
     icon: ShieldCheck,

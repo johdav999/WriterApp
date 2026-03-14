@@ -139,6 +139,7 @@ namespace WriterApp.Client.Pages
         private readonly List<DocumentTranslationLinkDto> _documentTranslationLinks = new();
         private readonly List<SectionTranslationLinkDto> _sectionTranslationLinks = new();
         private bool _layoutStateInitialized;
+        private bool _isPreviewMode;
         private PageEditor? _pageEditor;
         private Projects? _navigatorPanel;
         private PageEditor.EditorStatusSnapshot _editorStatus = PageEditor.EditorStatusSnapshot.Empty;
@@ -548,8 +549,8 @@ namespace WriterApp.Client.Pages
         private AiSelectionSnapshot? _lastAiSelectionSnapshot;
         private bool _pendingDetailsExpanded;
         private bool _aiUndoRedoInFlight;
-        private bool _canAiUndo;
-        private bool _canAiRedo;
+        private bool _hasAiUndoHistory;
+        private bool _hasAiRedoHistory;
         private bool _isAiQuotaDialogOpen;
         private string _aiQuotaPlanName = "Free";
         private int _aiQuotaBudget;
@@ -618,9 +619,22 @@ namespace WriterApp.Client.Pages
             CanRunExtractCharacterBible
             && CanRunExtractPlaceBible
             && CanRunExtractTimelineBible;
+        private bool CanDisplayContinuityCoach =>
+            CanShowContinuityCoach
+            || !CanUseFeature(FeatureKey.ContinuityCheck)
+            || !CanUseFeature(FeatureKey.CanonRefresh);
         private bool CanShowPromptLibrary =>
             HasAction("custom_transform")
             && CanUseFeature(FeatureKey.PromptLibrary);
+        private bool CanDisplayPromptLibrary =>
+            HasAction("custom_transform")
+            || !CanUseFeature(FeatureKey.PromptLibrary);
+        private bool CanShowQualityChecks =>
+            CanUseFeature(FeatureKey.QualityChecks);
+        private bool CanDisplayQualityChecks => true;
+        private bool CanShowVersionHistory =>
+            CanUseFeature(FeatureKey.VersionHistory);
+        private bool CanDisplayVersionHistory => true;
         private IReadOnlyList<PromptPresetDto> PinnedPromptPresets =>
             _pinnedPromptPresetIds
                 .Select(id => _promptPresets.FirstOrDefault(preset => preset.Id == id))
@@ -1960,6 +1974,11 @@ namespace WriterApp.Client.Pages
 
         private string GetWorkspaceClass()
         {
+            if (_isPreviewMode)
+            {
+                return "is-panels-collapsed is-preview-mode";
+            }
+
             LayoutState state = LayoutStateService.State;
             bool contextCollapsed = state.FocusMode || state.ContextCollapsed;
             bool sectionsCollapsed = state.FocusMode || state.SectionsCollapsed;
@@ -2066,6 +2085,54 @@ namespace WriterApp.Client.Pages
             }
 
             return GetTooltip("Export: Download the selected content in the chosen format.");
+        }
+
+        private string? GetExportSubmitLockedTooltip()
+        {
+            if (!TryGetExportSubmitRequiredFeature(out FeatureKey feature))
+            {
+                return null;
+            }
+
+            return FeatureAccessService.GetRequiredPlanMessage(feature);
+        }
+
+        private string? GetExportSubmitFeatureName()
+        {
+            return TryGetExportSubmitRequiredFeature(out FeatureKey feature)
+                ? feature.ToString()
+                : null;
+        }
+
+        private bool TryGetExportSubmitRequiredFeature(out FeatureKey feature)
+        {
+            if (_selectedTemplateId.HasValue && !CanUseFeature(FeatureKey.ExportTemplates))
+            {
+                feature = FeatureKey.ExportTemplates;
+                return true;
+            }
+
+            if (string.Equals(_exportContentSelection, "synopsis", StringComparison.OrdinalIgnoreCase)
+                && !CanUseFeature(FeatureKey.SynopsisExport))
+            {
+                feature = FeatureKey.SynopsisExport;
+                return true;
+            }
+
+            if (!CanUseFeature(FeatureKey.ExportDocument))
+            {
+                feature = FeatureKey.ExportDocument;
+                return true;
+            }
+
+            if (!CanUseFeature(FeatureKey.ExportFormats))
+            {
+                feature = FeatureKey.ExportFormats;
+                return true;
+            }
+
+            feature = default;
+            return false;
         }
 
         private string GetExportPreviewTitle()
@@ -2340,6 +2407,11 @@ namespace WriterApp.Client.Pages
         {
             LayoutState state = LayoutStateService.State;
             List<string> classes = new();
+            if (_isPreviewMode)
+            {
+                classes.Add("is-preview-mode");
+            }
+
             if (state.FocusMode)
             {
                 classes.Add("is-focus-mode");
@@ -2803,6 +2875,22 @@ namespace WriterApp.Client.Pages
             await LayoutStateService.SetStateAsync(current with { FocusMode = !current.FocusMode });
         }
 
+        private async Task TogglePreviewModeAsync()
+        {
+            if (!_isPreviewMode)
+            {
+                await FlushActiveEditorAsync("preview-mode");
+            }
+
+            _isPreviewMode = !_isPreviewMode;
+            _isToolbarOverflowOpen = false;
+            _isDocumentMenuOpen = false;
+            _selectionBubbleVisible = false;
+            _isContextMenuOpen = false;
+            _isLinkContextMenuOpen = false;
+            await InvokeAsync(StateHasChanged);
+        }
+
         private async Task OnZoomOutRequested()
         {
             LayoutState current = LayoutStateService.State;
@@ -2898,6 +2986,16 @@ namespace WriterApp.Client.Pages
             }
 
             if (!loadTabData)
+            {
+                if (persistSelection)
+                {
+                    await PersistContextPanelStateAsync();
+                }
+
+                return;
+            }
+
+            if (!CanAccessContextTab(tab))
             {
                 if (persistSelection)
                 {
@@ -3062,7 +3160,8 @@ namespace WriterApp.Client.Pages
                 selected.Why,
                 selected.PrimaryAction,
                 null,
-                null);
+                null,
+                nameof(FeatureKey.QualityChecks));
         }
 
         private CoachCardRecommendation BuildConsistencyCoachRecommendation(RightPanelCoachContext context)
@@ -3089,7 +3188,8 @@ namespace WriterApp.Client.Pages
                 "Continuity checks protect timeline, location, and entity consistency.",
                 CoachPrimaryAction.RunContinuityCheck,
                 null,
-                null);
+                null,
+                nameof(FeatureKey.ContinuityCheck));
         }
 
         private CoachCardRecommendation BuildStyleQualityCoachRecommendation(RightPanelCoachContext context)
@@ -3115,7 +3215,8 @@ namespace WriterApp.Client.Pages
                 "Short quality loops keep tone and readability consistent.",
                 CoachPrimaryAction.RunQualityCheck,
                 null,
-                null);
+                null,
+                nameof(FeatureKey.QualityChecks));
         }
 
         private CoachCardRecommendation BuildHistoryCoachRecommendation(RightPanelCoachContext context)
@@ -3148,7 +3249,8 @@ namespace WriterApp.Client.Pages
                 "Frequent history review reduces risk when applying large rewrites.",
                 CoachPrimaryAction.OpenOutline,
                 null,
-                null);
+                null,
+                nameof(FeatureKey.VersionHistory));
         }
 
         private CoachCardRecommendation BuildNavigatorCoachRecommendation(RightPanelCoachContext context)
@@ -3218,7 +3320,8 @@ namespace WriterApp.Client.Pages
                 selected.Why,
                 selected.PrimaryAction,
                 null,
-                null);
+                null,
+                context.IsSceneContext ? nameof(FeatureKey.SceneAiSuggestions) : null);
         }
 
         private static CoachTipCandidate SelectCoachTipCandidate(
@@ -3270,6 +3373,7 @@ namespace WriterApp.Client.Pages
                 "Fast note capture prevents context loss between revision sessions.",
                 CoachPrimaryAction.OpenOutline,
                 null,
+                null,
                 null);
         }
 
@@ -3292,12 +3396,20 @@ namespace WriterApp.Client.Pages
                 "Reusable prompts reduce repetitive editing overhead.",
                 CoachPrimaryAction.OpenOutline,
                 null,
-                null);
+                null,
+                nameof(FeatureKey.PromptLibrary));
         }
 
         private async Task OnContextCoachPrimaryActionAsync()
         {
             CoachCardRecommendation recommendation = BuildContextCoachRecommendation();
+            if (TryResolveCoachRequiredFeature(recommendation, out FeatureKey requiredFeature)
+                && !CanUseFeature(requiredFeature))
+            {
+                NavigateToUpgradeForFeature(requiredFeature);
+                return;
+            }
+
             switch (recommendation.PrimaryAction)
             {
                 case CoachPrimaryAction.SuggestSceneCardFromText:
@@ -3415,6 +3527,50 @@ namespace WriterApp.Client.Pages
             return _activeSection?.Title ?? "Section";
         }
 
+        private string GetPreviewDocumentTitle()
+        {
+            return string.IsNullOrWhiteSpace(_documentTitle)
+                ? "Untitled manuscript"
+                : _documentTitle.Trim();
+        }
+
+        private IReadOnlyList<DocumentPreviewSectionItem> GetPreviewSections()
+        {
+            return _sections
+                .OrderBy(section => section.OrderIndex)
+                .Select((section, index) =>
+                {
+                    string kindLabel = GetPreviewSectionKindLabel(section);
+                    string title = string.IsNullOrWhiteSpace(section.Title)
+                        ? $"{kindLabel} {index + 1}"
+                        : section.Title.Trim();
+                    string contentHtml = GetPrimaryPage(section.Id)?.Content ?? string.Empty;
+                    return new DocumentPreviewSectionItem(kindLabel, title, contentHtml);
+                })
+                .ToList();
+        }
+
+        private string GetPreviewSectionKindLabel(SectionDto section)
+        {
+            string title = section.Title?.Trim() ?? string.Empty;
+            if (title.StartsWith("Part ", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Part";
+            }
+
+            if (title.StartsWith("Chapter ", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Chapter";
+            }
+
+            if (title.StartsWith("Scene ", StringComparison.OrdinalIgnoreCase) || IsSceneRoute)
+            {
+                return "Scene";
+            }
+
+            return "Section";
+        }
+
         private void SyncActiveSceneTitle()
         {
             if (!IsSceneRoute || ProjectId == Guid.Empty || SceneNodeId == Guid.Empty)
@@ -3485,7 +3641,7 @@ namespace WriterApp.Client.Pages
                 PanelCategory.History
             };
 
-            if (CanShowPromptLibrary)
+            if (CanDisplayPromptLibrary)
             {
                 categories.Add(PanelCategory.Advanced);
             }
@@ -3506,7 +3662,7 @@ namespace WriterApp.Client.Pages
             {
                 case PanelCategory.Coach:
                     tabs.Add(ContextTab.Ai);
-                    if (CanShowContinuityCoach)
+                    if (CanDisplayContinuityCoach)
                     {
                         tabs.Add(ContextTab.Continuity);
                     }
@@ -3532,7 +3688,7 @@ namespace WriterApp.Client.Pages
                     break;
 
                 case PanelCategory.Advanced:
-                    if (CanShowPromptLibrary)
+                    if (CanDisplayPromptLibrary)
                     {
                         tabs.Add(ContextTab.PromptLibrary);
                     }
@@ -3660,10 +3816,45 @@ namespace WriterApp.Client.Pages
         {
             return tab switch
             {
-                ContextTab.Continuity => CanShowContinuityCoach,
-                ContextTab.PromptLibrary => CanShowPromptLibrary,
+                ContextTab.Continuity => CanDisplayContinuityCoach,
+                ContextTab.Quality => CanDisplayQualityChecks,
+                ContextTab.History => CanDisplayVersionHistory,
+                ContextTab.PromptLibrary => CanDisplayPromptLibrary,
                 _ => true
             };
+        }
+
+        private FeatureKey? GetRequiredFeatureForContextTab(ContextTab tab)
+        {
+            return tab switch
+            {
+                ContextTab.Continuity => FeatureKey.ContinuityCheck,
+                ContextTab.Quality => FeatureKey.QualityChecks,
+                ContextTab.History => FeatureKey.VersionHistory,
+                ContextTab.PromptLibrary => FeatureKey.PromptLibrary,
+                _ => null
+            };
+        }
+
+        private bool CanAccessContextTab(ContextTab tab)
+        {
+            FeatureKey? feature = GetRequiredFeatureForContextTab(tab);
+            return !feature.HasValue || CanUseFeature(feature.Value);
+        }
+
+        private void NavigateToUpgradeForFeature(FeatureKey feature)
+        {
+            Navigation.NavigateTo(FeatureAccessService.GetUpgradePathWithCurrentReturn(feature));
+        }
+
+        private string AppendUpgradeReturnUrl(string upgradePath)
+        {
+            return FeatureAccessService.AppendReturnUrl(upgradePath);
+        }
+
+        private static bool TryResolveCoachRequiredFeature(CoachCardRecommendation recommendation, out FeatureKey feature)
+        {
+            return Enum.TryParse(recommendation.RequiredFeature, ignoreCase: true, out feature);
         }
 
         private PanelCategory GetCategoryForTab(ContextTab tab)
@@ -6773,6 +6964,12 @@ private const string PreviewBootstrapScript = @"
 
         private async Task ExecuteExportSelectionAsync()
         {
+            if (TryGetExportSubmitRequiredFeature(out FeatureKey requiredFeature))
+            {
+                NavigateToUpgradeForFeature(requiredFeature);
+                return;
+            }
+
             if (string.Equals(_exportFormatSelection, "pdf", StringComparison.OrdinalIgnoreCase))
             {
                 if (!string.Equals(_exportContentSelection, "document", StringComparison.OrdinalIgnoreCase))
@@ -8906,6 +9103,7 @@ private const string PreviewBootstrapScript = @"
                 _entitlementUpgradeUrl = GetJsonString(root, "upgradePath")
                     ?? GetJsonString(root, "upgradeUrl")
                     ?? $"/upgrade?feature={WebUtility.UrlEncode(_entitlementFeatureKey)}";
+                _entitlementUpgradeUrl = AppendUpgradeReturnUrl(_entitlementUpgradeUrl);
 
                 Navigation.NavigateTo(_entitlementUpgradeUrl, forceLoad: true);
                 return true;
@@ -8943,7 +9141,7 @@ private const string PreviewBootstrapScript = @"
                 if (IsProblemDetailsResponse(response)
                     && !string.IsNullOrWhiteSpace(problemUpgradePath))
                 {
-                    Navigation.NavigateTo(problemUpgradePath, forceLoad: true);
+                    Navigation.NavigateTo(AppendUpgradeReturnUrl(problemUpgradePath), forceLoad: true);
                     return true;
                 }
 
@@ -8954,6 +9152,7 @@ private const string PreviewBootstrapScript = @"
                 }
 
                 string upgradePath = problemUpgradePath ?? "/upgrade?feature=ai.actions";
+                upgradePath = AppendUpgradeReturnUrl(upgradePath);
                 Navigation.NavigateTo(upgradePath, forceLoad: true);
                 return true;
             }
@@ -9009,7 +9208,7 @@ private const string PreviewBootstrapScript = @"
         private void NavigateToUpgradeFromQuotaDialog()
         {
             _isAiQuotaDialogOpen = false;
-            Navigation.NavigateTo("/start?plan=pro", forceLoad: true);
+            Navigation.NavigateTo(FeatureAccessService.AppendReturnUrl("/upgrade"), forceLoad: true);
         }
 
         private void CloseEntitlementUpgradeDialog()
@@ -9021,7 +9220,7 @@ private const string PreviewBootstrapScript = @"
         {
             _isEntitlementUpgradeDialogOpen = false;
             string target = string.IsNullOrWhiteSpace(_entitlementUpgradeUrl)
-                ? $"/upgrade?feature={WebUtility.UrlEncode(_entitlementFeatureKey)}"
+                ? FeatureAccessService.AppendReturnUrl($"/upgrade?feature={WebUtility.UrlEncode(_entitlementFeatureKey)}")
                 : _entitlementUpgradeUrl;
             Navigation.NavigateTo(target, forceLoad: true);
         }
@@ -9463,6 +9662,11 @@ private const string PreviewBootstrapScript = @"
             return feature.HasValue ? GetFeatureTooltip(feature.Value) : string.Empty;
         }
 
+        private string? GetFeatureNameForAction(AiActionOption action)
+        {
+            return ResolveFeatureForAction(action.ActionKey)?.ToString();
+        }
+
         private static FeatureKey? ResolveFeatureForAction(string actionKey)
         {
             return actionKey switch
@@ -9488,10 +9692,27 @@ private const string PreviewBootstrapScript = @"
             };
         }
 
-        private string AiUsageStatusLabel =>
-            AuthMeStateService.AiMonthlyTokenBudget <= 0
-                ? "AI: not included"
-                : $"AI: {AuthMeStateService.AiTokensUsedThisPeriod} / {AuthMeStateService.AiMonthlyTokenBudget} tokens";
+        private string AiUsageStatusLabel
+        {
+            get
+            {
+                int budget = AuthMeStateService.AiMonthlyTokenBudget;
+                if (budget <= 0)
+                {
+                    return "AI: not included";
+                }
+
+                if (string.Equals(AuthMeStateService.PlanKey, "Standard", StringComparison.Ordinal)
+                    || string.Equals(AuthMeStateService.PlanKey, "Professional", StringComparison.Ordinal))
+                {
+                    int used = Math.Max(0, AuthMeStateService.AiTokensUsedThisPeriod);
+                    int percentage = (int)Math.Round(Math.Clamp(used / (double)budget, 0d, 1d) * 100d);
+                    return $"AI: {percentage}% / 100%";
+                }
+
+                return $"AI: {AuthMeStateService.AiTokensUsedThisPeriod} / {budget} tokens";
+            }
+        }
 
         private bool ShowPlanUpgrade => GetPlanUpgradeHref() is not null;
 
@@ -9513,8 +9734,8 @@ private const string PreviewBootstrapScript = @"
 
         private void UpdateAiUndoRedoAvailability()
         {
-            _canAiUndo = _aiHistoryEntries.Any(entry => entry.IsApplied);
-            _canAiRedo = _aiHistoryEntries.Any(entry => entry.AppliedCount > 0 && !entry.IsApplied);
+            _hasAiUndoHistory = _aiHistoryEntries.Any(entry => entry.IsApplied);
+            _hasAiRedoHistory = _aiHistoryEntries.Any(entry => entry.AppliedCount > 0 && !entry.IsApplied);
         }
 
         private IEnumerable<TranslationApplyOption> GetTranslationApplyOptions()
@@ -12755,7 +12976,13 @@ private const string PreviewBootstrapScript = @"
 
         private async Task OnAiUndoRequested()
         {
-            if (_aiUndoRedoInFlight || _pageEditor is null || _activeSection is null)
+            if (!CanUseFeature(FeatureKey.AiUndoRedo))
+            {
+                NavigateToUpgradeForFeature(FeatureKey.AiUndoRedo);
+                return;
+            }
+
+            if (_aiUndoRedoInFlight || _pageEditor is null || _activeSection is null || !_hasAiUndoHistory)
             {
                 return;
             }
@@ -12801,7 +13028,13 @@ private const string PreviewBootstrapScript = @"
 
         private async Task OnAiRedoRequested()
         {
-            if (_aiUndoRedoInFlight || _pageEditor is null || _activeSection is null)
+            if (!CanUseFeature(FeatureKey.AiUndoRedo))
+            {
+                NavigateToUpgradeForFeature(FeatureKey.AiUndoRedo);
+                return;
+            }
+
+            if (_aiUndoRedoInFlight || _pageEditor is null || _activeSection is null || !_hasAiRedoHistory)
             {
                 return;
             }
@@ -13328,6 +13561,11 @@ private const string PreviewBootstrapScript = @"
             int Length,
             bool IsDeletion,
             string DeletionText);
+
+        private sealed record DocumentPreviewSectionItem(
+            string KindLabel,
+            string Title,
+            string ContentHtml);
 
         private enum ContextTab
         {

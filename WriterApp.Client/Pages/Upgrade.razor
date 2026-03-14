@@ -1,8 +1,11 @@
 @page "/upgrade"
 @using System.Net.Http.Json
+@using WriterApp.Application.Subscriptions
+@using WriterApp.Client.Services
 @using WriterApp.Client.Utilities
 @inject NavigationManager Navigation
 @inject HttpClient Http
+@inject FeatureAccessService FeatureAccessService
 
 <PageTitle>Upgrade</PageTitle>
 
@@ -10,44 +13,119 @@
     <header class="projects-header">
         <div>
             <h1>Upgrade</h1>
-            <p class="projects-subtitle">This feature requires Standard or Pro.</p>
-            @if (!string.IsNullOrWhiteSpace(_featureKey))
+            <p class="projects-subtitle">@GetSubtitle()</p>
+            @if (HasResolvedFeature)
             {
-                <p class="projects-subtitle">Feature: @_featureKey</p>
+                <p class="projects-subtitle">@GetFeatureLead()</p>
             }
         </div>
     </header>
+
+    @if (HasResolvedFeature)
+    {
+        <section class="upgrade-feature-callout" aria-label="Required plan information">
+            <div class="upgrade-feature-callout__eyebrow">Requested feature</div>
+            <h2>@_featureDisplayName</h2>
+            <p>@GetFeatureRequirementMessage()</p>
+        </section>
+    }
 
     @if (!string.IsNullOrWhiteSpace(_errorMessage))
     {
         <div class="projects-error" role="alert">@_errorMessage</div>
     }
 
+    <div class="upgrade-plan-grid">
+        <section class="@GetPlanCardClass(PlanTier.Standard)">
+            <div class="upgrade-plan-card__header">
+                <div>
+                    <h2>Standard</h2>
+                    <p>Core coaching for active drafting and revision.</p>
+                </div>
+                @if (GetPlanBadge(PlanTier.Standard) is string standardBadge)
+                {
+                    <span class="upgrade-plan-card__badge">@standardBadge</span>
+                }
+            </div>
+            <ul class="upgrade-plan-card__features">
+                <li>Evaluate Synopsis</li>
+                <li>Quality Checks</li>
+                <li>Core writing and revision tools</li>
+            </ul>
+            @if (GetPlanNote(PlanTier.Standard) is string standardNote)
+            {
+                <div class="upgrade-plan-card__note">@standardNote</div>
+            }
+            <button type="button"
+                    class="primary"
+                    @onclick='() => StartUpgradeAsync("standard")'
+                    disabled="@IsPlanDisabled(PlanTier.Standard)">
+                @GetPlanButtonLabel("standard", PlanTier.Standard)
+            </button>
+        </section>
+
+        <section class="@GetPlanCardClass(PlanTier.Professional)">
+            <div class="upgrade-plan-card__header">
+                <div>
+                    <h2>Professional</h2>
+                    <p>Full coaching suite for story-aware editing.</p>
+                </div>
+                @if (GetPlanBadge(PlanTier.Professional) is string professionalBadge)
+                {
+                    <span class="upgrade-plan-card__badge">@professionalBadge</span>
+                }
+            </div>
+            <ul class="upgrade-plan-card__features">
+                <li>Everything in Standard</li>
+                <li>Scene Suggestions and Story Coach</li>
+                <li>Continuity Check and Refresh Canon</li>
+                <li>AI Undo and AI History</li>
+            </ul>
+            @if (GetPlanNote(PlanTier.Professional) is string professionalNote)
+            {
+                <div class="upgrade-plan-card__note">@professionalNote</div>
+            }
+            <button type="button"
+                    class="primary"
+                    @onclick='() => StartUpgradeAsync("pro")'
+                    disabled="@IsPlanDisabled(PlanTier.Professional)">
+                @GetPlanButtonLabel("pro", PlanTier.Professional)
+            </button>
+        </section>
+    </div>
+
     <div class="projects-actions">
-        <button type="button" class="primary" @onclick='() => StartUpgradeAsync("standard")' disabled="@_isBusy">
-            @(_isBusy && _selectedPlan == "standard" ? "Opening..." : "Upgrade to Standard")
-        </button>
-        <button type="button" class="primary" @onclick='() => StartUpgradeAsync("pro")' disabled="@_isBusy">
-            @(_isBusy && _selectedPlan == "pro" ? "Opening..." : "Upgrade to Pro")
-        </button>
         <button type="button" class="secondary" @onclick="GoBack" disabled="@_isBusy">Back</button>
     </div>
 </div>
 
 @code {
     private string _featureKey = "ai.feature";
+    private string _returnUrl = SafeReturnUrl.DefaultProjectsPath;
+    private FeatureKey? _resolvedFeature;
+    private string? _featureDisplayName;
+    private PlanTier? _requiredTier;
     private bool _isBusy;
     private string? _selectedPlan;
     private string? _errorMessage;
+
+    private bool HasResolvedFeature => _resolvedFeature.HasValue && _requiredTier.HasValue && !string.IsNullOrWhiteSpace(_featureDisplayName);
 
     protected override void OnInitialized()
     {
         Uri uri = Navigation.ToAbsoluteUri(Navigation.Uri);
         Dictionary<string, string> query = QueryStringParser.Parse(uri.Query);
+        _returnUrl = SafeReturnUrl.ResolveFromQuery(query, fallback: SafeReturnUrl.DefaultProjectsPath);
         if (query.TryGetValue("feature", out string? feature)
             && !string.IsNullOrWhiteSpace(feature))
         {
             _featureKey = feature.Trim();
+            if (FeatureAccessService.TryResolveFeature(_featureKey, out FeatureKey resolvedFeature))
+            {
+                _resolvedFeature = resolvedFeature;
+                _requiredTier = FeatureAccessService.GetRequiredTier(resolvedFeature);
+                _featureDisplayName = FeatureAccessService.GetFeatureDisplayName(resolvedFeature);
+            }
         }
     }
 
@@ -90,7 +168,100 @@
 
     private void GoBack()
     {
-        Navigation.NavigateTo("/app/account/billing");
+        Navigation.NavigateTo(_returnUrl);
+    }
+
+    private string GetSubtitle()
+    {
+        if (!HasResolvedFeature)
+        {
+            return "Choose the plan that fits your writing workflow.";
+        }
+
+        return _requiredTier == PlanTier.Standard
+            ? $"{_featureDisplayName} is available on Standard and Professional."
+            : $"{_featureDisplayName} requires Professional.";
+    }
+
+    private string GetFeatureLead()
+    {
+        return $"Required plan: {FeatureAccessService.GetPlanLabel(_requiredTier!.Value)}";
+    }
+
+    private string GetFeatureRequirementMessage()
+    {
+        return _requiredTier == PlanTier.Standard
+            ? $"{_featureDisplayName} is included in Standard and above."
+            : $"{_featureDisplayName} is included in Professional.";
+    }
+
+    private bool IsPlanDisabled(PlanTier tier)
+    {
+        if (_isBusy)
+        {
+            return true;
+        }
+
+        return HasResolvedFeature && tier < _requiredTier;
+    }
+
+    private string GetPlanCardClass(PlanTier tier)
+    {
+        List<string> classes = new() { "upgrade-plan-card" };
+        if (HasResolvedFeature && tier == _requiredTier)
+        {
+            classes.Add("is-required");
+        }
+        else if (HasResolvedFeature && tier < _requiredTier)
+        {
+            classes.Add("is-unavailable");
+        }
+
+        return string.Join(" ", classes);
+    }
+
+    private string? GetPlanBadge(PlanTier tier)
+    {
+        if (!HasResolvedFeature)
+        {
+            return null;
+        }
+
+        if (tier == _requiredTier)
+        {
+            return "Required for this feature";
+        }
+
+        if (_requiredTier == PlanTier.Standard && tier == PlanTier.Professional)
+        {
+            return "Also includes this";
+        }
+
+        return tier < _requiredTier ? "Does not unlock this" : null;
+    }
+
+    private string? GetPlanNote(PlanTier tier)
+    {
+        if (!HasResolvedFeature || tier >= _requiredTier)
+        {
+            return null;
+        }
+
+        return $"{_featureDisplayName} requires {FeatureAccessService.GetPlanLabel(_requiredTier!.Value)}.";
+    }
+
+    private string GetPlanButtonLabel(string checkoutPlan, PlanTier tier)
+    {
+        string baseLabel = tier switch
+        {
+            PlanTier.Standard => "Upgrade to Standard",
+            PlanTier.Professional => "Upgrade to Professional",
+            _ => "Upgrade"
+        };
+
+        return _isBusy && string.Equals(_selectedPlan, checkoutPlan, StringComparison.OrdinalIgnoreCase)
+            ? "Opening..."
+            : baseLabel;
     }
 
     private sealed class BillingUrlResponse

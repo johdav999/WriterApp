@@ -74,16 +74,18 @@
                     <p class="ai-helper">Feedback only. AI never edits your manuscript.</p>
 
                     <div class="ai-actions">
-                        <button type="button" class="primary" disabled="@_aiInFlight" @onclick="RunEvaluateAsync">Evaluate synopsis</button>
-                        <button type="button"
-                                class="secondary"
-                                disabled="@(_aiInFlight || !FeatureAccessService.CanUse(FeatureKey.AiGuidingQuestions))"
-                                title='@(!FeatureAccessService.CanUse(FeatureKey.AiGuidingQuestions) ? FeatureAccessService.GetUpgradeMessage(FeatureKey.AiGuidingQuestions) : string.Empty)'
-                                @onclick="RunQuestionsAsync">Ask guiding questions</button>
-                        @if (!FeatureAccessService.CanUse(FeatureKey.AiGuidingQuestions))
-                        {
-                            <a class="link-button" href="@FeatureAccessService.GetUpgradePath()">Upgrade</a>
-                        }
+                        <PlanGatedButton Feature="@nameof(FeatureKey.AiSynopsisEvaluation)"
+                                         Class="primary"
+                                         IsBusy="_aiInFlight"
+                                         OnClick="RunEvaluateAsync">
+                            Evaluate synopsis
+                        </PlanGatedButton>
+                        <PlanGatedButton Feature="@nameof(FeatureKey.AiGuidingQuestions)"
+                                         Class="secondary"
+                                         IsBusy="_aiInFlight"
+                                         OnClick="RunQuestionsAsync">
+                            Ask guiding questions
+                        </PlanGatedButton>
                     </div>
 
                     <div class="ai-suggest">
@@ -99,15 +101,12 @@
                                   value="@_aiUserNotes"
                                   @oninput="OnAiNotesInput"
                                   placeholder="Add constraints or intent for this suggestion..."></textarea>
-                        <button type="button"
-                                class="primary"
-                                disabled="@(_aiInFlight || !FeatureAccessService.CanUse(FeatureKey.AiSynopsisSuggestions))"
-                                title='@(!FeatureAccessService.CanUse(FeatureKey.AiSynopsisSuggestions) ? FeatureAccessService.GetUpgradeMessage(FeatureKey.AiSynopsisSuggestions) : string.Empty)'
-                                @onclick="RunSuggestAsync">Suggest alternative</button>
-                        @if (!FeatureAccessService.CanUse(FeatureKey.AiSynopsisSuggestions))
-                        {
-                            <a class="link-button" href="@FeatureAccessService.GetUpgradePath()">Upgrade</a>
-                        }
+                        <PlanGatedButton Feature="@nameof(FeatureKey.AiSynopsisSuggestions)"
+                                         Class="primary"
+                                         IsBusy="_aiInFlight"
+                                         OnClick="RunSuggestAsync">
+                            Suggest alternative
+                        </PlanGatedButton>
                     </div>
 
                     @if (!string.IsNullOrWhiteSpace(_aiError))
@@ -484,7 +483,10 @@
 
     private void NavigateToUpgrade()
     {
-        Navigation.NavigateTo("/start?plan=pro", forceLoad: true);
+        string target = DocumentId.HasValue
+            ? FeatureAccessService.GetUpgradePathWithReturn(FeatureKey.AiSynopsisEvaluation, $"/synopsis/{DocumentId.Value:D}")
+            : FeatureAccessService.AppendReturnUrl(FeatureAccessService.GetUpgradePath());
+        Navigation.NavigateTo(target, forceLoad: true);
     }
 
     private async Task<bool> TryHandleAiQuotaExceededAsync(HttpResponseMessage response)

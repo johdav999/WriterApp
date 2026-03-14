@@ -1,10 +1,13 @@
 .translation-proposal {
-    display: grid;
+    display: flex;
+    flex-direction: column;
     gap: 12px;
     background: #ffffff;
     border: 1px solid #e5e7eb;
     border-radius: 14px;
     padding: 16px;
+    flex: 1 1 auto;
+    min-height: 0;
 }
 
 .translation-proposal-header {
@@ -35,8 +38,11 @@
 }
 
 .translation-proposal-body {
-    display: grid;
+    display: flex;
+    flex-direction: column;
     gap: 10px;
+    flex: 1 1 auto;
+    min-height: 0;
 }
 
 .translation-proposal-columns {
@@ -53,8 +59,10 @@
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px;
-    max-height: 380px;
+    flex: 1 1 auto;
+    min-height: 0;
     overflow: auto;
+    align-content: start;
 }
 
 .translation-proposal-cell {
@@ -69,4 +77,11 @@
     white-space: pre-wrap;
     font-size: 0.9rem;
     color: #1f2937;
+}
+
+@media (max-width: 900px) {
+    .translation-proposal-columns,
+    .translation-proposal-grid {
+        grid-template-columns: 1fr;
+    }
 }
