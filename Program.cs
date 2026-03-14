@@ -979,6 +979,21 @@ app.MapGet("/logout", (HttpContext context) =>
 });
 
 app.MapGet("/__ping", () => Results.Ok("pong"));
+app.MapGet("/health", () => Results.Text("OK", "text/plain")).AllowAnonymous();
+app.MapGet("/warmup", async (AppDbContext dbContext, CancellationToken ct) =>
+{
+    try
+    {
+        bool canConnect = await dbContext.Database.CanConnectAsync(ct);
+        return canConnect
+            ? Results.Text("DB OK", "text/plain")
+            : Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+    }
+    catch
+    {
+        return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+    }
+}).AllowAnonymous();
 app.MapGet("/healthz", async (AppDbContext dbContext, CancellationToken ct) =>
 {
     try

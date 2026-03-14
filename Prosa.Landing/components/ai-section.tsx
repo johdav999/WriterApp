@@ -2,12 +2,12 @@ import { Badge } from "@/components/ui/badge"
 import { Sparkles } from "lucide-react"
 
 const actions = [
-  "Tighten selection",
-  "Expand scene",
-  "Change tone",
-  "Show, don\u2019t tell",
-  "Propose next paragraph",
+  "Evaluate synopsis",
+  "Guiding questions",
+  "Suggest scene improvements",
+  "Story coach",
   "Continuity check",
+  "Quality checks",
 ]
 
 export function AiSection() {
@@ -27,12 +27,13 @@ export function AiSection() {
               </Badge>
             </div>
             <h2 className="font-serif text-3xl font-bold tracking-tight text-foreground md:text-4xl">
-              AI coaching when you want it&mdash;never when you don&rsquo;t.
+              Coaching that stays tied to the manuscript, not a generic chat.
             </h2>
             <p className="max-w-lg leading-relaxed text-muted-foreground">
-              Use AI to tighten prose, expand a scene, change tone, propose the
-              next paragraph, generate outlines, and keep continuity bibles up
-              to date. Every AI change is reviewable before you apply it.
+              Prosa uses AI for structured feedback across synopsis work,
+              scene-level revision, story context, continuity, and quality
+              checks. Suggestions stay reviewable before you apply them, so the
+              workflow supports authorship instead of replacing it.
             </p>
           </div>
 

@@ -1,4 +1,6 @@
+@using WriterApp.Application.Subscriptions
 @using WriterApp.Client.Services
+@inject FeatureAccessService FeatureAccessService
 
 <section class="coach-card" aria-label="@Recommendation.ContextTitle">
     <div class="coach-card-header">
@@ -22,9 +24,14 @@
 
     <div class="coach-card-next">
         <div class="coach-card-next-label">Suggested next step</div>
-        <button type="button" class="primary" @onclick="OnPrimaryAction">
+        <PlanGatedButton ButtonType="button"
+                         Class="primary coach-card-next-action"
+                         Feature="@GetRequiredFeatureName()"
+                         LockedTitle="@GetLockedTitle()"
+                         AriaLabel="@Recommendation.PrimaryActionLabel"
+                         OnClick="OnPrimaryAction">
             @Recommendation.PrimaryActionLabel
-        </button>
+        </PlanGatedButton>
     </div>
 
     <div class="coach-card-why">
@@ -45,4 +52,24 @@
 
     [Parameter]
     public EventCallback OnPrimaryAction { get; set; }
+
+    private string? GetRequiredFeatureName()
+    {
+        return Recommendation.RequiredFeature;
+    }
+
+    private string? GetLockedTitle()
+    {
+        if (!TryResolveFeature(out FeatureKey feature))
+        {
+            return null;
+        }
+
+        return FeatureAccessService.GetRequiredPlanMessage(feature);
+    }
+
+    private bool TryResolveFeature(out FeatureKey feature)
+    {
+        return Enum.TryParse(Recommendation.RequiredFeature, ignoreCase: true, out feature);
+    }
 }

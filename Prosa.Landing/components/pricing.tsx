@@ -34,12 +34,13 @@ const tiers: PricingTier[] = [
   },
   {
     name: "Standard",
-    price: "129",
-    period: "SEK / month",
+    price: "9",
+    period: "USD / month",
     description: "Add AI tools and deeper organization",
     features: [
       "Everything in Free",
       "AI writing tools (rewrite, tighten, expand, tone)",
+      "Synopsis evaluation + quality checks",
       "Outline generation from synopsis",
       "Search across project content",
       "Versioning + diff",
@@ -51,12 +52,13 @@ const tiers: PricingTier[] = [
   },
   {
     name: "Professional",
-    price: "299",
-    period: "SEK / month",
+    price: "18",
+    period: "USD / month",
     description: "Full power for serious authors",
     features: [
       "Everything in Standard",
       "Higher AI token limits",
+      "Full coaching suite for scenes and story",
       "Continuity bibles + apply fixes",
       "Cover image generation",
       "DOCX + EPUB export",
@@ -148,6 +150,28 @@ export function Pricing() {
           AI usage limits apply. Professional includes higher monthly AI
           capacity.
         </p>
+
+        <div className="mt-8 grid gap-4 md:grid-cols-2">
+          <div className="rounded-xl border border-border bg-card p-5">
+            <div className="mb-2 text-sm font-medium uppercase tracking-wider text-accent">
+              Standard coaching
+            </div>
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              Start with core coaching for active draft work: synopsis
+              evaluation and scene quality checks.
+            </p>
+          </div>
+          <div className="rounded-xl border border-border bg-card p-5">
+            <div className="mb-2 text-sm font-medium uppercase tracking-wider text-accent">
+              Professional coaching
+            </div>
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              Unlock the full suite with guiding questions, synopsis
+              alternatives, scene coaching, story coach, continuity checks, and
+              canon refresh.
+            </p>
+          </div>
+        </div>
       </div>
     </section>
   )

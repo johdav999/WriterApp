@@ -32,34 +32,48 @@ else
             <section class="editor-main" id="onboarding-editor-scene">
                 <div class="editor-main-header">
                     <div class="editor-section-info" id="onboarding-project-structure">
-                        <div class="editor-section-label">Section</div>
-                        <div class="editor-section-title">@GetActiveEditorTitle()</div>
+                        <div class="editor-section-label">@(_isPreviewMode ? "Manuscript" : "Section")</div>
+                        <div class="editor-section-title">@(_isPreviewMode ? GetPreviewDocumentTitle() : GetActiveEditorTitle())</div>
                     </div>
-                    @if (ShowTranslationSwitcher)
-                    {
-                        <div class="translation-switcher">
-                            <div class="translation-switcher-label">Translation</div>
-                            <div class="translation-switcher-links">
-                                @foreach (TranslationLinkItem item in GetTranslationLinks())
-                                {
-                                    <button type="button"
-                                            class="translation-switcher-link @(item.IsActive ? "is-active" : string.Empty)"
-                                            title='@GetTooltip(item.Title)'
-                                            @onclick="() => NavigateToTranslation(item)">
-                                        @item.Label
-                                    </button>
-                                }
+                    <div class="editor-main-header-actions">
+                        @if (ShowTranslationSwitcher)
+                        {
+                            <div class="translation-switcher">
+                                <div class="translation-switcher-label">Translation</div>
+                                <div class="translation-switcher-links">
+                                    @foreach (TranslationLinkItem item in GetTranslationLinks())
+                                    {
+                                        <button type="button"
+                                                class="translation-switcher-link @(item.IsActive ? "is-active" : string.Empty)"
+                                                title='@GetTooltip(item.Title)'
+                                                @onclick="() => NavigateToTranslation(item)">
+                                            @item.Label
+                                        </button>
+                                    }
+                                </div>
                             </div>
-                        </div>
-                    }
-                    <button type="button" class="panel-toggle" title='@GetTooltip("Hide panels and focus on writing.")' @onclick="ToggleFocusMode">
-                        @(LayoutStateService.State.FocusMode ? "Exit focus" : "Focus mode")
-                    </button>
-                    <button type="button" class="panel-toggle" title='@GetTooltip("Toggle the right-hand panel.")' @onclick="ToggleContextPanel">
-                        @(IsContextPanelCollapsed() ? "Show panel" : "Hide panel")
-                    </button>
+                        }
+                        <button type="button"
+                                class="panel-toggle preview-toggle @(_isPreviewMode ? "is-active" : string.Empty)"
+                                title='@GetTooltip(_isPreviewMode ? "Return to editing." : "Preview the full document in a clean reading layout.")'
+                                @onclick="TogglePreviewModeAsync">
+                            <Icon Name="@(_isPreviewMode ? "edit" : "visibility")" />
+                            <span>@(_isPreviewMode ? "Back to editing" : "Preview")</span>
+                        </button>
+                        @if (!_isPreviewMode)
+                        {
+                            <button type="button" class="panel-toggle" title='@GetTooltip("Hide panels and focus on writing.")' @onclick="ToggleFocusMode">
+                                @(LayoutStateService.State.FocusMode ? "Exit focus" : "Focus mode")
+                            </button>
+                            <button type="button" class="panel-toggle" title='@GetTooltip("Toggle the right-hand panel.")' @onclick="ToggleContextPanel">
+                                @(IsContextPanelCollapsed() ? "Show panel" : "Hide panel")
+                            </button>
+                        }
+                    </div>
                 </div>
 
+                @if (!_isPreviewMode)
+                {
                 <div class="editor-toolbar" role="toolbar" aria-label="Editor formatting">
                     <div class="editor-toolbar-group" aria-label="Essentials" data-compact="true">
                         <button type="button" class='@($"{GetActiveClass(_formattingState.IsBold)} icon-only")' disabled="@(!_formattingState.CanBold)" title='@GetTooltip("Make selected text bold.")' aria-label="Bold" @onclick="OnBoldRequested"><Icon Name="format_bold" /></button>
@@ -150,12 +164,11 @@ else
                         <div class="revise-tools">
                             @foreach (PromptPresetDto preset in PinnedPromptPresets)
                             {
-                                <button type="button"
-                                        disabled="@(IsAiQuotaExceeded || !CanUseFeature(FeatureKey.PromptLibrary))"
-                                        title='@(!CanUseFeature(FeatureKey.PromptLibrary) ? GetFeatureTooltip(FeatureKey.PromptLibrary) : string.Empty)'
-                                        @onclick="() => RunPromptPresetAsync(preset)">
+                                <PlanGatedButton Feature="@nameof(FeatureKey.PromptLibrary)"
+                                                 IsActionDisabled="@IsAiQuotaExceeded"
+                                                 OnClick="() => RunPromptPresetAsync(preset)">
                                     @preset.Name
-                                </button>
+                                </PlanGatedButton>
                             }
                         </div>
                     }
@@ -181,8 +194,40 @@ else
                         <span class="version-status" title="Feedback delivery status.">@_feedbackBannerMessage</span>
                     }
                 </div>
+                }
 
-                @if (_isDiffMode)
+                @if (_isPreviewMode)
+                {
+                    <div class="editor-preview-shell">
+                        <div class="editor-preview-banner">
+                            <div>
+                                <div class="editor-preview-eyebrow">Full document preview</div>
+                                <div class="editor-preview-copy">Read the manuscript as a clean document without editing controls.</div>
+                            </div>
+                            <button type="button" class="panel-toggle" @onclick="TogglePreviewModeAsync">Back to editing</button>
+                        </div>
+                        <div class="editor-preview-document" aria-label="Full document preview">
+                            @foreach (DocumentPreviewSectionItem section in GetPreviewSections())
+                            {
+                                <article class="preview-section">
+                                    <header class="preview-section-header">
+                                        <div class="preview-section-kind">@(section.KindLabel)</div>
+                                        <h2 class="preview-section-title">@(section.Title)</h2>
+                                    </header>
+                                    @if (string.IsNullOrWhiteSpace(section.ContentHtml))
+                                    {
+                                        <div class="preview-section-empty">This section is empty.</div>
+                                    }
+                                    else
+                                    {
+                                        <div class="preview-section-body">@((MarkupString)(section.ContentHtml))</div>
+                                    }
+                                </article>
+                            }
+                        </div>
+                    </div>
+                }
+                else if (_isDiffMode)
                 {
                     <div class="diff-header-bar" @onkeydown="OnDiffKeyDown" tabindex="0" @ref="_diffHeaderRef">
                         <div class="diff-header-group">
@@ -526,8 +571,8 @@ else
                     }
                 </div>
             </section>
-
-
+            @if (!_isPreviewMode)
+            {
             <aside class="context-drawer @(GetContextPanelClass())">
                 <RightPanelShell>
                     <Tabs>
@@ -640,51 +685,64 @@ else
                             else if (_activeContextTab == ContextTab.Quality)
                             {
                                 <div class="rp-title">Style & quality Coach</div>
-                                <div class="quality-toolbar">
-                                    <div class="quality-filter">
-                                        <label class="quality-filter-label">Scope</label>
-                                        <select class="quality-filter-select" value="@_qualityScope" @onchange="OnQualityScopeChanged">
-                                            <option value="page">Page</option>
-                                            <option value="selection">Selection</option>
-                                        </select>
-                                    </div>
-                                    <div class="quality-filter">
-                                        <label class="quality-filter-label">Severity</label>
-                                        <select class="quality-filter-select" value="@_qualityFilterSeverity" @onchange="OnQualitySeverityChanged">
-                                            <option value="all">All</option>
-                                            <option value="warning">Warning</option>
-                                            <option value="info">Info</option>
-                                        </select>
-                                    </div>
-                                    <div class="quality-filter">
-                                        <label class="quality-filter-label">Type</label>
-                                        <select class="quality-filter-select" value="@_qualityFilterKind" @onchange="OnQualityKindChanged">
-                                            <option value="all">All</option>
-                                            <option value="readability">Readability</option>
-                                            <option value="sentence-length">Sentence length</option>
-                                            <option value="paragraph-length">Paragraph length</option>
-                                            <option value="repeated-word">Repeated words</option>
-                                            <option value="passive-voice">Passive voice</option>
-                                            <option value="name-consistency">Name consistency</option>
-                                            <option value="timeline">Timeline hints</option>
-                                            <option value="glossary">Glossary</option>
-                                        </select>
-                                    </div>
-                                    <button type="button"
-                                            class="quality-refresh primary"
-                                            disabled="@_qualityLoading"
-                                            title='@GetTooltip("Quality check: Analyze the current scope and list style issues.")'
-                                            @onclick="RunQualityChecksAsync">
-                                        @(_qualityLoading ? "Scanning..." : GetQualityRunButtonLabel())
-                                    </button>
-                                </div>
-                                @if (_qualityFromCache)
+                                @if (!CanShowQualityChecks)
                                 {
-                                    <div class="quality-cache-note">Showing cached results for this version.</div>
+                                    <div class="drawer-empty">
+                                        <div>@GetFeatureTooltip(FeatureKey.QualityChecks)</div>
+                                        <PlanGatedButton Feature="@nameof(FeatureKey.QualityChecks)"
+                                                         Class="link-button">
+                                            Upgrade
+                                        </PlanGatedButton>
+                                    </div>
                                 }
-                                @if (!string.IsNullOrWhiteSpace(_qualityStatus))
+                                else
                                 {
-                                    <div class="quality-cache-note">@_qualityStatus</div>
+                                    <div class="quality-toolbar">
+                                        <div class="quality-filter">
+                                            <label class="quality-filter-label">Scope</label>
+                                            <select class="quality-filter-select" value="@_qualityScope" @onchange="OnQualityScopeChanged">
+                                                <option value="page">Page</option>
+                                                <option value="selection">Selection</option>
+                                            </select>
+                                        </div>
+                                        <div class="quality-filter">
+                                            <label class="quality-filter-label">Severity</label>
+                                            <select class="quality-filter-select" value="@_qualityFilterSeverity" @onchange="OnQualitySeverityChanged">
+                                                <option value="all">All</option>
+                                                <option value="warning">Warning</option>
+                                                <option value="info">Info</option>
+                                            </select>
+                                        </div>
+                                        <div class="quality-filter">
+                                            <label class="quality-filter-label">Type</label>
+                                            <select class="quality-filter-select" value="@_qualityFilterKind" @onchange="OnQualityKindChanged">
+                                                <option value="all">All</option>
+                                                <option value="readability">Readability</option>
+                                                <option value="sentence-length">Sentence length</option>
+                                                <option value="paragraph-length">Paragraph length</option>
+                                                <option value="repeated-word">Repeated words</option>
+                                                <option value="passive-voice">Passive voice</option>
+                                                <option value="name-consistency">Name consistency</option>
+                                                <option value="timeline">Timeline hints</option>
+                                                <option value="glossary">Glossary</option>
+                                            </select>
+                                        </div>
+                                        <PlanGatedButton Feature="@nameof(FeatureKey.QualityChecks)"
+                                                         Class="quality-refresh primary"
+                                                         IsBusy="_qualityLoading"
+                                                         AllowedTitle="@GetTooltip("Quality check: Analyze the current scope and list style issues.")"
+                                                         OnClick="RunQualityChecksAsync">
+                                            @(_qualityLoading ? "Scanning..." : GetQualityRunButtonLabel())
+                                        </PlanGatedButton>
+                                    </div>
+                                    @if (_qualityFromCache)
+                                    {
+                                        <div class="quality-cache-note">Showing cached results for this version.</div>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(_qualityStatus))
+                                    {
+                                        <div class="quality-cache-note">@_qualityStatus</div>
+                                    }
                                 }
                             }
                             else if (_activeContextTab == ContextTab.History)
@@ -750,31 +808,27 @@ else
                             <div class="drawer-panel scene-card-panel">
                                 <div class="drawer-panel-subtitle">Capture metadata for this section.</div>
                                 <div class="scene-card-actions">
-                                    <button type="button"
-                                            class="btn btn-secondary"
-                                            disabled="@(_sceneAiInFlight || !CanUseFeature(FeatureKey.SceneAiSuggestions))"
-                                            title='@(!CanUseFeature(FeatureKey.SceneAiSuggestions) ? GetFeatureTooltip(FeatureKey.SceneAiSuggestions) : GetTooltip("Generate scene details from the current text."))'
-                                            @onclick="@(() => RunSceneAiAsync("scene.suggest", "Suggest scene card fields based on the section text."))">
+                                    <PlanGatedButton Feature="@nameof(FeatureKey.SceneAiSuggestions)"
+                                                     Class="btn btn-secondary"
+                                                     IsBusy="_sceneAiInFlight"
+                                                     AllowedTitle="@GetTooltip("Generate scene details from the current text.")"
+                                                     OnClick="@(() => RunSceneAiAsync("scene.suggest", "Suggest scene card fields based on the section text."))">
                                         Suggest from text
-                                    </button>
-                                    <button type="button"
-                                            class="btn btn-secondary"
-                                            disabled="@(_sceneAiInFlight || !CanUseFeature(FeatureKey.SceneAiSuggestions))"
-                                            title='@(!CanUseFeature(FeatureKey.SceneAiSuggestions) ? GetFeatureTooltip(FeatureKey.SceneAiSuggestions) : GetTooltip("Improve or clarify this scene card."))'
-                                            @onclick="@(() => RunSceneAiAsync("scene.refine", "Refine the scene card fields while keeping intent."))">
+                                    </PlanGatedButton>
+                                    <PlanGatedButton Feature="@nameof(FeatureKey.SceneAiSuggestions)"
+                                                     Class="btn btn-secondary"
+                                                     IsBusy="_sceneAiInFlight"
+                                                     AllowedTitle="@GetTooltip("Improve or clarify this scene card.")"
+                                                     OnClick="@(() => RunSceneAiAsync("scene.refine", "Refine the scene card fields while keeping intent."))">
                                         Refine
-                                    </button>
-                                    <button type="button"
-                                            class="btn btn-secondary"
-                                            disabled="@(_sceneAiInFlight || !CanUseFeature(FeatureKey.SceneAiSuggestions))"
-                                            title='@(!CanUseFeature(FeatureKey.SceneAiSuggestions) ? GetFeatureTooltip(FeatureKey.SceneAiSuggestions) : GetTooltip("Identify unresolved story questions."))'
-                                            @onclick="@(() => RunSceneAiAsync("scene.find-open-questions", "Find open questions in this section."))">
+                                    </PlanGatedButton>
+                                    <PlanGatedButton Feature="@nameof(FeatureKey.SceneAiSuggestions)"
+                                                     Class="btn btn-secondary"
+                                                     IsBusy="_sceneAiInFlight"
+                                                     AllowedTitle="@GetTooltip("Identify unresolved story questions.")"
+                                                     OnClick="@(() => RunSceneAiAsync("scene.find-open-questions", "Find open questions in this section."))">
                                         Find open questions
-                                    </button>
-                                    @if (!CanUseFeature(FeatureKey.SceneAiSuggestions))
-                                    {
-                                        <a class="link-button" href="@FeatureAccessService.GetUpgradePath()">Upgrade</a>
-                                    }
+                                    </PlanGatedButton>
                                 </div>
                                 @if (!string.IsNullOrWhiteSpace(_sceneAiError))
                                 {
@@ -958,20 +1012,18 @@ else
                                                 @foreach (AiActionOption action in RecommendedAiActions)
                                                 {
                                                     <div class="ai-action-item">
-                                                        <button type="button"
-                                                                disabled="@(IsAiQuotaExceeded || !CanUseAiAction(action))"
-                                                                title='@(!CanUseAiAction(action) ? GetAiActionUpgradeTooltip(action) : GetAiActionTooltip(action))'
-                                                                @onclick="() => OnAiActionSelected(action)">
+                                                        <PlanGatedButton Feature="@GetFeatureNameForAction(action)"
+                                                                         IsActionDisabled="@IsAiQuotaExceeded"
+                                                                         AllowedTitle="@GetAiActionTooltip(action)"
+                                                                         LockedTitle="@GetAiActionUpgradeTooltip(action)"
+                                                                         ShowLockIndicator="false"
+                                                                         OnClick="() => OnAiActionSelected(action)">
                                                             <span class="ai-action-label">@action.Label</span>
                                                             @if (!string.IsNullOrWhiteSpace(action.RecommendationBadge))
                                                             {
                                                                 <span class="ai-recommended-badge">@action.RecommendationBadge</span>
                                                             }
-                                                        </button>
-                                                        @if (!CanUseAiAction(action))
-                                                        {
-                                                            <a class="link-button" href="@FeatureAccessService.GetUpgradePath()">Upgrade</a>
-                                                        }
+                                                        </PlanGatedButton>
                                                     </div>
                                                 }
                                             </div>
@@ -987,21 +1039,18 @@ else
                                                 @foreach (AiActionOption action in SelectionAiActions)
                                                 {
                                                     <div class="ai-action-item">
-                                                        <button type="button"
-                                                                disabled="@(_currentSelectionRange is null || IsAiQuotaExceeded || !CanUseAiAction(action))"
-                                                                title='@(!CanUseAiAction(action) ? GetAiActionUpgradeTooltip(action) : GetAiActionTooltip(action))'
-                                                                @onmousedown:preventDefault="true"
-                                                                @onclick="() => OnAiActionSelected(action)">
+                                                        <PlanGatedButton Feature="@GetFeatureNameForAction(action)"
+                                                                         IsActionDisabled="@(_currentSelectionRange is null || IsAiQuotaExceeded)"
+                                                                         AllowedTitle="@GetAiActionTooltip(action)"
+                                                                         LockedTitle="@GetAiActionUpgradeTooltip(action)"
+                                                                         ShowLockIndicator="false"
+                                                                         OnClick="() => OnAiActionSelected(action)">
                                                             <span class="ai-action-label">@action.Label</span>
                                                             @if (!string.IsNullOrWhiteSpace(action.RecommendationBadge))
                                                             {
                                                                 <span class="ai-recommended-badge">@action.RecommendationBadge</span>
                                                             }
-                                                        </button>
-                                                        @if (!CanUseAiAction(action))
-                                                        {
-                                                            <a class="link-button" href="@FeatureAccessService.GetUpgradePath()">Upgrade</a>
-                                                        }
+                                                        </PlanGatedButton>
                                                     </div>
                                                 }
                                             }
@@ -1011,20 +1060,18 @@ else
                                             @foreach (AiActionOption action in SectionAiActions)
                                             {
                                                 <div class="ai-action-item">
-                                                    <button type="button"
-                                                            disabled="@(IsAiQuotaExceeded || !CanUseAiAction(action))"
-                                                            title='@(!CanUseAiAction(action) ? GetAiActionUpgradeTooltip(action) : GetAiActionTooltip(action))'
-                                                            @onclick="() => OnAiActionSelected(action)">
+                                                    <PlanGatedButton Feature="@GetFeatureNameForAction(action)"
+                                                                     IsActionDisabled="@IsAiQuotaExceeded"
+                                                                     AllowedTitle="@GetAiActionTooltip(action)"
+                                                                     LockedTitle="@GetAiActionUpgradeTooltip(action)"
+                                                                     ShowLockIndicator="false"
+                                                                     OnClick="() => OnAiActionSelected(action)">
                                                         <span class="ai-action-label">@action.Label</span>
                                                         @if (!string.IsNullOrWhiteSpace(action.RecommendationBadge))
                                                         {
                                                             <span class="ai-recommended-badge">@action.RecommendationBadge</span>
                                                         }
-                                                    </button>
-                                                    @if (!CanUseAiAction(action))
-                                                    {
-                                                        <a class="link-button" href="@FeatureAccessService.GetUpgradePath()">Upgrade</a>
-                                                    }
+                                                    </PlanGatedButton>
                                                 </div>
                                             }
                                         </div>
@@ -1116,22 +1163,30 @@ else
                             <div class="drawer-panel ai-panel">
                                 @if (!CanShowContinuityCoach)
                                 {
-                                    <div class="drawer-empty">Consistency checks are disabled.</div>
+                                    <div class="drawer-empty">
+                                        <div>@GetFeatureTooltip(FeatureKey.ContinuityCheck)</div>
+                                        <PlanGatedButton Feature="@nameof(FeatureKey.ContinuityCheck)"
+                                                         Class="link-button">
+                                            Upgrade
+                                        </PlanGatedButton>
+                                    </div>
                                 }
                                 else
                                 {
                                     <div class="ai-actions-list">
-                                        <button type="button"
-                                                class="quality-refresh primary"
-                                                disabled="@(_continuityBusy || !CanRunBibleUpdate)"
-                                                @onclick="OnUpdateAllBiblesAsync">
+                                        <PlanGatedButton Feature="@nameof(FeatureKey.CanonRefresh)"
+                                                         Class="quality-refresh primary"
+                                                         IsBusy="_continuityBusy"
+                                                         IsActionDisabled="@(!CanRunBibleUpdate)"
+                                                         OnClick="OnUpdateAllBiblesAsync">
                                             @(_continuityBusy ? "Updating Story Canon..." : "Update Story Canon")
-                                        </button>
-                                        <button type="button"
-                                                disabled="@(_continuityBusy || !CanRunContinuityCheck)"
-                                                @onclick="OnCheckContinuityAsync">
+                                        </PlanGatedButton>
+                                        <PlanGatedButton Feature="@nameof(FeatureKey.ContinuityCheck)"
+                                                         IsBusy="_continuityBusy"
+                                                         IsActionDisabled="@(!CanRunContinuityCheck)"
+                                                         OnClick="OnCheckContinuityAsync">
                                             Check current section
-                                        </button>
+                                        </PlanGatedButton>
                                         <button type="button"
                                                 disabled="@_continuityBusy"
                                                 @onclick="OnClearContinuityHighlightsAsync">
@@ -1185,11 +1240,13 @@ else
                                                             <button type="button" @onclick="() => OnJumpToContinuityIssueAsync(issue)">Jump</button>
                                                             @if (CanShowContinuityCoachFixes)
                                                             {
-                                                                <button type="button"
-                                                                        disabled="@(_continuityBusy || string.IsNullOrWhiteSpace(issue.SuggestedFix))"
-                                                                        @onclick="() => OpenContinuityProposalAsync(issue)">
+                                                                <PlanGatedButton Feature="@nameof(FeatureKey.ContinuityCheck)"
+                                                                                 IsBusy="_continuityBusy"
+                                                                                 IsActionDisabled="@string.IsNullOrWhiteSpace(issue.SuggestedFix)"
+                                                                                 ShowLockIndicator="false"
+                                                                                 OnClick="() => OpenContinuityProposalAsync(issue)">
                                                                     Apply suggested fix
-                                                                </button>
+                                                                </PlanGatedButton>
                                                             }
                                                         </div>
                                                     </li>
@@ -1207,7 +1264,10 @@ else
                                 {
                                     <div class="drawer-empty">
                                         <div>@GetFeatureTooltip(FeatureKey.PromptLibrary)</div>
-                                        <a class="link-button" href="@FeatureAccessService.GetUpgradePath()">Upgrade</a>
+                                        <PlanGatedButton Feature="@nameof(FeatureKey.PromptLibrary)"
+                                                         Class="link-button">
+                                            Upgrade
+                                        </PlanGatedButton>
                                     </div>
                                 }
                                 else
@@ -1342,7 +1402,17 @@ else
                         else if (_activeContextTab == ContextTab.Quality)
                         {
                             <div class="drawer-panel quality-panel">
-                                @if (_qualityLoading)
+                                @if (!CanShowQualityChecks)
+                                {
+                                    <div class="drawer-empty">
+                                        <div>@GetFeatureTooltip(FeatureKey.QualityChecks)</div>
+                                        <PlanGatedButton Feature="@nameof(FeatureKey.QualityChecks)"
+                                                         Class="link-button">
+                                            Upgrade
+                                        </PlanGatedButton>
+                                    </div>
+                                }
+                                else if (_qualityLoading)
                                 {
                                     <div class="drawer-empty">Checking quality...</div>
                                 }
@@ -1416,6 +1486,18 @@ else
                         else if (_activeContextTab == ContextTab.History)
                         {
                             <div class="drawer-panel version-history-panel">
+                                @if (!CanShowVersionHistory)
+                                {
+                                    <div class="drawer-empty">
+                                        <div>@GetFeatureTooltip(FeatureKey.VersionHistory)</div>
+                                        <PlanGatedButton Feature="@nameof(FeatureKey.VersionHistory)"
+                                                         Class="link-button">
+                                            Upgrade
+                                        </PlanGatedButton>
+                                    </div>
+                                }
+                                else
+                                {
                                 <div class="history-filter-bar" role="tablist" aria-label="History filter">
                                     <button type="button"
                                             class="history-filter-button @GetHistoryFilterClass(HistoryFilter.All)"
@@ -1445,18 +1527,26 @@ else
                                             @onclick="LoadAiHistoryAsync">
                                         Refresh history
                                     </button>
-                                    <button type="button"
-                                            class="ai-history-button"
-                                            @onclick="OnAiUndoRequested"
-                                            disabled="@(!_canAiUndo || _aiUndoRedoInFlight)">
+                                    <PlanGatedButton Feature="@nameof(FeatureKey.AiUndoRedo)"
+                                                     Class="ai-history-button"
+                                                     AriaLabel="AI Undo"
+                                                     AllowedTitle="Undo the last AI-applied change."
+                                                     LockedTitle="@GetFeatureTooltip(FeatureKey.AiUndoRedo)"
+                                                     IsBusy="_aiUndoRedoInFlight"
+                                                     IsActionDisabled="@(!_hasAiUndoHistory)"
+                                                     OnClick="OnAiUndoRequested">
                                         AI Undo
-                                    </button>
-                                    <button type="button"
-                                            class="ai-history-button"
-                                            @onclick="OnAiRedoRequested"
-                                            disabled="@(!_canAiRedo || _aiUndoRedoInFlight)">
+                                    </PlanGatedButton>
+                                    <PlanGatedButton Feature="@nameof(FeatureKey.AiUndoRedo)"
+                                                     Class="ai-history-button"
+                                                     AriaLabel="AI Redo"
+                                                     AllowedTitle="Redo the last AI-applied change."
+                                                     LockedTitle="@GetFeatureTooltip(FeatureKey.AiUndoRedo)"
+                                                     IsBusy="_aiUndoRedoInFlight"
+                                                     IsActionDisabled="@(!_hasAiRedoHistory)"
+                                                     OnClick="OnAiRedoRequested">
                                         AI Redo
-                                    </button>
+                                    </PlanGatedButton>
                                     <span class="ai-history-count-pill">@_aiHistoryEntries.Count</span>
                                 </div>
                                 @if (_versionsLoading)
@@ -1554,6 +1644,7 @@ else
                                         }
                                     </ul>
                                 }
+                                }
                             </div>
                         }
                     </Body>
@@ -1628,6 +1719,7 @@ else
                     </Footer>
                 </RightPanelShell>
             </aside>
+            }
 
         </div>
     </div>
@@ -1993,26 +2085,24 @@ else
             </div>
             <div class="export-panel-row export-panel-actions">
                 <div class="export-panel-action-group">
-                    <button type="button"
-                            class="link-button"
-                            @onclick="OpenPresetSave"
-                            disabled="@(!CanUseFeature(FeatureKey.ExportPresets))"
-                            title='@(!CanUseFeature(FeatureKey.ExportPresets) ? GetFeatureTooltip(FeatureKey.ExportPresets) : string.Empty)'>Save as preset...</button>
-                    <button type="button"
-                            class="link-button"
-                            @onclick="UpdateSelectedPresetAsync"
-                            disabled="@(_selectedExportPresetId is null || !CanUseFeature(FeatureKey.ExportPresets))"
-                            title='@(!CanUseFeature(FeatureKey.ExportPresets) ? GetFeatureTooltip(FeatureKey.ExportPresets) : string.Empty)'>Update preset</button>
+                    <PlanGatedButton Feature="@nameof(FeatureKey.ExportPresets)"
+                                     Class="link-button"
+                                     OnClick="OpenPresetSave">
+                        Save as preset...
+                    </PlanGatedButton>
+                    <PlanGatedButton Feature="@nameof(FeatureKey.ExportPresets)"
+                                     Class="link-button"
+                                     IsActionDisabled="@(_selectedExportPresetId is null)"
+                                     OnClick="UpdateSelectedPresetAsync">
+                        Update preset
+                    </PlanGatedButton>
                 </div>
-                <button type="button"
-                        class="link-button"
-                        @onclick="SetProjectDefaultPresetAsync"
-                        disabled="@(_selectedExportPresetId is null || !CanUseFeature(FeatureKey.ExportPresets))"
-                        title='@(!CanUseFeature(FeatureKey.ExportPresets) ? GetFeatureTooltip(FeatureKey.ExportPresets) : string.Empty)'>Set as project default</button>
-                @if (!CanUseFeature(FeatureKey.ExportPresets))
-                {
-                    <a class="link-button" href="@FeatureAccessService.GetUpgradePath()">Upgrade</a>
-                }
+                <PlanGatedButton Feature="@nameof(FeatureKey.ExportPresets)"
+                                 Class="link-button"
+                                 IsActionDisabled="@(_selectedExportPresetId is null)"
+                                 OnClick="SetProjectDefaultPresetAsync">
+                    Set as project default
+                </PlanGatedButton>
             </div>
             @if (_isPresetSaveOpen)
             {
@@ -2197,16 +2287,12 @@ else
                 </div>
             </div>
             <div class="export-panel-row export-panel-actions">
-                <button type="button"
-                        class="link-button"
-                        @onclick="OpenTemplateManagerAsync"
-                        disabled="@(!CanUseFeature(FeatureKey.ExportTemplates))"
-                        title='@(!CanUseFeature(FeatureKey.ExportTemplates) ? GetFeatureTooltip(FeatureKey.ExportTemplates) : string.Empty)'>Manage templates...</button>
+                <PlanGatedButton Feature="@nameof(FeatureKey.ExportTemplates)"
+                                 Class="link-button"
+                                 OnClick="OpenTemplateManagerAsync">
+                    Manage templates...
+                </PlanGatedButton>
                 <span class="export-panel-hint">Templates apply to HTML/PDF/DOCX exports.</span>
-                @if (!CanUseFeature(FeatureKey.ExportTemplates))
-                {
-                    <a class="link-button" href="@FeatureAccessService.GetUpgradePath()">Upgrade</a>
-                }
             </div>
             }
             @if (!string.IsNullOrWhiteSpace(_templateLoadError))
@@ -2231,10 +2317,15 @@ else
                         title="@GetExportPreviewButtonTooltip()"
                         @onclick="OpenPreviewAsync"
                         disabled="@IsExportDialogLoading">@GetExportPreviewButtonLabel()</button>
-                <button type="button"
-                        title="@GetExportSubmitButtonTooltip()"
-                        @onclick="ExecuteExportSelectionAsync"
-                        disabled="@IsExportDialogLoading">Export</button>
+                <PlanGatedButton Feature="@GetExportSubmitFeatureName()"
+                                 Class="export-submit-button"
+                                 AllowedTitle="@GetExportSubmitButtonTooltip()"
+                                 LockedTitle="@GetExportSubmitLockedTooltip()"
+                                 AriaLabel="Export"
+                                 IsActionDisabled="@IsExportDialogLoading"
+                                 OnClick="ExecuteExportSelectionAsync">
+                    Export
+                </PlanGatedButton>
                 <button type="button" @onclick="CloseExportDialog">Cancel</button>
             </div>
         </div>

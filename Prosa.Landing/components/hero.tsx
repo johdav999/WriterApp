@@ -4,9 +4,9 @@ import { ProductMock } from "@/components/product-mock"
 import { APP_LINKS } from "@/lib/app-links"
 
 const benefitChips = [
-  "Scene-based writing",
+  "Synopsis coaching",
+  "Scene guidance",
   "Continuity-aware",
-  "Publish-ready exports",
 ]
 
 export function Hero() {
@@ -28,13 +28,14 @@ export function Hero() {
               ))}
             </div>
             <h1 className="font-serif text-4xl font-bold leading-tight tracking-tight text-foreground text-balance md:text-5xl lg:text-6xl">
-              Write faster. Stay consistent. Finish your book.
+              Write faster. Stay consistent. Finish your book with structured coaching.
             </h1>
             <p className="max-w-lg text-base leading-relaxed text-muted-foreground md:text-lg">
-              Prosa is a modern writing workspace built for long-form
-              projects&mdash;scenes, versions, exports, and (when you want it)
-              AI coaching. Draft in flow, organize your story structure, and
-              revise with confidence.
+              Prosa is a modern writing workspace for long-form projects with
+              built-in coaching for synopsis, scenes, story development,
+              continuity, and revision quality. Draft in flow, organize your
+              structure, and get clear feedback where the manuscript actually
+              needs it.
             </p>
             <div className="flex flex-wrap gap-3 pt-2">
               <Button size="lg" asChild>
@@ -44,9 +45,10 @@ export function Hero() {
                 <a href="#pricing">Explore pricing</a>
               </Button>
             </div>
-            <p className="text-sm text-muted-foreground">
-              Create account or sign in with Google.
-            </p>
+            <div className="grid gap-2 pt-1 text-sm text-muted-foreground sm:grid-cols-2">
+              <div>Evaluate your synopsis before you draft deeper.</div>
+              <div>Refine scenes and catch continuity issues in context.</div>
+            </div>
           </div>
 
           {/* Product mock */}

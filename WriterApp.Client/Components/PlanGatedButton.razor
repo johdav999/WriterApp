@@ -1,0 +1,142 @@
+@using WriterApp.Application.Subscriptions
+@using WriterApp.Client.Services
+@inject FeatureAccessService FeatureAccessService
+@inject NavigationManager Navigation
+
+<button type="@ButtonType"
+        class="@GetCssClass()"
+        title="@GetResolvedTitle()"
+        aria-label="@GetResolvedAriaLabel()"
+        aria-disabled="@(IsLocked ? "true" : null)"
+        disabled="@IsActuallyDisabled"
+        @onclick="HandleClickAsync"
+        @attributes="AdditionalAttributes">
+    <span class="plan-gated-action__content">@ChildContent</span>
+    @if (IsLocked && ShowLockIndicator)
+    {
+        <span class="plan-gated-action__lock" aria-hidden="true">
+            <Icon Name="lock" />
+        </span>
+    }
+</button>
+
+@code {
+    [Parameter]
+    public string? Feature { get; set; }
+
+    [Parameter]
+    public EventCallback OnClick { get; set; }
+
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    [Parameter]
+    public string? Class { get; set; }
+
+    [Parameter]
+    public string? AllowedTitle { get; set; }
+
+    [Parameter]
+    public string? LockedTitle { get; set; }
+
+    [Parameter]
+    public string? AriaLabel { get; set; }
+
+    [Parameter]
+    public string ButtonType { get; set; } = "button";
+
+    [Parameter]
+    public bool IsActionDisabled { get; set; }
+
+    [Parameter]
+    public bool IsBusy { get; set; }
+
+    [Parameter]
+    public bool ShowLockIndicator { get; set; } = true;
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public IDictionary<string, object>? AdditionalAttributes { get; set; }
+
+    private FeatureKey? ResolvedFeature =>
+        string.IsNullOrWhiteSpace(Feature)
+            ? null
+            : Enum.TryParse(Feature, ignoreCase: true, out FeatureKey feature)
+                ? feature
+                : null;
+
+    private bool IsLocked => ResolvedFeature.HasValue && !FeatureAccessService.CanUse(ResolvedFeature.Value);
+
+    private bool IsActuallyDisabled => IsBusy || (!IsLocked && IsActionDisabled);
+
+    private async Task HandleClickAsync()
+    {
+        if (IsActuallyDisabled)
+        {
+            return;
+        }
+
+        if (IsLocked)
+        {
+            Navigation.NavigateTo(
+                ResolvedFeature.HasValue
+                    ? FeatureAccessService.GetUpgradePathWithCurrentReturn(ResolvedFeature.Value)
+                    : FeatureAccessService.AppendReturnUrl(FeatureAccessService.GetUpgradePath()));
+            return;
+        }
+
+        if (OnClick.HasDelegate)
+        {
+            await OnClick.InvokeAsync();
+        }
+    }
+
+    private string GetResolvedTitle()
+    {
+        if (IsLocked)
+        {
+            return string.IsNullOrWhiteSpace(LockedTitle)
+                ? ResolvedFeature.HasValue ? FeatureAccessService.GetUpgradeMessage(ResolvedFeature.Value) : string.Empty
+                : LockedTitle;
+        }
+
+        return AllowedTitle ?? string.Empty;
+    }
+
+    private string? GetResolvedAriaLabel()
+    {
+        if (string.IsNullOrWhiteSpace(AriaLabel))
+        {
+            return null;
+        }
+
+        if (!IsLocked)
+        {
+            return AriaLabel;
+        }
+
+        return $"{AriaLabel}. {GetResolvedTitle()}";
+    }
+
+    private string GetCssClass()
+    {
+        List<string> classes = new();
+        if (!string.IsNullOrWhiteSpace(Class))
+        {
+            classes.Add(Class);
+        }
+
+        classes.Add("plan-gated-action");
+
+        if (IsLocked)
+        {
+            classes.Add("is-locked");
+        }
+
+        if (ShowLockIndicator && IsLocked)
+        {
+            classes.Add("has-lock-indicator");
+        }
+
+        return string.Join(" ", classes);
+    }
+}

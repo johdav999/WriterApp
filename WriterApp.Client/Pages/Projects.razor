@@ -55,25 +55,21 @@
                     <option value="chapter">Chapter</option>
                     <option value="scene">Scene</option>
                 </select>
-                <button type="button"
-                        class="secondary"
-                        @onclick="AddSelectedNodeTypeAsync"
-                        disabled="@(!CanAddSelectedNodeType())">
+                <PlanGatedButton Feature="@nameof(FeatureKey.ProjectStructureEditing)"
+                                 Class="secondary"
+                                 IsActionDisabled="@(!CanAddSelectedNodeType())"
+                                 LockedTitle="@ProjectStructureLockedMessage"
+                                 OnClick="AddSelectedNodeTypeAsync">
                     Add
-                </button>
+                </PlanGatedButton>
                 @if (_outlineTemplatesEnabled)
                 {
-                    <button type="button"
-                            class="secondary"
-                            @onclick="OpenOutlineTemplatesModalAsync"
-                            disabled="@(_isOutlineTemplateActionInFlight || !FeatureAccessService.CanUse(FeatureKey.OutlineTemplates))"
-                            title='@(!FeatureAccessService.CanUse(FeatureKey.OutlineTemplates) ? FeatureAccessService.GetUpgradeMessage(FeatureKey.OutlineTemplates) : string.Empty)'>
+                    <PlanGatedButton Feature="@nameof(FeatureKey.OutlineTemplates)"
+                                     Class="secondary"
+                                     IsBusy="_isOutlineTemplateActionInFlight"
+                                     OnClick="OpenOutlineTemplatesModalAsync">
                         Templates...
-                    </button>
-                    @if (!FeatureAccessService.CanUse(FeatureKey.OutlineTemplates))
-                    {
-                        <a class="link-button" href="@FeatureAccessService.GetUpgradePath()">Upgrade</a>
-                    }
+                    </PlanGatedButton>
                 }
             </div>
             <ul class="tree-list">
@@ -207,17 +203,12 @@ else
                 </button>
                 @if (_goalsEnabled)
                 {
-                    <button type="button"
-                            class="@GetTabClass("progress")"
-                            title='@(!FeatureAccessService.CanUse(FeatureKey.ProjectProgressDashboard) ? FeatureAccessService.GetUpgradeMessage(FeatureKey.ProjectProgressDashboard) : "Open project progress and goals.")'
-                            disabled="@(!FeatureAccessService.CanUse(FeatureKey.ProjectProgressDashboard))"
-                            @onclick='() => SelectTab("progress")'>
+                    <PlanGatedButton Feature="@nameof(FeatureKey.ProjectProgressDashboard)"
+                                     Class="@GetTabClass("progress")"
+                                     AllowedTitle="Open project progress and goals."
+                                     OnClick='() => SelectTab("progress")'>
                         Progress
-                    </button>
-                    @if (!FeatureAccessService.CanUse(FeatureKey.ProjectProgressDashboard))
-                    {
-                        <a class="link-button" href="@FeatureAccessService.GetUpgradePath()">Upgrade</a>
-                    }
+                    </PlanGatedButton>
                 }
             </div>
         }
@@ -405,26 +396,21 @@ else
                                 <option value="chapter">Chapter</option>
                                 <option value="scene">Scene</option>
                             </select>
-                            <button type="button"
-                                    class="secondary"
-                                    @onclick="AddSelectedNodeTypeAsync"
-                                    disabled="@(!CanAddSelectedNodeType())"
-                                    title='@(!CanEditProjectStructure ? ProjectStructureLockedMessage : string.Empty)'>
+                            <PlanGatedButton Feature="@nameof(FeatureKey.ProjectStructureEditing)"
+                                             Class="secondary"
+                                             IsActionDisabled="@(!CanAddSelectedNodeType())"
+                                             LockedTitle="@ProjectStructureLockedMessage"
+                                             OnClick="AddSelectedNodeTypeAsync">
                                 Add
-                            </button>
+                            </PlanGatedButton>
                             @if (_outlineTemplatesEnabled)
                             {
-                                <button type="button"
-                                        class="secondary"
-                                        @onclick="OpenOutlineTemplatesModalAsync"
-                                        disabled="@(_isOutlineTemplateActionInFlight || !FeatureAccessService.CanUse(FeatureKey.OutlineTemplates))"
-                                        title='@(!FeatureAccessService.CanUse(FeatureKey.OutlineTemplates) ? FeatureAccessService.GetUpgradeMessage(FeatureKey.OutlineTemplates) : string.Empty)'>
+                                <PlanGatedButton Feature="@nameof(FeatureKey.OutlineTemplates)"
+                                                 Class="secondary"
+                                                 IsBusy="_isOutlineTemplateActionInFlight"
+                                                 OnClick="OpenOutlineTemplatesModalAsync">
                                     Templates...
-                                </button>
-                                @if (!FeatureAccessService.CanUse(FeatureKey.OutlineTemplates))
-                                {
-                                    <a class="link-button" href="@FeatureAccessService.GetUpgradePath()">Upgrade</a>
-                                }
+                                </PlanGatedButton>
                             }
                         </div>
                         <ul class="tree-list">
@@ -497,13 +483,12 @@ else
                             <div class="node-actions">
                                 @if (IsChapter(_selectedNode))
                                 {
-                                    <button type="button"
-                                            class="secondary"
-                                            @onclick="() => AddSceneUnderAsync(_selectedNode.Id)"
-                                            disabled="@(!CanEditProjectStructure)"
-                                            title='@(!CanEditProjectStructure ? ProjectStructureLockedMessage : string.Empty)'>
+                                    <PlanGatedButton Feature="@nameof(FeatureKey.ProjectStructureEditing)"
+                                                     Class="secondary"
+                                                     OnClick="() => AddSceneUnderAsync(_selectedNode.Id)"
+                                                     LockedTitle="@ProjectStructureLockedMessage">
                                         Add scene under chapter
-                                    </button>
+                                    </PlanGatedButton>
                                 }
                                 @if (IsScene(_selectedNode))
                                 {
@@ -544,28 +529,35 @@ else
                     role="menuitem"
                     @onclick="OnNodeMenuRenameAsync"
                     disabled="@_duplicateNodeInFlight">Rename</button>
-            <button type="button"
-                    role="menuitem"
-                    @onclick="OnNodeMenuDuplicateAsync"
-                    disabled="@(_duplicateNodeInFlight || !CanEditProjectStructure)"
-                    title='@(!CanEditProjectStructure ? ProjectStructureLockedMessage : string.Empty)'>
+            <PlanGatedButton Feature="@nameof(FeatureKey.ProjectStructureEditing)"
+                             role="menuitem"
+                             IsBusy="_duplicateNodeInFlight"
+                             LockedTitle="@ProjectStructureLockedMessage"
+                             ShowLockIndicator="false"
+                             OnClick="OnNodeMenuDuplicateAsync">
                 @(_duplicateNodeInFlight ? "Duplicating..." : "Duplicate")
-            </button>
+            </PlanGatedButton>
             @if (IsPart(OpenNodeMenuNode))
             {
-                <button type="button"
-                        role="menuitem"
-                        @onclick="OnNodeMenuAddChapterAsync"
-                        disabled="@(_duplicateNodeInFlight || !CanEditProjectStructure)"
-                        title='@(!CanEditProjectStructure ? ProjectStructureLockedMessage : string.Empty)'>Add chapter</button>
+                <PlanGatedButton Feature="@nameof(FeatureKey.ProjectStructureEditing)"
+                                 role="menuitem"
+                                 IsBusy="_duplicateNodeInFlight"
+                                 LockedTitle="@ProjectStructureLockedMessage"
+                                 ShowLockIndicator="false"
+                                 OnClick="OnNodeMenuAddChapterAsync">
+                    Add chapter
+                </PlanGatedButton>
             }
             else if (IsChapter(OpenNodeMenuNode))
             {
-                <button type="button"
-                        role="menuitem"
-                        @onclick="OnNodeMenuAddSceneAsync"
-                        disabled="@(_duplicateNodeInFlight || !CanEditProjectStructure)"
-                        title='@(!CanEditProjectStructure ? ProjectStructureLockedMessage : string.Empty)'>Add scene</button>
+                <PlanGatedButton Feature="@nameof(FeatureKey.ProjectStructureEditing)"
+                                 role="menuitem"
+                                 IsBusy="_duplicateNodeInFlight"
+                                 LockedTitle="@ProjectStructureLockedMessage"
+                                 ShowLockIndicator="false"
+                                 OnClick="OnNodeMenuAddSceneAsync">
+                    Add scene
+                </PlanGatedButton>
             }
             else if (IsScene(OpenNodeMenuNode))
             {
@@ -573,18 +565,23 @@ else
             }
             @if (_outlineTemplatesEnabled)
             {
-                <button type="button"
-                        role="menuitem"
-                        @onclick="OnNodeMenuTemplatesAsync"
-                        disabled="@(_duplicateNodeInFlight || !FeatureAccessService.CanUse(FeatureKey.OutlineTemplates))"
-                        title='@(!FeatureAccessService.CanUse(FeatureKey.OutlineTemplates) ? FeatureAccessService.GetUpgradeMessage(FeatureKey.OutlineTemplates) : string.Empty)'>Templates...</button>
+                <PlanGatedButton Feature="@nameof(FeatureKey.OutlineTemplates)"
+                                 role="menuitem"
+                                 IsBusy="_duplicateNodeInFlight"
+                                 ShowLockIndicator="false"
+                                 OnClick="OnNodeMenuTemplatesAsync">
+                    Templates...
+                </PlanGatedButton>
             }
-            <button type="button"
-                    role="menuitem"
-                    class="danger"
-                    @onclick="OnNodeMenuDeleteAsync"
-                    disabled="@(_duplicateNodeInFlight || !CanEditProjectStructure)"
-                    title='@(!CanEditProjectStructure ? ProjectStructureLockedMessage : string.Empty)'>Delete</button>
+            <PlanGatedButton Feature="@nameof(FeatureKey.ProjectStructureEditing)"
+                             Class="danger"
+                             role="menuitem"
+                             IsBusy="_duplicateNodeInFlight"
+                             LockedTitle="@ProjectStructureLockedMessage"
+                             ShowLockIndicator="false"
+                             OnClick="OnNodeMenuDeleteAsync">
+                Delete
+            </PlanGatedButton>
         </div>
     </div>
 }

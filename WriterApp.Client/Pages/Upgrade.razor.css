@@ -1,0 +1,94 @@
+.upgrade-feature-callout {
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-4);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-primary-soft);
+}
+
+.upgrade-feature-callout__eyebrow {
+    font-size: var(--font-size-caption);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--color-primary);
+}
+
+.upgrade-feature-callout h2 {
+    margin: 0;
+    font-size: var(--font-size-section-title);
+}
+
+.upgrade-feature-callout p {
+    margin: 0;
+    color: var(--color-text-muted);
+}
+
+.upgrade-plan-grid {
+    display: grid;
+    gap: var(--space-4);
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.upgrade-plan-card {
+    display: grid;
+    gap: var(--space-4);
+    padding: var(--space-4);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface-1);
+}
+
+.upgrade-plan-card.is-required {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-primary) 20%, transparent);
+    background: var(--color-primary-soft);
+}
+
+.upgrade-plan-card.is-unavailable {
+    opacity: 0.78;
+}
+
+.upgrade-plan-card__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-3);
+}
+
+.upgrade-plan-card__header h2 {
+    margin: 0;
+    font-size: var(--font-size-section-title);
+}
+
+.upgrade-plan-card__header p {
+    margin: var(--space-1) 0 0;
+    color: var(--color-text-muted);
+}
+
+.upgrade-plan-card__badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.75rem;
+    padding: 0 var(--space-2);
+    border-radius: 999px;
+    background: var(--color-surface-1);
+    color: var(--color-primary);
+    font-size: var(--font-size-caption);
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.upgrade-plan-card__features {
+    margin: 0;
+    padding-left: 1.1rem;
+    color: var(--color-text-muted);
+    display: grid;
+    gap: var(--space-2);
+}
+
+.upgrade-plan-card__note {
+    color: var(--color-danger);
+    font-size: var(--font-size-helper);
+}

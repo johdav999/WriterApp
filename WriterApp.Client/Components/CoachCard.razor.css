@@ -46,6 +46,10 @@
     gap: 6px;
 }
 
+.coach-card-next-action {
+    justify-self: start;
+}
+
 .coach-card-next-label {
     font-size: var(--font-size-caption);
     color: var(--color-text-muted);

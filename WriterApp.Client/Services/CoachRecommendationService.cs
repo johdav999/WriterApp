@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
-
 namespace WriterApp.Client.Services
 {
     public sealed class CoachRecommendationService
@@ -68,7 +67,8 @@ namespace WriterApp.Client.Services
                 why,
                 primary,
                 input.PlaceholderNodeId,
-                input.NextSceneNodeId);
+                input.NextSceneNodeId,
+                null);
         }
 
         public CoachCardRecommendation BuildSceneRecommendation(SceneCoachInput input)
@@ -138,7 +138,8 @@ namespace WriterApp.Client.Services
                 why,
                 primary,
                 null,
-                null);
+                null,
+                GetRequiredFeatureName(primary));
         }
 
         public bool IsPlaceholderTitle(string? title)
@@ -190,6 +191,17 @@ namespace WriterApp.Client.Services
                 _ => "Continue"
             };
         }
+
+        private static string? GetRequiredFeatureName(CoachPrimaryAction action)
+        {
+            return action switch
+            {
+                CoachPrimaryAction.SuggestSceneCardFromText => "SceneAiSuggestions",
+                CoachPrimaryAction.RunQualityCheck => "QualityChecks",
+                CoachPrimaryAction.RunContinuityCheck => "ContinuityCheck",
+                _ => null
+            };
+        }
     }
 
     public sealed record ProjectCoachInput(
@@ -220,7 +232,8 @@ namespace WriterApp.Client.Services
         string Why,
         CoachPrimaryAction PrimaryAction,
         Guid? TargetNodeId,
-        Guid? NextSceneNodeId);
+        Guid? NextSceneNodeId,
+        string? RequiredFeature = null);
 
     public enum CoachPrimaryAction
     {
