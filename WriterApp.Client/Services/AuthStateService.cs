@@ -7,6 +7,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using WriterApp.Application.Security;
+using WriterApp.Client.State;
+using WriterApp.Client.Utilities;
 
 namespace WriterApp.Client.Services
 {
@@ -16,6 +18,7 @@ namespace WriterApp.Client.Services
 
         private readonly HttpClient _http;
         private readonly ILogger<AuthStateService> _logger;
+        private readonly DeletedAccountStateService _deletedAccountStateService;
         private readonly SemaphoreSlim _refreshLock = new(1, 1);
 
         private AuthState _cached = AuthState.Anonymous;
@@ -24,10 +27,12 @@ namespace WriterApp.Client.Services
 
         public AuthStateService(
             HttpClient http,
-            ILogger<AuthStateService> logger)
+            ILogger<AuthStateService> logger,
+            DeletedAccountStateService deletedAccountStateService)
         {
             _http = http ?? throw new ArgumentNullException(nameof(http));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _deletedAccountStateService = deletedAccountStateService ?? throw new ArgumentNullException(nameof(deletedAccountStateService));
         }
 
         public bool IsAuthenticated => _cached.IsAuthenticated;
@@ -91,6 +96,19 @@ namespace WriterApp.Client.Services
                 using HttpRequestMessage request = new(HttpMethod.Get, endpoint);
                 using HttpResponseMessage response = await _http.SendAsync(request, ct);
 
+                if (response.StatusCode == HttpStatusCode.Forbidden)
+                {
+                    DeletedAccountApiResponse? deleted = await DeletedAccountApiResponseReader.TryReadAsync(response, ct);
+                    if (deleted is not null)
+                    {
+                        _deletedAccountStateService.MarkDeleted(deleted.Message);
+                        return FetchResult.FromState(
+                            endpoint,
+                            AuthState.DeletedAccount(deleted.Message, endpoint),
+                            DeletedAccountApiResponseReader.DeletedCode);
+                    }
+                }
+
                 if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
                 {
                     return FetchResult.FromState(
@@ -116,6 +134,7 @@ namespace WriterApp.Client.Services
 
                 if (!auth.IsAuthenticated)
                 {
+                    _deletedAccountStateService.Clear();
                     return FetchResult.FromState(
                         endpoint,
                         AuthState.Anonymous,
@@ -143,6 +162,7 @@ namespace WriterApp.Client.Services
                     Provider: endpoint,
                     UserId: auth.UserId,
                     Claims: claims);
+                _deletedAccountStateService.Clear();
                 return FetchResult.FromState(
                     endpoint,
                     state,

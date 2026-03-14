@@ -10,6 +10,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using WriterApp.Application.Billing;
 using WriterApp.Application.Documents;
+using WriterApp.Application.Security;
 using WriterApp.Application.Subscriptions;
 using WriterApp.Data;
 using WriterApp.Data.Subscriptions;
@@ -26,6 +27,7 @@ namespace WriterApp.Application.Users
         private readonly AppDbContext _dbContext;
         private readonly AdminPlanOverrideService _adminPlanOverrideService;
         private readonly AdminAuditService _adminAuditService;
+        private readonly IDeletedUserIdentityService _deletedUserIdentityService;
         private readonly IUserEntitlementStore? _userEntitlementStore;
         private readonly IEntitlementService? _entitlementService;
         private readonly IProjectDeletionService? _projectDeletionService;
@@ -38,6 +40,7 @@ namespace WriterApp.Application.Users
             AppDbContext dbContext,
             AdminPlanOverrideService adminPlanOverrideService,
             AdminAuditService adminAuditService,
+            IDeletedUserIdentityService deletedUserIdentityService,
             IUserEntitlementStore userEntitlementStore,
             IEntitlementService entitlementService,
             IProjectDeletionService projectDeletionService,
@@ -49,6 +52,7 @@ namespace WriterApp.Application.Users
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _adminPlanOverrideService = adminPlanOverrideService ?? throw new ArgumentNullException(nameof(adminPlanOverrideService));
             _adminAuditService = adminAuditService ?? throw new ArgumentNullException(nameof(adminAuditService));
+            _deletedUserIdentityService = deletedUserIdentityService ?? throw new ArgumentNullException(nameof(deletedUserIdentityService));
             _userEntitlementStore = userEntitlementStore ?? throw new ArgumentNullException(nameof(userEntitlementStore));
             _entitlementService = entitlementService ?? throw new ArgumentNullException(nameof(entitlementService));
             _projectDeletionService = projectDeletionService ?? throw new ArgumentNullException(nameof(projectDeletionService));
@@ -62,6 +66,7 @@ namespace WriterApp.Application.Users
             AppDbContext dbContext,
             AdminPlanOverrideService adminPlanOverrideService,
             AdminAuditService adminAuditService,
+            IDeletedUserIdentityService deletedUserIdentityService,
             IUserEntitlementStore userEntitlementStore,
             IEntitlementService entitlementService,
             IProjectDeletionService projectDeletionService,
@@ -70,6 +75,7 @@ namespace WriterApp.Application.Users
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _adminPlanOverrideService = adminPlanOverrideService ?? throw new ArgumentNullException(nameof(adminPlanOverrideService));
             _adminAuditService = adminAuditService ?? throw new ArgumentNullException(nameof(adminAuditService));
+            _deletedUserIdentityService = deletedUserIdentityService ?? throw new ArgumentNullException(nameof(deletedUserIdentityService));
             _userEntitlementStore = userEntitlementStore ?? throw new ArgumentNullException(nameof(userEntitlementStore));
             _entitlementService = entitlementService ?? throw new ArgumentNullException(nameof(entitlementService));
             _projectDeletionService = projectDeletionService ?? throw new ArgumentNullException(nameof(projectDeletionService));
@@ -84,6 +90,7 @@ namespace WriterApp.Application.Users
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _adminPlanOverrideService = adminPlanOverrideService ?? throw new ArgumentNullException(nameof(adminPlanOverrideService));
             _adminAuditService = new AdminAuditService(dbContext);
+            _deletedUserIdentityService = new DeletedUserIdentityService(dbContext);
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -381,6 +388,7 @@ namespace WriterApp.Application.Users
                 UserProfile? profile = await _dbContext.UserProfiles.FirstOrDefaultAsync(item => item.UserId == normalizedUserId, ct);
                 UserEntitlement? entitlement = await _dbContext.UserEntitlements.FirstOrDefaultAsync(item => item.UserId == normalizedUserId, ct);
                 string? targetEmail = ResolveEmail(profile?.Email, profile?.DisplayName, normalizedUserId);
+                bool alreadyDeletedIdentity = await _deletedUserIdentityService.IsDeletedAsync(normalizedUserId, ct);
 
                 if (!allowDeleteWithActiveSubscription && HasActiveSubscription(entitlement))
                 {
@@ -464,6 +472,15 @@ namespace WriterApp.Application.Users
                     deletedUserProfile = true;
                 }
 
+                await _deletedUserIdentityService.UpsertDeletedIdentityAsync(
+                    normalizedUserId,
+                    profile?.Email,
+                    profile?.DisplayName,
+                    adminUserId,
+                    adminEmail,
+                    "AdminDeleteCustomer",
+                    ct);
+
                 await _dbContext.SaveChangesAsync(ct);
 
                 bool alreadyDeleted =
@@ -480,7 +497,8 @@ namespace WriterApp.Application.Users
                     && deletedTokenAdjustments == 0
                     && removedPlanOverrides == 0
                     && !deletedUserProfile
-                    && !deletedEntitlement;
+                    && !deletedEntitlement
+                    && alreadyDeletedIdentity;
 
                 await _adminAuditService.WriteAsync(
                     adminUserId,
@@ -507,7 +525,8 @@ namespace WriterApp.Application.Users
                         deletedUserProfile,
                         deletedEntitlement,
                         externalIdentityPreserved = true,
-                        preservedAuditTrail = true
+                        preservedAuditTrail = true,
+                        blockedSilentReprovisioning = true
                     },
                     ct);
 
@@ -536,10 +555,8 @@ namespace WriterApp.Application.Users
 
             _entitlementService?.InvalidateForUser(normalizedUserId);
 
-            // EasyAuth / external IdP accounts are intentionally not touched here.
-            // Without a separate tombstone/block mechanism, a later sign-in can reprovision a new app user.
             _logger.LogInformation(
-                "Admin deleted customer application data. UserId={UserId} AlreadyDeleted={AlreadyDeleted} DeletedProjects={DeletedProjects}",
+                "Admin deleted customer application data and blocked silent reprovisioning. UserId={UserId} AlreadyDeleted={AlreadyDeleted} DeletedProjects={DeletedProjects}",
                 normalizedUserId,
                 response!.AlreadyDeleted,
                 response.DeletedProjects);
@@ -730,6 +747,10 @@ namespace WriterApp.Application.Users
                         .ExecuteDeleteAsync(ct);
 
                     int removedPlanOverrides = await _dbContext.UserPlanAssignments
+                        .Where(item => item.UserId == normalizedUserId)
+                        .ExecuteDeleteAsync(ct);
+
+                    await _dbContext.DeletedUserIdentities
                         .Where(item => item.UserId == normalizedUserId)
                         .ExecuteDeleteAsync(ct);
 

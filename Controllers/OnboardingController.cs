@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using WriterApp.Application.Documents;
 using WriterApp.Application.Security;
 using WriterApp.Application.Users;
 using WriterApp.Data;
@@ -18,6 +19,8 @@ namespace WriterApp.Controllers
 
         private readonly AppDbContext _dbContext;
         private readonly IUserIdResolver _userIdResolver;
+        private readonly IDeletedUserIdentityService _deletedUserIdentityService;
+        private readonly IOnboardingBootstrapService _onboardingBootstrapService;
         private readonly UserEventService _userEventService;
         private readonly ILogger<OnboardingController> _logger;
         private static readonly HashSet<string> AllowedEventNames = new(StringComparer.OrdinalIgnoreCase)
@@ -33,11 +36,15 @@ namespace WriterApp.Controllers
         public OnboardingController(
             AppDbContext dbContext,
             IUserIdResolver userIdResolver,
+            IDeletedUserIdentityService deletedUserIdentityService,
+            IOnboardingBootstrapService onboardingBootstrapService,
             UserEventService userEventService,
             ILogger<OnboardingController> logger)
         {
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
+            _deletedUserIdentityService = deletedUserIdentityService ?? throw new ArgumentNullException(nameof(deletedUserIdentityService));
+            _onboardingBootstrapService = onboardingBootstrapService ?? throw new ArgumentNullException(nameof(onboardingBootstrapService));
             _userEventService = userEventService ?? throw new ArgumentNullException(nameof(userEventService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
@@ -46,6 +53,10 @@ namespace WriterApp.Controllers
         public async Task<ActionResult<OnboardingStateResponse>> GetState(CancellationToken ct)
         {
             string userId = _userIdResolver.ResolveUserId(User);
+            if (await TryHandleDeletedIdentityAsync(userId, ct) is ObjectResult deletedResult)
+            {
+                return deletedResult;
+            }
             UserProfile profile = await GetOrCreateProfileAsync(userId, ct);
             return Ok(ToStateResponse(profile));
         }
@@ -72,6 +83,10 @@ namespace WriterApp.Controllers
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
+            if (await TryHandleDeletedIdentityAsync(userId, ct) is ObjectResult deletedResult)
+            {
+                return deletedResult;
+            }
             UserProfile profile = await GetOrCreateProfileAsync(userId, ct);
             DateTimeOffset now = DateTimeOffset.UtcNow;
             DateTime nowUtc = now.UtcDateTime;
@@ -128,6 +143,10 @@ namespace WriterApp.Controllers
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
+            if (await TryHandleDeletedIdentityAsync(userId, ct) is ObjectResult deletedResult)
+            {
+                return deletedResult;
+            }
             UserProfile profile = await GetOrCreateProfileAsync(userId, ct);
             DateTimeOffset now = DateTimeOffset.UtcNow;
             DateTime nowUtc = now.UtcDateTime;
@@ -163,6 +182,10 @@ namespace WriterApp.Controllers
         public async Task<ActionResult<OnboardingStateResponse>> Complete(CancellationToken ct)
         {
             string userId = _userIdResolver.ResolveUserId(User);
+            if (await TryHandleDeletedIdentityAsync(userId, ct) is ObjectResult deletedResult)
+            {
+                return deletedResult;
+            }
             UserProfile profile = await GetOrCreateProfileAsync(userId, ct);
             DateTimeOffset now = DateTimeOffset.UtcNow;
             DateTime nowUtc = now.UtcDateTime;
@@ -237,6 +260,10 @@ namespace WriterApp.Controllers
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
+            if (await TryHandleDeletedIdentityAsync(userId, ct) is ObjectResult deletedResult)
+            {
+                return deletedResult;
+            }
             await GetOrCreateProfileAsync(userId, ct);
             await _userEventService.TrackAsync(userId, eventName, request.Metadata, ct);
 
@@ -246,6 +273,59 @@ namespace WriterApp.Controllers
                 eventName);
 
             return Ok(new { ok = true });
+        }
+
+        [HttpPost("bootstrap-workspace")]
+        public async Task<ActionResult<BootstrapWorkspaceResponse>> BootstrapWorkspace(
+            [FromBody] BootstrapWorkspaceRequest? request,
+            CancellationToken ct)
+        {
+            if (request is null)
+            {
+                return BadRequest(new { code = "onboarding.invalid_request", message = "Request body is required." });
+            }
+
+            string normalizedIntent = (request.PrimaryWritingIntent ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(normalizedIntent))
+            {
+                return BadRequest(new { code = "onboarding.invalid_intent", message = "primaryWritingIntent is required." });
+            }
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            if (await TryHandleDeletedIdentityAsync(userId, ct) is ObjectResult deletedResult)
+            {
+                return deletedResult;
+            }
+
+            try
+            {
+                OnboardingBootstrapResult result = await _onboardingBootstrapService.CreateStarterWorkspaceForOnboardingAsync(userId, normalizedIntent, ct);
+                return Ok(new BootstrapWorkspaceResponse(result.ProjectId, result.ProjectTitle, result.FirstSceneNodeId));
+            }
+            catch (OnboardingBootstrapException ex)
+            {
+                _logger.LogWarning(ex, "Onboarding bootstrap failed. UserId={UserId} Code={Code}", userId, ex.Code);
+                return StatusCode(StatusCodes.Status500InternalServerError, new
+                {
+                    code = ex.Code,
+                    message = ex.Message
+                });
+            }
+        }
+
+        private async Task<ObjectResult?> TryHandleDeletedIdentityAsync(string userId, CancellationToken ct)
+        {
+            if (!await _deletedUserIdentityService.IsDeletedAsync(userId, ct))
+            {
+                return null;
+            }
+
+            _logger.LogInformation("Blocked onboarding request for deleted identity. UserId={UserId}", userId);
+            return StatusCode(StatusCodes.Status403Forbidden, new
+            {
+                code = "account_deleted",
+                message = "This Prosa account has been deleted. Sign out before registering again."
+            });
         }
 
         private async Task<UserProfile> GetOrCreateProfileAsync(string userId, CancellationToken ct)
@@ -328,6 +408,8 @@ namespace WriterApp.Controllers
             DateTimeOffset? OnboardingStartedUtc,
             DateTimeOffset? OnboardingCompletedUtc);
 
+        public sealed record BootstrapWorkspaceRequest(string? PrimaryWritingIntent);
+        public sealed record BootstrapWorkspaceResponse(Guid ProjectId, string ProjectTitle, Guid FirstSceneNodeId);
         public sealed record SetOnboardingIntentRequest(string? PrimaryWritingIntent);
         public sealed record SetOnboardingStepRequest(int Step);
         public sealed record OnboardingTrackEventRequest(string? EventName, Dictionary<string, object?>? Metadata);

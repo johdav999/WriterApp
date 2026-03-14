@@ -227,6 +227,42 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
                     b.ToTable("AdminAuditEvents");
                 });
 
+            modelBuilder.Entity("WriterApp.Data.Admin.DeletedUserIdentity", b =>
+                {
+                    b.Property<string>("UserId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<DateTime>("DeletedAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("DeletedByAdminEmail")
+                        .HasMaxLength(320)
+                        .HasColumnType("nvarchar(320)");
+
+                    b.Property<string>("DeletedByAdminUserId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("DisplayName")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("Email")
+                        .HasMaxLength(320)
+                        .HasColumnType("nvarchar(320)");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.HasKey("UserId");
+
+                    b.HasIndex("DeletedAtUtc");
+
+                    b.ToTable("DeletedUserIdentities");
+                });
+
             modelBuilder.Entity("WriterApp.Data.Continuity.BibleSnapshotRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1838,7 +1874,8 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
             modelBuilder.Entity("WriterApp.Data.Subscriptions.UserEntitlement", b =>
                 {
                     b.Property<string>("UserId")
-                        .HasColumnType("nvarchar(450)");
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
 
                     b.Property<int>("AiMonthlyTokenBudget")
                         .HasColumnType("int");
@@ -1910,7 +1947,8 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
             modelBuilder.Entity("WriterApp.Data.Subscriptions.UserProfile", b =>
                 {
                     b.Property<string>("UserId")
-                        .HasColumnType("nvarchar(450)");
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
 
                     b.Property<DateTime>("CreatedUtc")
                         .HasColumnType("datetime2");

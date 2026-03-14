@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using WriterApp.Application.Security;
 using WriterApp.Application.Usage;
 using WriterApp.Data;
 using WriterApp.Data.Subscriptions;
@@ -14,15 +15,18 @@ namespace WriterApp.Application.Subscriptions
     {
         private readonly AppDbContext _dbContext;
         private readonly IClock _clock;
+        private readonly IDeletedUserIdentityService _deletedUserIdentityService;
         private readonly ILogger<UserEntitlementStore>? _logger;
 
         public UserEntitlementStore(
             AppDbContext dbContext,
             IClock clock,
+            IDeletedUserIdentityService deletedUserIdentityService,
             ILogger<UserEntitlementStore>? logger = null)
         {
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _clock = clock ?? throw new ArgumentNullException(nameof(clock));
+            _deletedUserIdentityService = deletedUserIdentityService ?? throw new ArgumentNullException(nameof(deletedUserIdentityService));
             _logger = logger;
         }
 
@@ -32,6 +36,8 @@ namespace WriterApp.Application.Subscriptions
             {
                 throw new ArgumentException("userId is required.", nameof(userId));
             }
+
+            await _deletedUserIdentityService.ThrowIfDeletedAsync(userId, cancellationToken);
 
             UserEntitlement? entitlement = await _dbContext.UserEntitlements
                 .FirstOrDefaultAsync(item => item.UserId == userId, cancellationToken);

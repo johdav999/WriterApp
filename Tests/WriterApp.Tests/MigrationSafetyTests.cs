@@ -40,6 +40,16 @@ namespace WriterApp.Tests
                     connectionString,
                     "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='Projects';");
                 Assert.Equal(1, projectsCount);
+
+                int deletedUsersCount = await ExecuteScalarIntAsync(
+                    connectionString,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='DeletedUserIdentities';");
+                Assert.Equal(1, deletedUsersCount);
+
+                int deletedUsersIndexCount = await ExecuteScalarIntAsync(
+                    connectionString,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='IX_DeletedUserIdentities_DeletedAtUtc';");
+                Assert.Equal(1, deletedUsersIndexCount);
             }
             finally
             {

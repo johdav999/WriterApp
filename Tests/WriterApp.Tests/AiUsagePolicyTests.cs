@@ -178,7 +178,12 @@ namespace WriterApp.Tests
         {
             IMemoryCache cache = new MemoryCache(new MemoryCacheOptions());
             IPlanRepository planRepository = new PlanRepository(dbContext);
-            return new EntitlementService(planRepository, cache);
+            IUserEntitlementStore entitlementStore = new UserEntitlementStore(
+                dbContext,
+                new FixedClock(DateTime.UtcNow),
+                new DeletedUserIdentityService(dbContext),
+                NullLogger<UserEntitlementStore>.Instance);
+            return new EntitlementService(planRepository, entitlementStore, cache);
         }
 
         private static IAiUsagePolicy BuildPolicy(

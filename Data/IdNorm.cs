@@ -7,8 +7,10 @@ namespace WriterApp.Data
         public static string Norm(Guid id)
             => id.ToString("D").ToLowerInvariant();
 
-        public static string Norm(string id)
-            => id?.Trim().ToLowerInvariant();
+        public static string Norm(string? id)
+            => string.IsNullOrWhiteSpace(id)
+                ? string.Empty
+                : id.Trim().ToLowerInvariant();
 
         public static bool TryNormGuidString(string id, out string normalized)
         {

@@ -209,6 +209,7 @@ namespace WriterApp.Tests
             return new UserEntitlementStore(
                 dbContext,
                 new FixedClock(DateTime.UtcNow),
+                new DeletedUserIdentityService(dbContext),
                 NullLogger<UserEntitlementStore>.Instance);
         }
 

@@ -3,7 +3,6 @@
 @using System.Collections.Generic
 @using System.Linq
 @using System.Net.Http.Json
-@using WriterApp.Application.Documents
 @using WriterApp.Client.Services
 @using WriterApp.Client.State
 @inject HttpClient Http
@@ -112,18 +111,15 @@
             await OnboardingService.SetIntentAsync(normalizedIntent);
             await OnboardingService.SetStepAsync(1);
 
-            (ProjectDto? project, Guid? firstSceneNodeId) = await CreateFirstProjectAsync(normalizedIntent);
-            if (project is null)
+            BootstrapWorkspaceResponse? bootstrap = await CreateStarterWorkspaceAsync(normalizedIntent);
+            if (bootstrap is null)
             {
-                _status = "Could not create your first project.";
-                _statusIsError = true;
                 return;
             }
 
-            Guid? sceneNodeId = firstSceneNodeId ?? await TryGetFirstSceneIdAsync(project.Id);
-            if (!sceneNodeId.HasValue)
+            if (bootstrap.FirstSceneNodeId == Guid.Empty)
             {
-                _status = "Project created, but opening the first scene failed.";
+                _status = "Your starter project was created, but opening the first scene failed.";
                 _statusIsError = true;
                 return;
             }
@@ -135,7 +131,7 @@
                     "onboarding_project_created",
                     new Dictionary<string, object?>
                     {
-                        ["projectId"] = project.Id.ToString(),
+                        ["projectId"] = bootstrap.ProjectId.ToString(),
                         ["intent"] = normalizedIntent
                     });
             }
@@ -145,7 +141,7 @@
             }
 
             await OnboardingStateStore.RefreshAsync();
-            Navigation.NavigateTo($"projects/{project.Id}/scenes/{sceneNodeId.Value}", replace: true);
+            Navigation.NavigateTo($"projects/{bootstrap.ProjectId}/scenes/{bootstrap.FirstSceneNodeId}", replace: true);
         }
         catch (Exception ex)
         {
@@ -159,141 +155,25 @@
         }
     }
 
-    private async Task<(ProjectDto? Project, Guid? FirstSceneNodeId)> CreateFirstProjectAsync(string intent)
+    private async Task<BootstrapWorkspaceResponse?> CreateStarterWorkspaceAsync(string intent)
     {
-        string projectName = GetDefaultProjectName(intent);
-        ProjectCreateRequest request = new(projectName, null, null, null, null, null);
-        using HttpResponseMessage response = await Http.PostAsJsonAsync("/api/projects", request);
-        response.EnsureSuccessStatusCode();
-
-        ProjectDto? created = await response.Content.ReadFromJsonAsync<ProjectDto>();
-        if (created is null)
-        {
-            return (null, null);
-        }
-
-        Guid? firstSceneNodeId = await BuildInitialStructureAsync(created.Id, intent);
-        return (created, firstSceneNodeId);
-    }
-
-    private async Task<Guid?> TryGetFirstSceneIdAsync(Guid projectId)
-    {
-        try
-        {
-            using HttpResponseMessage response = await Http.GetAsync($"/api/projects/{projectId}/tree");
-            if (!response.IsSuccessStatusCode)
-            {
-                return null;
-            }
-
-            ProjectTreeDto? tree = await response.Content.ReadFromJsonAsync<ProjectTreeDto>();
-            ProjectNodeDto? firstScene = tree is null ? null : FindFirstScene(tree.Nodes);
-            return firstScene?.Id;
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private async Task<Guid?> BuildInitialStructureAsync(Guid projectId, string intent)
-    {
-        string normalized = NormalizeIntent(intent);
-        return normalized switch
-        {
-            "Novel" => await BuildNovelStructureAsync(projectId),
-            "Blog" => await BuildBlogStructureAsync(projectId),
-            "NonFiction" => await BuildNonFictionStructureAsync(projectId),
-            "ShortStory" => await BuildShortStoryStructureAsync(projectId),
-            _ => await BuildOtherStructureAsync(projectId)
-        };
-    }
-
-    private async Task<Guid?> BuildNovelStructureAsync(Guid projectId)
-    {
-        ProjectNodeDto? act1 = await CreateNodeAsync(projectId, null, "part", "Act I");
-        if (act1 is null)
-        {
-            return null;
-        }
-
-        ProjectNodeDto? scene1 = await CreateNodeAsync(projectId, act1.Id, "scene", "Scene 1");
-        return scene1?.Id;
-    }
-
-    private async Task<Guid?> BuildBlogStructureAsync(Guid projectId)
-    {
-        ProjectNodeDto? draft = await CreateNodeAsync(projectId, null, "chapter", "Draft");
-        await CreateNodeAsync(projectId, null, "chapter", "Headline Ideas");
-        if (draft is null)
-        {
-            return null;
-        }
-
-        ProjectNodeDto? scene = await CreateNodeAsync(projectId, draft.Id, "scene", "Scene 1");
-        return scene?.Id;
-    }
-
-    private async Task<Guid?> BuildNonFictionStructureAsync(Guid projectId)
-    {
-        ProjectNodeDto? chapter1 = await CreateNodeAsync(projectId, null, "chapter", "Chapter 1");
-        await CreateNodeAsync(projectId, null, "chapter", "Research");
-        if (chapter1 is null)
-        {
-            return null;
-        }
-
-        ProjectNodeDto? scene = await CreateNodeAsync(projectId, chapter1.Id, "scene", "Scene 1");
-        return scene?.Id;
-    }
-
-    private async Task<Guid?> BuildShortStoryStructureAsync(Guid projectId)
-    {
-        ProjectNodeDto? draft = await CreateNodeAsync(projectId, null, "chapter", "Draft");
-        await CreateNodeAsync(projectId, null, "chapter", "Ending Notes");
-        if (draft is null)
-        {
-            return null;
-        }
-
-        ProjectNodeDto? scene = await CreateNodeAsync(projectId, draft.Id, "scene", "Scene 1");
-        return scene?.Id;
-    }
-
-    private async Task<Guid?> BuildOtherStructureAsync(Guid projectId)
-    {
-        ProjectNodeDto? draft = await CreateNodeAsync(projectId, null, "chapter", "Draft");
-        if (draft is null)
-        {
-            return null;
-        }
-
-        ProjectNodeDto? scene = await CreateNodeAsync(projectId, draft.Id, "scene", "Scene 1");
-        return scene?.Id;
-    }
-
-    private async Task<ProjectNodeDto?> CreateNodeAsync(
-        Guid projectId,
-        Guid? parentId,
-        string nodeType,
-        string title)
-    {
-        ProjectNodeCreateRequest request = new(parentId, nodeType, title, null, null, null);
-        using HttpResponseMessage response = await Http.PostAsJsonAsync($"api/projects/{projectId}/nodes", request);
+        using HttpResponseMessage response = await Http.PostAsJsonAsync(
+            "/api/onboarding/bootstrap-workspace",
+            new BootstrapWorkspaceRequest(intent));
         if (!response.IsSuccessStatusCode)
         {
+            BootstrapErrorResponse? error = await response.Content.ReadFromJsonAsync<BootstrapErrorResponse>();
+            _status = error?.Code switch
+            {
+                "project_create_failed" => "We couldn't create your first project.",
+                "starter_structure_failed" => "We created your project, but setting up the starter structure failed.",
+                _ => "We couldn't set up onboarding right now. Please try again."
+            };
+            _statusIsError = true;
             return null;
         }
 
-        return await response.Content.ReadFromJsonAsync<ProjectNodeDto>();
-    }
-
-    private static ProjectNodeDto? FindFirstScene(IReadOnlyList<ProjectNodeDto> nodes)
-    {
-        return nodes
-            .Where(node => string.Equals(node.NodeType, "scene", StringComparison.OrdinalIgnoreCase))
-            .OrderBy(node => node.OrderIndex)
-            .FirstOrDefault();
+        return await response.Content.ReadFromJsonAsync<BootstrapWorkspaceResponse>();
     }
 
     private static string NormalizeIntent(string raw)
@@ -312,18 +192,6 @@
         };
     }
 
-    private static string GetDefaultProjectName(string intent)
-    {
-        return NormalizeIntent(intent) switch
-        {
-            "Novel" => "My Novel",
-            "ShortStory" => "My Short Story",
-            "NonFiction" => "My Non-fiction Draft",
-            "Blog" => "My Blog Post",
-            _ => "My First Project"
-        };
-    }
-
     private string ResolveIntentKey(string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw))
@@ -337,5 +205,8 @@
         return match?.Key ?? "Other";
     }
 
+    private sealed record BootstrapWorkspaceRequest(string PrimaryWritingIntent);
+    private sealed record BootstrapWorkspaceResponse(Guid ProjectId, string ProjectTitle, Guid FirstSceneNodeId);
+    private sealed record BootstrapErrorResponse(string? Code, string? Message);
     private sealed record IntentOption(string Key, string Label, string Subtitle, string Icon);
 }

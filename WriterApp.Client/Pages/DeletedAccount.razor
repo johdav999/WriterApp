@@ -1,0 +1,24 @@
+@page "/deleted-account"
+@page "/app/deleted-account"
+@using WriterApp.Client.State
+@using WriterApp.Client.Utilities
+@inject NavigationManager Navigation
+@inject DeletedAccountStateService DeletedAccountStateService
+
+<PageTitle>Account deleted</PageTitle>
+
+<div class="projects-page">
+    <header class="projects-header">
+        <div>
+            <h1>Account deleted</h1>
+            <p class="projects-subtitle">@DeletedAccountStateService.Message</p>
+        </div>
+    </header>
+
+    <div class="projects-actions">
+        <a class="primary"
+           href="@EasyAuthUrlBuilder.BuildLogoutUrl(Navigation.BaseUri, SafeReturnUrl.DefaultHomePath, SafeReturnUrl.DefaultHomePath)">
+            Sign out
+        </a>
+    </div>
+</div>
