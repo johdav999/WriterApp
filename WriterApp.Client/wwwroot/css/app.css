@@ -1,8 +1,8 @@
 @import url("design-tokens.css");
 
 :root {
-    --app-brand-logo-height: 44px;
-    --app-brand-logo-height-mobile: 38px;
+    --app-brand-logo-height: 56px;
+    --app-brand-logo-height-mobile: 48px;
 }
 
 .wa-icon {

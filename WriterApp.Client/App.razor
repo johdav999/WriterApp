@@ -58,8 +58,10 @@
         return normalized.StartsWith("/login", StringComparison.OrdinalIgnoreCase)
             || normalized.StartsWith("/logout", StringComparison.OrdinalIgnoreCase)
             || normalized.StartsWith("/start", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("/deleted-account", StringComparison.OrdinalIgnoreCase)
             || normalized.StartsWith("/app/login", StringComparison.OrdinalIgnoreCase)
             || normalized.StartsWith("/app/logout", StringComparison.OrdinalIgnoreCase)
-            || normalized.StartsWith("/app/start", StringComparison.OrdinalIgnoreCase);
+            || normalized.StartsWith("/app/start", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("/app/deleted-account", StringComparison.OrdinalIgnoreCase);
     }
 }

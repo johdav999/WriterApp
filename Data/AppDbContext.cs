@@ -24,6 +24,7 @@ namespace WriterApp.Data
         public DbSet<UserProfile> UserProfiles => Set<UserProfile>();
         public DbSet<UserEntitlement> UserEntitlements => Set<UserEntitlement>();
         public DbSet<AdminAuditEvent> AdminAuditEvents => Set<AdminAuditEvent>();
+        public DbSet<DeletedUserIdentity> DeletedUserIdentities => Set<DeletedUserIdentity>();
         public DbSet<StripeEventLog> StripeEventLogs => Set<StripeEventLog>();
         public DbSet<Plan> Plans => Set<Plan>();
         public DbSet<PlanEntitlement> PlanEntitlements => Set<PlanEntitlement>();
@@ -110,6 +111,7 @@ namespace WriterApp.Data
             builder.Entity<UserProfile>(entity =>
             {
                 entity.HasKey(profile => profile.UserId);
+                entity.Property(profile => profile.UserId).HasMaxLength(128).IsRequired();
                 entity.Property(profile => profile.Email).HasMaxLength(320);
                 entity.Property(profile => profile.CreatedUtc).IsRequired();
                 entity.Property(profile => profile.HasOnboarded).IsRequired();
@@ -125,6 +127,7 @@ namespace WriterApp.Data
             builder.Entity<UserEntitlement>(entity =>
             {
                 entity.HasKey(entitlement => entitlement.UserId);
+                entity.Property(entitlement => entitlement.UserId).HasMaxLength(128).IsRequired();
                 entity.Property(entitlement => entitlement.PlanKey).IsRequired();
                 entity.Property(entitlement => entitlement.SubscriptionStatus).IsRequired();
                 entity.Property(entitlement => entitlement.CreatedAt).IsRequired();
@@ -150,6 +153,19 @@ namespace WriterApp.Data
                 entity.HasIndex(audit => audit.AdminUserId);
                 entity.HasIndex(audit => audit.TargetUserId);
                 entity.HasIndex(audit => audit.Action);
+            });
+
+            builder.Entity<DeletedUserIdentity>(entity =>
+            {
+                entity.HasKey(item => item.UserId);
+                entity.Property(item => item.UserId).HasMaxLength(128).IsRequired();
+                entity.Property(item => item.Email).HasMaxLength(320);
+                entity.Property(item => item.DisplayName).HasMaxLength(256);
+                entity.Property(item => item.DeletedByAdminUserId).HasMaxLength(128);
+                entity.Property(item => item.DeletedByAdminEmail).HasMaxLength(320);
+                entity.Property(item => item.Reason).HasMaxLength(256);
+                entity.Property(item => item.DeletedAtUtc).IsRequired();
+                entity.HasIndex(item => item.DeletedAtUtc);
             });
 
             builder.Entity<StripeEventLog>(entity =>

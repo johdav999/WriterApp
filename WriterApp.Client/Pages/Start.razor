@@ -12,13 +12,14 @@
 <p>@_statusMessage</p>
 @if (!string.IsNullOrWhiteSpace(_signInUrl))
 {
-    <p><a href="@_signInUrl">Sign in</a></p>
+    <p><a href="@_signInUrl">@(_showDeletedAccountMessage ? "Sign out" : "Sign in")</a></p>
 }
 
 @code {
     private const string DefaultReturnUrl = SafeReturnUrl.DefaultProjectsPath;
     private string _statusMessage = "Preparing your workspace...";
     private string? _signInUrl;
+    private bool _showDeletedAccountMessage;
 
     protected override async Task OnInitializedAsync()
     {
@@ -29,6 +30,12 @@
         string returnUrl = ResolveReturnUrl(query);
 
         AuthMeResponse? auth = await TryGetAuthMeAsync();
+        if (_showDeletedAccountMessage)
+        {
+            _signInUrl = EasyAuthUrlBuilder.BuildLogoutUrl(Navigation.BaseUri, SafeReturnUrl.DefaultHomePath, SafeReturnUrl.DefaultHomePath);
+            return;
+        }
+
         if (auth is null || auth.IsAuthenticated != true || string.IsNullOrWhiteSpace(auth.UserId))
         {
             _statusMessage = "You are not signed in. Please use the sign-in link.";
@@ -65,6 +72,17 @@
         try
         {
             using HttpResponseMessage response = await Http.GetAsync("/api/auth/me");
+            if (response.StatusCode == HttpStatusCode.Forbidden)
+            {
+                DeletedAccountResponse? deleted = await response.Content.ReadFromJsonAsync<DeletedAccountResponse>();
+                if (string.Equals(deleted?.Code, "account_deleted", StringComparison.Ordinal))
+                {
+                    _showDeletedAccountMessage = true;
+                    _statusMessage = deleted?.Message ?? "This Prosa account has been deleted. Sign out before registering again.";
+                    return null;
+                }
+            }
+
             if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
             {
                 return null;
@@ -230,6 +248,12 @@
     private sealed class UserProfileResponse
     {
         public bool HasOnboarded { get; init; }
+    }
+
+    private sealed class DeletedAccountResponse
+    {
+        public string? Code { get; init; }
+        public string? Message { get; init; }
     }
 
     private static string ToQueryValue(PlanTier plan)

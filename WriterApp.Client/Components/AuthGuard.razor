@@ -1,8 +1,10 @@
 @using WriterApp.Client.Services
+@using WriterApp.Client.State
 @using WriterApp.Client.Utilities
 @using Microsoft.Extensions.Logging
 @inject NavigationManager Navigation
 @inject AuthStateService AuthState
+@inject DeletedAccountStateService DeletedAccountStateService
 @inject ILogger<AuthGuard> Logger
 
 @if (_showContent)
@@ -73,6 +75,18 @@ else
             state.IsAuthenticated,
             AuthState.HasResolvedState);
 
+        if (state.IsDeletedAccount || DeletedAccountStateService.IsDeletedAccount)
+        {
+            _showContent = false;
+            _isChecking = false;
+            if (!IsDeletedAccountPath(currentPath))
+            {
+                Navigation.NavigateTo("/app/deleted-account", replace: true);
+            }
+
+            return;
+        }
+
         if (_probeState.IsAuthenticated)
         {
             _showContent = true;
@@ -123,5 +137,11 @@ else
         return string.IsNullOrWhiteSpace(pathAndQuery)
             ? "/"
             : pathAndQuery;
+    }
+
+    private static bool IsDeletedAccountPath(string path)
+    {
+        return path.StartsWith("/deleted-account", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/app/deleted-account", StringComparison.OrdinalIgnoreCase);
     }
 }

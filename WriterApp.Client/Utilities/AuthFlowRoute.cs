@@ -20,9 +20,11 @@ namespace WriterApp.Client.Utilities
             return path.Equals("/login", StringComparison.OrdinalIgnoreCase)
                 || path.Equals("/logout", StringComparison.OrdinalIgnoreCase)
                 || path.Equals("/start", StringComparison.OrdinalIgnoreCase)
+                || path.Equals("/deleted-account", StringComparison.OrdinalIgnoreCase)
                 || path.Equals("/app/login", StringComparison.OrdinalIgnoreCase)
                 || path.Equals("/app/logout", StringComparison.OrdinalIgnoreCase)
                 || path.Equals("/app/start", StringComparison.OrdinalIgnoreCase)
+                || path.Equals("/app/deleted-account", StringComparison.OrdinalIgnoreCase)
                 || path.Equals("/.auth", StringComparison.OrdinalIgnoreCase)
                 || path.StartsWith("/.auth/", StringComparison.OrdinalIgnoreCase);
         }

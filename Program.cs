@@ -249,6 +249,7 @@ else
 // Domain services
 builder.Services.AddScoped<IPlanRepository, PlanRepository>();
 builder.Services.AddScoped<IUserEntitlementStore, UserEntitlementStore>();
+builder.Services.AddScoped<IDeletedUserIdentityService, DeletedUserIdentityService>();
 builder.Services.AddScoped<IEntitlementService, EntitlementService>();
 builder.Services.AddScoped<IUserIdResolver, UserIdResolver>();
 builder.Services.AddScoped<IPlanAssignmentService, PlanAssignmentService>();
@@ -279,6 +280,7 @@ builder.Services.AddScoped<WriterApp.Application.Documents.IProjectWordCountServ
 builder.Services.AddScoped<WriterApp.Application.Documents.IProjectGoalsService, WriterApp.Application.Documents.ProjectGoalsService>();
 builder.Services.AddScoped<WriterApp.Application.Documents.IProjectSceneLinkingService, WriterApp.Application.Documents.ProjectSceneLinkingService>();
 builder.Services.AddScoped<WriterApp.Application.Documents.IProjectDeletionService, WriterApp.Application.Documents.ProjectDeletionService>();
+builder.Services.AddScoped<WriterApp.Application.Documents.IOnboardingBootstrapService, WriterApp.Application.Documents.OnboardingBootstrapService>();
 builder.Services.AddScoped<WriterApp.Application.Exporting.IOutlineOrderResolver, WriterApp.Application.Exporting.OutlineOrderResolver>();
 builder.Services.AddScoped<WriterApp.Application.Documents.ISceneContentBackfillService, WriterApp.Application.Documents.SceneContentBackfillService>();
 builder.Services.AddSingleton<WriterApp.Application.Commands.IStructureCommandProcessor, WriterApp.Application.Commands.StructureCommandProcessor>();
@@ -868,6 +870,26 @@ app.Use(async (context, next) =>
             context.Response.StatusCode = StatusCodes.Status402PaymentRequired;
             context.Response.ContentType = "application/problem+json";
             await context.Response.WriteAsJsonAsync(payload);
+            return;
+        }
+
+        if (ex is DeletedUserIdentityException)
+        {
+            logger.LogInformation(
+                ex,
+                "API request blocked for deleted identity. Method={Method} Path={Path} DurationMs={DurationMs} CorrelationId={CorrelationId}",
+                context.Request.Method,
+                context.Request.Path.Value,
+                stopwatch.ElapsedMilliseconds,
+                correlationId);
+
+            await WriteApiProblemDetailsAsync(
+                context,
+                StatusCodes.Status403Forbidden,
+                "Account deleted",
+                "This Prosa account has been deleted. Sign out before registering again.",
+                "account_deleted",
+                correlationId);
             return;
         }
 
@@ -1843,6 +1865,7 @@ app.MapGet("/api/auth/me", async (
     HttpContext context,
     AppDbContext dbContext,
     IUserIdResolver userIdResolver,
+    IDeletedUserIdentityService deletedUserIdentityService,
     IUserEntitlementStore userEntitlementStore,
     ILoggerFactory loggerFactory,
     CancellationToken ct) =>
@@ -1903,6 +1926,16 @@ app.MapGet("/api/auth/me", async (
 
     ExternalIdentityClaims.UserProfileIdentity profileIdentity =
         ExternalIdentityClaims.MapToUserProfileIdentity(user.Claims, userId);
+
+    if (await deletedUserIdentityService.IsDeletedAsync(userId, ct))
+    {
+        logger.LogInformation("Blocked auth probe for deleted identity. UserId={UserId}", userId);
+        return Results.Json(new
+        {
+            code = "account_deleted",
+            message = "This Prosa account has been deleted. Sign out before registering again."
+        }, statusCode: StatusCodes.Status403Forbidden);
+    }
 
     List<string> roles = user.FindAll(ClaimTypes.Role)
         .Select(c => c.Value)

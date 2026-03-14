@@ -53,6 +53,7 @@ namespace WriterApp.Application.Subscriptions
             _cache = cache ?? throw new ArgumentNullException(nameof(cache));
         }
 
+        [Obsolete("Test-only fallback constructor. Production should supply IUserEntitlementStore to preserve deleted-account enforcement.")]
         public EntitlementService(
             IPlanRepository planRepository,
             IMemoryCache cache)

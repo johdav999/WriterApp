@@ -14,17 +14,27 @@ namespace WriterApp.Controllers
     {
         private readonly AppDbContext _dbContext;
         private readonly IUserIdResolver _userIdResolver;
+        private readonly IDeletedUserIdentityService _deletedUserIdentityService;
 
-        public UserProfileController(AppDbContext dbContext, IUserIdResolver userIdResolver)
+        public UserProfileController(AppDbContext dbContext, IUserIdResolver userIdResolver, IDeletedUserIdentityService deletedUserIdentityService)
         {
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
+            _deletedUserIdentityService = deletedUserIdentityService ?? throw new ArgumentNullException(nameof(deletedUserIdentityService));
         }
 
         [HttpGet]
         public async Task<ActionResult<UserProfileDto>> Get(CancellationToken ct)
         {
             string userId = _userIdResolver.ResolveUserId(User);
+            if (await _deletedUserIdentityService.IsDeletedAsync(userId, ct))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new
+                {
+                    code = "account_deleted",
+                    message = "This Prosa account has been deleted. Sign out before registering again."
+                });
+            }
             UserProfile? profile = await _dbContext.UserProfiles
                 .FirstOrDefaultAsync(item => item.UserId == userId, ct);
 
@@ -49,6 +59,14 @@ namespace WriterApp.Controllers
         public async Task<ActionResult<UserProfileDto>> CompleteOnboarding(CancellationToken ct)
         {
             string userId = _userIdResolver.ResolveUserId(User);
+            if (await _deletedUserIdentityService.IsDeletedAsync(userId, ct))
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new
+                {
+                    code = "account_deleted",
+                    message = "This Prosa account has been deleted. Sign out before registering again."
+                });
+            }
             DateTime now = DateTime.UtcNow;
 
             UserProfile? profile = await _dbContext.UserProfiles

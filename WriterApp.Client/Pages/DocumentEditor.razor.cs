@@ -4828,7 +4828,12 @@ namespace WriterApp.Client.Pages
                     return false;
                 }
 
-                remapped.Add(new AiTextOperationDto(operation.Type, from, to, operation.Text, operation.ExpectedText));
+                remapped.Add(new AiTextOperationDto(
+                    operation.Type?.Trim() ?? string.Empty,
+                    from,
+                    to,
+                    operation.Text,
+                    operation.ExpectedText));
                 lastEnd = Math.Max(lastEnd, to);
             }
 
@@ -4985,7 +4990,7 @@ namespace WriterApp.Client.Pages
             out string? error)
         {
             error = null;
-            int length = beforePlain?.Length ?? 0;
+            int length = beforePlain.Length;
 
             List<AiTextOperationDto> ascending = operations
                 .OrderBy(operation => operation.From)
@@ -8315,11 +8320,11 @@ private const string PreviewBootstrapScript = @"
             }
         }
 
-        private async Task OnOnboardingWalkthroughSkipAsync()
+        private Task OnOnboardingWalkthroughSkipAsync()
         {
             if (_onboardingWalkthroughBusy)
             {
-                return;
+                return Task.CompletedTask;
             }
 
             _onboardingWalkthroughBusy = true;
@@ -8339,6 +8344,8 @@ private const string PreviewBootstrapScript = @"
                 _onboardingWalkthroughBusy = false;
                 SyncOnboardingOverlayState();
             }
+
+            return Task.CompletedTask;
         }
 
         private async Task EnsureOnboardingStarterTextAsync()

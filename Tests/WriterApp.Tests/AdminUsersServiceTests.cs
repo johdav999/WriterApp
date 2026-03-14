@@ -478,6 +478,35 @@ namespace WriterApp.Tests
         }
 
         [Fact]
+        public async Task DeleteUser_WritesDeletedIdentityTombstone_AndBlocksEntitlementReprovision()
+        {
+            await using SqliteConnection connection = new("Data Source=:memory:");
+            await connection.OpenAsync();
+            await using AppDbContext dbContext = BuildDbContext(connection);
+            SeedUsers(dbContext, count: 1);
+
+            AdminUsersService service = BuildService(dbContext);
+
+            _ = await service.DeleteUserAsync(
+                "user-0",
+                allowDeleteWithActiveSubscription: true,
+                "admin-1",
+                "admin@example.com");
+
+            DeletedUserIdentity? tombstone = await dbContext.DeletedUserIdentities.FirstOrDefaultAsync(item => item.UserId == "user-0");
+            Assert.NotNull(tombstone);
+
+            IUserEntitlementStore entitlementStore = new UserEntitlementStore(
+                dbContext,
+                new FixedClock(DateTime.UtcNow),
+                new DeletedUserIdentityService(dbContext),
+                NullLogger<UserEntitlementStore>.Instance);
+
+            await Assert.ThrowsAsync<DeletedUserIdentityException>(() =>
+                entitlementStore.GetOrCreateAsync("user-0", CancellationToken.None));
+        }
+
+        [Fact]
         public async Task ProjectDeletion_StandalonePath_StillDeletesProject()
         {
             await using SqliteConnection connection = new("Data Source=:memory:");
@@ -561,9 +590,11 @@ namespace WriterApp.Tests
         private static AdminUsersService BuildService(AppDbContext dbContext, IProjectDeletionService? projectDeletionService = null)
         {
             AdminAuditService auditService = new(dbContext, NullLogger<AdminAuditService>.Instance);
+            DeletedUserIdentityService deletedUserIdentityService = new(dbContext);
             IUserEntitlementStore entitlementStore = new UserEntitlementStore(
                 dbContext,
                 new FixedClock(DateTime.UtcNow),
+                deletedUserIdentityService,
                 NullLogger<UserEntitlementStore>.Instance);
             IEntitlementService entitlementService = new EntitlementService(
                 new PlanRepository(dbContext),
@@ -583,6 +614,7 @@ namespace WriterApp.Tests
                 dbContext,
                 overrideService,
                 auditService,
+                deletedUserIdentityService,
                 entitlementStore,
                 entitlementService,
                 projectDeletionService,

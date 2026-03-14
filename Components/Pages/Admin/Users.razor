@@ -286,7 +286,7 @@
     <div class="modal-backdrop">
         <div class="modal-panel">
             <h2>Delete customer</h2>
-            <p>This permanently deletes the user's application data in Prosa. It does not delete their Microsoft/Google account.</p>
+            <p>This permanently deletes the user's application data in Prosa and blocks automatic reprovisioning for the same sign-in identity. It does not delete their Microsoft/Google account.</p>
             <p><strong>User:</strong> @_deleteTarget.UserId</p>
             <label>Type DELETE to confirm</label>
             <input type="text" class="form-control" @bind="_deleteConfirmationInput" @bind:event="oninput" />
@@ -378,7 +378,7 @@
             </div>
 
             <h3>Delete customer</h3>
-            <p class="error-text">This permanently deletes the user's Prosa application data. Their external sign-in account is not deleted.</p>
+            <p class="error-text">This permanently deletes the user's Prosa application data and blocks automatic reprovisioning. Their external sign-in account is not deleted.</p>
             <div class="drawer-actions">
                 <button class="btn btn-danger" @onclick="PromptDeleteSelectedUser">Delete customer</button>
             </div>
@@ -1023,7 +1023,11 @@
                 allowDeleteWithActiveSubscription,
                 adminActor.UserId,
                 adminActor.Email);
-            AddToast(response.AlreadyDeleted ? "Customer data was already deleted." : "Customer application data deleted.", "success");
+            AddToast(
+                response.AlreadyDeleted
+                    ? "Customer was already deleted and remains blocked from automatic reprovisioning."
+                    : "Customer application data deleted and automatic reprovisioning blocked.",
+                "success");
             _showDeleteConfirm = false;
             _deleteTarget = null;
             _deleteConfirmationInput = null;

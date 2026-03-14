@@ -7,6 +7,7 @@
 @inject NavigationManager Navigation
 @inject HttpClient Http
 @inject AuthMeStateService AuthMeStateService
+@inject DeletedAccountStateService DeletedAccountStateService
 @inject OnboardingStateStore OnboardingStateStore
 @inject ILogger<OnboardingGuard> Logger
 @implements IDisposable
@@ -43,6 +44,8 @@
         {
             string currentPath = BuildCurrentPathAndQuery();
             if (AuthFlowRoute.IsAuthFlowPath(currentPath)
+                || currentPath.StartsWith("/deleted-account", StringComparison.OrdinalIgnoreCase)
+                || currentPath.StartsWith("/app/deleted-account", StringComparison.OrdinalIgnoreCase)
                 || currentPath.StartsWith("/onboarding", StringComparison.OrdinalIgnoreCase)
                 || currentPath.StartsWith("/app/onboarding", StringComparison.OrdinalIgnoreCase))
             {
@@ -50,6 +53,12 @@
             }
 
             await AuthMeStateService.RefreshAsync();
+            if (AuthMeStateService.IsDeletedAccount || DeletedAccountStateService.IsDeletedAccount)
+            {
+                Navigation.NavigateTo("/app/deleted-account", replace: true);
+                return;
+            }
+
             if (!AuthMeStateService.IsAuthenticated)
             {
                 return;

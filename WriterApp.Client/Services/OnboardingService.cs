@@ -1,20 +1,34 @@
 using System.Net;
 using System.Net.Http.Json;
+using WriterApp.Client.State;
+using WriterApp.Client.Utilities;
 
 namespace WriterApp.Client.Services
 {
     public sealed class OnboardingService
     {
         private readonly HttpClient _http;
+        private readonly DeletedAccountStateService _deletedAccountStateService;
 
-        public OnboardingService(HttpClient http)
+        public OnboardingService(HttpClient http, DeletedAccountStateService deletedAccountStateService)
         {
             _http = http ?? throw new ArgumentNullException(nameof(http));
+            _deletedAccountStateService = deletedAccountStateService ?? throw new ArgumentNullException(nameof(deletedAccountStateService));
         }
 
         public async Task<OnboardingState> GetStateAsync()
         {
             using HttpResponseMessage response = await _http.GetAsync("/api/onboarding/state");
+            if (response.StatusCode == HttpStatusCode.Forbidden)
+            {
+                DeletedAccountApiResponse? deleted = await DeletedAccountApiResponseReader.TryReadAsync(response);
+                if (deleted is not null)
+                {
+                    _deletedAccountStateService.MarkDeleted(deleted.Message);
+                    return OnboardingState.Default;
+                }
+            }
+
             if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
             {
                 return OnboardingState.Default;
@@ -34,6 +48,10 @@ namespace WriterApp.Client.Services
         {
             SetOnboardingIntentRequest request = new(intent);
             using HttpResponseMessage response = await _http.PostAsJsonAsync("/api/onboarding/intent", request);
+            if (await HandleDeletedAccountAsync(response))
+            {
+                return;
+            }
             response.EnsureSuccessStatusCode();
         }
 
@@ -41,12 +59,20 @@ namespace WriterApp.Client.Services
         {
             SetOnboardingStepRequest request = new(step);
             using HttpResponseMessage response = await _http.PostAsJsonAsync("/api/onboarding/step", request);
+            if (await HandleDeletedAccountAsync(response))
+            {
+                return;
+            }
             response.EnsureSuccessStatusCode();
         }
 
         public async Task CompleteAsync()
         {
             using HttpResponseMessage response = await _http.PostAsync("/api/onboarding/complete", content: null);
+            if (await HandleDeletedAccountAsync(response))
+            {
+                return;
+            }
             response.EnsureSuccessStatusCode();
         }
 
@@ -59,7 +85,23 @@ namespace WriterApp.Client.Services
 
             TrackOnboardingEventRequest request = new(eventName.Trim(), metadata);
             using HttpResponseMessage response = await _http.PostAsJsonAsync("/api/onboarding/event", request);
+            if (await HandleDeletedAccountAsync(response))
+            {
+                return;
+            }
             response.EnsureSuccessStatusCode();
+        }
+
+        private async Task<bool> HandleDeletedAccountAsync(HttpResponseMessage response)
+        {
+            DeletedAccountApiResponse? deleted = await DeletedAccountApiResponseReader.TryReadAsync(response);
+            if (deleted is not null)
+            {
+                _deletedAccountStateService.MarkDeleted(deleted.Message);
+                return true;
+            }
+
+            return false;
         }
 
         private sealed record OnboardingStateResponse(

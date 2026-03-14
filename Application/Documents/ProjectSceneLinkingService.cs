@@ -3,6 +3,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using WriterApp.Data;
 using WriterApp.Data.Documents;
 
@@ -12,6 +13,8 @@ namespace WriterApp.Application.Documents
     {
         Task<DocumentRecord?> GetOrCreateManuscriptDocumentAsync(Guid projectId, string ownerUserId, CancellationToken ct);
 
+        Task<DocumentRecord?> GetOrCreateManuscriptDocumentAsync(ProjectRecord project, string ownerUserId, CancellationToken ct);
+
         Task<SceneLinkResult?> EnsureSceneLinkedSectionAsync(Guid projectId, Guid sceneNodeId, string ownerUserId, CancellationToken ct);
 
         Task<SceneLinkResult?> EnsureSceneLinkedSectionAsync(ProjectRecord project, ProjectNodeRecord sceneNode, string ownerUserId, CancellationToken ct);
@@ -19,7 +22,7 @@ namespace WriterApp.Application.Documents
         Task<IReadOnlyList<ManuscriptSceneSectionItem>> GetManuscriptSceneSectionsAsync(Guid projectId, string ownerUserId, CancellationToken ct);
     }
 
-    public sealed record SceneLinkResult(Guid DocumentId, Guid SectionId);
+    public sealed record SceneLinkResult(Guid DocumentId, Guid SectionId, bool ManuscriptCreated, bool SectionCreated, bool PageCreated);
 
     public sealed record ManuscriptSceneSectionItem(
         ProjectNodeRecord SceneNode,
@@ -30,10 +33,12 @@ namespace WriterApp.Application.Documents
     public sealed class ProjectSceneLinkingService : IProjectSceneLinkingService
     {
         private readonly AppDbContext _dbContext;
+        private readonly ILogger<ProjectSceneLinkingService>? _logger;
 
-        public ProjectSceneLinkingService(AppDbContext dbContext)
+        public ProjectSceneLinkingService(AppDbContext dbContext, ILogger<ProjectSceneLinkingService>? logger = null)
         {
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
+            _logger = logger;
         }
 
         public async Task<DocumentRecord?> GetOrCreateManuscriptDocumentAsync(Guid projectId, string ownerUserId, CancellationToken ct)
@@ -41,6 +46,21 @@ namespace WriterApp.Application.Documents
             ProjectRecord? project = await _dbContext.Projects
                 .FirstOrDefaultAsync(item => item.Id == projectId && item.OwnerUserId == ownerUserId, ct);
             if (project is null)
+            {
+                return null;
+            }
+
+            return await GetOrCreateManuscriptDocumentInternalAsync(project, ownerUserId, ct);
+        }
+
+        public async Task<DocumentRecord?> GetOrCreateManuscriptDocumentAsync(ProjectRecord project, string ownerUserId, CancellationToken ct)
+        {
+            if (project is null)
+            {
+                throw new ArgumentNullException(nameof(project));
+            }
+
+            if (!string.Equals(project.OwnerUserId, ownerUserId, StringComparison.Ordinal))
             {
                 return null;
             }
@@ -81,8 +101,10 @@ namespace WriterApp.Application.Documents
                 return null;
             }
 
-            DocumentRecord manuscript = await GetOrCreateManuscriptDocumentInternalAsync(project, ownerUserId, ct);
+            (DocumentRecord manuscript, bool manuscriptCreated) = await GetOrCreateManuscriptDocumentWithStateAsync(project, ownerUserId, ct);
             SectionRecord? linkedSection = null;
+            bool sectionCreated = false;
+            bool pageCreated = false;
 
             if (sceneNode.LinkedSectionId.HasValue)
             {
@@ -96,47 +118,20 @@ namespace WriterApp.Application.Documents
 
             if (linkedSection is null)
             {
-                DateTimeOffset now = DateTimeOffset.UtcNow;
-                int nextOrder = await _dbContext.Sections
-                    .Where(item => item.DocumentId == manuscript.Id)
-                    .Select(item => (int?)item.OrderIndex)
-                    .MaxAsync(ct) ?? -1;
-                nextOrder += 1;
-
-                linkedSection = new SectionRecord
-                {
-                    Id = Guid.NewGuid(),
-                    DocumentId = manuscript.Id,
-                    Title = string.IsNullOrWhiteSpace(sceneNode.Title) ? "New scene" : sceneNode.Title.Trim(),
-                    NarrativePurpose = null,
-                    LanguageCode = manuscript.LanguageCode,
-                    TranslationGroupId = manuscript.TranslationGroupId,
-                    OrderIndex = nextOrder,
-                    CreatedAt = now,
-                    UpdatedAt = now
-                };
-                _dbContext.Sections.Add(linkedSection);
-
-                PageRecord page = new()
-                {
-                    Id = Guid.NewGuid(),
-                    DocumentId = manuscript.Id,
-                    SectionId = linkedSection.Id,
-                    Title = "Page 1",
-                    Content = string.Empty,
-                    OrderIndex = 0,
-                    CreatedAt = now,
-                    UpdatedAt = now
-                };
-                _dbContext.Pages.Add(page);
-
-                sceneNode.LinkedSectionId = linkedSection.Id;
-                sceneNode.UpdatedUtc = now;
-                project.UpdatedUtc = now;
-                manuscript.UpdatedAt = now;
+                (linkedSection, sectionCreated, pageCreated) = await GetOrCreateSceneSectionAsync(project, manuscript, sceneNode, ct);
             }
 
-            return new SceneLinkResult(manuscript.Id, linkedSection.Id);
+            _logger?.LogInformation(
+                "Scene linking ensured manuscript workspace. ProjectId={ProjectId} SceneNodeId={SceneNodeId} DocumentId={DocumentId} SectionId={SectionId} ManuscriptCreated={ManuscriptCreated} SectionCreated={SectionCreated} PageCreated={PageCreated}",
+                project.Id,
+                sceneNode.Id,
+                manuscript.Id,
+                linkedSection.Id,
+                manuscriptCreated,
+                sectionCreated,
+                pageCreated);
+
+            return new SceneLinkResult(manuscript.Id, linkedSection.Id, manuscriptCreated, sectionCreated, pageCreated);
         }
 
         public async Task<IReadOnlyList<ManuscriptSceneSectionItem>> GetManuscriptSceneSectionsAsync(
@@ -231,15 +226,99 @@ namespace WriterApp.Application.Documents
             return result;
         }
 
+        private async Task<(SectionRecord Section, bool SectionCreated, bool PageCreated)> GetOrCreateSceneSectionAsync(
+            ProjectRecord project,
+            DocumentRecord manuscript,
+            ProjectNodeRecord sceneNode,
+            CancellationToken ct)
+        {
+            string sectionTitle = string.IsNullOrWhiteSpace(sceneNode.Title) ? "New scene" : sceneNode.Title.Trim();
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+
+            SectionRecord? existingSection = _dbContext.Sections.Local
+                .FirstOrDefault(item => item.DocumentId == manuscript.Id && string.Equals(item.Title, sectionTitle, StringComparison.OrdinalIgnoreCase))
+                ?? await _dbContext.Sections
+                    .Where(item => item.DocumentId == manuscript.Id && item.Title == sectionTitle)
+                    .OrderBy(item => item.OrderIndex)
+                    .FirstOrDefaultAsync(ct);
+
+            bool sectionCreated = false;
+            if (existingSection is null)
+            {
+                int nextOrder = await _dbContext.Sections
+                    .Where(item => item.DocumentId == manuscript.Id)
+                    .Select(item => (int?)item.OrderIndex)
+                    .MaxAsync(ct) ?? -1;
+                nextOrder += 1;
+
+                existingSection = new SectionRecord
+                {
+                    Id = Guid.NewGuid(),
+                    DocumentId = manuscript.Id,
+                    Title = sectionTitle,
+                    NarrativePurpose = null,
+                    LanguageCode = manuscript.LanguageCode,
+                    TranslationGroupId = manuscript.TranslationGroupId,
+                    OrderIndex = nextOrder,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                };
+                _dbContext.Sections.Add(existingSection);
+                sectionCreated = true;
+            }
+
+            bool pageCreated = false;
+            PageRecord? existingPage = _dbContext.Pages.Local
+                .FirstOrDefault(item => item.DocumentId == manuscript.Id && item.SectionId == existingSection.Id && item.OrderIndex == 0)
+                ?? await _dbContext.Pages
+                    .Where(item => item.DocumentId == manuscript.Id && item.SectionId == existingSection.Id)
+                    .OrderBy(item => item.OrderIndex)
+                    .FirstOrDefaultAsync(ct);
+            if (existingPage is null)
+            {
+                existingPage = new PageRecord
+                {
+                    Id = Guid.NewGuid(),
+                    DocumentId = manuscript.Id,
+                    SectionId = existingSection.Id,
+                    Title = "Page 1",
+                    Content = string.Empty,
+                    OrderIndex = 0,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                };
+                _dbContext.Pages.Add(existingPage);
+                pageCreated = true;
+            }
+
+            sceneNode.LinkedSectionId = existingSection.Id;
+            sceneNode.UpdatedUtc = now;
+            project.UpdatedUtc = now;
+            manuscript.UpdatedAt = now;
+
+            return (existingSection, sectionCreated, pageCreated);
+        }
+
         private async Task<DocumentRecord> GetOrCreateManuscriptDocumentInternalAsync(ProjectRecord project, string ownerUserId, CancellationToken ct)
         {
-            DocumentRecord? manuscript = await _dbContext.Documents
-                .Where(item => item.ProjectId == project.Id && item.OwnerUserId == ownerUserId && item.DocumentKind == DocumentKind.Manuscript)
-                .OrderByDescending(item => item.UpdatedAtUnixSeconds)
-                .FirstOrDefaultAsync(ct);
+            (DocumentRecord manuscript, _) = await GetOrCreateManuscriptDocumentWithStateAsync(project, ownerUserId, ct);
+            return manuscript;
+        }
+
+        private async Task<(DocumentRecord Document, bool Created)> GetOrCreateManuscriptDocumentWithStateAsync(ProjectRecord project, string ownerUserId, CancellationToken ct)
+        {
+            DocumentRecord? manuscript = _dbContext.Documents.Local
+                .FirstOrDefault(item =>
+                    item.ProjectId == project.Id
+                    && item.OwnerUserId == ownerUserId
+                    && item.DocumentKind == DocumentKind.Manuscript)
+                ?? await _dbContext.Documents
+                    .Where(item => item.ProjectId == project.Id && item.OwnerUserId == ownerUserId && item.DocumentKind == DocumentKind.Manuscript)
+                    .OrderByDescending(item => item.UpdatedAtUnixSeconds)
+                    .FirstOrDefaultAsync(ct);
             if (manuscript is not null)
             {
-                return manuscript;
+                return (manuscript, false);
             }
 
             DateTimeOffset now = DateTimeOffset.UtcNow;
@@ -262,7 +341,7 @@ namespace WriterApp.Application.Documents
             };
             _dbContext.Documents.Add(manuscript);
             project.UpdatedUtc = now;
-            return manuscript;
+            return (manuscript, true);
         }
 
         private async Task CollectSceneNodesDepthFirstAsync(

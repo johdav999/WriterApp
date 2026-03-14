@@ -8,6 +8,7 @@
 @using WriterApp.Client.Components.AI
 @using WriterApp.Client.Components
 @using WriterApp.Client.Pages
+@using WriterApp.Client.Utilities
 @using WriterApp.Shared.Localization
 
 <PageTitle>@GetPageTitle()</PageTitle>
@@ -159,6 +160,15 @@ else
                     <button type="button" class="icon-only" title='@GetTooltip("Undo last change.")' aria-label="Undo" @onclick="OnUndoRequested"><Icon Name="undo" /></button>
                     <button type="button" class="icon-only" title='@GetTooltip("Redo last change.")' aria-label="Redo" @onclick="OnRedoRequested"><Icon Name="redo" /></button>
                     <button type="button" class="icon-only" title='@GetTooltip("User feedback: Report a bug or request an enhancement.")' aria-label="User feedback" @onclick="OpenFeedbackDialog"><Icon Name="feedback" /></button>
+                    <a class="editor-action-link"
+                       href="@ExternalUrls.ProsaDocumentation"
+                       target="_blank"
+                       rel="noopener noreferrer"
+                       title='@GetTooltip("Open Prosa documentation")'
+                       aria-label="Documentation">
+                        <Icon Name="menu_book" />
+                        <span>Documentation</span>
+                    </a>
                     @if (CanShowPromptLibrary && PinnedPromptPresets.Count > 0)
                     {
                         <div class="revise-tools">

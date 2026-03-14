@@ -170,6 +170,42 @@ namespace BlazorApp.Migrations
                     b.ToTable("PromptPresets");
                 });
 
+            modelBuilder.Entity("WriterApp.Data.Admin.DeletedUserIdentity", b =>
+                {
+                    b.Property<string>("UserId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("DeletedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DeletedByAdminEmail")
+                        .HasMaxLength(320)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DeletedByAdminUserId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DisplayName")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Email")
+                        .HasMaxLength(320)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("UserId");
+
+                    b.HasIndex("DeletedAtUtc");
+
+                    b.ToTable("DeletedUserIdentities");
+                });
+
             modelBuilder.Entity("WriterApp.Data.Continuity.BibleSnapshotRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1668,6 +1704,7 @@ namespace BlazorApp.Migrations
             modelBuilder.Entity("WriterApp.Data.Subscriptions.UserEntitlement", b =>
                 {
                     b.Property<string>("UserId")
+                        .HasMaxLength(128)
                         .HasColumnType("TEXT");
 
                     b.Property<int>("AiMonthlyTokenBudget")
@@ -1740,6 +1777,7 @@ namespace BlazorApp.Migrations
             modelBuilder.Entity("WriterApp.Data.Subscriptions.UserProfile", b =>
                 {
                     b.Property<string>("UserId")
+                        .HasMaxLength(128)
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime>("CreatedUtc")
