@@ -47,10 +47,12 @@ namespace WriterApp.Shared
             return payload ?? throw new InvalidOperationException("Admin API returned an empty update-user response.");
         }
 
-        public async Task DeleteUserAsync(string userId, CancellationToken ct = default)
+        public async Task<AdminDeleteCustomerResponse> DeleteUserAsync(string userId, CancellationToken ct = default)
         {
             using HttpResponseMessage response = await _http.DeleteAsync($"api/admin/users/{Uri.EscapeDataString(userId)}", ct);
             await EnsureSuccess(response, ct);
+            AdminDeleteCustomerResponse? payload = await response.Content.ReadFromJsonAsync<AdminDeleteCustomerResponse>(cancellationToken: ct);
+            return payload ?? throw new InvalidOperationException("Admin API returned an empty delete-user response.");
         }
 
         public async Task<AdminPlanOverrideResponse> SetPlanOverrideAsync(string userId, AdminSetPlanOverrideRequest request, CancellationToken ct = default)
@@ -89,13 +91,13 @@ namespace WriterApp.Shared
             return payload ?? throw new InvalidOperationException("Admin API returned an empty adjust-tokens response.");
         }
 
-        public async Task<AdminUserDetailDto> ResetOnboardingAsync(string userId, CancellationToken ct = default)
+        public async Task<AdminResetToFirstRunResponse> ResetToFirstRunAsync(string userId, CancellationToken ct = default)
         {
             using HttpResponseMessage response =
-                await _http.PostAsync($"api/dev/users/{Uri.EscapeDataString(userId)}/reset-onboarding", content: null, ct);
+                await _http.PostAsync($"api/admin/users/{Uri.EscapeDataString(userId)}/reset-first-run", content: null, ct);
             await EnsureSuccess(response, ct);
-            AdminUserDetailDto? payload = await response.Content.ReadFromJsonAsync<AdminUserDetailDto>(cancellationToken: ct);
-            return payload ?? throw new InvalidOperationException("Admin API returned an empty reset-onboarding response.");
+            AdminResetToFirstRunResponse? payload = await response.Content.ReadFromJsonAsync<AdminResetToFirstRunResponse>(cancellationToken: ct);
+            return payload ?? throw new InvalidOperationException("Admin API returned an empty reset-first-run response.");
         }
 
         public async Task<AdminAuditListResponseDto> GetAuditAsync(AdminAuditQueryDto query, CancellationToken ct = default)

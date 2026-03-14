@@ -36,110 +36,124 @@ namespace WriterApp.Application.Documents
 
             return _dbContext.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
             {
-                ProjectRecord? project = await ResolveOwnedProjectAsync(incomingId, ownerUserId, ct);
-                if (project is null)
-                {
-                    _logger.LogWarning(
-                        "Project deletion not found. IncomingId={IncomingId} OwnerUserId={OwnerUserId}",
-                        incomingId,
-                        ownerUserId);
-                    return new ProjectDeletionResult(false, null, null);
-                }
-
-                Guid projectId = project.Id;
-                List<Guid> documentIds = await _dbContext.Documents
-                    .AsNoTracking()
-                    .Where(item => item.ProjectId == projectId && item.OwnerUserId == ownerUserId)
-                    .Select(item => item.Id)
-                    .ToListAsync(ct);
-
-                List<Guid> sectionIds = documentIds.Count == 0
-                    ? new List<Guid>()
-                    : await _dbContext.Sections
-                        .AsNoTracking()
-                        .Where(item => documentIds.Contains(item.DocumentId))
-                        .Select(item => item.Id)
-                        .ToListAsync(ct);
-
-                List<Guid> pageIds = documentIds.Count == 0
-                    ? new List<Guid>()
-                    : await _dbContext.Pages
-                        .AsNoTracking()
-                        .Where(item => documentIds.Contains(item.DocumentId))
-                        .Select(item => item.Id)
-                        .ToListAsync(ct);
-
-                List<Guid> projectNodeIds = await _dbContext.ProjectNodes
-                    .AsNoTracking()
-                    .Where(item => item.ProjectId == projectId)
-                    .Select(item => item.Id)
-                    .ToListAsync(ct);
-
-                List<Guid> historyEntryIds = await _dbContext.AiActionHistoryEntries
-                    .AsNoTracking()
-                    .Where(item => item.OwnerUserId == ownerUserId
-                        && ((item.DocumentId.HasValue && documentIds.Contains(item.DocumentId.Value))
-                            || (item.SectionId.HasValue && sectionIds.Contains(item.SectionId.Value))
-                            || (item.PageId.HasValue && pageIds.Contains(item.PageId.Value))))
-                    .Select(item => item.Id)
-                    .ToListAsync(ct);
-
-                ProjectDeletionCounts counts = await BuildCountsAsync(
-                    projectId,
-                    ownerUserId,
-                    documentIds,
-                    sectionIds,
-                    pageIds,
-                    projectNodeIds,
-                    historyEntryIds,
-                    ct);
-
-                _logger.LogInformation(
-                    "Project deletion starting. ProjectId={ProjectId} IncomingId={IncomingId} OwnerUserId={OwnerUserId} Documents={Documents} Sections={Sections} Pages={Pages} ProjectNodes={ProjectNodes} SearchIndexEntries={SearchIndexEntries}",
-                    projectId,
-                    incomingId,
-                    ownerUserId,
-                    counts.Documents,
-                    counts.Sections,
-                    counts.Pages,
-                    counts.ProjectNodes,
-                    counts.SearchIndexEntries);
-
                 await using IDbContextTransaction transaction = await _dbContext.Database.BeginTransactionAsync(ct);
-
-                // SQL Server migrations flatten most FKs to Restrict, so we explicitly delete the
-                // owned graph in dependency order instead of assuming runtime cascade behavior.
-                await DeleteHistoryAsync(ownerUserId, documentIds, sectionIds, pageIds, historyEntryIds, ct);
-                await DeleteSearchIndexAsync(projectId, documentIds, ct);
-                await DeleteProjectScopedSettingsAsync(projectId, ownerUserId, ct);
-                await DeleteSceneChildrenAsync(projectNodeIds, ct);
-                await DeleteProjectChildrenAsync(projectId, ct);
-                await DeleteDocumentOutlineNodeTreeAsync(documentIds, ct);
-                await DeleteDocumentAndPageChildrenAsync(documentIds, sectionIds, pageIds, ct);
-                await DeleteProjectNodeTreeAsync(projectId, ct);
-                await DeleteCoreContentAsync(documentIds, sectionIds, pageIds, ct);
-
-                int removedProjects = await _dbContext.Projects
-                    .Where(item => item.Id == projectId && item.OwnerUserId == ownerUserId)
-                    .ExecuteDeleteAsync(ct);
-                if (removedProjects == 0)
-                {
-                    throw new InvalidOperationException($"Project {projectId} disappeared during deletion.");
-                }
-
+                ProjectDeletionResult result = await DeleteOwnedProjectCoreAsync(incomingId, ownerUserId, ct);
                 await transaction.CommitAsync(ct);
-
-                _logger.LogInformation(
-                    "Project deletion completed. ProjectId={ProjectId} OwnerUserId={OwnerUserId} Documents={Documents} Sections={Sections} Pages={Pages} ProjectNodes={ProjectNodes}",
-                    projectId,
-                    ownerUserId,
-                    counts.Documents,
-                    counts.Sections,
-                    counts.Pages,
-                    counts.ProjectNodes);
-
-                return new ProjectDeletionResult(true, projectId, counts);
+                return result;
             });
+        }
+
+        public Task<ProjectDeletionResult> DeleteOwnedProjectInExistingTransactionAsync(Guid incomingId, string ownerUserId, CancellationToken ct)
+        {
+            if (incomingId == Guid.Empty)
+            {
+                return Task.FromResult(new ProjectDeletionResult(false, null, null));
+            }
+
+            return DeleteOwnedProjectCoreAsync(incomingId, ownerUserId, ct);
+        }
+
+        private async Task<ProjectDeletionResult> DeleteOwnedProjectCoreAsync(Guid incomingId, string ownerUserId, CancellationToken ct)
+        {
+            ProjectRecord? project = await ResolveOwnedProjectAsync(incomingId, ownerUserId, ct);
+            if (project is null)
+            {
+                _logger.LogWarning(
+                    "Project deletion not found. IncomingId={IncomingId} OwnerUserId={OwnerUserId}",
+                    incomingId,
+                    ownerUserId);
+                return new ProjectDeletionResult(false, null, null);
+            }
+
+            Guid projectId = project.Id;
+            List<Guid> documentIds = await _dbContext.Documents
+                .AsNoTracking()
+                .Where(item => item.ProjectId == projectId && item.OwnerUserId == ownerUserId)
+                .Select(item => item.Id)
+                .ToListAsync(ct);
+
+            List<Guid> sectionIds = documentIds.Count == 0
+                ? new List<Guid>()
+                : await _dbContext.Sections
+                    .AsNoTracking()
+                    .Where(item => documentIds.Contains(item.DocumentId))
+                    .Select(item => item.Id)
+                    .ToListAsync(ct);
+
+            List<Guid> pageIds = documentIds.Count == 0
+                ? new List<Guid>()
+                : await _dbContext.Pages
+                    .AsNoTracking()
+                    .Where(item => documentIds.Contains(item.DocumentId))
+                    .Select(item => item.Id)
+                    .ToListAsync(ct);
+
+            List<Guid> projectNodeIds = await _dbContext.ProjectNodes
+                .AsNoTracking()
+                .Where(item => item.ProjectId == projectId)
+                .Select(item => item.Id)
+                .ToListAsync(ct);
+
+            List<Guid> historyEntryIds = await _dbContext.AiActionHistoryEntries
+                .AsNoTracking()
+                .Where(item => item.OwnerUserId == ownerUserId
+                    && ((item.DocumentId.HasValue && documentIds.Contains(item.DocumentId.Value))
+                        || (item.SectionId.HasValue && sectionIds.Contains(item.SectionId.Value))
+                        || (item.PageId.HasValue && pageIds.Contains(item.PageId.Value))))
+                .Select(item => item.Id)
+                .ToListAsync(ct);
+
+            ProjectDeletionCounts counts = await BuildCountsAsync(
+                projectId,
+                ownerUserId,
+                documentIds,
+                sectionIds,
+                pageIds,
+                projectNodeIds,
+                historyEntryIds,
+                ct);
+
+            _logger.LogInformation(
+                "Project deletion starting. ProjectId={ProjectId} IncomingId={IncomingId} OwnerUserId={OwnerUserId} Documents={Documents} Sections={Sections} Pages={Pages} ProjectNodes={ProjectNodes} SearchIndexEntries={SearchIndexEntries}",
+                projectId,
+                incomingId,
+                ownerUserId,
+                counts.Documents,
+                counts.Sections,
+                counts.Pages,
+                counts.ProjectNodes,
+                counts.SearchIndexEntries);
+
+            // SQL Server migrations flatten most FKs to Restrict, so we explicitly delete the
+            // owned graph in dependency order instead of assuming runtime cascade behavior.
+            await DeleteHistoryAsync(ownerUserId, documentIds, sectionIds, pageIds, historyEntryIds, ct);
+            await DeleteSearchIndexAsync(projectId, documentIds, ct);
+            await DeleteProjectScopedSettingsAsync(projectId, ownerUserId, ct);
+            await DeleteSceneChildrenAsync(projectNodeIds, ct);
+            await DeleteProjectChildrenAsync(projectId, ct);
+            await DeleteDocumentOutlineNodeTreeAsync(documentIds, ct);
+            await DeleteDocumentAndPageChildrenAsync(documentIds, sectionIds, pageIds, ct);
+            await DeleteProjectNodeTreeAsync(projectId, ct);
+            await DeleteCoreContentAsync(documentIds, sectionIds, pageIds, ct);
+
+            int removedProjects = await _dbContext.Projects
+                .Where(item => item.Id == projectId && item.OwnerUserId == ownerUserId)
+                .ExecuteDeleteAsync(ct);
+            if (removedProjects == 0)
+            {
+                throw new InvalidOperationException($"Project {projectId} disappeared during deletion.");
+            }
+
+            _logger.LogInformation(
+                "Project deletion completed. ProjectId={ProjectId} OwnerUserId={OwnerUserId} Documents={Documents} Sections={Sections} Pages={Pages} ProjectNodes={ProjectNodes}",
+                projectId,
+                ownerUserId,
+                counts.Documents,
+                counts.Sections,
+                counts.Pages,
+                counts.ProjectNodes);
+
+            return new ProjectDeletionResult(true, projectId, counts);
         }
 
         private async Task<ProjectDeletionCounts> BuildCountsAsync(
