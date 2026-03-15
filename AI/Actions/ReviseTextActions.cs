@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using WriterApp.AI.Abstractions;
+using WriterApp.Application.AI;
 using WriterApp.Application.Commands;
 using WriterApp.Application.State;
 using WriterApp.Domain.Documents;
@@ -48,6 +49,8 @@ namespace WriterApp.AI.Actions
                 ? input.SelectedText
                 : ExtractRange(sectionPlainText, normalizedRange);
             string tone = GetOption(input.Options, "tone", "Neutral");
+            string instruction = GetOption(input.Options, OnboardingDemoAiUsage.InstructionParameterKey)
+                ?? BuildInstruction(Mode, tone, RequiresSelection);
 
             string? languageHint = string.IsNullOrWhiteSpace(input.Document.Metadata.Language)
                 ? "en"
@@ -71,9 +74,13 @@ namespace WriterApp.AI.Actions
 
             Dictionary<string, object> inputs = new()
             {
-                ["instruction"] = BuildInstruction(Mode, tone, RequiresSelection),
+                ["instruction"] = instruction,
                 ["tone"] = tone
             };
+            if (GetBoolOption(input.Options, OnboardingDemoAiUsage.RequestParameterKey))
+            {
+                inputs[OnboardingDemoAiUsage.RequestParameterKey] = true;
+            }
 
             return new AiRequest(
                 Guid.NewGuid(),
@@ -171,6 +178,21 @@ namespace WriterApp.AI.Actions
             }
 
             return value.ToString();
+        }
+
+        private static bool GetBoolOption(Dictionary<string, object?>? options, string key)
+        {
+            if (options is null || !options.TryGetValue(key, out object? value) || value is null)
+            {
+                return false;
+            }
+
+            return value switch
+            {
+                bool boolean => boolean,
+                string text when bool.TryParse(text, out bool parsed) => parsed,
+                _ => false
+            };
         }
 
         protected enum ReviseMode

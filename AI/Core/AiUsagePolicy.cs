@@ -6,6 +6,7 @@ using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using WriterApp.AI.Abstractions;
 using WriterApp.AI.Actions;
+using WriterApp.Application.AI;
 using WriterApp.Application.Security;
 using WriterApp.Application.Subscriptions;
 using WriterApp.Application.Usage;
@@ -72,6 +73,13 @@ namespace WriterApp.AI.Core
             if (!isAuthenticated)
             {
                 return new AiUsageDecision(false, string.Empty, "auth.required", "Sign in to use AI.");
+            }
+
+            if (_httpContextAccessor.HttpContext?.Items.TryGetValue(OnboardingDemoAiUsage.HttpContextValidatedKey, out object? onboardingDemo)
+                == true
+                && onboardingDemo is true)
+            {
+                return new AiUsageDecision(true, userId, null, null);
             }
 
             bool aiEnabled = await _entitlementService.HasAsync(userId, "ai.enabled");
