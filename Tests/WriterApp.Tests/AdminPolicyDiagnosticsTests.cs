@@ -8,7 +8,27 @@ namespace WriterApp.Tests
     public sealed class AdminPolicyDiagnosticsTests
     {
         [Fact]
-        public void GetBootstrapConfigurationState_EnabledAndConfigured_MasksOid()
+        public void GetBootstrapConfigurationState_EnabledAndConfigured_MasksUserId()
+        {
+            IConfiguration configuration = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["BOOTSTRAP_ADMIN_ENABLED"] = "true",
+                    ["BOOTSTRAP_ADMIN_USER_ID"] = "extid:https%3A%2F%2Ftenant.ciamlogin.com%2Ftenant%2Fv2.0:abcdef123456"
+                })
+                .Build();
+
+            AdminPolicyDiagnostics.BootstrapAdminConfigurationState state =
+                AdminPolicyDiagnostics.GetBootstrapConfigurationState(configuration);
+
+            Assert.True(state.Enabled);
+            Assert.True(state.UserIdConfigured);
+            Assert.Equal("***123456", state.MaskedUserId);
+            Assert.False(state.UsesLegacyOidFallback);
+        }
+
+        [Fact]
+        public void GetBootstrapConfigurationState_LegacyOidFallback_RemainsVisible()
         {
             IConfiguration configuration = new ConfigurationBuilder()
                 .AddInMemoryCollection(new Dictionary<string, string?>
@@ -22,18 +42,19 @@ namespace WriterApp.Tests
                 AdminPolicyDiagnostics.GetBootstrapConfigurationState(configuration);
 
             Assert.True(state.Enabled);
-            Assert.True(state.OidConfigured);
-            Assert.Equal("***123456", state.MaskedOid);
+            Assert.True(state.UserIdConfigured);
+            Assert.Equal("***123456", state.MaskedUserId);
+            Assert.True(state.UsesLegacyOidFallback);
         }
 
         [Fact]
-        public void GetBootstrapConfigurationState_EnabledWithoutOid_FlagsMissingConfiguration()
+        public void GetBootstrapConfigurationState_EnabledWithoutUserId_FlagsMissingConfiguration()
         {
             IConfiguration configuration = new ConfigurationBuilder()
                 .AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["BOOTSTRAP_ADMIN_ENABLED"] = "true",
-                    ["BOOTSTRAP_ADMIN_OID"] = "   "
+                    ["BOOTSTRAP_ADMIN_USER_ID"] = "   "
                 })
                 .Build();
 
@@ -41,8 +62,9 @@ namespace WriterApp.Tests
                 AdminPolicyDiagnostics.GetBootstrapConfigurationState(configuration);
 
             Assert.True(state.Enabled);
-            Assert.False(state.OidConfigured);
-            Assert.Equal(string.Empty, state.MaskedOid);
+            Assert.False(state.UserIdConfigured);
+            Assert.Equal(string.Empty, state.MaskedUserId);
+            Assert.False(state.UsesLegacyOidFallback);
         }
     }
 }

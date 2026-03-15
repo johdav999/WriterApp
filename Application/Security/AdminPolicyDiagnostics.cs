@@ -30,25 +30,26 @@ namespace WriterApp.Application.Security
             // Bootstrap admin is an emergency fallback path. Keep its runtime state explicit.
             BootstrapAdminConfigurationState state = GetBootstrapConfigurationState(configuration);
             logger.LogInformation(
-                "Bootstrap admin configuration. Enabled={Enabled} OidConfigured={OidConfigured} BootstrapOid={BootstrapOid}",
+                "Bootstrap admin configuration. Enabled={Enabled} UserIdConfigured={UserIdConfigured} BootstrapUserId={BootstrapUserId} UsesLegacyOidFallback={UsesLegacyOidFallback}",
                 state.Enabled,
-                state.OidConfigured,
-                state.MaskedOid);
+                state.UserIdConfigured,
+                state.MaskedUserId,
+                state.UsesLegacyOidFallback);
 
-            if (state.Enabled && !state.OidConfigured)
+            if (state.Enabled && !state.UserIdConfigured)
             {
-                logger.LogWarning("Bootstrap admin is enabled but BOOTSTRAP_ADMIN_OID is missing or blank. Bootstrap access will be unavailable until configuration is fixed.");
+                logger.LogWarning("Bootstrap admin is enabled but BOOTSTRAP_ADMIN_USER_ID is missing or blank. Legacy fallback BOOTSTRAP_ADMIN_OID is also absent. Bootstrap access will be unavailable until configuration is fixed.");
             }
         }
 
         public static void LogDecision(
             bool isRoleAdmin,
             bool bootstrapEnabled,
-            bool bootstrapOidPresent,
-            bool userOidPresent,
+            bool bootstrapUserIdPresent,
+            bool userIdPresent,
             bool decision,
-            string? bootstrapOid,
-            string? userOid)
+            string? bootstrapUserId,
+            string? userId)
         {
             ILogger? logger = _logger;
             if (logger is null)
@@ -57,14 +58,14 @@ namespace WriterApp.Application.Security
             }
 
             logger.LogInformation(
-                "AdminOnly policy: isRoleAdmin={IsRoleAdmin} bootstrapEnabled={BootstrapEnabled} bootstrapOidPresent={BootstrapOidPresent} userOidPresent={UserOidPresent} decision={Decision} bootstrapOid={BootstrapOid} userOid={UserOid}",
+                "AdminOnly policy: isRoleAdmin={IsRoleAdmin} bootstrapEnabled={BootstrapEnabled} bootstrapUserIdPresent={BootstrapUserIdPresent} userIdPresent={UserIdPresent} decision={Decision} bootstrapUserId={BootstrapUserId} userId={UserId}",
                 isRoleAdmin,
                 bootstrapEnabled,
-                bootstrapOidPresent,
-                userOidPresent,
+                bootstrapUserIdPresent,
+                userIdPresent,
                 decision,
-                MaskOid(bootstrapOid),
-                MaskOid(userOid));
+                MaskIdentifier(bootstrapUserId),
+                MaskIdentifier(userId));
         }
 
         public static void LogBootstrapAccessGranted(object? resource, string? userIdentifier)
@@ -89,7 +90,7 @@ namespace WriterApp.Application.Security
             logger.LogWarning(
                 "Bootstrap admin access granted. Path={Path} User={User} CorrelationId={CorrelationId}",
                 path,
-                MaskOid(userIdentifier),
+                MaskIdentifier(userIdentifier),
                 traceIdentifier);
         }
 
@@ -109,15 +110,15 @@ namespace WriterApp.Application.Security
                 ?? context.User.Identity?.Name;
 
             logger.LogInformation(
-                "Admin API access decision. Method={Method} Path={Path} User={User} IsRoleAdmin={IsRoleAdmin} BootstrapMatched={BootstrapMatched} BootstrapEnabled={BootstrapEnabled} BootstrapOidConfigured={BootstrapOidConfigured} UserOidPresent={UserOidPresent} AccessResult={AccessResult} AccessSource={AccessSource} Reason={Reason} CorrelationId={CorrelationId}",
+                "Admin API access decision. Method={Method} Path={Path} User={User} IsRoleAdmin={IsRoleAdmin} BootstrapMatched={BootstrapMatched} BootstrapEnabled={BootstrapEnabled} BootstrapUserIdConfigured={BootstrapUserIdConfigured} UserIdPresent={UserIdPresent} AccessResult={AccessResult} AccessSource={AccessSource} Reason={Reason} CorrelationId={CorrelationId}",
                 method,
                 path,
-                MaskOid(userIdentifier),
+                MaskIdentifier(userIdentifier),
                 diagnostic.IsRoleAdmin,
                 diagnostic.BootstrapMatched,
                 diagnostic.BootstrapEnabled,
-                diagnostic.BootstrapOidConfigured,
-                diagnostic.UserOidPresent,
+                diagnostic.BootstrapUserIdConfigured,
+                diagnostic.UserIdPresent,
                 diagnostic.Resolution.IsAdminAccess ? "Granted" : "Denied",
                 diagnostic.Resolution.Source.ToString(),
                 reasonCodeOverride ?? ToReasonCode(diagnostic.Resolution.Reason),
@@ -131,26 +132,30 @@ namespace WriterApp.Application.Security
                 throw new ArgumentNullException(nameof(configuration));
             }
 
+            string? bootstrapUserId = configuration["BOOTSTRAP_ADMIN_USER_ID"];
             string? bootstrapOid = configuration["BOOTSTRAP_ADMIN_OID"];
             bool enabled = string.Equals(
                 configuration["BOOTSTRAP_ADMIN_ENABLED"],
                 "true",
                 StringComparison.OrdinalIgnoreCase);
+            string? effectiveUserId = !string.IsNullOrWhiteSpace(bootstrapUserId) ? bootstrapUserId : bootstrapOid;
+            bool usesLegacyOidFallback = string.IsNullOrWhiteSpace(bootstrapUserId) && !string.IsNullOrWhiteSpace(bootstrapOid);
 
             return new BootstrapAdminConfigurationState(
                 enabled,
-                !string.IsNullOrWhiteSpace(bootstrapOid),
-                MaskOid(bootstrapOid));
+                !string.IsNullOrWhiteSpace(effectiveUserId),
+                MaskIdentifier(effectiveUserId),
+                usesLegacyOidFallback);
         }
 
-        private static string MaskOid(string? oid)
+        private static string MaskIdentifier(string? identifier)
         {
-            if (string.IsNullOrWhiteSpace(oid))
+            if (string.IsNullOrWhiteSpace(identifier))
             {
                 return string.Empty;
             }
 
-            string trimmed = oid.Trim();
+            string trimmed = identifier.Trim();
             int length = Math.Min(6, trimmed.Length);
             return $"***{trimmed.Substring(trimmed.Length - length, length)}";
         }
@@ -163,8 +168,8 @@ namespace WriterApp.Application.Security
                 AdminAccessReason.GrantedBootstrap => "granted_bootstrap",
                 AdminAccessReason.NotAuthenticated => "not_authenticated",
                 AdminAccessReason.BootstrapDisabled => "bootstrap_disabled",
-                AdminAccessReason.BootstrapOidMissing => "bootstrap_oid_missing",
-                AdminAccessReason.BootstrapOidMismatch => "bootstrap_oid_mismatch",
+                AdminAccessReason.BootstrapUserIdMissing => "bootstrap_user_id_missing",
+                AdminAccessReason.BootstrapUserIdMismatch => "bootstrap_user_id_mismatch",
                 AdminAccessReason.UserIdMismatch => "user_id_mismatch",
                 _ => "not_admin"
             };
@@ -172,7 +177,8 @@ namespace WriterApp.Application.Security
 
         public readonly record struct BootstrapAdminConfigurationState(
             bool Enabled,
-            bool OidConfigured,
-            string MaskedOid);
+            bool UserIdConfigured,
+            string MaskedUserId,
+            bool UsesLegacyOidFallback);
     }
 }

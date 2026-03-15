@@ -63,6 +63,18 @@ namespace WriterApp.Shared
         string? StripeCustomerId,
         string? StripeSubscriptionId);
 
+    public sealed record AdminDuplicateAccountCandidateDto(
+        string UserId,
+        string? DisplayName,
+        string? Email,
+        DateTime CreatedUtc,
+        string PlanKey,
+        IReadOnlyList<string> ProviderHints);
+
+    public sealed record AdminDuplicateAccountLookupResponseDto(
+        string Email,
+        IReadOnlyList<AdminDuplicateAccountCandidateDto> Matches);
+
     public sealed record AdminRoleChangeResponse(
         string UserId,
         string Action,

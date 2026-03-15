@@ -19,6 +19,7 @@ namespace WriterApp.Client.Services
         private readonly HttpClient _http;
         private readonly ILogger<AuthStateService> _logger;
         private readonly DeletedAccountStateService _deletedAccountStateService;
+        private readonly DuplicateAccountStateService _duplicateAccountStateService;
         private readonly SemaphoreSlim _refreshLock = new(1, 1);
 
         private AuthState _cached = AuthState.Anonymous;
@@ -28,11 +29,13 @@ namespace WriterApp.Client.Services
         public AuthStateService(
             HttpClient http,
             ILogger<AuthStateService> logger,
-            DeletedAccountStateService deletedAccountStateService)
+            DeletedAccountStateService deletedAccountStateService,
+            DuplicateAccountStateService duplicateAccountStateService)
         {
             _http = http ?? throw new ArgumentNullException(nameof(http));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _deletedAccountStateService = deletedAccountStateService ?? throw new ArgumentNullException(nameof(deletedAccountStateService));
+            _duplicateAccountStateService = duplicateAccountStateService ?? throw new ArgumentNullException(nameof(duplicateAccountStateService));
         }
 
         public bool IsAuthenticated => _cached.IsAuthenticated;
@@ -102,6 +105,7 @@ namespace WriterApp.Client.Services
                     if (deleted is not null)
                     {
                         _deletedAccountStateService.MarkDeleted(deleted.Message);
+                        _duplicateAccountStateService.Clear();
                         return FetchResult.FromState(
                             endpoint,
                             AuthState.DeletedAccount(deleted.Message, endpoint),
@@ -109,8 +113,23 @@ namespace WriterApp.Client.Services
                     }
                 }
 
+                if (response.StatusCode == HttpStatusCode.Conflict)
+                {
+                    AuthDuplicateAccountDto? duplicate = await DuplicateAccountApiResponseReader.TryReadAsync(response, ct);
+                    if (duplicate is not null)
+                    {
+                        _deletedAccountStateService.Clear();
+                        _duplicateAccountStateService.MarkDuplicate(duplicate);
+                        return FetchResult.FromState(
+                            endpoint,
+                            AuthState.DuplicateAccount(duplicate.Message, endpoint),
+                            AuthDuplicateAccountDto.DuplicateCode);
+                    }
+                }
+
                 if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
                 {
+                    _duplicateAccountStateService.Clear();
                     return FetchResult.FromState(
                         endpoint,
                         AuthState.Anonymous,
@@ -135,6 +154,7 @@ namespace WriterApp.Client.Services
                 if (!auth.IsAuthenticated)
                 {
                     _deletedAccountStateService.Clear();
+                    _duplicateAccountStateService.Clear();
                     return FetchResult.FromState(
                         endpoint,
                         AuthState.Anonymous,
@@ -163,6 +183,7 @@ namespace WriterApp.Client.Services
                     UserId: auth.UserId,
                     Claims: claims);
                 _deletedAccountStateService.Clear();
+                _duplicateAccountStateService.Clear();
                 return FetchResult.FromState(
                     endpoint,
                     state,

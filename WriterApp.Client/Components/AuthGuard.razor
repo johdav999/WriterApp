@@ -5,6 +5,7 @@
 @inject NavigationManager Navigation
 @inject AuthStateService AuthState
 @inject DeletedAccountStateService DeletedAccountStateService
+@inject DuplicateAccountStateService DuplicateAccountStateService
 @inject ILogger<AuthGuard> Logger
 
 @if (_showContent)
@@ -87,6 +88,18 @@ else
             return;
         }
 
+        if (state.IsDuplicateAccount || DuplicateAccountStateService.IsDuplicateAccount)
+        {
+            _showContent = false;
+            _isChecking = false;
+            if (!IsDuplicateAccountPath(currentPath))
+            {
+                Navigation.NavigateTo("/app/duplicate-account", replace: true);
+            }
+
+            return;
+        }
+
         if (_probeState.IsAuthenticated)
         {
             _showContent = true;
@@ -143,5 +156,11 @@ else
     {
         return path.StartsWith("/deleted-account", StringComparison.OrdinalIgnoreCase)
             || path.StartsWith("/app/deleted-account", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsDuplicateAccountPath(string path)
+    {
+        return path.StartsWith("/duplicate-account", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/app/duplicate-account", StringComparison.OrdinalIgnoreCase);
     }
 }

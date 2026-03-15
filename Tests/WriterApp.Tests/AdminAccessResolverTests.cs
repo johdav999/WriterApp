@@ -51,7 +51,7 @@ namespace WriterApp.Tests
         }
 
         [Fact]
-        public void Resolve_BootstrapEnabledAndOidMatch_ReturnsBootstrapAccess()
+        public void Resolve_BootstrapEnabledAndCanonicalUserIdMatch_ReturnsBootstrapAccess()
         {
             using SqliteConnection connection = new("Data Source=:memory:");
             connection.Open();
@@ -60,9 +60,11 @@ namespace WriterApp.Tests
             IAdminAccessResolver resolver = BuildResolver(dbContext, new Dictionary<string, string?>
             {
                 ["BOOTSTRAP_ADMIN_ENABLED"] = "true",
-                ["BOOTSTRAP_ADMIN_OID"] = "bootstrap-oid"
+                ["BOOTSTRAP_ADMIN_USER_ID"] = "extid:https%3A%2F%2Ftenant.ciamlogin.com%2Ftenant%2Fv2.0:bootstrap-user"
             });
-            ClaimsPrincipal principal = BuildPrincipal(new Claim("oid", "bootstrap-oid"));
+            ClaimsPrincipal principal = BuildPrincipal(
+                new Claim("iss", "https://tenant.ciamlogin.com/tenant/v2.0"),
+                new Claim("sub", "bootstrap-user"));
 
             AdminAccessResolution result = resolver.Resolve(principal);
 
@@ -83,7 +85,7 @@ namespace WriterApp.Tests
             IAdminAccessResolver resolver = BuildResolver(dbContext, new Dictionary<string, string?>
             {
                 ["BOOTSTRAP_ADMIN_ENABLED"] = "true",
-                ["BOOTSTRAP_ADMIN_OID"] = "same-user"
+                ["BOOTSTRAP_ADMIN_USER_ID"] = "same-user"
             });
             ClaimsPrincipal principal = BuildPrincipal(new Claim("oid", "same-user"));
 
@@ -112,7 +114,30 @@ namespace WriterApp.Tests
         }
 
         [Fact]
-        public void Resolve_BootstrapEnabledButOidMismatch_ReturnsNone()
+        public void Resolve_BootstrapEnabledButCanonicalUserIdMismatch_ReturnsNone()
+        {
+            using SqliteConnection connection = new("Data Source=:memory:");
+            connection.Open();
+            using AppDbContext dbContext = BuildDbContext(connection);
+
+            IAdminAccessResolver resolver = BuildResolver(dbContext, new Dictionary<string, string?>
+            {
+                ["BOOTSTRAP_ADMIN_ENABLED"] = "true",
+                ["BOOTSTRAP_ADMIN_USER_ID"] = "extid:https%3A%2F%2Ftenant.ciamlogin.com%2Ftenant%2Fv2.0:bootstrap-user"
+            });
+            ClaimsPrincipal principal = BuildPrincipal(
+                new Claim("iss", "https://tenant.ciamlogin.com/tenant/v2.0"),
+                new Claim("sub", "different-user"));
+
+            AdminAccessResolution result = resolver.Resolve(principal);
+
+            Assert.False(result.IsAdminAccess);
+            Assert.Equal(AdminAccessSource.None, result.Source);
+            Assert.Equal(AdminAccessReason.BootstrapUserIdMismatch, result.Reason);
+        }
+
+        [Fact]
+        public void Resolve_BootstrapEnabledAndLegacyOidConfigMatch_ReturnsBootstrapAccess()
         {
             using SqliteConnection connection = new("Data Source=:memory:");
             connection.Open();
@@ -123,13 +148,13 @@ namespace WriterApp.Tests
                 ["BOOTSTRAP_ADMIN_ENABLED"] = "true",
                 ["BOOTSTRAP_ADMIN_OID"] = "bootstrap-oid"
             });
-            ClaimsPrincipal principal = BuildPrincipal(new Claim("oid", "different-oid"));
+            ClaimsPrincipal principal = BuildPrincipal(new Claim("oid", "bootstrap-oid"));
 
             AdminAccessResolution result = resolver.Resolve(principal);
 
-            Assert.False(result.IsAdminAccess);
-            Assert.Equal(AdminAccessSource.None, result.Source);
-            Assert.Equal(AdminAccessReason.BootstrapOidMismatch, result.Reason);
+            Assert.True(result.IsAdminAccess);
+            Assert.Equal(AdminAccessSource.Bootstrap, result.Source);
+            Assert.Equal(AdminAccessReason.GrantedBootstrap, result.Reason);
         }
 
         [Fact]
@@ -159,7 +184,7 @@ namespace WriterApp.Tests
             IAdminAccessResolver resolver = BuildResolver(dbContext, new Dictionary<string, string?>
             {
                 ["BOOTSTRAP_ADMIN_ENABLED"] = "true",
-                ["BOOTSTRAP_ADMIN_OID"] = "bootstrap-user"
+                ["BOOTSTRAP_ADMIN_USER_ID"] = "bootstrap-user"
             });
             ClaimsPrincipal currentPrincipal = BuildPrincipal(
                 new Claim(ClaimTypes.Role, "Admin"),

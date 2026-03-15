@@ -9,6 +9,7 @@ using WriterApp.Data.Admin;
 using WriterApp.Data.Continuity;
 using WriterApp.Data.Documents;
 using WriterApp.Data.Exporting;
+using WriterApp.Data.Security;
 using WriterApp.Data.Subscriptions;
 using WriterApp.Data.Usage;
 
@@ -70,6 +71,7 @@ namespace WriterApp.Data
         public DbSet<ExportPreset> ExportPresets => Set<ExportPreset>();
         public DbSet<ProjectExportSettings> ProjectExportSettings => Set<ProjectExportSettings>();
         public DbSet<SearchIndexEntryRecord> SearchIndexEntries => Set<SearchIndexEntryRecord>();
+        public DbSet<ExternalIdentityLink> ExternalIdentityLinks => Set<ExternalIdentityLink>();
 
         public override int SaveChanges()
         {
@@ -177,6 +179,22 @@ namespace WriterApp.Data
                 entity.Property(item => item.Reason).HasMaxLength(256);
                 entity.Property(item => item.DeletedAtUtc).IsRequired();
                 entity.HasIndex(item => item.DeletedAtUtc);
+            });
+
+            builder.Entity<ExternalIdentityLink>(entity =>
+            {
+                entity.HasKey(item => item.Id);
+                entity.Property(item => item.UserId).HasMaxLength(128).IsRequired();
+                entity.Property(item => item.Provider).HasMaxLength(64);
+                entity.Property(item => item.Issuer).HasMaxLength(512);
+                entity.Property(item => item.Subject).HasMaxLength(256);
+                entity.Property(item => item.ObjectIdentifier).HasMaxLength(128);
+                entity.Property(item => item.EmailAtLinkTime).HasMaxLength(320);
+                entity.Property(item => item.CreatedUtc).IsRequired();
+                entity.Property(item => item.LastSeenUtc).IsRequired();
+                entity.HasIndex(item => item.UserId);
+                entity.HasIndex(item => item.EmailAtLinkTime);
+                entity.HasIndex(item => new { item.Provider, item.Issuer, item.Subject, item.ObjectIdentifier });
             });
 
             builder.Entity<StripeEventLog>(entity =>

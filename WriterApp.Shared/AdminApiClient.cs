@@ -31,6 +31,13 @@ namespace WriterApp.Shared
             return await _http.GetFromJsonAsync<AdminUserDetailDto>($"api/admin/users/{Uri.EscapeDataString(userId)}", ct);
         }
 
+        public async Task<AdminDuplicateAccountLookupResponseDto> GetDuplicateCandidatesAsync(string email, CancellationToken ct = default)
+        {
+            string url = $"api/admin/users/diagnostics/duplicate-candidates?email={Uri.EscapeDataString(email ?? string.Empty)}";
+            AdminDuplicateAccountLookupResponseDto? payload = await _http.GetFromJsonAsync<AdminDuplicateAccountLookupResponseDto>(url, ct);
+            return payload ?? new AdminDuplicateAccountLookupResponseDto(email ?? string.Empty, Array.Empty<AdminDuplicateAccountCandidateDto>());
+        }
+
         public async Task<AdminUserDetailDto> CreateUserAsync(AdminCreateUserRequest request, CancellationToken ct = default)
         {
             using HttpResponseMessage response = await _http.PostAsJsonAsync("api/admin/users", request, ct);

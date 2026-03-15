@@ -94,6 +94,9 @@ string externalIdClientId =
     builder.Configuration["ExternalIdClientId"]
     ?? builder.Configuration["WriterApp:Auth:ExternalIdClientId"]
     ?? string.Empty;
+WriterAuthOptions writerAuthOptions =
+    builder.Configuration.GetSection("WriterApp:Auth").Get<WriterAuthOptions>()
+    ?? new WriterAuthOptions();
 
 if (useExternalIdAuth
     && (string.IsNullOrWhiteSpace(externalIdTenantId) || string.IsNullOrWhiteSpace(externalIdClientId)))
@@ -173,6 +176,7 @@ builder.Services.AddAuthorization(options =>
         policy.RequireAuthenticatedUser()
             .AddRequirements(new AdminOnlyRequirement()));
 });
+builder.Services.Configure<WriterAuthOptions>(builder.Configuration.GetSection("WriterApp:Auth"));
 var mvcBuilder = builder.Services.AddControllers();
 mvcBuilder.ConfigureApplicationPartManager(manager =>
 {
@@ -224,6 +228,7 @@ builder.Services.AddScoped<IEntitlementService, EntitlementService>();
 builder.Services.AddScoped<IUserIdResolver, UserIdResolver>();
 builder.Services.AddScoped<IAdminAccessResolver, AdminAccessResolver>();
 builder.Services.AddScoped<IAuthorizationHandler, AdminOnlyAuthorizationHandler>();
+builder.Services.AddScoped<AuthMeProvisioningService>();
 builder.Services.AddScoped<IPlanAssignmentService, PlanAssignmentService>();
 builder.Services.AddScoped<AdminPlanOverrideService>();
 builder.Services.AddScoped<AdminAuditService>();
@@ -642,6 +647,13 @@ if (app.Environment.IsDevelopment())
         useExternalIdAuth,
         !string.IsNullOrWhiteSpace(externalIdTenantId),
         !string.IsNullOrWhiteSpace(externalIdClientId));
+    logger.LogInformation(
+        "EasyAuth provider routing: Mode={Mode} LoginProvider={LoginProvider} CustomerLoginProvider={CustomerLoginProvider} InternalLoginProvider={InternalLoginProvider} LogoutPath={LogoutPath}",
+        writerAuthOptions.DescribeConfiguredMode(),
+        writerAuthOptions.ResolveLoginProvider(),
+        writerAuthOptions.UseDualProviderMode ? writerAuthOptions.ResolveCustomerLoginProvider() : string.Empty,
+        writerAuthOptions.UseDualProviderMode ? writerAuthOptions.ResolveInternalLoginProvider() : string.Empty,
+        writerAuthOptions.ResolveLogoutPath());
 }
 
 if (openAiOptions.Enabled && !openAiKeyProvider.HasKey)
@@ -1126,6 +1138,46 @@ app.MapGet("/api/admin/users/{userId}", async (
 
     AdminUserDetailDto? user = await adminUsersService.GetUserAsync(userId, context.User, context.RequestAborted);
     return user is null ? Results.NotFound() : Results.Ok(user);
+});
+
+app.MapGet("/api/admin/users/diagnostics/duplicate-candidates", async (
+        HttpContext context,
+        string email,
+        IConfiguration configuration,
+        IAdminAccessResolver adminAccessResolver,
+        IUserIdResolver userIdResolver,
+        AdminEndpointRateLimiter adminRateLimiter,
+        AdminUsersService adminUsersService,
+        ILoggerFactory loggerFactory) =>
+{
+    if (!TryAuthorizeAdminRequest(context, configuration, adminAccessResolver))
+    {
+        return Results.NotFound();
+    }
+
+    if (string.IsNullOrWhiteSpace(email))
+    {
+        return Results.BadRequest(new { message = "email is required." });
+    }
+
+    ILogger logger = loggerFactory.CreateLogger("AdminUsers");
+    string adminUserId = ResolveAssignedBy(context.User, userIdResolver, logger, out _);
+    if (!adminRateLimiter.TryAcquire($"{adminUserId}:duplicate-candidates", 120))
+    {
+        return Results.StatusCode(StatusCodes.Status429TooManyRequests);
+    }
+
+    try
+    {
+        AdminDuplicateAccountLookupResponseDto response = await adminUsersService.FindDuplicateCandidatesByEmailAsync(
+            email,
+            context.RequestAborted);
+        return Results.Ok(response);
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(new { message = ex.Message });
+    }
 });
 
 app.MapPost("/api/admin/users", async (
@@ -1927,11 +1979,9 @@ app.MapGet("/api/auth/debug", (HttpContext context, ILoggerFactory loggerFactory
 
 app.MapGet("/api/auth/me", async (
     HttpContext context,
-    AppDbContext dbContext,
     IAdminAccessResolver adminAccessResolver,
     IUserIdResolver userIdResolver,
-    IDeletedUserIdentityService deletedUserIdentityService,
-    IUserEntitlementStore userEntitlementStore,
+    AuthMeProvisioningService authMeProvisioningService,
     ILoggerFactory loggerFactory,
     CancellationToken ct) =>
 {
@@ -1991,25 +2041,49 @@ app.MapGet("/api/auth/me", async (
         return Results.Unauthorized();
     }
 
-    ExternalIdentityClaims.UserProfileIdentity profileIdentity =
-        ExternalIdentityClaims.MapToUserProfileIdentity(user.Claims, userId);
-
-    if (await deletedUserIdentityService.IsDeletedAsync(userId, ct))
+    AuthMeProvisioningResult provisioning;
+      try
+      {
+          provisioning = await authMeProvisioningService.ProvisionAsync(user, userId, ct);
+      }
+      catch (DeletedUserIdentityException)
     {
         logger.LogInformation("Blocked auth probe for deleted identity. UserId={UserId}", userId);
         return Results.Json(new
         {
             code = "account_deleted",
             message = "This Prosa account has been deleted. Sign out before registering again."
-        }, statusCode: StatusCodes.Status403Forbidden);
-    }
+          }, statusCode: StatusCodes.Status403Forbidden);
+      }
 
-    List<string> roles = user.FindAll(ClaimTypes.Role)
-        .Select(c => c.Value)
-        .Concat(user.FindAll("roles").Select(c => c.Value))
-        .Distinct(StringComparer.OrdinalIgnoreCase)
+      if (provisioning.Status == AuthMeProvisioningStatus.DuplicateEmailDetected)
+      {
+          DuplicateEmailMatch duplicate = provisioning.DuplicateEmail
+              ?? new DuplicateEmailMatch(null, false, null, null, null);
+          logger.LogWarning(
+              "AuthMe duplicate account detected. UserId={UserId} Provider={Provider} EmailPresent={EmailPresent} MaskedEmail={MaskedEmail} MatchedUserId={MatchedUserId}",
+              ExternalIdentityClaims.MaskUserId(userId),
+              duplicate.CurrentLoginProvider ?? string.Empty,
+              duplicate.EmailPresent,
+              duplicate.MaskedEmail ?? string.Empty,
+              duplicate.MatchedUserIdMasked ?? string.Empty);
+          return Results.Json(new AuthDuplicateAccountDto
+          {
+              CurrentLoginProvider = duplicate.CurrentLoginProvider,
+              EmailPresent = duplicate.EmailPresent,
+              MaskedEmail = duplicate.MaskedEmail,
+              MatchedUserIdMasked = duplicate.MatchedUserIdMasked,
+              MatchedProfileCreatedUtc = duplicate.MatchedProfileCreatedUtc
+          }, statusCode: StatusCodes.Status409Conflict);
+      }
+
+      List<string> roles = user.FindAll(ClaimTypes.Role)
+          .Select(c => c.Value)
+          .Concat(user.FindAll("roles").Select(c => c.Value))
+          .Distinct(StringComparer.OrdinalIgnoreCase)
         .ToList();
     AdminAccessResolution adminAccess = adminAccessResolver.Resolve(user);
+    ExternalIdentityClaims.UserProfileIdentity profileIdentity = provisioning.ProfileIdentity;
 
     WriterApp.Application.Security.AuthMeDto minimalResponse = new()
     {
@@ -2031,110 +2105,52 @@ app.MapGet("/api/auth/me", async (
 
     try
     {
-        var strategy = dbContext.Database.CreateExecutionStrategy();
-        WriterApp.Application.Security.AuthMeDto? enrichedResponse = null;
-
-        await strategy.ExecuteAsync(async () =>
+        if (provisioning.CreatedProfile || provisioning.CreatedEntitlement)
         {
-            UserProfile? userProfile = await dbContext.UserProfiles
-                .FirstOrDefaultAsync(item => item.UserId == userId, ct);
-            bool createdProfile = false;
-            if (userProfile is null)
-            {
-                DateTime now = DateTime.UtcNow;
-                userProfile = new UserProfile
-                {
-                    UserId = userId,
-                    DisplayName = profileIdentity.DisplayName,
-                    HasOnboarded = false,
-                    CreatedUtc = now,
-                    UpdatedUtc = now
-                };
+            logger.LogInformation(
+                "Created new user records. UserId={UserId}, CreatedProfile={CreatedProfile}, CreatedEntitlement={CreatedEntitlement}, Email={Email}, DisplayName={DisplayName}, PlanKey={PlanKey}",
+                userId,
+                  provisioning.CreatedProfile,
+                  provisioning.CreatedEntitlement,
+                  profileIdentity.Email ?? string.Empty,
+                  profileIdentity.DisplayName,
+                  provisioning.Entitlement?.PlanKey ?? UserEntitlementDefaults.FreePlanKey);
+          }
+          else
+          {
+              logger.LogInformation(
+                  "Existing user login. UserId={UserId}, Email={Email}, DisplayName={DisplayName}, PlanKey={PlanKey}",
+                  userId,
+                  profileIdentity.Email ?? string.Empty,
+                  profileIdentity.DisplayName,
+                  provisioning.Entitlement?.PlanKey ?? UserEntitlementDefaults.FreePlanKey);
+          }
 
-                dbContext.UserProfiles.Add(userProfile);
-                try
-                {
-                    await dbContext.SaveChangesAsync(ct);
-                    createdProfile = true;
-                }
-                catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
-                {
-                    dbContext.Entry(userProfile).State = EntityState.Detached;
-                    userProfile = await dbContext.UserProfiles
-                        .FirstOrDefaultAsync(item => item.UserId == userId, ct);
-                    createdProfile = false;
-                }
-            }
-            else
-            {
-                DateTime now = DateTime.UtcNow;
-                string? nextDisplayName = string.IsNullOrWhiteSpace(profileIdentity.DisplayName)
-                    ? userProfile.DisplayName
-                    : profileIdentity.DisplayName;
-                bool changed =
-                    !string.Equals(userProfile.DisplayName, nextDisplayName, StringComparison.Ordinal)
-                    || userProfile.UpdatedUtc != now;
-                if (changed)
-                {
-                    userProfile.DisplayName = nextDisplayName;
-                    userProfile.UpdatedUtc = now;
-                    await dbContext.SaveChangesAsync(ct);
-                }
-            }
+          WriterApp.Application.Security.AuthMeDto enrichedResponse = new()
+          {
+            IsAuthenticated = true,
+            Name = profileIdentity.DisplayName,
+            Email = profileIdentity.Email,
+            UserId = userId,
+              Roles = roles,
+              IsAdminAccess = adminAccess.IsAdminAccess,
+              AdminAccessSource = adminAccess.Source.ToString(),
+              PlanKey = provisioning.Entitlement?.PlanKey ?? UserEntitlementDefaults.FreePlanKey,
+              SubscriptionStatus = provisioning.Entitlement?.SubscriptionStatus,
+              StripeCustomerId = provisioning.Entitlement?.StripeCustomerId,
+              AiMonthlyTokenBudget = provisioning.Entitlement?.AiMonthlyTokenBudget ?? 0,
+              AiTokensUsedThisPeriod = provisioning.Entitlement?.AiTokensUsedThisPeriod ?? 0,
+              PeriodStartUtc = provisioning.Entitlement?.PeriodStartUtc ?? DateTimeOffset.MinValue,
+              EntitlementUpdatedUtc = provisioning.Entitlement?.UpdatedUtc ?? DateTimeOffset.MinValue
+          };
 
-            bool hadEntitlement = await dbContext.UserEntitlements
-                .AsNoTracking()
-                .AnyAsync(item => item.UserId == userId, ct);
-
-            UserEntitlement entitlement = await userEntitlementStore.GetOrCreateAsync(userId, ct);
-
-            if (createdProfile || !hadEntitlement)
-            {
-                logger.LogInformation(
-                    "Created new user records. UserId={UserId}, CreatedProfile={CreatedProfile}, CreatedEntitlement={CreatedEntitlement}, Email={Email}, DisplayName={DisplayName}, PlanKey={PlanKey}",
-                    userId,
-                    createdProfile,
-                    !hadEntitlement,
-                    profileIdentity.Email ?? string.Empty,
-                    profileIdentity.DisplayName,
-                    entitlement.PlanKey);
-            }
-            else
-            {
-                logger.LogInformation(
-                    "Existing user login. UserId={UserId}, Email={Email}, DisplayName={DisplayName}, PlanKey={PlanKey}",
-                    userId,
-                    profileIdentity.Email ?? string.Empty,
-                    profileIdentity.DisplayName,
-                    entitlement.PlanKey);
-            }
-
-            enrichedResponse = new WriterApp.Application.Security.AuthMeDto
-            {
-                IsAuthenticated = true,
-                Name = profileIdentity.DisplayName,
-                Email = profileIdentity.Email,
-                UserId = userId,
-                Roles = roles,
-                IsAdminAccess = adminAccess.IsAdminAccess,
-                AdminAccessSource = adminAccess.Source.ToString(),
-                PlanKey = entitlement.PlanKey,
-                SubscriptionStatus = entitlement.SubscriptionStatus,
-                StripeCustomerId = entitlement.StripeCustomerId,
-                AiMonthlyTokenBudget = entitlement.AiMonthlyTokenBudget,
-                AiTokensUsedThisPeriod = entitlement.AiTokensUsedThisPeriod,
-                PeriodStartUtc = entitlement.PeriodStartUtc,
-                EntitlementUpdatedUtc = entitlement.UpdatedUtc
-            };
-        });
-
-        return Results.Ok(enrichedResponse ?? minimalResponse);
+        return Results.Ok(enrichedResponse);
     }
     catch (Exception ex)
     {
         logger.LogWarning(
             ex,
-            "Azure SQL connection failed during AuthMe. Likely cold start or transient failure. Returning minimal identity.");
+            "AuthMe enrichment failed after identity provisioning. Returning minimal identity.");
         return Results.Ok(minimalResponse);
     }
 });
@@ -2283,8 +2299,8 @@ static bool TryAuthorizeAdminRequest(HttpContext context, IConfiguration configu
                 HasPersistedRoleAdmin: false,
                 HasLegacyRoleAdminClaim: false,
                 BootstrapEnabled: false,
-                BootstrapOidConfigured: false,
-                UserOidPresent: false,
+                BootstrapUserIdConfigured: false,
+                UserIdPresent: false,
                 BootstrapMatched: false),
             reasonCodeOverride: "admin_api_disabled");
         return false;

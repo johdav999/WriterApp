@@ -201,7 +201,7 @@ public sealed class SearchIndexService : ISearchIndexService, ISearchIndexBackfi
                 row.Title ?? string.Empty,
                 BuildSnippet(row.Title ?? string.Empty, row.Content ?? string.Empty, normalizedQuery, contentMatch),
                 contentMatch ? 0 : 1,
-                docTitles.TryGetValue(row.DocumentId, out string title) ? title : string.Empty,
+                docTitles.TryGetValue(row.DocumentId, out string? title) ? title ?? string.Empty : string.Empty,
                 contentMatch ? "content" : "meta");
         }).ToList();
     }

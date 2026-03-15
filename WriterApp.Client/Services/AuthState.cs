@@ -9,7 +9,9 @@ namespace WriterApp.Client.Services
         string? UserId,
         IReadOnlyDictionary<string, string> Claims,
         bool IsDeletedAccount = false,
-        string? DeletedAccountMessage = null)
+        string? DeletedAccountMessage = null,
+        bool IsDuplicateAccount = false,
+        string? DuplicateAccountMessage = null)
     {
         public static AuthState Anonymous { get; } = new(
             IsAuthenticated: false,
@@ -24,5 +26,13 @@ namespace WriterApp.Client.Services
             Claims: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
             IsDeletedAccount: true,
             DeletedAccountMessage: message);
+
+        public static AuthState DuplicateAccount(string? message, string? provider = null) => new(
+            IsAuthenticated: false,
+            Provider: provider,
+            UserId: null,
+            Claims: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            IsDuplicateAccount: true,
+            DuplicateAccountMessage: message);
     }
 }

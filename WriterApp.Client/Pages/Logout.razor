@@ -4,6 +4,7 @@
 @using WriterApp.Client.Utilities
 @inject NavigationManager Navigation
 @inject IWebAssemblyHostEnvironment HostEnvironment
+@inject IOptions<WriterAuthOptions> AuthOptions
 
 <PageTitle>Sign out</PageTitle>
 
@@ -27,7 +28,7 @@
             return Task.CompletedTask;
         }
 
-        string logoutUrl = EasyAuthUrlBuilder.BuildLogoutUrl(Navigation.BaseUri, returnUrl, SafeReturnUrl.DefaultHomePath);
+        string logoutUrl = EasyAuthUrlBuilder.BuildLogoutUrl(Navigation.BaseUri, returnUrl, AuthOptions.Value, SafeReturnUrl.DefaultHomePath);
         Navigation.NavigateTo(logoutUrl, forceLoad: true);
         return Task.CompletedTask;
     }

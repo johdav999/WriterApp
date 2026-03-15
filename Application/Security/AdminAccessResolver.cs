@@ -28,8 +28,8 @@ namespace WriterApp.Application.Security
         GrantedBootstrap = 2,
         NotAuthenticated = 3,
         BootstrapDisabled = 4,
-        BootstrapOidMissing = 5,
-        BootstrapOidMismatch = 6,
+        BootstrapUserIdMissing = 5,
+        BootstrapUserIdMismatch = 6,
         UserIdMismatch = 7
     }
 
@@ -44,8 +44,8 @@ namespace WriterApp.Application.Security
         bool HasPersistedRoleAdmin,
         bool HasLegacyRoleAdminClaim,
         bool BootstrapEnabled,
-        bool BootstrapOidConfigured,
-        bool UserOidPresent,
+        bool BootstrapUserIdConfigured,
+        bool UserIdPresent,
         bool BootstrapMatched);
 
     public interface IAdminAccessResolver
@@ -109,8 +109,8 @@ namespace WriterApp.Application.Security
                     HasPersistedRoleAdmin: false,
                     HasLegacyRoleAdminClaim: false,
                     BootstrapEnabled: false,
-                    BootstrapOidConfigured: false,
-                    UserOidPresent: false,
+                    BootstrapUserIdConfigured: false,
+                    UserIdPresent: false,
                     BootstrapMatched: false);
             }
 
@@ -119,13 +119,13 @@ namespace WriterApp.Application.Security
             bool hasLegacyRoleAdminClaim = HasLegacyRoleAdminClaim(user);
             bool isRoleAdmin = hasPersistedRoleAdmin || hasLegacyRoleAdminClaim;
             BootstrapResolutionState bootstrapState = GetBootstrapState(configuration);
-            string? userOid = ExternalIdentityClaims.ResolveOid(user.Claims);
-            bool userOidPresent = !string.IsNullOrWhiteSpace(userOid);
+            string? bootstrapCandidateUserId = ResolveBootstrapCandidateUserId(user, bootstrapState);
+            bool userIdPresent = !string.IsNullOrWhiteSpace(bootstrapCandidateUserId);
             bool bootstrapMatched =
                 bootstrapState.Enabled
-                && bootstrapState.OidConfigured
-                && userOidPresent
-                && string.Equals(IdNorm.Norm(bootstrapState.BootstrapOid), IdNorm.Norm(userOid), StringComparison.Ordinal);
+                && bootstrapState.UserIdConfigured
+                && userIdPresent
+                && string.Equals(IdNorm.Norm(bootstrapState.BootstrapUserId), IdNorm.Norm(bootstrapCandidateUserId), StringComparison.Ordinal);
 
             AdminAccessResolution resolution;
             // App-managed role admin is the normal operating model. A matching
@@ -147,8 +147,8 @@ namespace WriterApp.Application.Security
                 hasPersistedRoleAdmin,
                 hasLegacyRoleAdminClaim,
                 bootstrapState.Enabled,
-                bootstrapState.OidConfigured,
-                userOidPresent,
+                bootstrapState.UserIdConfigured,
+                userIdPresent,
                 bootstrapMatched);
         }
 
@@ -263,8 +263,9 @@ namespace WriterApp.Application.Security
 
         private static AdminAccessResolution ResolveBootstrap(ClaimsPrincipal user, IConfiguration configuration)
         {
-            string? userOid = ExternalIdentityClaims.ResolveOid(user.Claims);
-            return ResolveBootstrapForUserId(userOid, GetBootstrapState(configuration));
+            BootstrapResolutionState bootstrapState = GetBootstrapState(configuration);
+            string? bootstrapCandidateUserId = ResolveBootstrapCandidateUserId(user, bootstrapState);
+            return ResolveBootstrapForUserId(bootstrapCandidateUserId, bootstrapState);
         }
 
         private static AdminAccessResolution ResolveBootstrapForUserId(string? userId, BootstrapResolutionState bootstrapState)
@@ -274,32 +275,43 @@ namespace WriterApp.Application.Security
                 return new AdminAccessResolution(false, AdminAccessSource.None, AdminAccessReason.BootstrapDisabled);
             }
 
-            if (!bootstrapState.OidConfigured)
+            if (!bootstrapState.UserIdConfigured)
             {
-                return new AdminAccessResolution(false, AdminAccessSource.None, AdminAccessReason.BootstrapOidMissing);
+                return new AdminAccessResolution(false, AdminAccessSource.None, AdminAccessReason.BootstrapUserIdMissing);
             }
 
             return !string.IsNullOrWhiteSpace(userId)
-                && string.Equals(IdNorm.Norm(bootstrapState.BootstrapOid), IdNorm.Norm(userId), StringComparison.Ordinal)
+                && string.Equals(IdNorm.Norm(bootstrapState.BootstrapUserId), IdNorm.Norm(userId), StringComparison.Ordinal)
                     ? new AdminAccessResolution(true, AdminAccessSource.Bootstrap, AdminAccessReason.GrantedBootstrap)
-                    : new AdminAccessResolution(false, AdminAccessSource.None, AdminAccessReason.BootstrapOidMismatch);
+                    : new AdminAccessResolution(false, AdminAccessSource.None, AdminAccessReason.BootstrapUserIdMismatch);
         }
 
         private static BootstrapResolutionState GetBootstrapState(IConfiguration configuration)
         {
+            string? bootstrapUserId = configuration["BOOTSTRAP_ADMIN_USER_ID"];
             string? bootstrapOid = configuration["BOOTSTRAP_ADMIN_OID"];
             string? bootstrapEnabledValue = configuration["BOOTSTRAP_ADMIN_ENABLED"];
             bool bootstrapEnabled = string.Equals(bootstrapEnabledValue, "true", StringComparison.OrdinalIgnoreCase);
+            string? effectiveUserId = !string.IsNullOrWhiteSpace(bootstrapUserId) ? bootstrapUserId : bootstrapOid;
 
             return new BootstrapResolutionState(
                 bootstrapEnabled,
-                !string.IsNullOrWhiteSpace(bootstrapOid),
-                bootstrapOid);
+                !string.IsNullOrWhiteSpace(effectiveUserId),
+                effectiveUserId,
+                UsesLegacyOidFallback: string.IsNullOrWhiteSpace(bootstrapUserId) && !string.IsNullOrWhiteSpace(bootstrapOid));
+        }
+
+        private static string? ResolveBootstrapCandidateUserId(ClaimsPrincipal user, BootstrapResolutionState bootstrapState)
+        {
+            return bootstrapState.UsesLegacyOidFallback
+                ? ExternalIdentityClaims.ResolveOid(user.Claims)
+                : ExternalIdentityClaims.ResolveStableUserId(user.Claims);
         }
 
         private readonly record struct BootstrapResolutionState(
             bool Enabled,
-            bool OidConfigured,
-            string? BootstrapOid);
+            bool UserIdConfigured,
+            string? BootstrapUserId,
+            bool UsesLegacyOidFallback);
     }
 }

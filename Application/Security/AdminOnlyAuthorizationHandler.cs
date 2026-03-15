@@ -24,15 +24,15 @@ namespace WriterApp.Application.Security
             AdminPolicyDiagnostics.LogDecision(
                 diagnostic.IsRoleAdmin,
                 diagnostic.BootstrapEnabled,
-                diagnostic.BootstrapOidConfigured,
-                diagnostic.UserOidPresent,
+                diagnostic.BootstrapUserIdConfigured,
+                diagnostic.UserIdPresent,
                 diagnostic.Resolution.IsAdminAccess,
-                bootstrapOid: null,
-                userOid: ExternalIdentityClaims.ResolveOid(context.User.Claims));
+                bootstrapUserId: null,
+                userId: ExternalIdentityClaims.ResolveStableUserId(context.User.Claims));
 
             if (diagnostic.Resolution.Source == AdminAccessSource.Bootstrap)
             {
-                AdminPolicyDiagnostics.LogBootstrapAccessGranted(context.Resource, ExternalIdentityClaims.ResolveOid(context.User.Claims));
+                AdminPolicyDiagnostics.LogBootstrapAccessGranted(context.Resource, ExternalIdentityClaims.ResolveStableUserId(context.User.Claims));
             }
 
             if (diagnostic.Resolution.IsAdminAccess)

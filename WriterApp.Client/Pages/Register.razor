@@ -1,0 +1,91 @@
+@page "/register"
+@page "/app/register"
+@using Microsoft.AspNetCore.Components.WebAssembly.Hosting
+@using WriterApp.Client.Utilities
+@inject NavigationManager Navigation
+@inject IWebAssemblyHostEnvironment HostEnvironment
+@inject IOptions<WriterAuthOptions> AuthOptions
+
+<PageTitle>Start free</PageTitle>
+
+<div class="container py-5">
+    <div class="row justify-content-center">
+        <div class="col-12 col-lg-8 col-xl-7">
+            <div class="card shadow-sm border-0">
+                <div class="card-body p-4 p-md-5">
+                    <p class="text-uppercase text-muted fw-semibold mb-2">Prosa</p>
+                    <h1 class="display-6 fw-semibold mb-3">Start free</h1>
+                    <p class="lead mb-3">Create your Prosa account with your email address and continue straight into your first project.</p>
+                    <p class="text-muted mb-4">@_statusMessage</p>
+                    <div class="d-grid gap-2 d-sm-flex">
+                        @foreach (AuthLink link in _primaryLinks)
+                        {
+                            <a class="@link.CssClass" href="@link.Href">@link.Label</a>
+                        }
+                    </div>
+                    @if (_secondaryLinks.Count > 0)
+                    {
+                        <div class="mt-4 d-grid gap-2">
+                            @foreach (AuthLink link in _secondaryLinks)
+                            {
+                                <a class="@link.CssClass" href="@link.Href">@link.Label</a>
+                            }
+                        </div>
+                    }
+                    <div class="mt-4 text-muted small">
+                        <p class="mb-2">Account creation continues with Prosa's secure sign-in provider. You can use a personal email address, including Gmail.</p>
+                        <p class="mb-0">After sign-in, Prosa provisions your workspace at <code>/api/auth/me</code> and sends you into onboarding automatically on first use.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private const string DefaultReturnUrl = SafeReturnUrl.DefaultDocumentsPath;
+    private readonly List<AuthLink> _primaryLinks = new();
+    private readonly List<AuthLink> _secondaryLinks = new();
+    private string _statusMessage = "Preparing sign-up...";
+
+    protected override Task OnInitializedAsync()
+    {
+        Uri currentUri = Navigation.ToAbsoluteUri(Navigation.Uri);
+        Dictionary<string, string> query = QueryStringParser.Parse(currentUri.Query);
+        string returnUrl = SafeReturnUrl.ResolveFromQuery(query, fallback: DefaultReturnUrl);
+        string postAuthStartUrl = EasyAuthUrlBuilder.BuildAppStartUrl(returnUrl, DefaultReturnUrl);
+        WriterAuthOptions authOptions = AuthOptions.Value;
+
+        if (HostEnvironment.IsDevelopment() || currentUri.IsLoopback)
+        {
+            _statusMessage = "Signed in (dev). Redirecting...";
+            Navigation.NavigateTo(postAuthStartUrl, forceLoad: true);
+            return Task.CompletedTask;
+        }
+
+        _statusMessage = authOptions.UseDualProviderMode
+            ? "Continue with the customer sign-in provider to create a new account. Internal team members should use the sign-in page instead."
+            : "Continue with the sign-in provider to create your account and begin onboarding.";
+        _primaryLinks.Clear();
+        _secondaryLinks.Clear();
+        _primaryLinks.Add(new AuthLink(
+            "Create account",
+            EasyAuthUrlBuilder.BuildCustomerLoginUrl(Navigation.BaseUri, postAuthStartUrl, authOptions, DefaultReturnUrl),
+            "btn btn-primary btn-lg"));
+        _secondaryLinks.Add(new AuthLink(
+            "Already have an account? Sign in",
+            EasyAuthUrlBuilder.BuildAppLoginUrl(returnUrl, audience: null, DefaultReturnUrl),
+            "btn btn-outline-secondary"));
+        if (authOptions.UseDualProviderMode)
+        {
+            _secondaryLinks.Add(new AuthLink(
+                "Internal/admin sign in",
+                EasyAuthUrlBuilder.BuildAppLoginUrl(returnUrl, EasyAuthUrlBuilder.InternalAudience, DefaultReturnUrl),
+                "btn btn-link text-start px-0"));
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private sealed record AuthLink(string Label, string Href, string CssClass);
+}

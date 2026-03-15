@@ -4,6 +4,7 @@
 @using WriterApp.Client.Utilities
 @inject NavigationManager Navigation
 @inject DeletedAccountStateService DeletedAccountStateService
+@inject IOptions<WriterAuthOptions> AuthOptions
 
 <PageTitle>Account deleted</PageTitle>
 
@@ -17,7 +18,7 @@
 
     <div class="projects-actions">
         <a class="primary"
-           href="@EasyAuthUrlBuilder.BuildLogoutUrl(Navigation.BaseUri, SafeReturnUrl.DefaultHomePath, SafeReturnUrl.DefaultHomePath)">
+           href="@EasyAuthUrlBuilder.BuildLogoutUrl(Navigation.BaseUri, SafeReturnUrl.DefaultHomePath, AuthOptions.Value, SafeReturnUrl.DefaultHomePath)">
             Sign out
         </a>
     </div>

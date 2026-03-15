@@ -71,10 +71,21 @@ namespace WriterApp.Application.Security
                     }
                 }
 
-                string? oid = ExternalIdentityClaims.ResolveOid(claims);
-                if (!string.IsNullOrWhiteSpace(oid))
+                if (root.TryGetProperty("auth_typ", out JsonElement authTypeElement))
                 {
-                    claims.Add(new Claim(ClaimTypes.NameIdentifier, oid));
+                    string? authType = authTypeElement.GetString();
+                    if (!string.IsNullOrWhiteSpace(authType))
+                    {
+                        claims.Add(new Claim(ExternalIdentityClaims.EasyAuthProviderClaimType, authType.Trim()));
+                    }
+                }
+
+                ExternalIdentityClaims.ExternalIdentityResolution? identityResolution =
+                    ExternalIdentityClaims.ResolveIdentity(claims);
+                string? canonicalUserId = identityResolution?.UserId;
+                if (!string.IsNullOrWhiteSpace(canonicalUserId))
+                {
+                    claims.Add(new Claim(ClaimTypes.NameIdentifier, canonicalUserId));
                 }
 
                 string? email = ExternalIdentityClaims.ResolveEmail(claims);
@@ -83,11 +94,20 @@ namespace WriterApp.Application.Security
                     claims.Add(new Claim(ClaimTypes.Email, email));
                 }
 
-                string displayName = ExternalIdentityClaims.ResolveDisplayName(claims, oid ?? "unknown");
+                string displayName = ExternalIdentityClaims.ResolveDisplayName(claims, canonicalUserId ?? "unknown");
                 if (!string.IsNullOrWhiteSpace(displayName))
                 {
                     claims.Add(new Claim(ClaimTypes.Name, displayName));
                 }
+
+                Logger.LogInformation(
+                    "EasyAuth claims resolved. Strategy={Strategy} EmailResolved={EmailResolved} DisplayNameResolved={DisplayNameResolved} EmailClaimTypes={EmailClaimTypes} NameClaimTypes={NameClaimTypes} ClaimCount={ClaimCount}",
+                    identityResolution?.Strategy.ToString() ?? ExternalIdentityClaims.ExternalIdentityUserIdStrategy.MissingClaims.ToString(),
+                    !string.IsNullOrWhiteSpace(email),
+                    !string.IsNullOrWhiteSpace(displayName),
+                    ExternalIdentityClaims.DescribePresentEmailClaimTypes(claims),
+                    ExternalIdentityClaims.DescribePresentNameClaimTypes(claims),
+                    claims.Count);
 
                 ClaimsIdentity identity = new(claims, SchemeName);
                 ClaimsPrincipal principal = new(identity);
