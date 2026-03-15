@@ -507,6 +507,99 @@ namespace WriterApp.Tests
         }
 
         [Fact]
+        public async Task GrantAdmin_AssignsManagedRole_AndListReflectsRoleAccess()
+        {
+            await using SqliteConnection connection = new("Data Source=:memory:");
+            await connection.OpenAsync();
+            await using AppDbContext dbContext = BuildDbContext(connection);
+            SeedUsers(dbContext, count: 1);
+
+            AdminUsersService service = BuildService(dbContext);
+
+            AdminRoleChangeResponse response = await service.GrantAdminAsync(
+                "user-0",
+                "bootstrap-admin",
+                "admin@example.com");
+            AdminUserListResponseDto list = await service.QueryUsersAsync(1, 20, null, null, false, null, null, null, null);
+            IAdminAccessResolver resolver = new AdminAccessResolver(
+                new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>()).Build(),
+                dbContext);
+            ClaimsPrincipal promotedPrincipal = new(new ClaimsIdentity(new[] { new Claim("oid", "user-0") }, "Test"));
+
+            Assert.Equal("grant_admin", response.Action);
+            Assert.True(response.User.IsAdminAccess);
+            Assert.Equal("Role", response.User.AdminAccessSource);
+            Assert.True(response.User.HasRoleAdminAssignment);
+            Assert.Contains(list.Items, item => item.UserId == "user-0" && item.AdminAccessSource == "Role" && item.HasRoleAdminAssignment);
+            Assert.True(resolver.Resolve(promotedPrincipal).IsAdminAccess);
+        }
+
+        [Fact]
+        public async Task RevokeAdmin_RemovesManagedRole()
+        {
+            await using SqliteConnection connection = new("Data Source=:memory:");
+            await connection.OpenAsync();
+            await using AppDbContext dbContext = BuildDbContext(connection);
+            SeedUsers(dbContext, count: 2);
+            dbContext.AdminRoleAssignments.AddRange(
+                new AdminRoleAssignment { UserId = "user-0", AssignedByUserId = "seed", AssignedUtc = DateTime.UtcNow },
+                new AdminRoleAssignment { UserId = "user-1", AssignedByUserId = "seed", AssignedUtc = DateTime.UtcNow });
+            await dbContext.SaveChangesAsync();
+
+            AdminUsersService service = BuildService(dbContext);
+
+            AdminRoleChangeResponse response = await service.RevokeAdminAsync(
+                "user-1",
+                "user-0",
+                "admin@example.com");
+
+            Assert.Equal("revoke_admin", response.Action);
+            Assert.False(response.User.IsAdminAccess);
+            Assert.Equal("None", response.User.AdminAccessSource);
+            Assert.False(response.User.HasRoleAdminAssignment);
+            Assert.DoesNotContain(dbContext.AdminRoleAssignments, item => item.UserId == "user-1");
+        }
+
+        [Fact]
+        public async Task RevokeAdmin_CannotSelfRevoke()
+        {
+            await using SqliteConnection connection = new("Data Source=:memory:");
+            await connection.OpenAsync();
+            await using AppDbContext dbContext = BuildDbContext(connection);
+            SeedUsers(dbContext, count: 1);
+            dbContext.AdminRoleAssignments.Add(new AdminRoleAssignment { UserId = "user-0", AssignedByUserId = "seed", AssignedUtc = DateTime.UtcNow });
+            await dbContext.SaveChangesAsync();
+
+            AdminUsersService service = BuildService(dbContext);
+
+            InvalidOperationException ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                service.RevokeAdminAsync("user-0", "user-0", "admin@example.com"));
+
+            Assert.Equal("You cannot remove your own admin role.", ex.Message);
+        }
+
+        [Fact]
+        public async Task AdminRoleChange_WritesAuditEvent()
+        {
+            await using SqliteConnection connection = new("Data Source=:memory:");
+            await connection.OpenAsync();
+            await using AppDbContext dbContext = BuildDbContext(connection);
+            SeedUsers(dbContext, count: 2);
+            dbContext.AdminRoleAssignments.AddRange(
+                new AdminRoleAssignment { UserId = "user-0", AssignedByUserId = "seed", AssignedUtc = DateTime.UtcNow },
+                new AdminRoleAssignment { UserId = "user-1", AssignedByUserId = "seed", AssignedUtc = DateTime.UtcNow });
+            await dbContext.SaveChangesAsync();
+
+            AdminUsersService service = BuildService(dbContext);
+
+            _ = await service.GrantAdminAsync("user-0", "user-1", "admin@example.com");
+            _ = await service.RevokeAdminAsync("user-1", "user-0", "admin@example.com");
+
+            Assert.Contains(dbContext.AdminAuditEvents, item => item.Action == "grant_admin" && item.TargetUserId == "user-0");
+            Assert.Contains(dbContext.AdminAuditEvents, item => item.Action == "revoke_admin" && item.TargetUserId == "user-1");
+        }
+
+        [Fact]
         public async Task ProjectDeletion_StandalonePath_StillDeletesProject()
         {
             await using SqliteConnection connection = new("Data Source=:memory:");
@@ -609,11 +702,17 @@ namespace WriterApp.Tests
             projectDeletionService ??= new ProjectDeletionService(
                 dbContext,
                 NullLogger<ProjectDeletionService>.Instance);
+            IAdminAccessResolver adminAccessResolver = new AdminAccessResolver(
+                new ConfigurationBuilder()
+                    .AddInMemoryCollection(new Dictionary<string, string?>())
+                    .Build(),
+                dbContext);
 
             return new AdminUsersService(
                 dbContext,
                 overrideService,
                 auditService,
+                adminAccessResolver,
                 deletedUserIdentityService,
                 entitlementStore,
                 entitlementService,

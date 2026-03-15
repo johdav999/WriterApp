@@ -3,6 +3,8 @@ using System.Threading.Tasks;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Logging.Abstractions;
+using WriterApp.Application.Security;
 using WriterApp.Application.Subscriptions;
 using WriterApp.Data;
 using WriterApp.Data.Subscriptions;

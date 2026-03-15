@@ -14,6 +14,7 @@ using WriterApp.Application.Security;
 using WriterApp.Application.Subscriptions;
 using WriterApp.Application.Usage;
 using WriterApp.Data;
+using WriterApp.Data.Admin;
 using WriterApp.Data.Subscriptions;
 using WriterApp.Data.Usage;
 using Xunit;

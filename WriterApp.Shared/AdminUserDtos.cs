@@ -25,7 +25,13 @@ namespace WriterApp.Shared
         int AiMonthlyTokenBudget,
         int AiTokensUsedThisPeriod,
         int TokensLeft,
-        bool IsManuallyOverridden);
+        bool IsManuallyOverridden,
+        bool IsAdminAccess,
+        string AdminAccessSource,
+        bool HasRoleAdminAssignment,
+        bool CanGrantAdminRole,
+        bool CanRevokeAdminRole,
+        string? AdminRoleActionDisabledReason);
 
     public sealed record AdminUserListResponseDto(
         IReadOnlyList<AdminUserListItemDto> Items,
@@ -45,11 +51,22 @@ namespace WriterApp.Shared
         int AiTokensUsedThisPeriod,
         int TokensLeft,
         bool IsManuallyOverridden,
+        bool IsAdminAccess,
+        string AdminAccessSource,
+        bool HasRoleAdminAssignment,
+        bool CanGrantAdminRole,
+        bool CanRevokeAdminRole,
+        string? AdminRoleActionDisabledReason,
         string? OverridePlanKey,
         DateTime? OverrideAssignedUtc,
         string? OverrideAssignedBy,
         string? StripeCustomerId,
         string? StripeSubscriptionId);
+
+    public sealed record AdminRoleChangeResponse(
+        string UserId,
+        string Action,
+        AdminUserDetailDto User);
 
     public sealed record AdminCreateUserRequest(
         string? UserId,

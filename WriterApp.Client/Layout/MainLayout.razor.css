@@ -27,6 +27,19 @@
     gap: 16px;
 }
 
+.bootstrap-admin-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid #f1c27d;
+    background: #fff7e6;
+    color: #8a4b08;
+    font-size: 0.82rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
 .app-brand {
     display: inline-flex;
     align-items: center;
@@ -118,6 +131,11 @@
     .app-header-left,
     .app-header-right {
         justify-content: space-between;
+    }
+
+    .bootstrap-admin-badge {
+        font-size: 0.76rem;
+        padding: 5px 8px;
     }
 
     .app-header-center {

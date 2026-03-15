@@ -124,6 +124,7 @@
                         <th>Email</th>
                         <th>Name</th>
                         <th>UserId</th>
+                        <th>Admin access</th>
                         <th>Current plan</th>
                         <th>Override</th>
                         <th>Tokens left</th>
@@ -138,14 +139,14 @@
                         @for (int i = 0; i < 8; i++)
                         {
                             <tr>
-                                <td colspan="9"><div class="skeleton-row"></div></td>
+                                <td colspan="10"><div class="skeleton-row"></div></td>
                             </tr>
                         }
                     }
                     else if (_items.Count == 0)
                     {
                         <tr>
-                            <td colspan="9">No users found.</td>
+                            <td colspan="10">No users found.</td>
                         </tr>
                     }
                     else
@@ -159,6 +160,7 @@
                                     <span>@item.UserId</span>
                                     <button class="btn btn-link btn-sm" @onclick="() => CopyUserIdAsync(item.UserId)">Copy</button>
                                 </td>
+                                <td><span class="chip @GetAdminAccessChipClass(item.AdminAccessSource)">@GetAdminAccessLabel(item.AdminAccessSource)</span></td>
                                 <td><span class="chip chip-plan">@item.PlanKey</span></td>
                                 <td><span class="chip @(item.IsManuallyOverridden ? "chip-override" : "chip-muted")">@(item.IsManuallyOverridden ? "Manual" : "None")</span></td>
                                 <td>@($"{item.TokensLeft} ({item.AiMonthlyTokenBudget}-{item.AiTokensUsedThisPeriod})")</td>
@@ -166,6 +168,12 @@
                                 <td>@item.LastSeenUtc.ToString("u")</td>
                                 <td class="actions">
                                     <button class="btn btn-sm btn-outline-primary" @onclick="() => ViewUserAsync(item.UserId)">View</button>
+                                    <button class="btn btn-sm @GetAdminRoleButtonClass(item)"
+                                            title="@item.AdminRoleActionDisabledReason"
+                                            disabled="@IsAdminRoleActionDisabled(item)"
+                                            @onclick="() => PromptAdminRoleChange(item)">
+                                        @GetAdminRoleActionLabel(item)
+                                    </button>
                                     <select class="form-select form-select-sm override-select"
                                             value="@GetOverrideSelection(item.UserId)"
                                             @onchange="(e) => OnOverrideSelectionChanged(item.UserId, e)">
@@ -314,6 +322,25 @@
     </div>
 }
 
+@if (_showAdminRoleConfirm && _adminRoleTarget is not null)
+{
+    <div class="modal-backdrop">
+        <div class="modal-panel">
+            <h2>@(_adminRoleIsGrant ? "Make admin" : "Remove admin")</h2>
+            <p>@GetAdminRoleConfirmationText()</p>
+            <p><strong>User:</strong> @_adminRoleTarget.UserId</p>
+            <div class="modal-actions">
+                <button class="btn @(_adminRoleIsGrant ? "btn-primary" : "btn-danger")"
+                        disabled="@_adminRoleBusy"
+                        @onclick="ConfirmAdminRoleChangeAsync">
+                    @(_adminRoleIsGrant ? "Make admin" : "Remove admin")
+                </button>
+                <button class="btn btn-secondary" disabled="@_adminRoleBusy" @onclick="CancelAdminRoleChange">Cancel</button>
+            </div>
+        </div>
+    </div>
+}
+
 @if (_detailOpen)
 {
     <div class="drawer-backdrop" @onclick="CloseDetailDrawer"></div>
@@ -337,6 +364,7 @@
             <div class="detail-grid">
                 <label>UserId</label><div>@_selectedUser.UserId</div>
                 <label>Email</label><div>@(_selectedUser.Email ?? "-")</div>
+                <label>Admin access</label><div><span class="chip @GetAdminAccessChipClass(_selectedUser.AdminAccessSource)">@GetAdminAccessLabel(_selectedUser.AdminAccessSource)</span></div>
                 <label>Plan</label><div>@_selectedUser.PlanKey</div>
                 <label>Status</label><div>@_selectedUser.SubscriptionStatus</div>
                 <label>Override</label><div>@(_selectedUser.IsManuallyOverridden ? _selectedUser.OverridePlanKey : "None")</div>
@@ -375,6 +403,17 @@
             <h3>Reset state</h3>
             <div class="drawer-actions">
                 <button class="btn btn-outline-warning" @onclick="PromptResetToFirstRun">Reset to first-run</button>
+            </div>
+
+            <h3>Admin access</h3>
+            <p>Role admin is the standard app-managed admin access. Bootstrap admin remains the emergency fallback only.</p>
+            <div class="drawer-actions">
+                <button class="btn @GetAdminRoleButtonClass(_selectedUser)"
+                        title="@_selectedUser.AdminRoleActionDisabledReason"
+                        disabled="@IsAdminRoleActionDisabled(_selectedUser)"
+                        @onclick="PromptAdminRoleChangeFromDetail">
+                    @GetAdminRoleActionLabel(_selectedUser)
+                </button>
             </div>
 
             <h3>Delete customer</h3>
@@ -432,6 +471,10 @@
     private string? _deleteConfirmationInput;
     private bool _showResetFirstRunConfirm;
     private bool _resetFirstRunBusy;
+    private bool _showAdminRoleConfirm;
+    private bool _adminRoleIsGrant;
+    private bool _adminRoleBusy;
+    private AdminUserDetailDto? _adminRoleTarget;
 
     private bool _detailOpen;
     private bool _detailLoading;
@@ -534,7 +577,8 @@
                 query.SubscriptionStatus,
                 query.TokensLeftLt,
                 query.TokensLeftGt,
-                query.Sort);
+                query.Sort,
+                (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User);
 
             _items.Clear();
             _items.AddRange(response.Items);
@@ -641,7 +685,7 @@
 
         try
         {
-            _selectedUser = await AdminUsersService.GetUserAsync(userId);
+            _selectedUser = await AdminUsersService.GetUserAsync(userId, (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User);
             _editDisplayName = _selectedUser?.DisplayName;
             _editEmail = _selectedUser?.Email;
         }
@@ -729,7 +773,7 @@
                 adminActor.UserId,
                 adminActor.Email);
             AddToast("Token period reset.", "success");
-            _selectedUser = await AdminUsersService.GetUserAsync(_selectedUser.UserId);
+            _selectedUser = await AdminUsersService.GetUserAsync(_selectedUser.UserId, (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User);
             await LoadUsersAsync(updateQueryString: false);
         }
         catch (Exception ex)
@@ -768,7 +812,7 @@
                 adminActor.UserId,
                 adminActor.Email);
             AddToast("Token adjustment applied.", "success");
-            _selectedUser = await AdminUsersService.GetUserAsync(_selectedUser.UserId);
+            _selectedUser = await AdminUsersService.GetUserAsync(_selectedUser.UserId, (await AuthenticationStateProvider.GetAuthenticationStateAsync()).User);
             await LoadUsersAsync(updateQueryString: false);
         }
         catch (Exception ex)
@@ -790,6 +834,91 @@
     private void CancelResetToFirstRun()
     {
         _showResetFirstRunConfirm = false;
+    }
+
+    private void PromptAdminRoleChange(AdminUserListItemDto item)
+    {
+        if (IsAdminRoleActionDisabled(item))
+        {
+            AddToast(item.AdminRoleActionDisabledReason ?? "Admin access cannot be changed for this user.", "error");
+            return;
+        }
+
+        _adminRoleTarget = ToDetailStub(item);
+        _adminRoleIsGrant = !item.HasRoleAdminAssignment;
+        _showAdminRoleConfirm = true;
+    }
+
+    private void PromptAdminRoleChangeFromDetail()
+    {
+        if (_selectedUser is null)
+        {
+            return;
+        }
+
+        if (IsAdminRoleActionDisabled(_selectedUser))
+        {
+            AddToast(_selectedUser.AdminRoleActionDisabledReason ?? "Admin access cannot be changed for this user.", "error");
+            return;
+        }
+
+        _adminRoleTarget = _selectedUser;
+        _adminRoleIsGrant = !_selectedUser.HasRoleAdminAssignment;
+        _showAdminRoleConfirm = true;
+    }
+
+    private void CancelAdminRoleChange()
+    {
+        _showAdminRoleConfirm = false;
+        _adminRoleTarget = null;
+        _adminRoleBusy = false;
+    }
+
+    private async Task ConfirmAdminRoleChangeAsync()
+    {
+        if (_adminRoleTarget is null)
+        {
+            return;
+        }
+
+        _adminRoleBusy = true;
+        try
+        {
+            AdminActorContext adminActor = await GetAdminActorAsync();
+            if (_adminRoleIsGrant)
+            {
+                _ = await AdminUsersService.GrantAdminAsync(
+                    _adminRoleTarget.UserId,
+                    adminActor.UserId,
+                    adminActor.Email);
+                AddToast("Admin role granted.", "success");
+            }
+            else
+            {
+                _ = await AdminUsersService.RevokeAdminAsync(
+                    _adminRoleTarget.UserId,
+                    adminActor.UserId,
+                    adminActor.Email);
+                AddToast("Admin role removed.", "success");
+            }
+
+            string targetUserId = _adminRoleTarget.UserId;
+            _showAdminRoleConfirm = false;
+            _adminRoleTarget = null;
+            await LoadUsersAsync(updateQueryString: false);
+            if (_selectedUser?.UserId == targetUserId)
+            {
+                await ViewUserAsync(targetUserId);
+            }
+        }
+        catch (Exception ex)
+        {
+            AddToast(ex.Message, "error");
+        }
+        finally
+        {
+            _adminRoleBusy = false;
+        }
     }
 
     private async Task ConfirmResetToFirstRunAsync()
@@ -997,7 +1126,13 @@
             _selectedUser.AiMonthlyTokenBudget,
             _selectedUser.AiTokensUsedThisPeriod,
             _selectedUser.TokensLeft,
-            _selectedUser.IsManuallyOverridden));
+            _selectedUser.IsManuallyOverridden,
+            _selectedUser.IsAdminAccess,
+            _selectedUser.AdminAccessSource,
+            _selectedUser.HasRoleAdminAssignment,
+            _selectedUser.CanGrantAdminRole,
+            _selectedUser.CanRevokeAdminRole,
+            _selectedUser.AdminRoleActionDisabledReason));
     }
 
     private void CancelDelete()
@@ -1116,6 +1251,78 @@
         {
             _toasts.RemoveAt(index);
         }
+    }
+
+    private static string GetAdminAccessLabel(string? source)
+    {
+        return source switch
+        {
+            "Role" => "Role admin",
+            "Bootstrap" => "Bootstrap admin",
+            _ => "No"
+        };
+    }
+
+    private static string GetAdminAccessChipClass(string? source)
+    {
+        return source switch
+        {
+            "Role" => "chip-admin-role",
+            "Bootstrap" => "chip-admin-bootstrap",
+            _ => "chip-muted"
+        };
+    }
+
+    private static string GetAdminRoleActionLabel(AdminUserListItemDto item)
+        => item.HasRoleAdminAssignment ? "Remove admin" : "Make admin";
+
+    private static string GetAdminRoleActionLabel(AdminUserDetailDto item)
+        => item.HasRoleAdminAssignment ? "Remove admin" : "Make admin";
+
+    private static string GetAdminRoleButtonClass(AdminUserListItemDto item)
+        => item.HasRoleAdminAssignment ? "btn-outline-danger" : "btn-outline-success";
+
+    private static string GetAdminRoleButtonClass(AdminUserDetailDto item)
+        => item.HasRoleAdminAssignment ? "btn-outline-danger" : "btn-outline-success";
+
+    private static bool IsAdminRoleActionDisabled(AdminUserListItemDto item)
+        => !item.CanGrantAdminRole && !item.CanRevokeAdminRole;
+
+    private static bool IsAdminRoleActionDisabled(AdminUserDetailDto item)
+        => !item.CanGrantAdminRole && !item.CanRevokeAdminRole;
+
+    private string GetAdminRoleConfirmationText()
+    {
+        return _adminRoleIsGrant
+            ? "This grants role-based admin access for future requests. Bootstrap admin remains the emergency fallback only."
+            : "This removes the user's app-managed role admin access. Their external sign-in account and any bootstrap fallback are unchanged.";
+    }
+
+    private static AdminUserDetailDto ToDetailStub(AdminUserListItemDto item)
+    {
+        return new AdminUserDetailDto(
+            item.UserId,
+            item.Email,
+            item.DisplayName,
+            item.CreatedAtUtc,
+            item.LastSeenUtc,
+            item.PlanKey,
+            item.SubscriptionStatus,
+            item.AiMonthlyTokenBudget,
+            item.AiTokensUsedThisPeriod,
+            item.TokensLeft,
+            item.IsManuallyOverridden,
+            item.IsAdminAccess,
+            item.AdminAccessSource,
+            item.HasRoleAdminAssignment,
+            item.CanGrantAdminRole,
+            item.CanRevokeAdminRole,
+            item.AdminRoleActionDisabledReason,
+            OverridePlanKey: null,
+            OverrideAssignedUtc: null,
+            OverrideAssignedBy: null,
+            StripeCustomerId: null,
+            StripeSubscriptionId: null);
     }
 
     private void SyncQueryString()

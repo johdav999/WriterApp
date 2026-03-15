@@ -24,6 +24,7 @@ namespace WriterApp.Data
         public DbSet<UserProfile> UserProfiles => Set<UserProfile>();
         public DbSet<UserEntitlement> UserEntitlements => Set<UserEntitlement>();
         public DbSet<AdminAuditEvent> AdminAuditEvents => Set<AdminAuditEvent>();
+        public DbSet<AdminRoleAssignment> AdminRoleAssignments => Set<AdminRoleAssignment>();
         public DbSet<DeletedUserIdentity> DeletedUserIdentities => Set<DeletedUserIdentity>();
         public DbSet<StripeEventLog> StripeEventLogs => Set<StripeEventLog>();
         public DbSet<Plan> Plans => Set<Plan>();
@@ -153,6 +154,16 @@ namespace WriterApp.Data
                 entity.HasIndex(audit => audit.AdminUserId);
                 entity.HasIndex(audit => audit.TargetUserId);
                 entity.HasIndex(audit => audit.Action);
+            });
+
+            builder.Entity<AdminRoleAssignment>(entity =>
+            {
+                entity.HasKey(item => item.UserId);
+                entity.Property(item => item.UserId).HasMaxLength(128).IsRequired();
+                entity.Property(item => item.AssignedByUserId).HasMaxLength(128);
+                entity.Property(item => item.AssignedByEmail).HasMaxLength(320);
+                entity.Property(item => item.AssignedUtc).IsRequired();
+                entity.HasIndex(item => item.AssignedUtc);
             });
 
             builder.Entity<DeletedUserIdentity>(entity =>

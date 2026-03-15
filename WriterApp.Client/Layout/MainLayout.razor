@@ -34,6 +34,12 @@
             <GlobalSearch />
         </div>
         <div class="app-header-right">
+            @if (AuthMeStateService.IsBootstrapAdminSession)
+            {
+                <span class="bootstrap-admin-badge" role="status" aria-live="polite" title="This session has admin access through bootstrap configuration.">
+                    Bootstrap admin session
+                </span>
+            }
             <UserBadge />
         </div>
     </header>
@@ -98,6 +104,7 @@
         CurrentSceneStateService.Changed += HandleSceneStateChange;
         CurrentProjectStateService.Changed += HandleProjectStateChange;
         OnboardingOverlayStateService.Changed += HandleOnboardingOverlayChange;
+        AuthMeStateService.Changed += HandleAuthMeStateChange;
         Navigation.LocationChanged += HandleLocationChanged;
         await LayoutStateService.InitializeAsync();
         await LastOpenedDocumentStateService.LoadAsync();
@@ -112,6 +119,7 @@
         CurrentSceneStateService.Changed -= HandleSceneStateChange;
         CurrentProjectStateService.Changed -= HandleProjectStateChange;
         OnboardingOverlayStateService.Changed -= HandleOnboardingOverlayChange;
+        AuthMeStateService.Changed -= HandleAuthMeStateChange;
         Navigation.LocationChanged -= HandleLocationChanged;
     }
 
@@ -144,6 +152,11 @@
     }
 
     private void HandleOnboardingOverlayChange()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void HandleAuthMeStateChange()
     {
         InvokeAsync(StateHasChanged);
     }

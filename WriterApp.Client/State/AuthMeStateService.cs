@@ -27,6 +27,9 @@ namespace WriterApp.Client.State
         public bool IsDeletedAccount { get; private set; }
         public string DeletedAccountMessage { get; private set; } = DeletedAccountStateService.DefaultMessage;
         public string PlanKey { get; private set; } = "Free";
+        public bool IsAdminAccess { get; private set; }
+        public string AdminAccessSource { get; private set; } = "None";
+        public bool IsBootstrapAdminSession => string.Equals(AdminAccessSource, "Bootstrap", StringComparison.Ordinal);
         public int AiMonthlyTokenBudget { get; private set; }
         public int AiTokensUsedThisPeriod { get; private set; }
         public DateTimeOffset PeriodStartUtc { get; private set; }
@@ -66,14 +69,14 @@ namespace WriterApp.Client.State
                 if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
                 {
                     _deletedAccountStateService.Clear();
-                    Apply(false, "Free", 0, 0, DateTimeOffset.MinValue, DateTimeOffset.MinValue);
+                    Apply(false, "Free", false, "None", 0, 0, DateTimeOffset.MinValue, DateTimeOffset.MinValue);
                     return;
                 }
 
                 if (!response.IsSuccessStatusCode)
                 {
                     _deletedAccountStateService.Clear();
-                    Apply(false, "Free", 0, 0, DateTimeOffset.MinValue, DateTimeOffset.MinValue);
+                    Apply(false, "Free", false, "None", 0, 0, DateTimeOffset.MinValue, DateTimeOffset.MinValue);
                     return;
                 }
 
@@ -81,7 +84,7 @@ namespace WriterApp.Client.State
                 if (auth is null)
                 {
                     _deletedAccountStateService.Clear();
-                    Apply(false, "Free", 0, 0, DateTimeOffset.MinValue, DateTimeOffset.MinValue);
+                    Apply(false, "Free", false, "None", 0, 0, DateTimeOffset.MinValue, DateTimeOffset.MinValue);
                     return;
                 }
 
@@ -89,6 +92,8 @@ namespace WriterApp.Client.State
                 Apply(
                     auth.IsAuthenticated,
                     NormalizePlanKey(auth.PlanKey),
+                    auth.IsAdminAccess,
+                    NormalizeAdminAccessSource(auth.AdminAccessSource),
                     Math.Max(0, auth.AiMonthlyTokenBudget),
                     Math.Max(0, auth.AiTokensUsedThisPeriod),
                     auth.PeriodStartUtc,
@@ -103,12 +108,14 @@ namespace WriterApp.Client.State
             }
         }
 
-        private void Apply(bool isAuthenticated, string planKey, int budget, int used, DateTimeOffset periodStartUtc, DateTimeOffset entitlementUpdatedUtc)
+        private void Apply(bool isAuthenticated, string planKey, bool isAdminAccess, string adminAccessSource, int budget, int used, DateTimeOffset periodStartUtc, DateTimeOffset entitlementUpdatedUtc)
         {
             bool changed = IsLoaded != true
                 || IsAuthenticated != isAuthenticated
                 || IsDeletedAccount
                 || !string.Equals(PlanKey, planKey, StringComparison.Ordinal)
+                || IsAdminAccess != isAdminAccess
+                || !string.Equals(AdminAccessSource, adminAccessSource, StringComparison.Ordinal)
                 || AiMonthlyTokenBudget != budget
                 || AiTokensUsedThisPeriod != used
                 || PeriodStartUtc != periodStartUtc
@@ -119,6 +126,8 @@ namespace WriterApp.Client.State
             IsDeletedAccount = false;
             DeletedAccountMessage = DeletedAccountStateService.DefaultMessage;
             PlanKey = planKey;
+            IsAdminAccess = isAdminAccess;
+            AdminAccessSource = adminAccessSource;
             AiMonthlyTokenBudget = budget;
             AiTokensUsedThisPeriod = used;
             PeriodStartUtc = periodStartUtc;
@@ -141,6 +150,8 @@ namespace WriterApp.Client.State
                 || !IsDeletedAccount
                 || !string.Equals(DeletedAccountMessage, normalizedMessage, StringComparison.Ordinal)
                 || !string.Equals(PlanKey, "Free", StringComparison.Ordinal)
+                || IsAdminAccess
+                || !string.Equals(AdminAccessSource, "None", StringComparison.Ordinal)
                 || AiMonthlyTokenBudget != 0
                 || AiTokensUsedThisPeriod != 0
                 || PeriodStartUtc != DateTimeOffset.MinValue
@@ -151,6 +162,8 @@ namespace WriterApp.Client.State
             IsDeletedAccount = true;
             DeletedAccountMessage = normalizedMessage;
             PlanKey = "Free";
+            IsAdminAccess = false;
+            AdminAccessSource = "None";
             AiMonthlyTokenBudget = 0;
             AiTokensUsedThisPeriod = 0;
             PeriodStartUtc = DateTimeOffset.MinValue;
@@ -176,6 +189,22 @@ namespace WriterApp.Client.State
                 "pro" => "Professional",
                 "standard" => "Standard",
                 _ => "Free"
+            };
+        }
+
+        private static string NormalizeAdminAccessSource(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return "None";
+            }
+
+            string normalized = raw.Trim().ToLowerInvariant();
+            return normalized switch
+            {
+                "role" => "Role",
+                "bootstrap" => "Bootstrap",
+                _ => "None"
             };
         }
     }

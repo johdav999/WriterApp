@@ -171,37 +171,7 @@ builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy("AdminOnly", policy =>
         policy.RequireAuthenticatedUser()
-            .RequireAssertion(context =>
-            {
-                ClaimsPrincipal user = context.User;
-                bool isRoleAdmin = user.IsInRole("Admin");
-
-                string? userOid = user.FindFirstValue("http://schemas.microsoft.com/identity/claims/objectidentifier")
-                    ?? user.FindFirstValue("oid");
-
-                string? bootstrapEnabledValue = builder.Configuration["BOOTSTRAP_ADMIN_ENABLED"];
-                bool bootstrapEnabled = string.Equals(bootstrapEnabledValue, "true", StringComparison.OrdinalIgnoreCase);
-                string? bootstrapOid = builder.Configuration["BOOTSTRAP_ADMIN_OID"];
-
-                bool bootstrapMatch =
-                    bootstrapEnabled
-                    && !string.IsNullOrWhiteSpace(bootstrapOid)
-                    && !string.IsNullOrWhiteSpace(userOid)
-                    && string.Equals(bootstrapOid, userOid, StringComparison.OrdinalIgnoreCase);
-
-                bool allowed = isRoleAdmin || bootstrapMatch;
-
-                AdminPolicyDiagnostics.LogDecision(
-                    isRoleAdmin,
-                    bootstrapEnabled,
-                    !string.IsNullOrWhiteSpace(bootstrapOid),
-                    !string.IsNullOrWhiteSpace(userOid),
-                    allowed,
-                    bootstrapOid,
-                    userOid);
-
-                return allowed;
-            }));
+            .AddRequirements(new AdminOnlyRequirement()));
 });
 var mvcBuilder = builder.Services.AddControllers();
 mvcBuilder.ConfigureApplicationPartManager(manager =>
@@ -252,6 +222,8 @@ builder.Services.AddScoped<IUserEntitlementStore, UserEntitlementStore>();
 builder.Services.AddScoped<IDeletedUserIdentityService, DeletedUserIdentityService>();
 builder.Services.AddScoped<IEntitlementService, EntitlementService>();
 builder.Services.AddScoped<IUserIdResolver, UserIdResolver>();
+builder.Services.AddScoped<IAdminAccessResolver, AdminAccessResolver>();
+builder.Services.AddScoped<IAuthorizationHandler, AdminOnlyAuthorizationHandler>();
 builder.Services.AddScoped<IPlanAssignmentService, PlanAssignmentService>();
 builder.Services.AddScoped<AdminPlanOverrideService>();
 builder.Services.AddScoped<AdminAuditService>();
@@ -439,6 +411,7 @@ if (!app.Environment.IsDevelopment())
 QualityRewriteOutputValidator.Configure(app.Services.GetRequiredService<IOptions<QualityRewriteValidationOptions>>().Value);
 
 AdminPolicyDiagnostics.Configure(app.Services.GetRequiredService<ILoggerFactory>());
+AdminPolicyDiagnostics.LogBootstrapConfiguration(app.Configuration);
 
 foreach (string warning in stripeConfiguration.Warnings)
 {
@@ -1087,6 +1060,7 @@ app.MapGet("/api/ai/status", async (
 app.MapGet("/api/admin/users", async (
         HttpContext context,
         IConfiguration configuration,
+        IAdminAccessResolver adminAccessResolver,
         IUserIdResolver userIdResolver,
         AdminEndpointRateLimiter adminRateLimiter,
         AdminUsersService adminUsersService,
@@ -1101,8 +1075,7 @@ app.MapGet("/api/admin/users", async (
         int? tokensLeftGt = null,
         string? sort = null) =>
 {
-    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
-        || !AdminPlanOverrideAccess.IsAuthorized(context.User, configuration))
+    if (!TryAuthorizeAdminRequest(context, configuration, adminAccessResolver))
     {
         return Results.NotFound();
     }
@@ -1124,6 +1097,7 @@ app.MapGet("/api/admin/users", async (
         tokensLeftLt,
         tokensLeftGt,
         sort,
+        context.User,
         context.RequestAborted);
     return Results.Ok(response);
 });
@@ -1132,13 +1106,13 @@ app.MapGet("/api/admin/users/{userId}", async (
         HttpContext context,
         string userId,
         IConfiguration configuration,
+        IAdminAccessResolver adminAccessResolver,
         IUserIdResolver userIdResolver,
         AdminEndpointRateLimiter adminRateLimiter,
         AdminUsersService adminUsersService,
         ILoggerFactory loggerFactory) =>
 {
-    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
-        || !AdminPlanOverrideAccess.IsAuthorized(context.User, configuration))
+    if (!TryAuthorizeAdminRequest(context, configuration, adminAccessResolver))
     {
         return Results.NotFound();
     }
@@ -1150,7 +1124,7 @@ app.MapGet("/api/admin/users/{userId}", async (
         return Results.StatusCode(StatusCodes.Status429TooManyRequests);
     }
 
-    AdminUserDetailDto? user = await adminUsersService.GetUserAsync(userId, context.RequestAborted);
+    AdminUserDetailDto? user = await adminUsersService.GetUserAsync(userId, context.User, context.RequestAborted);
     return user is null ? Results.NotFound() : Results.Ok(user);
 });
 
@@ -1158,13 +1132,13 @@ app.MapPost("/api/admin/users", async (
         HttpContext context,
         AdminCreateUserRequest request,
         IConfiguration configuration,
+        IAdminAccessResolver adminAccessResolver,
         IUserIdResolver userIdResolver,
         AdminEndpointRateLimiter adminRateLimiter,
         AdminUsersService adminUsersService,
         ILoggerFactory loggerFactory) =>
 {
-    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
-        || !AdminPlanOverrideAccess.IsAuthorized(context.User, configuration))
+    if (!TryAuthorizeAdminRequest(context, configuration, adminAccessResolver))
     {
         return Results.NotFound();
     }
@@ -1200,13 +1174,13 @@ app.MapPut("/api/admin/users/{userId}", async (
         string userId,
         AdminUpdateUserRequest request,
         IConfiguration configuration,
+        IAdminAccessResolver adminAccessResolver,
         IUserIdResolver userIdResolver,
         AdminEndpointRateLimiter adminRateLimiter,
         AdminUsersService adminUsersService,
         ILoggerFactory loggerFactory) =>
 {
-    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
-        || !AdminPlanOverrideAccess.IsAuthorized(context.User, configuration))
+    if (!TryAuthorizeAdminRequest(context, configuration, adminAccessResolver))
     {
         return Results.NotFound();
     }
@@ -1242,13 +1216,13 @@ app.MapDelete("/api/admin/users/{userId}", async (
         HttpContext context,
         string userId,
         IConfiguration configuration,
+        IAdminAccessResolver adminAccessResolver,
         IUserIdResolver userIdResolver,
         AdminEndpointRateLimiter adminRateLimiter,
         AdminUsersService adminUsersService,
         ILoggerFactory loggerFactory) =>
 {
-    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
-        || !AdminPlanOverrideAccess.IsAuthorized(context.User, configuration))
+    if (!TryAuthorizeAdminRequest(context, configuration, adminAccessResolver))
     {
         return Results.NotFound();
     }
@@ -1285,18 +1259,108 @@ app.MapDelete("/api/admin/users/{userId}", async (
     }
 });
 
+app.MapPost("/api/admin/users/{userId}/grant-admin", async (
+        HttpContext context,
+        string userId,
+        IConfiguration configuration,
+        IAdminAccessResolver adminAccessResolver,
+        IUserIdResolver userIdResolver,
+        AdminEndpointRateLimiter adminRateLimiter,
+        AdminUsersService adminUsersService,
+        ILoggerFactory loggerFactory) =>
+{
+    if (!TryAuthorizeAdminRequest(context, configuration, adminAccessResolver))
+    {
+        return Results.NotFound();
+    }
+
+    ILogger logger = loggerFactory.CreateLogger("AdminUsers");
+    string adminUserId = ResolveAssignedBy(context.User, userIdResolver, logger, out _);
+    string? adminEmail = context.User.FindFirstValue(ClaimTypes.Email)
+        ?? context.User.FindFirstValue("emails")
+        ?? context.User.FindFirstValue("preferred_username")
+        ?? context.User.Identity?.Name;
+    if (!adminRateLimiter.TryAcquire($"{adminUserId}:grant-admin", 60))
+    {
+        return Results.StatusCode(StatusCodes.Status429TooManyRequests);
+    }
+
+    try
+    {
+        AdminRoleChangeResponse response = await adminUsersService.GrantAdminAsync(
+            userId,
+            adminUserId,
+            adminEmail,
+            context.RequestAborted);
+        return Results.Ok(response);
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(new { message = ex.Message });
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.Conflict(new { message = ex.Message });
+    }
+});
+
+app.MapPost("/api/admin/users/{userId}/revoke-admin", async (
+        HttpContext context,
+        string userId,
+        IConfiguration configuration,
+        IAdminAccessResolver adminAccessResolver,
+        IUserIdResolver userIdResolver,
+        AdminEndpointRateLimiter adminRateLimiter,
+        AdminUsersService adminUsersService,
+        ILoggerFactory loggerFactory) =>
+{
+    if (!TryAuthorizeAdminRequest(context, configuration, adminAccessResolver))
+    {
+        return Results.NotFound();
+    }
+
+    ILogger logger = loggerFactory.CreateLogger("AdminUsers");
+    string adminUserId = ResolveAssignedBy(context.User, userIdResolver, logger, out _);
+    string? adminEmail = context.User.FindFirstValue(ClaimTypes.Email)
+        ?? context.User.FindFirstValue("emails")
+        ?? context.User.FindFirstValue("preferred_username")
+        ?? context.User.Identity?.Name;
+    if (!adminRateLimiter.TryAcquire($"{adminUserId}:revoke-admin", 60))
+    {
+        return Results.StatusCode(StatusCodes.Status429TooManyRequests);
+    }
+
+    try
+    {
+        AdminRoleChangeResponse response = await adminUsersService.RevokeAdminAsync(
+            userId,
+            adminUserId,
+            adminEmail,
+            context.RequestAborted);
+        return Results.Ok(response);
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.BadRequest(new { message = ex.Message });
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.Conflict(new { message = ex.Message });
+    }
+});
+
 app.MapPost("/api/admin/users/{userId}/plan-override", async (
         HttpContext context,
         string userId,
         AdminSetPlanOverrideRequest request,
         IConfiguration configuration,
+        IAdminAccessResolver adminAccessResolver,
         AdminEndpointRateLimiter adminRateLimiter,
         AdminUsersService adminUsersService,
         IUserIdResolver userIdResolver,
         ILoggerFactory loggerFactory) =>
 {
-    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
-        || !AdminPlanOverrideAccess.IsAuthorized(context.User, configuration))
+    if (!TryAuthorizeAdminRequest(context, configuration, adminAccessResolver))
     {
         return Results.NotFound();
     }
@@ -1357,13 +1421,13 @@ app.MapPost("/api/admin/users/{userId}/reset-first-run", async (
         HttpContext context,
         string userId,
         IConfiguration configuration,
+        IAdminAccessResolver adminAccessResolver,
         AdminEndpointRateLimiter adminRateLimiter,
         AdminUsersService adminUsersService,
         IUserIdResolver userIdResolver,
         ILoggerFactory loggerFactory) =>
 {
-    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
-        || !AdminPlanOverrideAccess.IsAuthorized(context.User, configuration))
+    if (!TryAuthorizeAdminRequest(context, configuration, adminAccessResolver))
     {
         return Results.NotFound();
     }
@@ -1407,13 +1471,13 @@ app.MapPost("/api/admin/users/{userId}/stripe/sync", async (
         HttpContext context,
         string userId,
         IConfiguration configuration,
+        IAdminAccessResolver adminAccessResolver,
         AdminEndpointRateLimiter adminRateLimiter,
         AdminUsersService adminUsersService,
         IUserIdResolver userIdResolver,
         ILoggerFactory loggerFactory) =>
 {
-    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
-        || !AdminPlanOverrideAccess.IsAuthorized(context.User, configuration))
+    if (!TryAuthorizeAdminRequest(context, configuration, adminAccessResolver))
     {
         return Results.NotFound();
     }
@@ -1448,13 +1512,13 @@ app.MapPost("/api/admin/users/{userId}/tokens/reset-period", async (
         HttpContext context,
         string userId,
         IConfiguration configuration,
+        IAdminAccessResolver adminAccessResolver,
         AdminEndpointRateLimiter adminRateLimiter,
         AdminUsersService adminUsersService,
         IUserIdResolver userIdResolver,
         ILoggerFactory loggerFactory) =>
 {
-    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
-        || !AdminPlanOverrideAccess.IsAuthorized(context.User, configuration))
+    if (!TryAuthorizeAdminRequest(context, configuration, adminAccessResolver))
     {
         return Results.NotFound();
     }
@@ -1483,13 +1547,13 @@ app.MapPost("/api/admin/users/{userId}/tokens/adjust", async (
         string userId,
         AdminAdjustTokensRequest request,
         IConfiguration configuration,
+        IAdminAccessResolver adminAccessResolver,
         AdminEndpointRateLimiter adminRateLimiter,
         AdminUsersService adminUsersService,
         IUserIdResolver userIdResolver,
         ILoggerFactory loggerFactory) =>
 {
-    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
-        || !AdminPlanOverrideAccess.IsAuthorized(context.User, configuration))
+    if (!TryAuthorizeAdminRequest(context, configuration, adminAccessResolver))
     {
         return Results.NotFound();
     }
@@ -1531,6 +1595,7 @@ app.MapPost("/api/admin/users/{userId}/tokens/adjust", async (
 app.MapGet("/api/admin/audit", async (
         HttpContext context,
         IConfiguration configuration,
+        IAdminAccessResolver adminAccessResolver,
         IUserIdResolver userIdResolver,
         AdminEndpointRateLimiter adminRateLimiter,
         AdminAuditService adminAuditService,
@@ -1543,8 +1608,7 @@ app.MapGet("/api/admin/audit", async (
         DateTime? fromUtc = null,
         DateTime? toUtc = null) =>
 {
-    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
-        || !AdminPlanOverrideAccess.IsAuthorized(context.User, configuration))
+    if (!TryAuthorizeAdminRequest(context, configuration, adminAccessResolver))
     {
         return Results.NotFound();
     }
@@ -1565,6 +1629,7 @@ app.MapGet("/api/admin/audit", async (
 app.MapGet("/api/admin/users/export.csv", async (
         HttpContext context,
         IConfiguration configuration,
+        IAdminAccessResolver adminAccessResolver,
         IUserIdResolver userIdResolver,
         AdminEndpointRateLimiter adminRateLimiter,
         AdminUsersService adminUsersService,
@@ -1579,8 +1644,7 @@ app.MapGet("/api/admin/users/export.csv", async (
         int? tokensLeftGt = null,
         string? sort = null) =>
 {
-    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration)
-        || !AdminPlanOverrideAccess.IsAuthorized(context.User, configuration))
+    if (!TryAuthorizeAdminRequest(context, configuration, adminAccessResolver))
     {
         return Results.NotFound();
     }
@@ -1864,6 +1928,7 @@ app.MapGet("/api/auth/debug", (HttpContext context, ILoggerFactory loggerFactory
 app.MapGet("/api/auth/me", async (
     HttpContext context,
     AppDbContext dbContext,
+    IAdminAccessResolver adminAccessResolver,
     IUserIdResolver userIdResolver,
     IDeletedUserIdentityService deletedUserIdentityService,
     IUserEntitlementStore userEntitlementStore,
@@ -1903,6 +1968,8 @@ app.MapGet("/api/auth/me", async (
         {
             IsAuthenticated = false,
             Roles = Array.Empty<string>(),
+            IsAdminAccess = false,
+            AdminAccessSource = AdminAccessSource.None.ToString(),
             PlanKey = UserEntitlementDefaults.FreePlanKey,
             SubscriptionStatus = null,
             StripeCustomerId = null,
@@ -1942,6 +2009,7 @@ app.MapGet("/api/auth/me", async (
         .Concat(user.FindAll("roles").Select(c => c.Value))
         .Distinct(StringComparer.OrdinalIgnoreCase)
         .ToList();
+    AdminAccessResolution adminAccess = adminAccessResolver.Resolve(user);
 
     WriterApp.Application.Security.AuthMeDto minimalResponse = new()
     {
@@ -1950,6 +2018,8 @@ app.MapGet("/api/auth/me", async (
         Email = profileIdentity.Email,
         UserId = userId,
         Roles = roles,
+        IsAdminAccess = adminAccess.IsAdminAccess,
+        AdminAccessSource = adminAccess.Source.ToString(),
         PlanKey = UserEntitlementDefaults.FreePlanKey,
         SubscriptionStatus = "Unknown",
         StripeCustomerId = null,
@@ -2046,6 +2116,8 @@ app.MapGet("/api/auth/me", async (
                 Email = profileIdentity.Email,
                 UserId = userId,
                 Roles = roles,
+                IsAdminAccess = adminAccess.IsAdminAccess,
+                AdminAccessSource = adminAccess.Source.ToString(),
                 PlanKey = entitlement.PlanKey,
                 SubscriptionStatus = entitlement.SubscriptionStatus,
                 StripeCustomerId = entitlement.StripeCustomerId,
@@ -2197,6 +2269,45 @@ static string ResolveAssignedBy(
         logger.LogWarning(ex, "Admin assignment missing oid claim.");
         return callerName ?? "admin";
     }
+}
+
+static bool TryAuthorizeAdminRequest(HttpContext context, IConfiguration configuration, IAdminAccessResolver adminAccessResolver)
+{
+    if (!AdminPlanOverrideAccess.IsAdminApiEnabled(configuration))
+    {
+        AdminPolicyDiagnostics.LogAdminApiAccessDecision(
+            context,
+            new AdminAccessDiagnosticInfo(
+                new AdminAccessResolution(false, AdminAccessSource.None, AdminAccessReason.None),
+                IsRoleAdmin: false,
+                HasPersistedRoleAdmin: false,
+                HasLegacyRoleAdminClaim: false,
+                BootstrapEnabled: false,
+                BootstrapOidConfigured: false,
+                UserOidPresent: false,
+                BootstrapMatched: false),
+            reasonCodeOverride: "admin_api_disabled");
+        return false;
+    }
+
+    // Shared admin API authorization flow:
+    // 1. Role admin is the normal production path.
+    // 2. Bootstrap admin is the emergency fallback only when role access is absent.
+    AdminAccessDiagnosticInfo diagnostic = adminAccessResolver.Describe(context.User);
+    AdminPolicyDiagnostics.LogAdminApiAccessDecision(context, diagnostic);
+    if (!diagnostic.Resolution.IsAdminAccess)
+    {
+        return false;
+    }
+
+    if (diagnostic.Resolution.Source == AdminAccessSource.Bootstrap)
+    {
+        string? userIdentifier = ExternalIdentityClaims.ResolveStableUserId(context.User.Claims)
+            ?? context.User.FindFirstValue("oid");
+        AdminPolicyDiagnostics.LogBootstrapAccessGranted(context, userIdentifier);
+    }
+
+    return true;
 }
 
 static bool TryParseAdminPlanKey(string input, out string normalizedPlanKey)

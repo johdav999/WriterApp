@@ -2,6 +2,7 @@ using System;
 using System.Threading.Tasks;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using WriterApp.Application.Security;
 using WriterApp.Application.Subscriptions;
 using WriterApp.Application.Usage;
 using WriterApp.Data;
@@ -40,7 +41,10 @@ namespace WriterApp.Tests
             });
             await dbContext.SaveChangesAsync();
 
-            UserEntitlementStore store = new(dbContext, new TestClock(baseTime.AddMinutes(1)));
+            UserEntitlementStore store = new(
+                dbContext,
+                new TestClock(baseTime.AddMinutes(1)),
+                new DeletedUserIdentityService(dbContext));
 
             UserEntitlement first = await store.GetOrCreateAsync(userId);
             UserEntitlement second = await store.GetOrCreateAsync(userId);
@@ -94,7 +98,10 @@ namespace WriterApp.Tests
             });
             await dbContext.SaveChangesAsync();
 
-            UserEntitlementStore store = new(dbContext, new TestClock(now));
+            UserEntitlementStore store = new(
+                dbContext,
+                new TestClock(now),
+                new DeletedUserIdentityService(dbContext));
 
             UserEntitlement entitlement = await store.GetOrCreateAsync(userId);
 
@@ -132,7 +139,10 @@ namespace WriterApp.Tests
             int assignmentCount = await dbContext.UserPlanAssignments.CountAsync(item => item.UserId == userId);
             Assert.Equal(0, assignmentCount);
 
-            UserEntitlementStore store = new(dbContext, new TestClock(now.UtcDateTime));
+            UserEntitlementStore store = new(
+                dbContext,
+                new TestClock(now.UtcDateTime),
+                new DeletedUserIdentityService(dbContext));
             UserEntitlement entitlement = await store.GetOrCreateAsync(userId);
 
             Assert.Equal(UserEntitlementDefaults.StandardPlanKey, entitlement.PlanKey);
@@ -171,7 +181,10 @@ namespace WriterApp.Tests
 
             await dbContext.SaveChangesAsync();
 
-            UserEntitlementStore store = new(dbContext, new TestClock(now.UtcDateTime));
+            UserEntitlementStore store = new(
+                dbContext,
+                new TestClock(now.UtcDateTime),
+                new DeletedUserIdentityService(dbContext));
             UserEntitlement entitlement = await store.GetOrCreateAsync(userId);
 
             Assert.Equal(UserEntitlementDefaults.ProfessionalPlanKey, entitlement.PlanKey);

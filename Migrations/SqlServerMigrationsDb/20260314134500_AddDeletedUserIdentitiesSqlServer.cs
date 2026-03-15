@@ -13,24 +13,6 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
     {
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.AlterColumn<string>(
-                name: "UserId",
-                table: "UserProfiles",
-                type: "nvarchar(128)",
-                maxLength: 128,
-                nullable: false,
-                oldClrType: typeof(string),
-                oldType: "nvarchar(450)");
-
-            migrationBuilder.AlterColumn<string>(
-                name: "UserId",
-                table: "UserEntitlements",
-                type: "nvarchar(128)",
-                maxLength: 128,
-                nullable: false,
-                oldClrType: typeof(string),
-                oldType: "nvarchar(450)");
-
             migrationBuilder.CreateTable(
                 name: "DeletedUserIdentities",
                 columns: table => new
@@ -58,24 +40,6 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
         {
             migrationBuilder.DropTable(
                 name: "DeletedUserIdentities");
-
-            migrationBuilder.AlterColumn<string>(
-                name: "UserId",
-                table: "UserProfiles",
-                type: "nvarchar(450)",
-                nullable: false,
-                oldClrType: typeof(string),
-                oldType: "nvarchar(128)",
-                oldMaxLength: 128);
-
-            migrationBuilder.AlterColumn<string>(
-                name: "UserId",
-                table: "UserEntitlements",
-                type: "nvarchar(450)",
-                nullable: false,
-                oldClrType: typeof(string),
-                oldType: "nvarchar(128)",
-                oldMaxLength: 128);
         }
     }
 }

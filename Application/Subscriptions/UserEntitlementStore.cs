@@ -115,7 +115,7 @@ namespace WriterApp.Application.Subscriptions
                 dirty = true;
             }
 
-            int expectedBudget = UserEntitlementDefaults.ResolveMonthlyTokenBudget(entitlement.PlanKey);
+            int expectedBudget = UserEntitlementDefaults.ResolveMonthlyTokenBudget(normalizedPlan);
             if (entitlement.AiMonthlyTokenBudget < 0)
             {
                 entitlement.AiMonthlyTokenBudget = expectedBudget;

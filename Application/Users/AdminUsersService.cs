@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -13,6 +14,7 @@ using WriterApp.Application.Documents;
 using WriterApp.Application.Security;
 using WriterApp.Application.Subscriptions;
 using WriterApp.Data;
+using WriterApp.Data.Admin;
 using WriterApp.Data.Subscriptions;
 using WriterApp.Shared;
 
@@ -27,6 +29,7 @@ namespace WriterApp.Application.Users
         private readonly AppDbContext _dbContext;
         private readonly AdminPlanOverrideService _adminPlanOverrideService;
         private readonly AdminAuditService _adminAuditService;
+        private readonly IAdminAccessResolver _adminAccessResolver;
         private readonly IDeletedUserIdentityService _deletedUserIdentityService;
         private readonly IUserEntitlementStore? _userEntitlementStore;
         private readonly IEntitlementService? _entitlementService;
@@ -40,6 +43,7 @@ namespace WriterApp.Application.Users
             AppDbContext dbContext,
             AdminPlanOverrideService adminPlanOverrideService,
             AdminAuditService adminAuditService,
+            IAdminAccessResolver adminAccessResolver,
             IDeletedUserIdentityService deletedUserIdentityService,
             IUserEntitlementStore userEntitlementStore,
             IEntitlementService entitlementService,
@@ -52,6 +56,7 @@ namespace WriterApp.Application.Users
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _adminPlanOverrideService = adminPlanOverrideService ?? throw new ArgumentNullException(nameof(adminPlanOverrideService));
             _adminAuditService = adminAuditService ?? throw new ArgumentNullException(nameof(adminAuditService));
+            _adminAccessResolver = adminAccessResolver ?? throw new ArgumentNullException(nameof(adminAccessResolver));
             _deletedUserIdentityService = deletedUserIdentityService ?? throw new ArgumentNullException(nameof(deletedUserIdentityService));
             _userEntitlementStore = userEntitlementStore ?? throw new ArgumentNullException(nameof(userEntitlementStore));
             _entitlementService = entitlementService ?? throw new ArgumentNullException(nameof(entitlementService));
@@ -66,6 +71,7 @@ namespace WriterApp.Application.Users
             AppDbContext dbContext,
             AdminPlanOverrideService adminPlanOverrideService,
             AdminAuditService adminAuditService,
+            IAdminAccessResolver adminAccessResolver,
             IDeletedUserIdentityService deletedUserIdentityService,
             IUserEntitlementStore userEntitlementStore,
             IEntitlementService entitlementService,
@@ -75,6 +81,7 @@ namespace WriterApp.Application.Users
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _adminPlanOverrideService = adminPlanOverrideService ?? throw new ArgumentNullException(nameof(adminPlanOverrideService));
             _adminAuditService = adminAuditService ?? throw new ArgumentNullException(nameof(adminAuditService));
+            _adminAccessResolver = adminAccessResolver ?? throw new ArgumentNullException(nameof(adminAccessResolver));
             _deletedUserIdentityService = deletedUserIdentityService ?? throw new ArgumentNullException(nameof(deletedUserIdentityService));
             _userEntitlementStore = userEntitlementStore ?? throw new ArgumentNullException(nameof(userEntitlementStore));
             _entitlementService = entitlementService ?? throw new ArgumentNullException(nameof(entitlementService));
@@ -90,6 +97,7 @@ namespace WriterApp.Application.Users
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _adminPlanOverrideService = adminPlanOverrideService ?? throw new ArgumentNullException(nameof(adminPlanOverrideService));
             _adminAuditService = new AdminAuditService(dbContext);
+            _adminAccessResolver = new AdminAccessResolver(new ConfigurationBuilder().AddInMemoryCollection().Build(), dbContext);
             _deletedUserIdentityService = new DeletedUserIdentityService(dbContext);
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
@@ -104,6 +112,7 @@ namespace WriterApp.Application.Users
             int? tokensLeftLt,
             int? tokensLeftGt,
             string? sort,
+            ClaimsPrincipal? currentPrincipal = null,
             CancellationToken ct = default)
         {
             int normalizedPage = page <= 0 ? 1 : page;
@@ -179,26 +188,56 @@ namespace WriterApp.Application.Users
                 .Skip((normalizedPage - 1) * normalizedPageSize)
                 .Take(normalizedPageSize)
                 .ToListAsync(ct);
+            string[] listedUserIds = rows.Select(item => item.UserId).ToArray();
+            IReadOnlyDictionary<string, AdminAccessResolution> adminAccessMap = _adminAccessResolver.ResolveForUserIds(listedUserIds, currentPrincipal);
+            List<string> persistedRoleAdminList = await _dbContext.AdminRoleAssignments
+                .AsNoTracking()
+                .Where(item => listedUserIds.Contains(item.UserId))
+                .Select(item => item.UserId)
+                .ToListAsync(ct);
+            HashSet<string> persistedRoleAdmins = persistedRoleAdminList.ToHashSet(StringComparer.Ordinal);
+            int persistedRoleAdminCount = await _dbContext.AdminRoleAssignments.CountAsync(ct);
+            string? actingAdminUserId = currentPrincipal?.Identity?.IsAuthenticated == true
+                ? IdNorm.Norm(ExternalIdentityClaims.ResolveStableUserId(currentPrincipal.Claims))
+                : null;
 
             IReadOnlyList<AdminUserListItemDto> items = rows
-                .Select(row => new AdminUserListItemDto(
-                    row.UserId,
-                    ResolveEmail(row.Email, row.DisplayName, row.UserId),
-                    row.DisplayName,
-                    row.CreatedUtc,
-                    row.UpdatedUtc,
-                    UserEntitlementDefaults.NormalizePlanKey(row.PlanKey),
-                    UserEntitlementDefaults.NormalizeSubscriptionStatus(row.SubscriptionStatus),
-                    row.AiMonthlyTokenBudget,
-                    row.AiTokensUsedThisPeriod,
-                    Math.Max(0, row.AiMonthlyTokenBudget - row.AiTokensUsedThisPeriod),
-                    row.HasOverride))
+                .Select(row =>
+                {
+                    AdminAccessResolution adminAccess = adminAccessMap.TryGetValue(row.UserId, out AdminAccessResolution resolvedAccess)
+                        ? resolvedAccess
+                        : new AdminAccessResolution(false, AdminAccessSource.None, AdminAccessReason.None);
+                    bool hasRoleAdminAssignment = persistedRoleAdmins.Contains(row.UserId);
+                    AdminRoleManagementState adminManagement = BuildAdminRoleManagementState(
+                        row.UserId,
+                        hasRoleAdminAssignment,
+                        persistedRoleAdminCount,
+                        actingAdminUserId);
+                    return new AdminUserListItemDto(
+                        row.UserId,
+                        ResolveEmail(row.Email, row.DisplayName, row.UserId),
+                        row.DisplayName,
+                        row.CreatedUtc,
+                        row.UpdatedUtc,
+                        UserEntitlementDefaults.NormalizePlanKey(row.PlanKey),
+                        UserEntitlementDefaults.NormalizeSubscriptionStatus(row.SubscriptionStatus),
+                        row.AiMonthlyTokenBudget,
+                        row.AiTokensUsedThisPeriod,
+                        Math.Max(0, row.AiMonthlyTokenBudget - row.AiTokensUsedThisPeriod),
+                        row.HasOverride,
+                        adminAccess.IsAdminAccess,
+                        adminAccess.Source.ToString(),
+                        hasRoleAdminAssignment,
+                        adminManagement.CanGrantAdminRole,
+                        adminManagement.CanRevokeAdminRole,
+                        adminManagement.DisabledReason);
+                })
                 .ToList();
 
             return new AdminUserListResponseDto(items, normalizedPage, normalizedPageSize, totalCount);
         }
 
-        public async Task<AdminUserDetailDto?> GetUserAsync(string userId, CancellationToken ct = default)
+        public async Task<AdminUserDetailDto?> GetUserAsync(string userId, ClaimsPrincipal? currentPrincipal = null, CancellationToken ct = default)
         {
             if (string.IsNullOrWhiteSpace(userId))
             {
@@ -229,6 +268,19 @@ namespace WriterApp.Application.Users
 
             int budget = entitlement?.AiMonthlyTokenBudget ?? 0;
             int used = entitlement?.AiTokensUsedThisPeriod ?? 0;
+            AdminAccessResolution adminAccess = ResolveAdminAccess(normalizedUserId, currentPrincipal);
+            bool hasRoleAdminAssignment = await _dbContext.AdminRoleAssignments
+                .AsNoTracking()
+                .AnyAsync(item => item.UserId == normalizedUserId, ct);
+            int persistedRoleAdminCount = await _dbContext.AdminRoleAssignments.CountAsync(ct);
+            string? actingAdminUserId = currentPrincipal?.Identity?.IsAuthenticated == true
+                ? IdNorm.Norm(ExternalIdentityClaims.ResolveStableUserId(currentPrincipal.Claims))
+                : null;
+            AdminRoleManagementState adminManagement = BuildAdminRoleManagementState(
+                normalizedUserId,
+                hasRoleAdminAssignment,
+                persistedRoleAdminCount,
+                actingAdminUserId);
             return new AdminUserDetailDto(
                 profile.UserId,
                 ResolveEmail(profile.Email, profile.DisplayName, profile.UserId),
@@ -241,11 +293,129 @@ namespace WriterApp.Application.Users
                 used,
                 Math.Max(0, budget - used),
                 latestOverride is not null,
+                adminAccess.IsAdminAccess,
+                adminAccess.Source.ToString(),
+                hasRoleAdminAssignment,
+                adminManagement.CanGrantAdminRole,
+                adminManagement.CanRevokeAdminRole,
+                adminManagement.DisabledReason,
                 UserEntitlementDefaults.NormalizePlanKey(latestOverride?.Plan?.Key),
                 latestOverride?.AssignedUtc,
                 latestOverride?.AssignedBy,
                 entitlement?.StripeCustomerId,
                 entitlement?.StripeSubscriptionId);
+        }
+
+        public async Task<AdminRoleChangeResponse> GrantAdminAsync(
+            string userId,
+            string adminUserId,
+            string? adminEmail,
+            CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(userId))
+            {
+                throw new ArgumentException("userId is required.", nameof(userId));
+            }
+
+            string normalizedUserId = IdNorm.Norm(userId);
+            UserProfile profile = await _dbContext.UserProfiles
+                .FirstOrDefaultAsync(item => item.UserId == normalizedUserId, ct)
+                ?? throw new InvalidOperationException("User not found.");
+
+            AdminRoleAssignment? existing = await _dbContext.AdminRoleAssignments
+                .FirstOrDefaultAsync(item => item.UserId == normalizedUserId, ct);
+
+            if (existing is null)
+            {
+                _dbContext.AdminRoleAssignments.Add(new AdminRoleAssignment
+                {
+                    UserId = normalizedUserId,
+                    AssignedByUserId = adminUserId,
+                    AssignedByEmail = adminEmail,
+                    AssignedUtc = DateTime.UtcNow
+                });
+                await _dbContext.SaveChangesAsync(ct);
+            }
+
+            await _adminAuditService.WriteAsync(
+                adminUserId,
+                adminEmail,
+                "grant_admin",
+                normalizedUserId,
+                ResolveEmail(profile.Email, profile.DisplayName, normalizedUserId),
+                new
+                {
+                    alreadyAssigned = existing is not null,
+                    assignedBy = adminUserId
+                },
+                ct);
+
+            AdminUserDetailDto? snapshot = await GetUserAsync(normalizedUserId, ct: ct);
+            if (snapshot is null)
+            {
+                throw new InvalidOperationException("Failed to load user after granting admin.");
+            }
+
+            return new AdminRoleChangeResponse(normalizedUserId, "grant_admin", snapshot);
+        }
+
+        public async Task<AdminRoleChangeResponse> RevokeAdminAsync(
+            string userId,
+            string adminUserId,
+            string? adminEmail,
+            CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(userId))
+            {
+                throw new ArgumentException("userId is required.", nameof(userId));
+            }
+
+            string normalizedUserId = IdNorm.Norm(userId);
+            string normalizedAdminUserId = IdNorm.Norm(adminUserId);
+            if (string.Equals(normalizedUserId, normalizedAdminUserId, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("You cannot remove your own admin role.");
+            }
+
+            UserProfile profile = await _dbContext.UserProfiles
+                .FirstOrDefaultAsync(item => item.UserId == normalizedUserId, ct)
+                ?? throw new InvalidOperationException("User not found.");
+
+            AdminRoleAssignment? existing = await _dbContext.AdminRoleAssignments
+                .FirstOrDefaultAsync(item => item.UserId == normalizedUserId, ct);
+            if (existing is null)
+            {
+                throw new InvalidOperationException("This user does not have a managed admin role.");
+            }
+
+            int persistedRoleAdminCount = await _dbContext.AdminRoleAssignments.CountAsync(ct);
+            if (persistedRoleAdminCount <= 1)
+            {
+                throw new InvalidOperationException("You cannot remove the last role admin.");
+            }
+
+            _dbContext.AdminRoleAssignments.Remove(existing);
+            await _dbContext.SaveChangesAsync(ct);
+
+            await _adminAuditService.WriteAsync(
+                adminUserId,
+                adminEmail,
+                "revoke_admin",
+                normalizedUserId,
+                ResolveEmail(profile.Email, profile.DisplayName, normalizedUserId),
+                new
+                {
+                    revokedBy = adminUserId
+                },
+                ct);
+
+            AdminUserDetailDto? snapshot = await GetUserAsync(normalizedUserId, ct: ct);
+            if (snapshot is null)
+            {
+                throw new InvalidOperationException("Failed to load user after revoking admin.");
+            }
+
+            return new AdminRoleChangeResponse(normalizedUserId, "revoke_admin", snapshot);
         }
 
         public async Task<AdminUserDetailDto> CreateUserAsync(
@@ -306,7 +476,7 @@ namespace WriterApp.Application.Users
                 },
                 ct);
 
-            AdminUserDetailDto? snapshot = await GetUserAsync(userId, ct);
+            AdminUserDetailDto? snapshot = await GetUserAsync(userId, ct: ct);
             return snapshot ?? throw new InvalidOperationException("Failed to load created user.");
         }
 
@@ -362,7 +532,7 @@ namespace WriterApp.Application.Users
                     ct);
             }
 
-            return await GetUserAsync(normalizedUserId, ct);
+            return await GetUserAsync(normalizedUserId, ct: ct);
         }
 
         public async Task<AdminDeleteCustomerResponse> DeleteUserAsync(
@@ -646,7 +816,7 @@ namespace WriterApp.Application.Users
                 new { reset = true },
                 ct);
 
-            AdminUserDetailDto? snapshot = await GetUserAsync(normalizedUserId, ct);
+            AdminUserDetailDto? snapshot = await GetUserAsync(normalizedUserId, ct: ct);
             return snapshot ?? throw new InvalidOperationException("Failed to load user after onboarding reset.");
         }
 
@@ -805,7 +975,7 @@ namespace WriterApp.Application.Users
 
                     await transaction.CommitAsync(ct);
 
-                    AdminUserDetailDto? snapshot = await GetUserAsync(normalizedUserId, ct);
+                    AdminUserDetailDto? snapshot = await GetUserAsync(normalizedUserId, ct: ct);
                     if (snapshot is null)
                     {
                         throw new InvalidOperationException("Failed to load user after first-run reset.");
@@ -1026,7 +1196,7 @@ namespace WriterApp.Application.Users
                 },
                 ct);
 
-            AdminUserDetailDto? snapshot = await GetUserAsync(normalizedUserId, ct);
+            AdminUserDetailDto? snapshot = await GetUserAsync(normalizedUserId, ct: ct);
             return snapshot ?? throw new InvalidOperationException("Failed to load user after Stripe sync.");
         }
 
@@ -1054,6 +1224,7 @@ namespace WriterApp.Application.Users
                 tokensLeftLt,
                 tokensLeftGt,
                 sort,
+                currentPrincipal: null,
                 ct);
 
             StringBuilder csv = new();
@@ -1118,6 +1289,40 @@ namespace WriterApp.Application.Users
                     ? query.OrderByDescending(item => item.CreatedUtc).ThenBy(item => item.UserId)
                     : query.OrderBy(item => item.CreatedUtc).ThenBy(item => item.UserId)
             };
+        }
+
+        private AdminAccessResolution ResolveAdminAccess(string userId, ClaimsPrincipal? currentPrincipal)
+            => currentPrincipal is null
+                ? _adminAccessResolver.ResolveForUserId(userId)
+                : _adminAccessResolver.ResolveForUserId(userId, currentPrincipal);
+
+        private static AdminRoleManagementState BuildAdminRoleManagementState(
+            string targetUserId,
+            bool hasRoleAdminAssignment,
+            int persistedRoleAdminCount,
+            string? actingAdminUserId)
+        {
+            if (string.IsNullOrWhiteSpace(actingAdminUserId))
+            {
+                return new AdminRoleManagementState(false, false, null);
+            }
+
+            if (!hasRoleAdminAssignment)
+            {
+                return new AdminRoleManagementState(true, false, null);
+            }
+
+            if (string.Equals(IdNorm.Norm(targetUserId), IdNorm.Norm(actingAdminUserId), StringComparison.Ordinal))
+            {
+                return new AdminRoleManagementState(false, false, "You cannot remove your own admin role.");
+            }
+
+            if (persistedRoleAdminCount <= 1)
+            {
+                return new AdminRoleManagementState(false, false, "You cannot remove the last role admin.");
+            }
+
+            return new AdminRoleManagementState(false, true, null);
         }
 
         private static bool HasActiveSubscription(UserEntitlement? entitlement)
@@ -1191,5 +1396,10 @@ namespace WriterApp.Application.Users
             public int AiTokensUsedThisPeriod { get; set; }
             public bool HasOverride { get; set; }
         }
+
+        private readonly record struct AdminRoleManagementState(
+            bool CanGrantAdminRole,
+            bool CanRevokeAdminRole,
+            string? DisabledReason);
     }
 }

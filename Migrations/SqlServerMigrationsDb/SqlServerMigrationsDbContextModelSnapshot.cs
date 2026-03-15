@@ -227,6 +227,30 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
                     b.ToTable("AdminAuditEvents");
                 });
 
+            modelBuilder.Entity("WriterApp.Data.Admin.AdminRoleAssignment", b =>
+                {
+                    b.Property<string>("UserId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("AssignedByEmail")
+                        .HasMaxLength(320)
+                        .HasColumnType("nvarchar(320)");
+
+                    b.Property<string>("AssignedByUserId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<DateTime>("AssignedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("UserId");
+
+                    b.HasIndex("AssignedUtc");
+
+                    b.ToTable("AdminRoleAssignments");
+                });
+
             modelBuilder.Entity("WriterApp.Data.Admin.DeletedUserIdentity", b =>
                 {
                     b.Property<string>("UserId")

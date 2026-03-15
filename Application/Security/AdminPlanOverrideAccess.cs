@@ -2,13 +2,12 @@ using System;
 using System.Linq;
 using System.Security.Claims;
 using Microsoft.Extensions.Configuration;
+using WriterApp.Data;
 
 namespace WriterApp.Application.Security
 {
     public static class AdminPlanOverrideAccess
     {
-        private const string OidClaimType = "http://schemas.microsoft.com/identity/claims/objectidentifier";
-
         public static bool IsEnabled(IConfiguration configuration)
         {
             return configuration.GetValue<bool?>("Admin:EnablePlanOverride") ?? false;
@@ -21,48 +20,37 @@ namespace WriterApp.Application.Security
 
         public static bool IsAuthorized(ClaimsPrincipal user)
         {
+            // Legacy role-only check used by older code paths. Role admin remains
+            // the standard production access model.
+            return AdminAccessEvaluation.HasLegacyRoleAdminClaim(user);
+        }
+
+        public static bool IsAuthorized(ClaimsPrincipal user, IConfiguration configuration)
+        {
+            if (AdminAccessEvaluation.HasLegacyRoleAdminClaim(user))
+            {
+                return true;
+            }
+
             if (user.Identity?.IsAuthenticated != true)
             {
                 return false;
             }
 
-            if (user.IsInRole("Admin"))
-            {
-                return true;
-            }
-
-            return user.Claims.Any(claim =>
-                (string.Equals(claim.Type, "roles", StringComparison.OrdinalIgnoreCase)
-                 || string.Equals(claim.Type, "appRole", StringComparison.OrdinalIgnoreCase)
-                 || string.Equals(claim.Type, ClaimTypes.Role, StringComparison.OrdinalIgnoreCase))
-                && string.Equals(claim.Value, "Admin", StringComparison.OrdinalIgnoreCase));
-        }
-
-        public static bool IsAuthorized(ClaimsPrincipal user, IConfiguration configuration)
-        {
-            if (IsAuthorized(user))
-            {
-                return true;
-            }
-
-            string? bootstrapEnabledValue = configuration["BOOTSTRAP_ADMIN_ENABLED"];
-            bool bootstrapEnabled = string.Equals(bootstrapEnabledValue, "true", StringComparison.OrdinalIgnoreCase);
+            bool bootstrapEnabled = string.Equals(
+                configuration["BOOTSTRAP_ADMIN_ENABLED"],
+                "true",
+                StringComparison.OrdinalIgnoreCase);
             if (!bootstrapEnabled)
             {
                 return false;
             }
 
             string? bootstrapOid = configuration["BOOTSTRAP_ADMIN_OID"];
-            if (string.IsNullOrWhiteSpace(bootstrapOid))
-            {
-                return false;
-            }
-
-            string? userOid = user.FindFirstValue(OidClaimType)
-                ?? user.FindFirstValue("oid");
-
-            return !string.IsNullOrWhiteSpace(userOid)
-                && string.Equals(bootstrapOid, userOid, StringComparison.OrdinalIgnoreCase);
+            string? userOid = ExternalIdentityClaims.ResolveOid(user.Claims);
+            return !string.IsNullOrWhiteSpace(bootstrapOid)
+                   && !string.IsNullOrWhiteSpace(userOid)
+                   && string.Equals(IdNorm.Norm(bootstrapOid), IdNorm.Norm(userOid), StringComparison.Ordinal);
         }
     }
 }
