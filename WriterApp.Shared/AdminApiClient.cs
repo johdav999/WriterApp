@@ -55,6 +55,24 @@ namespace WriterApp.Shared
             return payload ?? throw new InvalidOperationException("Admin API returned an empty delete-user response.");
         }
 
+        public async Task<AdminRoleChangeResponse> GrantAdminAsync(string userId, CancellationToken ct = default)
+        {
+            using HttpResponseMessage response =
+                await _http.PostAsync($"api/admin/users/{Uri.EscapeDataString(userId)}/grant-admin", content: null, ct);
+            await EnsureSuccess(response, ct);
+            AdminRoleChangeResponse? payload = await response.Content.ReadFromJsonAsync<AdminRoleChangeResponse>(cancellationToken: ct);
+            return payload ?? throw new InvalidOperationException("Admin API returned an empty grant-admin response.");
+        }
+
+        public async Task<AdminRoleChangeResponse> RevokeAdminAsync(string userId, CancellationToken ct = default)
+        {
+            using HttpResponseMessage response =
+                await _http.PostAsync($"api/admin/users/{Uri.EscapeDataString(userId)}/revoke-admin", content: null, ct);
+            await EnsureSuccess(response, ct);
+            AdminRoleChangeResponse? payload = await response.Content.ReadFromJsonAsync<AdminRoleChangeResponse>(cancellationToken: ct);
+            return payload ?? throw new InvalidOperationException("Admin API returned an empty revoke-admin response.");
+        }
+
         public async Task<AdminPlanOverrideResponse> SetPlanOverrideAsync(string userId, AdminSetPlanOverrideRequest request, CancellationToken ct = default)
         {
             using HttpResponseMessage response =

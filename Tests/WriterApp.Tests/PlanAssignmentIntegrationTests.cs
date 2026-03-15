@@ -4,6 +4,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
+using WriterApp.Application.Security;
 using WriterApp.Application.Subscriptions;
 using WriterApp.Application.Usage;
 using WriterApp.Data;
@@ -26,7 +27,10 @@ namespace WriterApp.Tests
             TestClock clock = new(now);
 
             IPlanRepository planRepository = new PlanRepository(dbContext);
-            UserEntitlementStore userEntitlementStore = new(dbContext, clock);
+            UserEntitlementStore userEntitlementStore = new(
+                dbContext,
+                clock,
+                new DeletedUserIdentityService(dbContext));
             IMemoryCache cache = new MemoryCache(new MemoryCacheOptions());
             EntitlementService entitlementService = new(planRepository, userEntitlementStore, cache);
             PlanAssignmentService planAssignmentService = new(

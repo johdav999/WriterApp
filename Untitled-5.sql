@@ -1,3 +1,5 @@
-SELECT * FROM __EFMigrationsHistory ORDER BY MigrationId;
-SELECT TOP 10 * FROM Plans;
-SELECT TOP 10 * FROM UserProfiles ORDER BY CreatedUtc DESC;
+SELECT TOP 20 [MigrationId]
+FROM [__EFMigrationsHistory]
+ORDER BY [MigrationId] DESC;
+
+SELECT OBJECT_ID(N'dbo.DeletedUserIdentities') AS DeletedUserIdentitiesObjectId;

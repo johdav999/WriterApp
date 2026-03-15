@@ -96,6 +96,16 @@
     color: #19603d;
 }
 
+.chip-admin-role {
+    background: #dbeafe;
+    color: #1d4ed8;
+}
+
+.chip-admin-bootstrap {
+    background: #ecfdf3;
+    color: #166534;
+}
+
 .chip-override {
     background: #fff7ed;
     color: #9a3412;
