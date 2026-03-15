@@ -1,0 +1,38 @@
+@page "/duplicate-account"
+@page "/app/duplicate-account"
+@using WriterApp.Client.State
+@using WriterApp.Client.Utilities
+@inject NavigationManager Navigation
+@inject DuplicateAccountStateService DuplicateAccountStateService
+@inject IOptions<WriterAuthOptions> AuthOptions
+
+<PageTitle>Possible duplicate account</PageTitle>
+
+<div class="projects-page">
+    <header class="projects-header">
+        <div>
+            <h1>Possible duplicate account</h1>
+            <p class="projects-subtitle">@DuplicateAccountStateService.Message</p>
+        </div>
+    </header>
+
+    <div class="drawer-empty">
+        @if (DuplicateAccountStateService.EmailPresent && !string.IsNullOrWhiteSpace(DuplicateAccountStateService.MaskedEmail))
+        {
+            <p>We found an existing Prosa account that may already be using <strong>@DuplicateAccountStateService.MaskedEmail</strong> with a different sign-in method.</p>
+        }
+        else
+        {
+            <p>We found an existing Prosa account that may already belong to you under a different sign-in method.</p>
+        }
+        <p>Do not keep retrying different providers. Sign out and try the sign-in method you used previously, or contact support if you are unsure.</p>
+    </div>
+
+    <div class="projects-actions">
+        <a class="primary"
+           href="@EasyAuthUrlBuilder.BuildLogoutUrl(Navigation.BaseUri, EasyAuthUrlBuilder.BuildAppLoginUrl(SafeReturnUrl.DefaultHomePath), AuthOptions.Value, SafeReturnUrl.DefaultHomePath)">
+            Sign out and try previous sign-in
+        </a>
+        <a class="secondary" href="/app/login">Back to sign in</a>
+    </div>
+</div>

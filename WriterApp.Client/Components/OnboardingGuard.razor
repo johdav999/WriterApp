@@ -8,6 +8,7 @@
 @inject HttpClient Http
 @inject AuthMeStateService AuthMeStateService
 @inject DeletedAccountStateService DeletedAccountStateService
+@inject DuplicateAccountStateService DuplicateAccountStateService
 @inject OnboardingStateStore OnboardingStateStore
 @inject ILogger<OnboardingGuard> Logger
 @implements IDisposable
@@ -56,6 +57,12 @@
             if (AuthMeStateService.IsDeletedAccount || DeletedAccountStateService.IsDeletedAccount)
             {
                 Navigation.NavigateTo("/app/deleted-account", replace: true);
+                return;
+            }
+
+            if (AuthMeStateService.IsDuplicateAccount || DuplicateAccountStateService.IsDuplicateAccount)
+            {
+                Navigation.NavigateTo("/app/duplicate-account", replace: true);
                 return;
             }
 

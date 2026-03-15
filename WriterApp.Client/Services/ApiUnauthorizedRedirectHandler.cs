@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.Logging;
+using WriterApp.Application.Security;
 using WriterApp.Client.State;
 using WriterApp.Client.Utilities;
 
@@ -15,15 +16,18 @@ namespace WriterApp.Client.Services
         private readonly ILogger<ApiUnauthorizedRedirectHandler> _logger;
         private readonly NavigationManager _navigation;
         private readonly DeletedAccountStateService _deletedAccountStateService;
+        private readonly DuplicateAccountStateService _duplicateAccountStateService;
 
         public ApiUnauthorizedRedirectHandler(
             ILogger<ApiUnauthorizedRedirectHandler> logger,
             NavigationManager navigation,
-            DeletedAccountStateService deletedAccountStateService)
+            DeletedAccountStateService deletedAccountStateService,
+            DuplicateAccountStateService duplicateAccountStateService)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _navigation = navigation ?? throw new ArgumentNullException(nameof(navigation));
             _deletedAccountStateService = deletedAccountStateService ?? throw new ArgumentNullException(nameof(deletedAccountStateService));
+            _duplicateAccountStateService = duplicateAccountStateService ?? throw new ArgumentNullException(nameof(duplicateAccountStateService));
         }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -38,6 +42,21 @@ namespace WriterApp.Client.Services
                     if (!IsDeletedAccountPath(_navigation.Uri))
                     {
                         _navigation.NavigateTo("/app/deleted-account", replace: true);
+                    }
+
+                    return response;
+                }
+            }
+
+            if (response.StatusCode == HttpStatusCode.Conflict && IsApiRequest(request.RequestUri))
+            {
+                AuthDuplicateAccountDto? duplicate = await DuplicateAccountApiResponseReader.TryReadAsync(response, cancellationToken);
+                if (duplicate is not null)
+                {
+                    _duplicateAccountStateService.MarkDuplicate(duplicate);
+                    if (!IsDuplicateAccountPath(_navigation.Uri))
+                    {
+                        _navigation.NavigateTo("/app/duplicate-account", replace: true);
                     }
 
                     return response;
@@ -74,6 +93,17 @@ namespace WriterApp.Client.Services
 
             return absolute.AbsolutePath.Equals("/deleted-account", StringComparison.OrdinalIgnoreCase)
                 || absolute.AbsolutePath.Equals("/app/deleted-account", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsDuplicateAccountPath(string uri)
+        {
+            if (!Uri.TryCreate(uri, UriKind.Absolute, out Uri? absolute))
+            {
+                return false;
+            }
+
+            return absolute.AbsolutePath.Equals("/duplicate-account", StringComparison.OrdinalIgnoreCase)
+                || absolute.AbsolutePath.Equals("/app/duplicate-account", StringComparison.OrdinalIgnoreCase);
         }
     }
 }

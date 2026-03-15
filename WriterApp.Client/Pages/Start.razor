@@ -3,22 +3,31 @@
 @using System.Net
 @using System.Net.Http.Json
 @using WriterApp.Application.Documents
+@using WriterApp.Client.Services
+@using WriterApp.Client.State
 @using WriterApp.Client.Utilities
 @inject NavigationManager Navigation
 @inject HttpClient Http
+@inject IOptions<WriterAuthOptions> AuthOptions
+@inject OnboardingService OnboardingService
+@inject DeletedAccountStateService DeletedAccountStateService
+@inject DuplicateAccountStateService DuplicateAccountStateService
 
 <PageTitle>Start</PageTitle>
 
 <p>@_statusMessage</p>
-@if (!string.IsNullOrWhiteSpace(_signInUrl))
+@if (_authLinks.Count > 0)
 {
-    <p><a href="@_signInUrl">@(_showDeletedAccountMessage ? "Sign out" : "Sign in")</a></p>
+    @foreach (AuthLink link in _authLinks)
+    {
+        <p><a href="@link.Href">@link.Label</a></p>
+    }
 }
 
 @code {
     private const string DefaultReturnUrl = SafeReturnUrl.DefaultProjectsPath;
     private string _statusMessage = "Preparing your workspace...";
-    private string? _signInUrl;
+    private readonly List<AuthLink> _authLinks = new();
     private bool _showDeletedAccountMessage;
 
     protected override async Task OnInitializedAsync()
@@ -26,45 +35,88 @@
         Uri currentUri = Navigation.ToAbsoluteUri(Navigation.Uri);
         Dictionary<string, string> query = QueryStringParser.Parse(currentUri.Query);
 
-        PlanTier requestedPlan = ParseRequestedPlan(query);
+        StartPlanTier requestedPlan = ParseRequestedPlan(query);
         string returnUrl = ResolveReturnUrl(query);
 
         AuthMeResponse? auth = await TryGetAuthMeAsync();
         if (_showDeletedAccountMessage)
         {
-            _signInUrl = EasyAuthUrlBuilder.BuildLogoutUrl(Navigation.BaseUri, SafeReturnUrl.DefaultHomePath, SafeReturnUrl.DefaultHomePath);
+            _authLinks.Clear();
+            _authLinks.Add(new AuthLink(
+                "Sign out",
+                EasyAuthUrlBuilder.BuildLogoutUrl(Navigation.BaseUri, SafeReturnUrl.DefaultHomePath, AuthOptions.Value, SafeReturnUrl.DefaultHomePath)));
+            return;
+        }
+
+        if (DuplicateAccountStateService.IsDuplicateAccount)
+        {
+            Navigation.NavigateTo("/app/duplicate-account", forceLoad: true);
             return;
         }
 
         if (auth is null || auth.IsAuthenticated != true || string.IsNullOrWhiteSpace(auth.UserId))
         {
-            _statusMessage = "You are not signed in. Please use the sign-in link.";
-            _signInUrl = EasyAuthUrlBuilder.BuildLoginUrl(Navigation.BaseUri, returnUrl, SafeReturnUrl.DefaultDocumentsPath);
+            PopulateAnonymousActions(returnUrl, requestedPlan);
             return;
         }
 
-        if (requestedPlan == PlanTier.Free)
+        OnboardingState onboardingState = await GetOnboardingStateAsync();
+        if (_showDeletedAccountMessage || DeletedAccountStateService.IsDeletedAccount)
         {
-            if (await IsFirstRunAsync())
-            {
+            _showDeletedAccountMessage = true;
+            _statusMessage = DeletedAccountStateService.Message;
+            _authLinks.Clear();
+            _authLinks.Add(new AuthLink(
+                "Sign out",
+                EasyAuthUrlBuilder.BuildLogoutUrl(Navigation.BaseUri, SafeReturnUrl.DefaultHomePath, AuthOptions.Value, SafeReturnUrl.DefaultHomePath)));
+            return;
+        }
+
+        bool hasProjects = await HasProjectsAsync();
+        if (_showDeletedAccountMessage || DeletedAccountStateService.IsDeletedAccount)
+        {
+            _showDeletedAccountMessage = true;
+            _statusMessage = DeletedAccountStateService.Message;
+            _authLinks.Clear();
+            _authLinks.Add(new AuthLink(
+                "Sign out",
+                EasyAuthUrlBuilder.BuildLogoutUrl(Navigation.BaseUri, SafeReturnUrl.DefaultHomePath, AuthOptions.Value, SafeReturnUrl.DefaultHomePath)));
+            return;
+        }
+
+        StartFlowDecision decision = StartFlowDecider.Decide(
+            auth.IsAuthenticated,
+            _showDeletedAccountMessage || DeletedAccountStateService.IsDeletedAccount,
+            requestedPlan,
+            ResolveCurrentPlanTier(auth),
+            onboardingState,
+            hasProjects);
+
+        switch (decision.Target)
+        {
+            case StartFlowTarget.DeletedAccount:
+                _showDeletedAccountMessage = true;
+                _statusMessage = DeletedAccountStateService.Message;
+                _authLinks.Clear();
+                _authLinks.Add(new AuthLink(
+                    "Sign out",
+                    EasyAuthUrlBuilder.BuildLogoutUrl(Navigation.BaseUri, SafeReturnUrl.DefaultHomePath, AuthOptions.Value, SafeReturnUrl.DefaultHomePath)));
+                return;
+            case StartFlowTarget.Onboarding:
                 string onboardingUrl = $"/app/onboarding?returnUrl={Uri.EscapeDataString(returnUrl)}";
                 Navigation.NavigateTo(onboardingUrl, forceLoad: true);
                 return;
-            }
-
-            Navigation.NavigateTo(returnUrl, forceLoad: true);
-            return;
+            case StartFlowTarget.ReturnUrl:
+                Navigation.NavigateTo(returnUrl, forceLoad: true);
+                return;
+            case StartFlowTarget.Checkout:
+                string checkoutUrl = $"/app/billing/checkout?plan={ToQueryValue(requestedPlan)}&returnUrl={Uri.EscapeDataString(returnUrl)}";
+                Navigation.NavigateTo(checkoutUrl, forceLoad: true);
+                return;
+            default:
+                PopulateAnonymousActions(returnUrl, requestedPlan);
+                return;
         }
-
-        PlanTier currentPlan = ResolveCurrentPlanTier(auth);
-        if (currentPlan >= requestedPlan)
-        {
-            Navigation.NavigateTo(returnUrl, forceLoad: true);
-            return;
-        }
-
-        string checkoutUrl = $"/app/billing/checkout?plan={ToQueryValue(requestedPlan)}&returnUrl={Uri.EscapeDataString(returnUrl)}";
-        Navigation.NavigateTo(checkoutUrl, forceLoad: true);
     }
 
     private async Task<AuthMeResponse?> TryGetAuthMeAsync()
@@ -78,7 +130,18 @@
                 if (string.Equals(deleted?.Code, "account_deleted", StringComparison.Ordinal))
                 {
                     _showDeletedAccountMessage = true;
+                    DeletedAccountStateService.MarkDeleted(deleted?.Message);
                     _statusMessage = deleted?.Message ?? "This Prosa account has been deleted. Sign out before registering again.";
+                    return null;
+                }
+            }
+
+            if (response.StatusCode == HttpStatusCode.Conflict)
+            {
+                AuthDuplicateAccountDto? duplicate = await DuplicateAccountApiResponseReader.TryReadAsync(response);
+                if (duplicate is not null)
+                {
+                    DuplicateAccountStateService.MarkDuplicate(duplicate);
                     return null;
                 }
             }
@@ -101,79 +164,87 @@
         }
     }
 
-    private async Task<bool> IsFirstRunAsync()
+    private async Task<OnboardingState> GetOnboardingStateAsync()
     {
-        UserProfileResponse? profile = await TryGetUserProfileAsync();
-        if (profile?.HasOnboarded == true)
+        try
         {
-            return false;
-        }
+            OnboardingState state = await OnboardingService.GetStateAsync();
+            if (DeletedAccountStateService.IsDeletedAccount)
+            {
+                _showDeletedAccountMessage = true;
+                _statusMessage = DeletedAccountStateService.Message;
+                return OnboardingState.Default;
+            }
 
+            return state;
+        }
+        catch
+        {
+            return OnboardingState.Default;
+        }
+    }
+
+    private async Task<bool> HasProjectsAsync()
+    {
         try
         {
             using HttpResponseMessage response = await Http.GetAsync("/api/projects/list-items");
+            if (response.StatusCode == HttpStatusCode.Forbidden)
+            {
+                DeletedAccountResponse? deleted = await response.Content.ReadFromJsonAsync<DeletedAccountResponse>();
+                if (string.Equals(deleted?.Code, "account_deleted", StringComparison.Ordinal))
+                {
+                    _showDeletedAccountMessage = true;
+                    DeletedAccountStateService.MarkDeleted(deleted.Message);
+                    _statusMessage = deleted?.Message ?? DeletedAccountStateService.DefaultMessage;
+                    return true;
+                }
+            }
+
             if (response.StatusCode == HttpStatusCode.NotFound)
             {
                 return false;
             }
 
+            if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+            {
+                return true;
+            }
+
             if (!response.IsSuccessStatusCode)
             {
-                return false;
+                return true;
             }
 
             List<ProjectListItemDto>? items = await response.Content.ReadFromJsonAsync<List<ProjectListItemDto>>();
-            return items is null || items.Count == 0;
+            return items is not null && items.Count > 0;
         }
         catch
         {
-            return false;
+            return true;
         }
     }
 
-    private async Task<UserProfileResponse?> TryGetUserProfileAsync()
-    {
-        try
-        {
-            using HttpResponseMessage response = await Http.GetAsync("/api/user/profile");
-            if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
-            {
-                return null;
-            }
-
-            if (!response.IsSuccessStatusCode)
-            {
-                return null;
-            }
-
-            return await response.Content.ReadFromJsonAsync<UserProfileResponse>();
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private static PlanTier ParseRequestedPlan(Dictionary<string, string> query)
+    private static StartPlanTier ParseRequestedPlan(Dictionary<string, string> query)
     {
         if (!query.TryGetValue("plan", out string? raw))
         {
-            return PlanTier.Free;
+            return StartPlanTier.Free;
         }
 
         if (string.IsNullOrWhiteSpace(raw))
         {
-            return PlanTier.Free;
+            return StartPlanTier.Free;
         }
 
         string normalized = raw.Trim().ToLowerInvariant();
         return normalized switch
         {
-            "standard" => PlanTier.Standard,
-            "pro" => PlanTier.Pro,
-            "professional" => PlanTier.Pro,
-            "free" => PlanTier.Free,
-            _ => PlanTier.Free
+            "standard" => StartPlanTier.Standard,
+            "pro" => StartPlanTier.Pro,
+            "professional" => StartPlanTier.Pro,
+            "free" => StartPlanTier.Free,
+            _ => StartPlanTier.Free
         };
     }
 
@@ -182,58 +253,51 @@
         return SafeReturnUrl.ResolveFromQuery(query, fallback: DefaultReturnUrl);
     }
 
-    private static PlanTier ResolveCurrentPlanTier(AuthMeResponse auth)
+    private static StartPlanTier ResolveCurrentPlanTier(AuthMeResponse auth)
     {
-        PlanTier fromPlan = ParsePlanTier(auth.Plan);
-        if (fromPlan != PlanTier.Free)
+        StartPlanTier fromPlan = ParsePlanTier(auth.Plan);
+        if (fromPlan != StartPlanTier.Free)
         {
             return fromPlan;
         }
 
-        PlanTier fromPlanKey = ParsePlanTier(auth.PlanKey);
-        if (fromPlanKey != PlanTier.Free)
+        StartPlanTier fromPlanKey = ParsePlanTier(auth.PlanKey);
+        if (fromPlanKey != StartPlanTier.Free)
         {
             return fromPlanKey;
         }
 
         foreach (string role in auth.Roles ?? Array.Empty<string>())
         {
-            PlanTier fromRole = ParsePlanTier(role);
-            if (fromRole > PlanTier.Free)
+            StartPlanTier fromRole = ParsePlanTier(role);
+            if (fromRole > StartPlanTier.Free)
             {
                 return fromRole;
             }
         }
 
-        return PlanTier.Free;
+        return StartPlanTier.Free;
     }
 
-    private static PlanTier ParsePlanTier(string? value)
+    private static StartPlanTier ParsePlanTier(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
         {
-            return PlanTier.Free;
+            return StartPlanTier.Free;
         }
 
         string normalized = value.Trim().ToLowerInvariant();
         return normalized switch
         {
-            "pro" => PlanTier.Pro,
-            "professional" => PlanTier.Pro,
-            "standard" => PlanTier.Standard,
-            "free" => PlanTier.Free,
-            _ when normalized.Contains("professional", StringComparison.Ordinal) => PlanTier.Pro,
-            _ when normalized.Contains("standard", StringComparison.Ordinal) => PlanTier.Standard,
-            _ when normalized.Contains("pro", StringComparison.Ordinal) => PlanTier.Pro,
-            _ => PlanTier.Free
+            "pro" => StartPlanTier.Pro,
+            "professional" => StartPlanTier.Pro,
+            "standard" => StartPlanTier.Standard,
+            "free" => StartPlanTier.Free,
+            _ when normalized.Contains("professional", StringComparison.Ordinal) => StartPlanTier.Pro,
+            _ when normalized.Contains("standard", StringComparison.Ordinal) => StartPlanTier.Standard,
+            _ when normalized.Contains("pro", StringComparison.Ordinal) => StartPlanTier.Pro,
+            _ => StartPlanTier.Free
         };
-    }
-
-    private enum PlanTier
-    {
-        Free = 0,
-        Standard = 1,
-        Pro = 2
     }
 
     private sealed class AuthMeResponse
@@ -245,24 +309,59 @@
         public IReadOnlyList<string> Roles { get; init; } = Array.Empty<string>();
     }
 
-    private sealed class UserProfileResponse
-    {
-        public bool HasOnboarded { get; init; }
-    }
-
     private sealed class DeletedAccountResponse
     {
         public string? Code { get; init; }
         public string? Message { get; init; }
     }
 
-    private static string ToQueryValue(PlanTier plan)
+    private static string ToQueryValue(StartPlanTier plan)
     {
         return plan switch
         {
-            PlanTier.Standard => "standard",
-            PlanTier.Pro => "pro",
+            StartPlanTier.Standard => "standard",
+            StartPlanTier.Pro => "pro",
             _ => "free"
         };
     }
+
+    private void PopulateAnonymousActions(string returnUrl, StartPlanTier requestedPlan)
+    {
+        WriterAuthOptions authOptions = AuthOptions.Value;
+        _authLinks.Clear();
+
+        if (requestedPlan == StartPlanTier.Free)
+        {
+            _statusMessage = authOptions.UseDualProviderMode
+                ? "Start free with a customer account, sign in, or use the internal admin sign-in if you belong to the workforce tenant."
+                : "Start free or sign in to continue.";
+            _authLinks.Add(new AuthLink(
+                "Start free",
+                EasyAuthUrlBuilder.BuildAppRegisterUrl(returnUrl, SafeReturnUrl.DefaultDocumentsPath)));
+            _authLinks.Add(new AuthLink(
+                "Sign in",
+                EasyAuthUrlBuilder.BuildAppLoginUrl(returnUrl, audience: null, SafeReturnUrl.DefaultDocumentsPath)));
+        }
+        else
+        {
+            _statusMessage = authOptions.UseDualProviderMode
+                ? "Sign in to continue to billing, or start free first if you do not have an account yet."
+                : "Sign in or start free to continue.";
+            _authLinks.Add(new AuthLink(
+                "Sign in",
+                EasyAuthUrlBuilder.BuildAppLoginUrl(returnUrl, audience: null, SafeReturnUrl.DefaultDocumentsPath)));
+            _authLinks.Add(new AuthLink(
+                "Start free",
+                EasyAuthUrlBuilder.BuildAppRegisterUrl(returnUrl, SafeReturnUrl.DefaultDocumentsPath)));
+        }
+
+        if (authOptions.UseDualProviderMode)
+        {
+            _authLinks.Add(new AuthLink(
+                "Internal/admin sign in",
+                EasyAuthUrlBuilder.BuildAppLoginUrl(returnUrl, EasyAuthUrlBuilder.InternalAudience, SafeReturnUrl.DefaultDocumentsPath)));
+        }
+    }
+
+    private sealed record AuthLink(string Label, string Href);
 }

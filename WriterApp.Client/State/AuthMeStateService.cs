@@ -12,12 +12,14 @@ namespace WriterApp.Client.State
     {
         private readonly HttpClient _http;
         private readonly DeletedAccountStateService _deletedAccountStateService;
+        private readonly DuplicateAccountStateService _duplicateAccountStateService;
         private bool _refreshInProgress;
 
-        public AuthMeStateService(HttpClient http, DeletedAccountStateService deletedAccountStateService)
+        public AuthMeStateService(HttpClient http, DeletedAccountStateService deletedAccountStateService, DuplicateAccountStateService duplicateAccountStateService)
         {
             _http = http ?? throw new ArgumentNullException(nameof(http));
             _deletedAccountStateService = deletedAccountStateService ?? throw new ArgumentNullException(nameof(deletedAccountStateService));
+            _duplicateAccountStateService = duplicateAccountStateService ?? throw new ArgumentNullException(nameof(duplicateAccountStateService));
         }
 
         public event Action? Changed;
@@ -25,6 +27,8 @@ namespace WriterApp.Client.State
         public bool IsLoaded { get; private set; }
         public bool IsAuthenticated { get; private set; }
         public bool IsDeletedAccount { get; private set; }
+        public bool IsDuplicateAccount { get; private set; }
+        public string DuplicateAccountMessage { get; private set; } = DuplicateAccountStateService.DefaultMessage;
         public string DeletedAccountMessage { get; private set; } = DeletedAccountStateService.DefaultMessage;
         public string PlanKey { get; private set; } = "Free";
         public bool IsAdminAccess { get; private set; }
@@ -61,7 +65,20 @@ namespace WriterApp.Client.State
                     if (deleted is not null)
                     {
                         _deletedAccountStateService.MarkDeleted(deleted.Message);
+                        _duplicateAccountStateService.Clear();
                         ApplyDeleted(deleted.Message);
+                        return;
+                    }
+                }
+
+                if (response.StatusCode == HttpStatusCode.Conflict)
+                {
+                    AuthDuplicateAccountDto? duplicate = await DuplicateAccountApiResponseReader.TryReadAsync(response);
+                    if (duplicate is not null)
+                    {
+                        _deletedAccountStateService.Clear();
+                        _duplicateAccountStateService.MarkDuplicate(duplicate);
+                        ApplyDuplicate(duplicate.Message);
                         return;
                     }
                 }
@@ -69,6 +86,7 @@ namespace WriterApp.Client.State
                 if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
                 {
                     _deletedAccountStateService.Clear();
+                    _duplicateAccountStateService.Clear();
                     Apply(false, "Free", false, "None", 0, 0, DateTimeOffset.MinValue, DateTimeOffset.MinValue);
                     return;
                 }
@@ -76,6 +94,7 @@ namespace WriterApp.Client.State
                 if (!response.IsSuccessStatusCode)
                 {
                     _deletedAccountStateService.Clear();
+                    _duplicateAccountStateService.Clear();
                     Apply(false, "Free", false, "None", 0, 0, DateTimeOffset.MinValue, DateTimeOffset.MinValue);
                     return;
                 }
@@ -84,11 +103,13 @@ namespace WriterApp.Client.State
                 if (auth is null)
                 {
                     _deletedAccountStateService.Clear();
+                    _duplicateAccountStateService.Clear();
                     Apply(false, "Free", false, "None", 0, 0, DateTimeOffset.MinValue, DateTimeOffset.MinValue);
                     return;
                 }
 
                 _deletedAccountStateService.Clear();
+                _duplicateAccountStateService.Clear();
                 Apply(
                     auth.IsAuthenticated,
                     NormalizePlanKey(auth.PlanKey),
@@ -113,6 +134,7 @@ namespace WriterApp.Client.State
             bool changed = IsLoaded != true
                 || IsAuthenticated != isAuthenticated
                 || IsDeletedAccount
+                || IsDuplicateAccount
                 || !string.Equals(PlanKey, planKey, StringComparison.Ordinal)
                 || IsAdminAccess != isAdminAccess
                 || !string.Equals(AdminAccessSource, adminAccessSource, StringComparison.Ordinal)
@@ -124,7 +146,9 @@ namespace WriterApp.Client.State
             IsLoaded = true;
             IsAuthenticated = isAuthenticated;
             IsDeletedAccount = false;
+            IsDuplicateAccount = false;
             DeletedAccountMessage = DeletedAccountStateService.DefaultMessage;
+            DuplicateAccountMessage = DuplicateAccountStateService.DefaultMessage;
             PlanKey = planKey;
             IsAdminAccess = isAdminAccess;
             AdminAccessSource = adminAccessSource;
@@ -148,6 +172,7 @@ namespace WriterApp.Client.State
             bool changed = IsLoaded != true
                 || IsAuthenticated
                 || !IsDeletedAccount
+                || IsDuplicateAccount
                 || !string.Equals(DeletedAccountMessage, normalizedMessage, StringComparison.Ordinal)
                 || !string.Equals(PlanKey, "Free", StringComparison.Ordinal)
                 || IsAdminAccess
@@ -160,7 +185,48 @@ namespace WriterApp.Client.State
             IsLoaded = true;
             IsAuthenticated = false;
             IsDeletedAccount = true;
+            IsDuplicateAccount = false;
             DeletedAccountMessage = normalizedMessage;
+            DuplicateAccountMessage = DuplicateAccountStateService.DefaultMessage;
+            PlanKey = "Free";
+            IsAdminAccess = false;
+            AdminAccessSource = "None";
+            AiMonthlyTokenBudget = 0;
+            AiTokensUsedThisPeriod = 0;
+            PeriodStartUtc = DateTimeOffset.MinValue;
+            EntitlementUpdatedUtc = DateTimeOffset.MinValue;
+
+            if (changed)
+            {
+                Changed?.Invoke();
+            }
+        }
+
+        private void ApplyDuplicate(string? message)
+        {
+            string normalizedMessage = string.IsNullOrWhiteSpace(message)
+                ? DuplicateAccountStateService.DefaultMessage
+                : message.Trim();
+
+            bool changed = IsLoaded != true
+                || IsAuthenticated
+                || IsDeletedAccount
+                || !IsDuplicateAccount
+                || !string.Equals(DuplicateAccountMessage, normalizedMessage, StringComparison.Ordinal)
+                || !string.Equals(PlanKey, "Free", StringComparison.Ordinal)
+                || IsAdminAccess
+                || !string.Equals(AdminAccessSource, "None", StringComparison.Ordinal)
+                || AiMonthlyTokenBudget != 0
+                || AiTokensUsedThisPeriod != 0
+                || PeriodStartUtc != DateTimeOffset.MinValue
+                || EntitlementUpdatedUtc != DateTimeOffset.MinValue;
+
+            IsLoaded = true;
+            IsAuthenticated = false;
+            IsDeletedAccount = false;
+            IsDuplicateAccount = true;
+            DeletedAccountMessage = DeletedAccountStateService.DefaultMessage;
+            DuplicateAccountMessage = normalizedMessage;
             PlanKey = "Free";
             IsAdminAccess = false;
             AdminAccessSource = "None";

@@ -4,25 +4,49 @@
 @using WriterApp.Client.Utilities
 @inject NavigationManager Navigation
 @inject IWebAssemblyHostEnvironment HostEnvironment
+@inject IOptions<WriterAuthOptions> AuthOptions
 
 <PageTitle>Sign in</PageTitle>
 
-<p>@_statusMessage</p>
-@if (_showSignInLink)
-{
-    <p><a href="@_loginUrl">Sign in</a></p>
-}
+<div class="container py-5">
+    <div class="row justify-content-center">
+        <div class="col-12 col-lg-8 col-xl-7">
+            <div class="card shadow-sm border-0">
+                <div class="card-body p-4 p-md-5">
+                    <p class="text-uppercase text-muted fw-semibold mb-2">Prosa</p>
+                    <h1 class="display-6 fw-semibold mb-3">Sign in</h1>
+                    <p class="lead mb-3">Pick the sign-in path that matches your account.</p>
+                    <p class="text-muted mb-4">@_statusMessage</p>
+                    <div class="d-grid gap-2">
+                        @foreach (AuthLink link in _authLinks)
+                        {
+                            <a class="@link.CssClass" href="@link.Href">@link.Label</a>
+                        }
+                    </div>
+                    <div class="mt-4 text-muted small">
+                        <p class="mb-2">Prosa uses App Service Authentication for the sign-in transaction. Your account is provisioned after authentication at <code>/api/auth/me</code>.</p>
+                        <p class="mb-0">Need a new customer account? Use <a href="@_registerUrl">Start free</a>.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 
 @code {
     private const string DefaultReturnUrl = SafeReturnUrl.DefaultDocumentsPath;
     private string _statusMessage = "Checking sign-in...";
-    private string _loginUrl = "/.auth/login/aad";
-    private bool _showSignInLink;
+    private string _registerUrl = EasyAuthUrlBuilder.BuildAppRegisterUrl(DefaultReturnUrl, DefaultReturnUrl);
+    private readonly List<AuthLink> _authLinks = new();
 
     protected override Task OnInitializedAsync()
     {
         Uri currentUri = Navigation.ToAbsoluteUri(Navigation.Uri);
-        string returnUrl = ResolveReturnUrl(currentUri.Query);
+        Dictionary<string, string> query = QueryStringParser.Parse(currentUri.Query);
+        string returnUrl = ResolveReturnUrl(query);
+        string audience = ResolveAudience(query);
+        WriterAuthOptions authOptions = AuthOptions.Value;
+        _registerUrl = EasyAuthUrlBuilder.BuildAppRegisterUrl(returnUrl, DefaultReturnUrl);
 
         if (HostEnvironment.IsDevelopment() || currentUri.IsLoopback)
         {
@@ -31,15 +55,60 @@
             return Task.CompletedTask;
         }
 
-        _loginUrl = EasyAuthUrlBuilder.BuildLoginUrl(Navigation.BaseUri, returnUrl, DefaultReturnUrl);
-        _statusMessage = "You are not signed in. Please use the sign-in link.";
-        _showSignInLink = true;
+        _authLinks.Clear();
+        if (string.Equals(audience, EasyAuthUrlBuilder.InternalAudience, StringComparison.OrdinalIgnoreCase))
+        {
+            _statusMessage = authOptions.UseDualProviderMode
+                ? "Use the internal provider for workforce access, or switch to customer sign-in if this is a regular Prosa account."
+                : "Use the available sign-in provider to continue.";
+            _authLinks.Add(new AuthLink(
+                "Internal sign in",
+                EasyAuthUrlBuilder.BuildInternalLoginUrl(Navigation.BaseUri, returnUrl, authOptions, DefaultReturnUrl),
+                "btn btn-primary btn-lg"));
+            _authLinks.Add(new AuthLink(
+                "Customer sign in",
+                EasyAuthUrlBuilder.BuildCustomerLoginUrl(Navigation.BaseUri, returnUrl, authOptions, DefaultReturnUrl),
+                "btn btn-outline-secondary"));
+        }
+        else
+        {
+            _statusMessage = authOptions.UseDualProviderMode
+                ? "Sign in with your customer account, or choose internal/admin sign-in if you belong to the workforce tenant."
+                : "Sign in to continue, or start free if you need a new account.";
+            _authLinks.Add(new AuthLink(
+                "Sign in",
+                EasyAuthUrlBuilder.BuildCustomerLoginUrl(Navigation.BaseUri, returnUrl, authOptions, DefaultReturnUrl),
+                "btn btn-primary btn-lg"));
+            _authLinks.Add(new AuthLink(
+                "Start free",
+                EasyAuthUrlBuilder.BuildAppRegisterUrl(returnUrl, DefaultReturnUrl),
+                "btn btn-outline-secondary"));
+            if (authOptions.UseDualProviderMode)
+            {
+                _authLinks.Add(new AuthLink(
+                    "Internal/admin sign in",
+                    EasyAuthUrlBuilder.BuildInternalLoginUrl(Navigation.BaseUri, returnUrl, authOptions, DefaultReturnUrl),
+                    "btn btn-link text-start px-0"));
+            }
+        }
+
         return Task.CompletedTask;
     }
 
-    private static string ResolveReturnUrl(string queryString)
+    private static string ResolveReturnUrl(Dictionary<string, string> query)
     {
-        Dictionary<string, string> query = QueryStringParser.Parse(queryString);
         return SafeReturnUrl.ResolveFromQuery(query, fallback: DefaultReturnUrl);
     }
+
+    private static string ResolveAudience(Dictionary<string, string> query)
+    {
+        if (!query.TryGetValue("audience", out string? audience) || string.IsNullOrWhiteSpace(audience))
+        {
+            return EasyAuthUrlBuilder.CustomerAudience;
+        }
+
+        return audience.Trim();
+    }
+
+    private sealed record AuthLink(string Label, string Href, string CssClass);
 }

@@ -44,21 +44,22 @@ namespace WriterApp.Tests
         }
 
         [Fact]
-        public void AdminApiAccess_BootstrapOidMatch_ReturnsTrue()
+        public void AdminApiAccess_BootstrapUserIdMatch_ReturnsTrue()
         {
-            const string oid = "00000000-0000-0000-151c-3ba2d7110bfa";
+            const string userId = "extid:https%3A%2F%2Ftenant.ciamlogin.com%2Ftenant%2Fv2.0:bootstrap-user";
             IConfiguration configuration = new ConfigurationBuilder()
                 .AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["BOOTSTRAP_ADMIN_ENABLED"] = "true",
-                    ["BOOTSTRAP_ADMIN_OID"] = oid
+                    ["BOOTSTRAP_ADMIN_USER_ID"] = userId
                 })
                 .Build();
 
             ClaimsPrincipal principal = new(new ClaimsIdentity(
                 new[]
                 {
-                    new Claim("oid", oid)
+                    new Claim("iss", "https://tenant.ciamlogin.com/tenant/v2.0"),
+                    new Claim("sub", "bootstrap-user")
                 },
                 authenticationType: "Test"));
 
@@ -68,7 +69,7 @@ namespace WriterApp.Tests
         }
 
         [Fact]
-        public void AdminApiAccess_BootstrapOidMismatch_ReturnsFalse()
+        public void AdminApiAccess_BootstrapLegacyOidFallbackMatch_ReturnsTrue()
         {
             IConfiguration configuration = new ConfigurationBuilder()
                 .AddInMemoryCollection(new Dictionary<string, string?>
@@ -81,7 +82,31 @@ namespace WriterApp.Tests
             ClaimsPrincipal principal = new(new ClaimsIdentity(
                 new[]
                 {
-                    new Claim("oid", "00000000-0000-0000-1111-111111111111")
+                    new Claim("oid", "00000000-0000-0000-151c-3ba2d7110bfa")
+                },
+                authenticationType: "Test"));
+
+            bool allowed = AdminPlanOverrideAccess.IsAuthorized(principal, configuration);
+
+            Assert.True(allowed);
+        }
+
+        [Fact]
+        public void AdminApiAccess_BootstrapUserIdMismatch_ReturnsFalse()
+        {
+            IConfiguration configuration = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["BOOTSTRAP_ADMIN_ENABLED"] = "true",
+                    ["BOOTSTRAP_ADMIN_USER_ID"] = "extid:https%3A%2F%2Ftenant.ciamlogin.com%2Ftenant%2Fv2.0:bootstrap-user"
+                })
+                .Build();
+
+            ClaimsPrincipal principal = new(new ClaimsIdentity(
+                new[]
+                {
+                    new Claim("iss", "https://tenant.ciamlogin.com/tenant/v2.0"),
+                    new Claim("sub", "different-user")
                 },
                 authenticationType: "Test"));
 

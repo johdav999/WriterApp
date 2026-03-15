@@ -10,6 +10,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using WriterApp.AI.Abstractions;
 using WriterApp.AI.Core;
+using WriterApp.Application.AI;
 using WriterApp.Application.Security;
 using WriterApp.Application.Subscriptions;
 using WriterApp.Application.Usage;

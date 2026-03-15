@@ -4,6 +4,10 @@
 - Mailgun feedback delivery setup:
   - [feedback-mailgun.md](/c:/Users/Johan/source/repos/WriterApp/docs/feedback-mailgun.md)
 
+## Auth runbooks
+- App Service EasyAuth + Entra External ID customer setup:
+  - [runbooks/app-service-entra-external-id-customer-auth.md](/c:/Users/Johan/source/repos/WriterApp/docs/runbooks/app-service-entra-external-id-customer-auth.md)
+
 ## Public routes and SPA redirects
 - Public top-level links are handled by server redirects:
   - `/login` -> `/app/login` (302, query preserved)
@@ -30,7 +34,7 @@
   - App Service Authentication should own interactive redirects for protected routes.
   - The WASM client must not auto-navigate to `/.auth/login/*`.
   - `/app/login` can render a manual sign-in link:
-    - `/.auth/login/aad?post_login_redirect_uri=<absolute-url>`
+    - `/.auth/login/externalid?post_login_redirect_uri=<absolute-url>`
   - Absolute URL is built from current origin + validated `returnUrl`.
 
 ## Logout behavior

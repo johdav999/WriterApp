@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
+using Microsoft.Extensions.Options;
+using WriterApp.Application.Security;
 using WriterApp.Client;
 using WriterApp.Application.Documents;
 using WriterApp.Client.Services;
@@ -23,12 +25,17 @@ builder.Services.AddScoped(sp =>
         BaseAddress = new Uri($"{origin}/")
     };
 });
+WriterAuthOptions authOptions =
+    builder.Configuration.GetSection("WriterApp:Auth").Get<WriterAuthOptions>()
+    ?? new WriterAuthOptions();
+builder.Services.AddSingleton<IOptions<WriterAuthOptions>>(Options.Create(authOptions));
 builder.Services.AddScoped<OutlineTemplatesClient>();
 builder.Services.AddScoped<WriterApp.Client.State.LayoutStateService>();
 builder.Services.AddScoped<WriterApp.Client.State.CurrentDocumentStateService>();
 builder.Services.AddScoped<WriterApp.Client.State.CurrentSceneStateService>();
 builder.Services.AddScoped<WriterApp.Client.State.CurrentProjectStateService>();
 builder.Services.AddScoped<WriterApp.Client.State.DeletedAccountStateService>();
+builder.Services.AddScoped<WriterApp.Client.State.DuplicateAccountStateService>();
 builder.Services.AddScoped<WriterApp.Client.State.AuthMeStateService>();
 builder.Services.AddScoped<FeatureAccessService>();
 builder.Services.AddScoped<WriterApp.Client.Services.OnboardingService>();

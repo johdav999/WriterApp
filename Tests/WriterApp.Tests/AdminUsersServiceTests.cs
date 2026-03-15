@@ -20,6 +20,7 @@ using WriterApp.Data.AI;
 using WriterApp.Data.Admin;
 using WriterApp.Data.Documents;
 using WriterApp.Data.Exporting;
+using WriterApp.Data.Security;
 using WriterApp.Data.Subscriptions;
 using WriterApp.Data.Usage;
 using WriterApp.Shared;
@@ -125,6 +126,82 @@ namespace WriterApp.Tests
             Assert.Equal(UserEntitlementDefaults.ProfessionalPlanKey, overrideResponse.ResolvedPlanKey);
             Assert.Equal(UserEntitlementDefaults.ProfessionalPlanKey, detail!.PlanKey);
             Assert.True(detail.IsManuallyOverridden);
+        }
+
+        [Fact]
+        public async Task FindDuplicateCandidatesByEmail_ReturnsProfilesWithProviderHints()
+        {
+            await using SqliteConnection connection = new("Data Source=:memory:");
+            await connection.OpenAsync();
+            await using AppDbContext dbContext = BuildDbContext(connection);
+
+            DateTime now = DateTime.UtcNow;
+            dbContext.UserProfiles.AddRange(
+                new UserProfile
+                {
+                    UserId = "legacy-user",
+                    Email = "reader@example.com",
+                    DisplayName = "Legacy Reader",
+                    CreatedUtc = now.AddDays(-10),
+                    UpdatedUtc = now.AddDays(-1),
+                    HasOnboarded = true
+                },
+                new UserProfile
+                {
+                    UserId = "extid:https%3A%2F%2Ftenant.ciamlogin.com%2Ftenant%2Fv2.0:customer-1",
+                    Email = "reader@example.com",
+                    DisplayName = "Customer Reader",
+                    CreatedUtc = now.AddDays(-2),
+                    UpdatedUtc = now,
+                    HasOnboarded = false
+                });
+            dbContext.UserEntitlements.AddRange(
+                new UserEntitlement
+                {
+                    UserId = "legacy-user",
+                    PlanKey = "Standard",
+                    SubscriptionStatus = "active",
+                    CreatedAt = now,
+                    UpdatedUtc = now,
+                    PeriodStartUtc = now
+                },
+                new UserEntitlement
+                {
+                    UserId = "extid:https%3A%2F%2Ftenant.ciamlogin.com%2Ftenant%2Fv2.0:customer-1",
+                    PlanKey = "Free",
+                    SubscriptionStatus = "active",
+                    CreatedAt = now,
+                    UpdatedUtc = now,
+                    PeriodStartUtc = now
+                });
+            dbContext.ExternalIdentityLinks.AddRange(
+                new ExternalIdentityLink
+                {
+                    UserId = "legacy-user",
+                    Provider = "aad",
+                    ObjectIdentifier = "legacy-user",
+                    CreatedUtc = now,
+                    LastSeenUtc = now
+                },
+                new ExternalIdentityLink
+                {
+                    UserId = "extid:https%3A%2F%2Ftenant.ciamlogin.com%2Ftenant%2Fv2.0:customer-1",
+                    Provider = "externalid",
+                    Issuer = "https://tenant.ciamlogin.com/tenant/v2.0",
+                    Subject = "customer-1",
+                    CreatedUtc = now,
+                    LastSeenUtc = now
+                });
+            await dbContext.SaveChangesAsync();
+
+            AdminUsersService service = BuildService(dbContext);
+
+            AdminDuplicateAccountLookupResponseDto response = await service.FindDuplicateCandidatesByEmailAsync("reader@example.com");
+
+            Assert.Equal("reader@example.com", response.Email);
+            Assert.Equal(2, response.Matches.Count);
+            Assert.Contains(response.Matches, item => item.UserId == "legacy-user" && item.ProviderHints.Contains("aad"));
+            Assert.Contains(response.Matches, item => item.UserId.Contains("extid:", StringComparison.Ordinal) && item.ProviderHints.Contains("externalid"));
         }
 
         [Fact]

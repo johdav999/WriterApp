@@ -306,6 +306,62 @@ namespace WriterApp.Application.Users
                 entitlement?.StripeSubscriptionId);
         }
 
+        public async Task<AdminDuplicateAccountLookupResponseDto> FindDuplicateCandidatesByEmailAsync(string email, CancellationToken ct = default)
+        {
+            string? normalizedEmail = ExternalIdentityClaims.NormalizeEmail(email);
+            if (string.IsNullOrWhiteSpace(normalizedEmail))
+            {
+                throw new ArgumentException("email is required.", nameof(email));
+            }
+
+            List<UserProfile> profiles = await _dbContext.UserProfiles
+                .AsNoTracking()
+                .Where(item => item.Email != null && item.Email.ToLower() == normalizedEmail)
+                .OrderBy(item => item.CreatedUtc)
+                .ToListAsync(ct);
+            if (profiles.Count == 0)
+            {
+                return new AdminDuplicateAccountLookupResponseDto(normalizedEmail, Array.Empty<AdminDuplicateAccountCandidateDto>());
+            }
+
+            string[] userIds = profiles.Select(item => item.UserId).ToArray();
+            Dictionary<string, UserEntitlement> entitlements = await _dbContext.UserEntitlements
+                .AsNoTracking()
+                .Where(item => userIds.Contains(item.UserId))
+                .ToDictionaryAsync(item => item.UserId, item => item, ct);
+            List<IGrouping<string, string>> providerGroups = (await _dbContext.ExternalIdentityLinks
+                    .AsNoTracking()
+                    .Where(item => userIds.Contains(item.UserId))
+                    .Select(item => new
+                    {
+                        item.UserId,
+                        ProviderHint = item.Provider ?? (item.ObjectIdentifier != null ? "aad" : "unknown")
+                    })
+                    .ToListAsync(ct))
+                .GroupBy(item => item.UserId, item => item.ProviderHint, StringComparer.Ordinal)
+                .ToList();
+            Dictionary<string, IReadOnlyList<string>> providerHints = providerGroups.ToDictionary(
+                group => group.Key,
+                group => (IReadOnlyList<string>)group.Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(item => item, StringComparer.OrdinalIgnoreCase).ToArray(),
+                StringComparer.Ordinal);
+
+            IReadOnlyList<AdminDuplicateAccountCandidateDto> matches = profiles
+                .Select(profile => new AdminDuplicateAccountCandidateDto(
+                    profile.UserId,
+                    profile.DisplayName,
+                    profile.Email,
+                    profile.CreatedUtc,
+                    entitlements.TryGetValue(profile.UserId, out UserEntitlement? entitlement)
+                        ? UserEntitlementDefaults.NormalizePlanKey(entitlement.PlanKey)
+                        : UserEntitlementDefaults.FreePlanKey,
+                    providerHints.TryGetValue(profile.UserId, out IReadOnlyList<string>? hints)
+                        ? hints
+                        : Array.Empty<string>()))
+                .ToList();
+
+            return new AdminDuplicateAccountLookupResponseDto(normalizedEmail, matches);
+        }
+
         public async Task<AdminRoleChangeResponse> GrantAdminAsync(
             string userId,
             string adminUserId,

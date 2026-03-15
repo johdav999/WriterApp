@@ -46,6 +46,14 @@ namespace WriterApp.Application.Security
                 return false;
             }
 
+            string? bootstrapUserId = configuration["BOOTSTRAP_ADMIN_USER_ID"];
+            if (!string.IsNullOrWhiteSpace(bootstrapUserId))
+            {
+                string? userId = ExternalIdentityClaims.ResolveStableUserId(user.Claims);
+                return !string.IsNullOrWhiteSpace(userId)
+                       && string.Equals(IdNorm.Norm(bootstrapUserId), IdNorm.Norm(userId), StringComparison.Ordinal);
+            }
+
             string? bootstrapOid = configuration["BOOTSTRAP_ADMIN_OID"];
             string? userOid = ExternalIdentityClaims.ResolveOid(user.Claims);
             return !string.IsNullOrWhiteSpace(bootstrapOid)

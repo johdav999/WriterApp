@@ -10,6 +10,7 @@ using WriterApp.AI.Providers.Mock;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using WriterApp.Application.AI;
+using WriterApp.Application.Commands;
 using WriterApp.Application.Usage;
 using WriterApp.Application.State;
 using WriterApp.Data.Usage;
@@ -111,10 +112,13 @@ namespace WriterApp.Tests
 
             Document document = DocumentFactory.CreateNewDocument();
             Guid sectionId = document.Chapters[0].Sections[0].SectionId;
-            document.Chapters[0].Sections[0].Content = new SectionContent
+            document.Chapters[0].Sections[0] = document.Chapters[0].Sections[0] with
             {
-                Format = "html",
-                Value = "<p>The woman was across the room.</p>"
+                Content = new SectionContent
+                {
+                    Format = "html",
+                    Value = "<p>The woman was across the room.</p>"
+                }
             };
 
             AiExecutionResult result = await orchestrator.ExecuteActionAsync(
