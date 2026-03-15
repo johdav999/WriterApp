@@ -22,6 +22,7 @@ using WriterApp.Application.State;
 using WriterApp.Application.Subscriptions;
 using WriterApp.Data;
 using WriterApp.Data.Documents;
+using WriterApp.Data.Subscriptions;
 using WriterApp.Domain.Documents;
 
 namespace WriterApp.Controllers
@@ -388,6 +389,17 @@ namespace WriterApp.Controllers
                 return NotFound();
             }
 
+            bool onboardingDemoRequested = IsOnboardingDemoRequested(request.Parameters);
+            bool onboardingDemoAllowed = false;
+            if (onboardingDemoRequested)
+            {
+                onboardingDemoAllowed = await IsAllowedOnboardingDemoRequestAsync(userId, actionKey, sectionId, ct);
+                if (onboardingDemoAllowed)
+                {
+                    HttpContext.Items[OnboardingDemoAiUsage.HttpContextValidatedKey] = true;
+                }
+            }
+
             if (action.RequiresSelection && (!request.SelectionStart.HasValue || !request.SelectionEnd.HasValue))
             {
                 return BadRequest(new
@@ -431,6 +443,10 @@ namespace WriterApp.Controllers
             Dictionary<string, object?> options = request.Parameters is null
                 ? new Dictionary<string, object?>()
                 : new Dictionary<string, object?>(request.Parameters);
+            if (onboardingDemoAllowed)
+            {
+                options[OnboardingDemoAiUsage.RequestParameterKey] = true;
+            }
             if (!string.IsNullOrWhiteSpace(request.SurroundingText))
             {
                 options["section_text_override"] = request.SurroundingText;
@@ -797,6 +813,48 @@ namespace WriterApp.Controllers
                 "ai.action_missing" => StatusCodes.Status400BadRequest,
                 _ => StatusCodes.Status400BadRequest
             };
+        }
+
+        private static bool IsOnboardingDemoRequested(Dictionary<string, object?>? parameters)
+        {
+            if (parameters is null
+                || !parameters.TryGetValue(OnboardingDemoAiUsage.RequestParameterKey, out object? value)
+                || value is null)
+            {
+                return false;
+            }
+
+            return value is bool boolean
+                ? boolean
+                : value is string text && bool.TryParse(text, out bool parsed) && parsed;
+        }
+
+        private async Task<bool> IsAllowedOnboardingDemoRequestAsync(
+            string userId,
+            string actionKey,
+            Guid sectionId,
+            CancellationToken ct)
+        {
+            if (!string.Equals(actionKey, OnboardingDemoAiUsage.DemoActionKey, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            UserProfile? profile = await _dbContext.UserProfiles
+                .AsNoTracking()
+                .FirstOrDefaultAsync(item => item.UserId == userId, ct);
+            if (profile?.HasCompletedOnboarding == true)
+            {
+                return false;
+            }
+
+            string? metadataJson = await _dbContext.ProjectNodes
+                .AsNoTracking()
+                .Where(item => item.LinkedSectionId == sectionId && item.NodeType == ProjectNodeType.Scene)
+                .Select(item => item.MetadataJson)
+                .FirstOrDefaultAsync(ct);
+
+            return OnboardingDemoSceneMetadata.IsDemoScene(metadataJson);
         }
 
         private static (int StatusCode, string ErrorCode, string Detail) MapProviderException(AiProviderException exception)

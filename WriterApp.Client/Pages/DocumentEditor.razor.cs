@@ -37,6 +37,14 @@ namespace WriterApp.Client.Pages
     {
         private const string ContextPanelStateStoragePrefix = "writerapp.editor.contextpanel.v1";
         private const int OnboardingMinTypedCharacters = 100;
+        private const string OnboardingDemoSceneHtml =
+            "<p>The caf&#233; was quiet that afternoon, the kind of quiet that settles softly between the clink of cups and the low murmur of strangers. Outside, the street moved slowly through a pale autumn light.</p>"
+            + "<p>He had chosen the table by the window without thinking much about it. It was simply where he always sat when he came here&mdash;close enough to watch the world passing by, far enough away from everyone else.</p>"
+            + "<p>He noticed her only after she had already been sitting there for several minutes.</p>"
+            + "<p>She was across the room, near the bookshelf, a cup of coffee resting untouched in front of her. She was reading something on her phone, though from time to time her eyes lifted, drifting around the room as if searching for something she couldn&#39;t quite name.</p>"
+            + "<p>At one of those moments their eyes met.</p>";
+        private const string OnboardingDemoAiInstruction =
+            "Tighten the character description. Focus especially on the woman across the room. Sharpen the visual details and make the prose more precise without rewriting the whole scene. Return only the revised section text.";
 
         [Parameter]
         public Guid DocumentId { get; set; }
@@ -443,6 +451,7 @@ namespace WriterApp.Client.Pages
         private bool _onboardingWalkthroughBusy;
         private string? _onboardingWalkthroughStatus;
         private bool _onboardingStarterTextEnsured;
+        private bool _onboardingAiDemoAttempted;
         private bool _onboardingProjectCreated;
         private bool _onboardingTypedEnough;
         private bool _onboardingSavedOnce;
@@ -8048,11 +8057,11 @@ private const string PreviewBootstrapScript = @"
                 _onboardingWalkthroughStatus,
                 _onboardingWalkthroughBusy,
                 ShowOnboardingAiActionCta,
-                "Expand scene with AI",
+                "Run AI demo",
                 "Next",
                 OnOnboardingWalkthroughNextAsync,
                 OnOnboardingWalkthroughSkipAsync,
-                OnOnboardingAiExpandAsync);
+                OnOnboardingAiDemoAsync);
         }
 
         private async Task RefreshOnboardingWalkthroughAsync()
@@ -8075,15 +8084,9 @@ private const string PreviewBootstrapScript = @"
                 _onboardingWalkthroughTips = BuildOnboardingWalkthroughTips(ResolveOnboardingIntentKey(state.PrimaryWritingIntent));
                 _onboardingProjectCreated = ProjectId != Guid.Empty || state.OnboardingStep >= 3;
                 _onboardingAiRequirementMet = state.OnboardingStep >= 8;
+                _onboardingAiDemoAttempted = state.OnboardingStep >= 8;
                 _onboardingWalkthroughIndex = ResolveWalkthroughIndex(state.OnboardingStep);
                 _onboardingWalkthroughStatus = null;
-
-                if (!_onboardingAiRequirementMet && (AuthMeStateService.AiMonthlyTokenBudget <= 0 || !IsAiEntitled || !IsAiUiEnabled))
-                {
-                    await MarkOnboardingAiSignalAsync("onboarding_first_ai_blocked", "free_plan");
-                    await OnboardingService.SetStepAsync(8);
-                    await OnboardingStateStore.RefreshAsync();
-                }
 
                 await EnsureWalkthroughContextAsync();
                 await EvaluateOnboardingCompletionAsync(forceTypingProbe: true);
@@ -8245,24 +8248,24 @@ private const string PreviewBootstrapScript = @"
             {
                 "Novel" => (
                     "Welcome — let's start your novel.",
-                    "We created Act I with Scene 1 so you can begin drafting right away.",
-                    "Try Continue Scene or Deepen Character in Writing tools."),
+                    "We created Act I with Scene 1 and loaded a sample caf&#233; scene so you can begin drafting right away.",
+                    "Watch AI tighten the character description, then compare the before and after."),
                 "ShortStory" => (
                     "Welcome — let's start your short story.",
-                    "We created a Draft with Scene 1 and an Ending Notes section for your closing idea.",
-                    "Try Tighten Prose to refine your opening."),
+                    "We created a Draft with Scene 1, loaded a sample caf&#233; scene, and added Ending Notes for your closing idea.",
+                    "Watch AI tighten the character description, then compare the before and after."),
                 "NonFiction" => (
                     "Welcome — let's start your non-fiction draft.",
-                    "We created Chapter 1 with Scene 1 and a Research section for source notes.",
-                    "Try Clarify & Simplify to tighten your explanation."),
+                    "We created Chapter 1 with Scene 1, loaded a sample scene, and added a Research section for source notes.",
+                    "Watch AI tighten the character description, then compare the before and after."),
                 "Blog" => (
                     "Welcome — let's start your blog post.",
-                    "We created a Draft with Scene 1 plus a Headline Ideas section.",
-                    "Try Improve Hook, then Generate Headlines."),
+                    "We created a Draft with Scene 1, loaded a sample scene, and added Headline Ideas.",
+                    "Watch AI tighten the character description, then compare the before and after."),
                 _ => (
                     "Welcome — let's start writing.",
-                    "We created a clean Draft with Scene 1 so you can jump in quickly.",
-                    "Try Improve Flow to explore your direction.")
+                    "We created a clean Draft with Scene 1 and loaded a sample caf&#233; scene so you can jump in quickly.",
+                    "Watch AI tighten the character description, then compare the before and after.")
             };
 
             return new List<OnboardingWalkthroughTip>
@@ -8279,6 +8282,10 @@ private const string PreviewBootstrapScript = @"
             if (string.Equals(tip.TargetSelector, "#onboarding-tab-ai", StringComparison.Ordinal))
             {
                 await SetContextTabAsync(ContextTab.Ai);
+                if (!_onboardingAiDemoAttempted)
+                {
+                    await OnOnboardingAiDemoAsync();
+                }
             }
         }
 
@@ -8362,7 +8369,7 @@ private const string PreviewBootstrapScript = @"
                 return;
             }
 
-            string starterHtml = "<p>Your protagonist enters a place they should never have returned to, and something immediately feels wrong.</p>";
+            string starterHtml = OnboardingDemoSceneHtml;
             try
             {
                 using HttpResponseMessage response = await Http.PutAsJsonAsync(
@@ -8396,53 +8403,43 @@ private const string PreviewBootstrapScript = @"
             }
         }
 
-        private async Task OnOnboardingAiExpandAsync()
+        private async Task OnOnboardingAiDemoAsync()
         {
             if (_onboardingWalkthroughBusy)
             {
                 return;
             }
 
+            _onboardingAiDemoAttempted = true;
             _onboardingWalkthroughBusy = true;
             SyncOnboardingOverlayState();
             try
             {
                 await SetContextTabAsync(ContextTab.Ai);
 
-                if (AuthMeStateService.AiMonthlyTokenBudget <= 0 || !IsAiEntitled || !IsAiUiEnabled)
+                if (!HasAction("tighten.section"))
                 {
-                    _onboardingWalkthroughStatus = "AI is not available on Free. See plans.";
-                    await MarkOnboardingAiSignalAsync("onboarding_first_ai_blocked", "free_plan");
-                    await OnboardingService.SetStepAsync(8);
-                    await OnboardingStateStore.RefreshAsync();
-                    await EvaluateOnboardingCompletionAsync(forceTypingProbe: false);
-                    return;
-                }
-
-                if (!HasAction("expand.section"))
-                {
-                    _onboardingWalkthroughStatus = "AI expand is not available right now.";
+                    _onboardingWalkthroughStatus = "AI tighten is not available right now.";
                     return;
                 }
 
                 await EnsureOnboardingStarterTextAsync();
                 Guid beforeProposalId = _pendingAiProposal?.ProposalId ?? Guid.Empty;
 
-                AiActionOption onboardingExpand = new(
-                    "expand.section",
-                    "Expand scene with AI",
-                    "Expand this scene into one concise paragraph (maximum 120 words). Keep the same tone and events.",
+                _onboardingWalkthroughStatus = "Running AI demo: \"tighten the character description\".";
+                AiActionOption onboardingDemo = new(
+                    "tighten.section",
+                    "Tighten character description",
+                    "tighten the character description",
                     false,
                     new Dictionary<string, object?>
                     {
-                        ["max_output_tokens"] = 180,
-                        ["temperature"] = 0.4,
-                        ["length"] = "Shorter"
+                        ["onboarding_demo"] = true
                     },
-                    "Generate a bounded starter expansion.",
+                    OnboardingDemoAiInstruction,
                     false);
 
-                await OnAiActionSelected(onboardingExpand);
+                await OnAiActionSelected(onboardingDemo);
 
                 bool aiSucceeded = _pendingAiProposal is not null
                     && _pendingAiProposal.ProposalId != beforeProposalId
@@ -8453,21 +8450,21 @@ private const string PreviewBootstrapScript = @"
                     await OnboardingService.SetStepAsync(8);
                     await OnboardingStateStore.RefreshAsync();
                     await EvaluateOnboardingCompletionAsync(forceTypingProbe: false);
-                    _onboardingWalkthroughStatus = "AI suggestion ready below. Review and apply when you are ready.";
+                    _onboardingWalkthroughStatus = "AI demo ready below. Compare the original and revised text to see how AI can tighten descriptions, improve pacing, and sharpen focus without rewriting the whole scene.";
                 }
                 else if (IsAiQuotaExceeded)
                 {
-                    _onboardingWalkthroughStatus = "AI is not available on Free. See plans.";
+                    _onboardingWalkthroughStatus = "AI demo did not complete. You can continue onboarding and try again.";
                 }
                 else
                 {
-                    _onboardingWalkthroughStatus = "AI expansion did not complete. You can continue without AI.";
+                    _onboardingWalkthroughStatus = "AI demo did not complete. You can continue without AI.";
                 }
             }
             catch (Exception ex)
             {
-                Logger.LogWarning(ex, "Onboarding AI expand action failed.");
-                _onboardingWalkthroughStatus = "AI expansion failed. You can continue onboarding.";
+                Logger.LogWarning(ex, "Onboarding AI demo action failed.");
+                _onboardingWalkthroughStatus = "AI demo failed. You can continue onboarding.";
             }
             finally
             {

@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Options;
 using WriterApp.AI.Abstractions;
 using WriterApp.AI.Actions;
+using WriterApp.Application.AI;
 using WriterApp.Application.Usage;
 using WriterApp.Data.Usage;
 
@@ -203,10 +204,12 @@ namespace WriterApp.AI.Core
                 return AiExecutionResult.Blocked(decision.ErrorCode ?? "ai.blocked", decision.ErrorMessage ?? "AI usage is not permitted.");
             }
 
+            bool onboardingDemoRequest = IsOnboardingDemoRequest(request);
             bool billable = provider is IAiBillingProvider billingProvider
                 && billingProvider.RequiresEntitlement
                 && billingProvider.IsBillable
-                && !string.IsNullOrWhiteSpace(decision.UserId);
+                && !string.IsNullOrWhiteSpace(decision.UserId)
+                && !onboardingDemoRequest;
             if (billable)
             {
                 int estimatedTokens = EstimateTokens(request);
@@ -310,6 +313,23 @@ namespace WriterApp.AI.Core
 
             int estimated = (requestChars + 3) / 4;
             return Math.Max(1, estimated);
+        }
+
+        private static bool IsOnboardingDemoRequest(AiRequest request)
+        {
+            if (request.Inputs is null)
+            {
+                return false;
+            }
+
+            if (!request.Inputs.TryGetValue(OnboardingDemoAiUsage.RequestParameterKey, out object? value) || value is null)
+            {
+                return false;
+            }
+
+            return value is bool boolean
+                ? boolean
+                : value is string text && bool.TryParse(text, out bool parsed) && parsed;
         }
 
         private async IAsyncEnumerable<AiStreamEvent> StreamProposalAsync(

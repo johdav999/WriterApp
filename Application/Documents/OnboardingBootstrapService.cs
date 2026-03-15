@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -30,6 +31,18 @@ namespace WriterApp.Application.Documents
 
     public sealed class OnboardingBootstrapService : IOnboardingBootstrapService
     {
+        private const string DemoSceneText = """
+The café was quiet that afternoon, the kind of quiet that settles softly between the clink of cups and the low murmur of strangers. Outside, the street moved slowly through a pale autumn light.
+
+He had chosen the table by the window without thinking much about it. It was simply where he always sat when he came here—close enough to watch the world passing by, far enough away from everyone else.
+
+He noticed her only after she had already been sitting there for several minutes.
+
+She was across the room, near the bookshelf, a cup of coffee resting untouched in front of her. She was reading something on her phone, though from time to time her eyes lifted, drifting around the room as if searching for something she couldn’t quite name.
+
+At one of those moments their eyes met.
+""";
+
         private readonly AppDbContext _dbContext;
         private readonly IProjectSceneLinkingService _sceneLinking;
         private readonly IProjectWordCountService _wordCounts;
@@ -99,6 +112,8 @@ namespace WriterApp.Application.Documents
                         throw new OnboardingBootstrapException("starter_structure_failed", "Failed to link the starter scene.");
                     }
 
+                    await EnsureStarterSceneDemoContentAsync(sceneNode, link, ct);
+
                     _logger.LogInformation(
                         "Onboarding bootstrap first scene workspace completed. UserId={UserId} ProjectId={ProjectId} SceneNodeId={SceneNodeId} DocumentId={DocumentId} SectionId={SectionId} SceneState={SceneState} SectionState={SectionState} PageState={PageState}",
                         ownerUserId,
@@ -133,6 +148,67 @@ namespace WriterApp.Application.Documents
                 result.FirstSceneNodeId);
 
             return result;
+        }
+
+        private async Task EnsureStarterSceneDemoContentAsync(
+            ProjectNodeRecord sceneNode,
+            SceneLinkResult link,
+            CancellationToken ct)
+        {
+            sceneNode.MetadataJson = OnboardingDemoSceneMetadata.Merge(sceneNode.MetadataJson);
+
+            PageRecord? page = await _dbContext.Pages
+                .FirstOrDefaultAsync(
+                    item => item.DocumentId == link.DocumentId
+                        && item.SectionId == link.SectionId
+                        && item.OrderIndex == 0,
+                    ct);
+            if (page is null)
+            {
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(page.Content))
+            {
+                return;
+            }
+
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            string demoHtml = ToParagraphHtml(DemoSceneText);
+            page.Content = demoHtml;
+            page.UpdatedAt = now;
+
+            SceneContentRecord? sceneContent = await _dbContext.SceneContents
+                .FirstOrDefaultAsync(item => item.SceneNodeId == sceneNode.Id, ct);
+            if (sceneContent is null)
+            {
+                sceneContent = new SceneContentRecord
+                {
+                    SceneNodeId = sceneNode.Id
+                };
+                _dbContext.SceneContents.Add(sceneContent);
+            }
+
+            if (string.IsNullOrWhiteSpace(sceneContent.ContentJson))
+            {
+                sceneContent.ContentJson = demoHtml;
+                sceneContent.UpdatedAtUtc = now;
+            }
+
+            _logger.LogInformation(
+                "Onboarding bootstrap seeded demo scene content. SceneNodeId={SceneNodeId} SectionId={SectionId}",
+                sceneNode.Id,
+                link.SectionId);
+        }
+
+        private static string ToParagraphHtml(string text)
+        {
+            string[] paragraphs = text
+                .Split(new[] { "\r\n\r\n", "\n\n" }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            return string.Join(
+                string.Empty,
+                paragraphs.Select(paragraph => $"<p>{System.Net.WebUtility.HtmlEncode(paragraph)}</p>"));
         }
 
         private async Task<(ProjectRecord Project, bool Created)> GetOrCreateBootstrapProjectAsync(string ownerUserId, string projectTitle, CancellationToken ct)

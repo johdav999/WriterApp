@@ -164,6 +164,26 @@ namespace WriterApp.Tests
             Assert.Equal("ai.quota_exceeded", blocked.ErrorCode);
         }
 
+        [Fact]
+        public async Task OnboardingDemoFlag_AllowsFreeUser()
+        {
+            await using SqliteConnection connection = new("DataSource=:memory:");
+            await connection.OpenAsync();
+            AppDbContext dbContext = BuildDbContext(connection);
+
+            IEntitlementService entitlementService = BuildEntitlementService(dbContext);
+            TestClock clock = new(new DateTime(2025, 1, 15, 0, 0, 0, DateTimeKind.Utc));
+            IUsageMeter usageMeter = new UsageMeter(dbContext, clock);
+            DefaultHttpContext httpContext = CreateHttpContext("user-free");
+            httpContext.Items[OnboardingDemoAiUsage.HttpContextValidatedKey] = true;
+            IAiUsagePolicy policy = BuildPolicy(entitlementService, usageMeter, clock, httpContext);
+
+            AiUsageDecision decision = await policy.EvaluateAsync(new TestBillingProvider(), "tighten.section");
+
+            Assert.True(decision.Allowed);
+            Assert.Equal("user-free", decision.UserId);
+        }
+
         private static AppDbContext BuildDbContext(SqliteConnection connection)
         {
             DbContextOptions<AppDbContext> options = new DbContextOptionsBuilder<AppDbContext>()
@@ -194,13 +214,21 @@ namespace WriterApp.Tests
             string userId,
             int? requestsPerMinute = null)
         {
-            DefaultHttpContext httpContext = new();
-            ClaimsIdentity identity = new(new[]
-            {
-                new Claim("oid", userId)
-            }, "test");
-            httpContext.User = new ClaimsPrincipal(identity);
+            return BuildPolicy(
+                entitlementService,
+                usageMeter,
+                clock,
+                CreateHttpContext(userId),
+                requestsPerMinute);
+        }
 
+        private static IAiUsagePolicy BuildPolicy(
+            IEntitlementService entitlementService,
+            IUsageMeter usageMeter,
+            IClock clock,
+            DefaultHttpContext httpContext,
+            int? requestsPerMinute = null)
+        {
             HttpContextAccessor accessor = new()
             {
                 HttpContext = httpContext
@@ -217,6 +245,17 @@ namespace WriterApp.Tests
             };
             IMemoryCache cache = new MemoryCache(new MemoryCacheOptions());
             return new AiUsagePolicy(accessor, userIdResolver, entitlementService, usageMeter, cache, clock, Options.Create(options));
+        }
+
+        private static DefaultHttpContext CreateHttpContext(string userId)
+        {
+            DefaultHttpContext httpContext = new();
+            ClaimsIdentity identity = new(new[]
+            {
+                new Claim("oid", userId)
+            }, "test");
+            httpContext.User = new ClaimsPrincipal(identity);
+            return httpContext;
         }
 
         private sealed class TestClock : IClock

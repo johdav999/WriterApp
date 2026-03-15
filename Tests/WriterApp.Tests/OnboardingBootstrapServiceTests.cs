@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using WriterApp.Application.AI;
 using WriterApp.Application.Documents;
 using WriterApp.Data;
 using WriterApp.Data.Documents;
@@ -31,6 +32,14 @@ namespace WriterApp.Tests
             Assert.Equal(1, await db.Documents.CountAsync(item => item.ProjectId == project.Id && item.DocumentKind == DocumentKind.Manuscript));
             Assert.True(await db.Sections.AnyAsync());
             Assert.True(await db.Pages.AnyAsync());
+
+            ProjectNodeRecord scene = await db.ProjectNodes.SingleAsync(item => item.Id == result.FirstSceneNodeId);
+            PageRecord page = await db.Pages.SingleAsync();
+            SceneContentRecord sceneContent = await db.SceneContents.SingleAsync();
+            Assert.Contains("The caf", page.Content);
+            Assert.Contains("their eyes met", page.Content);
+            Assert.Equal(page.Content, sceneContent.ContentJson);
+            Assert.True(OnboardingDemoSceneMetadata.IsDemoScene(scene.MetadataJson));
         }
 
         [Fact]
@@ -50,6 +59,26 @@ namespace WriterApp.Tests
             Assert.Equal(1, await db.Documents.CountAsync(item => item.ProjectId == first.ProjectId && item.DocumentKind == DocumentKind.Manuscript));
             Assert.Equal(1, await db.ProjectNodes.CountAsync(item => item.ProjectId == first.ProjectId && item.NodeType == ProjectNodeType.Scene));
             Assert.Equal(1, await db.ProjectNodes.CountAsync(item => item.ProjectId == first.ProjectId && item.NodeType == ProjectNodeType.Chapter));
+        }
+
+        [Fact]
+        public async Task CreateStarterWorkspaceForOnboarding_DoesNotOverwriteExistingSceneText()
+        {
+            await using SqliteConnection connection = new("Data Source=:memory:");
+            await connection.OpenAsync();
+            await using AppDbContext db = BuildDbContext(connection);
+            OnboardingBootstrapService service = BuildService(db);
+
+            OnboardingBootstrapResult first = await service.CreateStarterWorkspaceForOnboardingAsync("user-1", "Other", CancellationToken.None);
+            PageRecord page = await db.Pages.SingleAsync();
+            page.Content = "<p>User kept writing.</p>";
+            await db.SaveChangesAsync();
+
+            OnboardingBootstrapResult second = await service.CreateStarterWorkspaceForOnboardingAsync("user-1", "Other", CancellationToken.None);
+
+            PageRecord reloadedPage = await db.Pages.SingleAsync(item => item.SectionId == page.SectionId);
+            Assert.Equal(first.ProjectId, second.ProjectId);
+            Assert.Equal("<p>User kept writing.</p>", reloadedPage.Content);
         }
 
         [Fact]
