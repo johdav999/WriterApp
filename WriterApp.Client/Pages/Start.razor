@@ -194,9 +194,10 @@
                 DeletedAccountResponse? deleted = await response.Content.ReadFromJsonAsync<DeletedAccountResponse>();
                 if (string.Equals(deleted?.Code, "account_deleted", StringComparison.Ordinal))
                 {
+                    string deletedMessage = deleted?.Message ?? DeletedAccountStateService.DefaultMessage;
                     _showDeletedAccountMessage = true;
-                    DeletedAccountStateService.MarkDeleted(deleted.Message);
-                    _statusMessage = deleted?.Message ?? DeletedAccountStateService.DefaultMessage;
+                    DeletedAccountStateService.MarkDeleted(deletedMessage);
+                    _statusMessage = deletedMessage;
                     return true;
                 }
             }

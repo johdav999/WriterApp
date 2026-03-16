@@ -1,4 +1,5 @@
 using System;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace WriterApp.Data.Subscriptions
 {
@@ -17,5 +18,8 @@ namespace WriterApp.Data.Subscriptions
         public DateTimeOffset? CurrentPeriodEndUtc { get; set; }
         public bool CancelAtPeriodEnd { get; set; }
         public DateTimeOffset UpdatedUtc { get; set; }
+
+        [NotMapped]
+        public bool HasManualPlanOverride { get; set; }
     }
 }

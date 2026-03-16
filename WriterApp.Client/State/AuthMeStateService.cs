@@ -31,6 +31,11 @@ namespace WriterApp.Client.State
         public string DuplicateAccountMessage { get; private set; } = DuplicateAccountStateService.DefaultMessage;
         public string DeletedAccountMessage { get; private set; } = DeletedAccountStateService.DefaultMessage;
         public string PlanKey { get; private set; } = "Free";
+        public string EffectivePlanKey { get; private set; } = "Free";
+        public string SubscriptionStatus { get; private set; } = string.Empty;
+        public DateTimeOffset? CurrentPeriodEndUtc { get; private set; }
+        public bool CancelAtPeriodEnd { get; private set; }
+        public bool IsPaidAccessActive { get; private set; }
         public bool IsAdminAccess { get; private set; }
         public string AdminAccessSource { get; private set; } = "None";
         public bool IsBootstrapAdminSession => string.Equals(AdminAccessSource, "Bootstrap", StringComparison.Ordinal);
@@ -87,7 +92,7 @@ namespace WriterApp.Client.State
                 {
                     _deletedAccountStateService.Clear();
                     _duplicateAccountStateService.Clear();
-                    Apply(false, "Free", false, "None", 0, 0, DateTimeOffset.MinValue, DateTimeOffset.MinValue);
+                    Apply(false, "Free", "Free", string.Empty, null, false, false, false, "None", 0, 0, DateTimeOffset.MinValue, DateTimeOffset.MinValue);
                     return;
                 }
 
@@ -95,7 +100,7 @@ namespace WriterApp.Client.State
                 {
                     _deletedAccountStateService.Clear();
                     _duplicateAccountStateService.Clear();
-                    Apply(false, "Free", false, "None", 0, 0, DateTimeOffset.MinValue, DateTimeOffset.MinValue);
+                    Apply(false, "Free", "Free", string.Empty, null, false, false, false, "None", 0, 0, DateTimeOffset.MinValue, DateTimeOffset.MinValue);
                     return;
                 }
 
@@ -104,7 +109,7 @@ namespace WriterApp.Client.State
                 {
                     _deletedAccountStateService.Clear();
                     _duplicateAccountStateService.Clear();
-                    Apply(false, "Free", false, "None", 0, 0, DateTimeOffset.MinValue, DateTimeOffset.MinValue);
+                    Apply(false, "Free", "Free", string.Empty, null, false, false, false, "None", 0, 0, DateTimeOffset.MinValue, DateTimeOffset.MinValue);
                     return;
                 }
 
@@ -113,6 +118,11 @@ namespace WriterApp.Client.State
                 Apply(
                     auth.IsAuthenticated,
                     NormalizePlanKey(auth.PlanKey),
+                    NormalizePlanKey(auth.EffectivePlanKey ?? auth.PlanKey),
+                    NormalizeSubscriptionStatus(auth.SubscriptionStatus),
+                    auth.CurrentPeriodEndUtc,
+                    auth.CancelAtPeriodEnd,
+                    auth.IsPaidAccessActive,
                     auth.IsAdminAccess,
                     NormalizeAdminAccessSource(auth.AdminAccessSource),
                     Math.Max(0, auth.AiMonthlyTokenBudget),
@@ -129,13 +139,18 @@ namespace WriterApp.Client.State
             }
         }
 
-        private void Apply(bool isAuthenticated, string planKey, bool isAdminAccess, string adminAccessSource, int budget, int used, DateTimeOffset periodStartUtc, DateTimeOffset entitlementUpdatedUtc)
+        private void Apply(bool isAuthenticated, string planKey, string effectivePlanKey, string subscriptionStatus, DateTimeOffset? currentPeriodEndUtc, bool cancelAtPeriodEnd, bool isPaidAccessActive, bool isAdminAccess, string adminAccessSource, int budget, int used, DateTimeOffset periodStartUtc, DateTimeOffset entitlementUpdatedUtc)
         {
             bool changed = IsLoaded != true
                 || IsAuthenticated != isAuthenticated
                 || IsDeletedAccount
                 || IsDuplicateAccount
                 || !string.Equals(PlanKey, planKey, StringComparison.Ordinal)
+                || !string.Equals(EffectivePlanKey, effectivePlanKey, StringComparison.Ordinal)
+                || !string.Equals(SubscriptionStatus, subscriptionStatus, StringComparison.Ordinal)
+                || CurrentPeriodEndUtc != currentPeriodEndUtc
+                || CancelAtPeriodEnd != cancelAtPeriodEnd
+                || IsPaidAccessActive != isPaidAccessActive
                 || IsAdminAccess != isAdminAccess
                 || !string.Equals(AdminAccessSource, adminAccessSource, StringComparison.Ordinal)
                 || AiMonthlyTokenBudget != budget
@@ -150,6 +165,11 @@ namespace WriterApp.Client.State
             DeletedAccountMessage = DeletedAccountStateService.DefaultMessage;
             DuplicateAccountMessage = DuplicateAccountStateService.DefaultMessage;
             PlanKey = planKey;
+            EffectivePlanKey = effectivePlanKey;
+            SubscriptionStatus = subscriptionStatus;
+            CurrentPeriodEndUtc = currentPeriodEndUtc;
+            CancelAtPeriodEnd = cancelAtPeriodEnd;
+            IsPaidAccessActive = isPaidAccessActive;
             IsAdminAccess = isAdminAccess;
             AdminAccessSource = adminAccessSource;
             AiMonthlyTokenBudget = budget;
@@ -175,6 +195,11 @@ namespace WriterApp.Client.State
                 || IsDuplicateAccount
                 || !string.Equals(DeletedAccountMessage, normalizedMessage, StringComparison.Ordinal)
                 || !string.Equals(PlanKey, "Free", StringComparison.Ordinal)
+                || !string.Equals(EffectivePlanKey, "Free", StringComparison.Ordinal)
+                || !string.Equals(SubscriptionStatus, string.Empty, StringComparison.Ordinal)
+                || CurrentPeriodEndUtc != null
+                || CancelAtPeriodEnd
+                || IsPaidAccessActive
                 || IsAdminAccess
                 || !string.Equals(AdminAccessSource, "None", StringComparison.Ordinal)
                 || AiMonthlyTokenBudget != 0
@@ -189,6 +214,11 @@ namespace WriterApp.Client.State
             DeletedAccountMessage = normalizedMessage;
             DuplicateAccountMessage = DuplicateAccountStateService.DefaultMessage;
             PlanKey = "Free";
+            EffectivePlanKey = "Free";
+            SubscriptionStatus = string.Empty;
+            CurrentPeriodEndUtc = null;
+            CancelAtPeriodEnd = false;
+            IsPaidAccessActive = false;
             IsAdminAccess = false;
             AdminAccessSource = "None";
             AiMonthlyTokenBudget = 0;
@@ -214,6 +244,11 @@ namespace WriterApp.Client.State
                 || !IsDuplicateAccount
                 || !string.Equals(DuplicateAccountMessage, normalizedMessage, StringComparison.Ordinal)
                 || !string.Equals(PlanKey, "Free", StringComparison.Ordinal)
+                || !string.Equals(EffectivePlanKey, "Free", StringComparison.Ordinal)
+                || !string.Equals(SubscriptionStatus, string.Empty, StringComparison.Ordinal)
+                || CurrentPeriodEndUtc != null
+                || CancelAtPeriodEnd
+                || IsPaidAccessActive
                 || IsAdminAccess
                 || !string.Equals(AdminAccessSource, "None", StringComparison.Ordinal)
                 || AiMonthlyTokenBudget != 0
@@ -228,6 +263,11 @@ namespace WriterApp.Client.State
             DeletedAccountMessage = DeletedAccountStateService.DefaultMessage;
             DuplicateAccountMessage = normalizedMessage;
             PlanKey = "Free";
+            EffectivePlanKey = "Free";
+            SubscriptionStatus = string.Empty;
+            CurrentPeriodEndUtc = null;
+            CancelAtPeriodEnd = false;
+            IsPaidAccessActive = false;
             IsAdminAccess = false;
             AdminAccessSource = "None";
             AiMonthlyTokenBudget = 0;
@@ -256,6 +296,11 @@ namespace WriterApp.Client.State
                 "standard" => "Standard",
                 _ => "Free"
             };
+        }
+
+        private static string NormalizeSubscriptionStatus(string? raw)
+        {
+            return string.IsNullOrWhiteSpace(raw) ? string.Empty : raw.Trim();
         }
 
         private static string NormalizeAdminAccessSource(string? raw)

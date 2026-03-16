@@ -47,6 +47,7 @@ namespace WriterApp.Application.Billing
                 return null;
             }
 
+            // This is the single authoritative Stripe price id -> app plan mapping path.
             string candidate = priceId.Trim();
             if (string.Equals(candidate, _options.Prices.Standard.LivePriceId, StringComparison.Ordinal)
                 || string.Equals(candidate, _options.Prices.Standard.TestPriceId, StringComparison.Ordinal))

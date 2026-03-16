@@ -29,6 +29,11 @@
         <div class="account-card">
             <div class="account-row"><strong>Current plan:</strong> @_currentPlanDisplay</div>
             <div class="account-row"><strong>Subscription status:</strong> @_subscriptionStatusDisplay</div>
+            <div class="account-row">@GetBillingLifecycleMessage()</div>
+            @if (ShowPortalExplanation)
+            {
+                <div class="account-row">@GetPortalExplanation()</div>
+            }
         </div>
     }
 
@@ -39,12 +44,12 @@
 
     @if (_finalizingCheckout)
     {
-        <div class="projects-subtitle">Finalizing subscription...</div>
+        <div class="projects-subtitle">Confirming subscription with Prosa...</div>
     }
 
     @if (_showSuccessBanner)
     {
-        <div class="account-row"><strong>Success:</strong> Billing checkout completed successfully.@(string.IsNullOrWhiteSpace(_sessionId) ? string.Empty : $" Session: {_sessionId}")</div>
+        <div class="account-row"><strong>Payment received:</strong> We are waiting for Stripe webhook confirmation before activating the new plan.</div>
     }
 
     @if (_showCanceledBanner)
@@ -57,22 +62,38 @@
         <div class="account-row">@_statusMessage</div>
     }
 
+    @if (_allowRecoverySync && !string.IsNullOrWhiteSpace(_sessionId))
+    {
+        <div class="projects-actions">
+            <button type="button" class="secondary" @onclick="RunRecoverySyncAsync" disabled="@_actionInFlight">
+                @(_actionInFlight && _actionName == "recovery-sync" ? "Retrying sync..." : "Retry billing sync")
+            </button>
+        </div>
+    }
+
     <div class="projects-actions">
         <button type="button" class="primary" @onclick='() => StartCheckoutAsync("standard")' disabled="@DisableUpgradeToStandard">
-            @(_actionInFlight && _actionName == "upgrade-standard" ? "Opening checkout..." : "Upgrade to Standard")
+            @(_actionInFlight && _actionName == "upgrade-standard" ? "Opening checkout..." : GetStandardActionLabel())
         </button>
 
         <button type="button" class="primary" @onclick='() => StartCheckoutAsync("pro")' disabled="@DisableUpgradeToPro">
-            @(_actionInFlight && _actionName == "upgrade-pro" ? "Opening checkout..." : "Upgrade to Pro")
+            @(_actionInFlight && _actionName == "upgrade-pro" ? "Opening checkout..." : GetProfessionalActionLabel())
         </button>
 
         @if (_hasStripeCustomer)
         {
             <button type="button" class="secondary" @onclick="OpenPortalAsync" disabled="@_actionInFlight">
-                @(_actionInFlight && _actionName == "portal" ? "Opening portal..." : "Manage Billing")
+                @(_actionInFlight && _actionName == "portal" ? "Opening portal..." : "Manage payment method")
             </button>
-        }
 
+            @if (!string.Equals(_effectivePlan, "free", StringComparison.OrdinalIgnoreCase))
+            {
+                <button type="button" class="secondary" @onclick="HandleSubscriptionActionAsync" disabled="@_actionInFlight">
+                    @GetSubscriptionActionButtonText()
+                </button>
+            }
+
+        }
         <button type="button" class="secondary" @onclick="GoBack" disabled="@_actionInFlight">Back</button>
         <button type="button" class="secondary" @onclick="GoToProjects" disabled="@_actionInFlight">Go to projects</button>
     </div>
@@ -87,11 +108,17 @@
     private string _currentPlan = "free";
     private string _currentPlanDisplay = "Free";
     private string _subscriptionStatusDisplay = "-";
+    private string _effectivePlan = "free";
+    private DateTimeOffset? _currentPeriodEndUtc;
+    private bool _cancelAtPeriodEnd;
+    private bool _isPaidAccessActive;
     private bool _hasStripeCustomer;
     private bool _showSuccessBanner;
     private bool _showCanceledBanner;
     private string? _sessionId;
+    private string? _expectedPlan;
     private bool _finalizingCheckout;
+    private bool _allowRecoverySync;
     private string? _statusMessage;
 
     private bool DisableUpgradeToStandard =>
@@ -107,18 +134,15 @@
         || string.Equals(_currentPlan, "pro", StringComparison.OrdinalIgnoreCase)
         || string.Equals(_currentPlan, "professional", StringComparison.OrdinalIgnoreCase);
 
+    private bool ShowPortalExplanation => _hasStripeCustomer && !string.Equals(_effectivePlan, "free", StringComparison.OrdinalIgnoreCase);
+
     protected override async Task OnInitializedAsync()
     {
         ApplyQueryState();
+        await LoadAccountAsync(force: _showSuccessBanner);
         if (_showSuccessBanner)
         {
-            await AuthMeStateService.RefreshAsync(force: true);
-        }
-
-        await LoadAccountAsync();
-        if (_showSuccessBanner && !string.IsNullOrWhiteSpace(_sessionId))
-        {
-            await FinalizeCheckoutAsync(_sessionId);
+            await AwaitWebhookConfirmationAsync();
         }
 
         RemoveHandledQueryFromUrl();
@@ -132,66 +156,52 @@
         _showSuccessBanner = query.TryGetValue("success", out string? success) && success == "1";
         _showCanceledBanner = query.TryGetValue("canceled", out string? canceled) && canceled == "1";
         _sessionId = query.TryGetValue("session_id", out string? sessionId) ? sessionId : null;
+        _expectedPlan = query.TryGetValue("plan", out string? plan) ? NormalizePlan(plan) : null;
     }
 
-    private async Task FinalizeCheckoutAsync(string sessionId)
+    private async Task AwaitWebhookConfirmationAsync()
     {
+        if (string.IsNullOrWhiteSpace(_sessionId))
+        {
+            _statusMessage = "Payment received. Waiting for subscription confirmation.";
+            _allowRecoverySync = false;
+            return;
+        }
+
         _finalizingCheckout = true;
+        _allowRecoverySync = false;
         _statusMessage = null;
 
         try
         {
-            CheckoutStatusResponse? status = await GetCheckoutStatusAsync(sessionId);
-            if (status is null)
+            if (IsExpectedPlanActive())
             {
-                _statusMessage = "Could not verify checkout status.";
-                return;
-            }
-
-            if (string.Equals(status.State, "paid", StringComparison.OrdinalIgnoreCase))
-            {
-                await SyncEntitlementsAsync(sessionId, status.SubscriptionId);
-                await LoadAccountAsync();
-                await AuthMeStateService.RefreshAsync(force: true);
-                _showSuccessBanner = true;
+                _showSuccessBanner = false;
                 _statusMessage = "Subscription activated.";
                 return;
             }
 
-            if (string.Equals(status.State, "open", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(status.State, "incomplete", StringComparison.OrdinalIgnoreCase))
+            int[] delaysMs = { 1000, 2000, 3000, 5000, 8000 };
+            foreach (int delay in delaysMs)
             {
-                int[] delaysMs = { 1000, 2000, 4000 };
-                for (int i = 0; i < delaysMs.Length; i++)
+                await Task.Delay(delay);
+                await LoadAccountAsync(force: true);
+
+                if (IsExpectedPlanActive())
                 {
-                    await Task.Delay(delaysMs[i]);
-                    status = await GetCheckoutStatusAsync(sessionId);
-                    if (status is not null && string.Equals(status.State, "paid", StringComparison.OrdinalIgnoreCase))
-                    {
-                        await SyncEntitlementsAsync(sessionId, status.SubscriptionId);
-                        await LoadAccountAsync();
-                        await AuthMeStateService.RefreshAsync(force: true);
-                        _showSuccessBanner = true;
-                        _statusMessage = "Subscription activated.";
-                        return;
-                    }
+                    _showSuccessBanner = false;
+                    _statusMessage = "Subscription activated.";
+                    return;
                 }
-
-                _statusMessage = "Payment not completed yet. If you just paid, refresh in a moment.";
-                return;
             }
 
-            if (string.Equals(status.State, "expired", StringComparison.OrdinalIgnoreCase))
-            {
-                _statusMessage = "Checkout session expired. Please try again.";
-                return;
-            }
-
-            _statusMessage = status.Message ?? "Checkout status is unknown.";
+            _allowRecoverySync = true;
+            _statusMessage = "Payment was received, but subscription confirmation is still pending. Stripe webhooks are the primary source of truth. You can wait a moment or retry the recovery sync.";
         }
         catch
         {
-            _statusMessage = "Could not finalize subscription.";
+            _allowRecoverySync = true;
+            _statusMessage = "Payment was received, but confirmation is still pending. You can retry the recovery sync if this does not resolve shortly.";
         }
         finally
         {
@@ -199,23 +209,48 @@
         }
     }
 
-    private async Task<CheckoutStatusResponse?> GetCheckoutStatusAsync(string sessionId)
+    private async Task RunRecoverySyncAsync()
     {
-        string url = $"/api/billing/checkout-status?sessionId={Uri.EscapeDataString(sessionId)}";
-        using HttpResponseMessage response = await Http.GetAsync(url);
-        if (!response.IsSuccessStatusCode)
+        if (string.IsNullOrWhiteSpace(_sessionId))
         {
-            return null;
+            return;
         }
 
-        return await response.Content.ReadFromJsonAsync<CheckoutStatusResponse>();
-    }
+        _actionInFlight = true;
+        _actionName = "recovery-sync";
+        _errorMessage = null;
+        _statusMessage = "Retrying billing sync from the server...";
 
-    private async Task SyncEntitlementsAsync(string sessionId, string? subscriptionId)
-    {
-        SyncEntitlementsRequest body = new(sessionId, subscriptionId);
-        using HttpResponseMessage response = await Http.PostAsJsonAsync("/api/billing/sync-entitlements", body);
-        _ = response.IsSuccessStatusCode;
+        try
+        {
+            SyncEntitlementsRequest body = new(_sessionId, null);
+            using HttpResponseMessage response = await Http.PostAsJsonAsync("/api/billing/sync-entitlements", body);
+            if (!response.IsSuccessStatusCode)
+            {
+                _statusMessage = $"Recovery sync failed: {(int)response.StatusCode}.";
+                return;
+            }
+
+            await LoadAccountAsync(force: true);
+            if (IsExpectedPlanActive())
+            {
+                _allowRecoverySync = false;
+                _showSuccessBanner = false;
+                _statusMessage = "Subscription activated.";
+                return;
+            }
+
+            _statusMessage = "Recovery sync completed, but the updated subscription is still not visible yet.";
+        }
+        catch
+        {
+            _statusMessage = "Recovery sync failed due to a network error.";
+        }
+        finally
+        {
+            _actionInFlight = false;
+            _actionName = null;
+        }
     }
 
     private void RemoveHandledQueryFromUrl()
@@ -234,14 +269,15 @@
         Navigation.NavigateTo("/app/account/billing", replace: true);
     }
 
-    private async Task LoadAccountAsync()
+    private async Task LoadAccountAsync(bool force = false)
     {
         _isLoadingAccount = true;
         _errorMessage = null;
 
         try
         {
-            using HttpResponseMessage response = await Http.GetAsync("/api/auth/me");
+            string authMeUrl = force ? "/api/auth/me?force=1" : "/api/auth/me";
+            using HttpResponseMessage response = await Http.GetAsync(authMeUrl);
             if (!response.IsSuccessStatusCode)
             {
                 _errorMessage = $"Could not load billing account: {(int)response.StatusCode}.";
@@ -256,12 +292,16 @@
             }
 
             _currentPlan = NormalizePlan(auth.PlanKey);
+            _effectivePlan = NormalizePlan(auth.EffectivePlanKey ?? auth.PlanKey);
             _currentPlanDisplay = ToPlanDisplayName(_currentPlan);
             _subscriptionStatusDisplay = string.IsNullOrWhiteSpace(auth.SubscriptionStatus)
                 ? "-"
                 : auth.SubscriptionStatus;
+            _currentPeriodEndUtc = auth.CurrentPeriodEndUtc;
+            _cancelAtPeriodEnd = auth.CancelAtPeriodEnd;
+            _isPaidAccessActive = auth.IsPaidAccessActive;
             _hasStripeCustomer = !string.IsNullOrWhiteSpace(auth.StripeCustomerId);
-            await AuthMeStateService.RefreshAsync(serverEntitlementUpdatedUtc: auth.EntitlementUpdatedUtc);
+            await AuthMeStateService.RefreshAsync(force: force, serverEntitlementUpdatedUtc: auth.EntitlementUpdatedUtc);
         }
         catch
         {
@@ -360,6 +400,53 @@
         }
     }
 
+    private Task HandleSubscriptionActionAsync()
+    {
+        return _cancelAtPeriodEnd
+            ? OpenPortalAsync()
+            : CancelSubscriptionAsync();
+    }
+
+    private async Task CancelSubscriptionAsync()
+    {
+        _actionInFlight = true;
+        _actionName = "cancel";
+        _errorMessage = null;
+
+        try
+        {
+            using HttpResponseMessage response = await Http.PostAsync("/api/billing/cancel-subscription", content: null);
+            if (response.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                _errorMessage = "Cancellation failed: unauthorized.";
+                return;
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                string failureBody = await response.Content.ReadAsStringAsync();
+                _errorMessage = string.IsNullOrWhiteSpace(failureBody)
+                    ? $"Cancellation failed: {(int)response.StatusCode}."
+                    : $"Cancellation failed: {(int)response.StatusCode} {failureBody}";
+                return;
+            }
+
+            await LoadAccountAsync(force: true);
+            _statusMessage = _cancelAtPeriodEnd && _currentPeriodEndUtc.HasValue
+                ? $"Your subscription is scheduled to cancel on {FormatBillingDate(_currentPeriodEndUtc)}. After that, your account continues on the Free plan."
+                : "Your subscription is scheduled to cancel at period end. After that, your account continues on the Free plan.";
+        }
+        catch
+        {
+            _errorMessage = "Cancellation failed due to a network error.";
+        }
+        finally
+        {
+            _actionInFlight = false;
+            _actionName = null;
+        }
+    }
+
     private void GoBack()
     {
         Navigation.NavigateTo(_returnUrl);
@@ -368,6 +455,103 @@
     private void GoToProjects()
     {
         Navigation.NavigateTo("/projects");
+    }
+
+    private string GetBillingLifecycleMessage()
+    {
+        if (string.Equals(_effectivePlan, "free", StringComparison.OrdinalIgnoreCase))
+        {
+            return "You are on the Free plan. Upgrading starts a Stripe-managed subscription. Canceling a paid plan does not delete your account.";
+        }
+
+        string planLabel = ToPlanDisplayName(_effectivePlan);
+        string formattedDate = FormatBillingDate(_currentPeriodEndUtc);
+
+        if (_cancelAtPeriodEnd && _currentPeriodEndUtc.HasValue)
+        {
+            return $"Your {planLabel} plan is scheduled to cancel on {formattedDate}. After that, your account continues on the Free plan.";
+        }
+
+        if (_isPaidAccessActive && _currentPeriodEndUtc.HasValue)
+        {
+            return $"Your {planLabel} plan renews on {formattedDate}.";
+        }
+
+        if (_currentPeriodEndUtc.HasValue)
+        {
+            return $"Your {planLabel} plan keeps access until {formattedDate}.";
+        }
+
+        return $"Your {planLabel} plan is active.";
+    }
+
+    private string GetPortalExplanation()
+    {
+        if (_cancelAtPeriodEnd && _currentPeriodEndUtc.HasValue)
+        {
+            return "Manage payment method or resume the subscription in the Stripe billing portal. Canceling the subscription does not delete your account.";
+        }
+
+        return "Manage payment method, change plan, or cancel subscription in the Stripe billing portal. Canceling the subscription does not delete your account. After cancellation, your account continues on the Free plan.";
+    }
+
+    private string GetStandardActionLabel()
+    {
+        if (string.Equals(_effectivePlan, "standard", StringComparison.OrdinalIgnoreCase) && !_cancelAtPeriodEnd)
+        {
+            return "Current plan";
+        }
+
+        return string.Equals(_effectivePlan, "free", StringComparison.OrdinalIgnoreCase)
+            ? "Upgrade to Standard"
+            : "Change plan to Standard";
+    }
+
+    private string GetProfessionalActionLabel()
+    {
+        if (string.Equals(_effectivePlan, "pro", StringComparison.OrdinalIgnoreCase) && !_cancelAtPeriodEnd)
+        {
+            return "Current plan";
+        }
+
+        return string.Equals(_effectivePlan, "free", StringComparison.OrdinalIgnoreCase)
+            ? "Upgrade to Professional"
+            : "Change plan to Professional";
+    }
+
+    private string GetPortalSubscriptionActionLabel()
+    {
+        return _cancelAtPeriodEnd
+            ? "Review cancellation"
+            : "Cancel subscription";
+    }
+
+    private string GetSubscriptionActionButtonText()
+    {
+        if (_actionInFlight && _actionName == "cancel")
+        {
+            return "Scheduling cancellation...";
+        }
+
+        if (_actionInFlight && _actionName == "portal")
+        {
+            return "Opening portal...";
+        }
+
+        return GetPortalSubscriptionActionLabel();
+    }
+
+    private bool IsExpectedPlanActive()
+    {
+        string expectedPlan = NormalizePlan(_expectedPlan);
+        if (string.IsNullOrWhiteSpace(expectedPlan) || string.Equals(expectedPlan, "free", StringComparison.OrdinalIgnoreCase))
+        {
+            return !string.Equals(_currentPlan, "free", StringComparison.OrdinalIgnoreCase)
+                && IsSubscriptionLifecycleActive(_subscriptionStatusDisplay);
+        }
+
+        return string.Equals(_currentPlan, expectedPlan, StringComparison.OrdinalIgnoreCase)
+            && IsSubscriptionLifecycleActive(_subscriptionStatusDisplay);
     }
 
     private static string ResolveReturnUrl(Dictionary<string, string> query)
@@ -391,6 +575,17 @@
         return candidate;
     }
 
+    private static bool IsSubscriptionLifecycleActive(string? subscriptionStatus)
+    {
+        if (string.IsNullOrWhiteSpace(subscriptionStatus))
+        {
+            return false;
+        }
+
+        string normalized = subscriptionStatus.Trim().ToLowerInvariant();
+        return normalized is "active" or "trialing";
+    }
+
     private static string ToPlanDisplayName(string normalizedPlan)
     {
         return normalizedPlan switch
@@ -399,6 +594,13 @@
             "pro" => "Professional",
             _ => "Free"
         };
+    }
+
+    private static string FormatBillingDate(DateTimeOffset? value)
+    {
+        return value.HasValue
+            ? value.Value.ToLocalTime().ToString("yyyy-MM-dd")
+            : "-";
     }
 
     private sealed class CreateCheckoutRequest
@@ -415,7 +617,11 @@
     {
         public bool IsAuthenticated { get; init; }
         public string? PlanKey { get; init; }
+        public string? EffectivePlanKey { get; init; }
         public string? SubscriptionStatus { get; init; }
+        public DateTimeOffset? CurrentPeriodEndUtc { get; init; }
+        public bool CancelAtPeriodEnd { get; init; }
+        public bool IsPaidAccessActive { get; init; }
         public string? StripeCustomerId { get; init; }
         public DateTimeOffset EntitlementUpdatedUtc { get; init; }
     }
@@ -423,13 +629,6 @@
     private sealed class BillingUrlResponse
     {
         public string? Url { get; init; }
-    }
-
-    private sealed class CheckoutStatusResponse
-    {
-        public string? State { get; init; }
-        public string? SubscriptionId { get; init; }
-        public string? Message { get; init; }
     }
 
     private sealed record SyncEntitlementsRequest(string SessionId, string? SubscriptionId);

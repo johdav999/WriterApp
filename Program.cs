@@ -195,7 +195,9 @@ builder.Services.AddSingleton(stripeConfiguration.Options);
 builder.Services.AddSingleton<StripeApiClient>();
 builder.Services.AddScoped<StripeEntitlementSyncService>();
 builder.Services.AddScoped<IStripeClientFacade, StripeClientFacade>();
+builder.Services.Configure<AppUrlOptions>(builder.Configuration.GetSection("AppUrls"));
 builder.Services.Configure<StripeBillingOptions>(builder.Configuration.GetSection("Stripe:Billing"));
+builder.Services.AddSingleton<StripeRedirectUrlBuilder>();
 builder.Services.AddScoped<IStripePriceResolver, StripePriceResolver>();
 
 builder.Services.AddMemoryCache();
@@ -2021,7 +2023,11 @@ app.MapGet("/api/auth/me", async (
             IsAdminAccess = false,
             AdminAccessSource = AdminAccessSource.None.ToString(),
             PlanKey = UserEntitlementDefaults.FreePlanKey,
+            EffectivePlanKey = UserEntitlementDefaults.FreePlanKey,
             SubscriptionStatus = null,
+            CurrentPeriodEndUtc = null,
+            CancelAtPeriodEnd = false,
+            IsPaidAccessActive = false,
             StripeCustomerId = null,
             AiMonthlyTokenBudget = 0,
             AiTokensUsedThisPeriod = 0,
@@ -2084,6 +2090,9 @@ app.MapGet("/api/auth/me", async (
         .ToList();
     AdminAccessResolution adminAccess = adminAccessResolver.Resolve(user);
     ExternalIdentityClaims.UserProfileIdentity profileIdentity = provisioning.ProfileIdentity;
+    EvaluatedEntitlementAccess? evaluatedAccess = provisioning.Entitlement is null
+        ? null
+        : EntitlementAccessEvaluator.Evaluate(provisioning.Entitlement);
 
     WriterApp.Application.Security.AuthMeDto minimalResponse = new()
     {
@@ -2095,7 +2104,11 @@ app.MapGet("/api/auth/me", async (
         IsAdminAccess = adminAccess.IsAdminAccess,
         AdminAccessSource = adminAccess.Source.ToString(),
         PlanKey = UserEntitlementDefaults.FreePlanKey,
+        EffectivePlanKey = UserEntitlementDefaults.FreePlanKey,
         SubscriptionStatus = "Unknown",
+        CurrentPeriodEndUtc = null,
+        CancelAtPeriodEnd = false,
+        IsPaidAccessActive = false,
         StripeCustomerId = null,
         AiMonthlyTokenBudget = 0,
         AiTokensUsedThisPeriod = 0,
@@ -2135,10 +2148,14 @@ app.MapGet("/api/auth/me", async (
               Roles = roles,
               IsAdminAccess = adminAccess.IsAdminAccess,
               AdminAccessSource = adminAccess.Source.ToString(),
-              PlanKey = provisioning.Entitlement?.PlanKey ?? UserEntitlementDefaults.FreePlanKey,
+              PlanKey = evaluatedAccess?.EffectivePlanKey ?? UserEntitlementDefaults.FreePlanKey,
+              EffectivePlanKey = evaluatedAccess?.EffectivePlanKey ?? UserEntitlementDefaults.FreePlanKey,
               SubscriptionStatus = provisioning.Entitlement?.SubscriptionStatus,
+              CurrentPeriodEndUtc = provisioning.Entitlement?.CurrentPeriodEndUtc,
+              CancelAtPeriodEnd = provisioning.Entitlement?.CancelAtPeriodEnd ?? false,
+              IsPaidAccessActive = evaluatedAccess?.IsPaidAccessActive ?? false,
               StripeCustomerId = provisioning.Entitlement?.StripeCustomerId,
-              AiMonthlyTokenBudget = provisioning.Entitlement?.AiMonthlyTokenBudget ?? 0,
+              AiMonthlyTokenBudget = evaluatedAccess?.EffectiveAiMonthlyTokenBudget ?? 0,
               AiTokensUsedThisPeriod = provisioning.Entitlement?.AiTokensUsedThisPeriod ?? 0,
               PeriodStartUtc = provisioning.Entitlement?.PeriodStartUtc ?? DateTimeOffset.MinValue,
               EntitlementUpdatedUtc = provisioning.Entitlement?.UpdatedUtc ?? DateTimeOffset.MinValue

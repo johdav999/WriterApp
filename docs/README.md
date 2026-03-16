@@ -79,8 +79,10 @@
 
 ## Stripe configuration contract
 - The server reads Stripe config from one logical options source: `StripeOptions`.
+- Canonical public app origin for Stripe redirects should come from `AppUrls:PublicBaseUrl`.
 - Stable webhook endpoint path: `POST /api/stripe/webhook`.
 - Preferred Azure App Settings names (recommended):
+  - `AppUrls__PublicBaseUrl`
   - `Stripe__Mode` (`test` or `live`)
   - `Stripe__SecretKey`
   - `Stripe__WebhookSecret`
@@ -107,10 +109,11 @@
   - `WebhookSecret`
   - `PriceStandard`
   - `PricePro`
-  - `BillingPortalReturnUrl`
+  - `AppUrls__PublicBaseUrl`
 
 ### Setup steps (test mode)
 1. In Azure App Service (or local environment), set:
+   - `AppUrls__PublicBaseUrl=https://app.prosa-app.com`
    - `Stripe__Mode=test`
    - `Stripe__SecretKey=<your test secret key>`
    - `Stripe__WebhookSecret=<your test webhook signing secret>`
