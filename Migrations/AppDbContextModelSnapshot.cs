@@ -949,6 +949,9 @@ namespace BlazorApp.Migrations
                     b.Property<string>("DefaultExportSettingsJson")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("CoverImageUrl")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Genre")
                         .HasColumnType("TEXT");
 

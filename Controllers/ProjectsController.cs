@@ -280,6 +280,7 @@ namespace WriterApp.Controllers
                 Language = Normalize(request.Language),
                 Genre = Normalize(request.Genre),
                 DefaultExportSettingsJson = Normalize(request.DefaultExportSettingsJson),
+                CoverImageUrl = Normalize(request.CoverImageUrl),
                 CreatedUtc = now,
                 UpdatedUtc = now
             };
@@ -337,6 +338,43 @@ namespace WriterApp.Controllers
             project.Language = Normalize(request.Language);
             project.Genre = Normalize(request.Genre);
             project.DefaultExportSettingsJson = Normalize(request.DefaultExportSettingsJson);
+            project.CoverImageUrl = Normalize(request.CoverImageUrl);
+            project.UpdatedUtc = DateTimeOffset.UtcNow;
+            await _dbContext.SaveChangesAsync(ct);
+
+            int total = await _dbContext.ProjectNodes
+                .AsNoTracking()
+                .Where(node => node.ProjectId == projectId && node.ParentId == null)
+                .SumAsync(node => (int?)node.WordCountCache, ct) ?? 0;
+
+            return Ok(ToDto(project, total));
+        }
+
+        [HttpPost("{projectId:guid}/cover")]
+        public async Task<ActionResult<ProjectDto>> SaveProjectCover(
+            Guid projectId,
+            [FromBody] ProjectCoverUpdateRequest request,
+            CancellationToken ct)
+        {
+            if (!IsEnabled())
+            {
+                return NotFound();
+            }
+
+            if (request is null)
+            {
+                return BadRequest(new { message = "Request body is required." });
+            }
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            ProjectRecord? project = await _dbContext.Projects
+                .FirstOrDefaultAsync(item => item.Id == projectId && item.OwnerUserId == userId, ct);
+            if (project is null)
+            {
+                return NotFound();
+            }
+
+            project.CoverImageUrl = Normalize(request.ImageUrl);
             project.UpdatedUtc = DateTimeOffset.UtcNow;
             await _dbContext.SaveChangesAsync(ct);
 
@@ -2052,6 +2090,7 @@ namespace WriterApp.Controllers
                 project.AuthorName,
                 project.Language,
                 project.Genre,
+                project.CoverImageUrl,
                 project.CreatedUtc,
                 project.UpdatedUtc,
                 totalWords);

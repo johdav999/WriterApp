@@ -1014,6 +1014,9 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
                     b.Property<string>("DefaultExportSettingsJson")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("CoverImageUrl")
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<string>("Genre")
                         .HasColumnType("nvarchar(max)");
 

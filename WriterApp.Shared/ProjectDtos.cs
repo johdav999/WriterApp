@@ -10,6 +10,7 @@ namespace WriterApp.Application.Documents
         string? AuthorName,
         string? Language,
         string? Genre,
+        string? CoverImageUrl,
         DateTimeOffset CreatedUtc,
         DateTimeOffset UpdatedUtc,
         int TotalWordCount);
@@ -20,7 +21,8 @@ namespace WriterApp.Application.Documents
         string? AuthorName,
         string? Language,
         string? Genre,
-        string? DefaultExportSettingsJson);
+        string? DefaultExportSettingsJson,
+        string? CoverImageUrl = null);
 
     public sealed record ProjectUpdateRequest(
         string? Title,
@@ -28,7 +30,10 @@ namespace WriterApp.Application.Documents
         string? AuthorName,
         string? Language,
         string? Genre,
-        string? DefaultExportSettingsJson);
+        string? DefaultExportSettingsJson,
+        string? CoverImageUrl = null);
+
+    public sealed record ProjectCoverUpdateRequest(string? ImageUrl);
 
     public sealed record ProjectNodeDto(
         Guid Id,
