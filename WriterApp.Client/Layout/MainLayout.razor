@@ -19,28 +19,32 @@
     <header class="app-header">
         <div class="app-header-left">
             <NavLink class="app-brand" href="documents" Match="NavLinkMatch.All" aria-label="Prosa home">
-                <img class="app-brand-logo" src="logo.png" alt="Prosa" width="264" height="264" loading="eager" decoding="async" />
+                <span class="app-brand-frame">
+                    <img class="app-brand-logo" src="logo.png" alt="Prosa" loading="eager" decoding="async" />
+                </span>
             </NavLink>
         </div>
-        <div class="app-header-center">
-            <div class="app-breadcrumb">
-                <NavLink class="app-breadcrumb-link" href="@GetProjectBreadcrumbHref()" Match="NavLinkMatch.Prefix">@GetProjectBreadcrumbLabel()</NavLink>
-                @if (ShouldShowDocumentBreadcrumb())
-                {
-                    <span class="app-breadcrumb-separator">-&gt;</span>
-                    <span class="app-document-title">@_documentTitle</span>
-                }
+        <div class="app-header-content">
+            <div class="app-header-center">
+                <div class="app-breadcrumb">
+                    <NavLink class="app-breadcrumb-link" href="@GetProjectBreadcrumbHref()" Match="NavLinkMatch.Prefix">@GetProjectBreadcrumbLabel()</NavLink>
+                    @if (ShouldShowDocumentBreadcrumb())
+                    {
+                        <span class="app-breadcrumb-separator">-&gt;</span>
+                        <span class="app-document-title">@_documentTitle</span>
+                    }
+                </div>
+                <GlobalSearch />
             </div>
-            <GlobalSearch />
-        </div>
-        <div class="app-header-right">
-            @if (AuthMeStateService.IsBootstrapAdminSession)
-            {
-                <span class="bootstrap-admin-badge" role="status" aria-live="polite" title="This session has admin access through bootstrap configuration.">
-                    Bootstrap admin session
-                </span>
-            }
-            <UserBadge />
+            <div class="app-header-right">
+                @if (AuthMeStateService.IsBootstrapAdminSession)
+                {
+                    <span class="bootstrap-admin-badge" role="status" aria-live="polite" title="This session has admin access through bootstrap configuration.">
+                        Bootstrap admin session
+                    </span>
+                }
+                <UserBadge />
+            </div>
         </div>
     </header>
 
@@ -182,7 +186,23 @@
     private string GetLayoutClass()
     {
         LayoutState state = LayoutStateService.State;
-        return state.FocusMode || state.LeftNavCollapsed ? "is-focus-mode" : string.Empty;
+        List<string> classes = new();
+        if (state.FocusMode || state.LeftNavCollapsed)
+        {
+            classes.Add("is-focus-mode");
+        }
+
+        if (IsEditorRoute())
+        {
+            classes.Add("is-editor-route");
+        }
+
+        if (state.ContextCollapsed)
+        {
+            classes.Add("is-context-collapsed");
+        }
+
+        return string.Join(" ", classes);
     }
 
     private bool HasCurrentEditorLink =>
@@ -452,6 +472,16 @@
 
         projectId = Guid.Empty;
         return false;
+    }
+
+    private bool IsEditorRoute()
+    {
+        string[] segments = GetRouteSegments();
+        return segments.Length >= 4
+            && string.Equals(segments[0], "projects", StringComparison.OrdinalIgnoreCase)
+            && Guid.TryParse(segments[1], out _)
+            && string.Equals(segments[2], "scenes", StringComparison.OrdinalIgnoreCase)
+            && Guid.TryParse(segments[3], out _);
     }
 
     private string[] GetRouteSegments()
