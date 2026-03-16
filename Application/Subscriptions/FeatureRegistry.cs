@@ -131,7 +131,7 @@ namespace WriterApp.Application.Subscriptions
             [FeatureKey.FeedbackSubmission] = PlanTier.Free,
             [FeatureKey.ConvertDocumentToProject] = PlanTier.Standard,
             [FeatureKey.ProjectNavigator] = PlanTier.Free,
-            [FeatureKey.ProjectStructureEditing] = PlanTier.Standard,
+            [FeatureKey.ProjectStructureEditing] = PlanTier.Free,
             [FeatureKey.OpenSceneInEditor] = PlanTier.Free,
             [FeatureKey.ProjectProgressDashboard] = PlanTier.Standard,
             [FeatureKey.WritingGoals] = PlanTier.Standard,

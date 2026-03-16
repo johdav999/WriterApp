@@ -73,7 +73,7 @@ namespace WriterApp.Tests
         }
 
         [Fact]
-        public async Task CreateNode_ReturnsStructured402_WhenFreeUserAttemptsStructureEdit()
+        public async Task CreateNode_AllowsStructureEdit_ForFreeUser()
         {
             await using AppDbContext db = BuildDbContext();
             SeedProjectGraph(db, out Guid projectId, out _, out _, out _);
@@ -83,12 +83,10 @@ namespace WriterApp.Tests
 
             ActionResult<ProjectNodeDto> result = await controller.CreateNode(projectId, request, CancellationToken.None);
 
-            ObjectResult objectResult = Assert.IsType<ObjectResult>(result.Result);
-            Assert.Equal(StatusCodes.Status402PaymentRequired, objectResult.StatusCode);
-            ProblemDetails problem = Assert.IsType<ProblemDetails>(objectResult.Value);
-            Assert.Equal("entitlement_denied", problem.Extensions["code"]?.ToString());
-            Assert.Equal("projects.structure", problem.Extensions["featureKey"]?.ToString());
-            Assert.Contains("Standard", problem.Detail ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            OkObjectResult ok = Assert.IsType<OkObjectResult>(result.Result);
+            ProjectNodeDto payload = Assert.IsType<ProjectNodeDto>(ok.Value);
+            Assert.Equal("Locked Part", payload.Title);
+            Assert.Equal("part", payload.NodeType);
         }
 
         [Fact]
@@ -114,6 +112,28 @@ namespace WriterApp.Tests
 
             ProjectNodeRecord updated = await db.ProjectNodes.SingleAsync(item => item.Id == sceneNodeId);
             Assert.Equal("Renamed scene", updated.Title);
+        }
+
+        [Fact]
+        public async Task ReorderNodes_AllowsStructureEdit_ForFreeUser()
+        {
+            await using AppDbContext db = BuildDbContext();
+            SeedProjectGraphWithTwoRootParts(db, out Guid projectId, out Guid firstPartId, out Guid secondPartId);
+
+            ProjectsController controller = BuildController(db, PlanTier.Free);
+            ProjectNodeReorderRequest request = new(new[] { secondPartId, firstPartId });
+
+            ActionResult<IReadOnlyList<ProjectNodeDto>> result = await controller.ReorderChildren(projectId, Guid.Empty, request, CancellationToken.None);
+
+            Assert.IsType<OkObjectResult>(result.Result);
+
+            List<ProjectNodeRecord> roots = await db.ProjectNodes
+                .Where(node => node.ProjectId == projectId && node.ParentId == null)
+                .OrderBy(node => node.OrderIndex)
+                .ToListAsync();
+
+            Assert.Equal(secondPartId, roots[0].Id);
+            Assert.Equal(firstPartId, roots[1].Id);
         }
 
         private static ProjectsController BuildController(AppDbContext db, PlanTier userTier)
@@ -253,6 +273,53 @@ namespace WriterApp.Tests
                     OrderIndex = 0,
                     LinkedSectionId = sectionId,
                     WordCountCache = 123,
+                    UpdatedUtc = now
+                });
+
+            db.SaveChanges();
+        }
+
+        private static void SeedProjectGraphWithTwoRootParts(
+            AppDbContext db,
+            out Guid projectId,
+            out Guid firstPartId,
+            out Guid secondPartId)
+        {
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            projectId = Guid.NewGuid();
+            firstPartId = Guid.NewGuid();
+            secondPartId = Guid.NewGuid();
+
+            db.Projects.Add(new ProjectRecord
+            {
+                Id = projectId,
+                OwnerUserId = "user-1",
+                Title = "Downgraded project",
+                CreatedUtc = now,
+                UpdatedUtc = now
+            });
+
+            db.ProjectNodes.AddRange(
+                new ProjectNodeRecord
+                {
+                    Id = firstPartId,
+                    ProjectId = projectId,
+                    ParentId = null,
+                    NodeType = ProjectNodeType.Part,
+                    Title = "Part I",
+                    OrderIndex = 0,
+                    WordCountCache = 0,
+                    UpdatedUtc = now
+                },
+                new ProjectNodeRecord
+                {
+                    Id = secondPartId,
+                    ProjectId = projectId,
+                    ParentId = null,
+                    NodeType = ProjectNodeType.Part,
+                    Title = "Part II",
+                    OrderIndex = 1,
+                    WordCountCache = 0,
                     UpdatedUtc = now
                 });
 

@@ -7,6 +7,7 @@
 @using Microsoft.AspNetCore.Components
 @using WriterApp.Application.Documents
 @using WriterApp.Application.Subscriptions
+@using WriterApp.Client.Components.Covers
 @using WriterApp.Client.Services
 @using WriterApp.Client.Utilities
 @inject HttpClient Http
@@ -201,6 +202,12 @@ else
                         @onclick='() => SelectTab("structure")'>
                     Structure
                 </button>
+                <button type="button"
+                        class="@GetTabClass("cover")"
+                        title="Open cover studio."
+                        @onclick='() => SelectTab("cover")'>
+                    Cover
+                </button>
                 @if (_goalsEnabled)
                 {
                     <PlanGatedButton Feature="@nameof(FeatureKey.ProjectProgressDashboard)"
@@ -223,7 +230,11 @@ else
         }
         else
         {
-            @if (_activeTab == "progress" && _goalsEnabled)
+            @if (_activeTab == "cover")
+            {
+                <ProjectCoverStudio Project="_activeProject" />
+            }
+            else if (_activeTab == "progress" && _goalsEnabled)
             {
                 <div class="projects-progress">
                     @if (!FeatureAccessService.CanUse(FeatureKey.ProjectProgressDashboard))

@@ -21,6 +21,8 @@ namespace WriterApp.Data.Documents
 
         public string? DefaultExportSettingsJson { get; set; }
 
+        public string? CoverImageUrl { get; set; }
+
         public DateTimeOffset CreatedUtc { get; set; }
 
         public DateTimeOffset UpdatedUtc { get; set; }

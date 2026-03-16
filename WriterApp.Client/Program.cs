@@ -38,6 +38,7 @@ builder.Services.AddScoped<WriterApp.Client.State.DeletedAccountStateService>();
 builder.Services.AddScoped<WriterApp.Client.State.DuplicateAccountStateService>();
 builder.Services.AddScoped<WriterApp.Client.State.AuthMeStateService>();
 builder.Services.AddScoped<FeatureAccessService>();
+builder.Services.AddScoped<CoverApiClient>();
 builder.Services.AddScoped<WriterApp.Client.Services.OnboardingService>();
 builder.Services.AddScoped<WriterApp.Client.State.OnboardingStateStore>();
 builder.Services.AddScoped<WriterApp.Client.State.OnboardingOverlayStateService>();

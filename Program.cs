@@ -39,6 +39,7 @@ using WriterApp.Application.Billing;
 using WriterApp.Application.Subscriptions;
 using WriterApp.Application.Usage;
 using WriterApp.Application.Commands;
+using WriterApp.Application.Covers;
 using WriterApp.Application.Documents;
 using WriterApp.Application.Exporting;
 using WriterApp.Application.State;
@@ -260,6 +261,11 @@ builder.Services.AddScoped<WriterApp.Application.Documents.IProjectGoalsService,
 builder.Services.AddScoped<WriterApp.Application.Documents.IProjectSceneLinkingService, WriterApp.Application.Documents.ProjectSceneLinkingService>();
 builder.Services.AddScoped<WriterApp.Application.Documents.IProjectDeletionService, WriterApp.Application.Documents.ProjectDeletionService>();
 builder.Services.AddScoped<WriterApp.Application.Documents.IOnboardingBootstrapService, WriterApp.Application.Documents.OnboardingBootstrapService>();
+builder.Services.AddHttpClient<ICoverImageService, CoverImageService>((sp, client) =>
+{
+    WriterAiOpenAiOptions options = sp.GetRequiredService<IOptions<WriterAiOptions>>().Value.Providers.OpenAI ?? new WriterAiOpenAiOptions();
+    client.Timeout = TimeSpan.FromSeconds(Math.Max(1, options.TimeoutSeconds));
+});
 builder.Services.AddScoped<WriterApp.Application.Exporting.IOutlineOrderResolver, WriterApp.Application.Exporting.OutlineOrderResolver>();
 builder.Services.AddScoped<WriterApp.Application.Documents.ISceneContentBackfillService, WriterApp.Application.Documents.SceneContentBackfillService>();
 builder.Services.AddSingleton<WriterApp.Application.Commands.IStructureCommandProcessor, WriterApp.Application.Commands.StructureCommandProcessor>();

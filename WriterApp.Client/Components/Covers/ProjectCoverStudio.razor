@@ -1,0 +1,359 @@
+@using WriterApp.Application.Documents
+@using System
+@using System.Linq
+@using WriterApp.Shared
+@inject WriterApp.Client.Services.CoverApiClient CoverApiClient
+
+<section class="cover-studio" aria-label="Cover studio">
+    <div class="cover-studio-panel cover-studio-brief">
+        <div class="cover-studio-header">
+            <h3>Book Cover</h3>
+            <p>Generate and customize cover artwork for your manuscript.</p>
+        </div>
+
+        <div class="cover-form">
+            <label class="cover-field" for="cover-description">
+                <span>Describe your cover</span>
+                <textarea id="cover-description"
+                          @bind="_description"
+                          placeholder="Describe the subject, setting, typography mood, and any visual details you want on the cover."></textarea>
+            </label>
+
+            <label class="cover-field" for="cover-genre">
+                <span>Genre</span>
+                <select id="cover-genre" @bind="_genre">
+                    @foreach (string option in GenreOptions)
+                    {
+                        <option value="@option">@option</option>
+                    }
+                </select>
+            </label>
+
+            <label class="cover-field" for="cover-mood">
+                <span>Mood</span>
+                <select id="cover-mood" @bind="_mood">
+                    @foreach (string option in MoodOptions)
+                    {
+                        <option value="@option">@option</option>
+                    }
+                </select>
+            </label>
+
+            <label class="cover-field" for="cover-style">
+                <span>Visual Style</span>
+                <select id="cover-style" @bind="_visualStyle">
+                    @foreach (string option in VisualStyleOptions)
+                    {
+                        <option value="@option">@option</option>
+                    }
+                </select>
+            </label>
+
+            <label class="cover-field" for="cover-palette">
+                <span>Color palette</span>
+                <select id="cover-palette" @bind="_colorPalette">
+                    @foreach (string option in ColorPaletteOptions)
+                    {
+                        <option value="@option">@option</option>
+                    }
+                </select>
+            </label>
+        </div>
+
+        <div class="cover-actions">
+            <button type="button" class="primary" @onclick="GenerateCoverConceptsAsync" disabled="@_isGenerating">
+                @(_isGenerating ? "Generating..." : "Generate cover concepts")
+            </button>
+            <button type="button" class="secondary" @onclick="SurpriseMeAsync" disabled="@_isGenerating">
+                Surprise me
+            </button>
+            <button type="button" class="secondary" @onclick="SaveProjectCoverAsync" disabled="@(!_selectedImageAvailable || _isSavingCover)">
+                @(_isSavingCover ? "Saving..." : "Save as project cover")
+            </button>
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(_saveStatus))
+        {
+            <div class="cover-save-status">@_saveStatus</div>
+        }
+    </div>
+
+    <div class="cover-studio-panel cover-studio-preview">
+        <div class="cover-studio-header">
+            <h3>Cover Preview</h3>
+            <p>@(Project?.Title ?? "Current project")</p>
+        </div>
+
+        <div class="cover-preview-frame">
+            @if (!string.IsNullOrWhiteSpace(_coverError))
+            {
+                <div class="cover-preview-placeholder">@_coverError</div>
+            }
+            else if (_selectedImageUrl is not null)
+            {
+                <img class="cover-preview-image" src="@_selectedImageUrl" alt="Selected generated book cover concept" />
+            }
+            else if (string.IsNullOrWhiteSpace(_previewCaption))
+            {
+                <div class="cover-preview-placeholder">No cover generated yet.</div>
+            }
+            else
+            {
+                <div class="cover-preview-placeholder">@_previewCaption</div>
+            }
+        </div>
+
+        @if (_generatedImageUrls.Count > 0)
+        {
+            <div class="cover-preview-grid" role="list" aria-label="Generated cover concepts">
+                @foreach (string imageUrl in _generatedImageUrls)
+                {
+                    <button type="button"
+                            class="cover-preview-card @(string.Equals(_selectedImageUrl, imageUrl, StringComparison.Ordinal) ? "is-selected" : null)"
+                            @onclick="() => SelectImage(imageUrl)">
+                        <img src="@imageUrl" alt="Generated book cover concept" />
+                    </button>
+                }
+            </div>
+        }
+    </div>
+
+    <div class="cover-studio-panel cover-studio-controls">
+        <div class="cover-studio-header">
+            <h3>Controls</h3>
+            <p>Shape the next pass before generation is connected.</p>
+        </div>
+
+        <div class="cover-control-list">
+            <button type="button" class="secondary" @onclick="GenerateVariationsAsync">Generate variations</button>
+            <button type="button" class="secondary" @onclick="MakeDarkerAsync">Make darker</button>
+            <button type="button" class="secondary" @onclick="MakeBrighterAsync">Make brighter</button>
+            <button type="button" class="secondary" @onclick="MoreCinematicAsync">More cinematic</button>
+            <button type="button" class="secondary" @onclick="MoreMinimalAsync">More minimal</button>
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(_lastAction))
+        {
+            <div class="cover-action-status">@_lastAction</div>
+        }
+    </div>
+</section>
+
+@code {
+    private static readonly string[] GenreOptions =
+    [
+        "Fantasy",
+        "Romance",
+        "Sci-fi",
+        "Thriller",
+        "Mystery",
+        "Literary"
+    ];
+
+    private static readonly string[] MoodOptions =
+    [
+        "Dark",
+        "Hopeful",
+        "Epic",
+        "Mysterious",
+        "Romantic"
+    ];
+
+    private static readonly string[] VisualStyleOptions =
+    [
+        "Cinematic",
+        "Painted",
+        "Illustrated",
+        "Minimalist",
+        "Photorealistic"
+    ];
+
+    private static readonly string[] ColorPaletteOptions =
+    [
+        "Warm",
+        "Cold",
+        "Dark",
+        "High contrast",
+        "Pastel"
+    ];
+
+    private string _description = string.Empty;
+    private string _genre = GenreOptions[0];
+    private string _mood = MoodOptions[0];
+    private string _visualStyle = VisualStyleOptions[0];
+    private string _colorPalette = ColorPaletteOptions[0];
+    private string? _lastAction;
+    private string? _previewCaption;
+    private string? _coverError;
+    private bool _isGenerating;
+    private bool _isSavingCover;
+    private string? _selectedImageUrl;
+    private string? _saveStatus;
+    private string? _projectCoverImageUrl;
+    private readonly List<string> _generatedImageUrls = new();
+    private Guid? _boundProjectId;
+
+    [Parameter]
+    public ProjectDto? Project { get; set; }
+
+    private bool _selectedImageAvailable => !string.IsNullOrWhiteSpace(_selectedImageUrl);
+
+    protected override void OnParametersSet()
+    {
+        bool projectChanged = _boundProjectId != Project?.Id;
+        _boundProjectId = Project?.Id;
+
+        if (Project is null)
+        {
+            _projectCoverImageUrl = null;
+            return;
+        }
+
+        _projectCoverImageUrl = Project.CoverImageUrl;
+        if (!string.IsNullOrWhiteSpace(Project.CoverImageUrl))
+        {
+            if (!_generatedImageUrls.Any(url => string.Equals(url, Project.CoverImageUrl, StringComparison.Ordinal)))
+            {
+                _generatedImageUrls.Insert(0, Project.CoverImageUrl);
+            }
+
+            if (projectChanged || string.IsNullOrWhiteSpace(_selectedImageUrl))
+            {
+                _selectedImageUrl = Project.CoverImageUrl;
+                _previewCaption = null;
+            }
+        }
+        else if (projectChanged)
+        {
+            _selectedImageUrl = null;
+        }
+    }
+
+    private async Task GenerateCoverConceptsAsync()
+    {
+        _isGenerating = true;
+        _coverError = null;
+        _saveStatus = null;
+        _lastAction = "Generating cover concepts...";
+        _previewCaption = null;
+
+        try
+        {
+            CoverGenerationResponse response = await CoverApiClient.GenerateCoverConceptsAsync(BuildPrompt());
+            _generatedImageUrls.Clear();
+            _generatedImageUrls.AddRange(response.ImageUrls);
+            _selectedImageUrl = _generatedImageUrls.Count > 0 ? _generatedImageUrls[0] : null;
+            _lastAction = _generatedImageUrls.Count > 0
+                ? $"Generated {_generatedImageUrls.Count} cover concept{(_generatedImageUrls.Count == 1 ? string.Empty : "s")}."
+                : "No cover concepts were returned.";
+        }
+        catch (Exception ex)
+        {
+            _coverError = ex.Message;
+            _generatedImageUrls.Clear();
+            _selectedImageUrl = null;
+            _lastAction = null;
+        }
+        finally
+        {
+            _isGenerating = false;
+        }
+    }
+
+    private Task SurpriseMeAsync()
+    {
+        _saveStatus = null;
+        _description = string.Empty;
+        _genre = GenreOptions[(Array.IndexOf(GenreOptions, _genre) + 1) % GenreOptions.Length];
+        _mood = MoodOptions[(Array.IndexOf(MoodOptions, _mood) + 1) % MoodOptions.Length];
+        _visualStyle = VisualStyleOptions[(Array.IndexOf(VisualStyleOptions, _visualStyle) + 1) % VisualStyleOptions.Length];
+        _colorPalette = ColorPaletteOptions[(Array.IndexOf(ColorPaletteOptions, _colorPalette) + 1) % ColorPaletteOptions.Length];
+        return SetPendingActionAsync("Surprise me clicked.");
+    }
+
+    private Task GenerateVariationsAsync()
+    {
+        return SetPendingActionAsync("Generate variations clicked.");
+    }
+
+    private Task MakeDarkerAsync()
+    {
+        return SetPendingActionAsync("Make darker clicked.");
+    }
+
+    private Task MakeBrighterAsync()
+    {
+        return SetPendingActionAsync("Make brighter clicked.");
+    }
+
+    private Task MoreCinematicAsync()
+    {
+        return SetPendingActionAsync("More cinematic clicked.");
+    }
+
+    private Task MoreMinimalAsync()
+    {
+        return SetPendingActionAsync("More minimal clicked.");
+    }
+
+    private Task SetPendingActionAsync(string action)
+    {
+        _lastAction = action;
+        _coverError = null;
+        _saveStatus = null;
+        if (_selectedImageUrl is null)
+        {
+            _previewCaption = null;
+        }
+        return Task.CompletedTask;
+    }
+
+    private CoverPrompt BuildPrompt()
+    {
+        return new CoverPrompt
+        {
+            Description = string.IsNullOrWhiteSpace(_description) ? null : _description.Trim(),
+            Genre = _genre,
+            Mood = _mood,
+            Style = _visualStyle,
+            ColorPalette = _colorPalette
+        };
+    }
+
+    private void SelectImage(string imageUrl)
+    {
+        _selectedImageUrl = imageUrl;
+        _coverError = null;
+        _saveStatus = null;
+        _lastAction = "Selected cover concept.";
+    }
+
+    private async Task SaveProjectCoverAsync()
+    {
+        if (Project is null || !_selectedImageAvailable)
+        {
+            return;
+        }
+
+        _isSavingCover = true;
+        _coverError = null;
+        _saveStatus = null;
+
+        try
+        {
+            ProjectDto updatedProject = await CoverApiClient.SaveProjectCoverAsync(Project.Id, _selectedImageUrl!);
+            _projectCoverImageUrl = updatedProject.CoverImageUrl;
+            _selectedImageUrl = updatedProject.CoverImageUrl;
+            _saveStatus = "Cover saved.";
+            _lastAction = "Saved as project cover.";
+        }
+        catch (Exception ex)
+        {
+            _coverError = ex.Message;
+        }
+        finally
+        {
+            _isSavingCover = false;
+        }
+    }
+}
