@@ -46,12 +46,9 @@ namespace WriterApp.Application.Usage
             UserEntitlement entitlement = await _userEntitlementStore.GetOrCreateAsync(userId, ct);
             await ResetWindowIfExpiredAsync(entitlement, ct);
 
-            AiQuotaSnapshot snapshot = ToSnapshot(entitlement);
-            string normalizedPlan = UserEntitlementDefaults.NormalizePlanKey(entitlement.PlanKey);
-            string normalizedStatus = NormalizeSubscriptionStatus(entitlement.SubscriptionStatus);
-            bool paidPlan = IsPaidPlan(normalizedPlan);
-            bool subscriptionIsActive = !paidPlan || string.Equals(normalizedStatus, "active", StringComparison.Ordinal);
-            if (!subscriptionIsActive)
+            EvaluatedEntitlementAccess access = EntitlementAccessEvaluator.Evaluate(entitlement);
+            AiQuotaSnapshot snapshot = ToSnapshot(entitlement, access);
+            if (!access.IsAiAccessActive)
             {
                 AiAccessError error = BuildAccessError(snapshot, upgradeRequired: true);
                 return new AiQuotaDecision(false, SubscriptionInactiveCode, SubscriptionInactiveMessage, snapshot, error);
@@ -75,7 +72,8 @@ namespace WriterApp.Application.Usage
             {
                 UserEntitlement entitlement = await _userEntitlementStore.GetOrCreateAsync(userId, ct);
                 await ResetWindowIfExpiredAsync(entitlement, ct);
-                return new AiQuotaChargeResult(true, 0, ToSnapshot(entitlement), null, null, null);
+                EvaluatedEntitlementAccess access = EntitlementAccessEvaluator.Evaluate(entitlement);
+                return new AiQuotaChargeResult(true, 0, ToSnapshot(entitlement, access), null, null, null);
             }
 
             try
@@ -93,11 +91,9 @@ namespace WriterApp.Application.Usage
                         UserEntitlement entitlement = await _userEntitlementStore.GetOrCreateAsync(userId, ct);
                         await ResetWindowIfExpiredAsync(entitlement, ct);
 
-                        AiQuotaSnapshot snapshot = ToSnapshot(entitlement);
-                        string normalizedPlan = UserEntitlementDefaults.NormalizePlanKey(entitlement.PlanKey);
-                        string normalizedStatus = NormalizeSubscriptionStatus(entitlement.SubscriptionStatus);
-                        bool paidPlan = IsPaidPlan(normalizedPlan);
-                        if (paidPlan && !string.Equals(normalizedStatus, "active", StringComparison.Ordinal))
+                        EvaluatedEntitlementAccess access = EntitlementAccessEvaluator.Evaluate(entitlement);
+                        AiQuotaSnapshot snapshot = ToSnapshot(entitlement, access);
+                        if (!access.IsAiAccessActive)
                         {
                             await transaction.RollbackAsync(ct);
                             AiAccessError inactiveError = BuildAccessError(snapshot, upgradeRequired: true);
@@ -128,7 +124,8 @@ WHERE UserId = {userId}
                         {
                             await transaction.CommitAsync(ct);
                             UserEntitlement updated = await _userEntitlementStore.GetOrCreateAsync(userId, ct);
-                            chargeResult = new AiQuotaChargeResult(true, chargedTokens, ToSnapshot(updated), null, null, null);
+                            EvaluatedEntitlementAccess updatedAccess = EntitlementAccessEvaluator.Evaluate(updated);
+                            chargeResult = new AiQuotaChargeResult(true, chargedTokens, ToSnapshot(updated, updatedAccess), null, null, null);
                             return;
                         }
 
@@ -136,7 +133,8 @@ WHERE UserId = {userId}
                     }
 
                     UserEntitlement latest = await _userEntitlementStore.GetOrCreateAsync(userId, ct);
-                    AiQuotaSnapshot latestSnapshot = ToSnapshot(latest);
+                    EvaluatedEntitlementAccess latestAccess = EntitlementAccessEvaluator.Evaluate(latest);
+                    AiQuotaSnapshot latestSnapshot = ToSnapshot(latest, latestAccess);
                     AiAccessError retryError = BuildAccessError(latestSnapshot, upgradeRequired: true);
                     chargeResult = new AiQuotaChargeResult(false, 0, latestSnapshot, QuotaExceededCode, QuotaExceededMessage, retryError);
                 });
@@ -144,7 +142,8 @@ WHERE UserId = {userId}
                 if (chargeResult is null)
                 {
                     UserEntitlement latest = await _userEntitlementStore.GetOrCreateAsync(userId, ct);
-                    AiQuotaSnapshot latestSnapshot = ToSnapshot(latest);
+                    EvaluatedEntitlementAccess latestAccess = EntitlementAccessEvaluator.Evaluate(latest);
+                    AiQuotaSnapshot latestSnapshot = ToSnapshot(latest, latestAccess);
                     AiAccessError unexpectedError = BuildAccessError(latestSnapshot, upgradeRequired: true);
                     chargeResult = new AiQuotaChargeResult(false, 0, latestSnapshot, QuotaExceededCode, QuotaExceededMessage, unexpectedError);
                 }
@@ -230,35 +229,13 @@ WHERE UserId = {userId}
             return Math.Max(1, estimated);
         }
 
-        private static AiQuotaSnapshot ToSnapshot(UserEntitlement entitlement)
+        private static AiQuotaSnapshot ToSnapshot(UserEntitlement entitlement, EvaluatedEntitlementAccess access)
         {
             return new AiQuotaSnapshot(
-                UserEntitlementDefaults.NormalizePlanKey(entitlement.PlanKey),
-                Math.Max(0, entitlement.AiMonthlyTokenBudget),
+                access.EffectivePlanKey,
+                Math.Max(0, access.EffectiveAiMonthlyTokenBudget),
                 Math.Max(0, entitlement.AiTokensUsedThisPeriod),
                 entitlement.PeriodStartUtc);
-        }
-
-        private static bool IsPaidPlan(string planKey)
-        {
-            return string.Equals(planKey, UserEntitlementDefaults.StandardPlanKey, StringComparison.Ordinal)
-                || string.Equals(planKey, UserEntitlementDefaults.ProfessionalPlanKey, StringComparison.Ordinal);
-        }
-
-        private static string NormalizeSubscriptionStatus(string? rawStatus)
-        {
-            if (string.IsNullOrWhiteSpace(rawStatus))
-            {
-                return "active";
-            }
-
-            string normalized = rawStatus.Trim().ToLowerInvariant();
-            if (string.Equals(normalized, "trialing", StringComparison.Ordinal))
-            {
-                return "active";
-            }
-
-            return normalized;
         }
 
         private static AiAccessError BuildAccessError(AiQuotaSnapshot snapshot, bool upgradeRequired)

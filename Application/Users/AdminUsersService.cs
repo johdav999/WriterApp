@@ -1388,6 +1388,9 @@ namespace WriterApp.Application.Users
                 return false;
             }
 
+            // Deletion safety is intentionally broader than runtime paid-feature access.
+            // We block deletes while Stripe still has a managed subscription lifecycle that
+            // could continue charging or later settle, even if runtime feature access is reduced.
             string status = UserEntitlementDefaults.NormalizeSubscriptionStatus(entitlement.SubscriptionStatus);
             if (status.Equals("canceled", StringComparison.OrdinalIgnoreCase))
             {

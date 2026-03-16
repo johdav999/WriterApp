@@ -50,8 +50,8 @@
 
 .app-brand-logo {
     display: block;
-    height: var(--app-brand-logo-height, 132px);
-    width: auto;
+    height: var(--app-brand-logo-height, 264px);
+    width: var(--app-brand-logo-width, 264px);
     max-width: none;
     object-fit: contain;
     flex-shrink: 0;
@@ -149,7 +149,8 @@
     }
 
     .app-brand-logo {
-        height: var(--app-brand-logo-height-mobile, 114px);
+        height: var(--app-brand-logo-height-mobile, 264px);
+        width: var(--app-brand-logo-width-mobile, 264px);
         max-width: none;
     }
 

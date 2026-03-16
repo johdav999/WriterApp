@@ -141,6 +141,29 @@ namespace WriterApp.Application.Billing
             return url;
         }
 
+        public async Task<JsonDocument> UpdateSubscriptionCancelAtPeriodEndAsync(
+            string secretKey,
+            string subscriptionId,
+            bool cancelAtPeriodEnd,
+            CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(subscriptionId))
+            {
+                throw new ArgumentException("Subscription id is required.", nameof(subscriptionId));
+            }
+
+            Dictionary<string, string> form = new(StringComparer.Ordinal)
+            {
+                ["cancel_at_period_end"] = cancelAtPeriodEnd ? "true" : "false"
+            };
+
+            return await SendPostFormAsync(
+                secretKey,
+                $"subscriptions/{Uri.EscapeDataString(subscriptionId)}",
+                form,
+                ct);
+        }
+
         public async Task<JsonDocument> GetSubscriptionAsync(string secretKey, string subscriptionId, CancellationToken ct)
         {
             if (string.IsNullOrWhiteSpace(subscriptionId))

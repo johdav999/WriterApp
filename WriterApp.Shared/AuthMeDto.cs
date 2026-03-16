@@ -12,7 +12,11 @@ namespace WriterApp.Application.Security
         public bool IsAdminAccess { get; init; }
         public string? AdminAccessSource { get; init; }
         public string? PlanKey { get; init; }
+        public string? EffectivePlanKey { get; init; }
         public string? SubscriptionStatus { get; init; }
+        public DateTimeOffset? CurrentPeriodEndUtc { get; init; }
+        public bool CancelAtPeriodEnd { get; init; }
+        public bool IsPaidAccessActive { get; init; }
         public string? StripeCustomerId { get; init; }
         public int AiMonthlyTokenBudget { get; init; }
         public int AiTokensUsedThisPeriod { get; init; }

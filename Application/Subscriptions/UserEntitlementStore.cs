@@ -62,7 +62,8 @@ namespace WriterApp.Application.Subscriptions
                     AiMonthlyTokenBudget = UserEntitlementDefaults.ResolveMonthlyTokenBudget(planKey),
                     AiTokensUsedThisPeriod = 0,
                     PeriodStartUtc = now,
-                    UpdatedUtc = now
+                    UpdatedUtc = now,
+                    HasManualPlanOverride = !string.IsNullOrWhiteSpace(initialAssignedPlanKey)
                 };
 
                 _dbContext.UserEntitlements.Add(entitlement);
@@ -88,6 +89,7 @@ namespace WriterApp.Application.Subscriptions
             string entitlementPlanBefore = entitlement.PlanKey ?? string.Empty;
             string? assignedPlanKey = await ResolvePlanKeyFromAssignmentsAsync(userId, cancellationToken);
             bool didOverrideFromAssignment = false;
+            entitlement.HasManualPlanOverride = !string.IsNullOrWhiteSpace(assignedPlanKey);
             // Only explicit assignment rows are treated as manual overrides.
             // No assignment means keep the existing entitlement plan value.
             if (!string.IsNullOrWhiteSpace(assignedPlanKey)

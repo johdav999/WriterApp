@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
+using WriterApp.Application.Subscriptions;
 using WriterApp.Data.AI;
 using WriterApp.Data.Admin;
 using WriterApp.Data.Continuity;
@@ -1033,8 +1034,8 @@ namespace WriterApp.Data
                 new PlanEntitlement { PlanId = standardPlanId, Key = "ai.enabled", Value = "true" },
                 new PlanEntitlement { PlanId = professionalPlanId, Key = "ai.enabled", Value = "true" },
                 new PlanEntitlement { PlanId = freePlanId, Key = "ai.monthly_tokens", Value = "0" },
-                new PlanEntitlement { PlanId = standardPlanId, Key = "ai.monthly_tokens", Value = "200000" },
-                new PlanEntitlement { PlanId = professionalPlanId, Key = "ai.monthly_tokens", Value = "1000000" },
+                new PlanEntitlement { PlanId = standardPlanId, Key = "ai.monthly_tokens", Value = UserEntitlementDefaults.StandardMonthlyTokenBudget.ToString() },
+                new PlanEntitlement { PlanId = professionalPlanId, Key = "ai.monthly_tokens", Value = UserEntitlementDefaults.ProfessionalMonthlyTokenBudget.ToString() },
                 new PlanEntitlement { PlanId = freePlanId, Key = "export.pdf", Value = "false" },
                 new PlanEntitlement { PlanId = standardPlanId, Key = "export.pdf", Value = "true" },
                 new PlanEntitlement { PlanId = professionalPlanId, Key = "export.pdf", Value = "true" },

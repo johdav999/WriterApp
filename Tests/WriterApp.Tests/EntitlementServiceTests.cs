@@ -55,7 +55,7 @@ namespace WriterApp.Tests
 
             Assert.Equal("standard", entitlements.PlanKey);
             Assert.True(await service.HasAsync("user-2", "ai.enabled"));
-            Assert.Equal(200000, await service.GetIntAsync("user-2", "ai.monthly_tokens"));
+            Assert.Equal(UserEntitlementDefaults.StandardMonthlyTokenBudget, await service.GetIntAsync("user-2", "ai.monthly_tokens"));
         }
 
         [Fact]

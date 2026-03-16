@@ -15,20 +15,20 @@ namespace WriterApp.Application.Billing
         private readonly AppDbContext _dbContext;
         private readonly IUserEntitlementStore _userEntitlementStore;
         private readonly IEntitlementService _entitlementService;
-        private readonly StripeOptions _stripeOptions;
+        private readonly IStripePriceResolver _stripePriceResolver;
         private readonly ILogger<StripeEntitlementSyncService> _logger;
 
         public StripeEntitlementSyncService(
             AppDbContext dbContext,
             IUserEntitlementStore userEntitlementStore,
             IEntitlementService entitlementService,
-            StripeOptions stripeOptions,
+            IStripePriceResolver stripePriceResolver,
             ILogger<StripeEntitlementSyncService> logger)
         {
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _userEntitlementStore = userEntitlementStore ?? throw new ArgumentNullException(nameof(userEntitlementStore));
             _entitlementService = entitlementService ?? throw new ArgumentNullException(nameof(entitlementService));
-            _stripeOptions = stripeOptions ?? throw new ArgumentNullException(nameof(stripeOptions));
+            _stripePriceResolver = stripePriceResolver ?? throw new ArgumentNullException(nameof(stripePriceResolver));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -109,16 +109,13 @@ namespace WriterApp.Application.Billing
                 return UserEntitlementDefaults.FreePlanKey;
             }
 
-            if (!string.IsNullOrWhiteSpace(stripePriceId)
-                && string.Equals(stripePriceId, _stripeOptions.PriceStandard, StringComparison.Ordinal))
+            if (!string.IsNullOrWhiteSpace(stripePriceId))
             {
-                return UserEntitlementDefaults.StandardPlanKey;
-            }
-
-            if (!string.IsNullOrWhiteSpace(stripePriceId)
-                && string.Equals(stripePriceId, _stripeOptions.PricePro, StringComparison.Ordinal))
-            {
-                return UserEntitlementDefaults.ProfessionalPlanKey;
+                string? resolvedPlanKey = _stripePriceResolver.ResolvePlanKey(stripePriceId);
+                if (!string.IsNullOrWhiteSpace(resolvedPlanKey))
+                {
+                    return UserEntitlementDefaults.NormalizePlanKey(resolvedPlanKey);
+                }
             }
 
             _logger.LogWarning(

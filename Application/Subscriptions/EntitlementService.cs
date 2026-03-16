@@ -78,11 +78,12 @@ namespace WriterApp.Application.Subscriptions
             }
 
             UserEntitlement userEntitlement = await _userEntitlementStore.GetOrCreateAsync(userId);
-            string planLookupKey = UserEntitlementDefaults.ToPlanLookupKey(userEntitlement.PlanKey);
+            EvaluatedEntitlementAccess access = EntitlementAccessEvaluator.Evaluate(userEntitlement);
+            string planLookupKey = UserEntitlementDefaults.ToPlanLookupKey(access.EffectivePlanKey);
             Plan? plan = await _planRepository.GetPlanByKeyAsync(planLookupKey);
 
             string planKey = plan?.Key ?? planLookupKey;
-            string planName = plan?.Name ?? UserEntitlementDefaults.NormalizePlanKey(userEntitlement.PlanKey);
+            string planName = plan?.Name ?? UserEntitlementDefaults.NormalizePlanKey(access.EffectivePlanKey);
             Dictionary<string, string> entitlements = new(StringComparer.OrdinalIgnoreCase);
 
             if (plan?.Entitlements is not null)
@@ -93,8 +94,8 @@ namespace WriterApp.Application.Subscriptions
                 }
             }
 
-            entitlements["ai.monthly_tokens"] = userEntitlement.AiMonthlyTokenBudget.ToString(CultureInfo.InvariantCulture);
-            entitlements["ai.enabled"] = userEntitlement.AiMonthlyTokenBudget > 0 ? "true" : "false";
+            entitlements["ai.monthly_tokens"] = access.EffectiveAiMonthlyTokenBudget.ToString(CultureInfo.InvariantCulture);
+            entitlements["ai.enabled"] = access.IsAiAccessActive && access.EffectiveAiMonthlyTokenBudget > 0 ? "true" : "false";
             entitlements["ai.tokens_used_this_period"] = userEntitlement.AiTokensUsedThisPeriod.ToString(CultureInfo.InvariantCulture);
 
             UserEntitlements result = new(userId, planKey, planName, entitlements);
