@@ -246,6 +246,7 @@ namespace WriterApp.Controllers
                 result.Add(new ProjectListItemDto(
                     project.Id,
                     project.Title,
+                    project.CoverImageUrl,
                     primary?.Id,
                     primary?.Title,
                     lastEdited,

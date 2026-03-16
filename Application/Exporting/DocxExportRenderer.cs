@@ -68,6 +68,13 @@ namespace WriterApp.Application.Exporting
                 bool hasContent = false;
                 bool hasRenderedSection = false;
 
+                if (ExportHelpers.ShouldIncludeCover(resolved))
+                {
+                    string coverHtml = $"<p><img src=\"{WebUtility.HtmlEncode(resolved.CoverImageUrl!)}\" alt=\"Project cover\" /></p>";
+                    converter.AppendHtml(coverHtml, breakOnH1: false, ref hasContent);
+                    converter.AppendPageBreak();
+                }
+
                 if (resolved.IncludeTitlePage)
                 {
                     converter.AppendHeading(title, 1, pageBreakBefore: false);

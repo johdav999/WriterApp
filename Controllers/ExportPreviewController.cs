@@ -75,6 +75,8 @@ namespace WriterApp.Controllers
 
             try
             {
+                string? coverImageUrl = await ResolveProjectCoverImageUrlAsync(request.DocumentId, userId, scope, ct);
+                bool includeCover = SupportsCoverInPreview(request.Format) && request.IncludeCover;
                 ExportTemplate template = await _templateResolver.ResolveAsync(userId, request.TemplateId, ct);
                 ExportTemplate previewTemplate = CloneTemplate(template);
                 previewTemplate.TocEnabled = request.IncludeToc;
@@ -97,7 +99,9 @@ namespace WriterApp.Controllers
                         TitlePageDraftLabel: request.TitlePageDraftLabel,
                         TitlePageDate: request.TitlePageDate,
                         TemplateId: previewTemplate.Id,
-                        Template: previewTemplate),
+                        Template: previewTemplate,
+                        IncludeCover: includeCover,
+                        CoverImageUrl: coverImageUrl),
                     userId,
                     previewTemplate.Id,
                     ct);
@@ -114,6 +118,41 @@ namespace WriterApp.Controllers
             {
                 return NotFound(new { message = "Export template not found." });
             }
+        }
+
+        private static bool SupportsCoverInPreview(string? format)
+        {
+            return (format ?? string.Empty).Trim().ToLowerInvariant() switch
+            {
+                "html" => true,
+                "pdf" => true,
+                "docx" => true,
+                "epub" => true,
+                _ => false
+            };
+        }
+
+        private async Task<string?> ResolveProjectCoverImageUrlAsync(
+            Guid documentId,
+            string userId,
+            string scope,
+            CancellationToken ct)
+        {
+            string normalized = scope.Trim().ToLowerInvariant();
+            if (normalized is not ("document" or "manuscript"))
+            {
+                return null;
+            }
+
+            return await _dbContext.Documents
+                .AsNoTracking()
+                .Where(document => document.Id == documentId && document.OwnerUserId == userId)
+                .Join(
+                    _dbContext.Projects.AsNoTracking(),
+                    document => document.ProjectId,
+                    project => project.Id,
+                    (_, project) => project.CoverImageUrl)
+                .FirstOrDefaultAsync(ct);
         }
 
         private async Task<Document?> BuildExportDocumentAsync(

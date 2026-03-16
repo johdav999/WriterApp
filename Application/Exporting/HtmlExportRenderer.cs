@@ -53,6 +53,7 @@ namespace WriterApp.Application.Exporting
                 .Append("    .export-toc ol { list-style: none; padding-left: 0; }\n")
                 .Append("    .export-toc li { margin: 0.25em 0; }\n")
                 .Append("    .export-toc a { color: inherit; text-decoration: none; }\n")
+                .Append(ExportHelpers.BuildCoverPageCss())
                 .Append(BuildChapterBreakCss(resolved))
                 .Append("  </style>\n")
                 .Append("</head>\n")
@@ -78,6 +79,11 @@ namespace WriterApp.Application.Exporting
             IReadOnlyDictionary<Guid, SectionNumberingInfo> numbering = _numberingService.BuildIndex(document);
             List<(string Text, string Id, int Level)> headings = new();
             string titlePageHtml = string.Empty;
+
+            if (ExportHelpers.ShouldIncludeCover(resolved))
+            {
+                frontMatterBuilder.Append(ExportHelpers.BuildCoverPageBlock(resolved.CoverImageUrl!)).Append("\n");
+            }
 
             if (resolved.IncludeTitlePage)
             {

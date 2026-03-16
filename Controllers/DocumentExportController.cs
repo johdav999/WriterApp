@@ -87,11 +87,14 @@ namespace WriterApp.Controllers
 
             try
             {
+                string? coverImageUrl = await ResolveProjectCoverImageUrlAsync(documentId, userId, scope: "document", ct);
                 ExportResult result = await _exportService.ExportAsync(
                     document,
                     exportKind,
                     exportFormat,
-                    new ExportOptions(),
+                    new ExportOptions(
+                        IncludeCover: false,
+                        CoverImageUrl: coverImageUrl),
                     userId,
                     templateId,
                     ct);
@@ -162,11 +165,12 @@ namespace WriterApp.Controllers
 
             try
             {
+                string? coverImageUrl = await ResolveProjectCoverImageUrlAsync(documentId, userId, scopeType, ct);
                 ExportResult result = await _exportService.ExportAsync(
                     document,
                     ExportKind.Document,
                     exportFormat,
-                    BuildExportOptions(request),
+                    BuildExportOptions(request, coverImageUrl),
                     userId,
                     request.TemplateId,
                     ct);
@@ -271,10 +275,11 @@ namespace WriterApp.Controllers
 
             try
             {
+                string? coverImageUrl = await ResolveProjectCoverImageUrlAsync(documentId, userId, scopeType, ct);
                 string bodyHtml = await _exportService.ExportHtmlBodyAsync(
                     document,
                     ExportKind.Document,
-                    BuildExportOptions(request),
+                    BuildExportOptions(request, coverImageUrl),
                     userId,
                     request.TemplateId,
                     ct);
@@ -738,7 +743,7 @@ namespace WriterApp.Controllers
             return true;
         }
 
-        private static ExportOptions BuildExportOptions(ExportDocumentRequest request)
+        private static ExportOptions BuildExportOptions(ExportDocumentRequest request, string? coverImageUrl)
         {
             return new ExportOptions(
                 IncludeTitlePage: request.IncludeTitlePage,
@@ -750,7 +755,32 @@ namespace WriterApp.Controllers
                 TitlePageAuthor: request.TitlePageAuthor,
                 TitlePageDraftLabel: request.TitlePageDraftLabel,
                 TitlePageDate: request.TitlePageDate,
-                TemplateId: request.TemplateId);
+                TemplateId: request.TemplateId,
+                IncludeCover: request.IncludeCover,
+                CoverImageUrl: coverImageUrl);
+        }
+
+        private async Task<string?> ResolveProjectCoverImageUrlAsync(
+            Guid documentId,
+            string userId,
+            string scope,
+            CancellationToken ct)
+        {
+            string normalized = scope.Trim().ToLowerInvariant();
+            if (normalized is not ("document" or "manuscript"))
+            {
+                return null;
+            }
+
+            return await _dbContext.Documents
+                .AsNoTracking()
+                .Where(document => document.Id == documentId && document.OwnerUserId == userId)
+                .Join(
+                    _dbContext.Projects.AsNoTracking(),
+                    document => document.ProjectId,
+                    project => project.Id,
+                    (_, project) => project.CoverImageUrl)
+                .FirstOrDefaultAsync(ct);
         }
 
         private static bool TryParseFormat(string value, out ExportFormat format, out string? error)

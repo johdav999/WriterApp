@@ -757,6 +757,12 @@
     gap: 8px;
 }
 
+.preview-helper-note {
+    margin-top: 4px;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
 .preview-zoom {
     display: flex;
     flex-wrap: wrap;

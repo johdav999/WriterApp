@@ -2137,14 +2137,14 @@ else
             }
             <div class="export-panel-row">
                 <label class="export-panel-label" for="export-content">Content</label>
-                <select id="export-content" class="export-panel-select" @bind="_exportContentSelection" @bind:after="MarkPresetAsCustom">
+                <select id="export-content" class="export-panel-select" @bind="_exportContentSelection" @bind:after="OnExportContentSelectionChanged">
                     <option value="document">Document</option>
                     <option value="synopsis">Synopsis</option>
                 </select>
             </div>
             <div class="export-panel-row">
                 <label class="export-panel-label" for="export-format">Format</label>
-                <select id="export-format" class="export-panel-select" @bind="_exportFormatSelection" @bind:after="MarkPresetAsCustom">
+                <select id="export-format" class="export-panel-select" @bind="_exportFormatSelection" @bind:after="OnExportFormatSelectionChanged">
                     <option value="html">HTML</option>
                     <option value="markdown">Markdown</option>
                     @if (_docxExportEnabled)
@@ -2238,6 +2238,16 @@ else
                     <span>Include title page</span>
                 </div>
             </div>
+            @if (CanConfigureExportCover)
+            {
+                <div class="export-panel-row">
+                    <label class="export-panel-label">Cover</label>
+                    <div class="export-panel-checkbox">
+                        <input type="checkbox" @bind="_exportIncludeCover" @bind:after="MarkPresetAsCustom" />
+                        <span>Include cover</span>
+                    </div>
+                </div>
+            }
             @if (_exportIncludeTitlePage)
             {
                 <div class="export-panel-row">
@@ -2476,7 +2486,13 @@ else
         @* Standard modal layout *@
         <div class="modal export-preview modal-panel" role="dialog" aria-modal="true" style="@GetPreviewStyle()" @onclick:stopPropagation="true">
             <div class="modal-header">
-                <div class="modal-title">@GetExportPreviewTitle()</div>
+                <div>
+                    <div class="modal-title">@GetExportPreviewTitle()</div>
+                    @if (!string.IsNullOrWhiteSpace(GetExportPreviewCoverNote()))
+                    {
+                        <div class="preview-helper-note">@GetExportPreviewCoverNote()</div>
+                    }
+                </div>
             </div>
             <div class="modal-body">
                 <div class="preview-layout">

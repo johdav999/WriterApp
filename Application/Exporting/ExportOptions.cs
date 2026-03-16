@@ -14,5 +14,7 @@ namespace WriterApp.Application.Exporting
         string? TitlePageDraftLabel = null,
         string? TitlePageDate = null,
         Guid? TemplateId = null,
-        WriterApp.Data.Exporting.ExportTemplate? Template = null);
+        WriterApp.Data.Exporting.ExportTemplate? Template = null,
+        bool IncludeCover = false,
+        string? CoverImageUrl = null);
 }

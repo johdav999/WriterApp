@@ -19,5 +19,6 @@ namespace WriterApp.Application.Exporting
         string? TitlePageSubtitle = null,
         string? TitlePageAuthor = null,
         string? TitlePageDraftLabel = null,
-        string? TitlePageDate = null);
+        string? TitlePageDate = null,
+        bool IncludeCover = false);
 }

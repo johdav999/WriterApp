@@ -231,6 +231,7 @@ namespace WriterApp.Client.Pages
         private string _exportContentSelection = "document";
         private string _exportScopeType = "document";
         private bool _exportIncludeTitlePage = true;
+        private bool _exportIncludeCover = true;
         private bool _exportIncludeToc = true;
         private int _exportTocDepth = 2;
         private readonly HashSet<string> _exportChapterBreakRules = new(StringComparer.OrdinalIgnoreCase);
@@ -2149,6 +2150,23 @@ namespace WriterApp.Client.Pages
             return string.Equals(_exportContentSelection, "synopsis", StringComparison.OrdinalIgnoreCase)
                 ? "Synopsis preview"
                 : "Export preview";
+        }
+
+        private string? GetExportPreviewCoverNote()
+        {
+            if (string.Equals(_exportContentSelection, "synopsis", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            if (!IsCoverSupportedForFormat(_exportFormatSelection))
+            {
+                return "Cover is not included for this export format.";
+            }
+
+            return _exportIncludeCover
+                ? "This format includes the project cover."
+                : "Cover is not included for this export.";
         }
 
         private void OpenFeedbackDialog()
@@ -6450,7 +6468,8 @@ namespace WriterApp.Client.Pages
                     string.IsNullOrWhiteSpace(_titlePageSubtitle) ? null : _titlePageSubtitle,
                     string.IsNullOrWhiteSpace(_titlePageAuthor) ? null : _titlePageAuthor,
                     string.IsNullOrWhiteSpace(_titlePageDraftLabel) ? null : _titlePageDraftLabel,
-                    string.IsNullOrWhiteSpace(_titlePageDate) ? null : _titlePageDate);
+                    string.IsNullOrWhiteSpace(_titlePageDate) ? null : _titlePageDate,
+                    _exportIncludeCover);
 
                 using HttpResponseMessage exportResponse = await Http.PostAsJsonAsync(
                     $"api/documents/{DocumentId}/export",
@@ -6505,7 +6524,8 @@ namespace WriterApp.Client.Pages
                     string.IsNullOrWhiteSpace(_titlePageSubtitle) ? null : _titlePageSubtitle,
                     string.IsNullOrWhiteSpace(_titlePageAuthor) ? null : _titlePageAuthor,
                     string.IsNullOrWhiteSpace(_titlePageDraftLabel) ? null : _titlePageDraftLabel,
-                    string.IsNullOrWhiteSpace(_titlePageDate) ? null : _titlePageDate);
+                    string.IsNullOrWhiteSpace(_titlePageDate) ? null : _titlePageDate,
+                    _exportIncludeCover);
 
                 using HttpResponseMessage response = await Http.PostAsJsonAsync(
                     $"api/documents/{DocumentId}/export/print",
@@ -6566,6 +6586,7 @@ namespace WriterApp.Client.Pages
                 ExportPreviewRequest request = new(
                     DocumentId,
                     _selectedTemplateId,
+                    _exportFormatSelection,
                     _exportIncludeToc,
                     _exportScopeType,
                     BuildScopeIdsForRequest(),
@@ -6578,7 +6599,8 @@ namespace WriterApp.Client.Pages
                     string.IsNullOrWhiteSpace(_titlePageSubtitle) ? null : _titlePageSubtitle,
                     string.IsNullOrWhiteSpace(_titlePageAuthor) ? null : _titlePageAuthor,
                     string.IsNullOrWhiteSpace(_titlePageDraftLabel) ? null : _titlePageDraftLabel,
-                    string.IsNullOrWhiteSpace(_titlePageDate) ? null : _titlePageDate);
+                    string.IsNullOrWhiteSpace(_titlePageDate) ? null : _titlePageDate,
+                    _exportIncludeCover);
 
                 using HttpResponseMessage response = await Http.PostAsJsonAsync("api/export/preview", request);
                 if (!response.IsSuccessStatusCode)
@@ -6943,6 +6965,7 @@ private const string PreviewBootstrapScript = @"
             ExportTemplateDto? template = GetSelectedTemplate();
             _exportContentSelection = "document";
             _exportIncludeTitlePage = true;
+            _exportIncludeCover = GetDefaultIncludeCoverForCurrentSelection();
             _exportIncludeToc = template?.TocEnabled ?? true;
             _exportTocDepth = template?.TocDepth ?? 2;
             _exportChapterBreakRules.Clear();
@@ -7161,6 +7184,11 @@ private const string PreviewBootstrapScript = @"
             }
 
             NormalizeExportFormatSelection();
+            _exportIncludeCover = settings.IncludeCover ?? GetDefaultIncludeCoverForCurrentSelection();
+            if (!CanConfigureExportCover)
+            {
+                _exportIncludeCover = false;
+            }
         }
 
         private void NormalizeExportFormatSelection()
@@ -7180,6 +7208,11 @@ private const string PreviewBootstrapScript = @"
             if (string.Equals(_exportFormatSelection, "epub", StringComparison.OrdinalIgnoreCase) && !_epubExportEnabled)
             {
                 _exportFormatSelection = "html";
+            }
+
+            if (!CanConfigureExportCover)
+            {
+                _exportIncludeCover = false;
             }
         }
 
@@ -7210,7 +7243,8 @@ private const string PreviewBootstrapScript = @"
                 template?.FooterRight,
                 _exportChapterBreakRules.Count == 0 ? null : _exportChapterBreakRules.ToList(),
                 null,
-                null);
+                null,
+                CanConfigureExportCover ? _exportIncludeCover : null);
         }
 
         private IReadOnlyList<Guid>? BuildScopeIdsForPreset()
@@ -7373,6 +7407,59 @@ private const string PreviewBootstrapScript = @"
         {
             _selectedExportPresetId = null;
             NormalizeExportFormatSelection();
+        }
+
+        private void OnExportContentSelectionChanged()
+        {
+            NormalizeExportFormatSelection();
+            _exportIncludeCover = GetDefaultIncludeCoverForCurrentSelection();
+            _selectedExportPresetId = null;
+        }
+
+        private void OnExportFormatSelectionChanged()
+        {
+            NormalizeExportFormatSelection();
+            _exportIncludeCover = GetDefaultIncludeCoverForCurrentSelection();
+            _selectedExportPresetId = null;
+        }
+
+        private bool CanConfigureExportCover =>
+            string.Equals(_exportContentSelection, "document", StringComparison.OrdinalIgnoreCase)
+            && IsCoverSupportedForFormat(_exportFormatSelection);
+
+        private bool GetDefaultIncludeCoverForCurrentSelection()
+        {
+            if (!CanConfigureExportCover)
+            {
+                return false;
+            }
+
+            return GetDefaultIncludeCoverForFormat(_exportFormatSelection);
+        }
+
+        private static bool GetDefaultIncludeCoverForFormat(string? format)
+        {
+            return (format ?? string.Empty).Trim().ToLowerInvariant() switch
+            {
+                "docx" => false,
+                "markdown" => false,
+                "pdf" => true,
+                "epub" => true,
+                "html" => true,
+                _ => false
+            };
+        }
+
+        private static bool IsCoverSupportedForFormat(string? format)
+        {
+            return (format ?? string.Empty).Trim().ToLowerInvariant() switch
+            {
+                "html" => true,
+                "pdf" => true,
+                "docx" => true,
+                "epub" => true,
+                _ => false
+            };
         }
 
         private void OpenPresetSave()
