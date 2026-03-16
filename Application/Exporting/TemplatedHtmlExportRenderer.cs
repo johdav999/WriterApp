@@ -84,6 +84,11 @@ namespace WriterApp.Application.Exporting
             List<string> bodyBlocks = new();
             IReadOnlyDictionary<Guid, SectionNumberingInfo> numbering = _numberingService.BuildIndex(document);
 
+            if (ExportHelpers.ShouldIncludeCover(options))
+            {
+                frontMatterBlocks.Add(ExportHelpers.BuildCoverPageBlock(options.CoverImageUrl!));
+            }
+
             if (options.IncludeTitlePage)
             {
                 frontMatterBlocks.Add(BuildTitlePageBlock(options, title));
@@ -122,7 +127,7 @@ namespace WriterApp.Application.Exporting
                 string tocHtml = BuildToc(headings, tocDepth);
                 if (!string.IsNullOrWhiteSpace(tocHtml))
                 {
-                    int insertIndex = options.IncludeTitlePage ? 1 : 0;
+                    int insertIndex = frontMatterBlocks.Count;
                     frontMatterBlocks.Insert(insertIndex, tocHtml);
                 }
             }
@@ -261,6 +266,8 @@ namespace WriterApp.Application.Exporting
                 .Append("    .export-toc .toc-level-5 { margin-left: 4em; }\n")
                 .Append("    .export-toc .toc-level-6 { margin-left: 5em; }\n")
                 .Append("    .export-toc a { color: inherit; text-decoration: none; }\n");
+
+            css.Append(ExportHelpers.BuildCoverPageCss());
 
             if (usesSectionToken)
             {

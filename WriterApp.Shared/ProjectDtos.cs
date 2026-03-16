@@ -69,6 +69,7 @@ namespace WriterApp.Application.Documents
     public sealed record ProjectListItemDto(
         Guid ProjectId,
         string Title,
+        string? CoverImageUrl,
         Guid? PrimaryDocumentId,
         string? PrimaryDocumentTitle,
         DateTimeOffset LastEditedUtc,

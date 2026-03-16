@@ -126,6 +126,16 @@
                     Guid? rowPrimaryDocumentId = item.PrimaryDocumentId;
                     bool menuOpen = _openProjectMenuId == rowProjectId;
                     <article class="landing-card project-card">
+                        <div class="project-cover-shell">
+                            @if (!string.IsNullOrWhiteSpace(item.CoverImageUrl))
+                            {
+                                <img class="project-cover-thumb" src="@item.CoverImageUrl" alt="@($"{item.Title} cover")" />
+                            }
+                            else
+                            {
+                                <div class="project-cover-placeholder" aria-hidden="true">No cover</div>
+                            }
+                        </div>
                         <div class="landing-meta">
                             <div class="landing-title">@item.Title</div>
                             <div class="landing-time">Last edited @FormatRelativeTime(item.LastEditedUtc)</div>

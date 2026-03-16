@@ -3943,6 +3943,7 @@ namespace BlazorApp.Components.Pages
                 ExportPreviewRequest request = new(
                     DocumentId,
                     _selectedTemplateId,
+                    "html",
                     template?.TocEnabled ?? true,
                     _previewScope,
                     scopeIds,

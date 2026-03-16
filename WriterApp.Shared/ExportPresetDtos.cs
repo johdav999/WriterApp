@@ -27,7 +27,8 @@ namespace WriterApp.Application.Exporting
         string? FooterRight = null,
         IReadOnlyList<string>? ChapterBreakRules = null,
         double? Zoom = null,
-        string? PreviewMode = null);
+        string? PreviewMode = null,
+        bool? IncludeCover = null);
 
     public sealed record ExportPresetDto(
         Guid Id,

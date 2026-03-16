@@ -8,6 +8,7 @@ namespace WriterApp.Application.Exporting
     public sealed record ExportPreviewRequest(
         Guid DocumentId,
         Guid? TemplateId,
+        string Format,
         bool IncludeToc,
         string ScopeType,
         IReadOnlyList<Guid>? ScopeIds = null,
@@ -20,7 +21,8 @@ namespace WriterApp.Application.Exporting
         string? TitlePageSubtitle = null,
         string? TitlePageAuthor = null,
         string? TitlePageDraftLabel = null,
-        string? TitlePageDate = null);
+        string? TitlePageDate = null,
+        bool IncludeCover = false);
 
     public sealed record ExportPreviewResponse(string Html);
 }

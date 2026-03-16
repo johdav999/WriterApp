@@ -170,6 +170,7 @@ namespace WriterApp.Client.Services
                 FeatureKey.CanonRefresh => "Refresh Canon",
                 FeatureKey.AiUndoRedo => "AI Undo",
                 FeatureKey.AiActionHistory => "AI History",
+                FeatureKey.CoverGeneration => "Cover Generation",
                 FeatureKey.PromptLibrary => "Prompt Library",
                 FeatureKey.VersionHistory => "Version History",
                 FeatureKey.ExportTemplates => "Export Templates",

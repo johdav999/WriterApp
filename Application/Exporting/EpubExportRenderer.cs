@@ -41,6 +41,16 @@ namespace WriterApp.Application.Exporting
 
             bool splitOnH1 = ExportHelpers.HasChapterBreak(resolved, "h1");
             List<EpubChapter> chapters = BuildChapters(document, splitOnH1);
+            EpubAsset? coverAsset = TryBuildCoverAsset(resolved);
+            if (coverAsset is not null)
+            {
+                chapters.Insert(0, new EpubChapter(
+                    "cover.xhtml",
+                    "Cover",
+                    $"<section class=\"book-cover-page\"><img src=\"../images/{coverAsset.FileName}\" alt=\"Project cover\" /></section>",
+                    "cover"));
+            }
+
             if (chapters.Count == 0)
             {
                 chapters.Add(new EpubChapter("chapter-001.xhtml", title, "<p></p>", "chap1"));
@@ -49,7 +59,7 @@ namespace WriterApp.Application.Exporting
             string stylesheet = BuildStylesheet();
             string nav = BuildNav(chapters, title, language);
             string ncx = BuildNcx(chapters, title, identifier);
-            string opf = BuildOpf(chapters, title, author, language, identifier, modified);
+            string opf = BuildOpf(chapters, title, author, language, identifier, modified, coverAsset);
 
             using MemoryStream stream = new();
             using (ZipArchive archive = new(stream, ZipArchiveMode.Create, true))
@@ -66,6 +76,10 @@ namespace WriterApp.Application.Exporting
                 AddTextEntry(archive, "OEBPS/nav.xhtml", nav);
                 AddTextEntry(archive, "OEBPS/toc.ncx", ncx);
                 AddTextEntry(archive, "OEBPS/styles/style.css", stylesheet);
+                if (coverAsset is not null)
+                {
+                    AddBinaryEntry(archive, $"OEBPS/images/{coverAsset.FileName}", coverAsset.Bytes);
+                }
 
                 foreach (EpubChapter chapter in chapters)
                 {
@@ -285,7 +299,14 @@ namespace WriterApp.Application.Exporting
             return builder.ToString();
         }
 
-        private static string BuildOpf(IReadOnlyList<EpubChapter> chapters, string title, string author, string language, string identifier, string modified)
+        private static string BuildOpf(
+            IReadOnlyList<EpubChapter> chapters,
+            string title,
+            string author,
+            string language,
+            string identifier,
+            string modified,
+            EpubAsset? coverAsset)
         {
             StringBuilder manifest = new();
             StringBuilder spine = new();
@@ -293,6 +314,15 @@ namespace WriterApp.Application.Exporting
             manifest.Append("    <item id=\"nav\" href=\"nav.xhtml\" media-type=\"application/xhtml+xml\" properties=\"nav\" />\n")
                 .Append("    <item id=\"toc\" href=\"toc.ncx\" media-type=\"application/x-dtbncx+xml\" />\n")
                 .Append("    <item id=\"css\" href=\"styles/style.css\" media-type=\"text/css\" />\n");
+
+            if (coverAsset is not null)
+            {
+                manifest.Append("    <item id=\"cover-image\" href=\"images/")
+                    .Append(coverAsset.FileName)
+                    .Append("\" media-type=\"")
+                    .Append(coverAsset.MediaType)
+                    .Append("\" properties=\"cover-image\" />\n");
+            }
 
             foreach (EpubChapter chapter in chapters)
             {
@@ -330,7 +360,9 @@ namespace WriterApp.Application.Exporting
             return "body { font-family: serif; line-height: 1.6; margin: 1.2em; }\n" +
                    "h1, h2, h3 { margin-top: 1.5em; }\n" +
                    "p { margin: 0.8em 0; }\n" +
-                   "ul, ol { margin: 0.8em 0 0.8em 1.2em; }\n";
+                   "ul, ol { margin: 0.8em 0 0.8em 1.2em; }\n" +
+                   ".book-cover-page { min-height: 100vh; display: flex; align-items: center; justify-content: center; margin: 0; }\n" +
+                   ".book-cover-page img { max-width: 100%; max-height: 95vh; display: block; margin: 0 auto; }\n";
         }
 
         private static void AddTextEntry(ZipArchive archive, string path, string content)
@@ -341,6 +373,61 @@ namespace WriterApp.Application.Exporting
             writer.Write(content);
         }
 
+        private static void AddBinaryEntry(ZipArchive archive, string path, byte[] content)
+        {
+            ZipArchiveEntry entry = archive.CreateEntry(path, CompressionLevel.Optimal);
+            using Stream stream = entry.Open();
+            stream.Write(content, 0, content.Length);
+        }
+
+        private static EpubAsset? TryBuildCoverAsset(ExportOptions options)
+        {
+            if (!ExportHelpers.ShouldIncludeCover(options))
+            {
+                return null;
+            }
+
+            return TryParseDataUriAsset(options.CoverImageUrl!, "cover");
+        }
+
+        private static EpubAsset? TryParseDataUriAsset(string dataUri, string fileBaseName)
+        {
+            int commaIndex = dataUri.IndexOf(',');
+            if (commaIndex <= 0 || !dataUri.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            string header = dataUri.Substring(5, commaIndex - 5);
+            string payload = dataUri[(commaIndex + 1)..];
+            if (!header.Contains("base64", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            string mediaType = header.Split(';', StringSplitOptions.RemoveEmptyEntries)[0].Trim();
+            string extension = mediaType.ToLowerInvariant() switch
+            {
+                "image/png" => ".png",
+                "image/jpeg" => ".jpg",
+                "image/jpg" => ".jpg",
+                "image/gif" => ".gif",
+                "image/webp" => ".webp",
+                _ => string.Empty
+            };
+
+            if (string.IsNullOrWhiteSpace(extension))
+            {
+                return null;
+            }
+
+            return new EpubAsset(
+                fileBaseName + extension,
+                mediaType,
+                Convert.FromBase64String(payload));
+        }
+
         private sealed record EpubChapter(string FileName, string Title, string BodyHtml, string Id);
+        private sealed record EpubAsset(string FileName, string MediaType, byte[] Bytes);
     }
 }

@@ -1,8 +1,13 @@
 @using WriterApp.Application.Documents
+@using WriterApp.Application.Subscriptions
 @using System
 @using System.Linq
 @using WriterApp.Shared
+@implements IDisposable
 @inject WriterApp.Client.Services.CoverApiClient CoverApiClient
+@inject WriterApp.Client.State.AuthMeStateService AuthMeStateService
+@inject WriterApp.Client.Services.FeatureAccessService FeatureAccessService
+@inject NavigationManager Navigation
 
 <section class="cover-studio" aria-label="Cover studio">
     <div class="cover-studio-panel cover-studio-brief">
@@ -61,11 +66,31 @@
         </div>
 
         <div class="cover-actions">
-            <button type="button" class="primary" @onclick="GenerateCoverConceptsAsync" disabled="@_isGenerating">
-                @(_isGenerating ? "Generating..." : "Generate cover concepts")
+            <button type="button"
+                    class="@GetGenerationButtonClass("primary")"
+                    title="@GetGenerationTooltip()"
+                    aria-disabled="@(!IsProfessional)"
+                    @onclick="OnGenerateCoverConceptsClickedAsync">
+                @if (!IsProfessional)
+                {
+                    <span class="cover-gated-button-icon" aria-hidden="true">
+                        <Icon Name="lock" />
+                    </span>
+                }
+                <span>@(_isGenerating ? "Generating..." : "Generate cover concepts")</span>
             </button>
-            <button type="button" class="secondary" @onclick="SurpriseMeAsync" disabled="@_isGenerating">
-                Surprise me
+            <button type="button"
+                    class="@GetGenerationButtonClass("secondary")"
+                    title="@GetGenerationTooltip()"
+                    aria-disabled="@(!IsProfessional)"
+                    @onclick="OnSurpriseMeClickedAsync">
+                @if (!IsProfessional)
+                {
+                    <span class="cover-gated-button-icon" aria-hidden="true">
+                        <Icon Name="lock" />
+                    </span>
+                }
+                <span>Surprise me</span>
             </button>
             <button type="button" class="secondary" @onclick="SaveProjectCoverAsync" disabled="@(!_selectedImageAvailable || _isSavingCover)">
                 @(_isSavingCover ? "Saving..." : "Save as project cover")
@@ -82,6 +107,21 @@
         <div class="cover-studio-header">
             <h3>Cover Preview</h3>
             <p>@(Project?.Title ?? "Current project")</p>
+        </div>
+
+        <div class="cover-current-state">
+            @if (!string.IsNullOrWhiteSpace(_projectCoverImageUrl))
+            {
+                <div class="cover-current-label">Current saved cover</div>
+                <img class="cover-current-image" src="@_projectCoverImageUrl" alt="Current saved project cover" />
+            }
+            else
+            {
+                <div class="cover-current-empty">
+                    <strong>No saved cover yet.</strong>
+                    <span>Generate concepts and save one as the project cover.</span>
+                </div>
+            }
         </div>
 
         <div class="cover-preview-frame">
@@ -125,11 +165,51 @@
         </div>
 
         <div class="cover-control-list">
-            <button type="button" class="secondary" @onclick="GenerateVariationsAsync">Generate variations</button>
-            <button type="button" class="secondary" @onclick="MakeDarkerAsync">Make darker</button>
-            <button type="button" class="secondary" @onclick="MakeBrighterAsync">Make brighter</button>
-            <button type="button" class="secondary" @onclick="MoreCinematicAsync">More cinematic</button>
-            <button type="button" class="secondary" @onclick="MoreMinimalAsync">More minimal</button>
+            <button type="button" class="@GetGenerationButtonClass("secondary")" title="@GetGenerationTooltip()" aria-disabled="@(!IsProfessional)" @onclick="OnGenerateVariationsClickedAsync">
+                @if (!IsProfessional)
+                {
+                    <span class="cover-gated-button-icon" aria-hidden="true">
+                        <Icon Name="lock" />
+                    </span>
+                }
+                <span>Generate variations</span>
+            </button>
+            <button type="button" class="@GetGenerationButtonClass("secondary")" title="@GetGenerationTooltip()" aria-disabled="@(!IsProfessional)" @onclick="OnMakeDarkerClickedAsync">
+                @if (!IsProfessional)
+                {
+                    <span class="cover-gated-button-icon" aria-hidden="true">
+                        <Icon Name="lock" />
+                    </span>
+                }
+                <span>Make darker</span>
+            </button>
+            <button type="button" class="@GetGenerationButtonClass("secondary")" title="@GetGenerationTooltip()" aria-disabled="@(!IsProfessional)" @onclick="OnMakeBrighterClickedAsync">
+                @if (!IsProfessional)
+                {
+                    <span class="cover-gated-button-icon" aria-hidden="true">
+                        <Icon Name="lock" />
+                    </span>
+                }
+                <span>Make brighter</span>
+            </button>
+            <button type="button" class="@GetGenerationButtonClass("secondary")" title="@GetGenerationTooltip()" aria-disabled="@(!IsProfessional)" @onclick="OnMoreCinematicClickedAsync">
+                @if (!IsProfessional)
+                {
+                    <span class="cover-gated-button-icon" aria-hidden="true">
+                        <Icon Name="lock" />
+                    </span>
+                }
+                <span>More cinematic</span>
+            </button>
+            <button type="button" class="@GetGenerationButtonClass("secondary")" title="@GetGenerationTooltip()" aria-disabled="@(!IsProfessional)" @onclick="OnMoreMinimalClickedAsync">
+                @if (!IsProfessional)
+                {
+                    <span class="cover-gated-button-icon" aria-hidden="true">
+                        <Icon Name="lock" />
+                    </span>
+                }
+                <span>More minimal</span>
+            </button>
         </div>
 
         @if (!string.IsNullOrWhiteSpace(_lastAction))
@@ -196,7 +276,13 @@
     [Parameter]
     public ProjectDto? Project { get; set; }
 
+    private bool IsProfessional => string.Equals(AuthMeStateService.EffectivePlanKey, "Professional", StringComparison.OrdinalIgnoreCase);
     private bool _selectedImageAvailable => !string.IsNullOrWhiteSpace(_selectedImageUrl);
+
+    protected override void OnInitialized()
+    {
+        AuthMeStateService.Changed += HandleAuthMeChanged;
+    }
 
     protected override void OnParametersSet()
     {
@@ -227,6 +313,111 @@
         {
             _selectedImageUrl = null;
         }
+    }
+
+    public void Dispose()
+    {
+        AuthMeStateService.Changed -= HandleAuthMeChanged;
+    }
+
+    private void HandleAuthMeChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task OnGenerateCoverConceptsClickedAsync()
+    {
+        if (await RedirectToUpgradeIfLockedAsync())
+        {
+            return;
+        }
+
+        await GenerateCoverConceptsAsync();
+    }
+
+    private async Task OnSurpriseMeClickedAsync()
+    {
+        if (await RedirectToUpgradeIfLockedAsync())
+        {
+            return;
+        }
+
+        await SurpriseMeAsync();
+    }
+
+    private async Task OnGenerateVariationsClickedAsync()
+    {
+        if (await RedirectToUpgradeIfLockedAsync())
+        {
+            return;
+        }
+
+        await GenerateVariationsAsync();
+    }
+
+    private async Task OnMakeDarkerClickedAsync()
+    {
+        if (await RedirectToUpgradeIfLockedAsync())
+        {
+            return;
+        }
+
+        await MakeDarkerAsync();
+    }
+
+    private async Task OnMakeBrighterClickedAsync()
+    {
+        if (await RedirectToUpgradeIfLockedAsync())
+        {
+            return;
+        }
+
+        await MakeBrighterAsync();
+    }
+
+    private async Task OnMoreCinematicClickedAsync()
+    {
+        if (await RedirectToUpgradeIfLockedAsync())
+        {
+            return;
+        }
+
+        await MoreCinematicAsync();
+    }
+
+    private async Task OnMoreMinimalClickedAsync()
+    {
+        if (await RedirectToUpgradeIfLockedAsync())
+        {
+            return;
+        }
+
+        await MoreMinimalAsync();
+    }
+
+    private Task<bool> RedirectToUpgradeIfLockedAsync()
+    {
+        if (IsProfessional)
+        {
+            return Task.FromResult(false);
+        }
+
+        Navigation.NavigateTo(
+            FeatureAccessService.GetUpgradePathWithCurrentReturn(FeatureKey.CoverGeneration),
+            forceLoad: true);
+        return Task.FromResult(true);
+    }
+
+    private string GetGenerationButtonClass(string baseClass)
+    {
+        return IsProfessional
+            ? baseClass
+            : $"{baseClass} cover-gated-button is-locked";
+    }
+
+    private string? GetGenerationTooltip()
+    {
+        return IsProfessional ? null : "Cover generation requires the Professional plan.";
     }
 
     private async Task GenerateCoverConceptsAsync()
