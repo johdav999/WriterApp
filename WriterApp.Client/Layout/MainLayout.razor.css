@@ -1,4 +1,12 @@
 .app-shell {
+    --app-nav-width: 180px;
+    --app-nav-padding-x: 12px;
+    --app-nav-link-padding-left: 16px;
+    --app-nav-text-inset: calc(var(--app-nav-padding-x) + var(--app-nav-link-padding-left));
+    --app-header-center-width: 560px;
+    --app-editor-context-panel-width: 360px;
+    --app-editor-workspace-gap: 24px;
+    --app-header-center-shift: 0px;
     height: 100vh;
     display: flex;
     flex-direction: column;
@@ -11,13 +19,22 @@
     top: 0;
     z-index: 10;
     display: grid;
-    grid-template-columns: auto 1fr auto;
+    grid-template-columns: var(--app-nav-width) minmax(0, 1fr);
     align-items: center;
     gap: var(--space-4);
-    padding: var(--space-3) var(--space-6);
+    padding: 6px 20px 6px 0;
     min-height: 72px;
     border-bottom: 1px solid var(--color-border);
     background: var(--color-surface-2);
+}
+
+.app-header-content {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, var(--app-header-center-width)) minmax(0, 1fr);
+    align-items: center;
+    gap: var(--space-4);
+    min-width: 0;
+    width: 100%;
 }
 
 .app-header-left,
@@ -25,6 +42,16 @@
     display: flex;
     align-items: center;
     gap: 16px;
+}
+
+.app-header-left {
+    align-self: stretch;
+}
+
+.app-header-right {
+    grid-column: 3;
+    justify-self: end;
+    justify-content: flex-end;
 }
 
 .bootstrap-admin-badge {
@@ -40,30 +67,47 @@
     white-space: nowrap;
 }
 
-.app-brand {
+.app-header-left ::deep .app-brand {
     display: inline-flex;
     align-items: center;
+    height: 100%;
+    padding-left: var(--app-nav-text-inset);
     font-weight: 600;
     text-decoration: none;
     color: var(--color-primary);
 }
 
+.app-brand-frame {
+    display: flex;
+    align-items: center;
+    height: auto;
+    min-height: 0;
+    flex-shrink: 0;
+}
+
 .app-brand-logo {
     display: block;
-    height: var(--app-brand-logo-height, 264px);
-    width: var(--app-brand-logo-width, 264px);
-    max-width: none;
+    height: 50px;
+    max-height: 50px;
+    max-width: 240px;
+    width: auto;
     object-fit: contain;
     flex-shrink: 0;
 }
 
 .app-header-center {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
+    display: grid;
+    grid-template-rows: auto auto;
+    align-content: center;
+    justify-items: stretch;
     gap: 8px;
+    grid-column: 2;
+    width: 100%;
+    justify-self: stretch;
+    transform: translateX(var(--app-header-center-shift));
     font-size: 0.95rem;
     color: var(--color-text-muted);
+    min-width: 0;
 }
 
 .app-breadcrumb {
@@ -73,7 +117,7 @@
     font-size: 0.95rem;
 }
 
-.app-breadcrumb-link {
+.app-breadcrumb ::deep .app-breadcrumb-link {
     text-decoration: none;
     color: var(--color-text-muted);
 }
@@ -125,7 +169,13 @@
     .app-header {
         grid-template-columns: 1fr;
         gap: 10px;
+        padding: 6px 12px;
         min-height: 64px;
+    }
+
+    .app-header-content {
+        grid-template-columns: 1fr;
+        gap: 10px;
     }
 
     .app-header-left,
@@ -133,13 +183,31 @@
         justify-content: space-between;
     }
 
+    .app-header-right {
+        grid-column: auto;
+        justify-self: stretch;
+    }
+
+    .app-header-left {
+        align-self: auto;
+    }
+
     .bootstrap-admin-badge {
         font-size: 0.76rem;
         padding: 5px 8px;
     }
 
+    .app-header-left ::deep .app-brand {
+        height: auto;
+        padding-left: var(--app-nav-text-inset);
+    }
+
     .app-header-center {
         align-items: stretch;
+        grid-column: auto;
+        justify-self: stretch;
+        transform: none;
+        width: 100%;
     }
 
     .app-shell {
@@ -148,10 +216,15 @@
         overflow: auto;
     }
 
+    .app-brand-frame {
+        height: auto;
+    }
+
     .app-brand-logo {
-        height: var(--app-brand-logo-height-mobile, 264px);
-        width: var(--app-brand-logo-width-mobile, 264px);
-        max-width: none;
+        height: 40px;
+        max-height: 40px;
+        max-width: 192px;
+        width: auto;
     }
 
     .app-main,
@@ -170,10 +243,27 @@
 
 .app-body {
     display: grid;
-    grid-template-columns: 180px minmax(0, 1fr);
+    grid-template-columns: var(--app-nav-width) minmax(0, 1fr);
     min-height: 0;
     height: 100%;
     overflow: hidden;
+}
+
+.app-shell.is-editor-route:not(.is-focus-mode):not(.is-context-collapsed) {
+    --app-header-center-shift: calc((var(--app-editor-context-panel-width) + var(--app-editor-workspace-gap)) / -2);
+}
+
+@media (max-width: 1200px) {
+    .app-shell {
+        --app-editor-context-panel-width: 300px;
+        --app-editor-workspace-gap: 16px;
+    }
+}
+
+@media (max-width: 980px) {
+    .app-shell {
+        --app-header-center-shift: 0px;
+    }
 }
 
 .app-shell.is-focus-mode .app-body {
@@ -184,7 +274,7 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    padding: 16px 12px;
+    padding: 16px var(--app-nav-padding-x);
     border-right: 1px solid var(--color-border);
     background: var(--color-surface-3);
     overflow-y: auto;
@@ -200,7 +290,7 @@
     display: flex;
     align-items: center;
     width: 100%;
-    padding: 10px 12px 10px 16px;
+    padding: 10px 12px 10px var(--app-nav-link-padding-left);
     border-radius: var(--radius-sm);
     text-decoration: none;
     color: var(--color-text-muted);

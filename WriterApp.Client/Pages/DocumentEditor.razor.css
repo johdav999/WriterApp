@@ -27,7 +27,7 @@
 .editor-workspace {
     display: grid;
     grid-template-columns: minmax(0, 1fr) var(--context-panel-width);
-    gap: 24px;
+    gap: 32px;
     align-items: stretch;
     flex: 1;
     min-height: 0;
@@ -1242,6 +1242,7 @@
 .editor-surface {
     width: 100%;
     padding: 0;
+    margin-top: 10px;
     border-radius: 0;
     border: none;
     background: transparent;
@@ -3158,7 +3159,7 @@
     }
 
     .editor-workspace {
-        gap: 16px;
+        gap: 24px;
     }
 }
 
