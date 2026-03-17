@@ -1,0 +1,142 @@
+<article class="scene-card" aria-label="@Title">
+    <div class="scene-card-top">
+        <span class="scene-card-drag-handle drag-handle"
+              title="Drag scene"
+              aria-label="Drag scene"
+              draggable="true">
+            <span class="scene-card-drag-dots" aria-hidden="true">
+                <span></span>
+                <span></span>
+                <span></span>
+                <span></span>
+            </span>
+        </span>
+        <div class="scene-card-title">@Title</div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(Summary))
+    {
+        <div class="scene-card-summary">@Summary</div>
+    }
+
+    @if (WordCount > 0 || HasMetadata || UpdatedUtc.HasValue)
+    {
+        <div class="scene-card-footer">
+            @if (WordCount > 0)
+            {
+                <div class="scene-card-meta">@WordCount words</div>
+            }
+
+            @if (HasMetadata || UpdatedUtc.HasValue)
+            {
+                <div class="scene-card-metadata">
+                    @if (!string.IsNullOrWhiteSpace(Status))
+                    {
+                        <span class="scene-card-chip">@Status</span>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(Tag))
+                    {
+                        <span class="scene-card-chip">@Tag</span>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(Pov))
+                    {
+                        <span class="scene-card-chip">POV: @Pov</span>
+                    }
+                    @if (HasNotes)
+                    {
+                        <span class="scene-card-chip">Notes</span>
+                    }
+                    @if (UpdatedUtc.HasValue)
+                    {
+                        <span class="scene-card-chip">Updated @FormatRelativeDate(UpdatedUtc.Value)</span>
+                    }
+                </div>
+            }
+        </div>
+    }
+
+    <div class="scene-card-actions">
+        <button type="button"
+                class="scene-card-action"
+                @onclick:stopPropagation="true"
+                @onclick="() => OpenScene.InvokeAsync(SceneId)">
+            Open scene
+        </button>
+        <button type="button"
+                class="scene-card-action"
+                @onclick:stopPropagation="true"
+                @onclick="() => RevealInNavigator.InvokeAsync(SceneId)">
+            Reveal in navigator
+        </button>
+    </div>
+</article>
+
+@code {
+    [Parameter]
+    public Guid SceneId { get; set; }
+
+    [Parameter]
+    public string Title { get; set; } = string.Empty;
+
+    [Parameter]
+    public string? Summary { get; set; }
+
+    [Parameter]
+    public int? WordCount { get; set; }
+
+    [Parameter]
+    public string? Status { get; set; }
+
+    [Parameter]
+    public string? Tag { get; set; }
+
+    [Parameter]
+    public string? Pov { get; set; }
+
+    [Parameter]
+    public bool HasNotes { get; set; }
+
+    [Parameter]
+    public DateTimeOffset? UpdatedUtc { get; set; }
+
+    [Parameter]
+    public EventCallback<Guid> OpenScene { get; set; }
+
+    [Parameter]
+    public EventCallback<Guid> RevealInNavigator { get; set; }
+
+    private bool HasMetadata =>
+        !string.IsNullOrWhiteSpace(Status)
+        || !string.IsNullOrWhiteSpace(Tag)
+        || !string.IsNullOrWhiteSpace(Pov)
+        || HasNotes;
+
+    private static string FormatRelativeDate(DateTimeOffset updatedUtc)
+    {
+        TimeSpan age = DateTimeOffset.UtcNow - updatedUtc;
+        if (age < TimeSpan.FromMinutes(1))
+        {
+            return "just now";
+        }
+
+        if (age < TimeSpan.FromHours(1))
+        {
+            int minutes = Math.Max(1, (int)Math.Floor(age.TotalMinutes));
+            return $"{minutes}m ago";
+        }
+
+        if (age < TimeSpan.FromDays(1))
+        {
+            int hours = Math.Max(1, (int)Math.Floor(age.TotalHours));
+            return $"{hours}h ago";
+        }
+
+        if (age < TimeSpan.FromDays(7))
+        {
+            int days = Math.Max(1, (int)Math.Floor(age.TotalDays));
+            return $"{days}d ago";
+        }
+
+        return updatedUtc.ToLocalTime().ToString("yyyy-MM-dd");
+    }
+}
