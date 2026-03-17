@@ -535,10 +535,13 @@ namespace WriterApp.Client.Pages
         private int _notesSavedVersion;
         private int _notesRetryAttempt;
         private string _sceneNarrativePurpose = string.Empty;
+        private string _sceneSummary = string.Empty;
+        private string _sceneCardMetadataStatus = "Draft";
         private string _sceneEmotionalBeat = string.Empty;
         private string _sceneKeyEvents = string.Empty;
         private string _sceneOpenQuestions = string.Empty;
         private string _scenePovCharacterId = string.Empty;
+        private string _sceneSubplotTagsText = string.Empty;
         private string _scenePlaceId = string.Empty;
         private string _sceneTimelineEventId = string.Empty;
         private string _sceneTimeRef = string.Empty;
@@ -590,6 +593,21 @@ namespace WriterApp.Client.Pages
         };
         private static readonly TimeSpan SceneCardAutosaveDebounce = TimeSpan.FromSeconds(2.5);
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+        private static readonly string[] SceneCardStatusOptions = ["Idea", "Draft", "Revised", "Final"];
+        private static readonly string[] SceneNarrativePurposeOptions =
+        [
+            string.Empty,
+            "Setup",
+            "Inciting Incident",
+            "Rising Action",
+            "Complication",
+            "Revelation",
+            "Relationship Beat",
+            "Reversal",
+            "Decision",
+            "Climax",
+            "Aftermath"
+        ];
 
         private PageEditor.PageBreakOptions PageBreaks
         {
@@ -5638,6 +5656,24 @@ namespace WriterApp.Client.Pages
             OnSceneCardInputChanged();
         }
 
+        private void OnSceneNarrativePurposeChanged(ChangeEventArgs args)
+        {
+            _sceneNarrativePurpose = args.Value?.ToString() ?? string.Empty;
+            OnSceneCardInputChanged();
+        }
+
+        private void OnSceneSummaryInput(ChangeEventArgs args)
+        {
+            _sceneSummary = args.Value?.ToString() ?? string.Empty;
+            OnSceneCardInputChanged();
+        }
+
+        private void OnSceneMetadataStatusChanged(ChangeEventArgs args)
+        {
+            _sceneCardMetadataStatus = NormalizeSceneCardStatus(args.Value?.ToString());
+            OnSceneCardInputChanged();
+        }
+
         private void OnSceneEmotionalBeatInput(ChangeEventArgs args)
         {
             _sceneEmotionalBeat = args.Value?.ToString() ?? string.Empty;
@@ -5659,6 +5695,12 @@ namespace WriterApp.Client.Pages
         private void OnScenePovInput(ChangeEventArgs args)
         {
             _scenePovCharacterId = args.Value?.ToString() ?? string.Empty;
+            OnSceneCardInputChanged();
+        }
+
+        private void OnSceneSubplotTagsInput(ChangeEventArgs args)
+        {
+            _sceneSubplotTagsText = args.Value?.ToString() ?? string.Empty;
             OnSceneCardInputChanged();
         }
 
@@ -5725,11 +5767,14 @@ namespace WriterApp.Client.Pages
                 {
                     SceneCardDto? card =
                         await Http.GetFromJsonAsync<SceneCardDto>($"api/scenes/{SceneNodeId}/scene-card");
+                    _sceneSummary = card?.Summary ?? string.Empty;
+                    _sceneCardMetadataStatus = NormalizeSceneCardStatus(card?.Status);
                     _sceneNarrativePurpose = card?.NarrativePurpose ?? string.Empty;
                     _sceneEmotionalBeat = card?.EmotionalBeat ?? string.Empty;
                     _sceneKeyEvents = card?.KeyEvents ?? string.Empty;
                     _sceneOpenQuestions = card?.OpenQuestions ?? string.Empty;
                     _scenePovCharacterId = card?.PovCharacterId ?? string.Empty;
+                    _sceneSubplotTagsText = string.Join(", ", card?.SubplotTags ?? Array.Empty<string>());
                     _scenePlaceId = card?.PlaceId ?? string.Empty;
                     _sceneTimelineEventId = card?.TimelineEventId ?? string.Empty;
                     _sceneTimeRef = card?.TimeRef ?? string.Empty;
@@ -5741,11 +5786,14 @@ namespace WriterApp.Client.Pages
                     SectionSceneCardDto? card =
                         await Http.GetFromJsonAsync<SectionSceneCardDto>($"api/sections/{sectionId}/scene-card");
 
+                    _sceneSummary = card?.Summary ?? string.Empty;
+                    _sceneCardMetadataStatus = NormalizeSceneCardStatus(card?.Status);
                     _sceneNarrativePurpose = card?.NarrativePurpose ?? string.Empty;
                     _sceneEmotionalBeat = card?.EmotionalBeat ?? string.Empty;
                     _sceneKeyEvents = card?.KeyEvents ?? string.Empty;
                     _sceneOpenQuestions = card?.OpenQuestions ?? string.Empty;
                     _scenePovCharacterId = card?.PovCharacterId ?? string.Empty;
+                    _sceneSubplotTagsText = string.Join(", ", card?.SubplotTags ?? Array.Empty<string>());
                     _scenePlaceId = card?.PlaceId ?? string.Empty;
                     _sceneTimelineEventId = card?.TimelineEventId ?? string.Empty;
                     _sceneTimeRef = card?.TimeRef ?? string.Empty;
@@ -5809,7 +5857,10 @@ namespace WriterApp.Client.Pages
                     NormalizeOptional(_sceneTimelineEventId),
                     NormalizeOptional(_sceneTimeRef),
                     ParseTags(_sceneTagsText),
-                    ParseSceneReferences(_sceneReferencesJson));
+                    ParseSceneReferences(_sceneReferencesJson),
+                    NormalizeOptional(_sceneSummary),
+                    NormalizeSceneCardStatus(_sceneCardMetadataStatus),
+                    ParseTags(_sceneSubplotTagsText));
 
                 HttpResponseMessage response;
                 if (IsSceneRoute)
@@ -5828,7 +5879,10 @@ namespace WriterApp.Client.Pages
                         scenePayload.TimelineEventId,
                         scenePayload.TimeRef,
                         scenePayload.Tags,
-                        scenePayload.References);
+                        scenePayload.References,
+                        scenePayload.Summary,
+                        scenePayload.Status,
+                        scenePayload.SubplotTags);
                     response = await Http.PutAsJsonAsync($"api/sections/{sectionId}/scene-card", payload);
                 }
 
@@ -5860,15 +5914,21 @@ namespace WriterApp.Client.Pages
                             legacy.TimelineEventId,
                             legacy.TimeRef,
                             legacy.Tags,
-                            legacy.References);
+                            legacy.References,
+                            legacy.Summary,
+                            legacy.Status,
+                            legacy.SubplotTags);
                 }
                 if (updated is not null)
                 {
+                    _sceneSummary = updated.Summary ?? string.Empty;
+                    _sceneCardMetadataStatus = NormalizeSceneCardStatus(updated.Status);
                     _sceneNarrativePurpose = updated.NarrativePurpose ?? string.Empty;
                     _sceneEmotionalBeat = updated.EmotionalBeat ?? string.Empty;
                     _sceneKeyEvents = updated.KeyEvents ?? string.Empty;
                     _sceneOpenQuestions = updated.OpenQuestions ?? string.Empty;
                     _scenePovCharacterId = updated.PovCharacterId ?? string.Empty;
+                    _sceneSubplotTagsText = string.Join(", ", updated.SubplotTags ?? Array.Empty<string>());
                     _scenePlaceId = updated.PlaceId ?? string.Empty;
                     _sceneTimelineEventId = updated.TimelineEventId ?? string.Empty;
                     _sceneTimeRef = updated.TimeRef ?? string.Empty;
@@ -5980,6 +6040,8 @@ namespace WriterApp.Client.Pages
             }
 
             string beforeSnapshot = BuildSceneCardSnapshotJson();
+            ApplySuggestedValue(ref _sceneSummary, _sceneAiProposal.Summary);
+            ApplySuggestedValue(ref _sceneCardMetadataStatus, _sceneAiProposal.Status);
             ApplySuggestedValue(ref _sceneNarrativePurpose, _sceneAiProposal.NarrativePurpose);
             ApplySuggestedValue(ref _sceneEmotionalBeat, _sceneAiProposal.EmotionalBeat);
             ApplySuggestedValue(ref _sceneKeyEvents, _sceneAiProposal.KeyEvents);
@@ -5993,6 +6055,12 @@ namespace WriterApp.Client.Pages
             if (normalizedTags.Count > 0)
             {
                 _sceneTagsText = string.Join(", ", normalizedTags);
+            }
+
+            IReadOnlyList<string> normalizedSubplotTags = NormalizeTagList(_sceneAiProposal.SubplotTags);
+            if (normalizedSubplotTags.Count > 0)
+            {
+                _sceneSubplotTagsText = string.Join(", ", normalizedSubplotTags);
             }
 
             if (_sceneAiProposal.References is not null && _sceneAiProposal.References.Count > 0)
@@ -6030,7 +6098,10 @@ namespace WriterApp.Client.Pages
                 NormalizeOptional(_sceneTimelineEventId),
                 NormalizeOptional(_sceneTimeRef),
                 ParseTags(_sceneTagsText),
-                ParseSceneReferences(_sceneReferencesJson));
+                ParseSceneReferences(_sceneReferencesJson),
+                NormalizeOptional(_sceneSummary),
+                NormalizeSceneCardStatus(_sceneCardMetadataStatus),
+                ParseTags(_sceneSubplotTagsText));
             return JsonSerializer.Serialize(snapshot, JsonOptions);
         }
 
@@ -6089,6 +6160,32 @@ namespace WriterApp.Client.Pages
 
             target = suggestion.Trim();
         }
+
+        private static string NormalizeSceneCardStatus(string? status)
+        {
+            string normalized = status?.Trim() ?? string.Empty;
+            foreach (string option in SceneCardStatusOptions)
+            {
+                if (string.Equals(option, normalized, StringComparison.OrdinalIgnoreCase))
+                {
+                    return option;
+                }
+            }
+
+            return "Draft";
+        }
+
+        private IReadOnlyList<string> GetNarrativePurposeOptions()
+        {
+            if (string.IsNullOrWhiteSpace(_sceneNarrativePurpose)
+                || SceneNarrativePurposeOptions.Contains(_sceneNarrativePurpose, StringComparer.OrdinalIgnoreCase))
+            {
+                return SceneNarrativePurposeOptions;
+            }
+
+            return [.. SceneNarrativePurposeOptions, _sceneNarrativePurpose];
+        }
+
 
         private static IReadOnlyList<SceneCardReferenceDto> ParseSceneReferences(string json)
         {

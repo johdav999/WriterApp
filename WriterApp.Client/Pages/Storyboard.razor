@@ -1,0 +1,253 @@
+@page "/projects/{ProjectId:guid}/storyboard"
+@page "/app/projects/{ProjectId:guid}/storyboard"
+@using System.Net
+@using WriterApp.Application.Subscriptions
+@using WriterApp.Client.Components.Projects
+@using WriterApp.Client.Services
+@using WriterApp.Client.State
+@inject HttpClient Http
+@inject NavigationManager Navigation
+@inject ILogger<Storyboard> Logger
+@inject CurrentProjectStateService CurrentProjectStateService
+@inject CurrentSceneStateService CurrentSceneStateService
+@inject FeatureAccessService FeatureAccessService
+
+<PageTitle>Storyboard</PageTitle>
+
+<section class="storyboard-page">
+    <header class="storyboard-page__header">
+        <div>
+            <h1>Storyboard</h1>
+            <p class="storyboard-page__subtitle">Visual scene board for managing chapter and scene flow.</p>
+        </div>
+        @if (_project is not null)
+        {
+            <div class="storyboard-page__actions">
+                <button type="button"
+                        class="secondary"
+                        title="Open the project structure workspace."
+                        @onclick="OpenStructure">
+                    Open structure
+                </button>
+                <button type="button"
+                        class="secondary"
+                        title="Open the project workspace."
+                        @onclick="OpenProject">
+                    Open project
+                </button>
+            </div>
+        }
+    </header>
+
+    @if (!string.IsNullOrWhiteSpace(_error))
+    {
+        <div class="storyboard-page__error">@_error</div>
+    }
+
+    @if (_loading)
+    {
+        <div class="storyboard-page__state">Loading storyboard...</div>
+    }
+    else if (_project is null)
+    {
+        <div class="storyboard-page__state">Project not found.</div>
+    }
+    else
+    {
+        <div class="storyboard-page__layout">
+            <ProjectStoryboard Project="_project"
+                               Nodes="_nodes"
+                               SelectedSceneId="SingleSelectedSceneId"
+                               SelectedSceneIds="_selectedSceneIds"
+                               OnSelectionChanged="HandleSelectionChangedAsync"
+                               OnSceneUpdated="OnSceneUpdatedAsync"
+                               OnStructureChanged="RefreshStoryboardAsync" />
+
+            <StoryboardSceneInspector ProjectId="ProjectId"
+                                      SceneNode="SelectedSceneNode"
+                                      SelectionCount="_selectedSceneIds.Count"
+                                      SceneUpdated="OnSceneUpdatedAsync" />
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter]
+    public Guid ProjectId { get; set; }
+
+    private ProjectDto? _project;
+    private readonly List<ProjectNodeDto> _nodes = new();
+    private bool _loading = true;
+    private string? _error;
+    private HashSet<Guid> _selectedSceneIds = new();
+    private Guid? _primarySelectedSceneId;
+
+    private Guid? SingleSelectedSceneId => _selectedSceneIds.Count == 1
+        ? _primarySelectedSceneId is Guid primary && _selectedSceneIds.Contains(primary)
+            ? primary
+            : _selectedSceneIds.First()
+        : null;
+
+    private ProjectNodeDto? SelectedSceneNode => SingleSelectedSceneId.HasValue
+        ? _nodes.FirstOrDefault(node => node.Id == SingleSelectedSceneId.Value)
+        : null;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!FeatureAccessService.CanUse(FeatureKey.ProjectStoryboard))
+        {
+            Navigation.NavigateTo(
+                FeatureAccessService.GetUpgradePathWithReturn(
+                    FeatureKey.ProjectStoryboard,
+                    $"/projects/{ProjectId:D}/storyboard"),
+                replace: true);
+            return;
+        }
+
+        await LoadStoryboardAsync();
+    }
+
+    private async Task LoadStoryboardAsync()
+    {
+        _loading = true;
+        _error = null;
+
+        try
+        {
+            using HttpResponseMessage response = await Http.GetAsync($"api/projects/{ProjectId}/tree");
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                _project = null;
+                _nodes.Clear();
+                return;
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                _error = "Failed to load storyboard.";
+                _project = null;
+                _nodes.Clear();
+                return;
+            }
+
+            ProjectTreeDto? tree = await response.Content.ReadFromJsonAsync<ProjectTreeDto>();
+            if (tree?.Project is null)
+            {
+                _error = "Failed to load storyboard.";
+                _project = null;
+                _nodes.Clear();
+                return;
+            }
+
+            _project = tree.Project;
+            CurrentProjectStateService.SetCurrent(_project.Id, _project.Title);
+            _nodes.Clear();
+            _nodes.AddRange(tree.Nodes.OrderBy(node => node.ParentId).ThenBy(node => node.OrderIndex));
+            PreserveSelectedScene();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Storyboard page failed to load. ProjectId={ProjectId}", ProjectId);
+            _error = "Failed to load storyboard.";
+            _project = null;
+            _nodes.Clear();
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private Task RefreshStoryboardAsync()
+    {
+        return LoadStoryboardAsync();
+    }
+
+    private Task HandleSelectionChangedAsync(StoryboardSelectionChange selection)
+    {
+        _selectedSceneIds = selection.SelectedSceneIds
+            .Where(sceneId => _nodes.Any(node => node.Id == sceneId))
+            .ToHashSet();
+        _primarySelectedSceneId = selection.PrimarySceneId;
+        SyncCurrentSceneState();
+        return Task.CompletedTask;
+    }
+
+    private Task OnSceneUpdatedAsync(StoryboardSceneInspectorUpdate update)
+    {
+        int index = _nodes.FindIndex(node => node.Id == update.SceneNode.Id);
+        if (index >= 0)
+        {
+            _nodes[index] = update.SceneNode;
+        }
+
+        if (_selectedSceneIds.Count == 0)
+        {
+            _selectedSceneIds = [update.SceneNode.Id];
+            _primarySelectedSceneId = update.SceneNode.Id;
+        }
+
+        SyncCurrentSceneState();
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    private void PreserveSelectedScene()
+    {
+        _selectedSceneIds.RemoveWhere(sceneId => _nodes.All(node => node.Id != sceneId));
+
+        if (_selectedSceneIds.Count > 0)
+        {
+            if (!_primarySelectedSceneId.HasValue || !_selectedSceneIds.Contains(_primarySelectedSceneId.Value))
+            {
+                _primarySelectedSceneId = _selectedSceneIds.First();
+            }
+
+            SyncCurrentSceneState();
+            return;
+        }
+
+        if (CurrentSceneStateService.ProjectId == ProjectId
+            && CurrentSceneStateService.SceneNodeId.HasValue
+            && _nodes.Any(node => node.Id == CurrentSceneStateService.SceneNodeId.Value))
+        {
+            _selectedSceneIds = [CurrentSceneStateService.SceneNodeId.Value];
+            _primarySelectedSceneId = CurrentSceneStateService.SceneNodeId.Value;
+            SyncCurrentSceneState();
+            return;
+        }
+
+        _selectedSceneIds.Clear();
+        _primarySelectedSceneId = null;
+        CurrentSceneStateService.Clear();
+    }
+
+    private void SyncCurrentSceneState()
+    {
+        Guid? singleSceneId = SingleSelectedSceneId;
+        if (!singleSceneId.HasValue)
+        {
+            CurrentSceneStateService.Clear();
+            return;
+        }
+
+        ProjectNodeDto? scene = _nodes.FirstOrDefault(node => node.Id == singleSceneId.Value);
+        if (scene is null)
+        {
+            CurrentSceneStateService.Clear();
+            return;
+        }
+
+        CurrentSceneStateService.SetCurrent(ProjectId, scene.Id, scene.Title);
+    }
+
+    private void OpenStructure()
+    {
+        Navigation.NavigateTo($"projects/{ProjectId:D}");
+    }
+
+    private void OpenProject()
+    {
+        Navigation.NavigateTo($"projects/{ProjectId:D}");
+    }
+}

@@ -21,5 +21,15 @@ window.writerProjectsMenu = window.writerProjectsMenu || {
             width: window.innerWidth || document.documentElement.clientWidth || 0,
             height: window.innerHeight || document.documentElement.clientHeight || 0
         };
+    },
+    focusAndSelectInput: function (element) {
+        if (!element || typeof element.focus !== "function") {
+            return;
+        }
+
+        element.focus();
+        if (typeof element.select === "function") {
+            element.select();
+        }
     }
 };

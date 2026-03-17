@@ -1,17 +1,81 @@
-<article class="scene-card" aria-label="@Title">
+@inject IJSRuntime JS
+
+<article class="@GetCardClass()"
+         aria-label="@Title">
     <div class="scene-card-top">
-        <span class="scene-card-drag-handle drag-handle"
-              title="Drag scene"
-              aria-label="Drag scene"
-              draggable="true">
-            <span class="scene-card-drag-dots" aria-hidden="true">
-                <span></span>
-                <span></span>
-                <span></span>
-                <span></span>
+        <div class="scene-card-title-row">
+            <span class="scene-card-drag-handle drag-handle"
+                  title="Drag scene"
+                  aria-label="Drag scene"
+                  draggable="true">
+                <span class="scene-card-drag-dots" aria-hidden="true">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </span>
             </span>
-        </span>
-        <div class="scene-card-title">@Title</div>
+            <div class="scene-card-title-group">
+                @if (_isEditingTitle)
+                {
+                    <input class="scene-card-title-input"
+                           value="@_titleDraft"
+                           @ref="_titleInputRef"
+                           @oninput="OnTitleDraftInput"
+                           @onkeydown:stopPropagation="true"
+                           @onkeydown="HandleTitleKeyDownAsync"
+                           @onblur="CommitTitleEditAsync" />
+                }
+                else
+                {
+                    <button type="button"
+                            class="scene-card-title-button"
+                            title="Edit title"
+                            @onclick:stopPropagation="true"
+                            @onclick="StartTitleEditAsync">
+                        <span class="scene-card-title">@_displayTitle</span>
+                        <span class="material-symbols-rounded scene-card-edit-icon" aria-hidden="true">edit</span>
+                    </button>
+                }
+            </div>
+        </div>
+        <div class="scene-card-top-meta">
+            @if (HasWarnings)
+            {
+                <span class="scene-card-warning"
+                      title="@WarningTooltip"
+                      aria-label="@WarningTooltip">
+                    <span aria-hidden="true">⚠</span>
+                </span>
+            }
+            @if (!string.IsNullOrWhiteSpace(Status))
+            {
+                @if (_isEditingStatus)
+                {
+                    <select class="scene-card-status-select"
+                            value="@_statusDraft"
+                            @ref="_statusSelectRef"
+                            @onchange="CommitStatusEditAsync"
+                            @onblur="CloseStatusEdit"
+                            @onclick:stopPropagation="true">
+                        @foreach (string option in StatusOptions)
+                        {
+                            <option value="@option">@option</option>
+                        }
+                    </select>
+                }
+                else
+                {
+                    <button type="button"
+                            class="@($"{GetStatusBadgeClass()} scene-card-status-button")"
+                            title="Change status"
+                            @onclick:stopPropagation="true"
+                            @onclick="StartStatusEditAsync">
+                        @_displayStatus
+                    </button>
+                }
+            }
+        </div>
     </div>
 
     @if (!string.IsNullOrWhiteSpace(Summary))
@@ -19,38 +83,41 @@
         <div class="scene-card-summary">@Summary</div>
     }
 
-    @if (WordCount > 0 || HasMetadata || UpdatedUtc.HasValue)
+    @if (HasStructuredMetadata)
+    {
+        <div class="scene-card-metadata">
+            @if (!string.IsNullOrWhiteSpace(Pov))
+            {
+                <span class="scene-card-chip scene-card-chip--pov">
+                    <span class="scene-card-chip-dot" aria-hidden="true"></span>
+                    <span>POV: @Pov</span>
+                </span>
+            }
+            @foreach (string subplotTag in SubplotTags)
+            {
+                <span class="scene-card-chip">#@subplotTag</span>
+            }
+            @if (!string.IsNullOrWhiteSpace(NarrativePurpose))
+            {
+                <span class="scene-card-chip scene-card-chip--purpose">@NarrativePurpose</span>
+            }
+            @if (HasNotes)
+            {
+                <span class="scene-card-chip">Notes</span>
+            }
+        </div>
+    }
+
+    @if (WordCount > 0 || UpdatedUtc.HasValue)
     {
         <div class="scene-card-footer">
             @if (WordCount > 0)
             {
                 <div class="scene-card-meta">@WordCount words</div>
             }
-
-            @if (HasMetadata || UpdatedUtc.HasValue)
+            @if (UpdatedUtc.HasValue)
             {
-                <div class="scene-card-metadata">
-                    @if (!string.IsNullOrWhiteSpace(Status))
-                    {
-                        <span class="scene-card-chip">@Status</span>
-                    }
-                    @if (!string.IsNullOrWhiteSpace(Tag))
-                    {
-                        <span class="scene-card-chip">@Tag</span>
-                    }
-                    @if (!string.IsNullOrWhiteSpace(Pov))
-                    {
-                        <span class="scene-card-chip">POV: @Pov</span>
-                    }
-                    @if (HasNotes)
-                    {
-                        <span class="scene-card-chip">Notes</span>
-                    }
-                    @if (UpdatedUtc.HasValue)
-                    {
-                        <span class="scene-card-chip">Updated @FormatRelativeDate(UpdatedUtc.Value)</span>
-                    }
-                </div>
+                <div class="scene-card-meta">Updated @FormatRelativeDate(UpdatedUtc.Value)</div>
             }
         </div>
     }
@@ -88,10 +155,19 @@
     public string? Status { get; set; }
 
     [Parameter]
-    public string? Tag { get; set; }
+    public string? Pov { get; set; }
 
     [Parameter]
-    public string? Pov { get; set; }
+    public IReadOnlyList<string> SubplotTags { get; set; } = Array.Empty<string>();
+
+    [Parameter]
+    public string? NarrativePurpose { get; set; }
+
+    [Parameter]
+    public string? AccentClass { get; set; }
+
+    [Parameter]
+    public bool IsSelected { get; set; }
 
     [Parameter]
     public bool HasNotes { get; set; }
@@ -105,11 +181,238 @@
     [Parameter]
     public EventCallback<Guid> RevealInNavigator { get; set; }
 
-    private bool HasMetadata =>
-        !string.IsNullOrWhiteSpace(Status)
-        || !string.IsNullOrWhiteSpace(Tag)
-        || !string.IsNullOrWhiteSpace(Pov)
+    [Parameter]
+    public Func<SceneCardTitleQuickEditRequest, Task<bool>>? SaveTitleQuickEdit { get; set; }
+
+    [Parameter]
+    public Func<SceneCardStatusQuickEditRequest, Task<bool>>? SaveStatusQuickEdit { get; set; }
+
+    private static readonly string[] StatusOptions = ["Idea", "Draft", "Revised", "Final"];
+    private ElementReference _titleInputRef;
+    private ElementReference _statusSelectRef;
+    private bool _focusTitleInputPending;
+    private bool _focusStatusSelectPending;
+    private bool _isEditingTitle;
+    private bool _isEditingStatus;
+    private string _titleDraft = string.Empty;
+    private string _displayTitle = string.Empty;
+    private string _statusDraft = "Draft";
+    private string _displayStatus = "Draft";
+
+    private bool HasStructuredMetadata =>
+        !string.IsNullOrWhiteSpace(Pov)
+        || SubplotTags.Count > 0
+        || !string.IsNullOrWhiteSpace(NarrativePurpose)
         || HasNotes;
+
+    private bool HasWarnings => MissingFieldWarnings.Count > 0;
+
+    private IReadOnlyList<string> MissingFieldWarnings
+    {
+        get
+        {
+            List<string> warnings = new();
+            if (string.IsNullOrWhiteSpace(Summary))
+            {
+                warnings.Add("Missing summary");
+            }
+
+            if (string.IsNullOrWhiteSpace(Pov))
+            {
+                warnings.Add("Missing POV");
+            }
+
+            if (string.IsNullOrWhiteSpace(NarrativePurpose))
+            {
+                warnings.Add("Missing narrative purpose");
+            }
+
+            return warnings;
+        }
+    }
+
+    private string WarningTooltip => string.Join(" | ", MissingFieldWarnings);
+
+    protected override void OnParametersSet()
+    {
+        if (!_isEditingTitle)
+        {
+            _displayTitle = Title;
+            _titleDraft = Title;
+        }
+
+        string normalizedStatus = NormalizeStatus(Status);
+        if (!_isEditingStatus)
+        {
+            _displayStatus = normalizedStatus;
+            _statusDraft = normalizedStatus;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_focusTitleInputPending)
+        {
+            _focusTitleInputPending = false;
+            await JS.InvokeVoidAsync("writerProjectsMenu.focusAndSelectInput", _titleInputRef);
+        }
+
+        if (_focusStatusSelectPending)
+        {
+            _focusStatusSelectPending = false;
+            await _statusSelectRef.FocusAsync();
+        }
+    }
+
+    private string GetCardClass()
+    {
+        List<string> classes = new() { "scene-card" };
+        if (!string.IsNullOrWhiteSpace(AccentClass))
+        {
+            classes.Add(AccentClass);
+        }
+
+        if (IsSelected)
+        {
+            classes.Add("scene-card--selected");
+        }
+
+        return string.Join(" ", classes);
+    }
+
+    private string GetStatusBadgeClass()
+    {
+        string normalized = _displayStatus.Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "idea" => "scene-card-status scene-card-status--idea",
+            "revised" => "scene-card-status scene-card-status--revised",
+            "final" => "scene-card-status scene-card-status--final",
+            _ => "scene-card-status scene-card-status--draft"
+        };
+    }
+
+    private Task StartTitleEditAsync()
+    {
+        _isEditingStatus = false;
+        _isEditingTitle = true;
+        _titleDraft = _displayTitle;
+        _focusTitleInputPending = true;
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private void OnTitleDraftInput(ChangeEventArgs args)
+    {
+        _titleDraft = args.Value?.ToString() ?? string.Empty;
+    }
+
+    private async Task HandleTitleKeyDownAsync(KeyboardEventArgs args)
+    {
+        if (string.Equals(args.Key, "Enter", StringComparison.Ordinal))
+        {
+            await CommitTitleEditAsync();
+            return;
+        }
+
+        if (string.Equals(args.Key, "Escape", StringComparison.Ordinal))
+        {
+            CancelTitleEdit();
+        }
+    }
+
+    private async Task CommitTitleEditAsync()
+    {
+        if (!_isEditingTitle)
+        {
+            return;
+        }
+
+        string previous = _displayTitle;
+        string next = _titleDraft.Trim();
+        _isEditingTitle = false;
+
+        if (string.IsNullOrWhiteSpace(next) || string.Equals(previous, next, StringComparison.Ordinal))
+        {
+            _titleDraft = previous;
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        _displayTitle = next;
+        await InvokeAsync(StateHasChanged);
+
+        bool success = SaveTitleQuickEdit is not null
+            && await SaveTitleQuickEdit(new SceneCardTitleQuickEditRequest(SceneId, next));
+        if (!success)
+        {
+            _displayTitle = previous;
+        }
+
+        _titleDraft = _displayTitle;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void CancelTitleEdit()
+    {
+        _isEditingTitle = false;
+        _titleDraft = _displayTitle;
+    }
+
+    private Task StartStatusEditAsync()
+    {
+        _isEditingTitle = false;
+        _isEditingStatus = true;
+        _statusDraft = _displayStatus;
+        _focusStatusSelectPending = true;
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private async Task CommitStatusEditAsync(ChangeEventArgs args)
+    {
+        string previous = _displayStatus;
+        string next = NormalizeStatus(args.Value?.ToString());
+        _isEditingStatus = false;
+        _statusDraft = next;
+
+        if (string.Equals(previous, next, StringComparison.Ordinal))
+        {
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        _displayStatus = next;
+        await InvokeAsync(StateHasChanged);
+
+        bool success = SaveStatusQuickEdit is not null
+            && await SaveStatusQuickEdit(new SceneCardStatusQuickEditRequest(SceneId, next));
+        if (!success)
+        {
+            _displayStatus = previous;
+        }
+
+        _statusDraft = _displayStatus;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void CloseStatusEdit()
+    {
+        _isEditingStatus = false;
+        _statusDraft = _displayStatus;
+    }
+
+    private static string NormalizeStatus(string? status)
+    {
+        string normalized = status?.Trim() ?? string.Empty;
+        foreach (string option in StatusOptions)
+        {
+            if (string.Equals(option, normalized, StringComparison.OrdinalIgnoreCase))
+            {
+                return option;
+            }
+        }
+
+        return "Draft";
+    }
 
     private static string FormatRelativeDate(DateTimeOffset updatedUtc)
     {

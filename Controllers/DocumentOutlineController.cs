@@ -675,26 +675,37 @@ namespace WriterApp.Controllers
             string? purpose = null;
             string? emotionalBeat = null;
             string? openQuestions = null;
+            string? summary = null;
+            string? status = null;
             string? povCharacterId = null;
             string? placeId = null;
             string? timeRef = null;
             string? tagsJson = null;
+            string? subplotTagsJson = null;
             string? keyEvents = null;
 
             try
             {
                 using JsonDocument doc = JsonDocument.Parse(metadataJson);
                 JsonElement root = doc.RootElement;
-                purpose = GetMetadataValue(root, "purpose");
+                purpose = GetMetadataValue(root, "narrativePurpose") ?? GetMetadataValue(root, "purpose");
                 emotionalBeat = GetMetadataValue(root, "emotionalBeat");
                 openQuestions = JoinMetadataArray(root, "openQuestions");
                 keyEvents = JoinMetadataArray(root, "keyEvents");
+                summary = GetMetadataValue(root, "summary");
+                status = GetMetadataValue(root, "status");
                 povCharacterId = GetMetadataValue(root, "povCharacterId");
                 placeId = GetMetadataValue(root, "placeId");
                 timeRef = GetMetadataValue(root, "timeRef");
                 if (root.TryGetProperty("tags", out JsonElement tags) && tags.ValueKind == JsonValueKind.Array)
                 {
                     tagsJson = tags.GetRawText();
+                }
+
+                if (TryGetPropertyIgnoreCase(root, "subplotTags", out JsonElement subplotTags)
+                    && subplotTags.ValueKind == JsonValueKind.Array)
+                {
+                    subplotTagsJson = subplotTags.GetRawText();
                 }
             }
             catch (JsonException)
@@ -734,12 +745,27 @@ namespace WriterApp.Controllers
                 card.OpenQuestions = openQuestions;
             }
 
+            if (!string.IsNullOrWhiteSpace(summary))
+            {
+                card.Summary = summary;
+            }
+
+            if (!string.IsNullOrWhiteSpace(status))
+            {
+                card.Status = status;
+            }
+
             card.PovCharacterId = string.IsNullOrWhiteSpace(povCharacterId) ? card.PovCharacterId : povCharacterId;
             card.PlaceId = string.IsNullOrWhiteSpace(placeId) ? card.PlaceId : placeId;
             card.TimeRef = string.IsNullOrWhiteSpace(timeRef) ? card.TimeRef : timeRef;
             if (!string.IsNullOrWhiteSpace(tagsJson))
             {
                 card.TagsJson = tagsJson;
+            }
+
+            if (!string.IsNullOrWhiteSpace(subplotTagsJson))
+            {
+                card.SubplotTagsJson = subplotTagsJson;
             }
 
             card.UpdatedUtc = DateTimeOffset.UtcNow;
@@ -781,6 +807,21 @@ namespace WriterApp.Controllers
             }
 
             return string.Join(Environment.NewLine, items);
+        }
+
+        private static bool TryGetPropertyIgnoreCase(JsonElement root, string propertyName, out JsonElement value)
+        {
+            foreach (JsonProperty property in root.EnumerateObject())
+            {
+                if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = property.Value;
+                    return true;
+                }
+            }
+
+            value = default;
+            return false;
         }
 
         private async Task<string> BuildOutlineFromNodesAsync(Guid documentId, CancellationToken ct)

@@ -1135,11 +1135,14 @@ namespace WriterApp.Controllers
                         EmotionalBeat = sourceCard.EmotionalBeat,
                         KeyEvents = sourceCard.KeyEvents,
                         OpenQuestions = sourceCard.OpenQuestions,
+                        Summary = sourceCard.Summary,
+                        Status = sourceCard.Status,
                         PovCharacterId = sourceCard.PovCharacterId,
                         PlaceId = sourceCard.PlaceId,
                         TimelineEventId = sourceCard.TimelineEventId,
                         TimeRef = sourceCard.TimeRef,
                         TagsJson = sourceCard.TagsJson,
+                        SubplotTagsJson = sourceCard.SubplotTagsJson,
                         ReferencesJson = sourceCard.ReferencesJson,
                         UpdatedUtc = now
                     });
