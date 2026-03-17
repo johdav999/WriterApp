@@ -8,6 +8,7 @@
 @using WriterApp.Application.Documents
 @using WriterApp.Application.Subscriptions
 @using WriterApp.Client.Components.Covers
+@using WriterApp.Client.Components.Projects
 @using WriterApp.Client.Services
 @using WriterApp.Client.Utilities
 @inject HttpClient Http
@@ -208,6 +209,14 @@ else
                         @onclick='() => SelectTab("cover")'>
                     Cover
                 </button>
+                <PlanGatedButton Feature="@nameof(FeatureKey.ProjectStoryboard)"
+                                 Class="@GetTabClass("storyboard")"
+                                 AllowedTitle="Open storyboard workspace."
+                                 LockedTitle="Storyboard requires the Professional plan."
+                                 AriaLabel="Storyboard"
+                                 OnClick='() => SelectTab("storyboard")'>
+                    Storyboard
+                </PlanGatedButton>
                 @if (_goalsEnabled)
                 {
                     <PlanGatedButton Feature="@nameof(FeatureKey.ProjectProgressDashboard)"
@@ -233,6 +242,15 @@ else
             @if (_activeTab == "cover")
             {
                 <ProjectCoverStudio Project="_activeProject" />
+            }
+            else if (_activeTab == "storyboard")
+            {
+                @if (CanAccessStoryboard)
+                {
+                    <ProjectStoryboard Project="_activeProject"
+                                       Nodes="_nodes"
+                                       OnStructureChanged="RefreshActiveProjectFromStoryboardAsync" />
+                }
             }
             else if (_activeTab == "progress" && _goalsEnabled)
             {
@@ -755,6 +773,7 @@ else
     private int _sessionElapsedSeconds;
     private int _sessionLiveDelta;
     private bool CanEditProjectStructure => FeatureAccessService.CanUse(FeatureKey.ProjectStructureEditing);
+    private bool CanAccessStoryboard => FeatureAccessService.CanUse(FeatureKey.ProjectStoryboard);
     private string ProjectStructureLockedMessage => $"{FeatureAccessService.GetUpgradeMessage(FeatureKey.ProjectStructureEditing)}. Existing projects stay readable, but structure changes are locked.";
     private bool IsInlineRenameActive => _renamingNodeId.HasValue;
 
@@ -765,6 +784,12 @@ else
 
     [Parameter]
     public Guid? ProjectId { get; set; }
+
+    [SupplyParameterFromQuery(Name = "tab")]
+    public string? Tab { get; set; }
+
+    [SupplyParameterFromQuery(Name = "node")]
+    public Guid? Node { get; set; }
 
     [Parameter]
     public bool EmbedNavigator { get; set; }
@@ -803,6 +828,28 @@ else
 
     protected override async Task OnParametersSetAsync()
     {
+        string requestedTab = NormalizeTab(Tab);
+        if (string.Equals(requestedTab, "storyboard", StringComparison.Ordinal)
+            && !CanAccessStoryboard)
+        {
+            Navigation.NavigateTo(
+                FeatureAccessService.GetUpgradePathWithReturn(
+                    FeatureKey.ProjectStoryboard,
+                    BuildProjectWorkspaceReturnUrl()),
+                replace: true);
+            return;
+        }
+
+        bool tabChanged = !string.Equals(_activeTab, requestedTab, StringComparison.Ordinal);
+        _activeTab = requestedTab;
+
+        if (tabChanged && _activeTab == "progress" && _goalsEnabled && _activeProject is not null)
+        {
+            await LoadProgressAsync(_activeProject.Id);
+        }
+
+        ApplyRequestedNodeSelection();
+
         if (!_projectsEnabled || !_selectedProjectId.HasValue || !ProjectId.HasValue || ProjectId.Value == _selectedProjectId.Value)
         {
             return;
@@ -867,7 +914,7 @@ else
         }
     }
 
-    private async Task LoadTreeAsync(Guid projectId)
+    private async Task LoadTreeAsync(Guid projectId, bool includeProgress = true)
     {
         _error = null;
         using HttpResponseMessage response = await Http.GetAsync($"api/projects/{projectId}/tree");
@@ -898,6 +945,8 @@ else
             _selectedNodeId = null;
         }
 
+        ApplyRequestedNodeSelection();
+
         if (!_selectedNodeId.HasValue && _nodes.Count > 0)
         {
             _selectedNodeId = _nodes[0].Id;
@@ -907,9 +956,16 @@ else
 
         SyncCurrentSceneSelectionState();
 
-        if (_goalsEnabled)
+        if (includeProgress && _goalsEnabled)
         {
-            await LoadProgressAsync(projectId);
+            try
+            {
+                await LoadProgressAsync(projectId);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Project progress refresh failed after loading tree. ProjectId={ProjectId}", projectId);
+            }
         }
     }
 
@@ -927,34 +983,95 @@ else
 
     private async Task SelectTab(string tab)
     {
-        _activeTab = tab;
+        _activeTab = NormalizeTab(tab);
+        if (string.Equals(_activeTab, "storyboard", StringComparison.Ordinal) && !CanAccessStoryboard)
+        {
+            Navigation.NavigateTo(
+                FeatureAccessService.GetUpgradePathWithReturn(
+                    FeatureKey.ProjectStoryboard,
+                    BuildProjectWorkspaceReturnUrl()));
+            return;
+        }
+
         if (_activeTab == "progress" && _goalsEnabled && _activeProject is not null)
         {
             await LoadProgressAsync(_activeProject.Id);
         }
     }
 
+    private string BuildProjectWorkspaceReturnUrl()
+    {
+        return _activeProject is not null
+            ? $"/projects/{_activeProject.Id:D}"
+            : ProjectId.HasValue
+                ? $"/projects/{ProjectId.Value:D}"
+                : "/projects";
+    }
+
+    private void ApplyRequestedNodeSelection()
+    {
+        if (!Node.HasValue || _nodes.Count == 0)
+        {
+            return;
+        }
+
+        if (_nodes.Any(node => node.Id == Node.Value))
+        {
+            _selectedNodeId = Node.Value;
+            SyncInspectorRenameDraft();
+        }
+    }
+
+    private string NormalizeTab(string? tab)
+    {
+        if (string.Equals(tab, "cover", StringComparison.OrdinalIgnoreCase))
+        {
+            return "cover";
+        }
+
+        if (string.Equals(tab, "storyboard", StringComparison.OrdinalIgnoreCase))
+        {
+            return "storyboard";
+        }
+
+        if (_goalsEnabled && string.Equals(tab, "progress", StringComparison.OrdinalIgnoreCase))
+        {
+            return "progress";
+        }
+
+        return "structure";
+    }
+
     private async Task LoadProgressAsync(Guid projectId)
     {
         _error = null;
-        using HttpResponseMessage response = await Http.GetAsync($"api/projects/{projectId}/progress");
-        if (!response.IsSuccessStatusCode)
+        try
         {
+            using HttpResponseMessage response = await Http.GetAsync($"api/projects/{projectId}/progress");
+            if (!response.IsSuccessStatusCode)
+            {
+                _progress = null;
+                return;
+            }
+
+            _progress = await response.Content.ReadFromJsonAsync<ProjectProgressDashboardDto>();
+            if (_progress is null)
+            {
+                return;
+            }
+
+            _dailyTargetDraft = _progress.Goal.DailyTargetWords;
+            _weeklyTargetDraft = _progress.Goal.WeeklyTargetWords;
+            _timezoneDraft = string.IsNullOrWhiteSpace(_progress.Goal.Timezone) ? "UTC" : _progress.Goal.Timezone;
+            UpdateSessionTelemetry();
+            RestartSessionTicker();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to load project progress. ProjectId={ProjectId}", projectId);
             _progress = null;
             return;
         }
-
-        _progress = await response.Content.ReadFromJsonAsync<ProjectProgressDashboardDto>();
-        if (_progress is null)
-        {
-            return;
-        }
-
-        _dailyTargetDraft = _progress.Goal.DailyTargetWords;
-        _weeklyTargetDraft = _progress.Goal.WeeklyTargetWords;
-        _timezoneDraft = string.IsNullOrWhiteSpace(_progress.Goal.Timezone) ? "UTC" : _progress.Goal.Timezone;
-        UpdateSessionTelemetry();
-        RestartSessionTicker();
     }
 
     private async Task SaveGoalsAsync()
@@ -2909,6 +3026,16 @@ else
         }
 
         Navigation.NavigateTo(target);
+    }
+
+    private async Task RefreshActiveProjectFromStoryboardAsync()
+    {
+        if (_activeProject is null)
+        {
+            return;
+        }
+
+        await LoadTreeAsync(_activeProject.Id, includeProgress: false);
     }
 
     private async Task OpenManuscriptAsync(Guid projectId)

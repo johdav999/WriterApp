@@ -176,6 +176,7 @@ namespace WriterApp.Client.Services
                 FeatureKey.ExportTemplates => "Export Templates",
                 FeatureKey.ExportPresets => "Export Presets",
                 FeatureKey.ProjectStructureEditing => "Project Structure Editing",
+                FeatureKey.ProjectStoryboard => "Storyboard",
                 FeatureKey.ProjectProgressDashboard => "Project Progress Dashboard",
                 FeatureKey.OutlineTemplates => "Outline Templates",
                 _ => HumanizeFeatureName(feature.ToString())

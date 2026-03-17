@@ -1,0 +1,970 @@
+@using System.Text.Json
+@using WriterApp.Application.Documents
+@using WriterApp.Application.Subscriptions
+@using System.Net.Http.Json
+@using Microsoft.AspNetCore.Components.Web
+@inject HttpClient Http
+@inject NavigationManager Navigation
+@inject ILogger<ProjectStoryboard> Logger
+@inject IJSRuntime JS
+
+<section class="project-storyboard" aria-label="Storyboard">
+    <div class="project-storyboard-header">
+        <h3>Storyboard</h3>
+        <p>Visual scene board for managing chapter and scene flow.</p>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_storyboardError))
+    {
+        <div class="project-storyboard-error">@_storyboardError</div>
+    }
+
+    @if (ChapterColumns.Count == 0)
+    {
+        <div class="project-storyboard-empty">
+            <strong>No scenes yet.</strong>
+            <span>Add scenes in Structure or Navigator to begin.</span>
+        </div>
+    }
+    else
+    {
+        <div class="project-storyboard-layout">
+            <div class="project-storyboard-main">
+                <div class="project-storyboard-board-meta">
+                    <span>@ChapterColumns.Count chapter@(ChapterColumns.Count == 1 ? string.Empty : "s")</span>
+                    <span>Scroll horizontally to move across the manuscript.</span>
+                </div>
+
+                <div class="project-storyboard-board" role="list" aria-label="Storyboard chapter columns">
+                    @foreach (StoryboardChapterColumn column in ChapterColumns)
+                    {
+                        <section class="storyboard-column" role="listitem" aria-label="@column.Chapter.Title">
+                            <header class="storyboard-column-header">
+                                @if (!string.IsNullOrWhiteSpace(column.PartTitle))
+                                {
+                                    <div class="storyboard-part-label">@column.PartTitle</div>
+                                }
+                                <h4>@column.Chapter.Title</h4>
+                                <div class="storyboard-column-toolbar">
+                                    <div class="storyboard-column-meta">
+                                        @column.Scenes.Count scene@(column.Scenes.Count == 1 ? string.Empty : "s")
+                                    </div>
+                                    <div class="storyboard-column-actions">
+                                        <button type="button"
+                                                class="storyboard-column-action"
+                                                @onclick="() => OpenChapter(column.Chapter.Id)">
+                                            Open chapter
+                                        </button>
+                                    </div>
+                                </div>
+                            </header>
+
+                            <div class="storyboard-column-body">
+                                <div class="@GetColumnDropClass(column.Chapter.Id, null)"
+                                     @ondragover:preventDefault
+                                     @ondrop:preventDefault
+                                     @ondragover="args => OnColumnDragOver(column.Chapter.Id, null, args)"
+                                     @ondrop="args => OnColumnDropAsync(column.Chapter.Id, null, args)">
+                                    @if (column.Scenes.Count == 0)
+                                    {
+                                        <div class="storyboard-scene-empty">No scenes in this chapter yet.</div>
+                                    }
+                                    else
+                                    {
+                                        <div class="@GetGapDropClass(column.Chapter.Id, column.Scenes[0].SceneId)"
+                                             @ondragover:preventDefault
+                                             @ondrop:preventDefault
+                                             @ondragover="args => OnColumnDragOver(column.Chapter.Id, column.Scenes[0].SceneId, args)"
+                                             @ondrop="args => OnColumnDropAsync(column.Chapter.Id, column.Scenes[0].SceneId, args)"></div>
+
+                                        @foreach (StoryboardSceneCard scene in column.Scenes)
+                                        {
+                                            <div id="@GetSceneElementId(scene.SceneId)"
+                                                 class="@GetSceneDropClass(column.Chapter.Id, scene.SceneId)"
+                                                 draggable="@(!_moveInFlight)"
+                                                 @ondragstart="args => OnSceneDragStart(scene.SceneId, args)"
+                                                 @ondragend="OnSceneDragEnd">
+                                                <SceneCard SceneId="@scene.SceneId"
+                                                           Title="@scene.Title"
+                                                           Summary="@scene.Summary"
+                                                           WordCount="@scene.WordCount"
+                                                           Status="@scene.Status"
+                                                           Tag="@scene.Tag"
+                                                           Pov="@scene.Pov"
+                                                           HasNotes="@scene.HasNotes"
+                                                           UpdatedUtc="@scene.UpdatedUtc"
+                                                           OpenScene="OpenSceneAsync"
+                                                           RevealInNavigator="RevealInNavigator" />
+                                            </div>
+
+                                            <div class="@GetGapDropClass(column.Chapter.Id, GetNextSceneId(column.Scenes, scene.SceneId))"
+                                                 @ondragover:preventDefault
+                                                 @ondrop:preventDefault
+                                                 @ondragover="args => OnColumnDragOver(column.Chapter.Id, GetNextSceneId(column.Scenes, scene.SceneId), args)"
+                                                 @ondrop="args => OnColumnDropAsync(column.Chapter.Id, GetNextSceneId(column.Scenes, scene.SceneId), args)"></div>
+                                        }
+                                    }
+                                </div>
+
+                                <PlanGatedButton Feature="@nameof(FeatureKey.ProjectStructureEditing)"
+                                                 Class="storyboard-add-scene"
+                                                 LockedTitle="Project structure changes are locked on your current plan."
+                                                 AriaLabel="Add scene"
+                                                 ShowLockIndicator="false"
+                                                 IsBusy="@(_addingSceneChapterId == column.Chapter.Id)"
+                                                 IsActionDisabled="@_moveInFlight"
+                                                 OnClick="() => AddSceneAsync(column.Chapter.Id)">
+                                    <span class="storyboard-add-scene__icon bi bi-plus-lg" aria-hidden="true"></span>
+                                    <span>@(_addingSceneChapterId == column.Chapter.Id ? "Adding..." : "Add scene")</span>
+                                </PlanGatedButton>
+                            </div>
+                        </section>
+                    }
+                </div>
+            </div>
+
+            <aside class="storyboard-coach" aria-label="Storyboard coach">
+                <div class="storyboard-coach-header">
+                    <h4>Storyboard Coach</h4>
+                    <p>Deterministic structure observations from the current board.</p>
+                </div>
+
+                <div class="storyboard-coach-stats">
+                    <div><strong>@CoachSummary.TotalChapters</strong><span>chapters</span></div>
+                    <div><strong>@CoachSummary.TotalScenes</strong><span>scenes</span></div>
+                </div>
+
+                <div class="storyboard-coach-section">
+                    <h5>Observations</h5>
+                    @if (CoachSummary.Observations.Count == 0)
+                    {
+                        <div class="storyboard-coach-empty">No structural issues stand out right now.</div>
+                    }
+                    else
+                    {
+                        <ul class="storyboard-coach-list">
+                            @foreach (string observation in CoachSummary.Observations)
+                            {
+                                <li>@observation</li>
+                            }
+                        </ul>
+                    }
+                </div>
+
+                <div class="storyboard-coach-section">
+                    <h5>Actions</h5>
+                    <div class="storyboard-coach-actions">
+                        <button type="button" class="storyboard-coach-action" @onclick="OpenStructure">
+                            Open structure
+                        </button>
+                        <button type="button" class="storyboard-coach-action" @onclick="RefreshStoryboardAsync">
+                            Refresh storyboard
+                        </button>
+                    </div>
+                </div>
+            </aside>
+        </div>
+    }
+</section>
+
+@code {
+    private IReadOnlyList<StoryboardChapterColumn> ChapterColumns => BuildChapterColumns();
+    private StoryboardCoachSummary CoachSummary => BuildCoachSummary();
+
+    [Parameter]
+    public ProjectDto? Project { get; set; }
+
+    [Parameter]
+    public IReadOnlyList<ProjectNodeDto>? Nodes { get; set; }
+
+    [Parameter]
+    public EventCallback OnStructureChanged { get; set; }
+
+    private List<ProjectNodeDto> _renderNodes = new();
+    private Guid? _dragSceneId;
+    private Guid? _dropChapterId;
+    private Guid? _dropBeforeSceneId;
+    private bool _moveInFlight;
+    private Guid? _addingSceneChapterId;
+    private Guid? _highlightedSceneId;
+    private Guid? _pendingScrollSceneId;
+    private string? _storyboardError;
+
+    protected override void OnParametersSet()
+    {
+        if (_moveInFlight)
+        {
+            return;
+        }
+
+        _renderNodes = Nodes?
+            .OrderBy(node => node.ParentId)
+            .ThenBy(node => node.OrderIndex)
+            .ToList()
+            ?? new List<ProjectNodeDto>();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_pendingScrollSceneId.HasValue)
+        {
+            return;
+        }
+
+        Guid sceneId = _pendingScrollSceneId.Value;
+        _pendingScrollSceneId = null;
+        await JS.InvokeVoidAsync("tiptapEditor.scrollToElement", GetSceneElementId(sceneId));
+    }
+
+    private IReadOnlyList<StoryboardChapterColumn> BuildChapterColumns()
+    {
+        if (_renderNodes.Count == 0)
+        {
+            return Array.Empty<StoryboardChapterColumn>();
+        }
+
+        List<ProjectNodeDto> roots = _renderNodes
+            .Where(node => !node.ParentId.HasValue)
+            .OrderBy(node => node.OrderIndex)
+            .ToList();
+        Dictionary<Guid, List<ProjectNodeDto>> byParent = _renderNodes
+            .Where(node => node.ParentId.HasValue)
+            .GroupBy(node => node.ParentId!.Value)
+            .ToDictionary(
+                group => group.Key,
+                group => group.OrderBy(node => node.OrderIndex).ToList());
+
+        Dictionary<Guid, ProjectNodeDto> byId = _renderNodes.ToDictionary(node => node.Id);
+        List<StoryboardChapterColumn> columns = new();
+
+        foreach (ProjectNodeDto root in roots)
+        {
+            AppendChapterColumns(root, partTitle: null, byParent, byId, columns);
+        }
+
+        return columns;
+    }
+
+    private static void AppendChapterColumns(
+        ProjectNodeDto node,
+        string? partTitle,
+        IReadOnlyDictionary<Guid, List<ProjectNodeDto>> byParent,
+        IReadOnlyDictionary<Guid, ProjectNodeDto> byId,
+        ICollection<StoryboardChapterColumn> columns)
+    {
+        if (IsPart(node))
+        {
+            foreach (ProjectNodeDto child in GetChildren(node.Id, byParent))
+            {
+                AppendChapterColumns(child, node.Title, byParent, byId, columns);
+            }
+
+            return;
+        }
+
+        if (IsChapter(node))
+        {
+            List<StoryboardSceneCard> scenes = GetChildren(node.Id, byParent)
+                .Where(IsScene)
+                .Select(scene => new StoryboardSceneCard(
+                    scene.Id,
+                    scene.Title,
+                    TryExtractSceneSummary(scene),
+                    scene.WordCountCache,
+                    TryGetSceneMetadata(scene)))
+                .ToList();
+
+            string? resolvedPartTitle = partTitle;
+            if (string.IsNullOrWhiteSpace(resolvedPartTitle)
+                && node.ParentId.HasValue
+                && byId.TryGetValue(node.ParentId.Value, out ProjectNodeDto? parent)
+                && IsPart(parent))
+            {
+                resolvedPartTitle = parent.Title;
+            }
+
+            columns.Add(new StoryboardChapterColumn(node, resolvedPartTitle, scenes));
+            return;
+        }
+
+        foreach (ProjectNodeDto child in GetChildren(node.Id, byParent))
+        {
+            AppendChapterColumns(child, partTitle, byParent, byId, columns);
+        }
+    }
+
+    private static IReadOnlyList<ProjectNodeDto> GetChildren(
+        Guid parentId,
+        IReadOnlyDictionary<Guid, List<ProjectNodeDto>> byParent)
+    {
+        return byParent.TryGetValue(parentId, out List<ProjectNodeDto>? children)
+            ? children
+            : Array.Empty<ProjectNodeDto>();
+    }
+
+    private static string? TryExtractSceneSummary(ProjectNodeDto scene)
+    {
+        SceneMetadata metadata = ReadSceneMetadata(scene);
+        return metadata.Summary;
+    }
+
+    private static SceneMetadata TryGetSceneMetadata(ProjectNodeDto scene)
+    {
+        return ReadSceneMetadata(scene);
+    }
+
+    private static SceneMetadata ReadSceneMetadata(ProjectNodeDto scene)
+    {
+        SceneMetadata metadata = new(
+            Summary: null,
+            Status: null,
+            Tag: null,
+            Pov: null,
+            HasNotes: scene.LinkedSectionId.HasValue,
+            UpdatedUtc: scene.UpdatedUtc);
+
+        if (string.IsNullOrWhiteSpace(scene.MetadataJson))
+        {
+            return metadata;
+        }
+
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(scene.MetadataJson);
+            JsonElement root = document.RootElement;
+            string? summary = GetString(root, "summary")
+                ?? GetString(root, "subtitle")
+                ?? GetString(root, "narrativePurpose")
+                ?? GetString(root, "description");
+            string? status = GetString(root, "status");
+            string? tag = GetString(root, "tag")
+                ?? GetString(root, "label");
+            string? pov = GetString(root, "pov")
+                ?? GetString(root, "pointOfView");
+            bool hasNotes = metadata.HasNotes
+                || HasMeaningfulValue(root, "notes")
+                || HasMeaningfulValue(root, "notesText");
+
+            return new SceneMetadata(
+                string.IsNullOrWhiteSpace(summary) ? null : summary.Trim(),
+                string.IsNullOrWhiteSpace(status) ? null : status.Trim(),
+                string.IsNullOrWhiteSpace(tag) ? null : tag.Trim(),
+                string.IsNullOrWhiteSpace(pov) ? null : pov.Trim(),
+                hasNotes,
+                scene.UpdatedUtc);
+        }
+        catch
+        {
+            return metadata;
+        }
+    }
+
+    private static string? GetString(JsonElement element, string propertyName)
+    {
+        foreach (JsonProperty property in element.EnumerateObject())
+        {
+            if (!string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            return property.Value.ValueKind == JsonValueKind.String
+                ? property.Value.GetString()
+                : property.Value.ToString();
+        }
+
+        return null;
+    }
+
+    private static bool HasMeaningfulValue(JsonElement element, string propertyName)
+    {
+        foreach (JsonProperty property in element.EnumerateObject())
+        {
+            if (!string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            return property.Value.ValueKind switch
+            {
+                JsonValueKind.Null => false,
+                JsonValueKind.Undefined => false,
+                JsonValueKind.False => false,
+                JsonValueKind.String => !string.IsNullOrWhiteSpace(property.Value.GetString()),
+                JsonValueKind.Array => property.Value.GetArrayLength() > 0,
+                JsonValueKind.Object => property.Value.EnumerateObject().Any(),
+                _ => true
+            };
+        }
+
+        return false;
+    }
+
+    private static bool IsPart(ProjectNodeDto node)
+    {
+        return string.Equals(node.NodeType, "part", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsChapter(ProjectNodeDto node)
+    {
+        return string.Equals(node.NodeType, "chapter", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsScene(ProjectNodeDto node)
+    {
+        return string.Equals(node.NodeType, "scene", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void OnSceneDragStart(Guid sceneId, DragEventArgs args)
+    {
+        if (_moveInFlight)
+        {
+            LogDnd($"dragstart blocked scene={sceneId} moveInFlight=true");
+            return;
+        }
+
+        _dragSceneId = sceneId;
+        _storyboardError = null;
+        LogDnd(
+            $"dragstart scene={sceneId} hasDataTransfer={args.DataTransfer is not null} effectAllowed={args.DataTransfer?.EffectAllowed ?? "<null>"} dropEffect={args.DataTransfer?.DropEffect ?? "<null>"}");
+        if (args.DataTransfer is not null)
+        {
+            args.DataTransfer.DropEffect = "move";
+            args.DataTransfer.EffectAllowed = "move";
+        }
+    }
+
+    private void OnSceneDragEnd()
+    {
+        LogDnd($"dragend scene={_dragSceneId?.ToString() ?? "<null>"} dropChapter={_dropChapterId?.ToString() ?? "<null>"} beforeScene={_dropBeforeSceneId?.ToString() ?? "<null>"}");
+        ClearDropState();
+    }
+
+    private void OnColumnDragOver(Guid chapterId, Guid? beforeSceneId, DragEventArgs args)
+    {
+        if (_moveInFlight || !_dragSceneId.HasValue)
+        {
+            LogDnd($"dragover ignored chapter={chapterId} beforeScene={beforeSceneId?.ToString() ?? "<null>"} moveInFlight={_moveInFlight} activeDrag={_dragSceneId?.ToString() ?? "<null>"}");
+            return;
+        }
+
+        if (args.DataTransfer is not null)
+        {
+            args.DataTransfer.DropEffect = "move";
+        }
+
+        _dropChapterId = chapterId;
+        _dropBeforeSceneId = beforeSceneId;
+        LogDnd($"dragover chapter={chapterId} beforeScene={beforeSceneId?.ToString() ?? "<null>"} dragScene={_dragSceneId.Value}");
+    }
+
+    private async Task OnColumnDropAsync(Guid chapterId, Guid? beforeSceneId, DragEventArgs _)
+    {
+        if (_moveInFlight || Project is null || !_dragSceneId.HasValue)
+        {
+            LogDnd($"drop ignored chapter={chapterId} beforeScene={beforeSceneId?.ToString() ?? "<null>"} moveInFlight={_moveInFlight} projectPresent={Project is not null} dragScene={_dragSceneId?.ToString() ?? "<null>"}");
+            return;
+        }
+
+        ProjectNodeDto? dragged = _renderNodes.FirstOrDefault(node => node.Id == _dragSceneId.Value);
+        if (dragged is null || !IsScene(dragged))
+        {
+            LogDnd($"drop aborted chapter={chapterId} beforeScene={beforeSceneId?.ToString() ?? "<null>"} draggedFound={dragged is not null}");
+            ClearDropState();
+            return;
+        }
+
+        if (dragged.ParentId == chapterId && beforeSceneId == dragged.Id)
+        {
+            LogDnd($"drop no-op chapter={chapterId} beforeScene={beforeSceneId?.ToString() ?? "<null>"} scene={dragged.Id}");
+            ClearDropState();
+            return;
+        }
+
+        _moveInFlight = true;
+        _storyboardError = null;
+        LogDnd($"drop begin scene={dragged.Id} fromChapter={dragged.ParentId?.ToString() ?? "<null>"} toChapter={chapterId} beforeScene={beforeSceneId?.ToString() ?? "<null>"}");
+
+        List<ProjectNodeDto> renderSnapshot = _renderNodes.ToList();
+
+        try
+        {
+            Dictionary<Guid, List<ProjectNodeDto>> byParent = _renderNodes
+                .Where(node => node.ParentId.HasValue)
+                .GroupBy(node => node.ParentId!.Value)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.OrderBy(node => node.OrderIndex).ToList());
+
+            List<ProjectNodeDto> destinationScenes = GetChildren(chapterId, byParent)
+                .Where(IsScene)
+                .ToList();
+
+            ApplyOptimisticDrop(dragged, chapterId, beforeSceneId);
+            await InvokeAsync(StateHasChanged);
+
+            if (dragged.ParentId == chapterId)
+            {
+                List<Guid> order = BuildDestinationOrder(destinationScenes, dragged.Id, beforeSceneId);
+                List<Guid> current = destinationScenes.Select(scene => scene.Id).ToList();
+                if (!current.SequenceEqual(order))
+                {
+                    LogDnd($"drop reorder chapter={chapterId} order={string.Join(",", order)}");
+                    await SaveSiblingOrderAsync(chapterId, order);
+                }
+                else
+                {
+                    LogDnd($"drop reorder skipped chapter={chapterId} reason=no-change");
+                }
+            }
+            else
+            {
+                LogDnd($"drop move scene={dragged.Id} targetChapter={chapterId}");
+                await MoveSceneToChapterAsync(dragged, chapterId);
+                List<Guid> order = BuildDestinationOrder(destinationScenes, dragged.Id, beforeSceneId);
+                LogDnd($"drop reorder after move chapter={chapterId} order={string.Join(",", order)}");
+                await SaveSiblingOrderAsync(chapterId, order);
+            }
+
+            if (OnStructureChanged.HasDelegate)
+            {
+                LogDnd("drop refresh begin");
+                await OnStructureChanged.InvokeAsync();
+                LogDnd("drop refresh complete");
+            }
+        }
+        catch (Exception ex)
+        {
+            _renderNodes = renderSnapshot;
+            await InvokeAsync(StateHasChanged);
+            LogDnd($"drop failed chapter={chapterId} scene={dragged.Id} error={ex.Message}");
+            _storyboardError = ex.Message;
+        }
+        finally
+        {
+            _moveInFlight = false;
+            ClearDropState();
+        }
+    }
+
+    private async Task MoveSceneToChapterAsync(ProjectNodeDto scene, Guid chapterId)
+    {
+        if (Project is null)
+        {
+            return;
+        }
+
+        ProjectNodePatchRequest patch = new(
+            scene.Title,
+            chapterId,
+            scene.LinkedSectionId,
+            scene.MetadataJson,
+            scene.NodeType);
+
+        using HttpResponseMessage response = await Http.PatchAsJsonAsync(
+            $"api/projects/{Project.Id}/nodes/{scene.Id}",
+            patch);
+        if (!response.IsSuccessStatusCode)
+        {
+            LogDnd($"move patch failed scene={scene.Id} chapter={chapterId} status={(int)response.StatusCode}");
+            throw new InvalidOperationException(await ReadApiErrorAsync(response, "Move scene failed."));
+        }
+
+        LogDnd($"move patch succeeded scene={scene.Id} chapter={chapterId}");
+    }
+
+    private async Task SaveSiblingOrderAsync(Guid chapterId, IReadOnlyList<Guid> orderedChildIds)
+    {
+        if (Project is null)
+        {
+            return;
+        }
+
+        ProjectNodeReorderRequest request = new(orderedChildIds);
+        using HttpResponseMessage response = await Http.PostAsJsonAsync(
+            $"api/projects/{Project.Id}/nodes/{chapterId}/reorder",
+            request);
+        if (!response.IsSuccessStatusCode)
+        {
+            LogDnd($"reorder failed chapter={chapterId} status={(int)response.StatusCode}");
+            throw new InvalidOperationException(await ReadApiErrorAsync(response, "Reorder scenes failed."));
+        }
+
+        LogDnd($"reorder succeeded chapter={chapterId} count={orderedChildIds.Count}");
+    }
+
+    private static List<Guid> BuildDestinationOrder(
+        IReadOnlyList<ProjectNodeDto> destinationScenes,
+        Guid draggedSceneId,
+        Guid? beforeSceneId)
+    {
+        List<Guid> order = destinationScenes
+            .Select(scene => scene.Id)
+            .Where(id => id != draggedSceneId)
+            .ToList();
+
+        int insertIndex = beforeSceneId.HasValue
+            ? order.IndexOf(beforeSceneId.Value)
+            : -1;
+
+        if (insertIndex < 0)
+        {
+            order.Add(draggedSceneId);
+        }
+        else
+        {
+            order.Insert(insertIndex, draggedSceneId);
+        }
+
+        return order;
+    }
+
+    private void ApplyOptimisticDrop(ProjectNodeDto dragged, Guid chapterId, Guid? beforeSceneId)
+    {
+        if (_renderNodes.Count == 0)
+        {
+            return;
+        }
+
+        List<ProjectNodeDto> nextNodes = _renderNodes.ToList();
+        int draggedIndex = nextNodes.FindIndex(node => node.Id == dragged.Id);
+        if (draggedIndex < 0)
+        {
+            return;
+        }
+
+        nextNodes[draggedIndex] = nextNodes[draggedIndex] with
+        {
+            ParentId = chapterId,
+            UpdatedUtc = DateTimeOffset.UtcNow
+        };
+
+        List<ProjectNodeDto> chapterScenes = nextNodes
+            .Where(node => node.ParentId == chapterId && IsScene(node))
+            .OrderBy(node => node.OrderIndex)
+            .Where(node => node.Id != dragged.Id)
+            .ToList();
+
+        int insertIndex = beforeSceneId.HasValue
+            ? chapterScenes.FindIndex(node => node.Id == beforeSceneId.Value)
+            : -1;
+
+        if (insertIndex < 0)
+        {
+            chapterScenes.Add(nextNodes[draggedIndex]);
+        }
+        else
+        {
+            chapterScenes.Insert(insertIndex, nextNodes[draggedIndex]);
+        }
+
+        for (int index = 0; index < chapterScenes.Count; index++)
+        {
+            ProjectNodeDto scene = chapterScenes[index];
+            int sceneIndex = nextNodes.FindIndex(node => node.Id == scene.Id);
+            if (sceneIndex < 0)
+            {
+                continue;
+            }
+
+            nextNodes[sceneIndex] = nextNodes[sceneIndex] with { OrderIndex = index };
+        }
+
+        _renderNodes = nextNodes
+            .OrderBy(node => node.ParentId)
+            .ThenBy(node => node.OrderIndex)
+            .ToList();
+    }
+
+    private static async Task<string> ReadApiErrorAsync(HttpResponseMessage response, string fallback)
+    {
+        try
+        {
+            string payload = await response.Content.ReadAsStringAsync();
+            return string.IsNullOrWhiteSpace(payload) ? fallback : payload;
+        }
+        catch
+        {
+            return fallback;
+        }
+    }
+
+    private string GetColumnDropClass(Guid chapterId, Guid? beforeSceneId)
+    {
+        List<string> classes = new() { "storyboard-scene-list" };
+        if (_dropChapterId == chapterId && _dropBeforeSceneId == beforeSceneId)
+        {
+            classes.Add("is-drop-target");
+        }
+
+        return string.Join(" ", classes);
+    }
+
+    private string GetSceneDropClass(Guid chapterId, Guid sceneId)
+    {
+        List<string> classes = new() { "storyboard-scene-slot", "section-nav-row" };
+        if (_dragSceneId == sceneId)
+        {
+            classes.Add("is-dragging");
+        }
+
+        if (_highlightedSceneId == sceneId)
+        {
+            classes.Add("is-new");
+        }
+
+        if (_dropChapterId == chapterId && _dropBeforeSceneId == sceneId)
+        {
+            classes.Add("is-drop-target");
+        }
+
+        return string.Join(" ", classes);
+    }
+
+    private void InsertOrUpdateRenderNode(ProjectNodeDto node)
+    {
+        _renderNodes = _renderNodes
+            .Where(existing => existing.Id != node.Id)
+            .Append(node)
+            .OrderBy(existing => existing.ParentId)
+            .ThenBy(existing => existing.OrderIndex)
+            .ToList();
+    }
+
+    private static string GetSceneElementId(Guid sceneId)
+    {
+        return $"storyboard-scene-{sceneId:D}";
+    }
+
+    private string GetGapDropClass(Guid chapterId, Guid? beforeSceneId)
+    {
+        List<string> classes = new() { "storyboard-drop-gap" };
+        if (_dropChapterId == chapterId && _dropBeforeSceneId == beforeSceneId)
+        {
+            classes.Add("is-drop-target");
+        }
+
+        return string.Join(" ", classes);
+    }
+
+    private static Guid? GetNextSceneId(IReadOnlyList<StoryboardSceneCard> scenes, Guid sceneId)
+    {
+        for (int index = 0; index < scenes.Count; index++)
+        {
+            if (scenes[index].SceneId != sceneId)
+            {
+                continue;
+            }
+
+            return index + 1 < scenes.Count ? scenes[index + 1].SceneId : null;
+        }
+
+        return null;
+    }
+
+    private void ClearDropState()
+    {
+        _dragSceneId = null;
+        _dropChapterId = null;
+        _dropBeforeSceneId = null;
+        LogDnd("drag state cleared");
+    }
+
+    private void OpenChapter(Guid chapterId)
+    {
+        if (Project is null)
+        {
+            return;
+        }
+
+        Navigation.NavigateTo($"projects/{Project.Id:D}?tab=structure&node={chapterId:D}");
+    }
+
+    private async Task AddSceneAsync(Guid chapterId)
+    {
+        if (Project is null || _moveInFlight || _addingSceneChapterId == chapterId)
+        {
+            return;
+        }
+
+        _addingSceneChapterId = chapterId;
+        _storyboardError = null;
+
+        try
+        {
+            ProjectNodeCreateRequest request = new(
+                chapterId,
+                "scene",
+                "New Scene",
+                null,
+                null,
+                null);
+
+            using HttpResponseMessage response = await Http.PostAsJsonAsync(
+                $"api/projects/{Project.Id}/nodes",
+                request);
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new InvalidOperationException(await ReadApiErrorAsync(response, "Add scene failed."));
+            }
+
+            ProjectNodeDto? created = await response.Content.ReadFromJsonAsync<ProjectNodeDto>();
+            if (created is not null)
+            {
+                InsertOrUpdateRenderNode(created);
+                _highlightedSceneId = created.Id;
+                _pendingScrollSceneId = created.Id;
+                await InvokeAsync(StateHasChanged);
+            }
+
+            if (OnStructureChanged.HasDelegate)
+            {
+                await OnStructureChanged.InvokeAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _storyboardError = ex.Message;
+        }
+        finally
+        {
+            _addingSceneChapterId = null;
+        }
+    }
+
+    private Task OpenSceneAsync(Guid sceneId)
+    {
+        if (Project is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        Navigation.NavigateTo($"projects/{Project.Id:D}/scenes/{sceneId:D}");
+        return Task.CompletedTask;
+    }
+
+    private void OpenStructure()
+    {
+        if (Project is null)
+        {
+            return;
+        }
+
+        Navigation.NavigateTo($"projects/{Project.Id:D}?tab=structure");
+    }
+
+    private async Task RefreshStoryboardAsync()
+    {
+        _storyboardError = null;
+        if (OnStructureChanged.HasDelegate)
+        {
+            await OnStructureChanged.InvokeAsync();
+        }
+    }
+
+    private void RevealInNavigator(Guid sceneId)
+    {
+        if (Project is null)
+        {
+            return;
+        }
+
+        Navigation.NavigateTo($"projects/{Project.Id:D}?tab=structure&node={sceneId:D}");
+    }
+
+    private sealed record StoryboardChapterColumn(
+        ProjectNodeDto Chapter,
+        string? PartTitle,
+        List<StoryboardSceneCard> Scenes);
+
+    private StoryboardCoachSummary BuildCoachSummary()
+    {
+        IReadOnlyList<StoryboardChapterColumn> columns = ChapterColumns;
+        int totalChapters = columns.Count;
+        int totalScenes = columns.Sum(column => column.Scenes.Count);
+        double averageScenes = totalChapters == 0 ? 0 : (double)totalScenes / totalChapters;
+        List<string> observations = new();
+
+        foreach (StoryboardChapterColumn column in columns.Where(column => column.Scenes.Count == 0))
+        {
+            observations.Add($"{column.Chapter.Title} has no scenes.");
+        }
+
+        if (averageScenes > 0)
+        {
+            foreach (StoryboardChapterColumn column in columns.Where(column => column.Scenes.Count >= Math.Max(6, Math.Ceiling(averageScenes * 1.75))))
+            {
+                observations.Add($"{column.Chapter.Title} contains {column.Scenes.Count} scenes, well above the project average of {averageScenes:0.#}.");
+            }
+        }
+
+        List<StoryboardSceneCard> genericTitles = columns
+            .SelectMany(column => column.Scenes)
+            .Where(scene => IsGenericSceneTitle(scene.Title))
+            .ToList();
+        if (genericTitles.Count > 0)
+        {
+            observations.Add($"{genericTitles.Count} scene title{(genericTitles.Count == 1 ? " is" : "s are")} still generic or very short.");
+        }
+
+        int maxScenes = columns.Count == 0 ? 0 : columns.Max(column => column.Scenes.Count);
+        int minScenes = columns.Count == 0 ? 0 : columns.Min(column => column.Scenes.Count);
+        if (totalChapters >= 3 && maxScenes - minScenes >= 4)
+        {
+            observations.Add("Scene distribution is uneven across chapters.");
+        }
+
+        return new StoryboardCoachSummary(totalChapters, totalScenes, observations);
+    }
+
+    private static bool IsGenericSceneTitle(string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return true;
+        }
+
+        string normalized = title.Trim();
+        if (normalized.Length <= 4)
+        {
+            return true;
+        }
+
+        return normalized.StartsWith("scene", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("new scene", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("untitled", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed record StoryboardSceneCard(
+        Guid SceneId,
+        string Title,
+        string? Summary,
+        int WordCount,
+        SceneMetadata Metadata)
+    {
+        public string? Status => Metadata.Status;
+        public string? Tag => Metadata.Tag;
+        public string? Pov => Metadata.Pov;
+        public bool HasNotes => Metadata.HasNotes;
+        public DateTimeOffset UpdatedUtc => Metadata.UpdatedUtc;
+    }
+
+    private sealed record SceneMetadata(
+        string? Summary,
+        string? Status,
+        string? Tag,
+        string? Pov,
+        bool HasNotes,
+        DateTimeOffset UpdatedUtc);
+
+    private sealed record StoryboardCoachSummary(
+        int TotalChapters,
+        int TotalScenes,
+        List<string> Observations);
+
+    private void LogDnd(string message)
+    {
+        Logger.LogInformation("Storyboard DnD: {Message}", message);
+        _ = JS.InvokeVoidAsync("console.debug", $"[Storyboard DnD] {message}");
+    }
+}
