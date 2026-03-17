@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.SqlClient;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -468,6 +469,18 @@ namespace WriterApp.Controllers
                 catch (SqliteException ex) when (
                     ex.Message.Contains("no such column", StringComparison.OrdinalIgnoreCase)
                     || ex.Message.Contains("no such table", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Production-safe fallback for transient schema drift while migrations are being reconciled.
+                    _logger.LogWarning(
+                        ex,
+                        "Scene metadata table/columns unavailable. Falling back to empty scene card context. TraceId={TraceId}, CorrelationId={CorrelationId}, ActionKey={ActionKey}, DocumentId={DocumentId}, SectionId={SectionId}",
+                        HttpContext.TraceIdentifier,
+                        correlationId,
+                        actionKey,
+                        documentId,
+                        sectionId);
+                }
+                catch (SqlException ex) when (ex.Number == 207 || ex.Number == 208)
                 {
                     // Production-safe fallback for transient schema drift while migrations are being reconciled.
                     _logger.LogWarning(

@@ -76,7 +76,17 @@ public sealed class SearchIndexService : ISearchIndexService, ISearchIndexBackfi
 
     public async Task UpsertSceneCardAsync(SectionRecord section, SectionSceneCardRecord card, CancellationToken ct)
     {
-        string content = string.Join("\n", new[] { card.NarrativePurpose, card.EmotionalBeat, card.KeyEvents, card.OpenQuestions }.Where(v => !string.IsNullOrWhiteSpace(v)));
+        string content = string.Join(
+            "\n",
+            new[]
+            {
+                card.Summary,
+                card.Status,
+                card.NarrativePurpose,
+                card.EmotionalBeat,
+                card.KeyEvents,
+                card.OpenQuestions
+            }.Where(v => !string.IsNullOrWhiteSpace(v)));
         Guid projectId = section.Document?.ProjectId ?? await ResolveProjectIdForDocumentAsync(section.DocumentId, ct);
         await UpsertEntryAsync(new SearchIndexEntry(SearchEntityTypes.SceneCard, card.SectionId, section.DocumentId, projectId, section.Id, null, $"Scene card: {section.Title ?? "Section"}", NormalizeText(content), card.UpdatedUtc), ct);
     }

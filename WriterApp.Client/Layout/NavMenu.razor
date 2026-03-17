@@ -176,8 +176,8 @@
         }
 
         return projectId.HasValue
-            ? $"projects/{projectId.Value:D}?tab=storyboard"
-            : "projects?tab=storyboard";
+            ? $"projects/{projectId.Value:D}/storyboard"
+            : "projects";
     }
 
     private bool CanAccessStoryboard => FeatureAccessService.CanUse(FeatureKey.ProjectStoryboard);
@@ -279,54 +279,10 @@
     private bool IsStoryboardRoute()
     {
         string[] segments = GetRouteSegments();
-        if (segments.Length == 0 || !string.Equals(segments[0], "projects", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        Uri uri = Navigation.ToAbsoluteUri(Navigation.Uri);
-        return TryGetQueryValue(uri.Query, "tab", out string? tab)
-            && string.Equals(tab, "storyboard", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool TryGetQueryValue(string? query, string key, out string? value)
-    {
-        value = null;
-        if (string.IsNullOrWhiteSpace(query))
-        {
-            return false;
-        }
-
-        ReadOnlySpan<char> span = query.AsSpan();
-        if (!span.IsEmpty && span[0] == '?')
-        {
-            span = span[1..];
-        }
-
-        while (!span.IsEmpty)
-        {
-            int ampersandIndex = span.IndexOf('&');
-            ReadOnlySpan<char> pair = ampersandIndex >= 0 ? span[..ampersandIndex] : span;
-            span = ampersandIndex >= 0 ? span[(ampersandIndex + 1)..] : ReadOnlySpan<char>.Empty;
-
-            if (pair.IsEmpty)
-            {
-                continue;
-            }
-
-            int equalsIndex = pair.IndexOf('=');
-            ReadOnlySpan<char> rawKey = equalsIndex >= 0 ? pair[..equalsIndex] : pair;
-            if (!rawKey.Equals(key.AsSpan(), StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            ReadOnlySpan<char> rawValue = equalsIndex >= 0 ? pair[(equalsIndex + 1)..] : ReadOnlySpan<char>.Empty;
-            value = Uri.UnescapeDataString(rawValue.ToString().Replace('+', ' '));
-            return true;
-        }
-
-        return false;
+        return segments.Length >= 3
+            && string.Equals(segments[0], "projects", StringComparison.OrdinalIgnoreCase)
+            && Guid.TryParse(segments[1], out _)
+            && string.Equals(segments[2], "storyboard", StringComparison.OrdinalIgnoreCase);
     }
 
     private string[] GetRouteSegments()

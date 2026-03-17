@@ -1,4 +1,5 @@
 @using System.Text.Json
+@using System.Text.Json.Nodes
 @using WriterApp.Application.Documents
 @using WriterApp.Application.Subscriptions
 @using System.Net.Http.Json
@@ -33,12 +34,135 @@
                 <div class="project-storyboard-board-meta">
                     <span>@ChapterColumns.Count chapter@(ChapterColumns.Count == 1 ? string.Empty : "s")</span>
                     <span>Scroll horizontally to move across the manuscript.</span>
+                    @if (SelectedSceneIds.Count > 0)
+                    {
+                        <span class="project-storyboard-selection-count">@SelectedSceneIds.Count selected</span>
+                    }
+                    <label class="project-storyboard-filter" for="storyboard-filter-pov">
+                        <span>POV</span>
+                        <select id="storyboard-filter-pov"
+                                class="project-storyboard-filter-select"
+                                value="@_povFilter"
+                                @onchange="OnPovFilterChanged">
+                            <option value="">All</option>
+                            @foreach (string option in PovFilterOptions)
+                            {
+                                <option value="@option">@option</option>
+                            }
+                        </select>
+                    </label>
+                    <label class="project-storyboard-filter" for="storyboard-filter-status">
+                        <span>Status</span>
+                        <select id="storyboard-filter-status"
+                                class="project-storyboard-filter-select"
+                                value="@_statusFilter"
+                                @onchange="OnStatusFilterChanged">
+                            <option value="">All</option>
+                            @foreach (string option in StatusFilterOptions)
+                            {
+                                <option value="@option">@option</option>
+                            }
+                        </select>
+                    </label>
+                    <label class="project-storyboard-filter" for="storyboard-filter-subplot">
+                        <span>Subplot</span>
+                        <select id="storyboard-filter-subplot"
+                                class="project-storyboard-filter-select"
+                                value="@_subplotFilter"
+                                @onchange="OnSubplotFilterChanged">
+                            <option value="">All</option>
+                            @foreach (string option in SubplotFilterOptions)
+                            {
+                                <option value="@option">@option</option>
+                            }
+                        </select>
+                    </label>
+                    <label class="project-storyboard-color-mode" for="storyboard-color-mode">
+                        <span>Color by:</span>
+                        <select id="storyboard-color-mode"
+                                class="project-storyboard-color-mode-select"
+                                value="@_colorMode"
+                                @onchange="OnColorModeChanged">
+                            <option value="@StoryboardColorMode.None">None</option>
+                            <option value="@StoryboardColorMode.Pov">POV</option>
+                            <option value="@StoryboardColorMode.Subplot">Subplot</option>
+                            <option value="@StoryboardColorMode.Status">Status</option>
+                        </select>
+                    </label>
                 </div>
 
-                <div class="project-storyboard-board" role="list" aria-label="Storyboard chapter columns">
+                @if (SelectedSceneIds.Count >= 2)
+                {
+                    <div class="project-storyboard-bulk-bar" @onclick:stopPropagation="true">
+                        <div class="project-storyboard-bulk-bar__title">@SelectedSceneIds.Count scenes selected</div>
+                        <label class="project-storyboard-bulk-field" for="storyboard-bulk-status">
+                            <span>Status</span>
+                            <select id="storyboard-bulk-status"
+                                    class="project-storyboard-bulk-select"
+                                    value=""
+                                    @onchange="ApplyBulkStatusAsync">
+                                <option value="">@BulkStatusPlaceholder</option>
+                                @foreach (string option in BulkStatusOptions)
+                                {
+                                    <option value="@option">@option</option>
+                                }
+                            </select>
+                        </label>
+                        <label class="project-storyboard-bulk-field" for="storyboard-bulk-purpose">
+                            <span>Purpose</span>
+                            <select id="storyboard-bulk-purpose"
+                                    class="project-storyboard-bulk-select"
+                                    value=""
+                                    @onchange="ApplyBulkNarrativePurposeAsync">
+                                <option value="">@BulkNarrativePurposePlaceholder</option>
+                                @foreach (string option in BulkNarrativePurposeOptions)
+                                {
+                                    <option value="@option">@option</option>
+                                }
+                            </select>
+                        </label>
+                        <label class="project-storyboard-bulk-field project-storyboard-bulk-field--wide" for="storyboard-bulk-tag-add">
+                            <span>Add subplot tag</span>
+                            <div class="project-storyboard-bulk-input-group">
+                                <input id="storyboard-bulk-tag-add"
+                                       class="project-storyboard-bulk-input"
+                                       value="@_bulkSubplotTagDraft"
+                                       @oninput="OnBulkSubplotTagDraftChanged"
+                                       @onkeydown="HandleBulkSubplotTagKeyDownAsync"
+                                       placeholder="Add tag to selected scenes" />
+                                <button type="button"
+                                        class="project-storyboard-bulk-button"
+                                        @onclick="AddBulkSubplotTagAsync">
+                                    Add
+                                </button>
+                            </div>
+                        </label>
+                        <label class="project-storyboard-bulk-field" for="storyboard-bulk-tag-remove">
+                            <span>Remove subplot tag</span>
+                            <select id="storyboard-bulk-tag-remove"
+                                    class="project-storyboard-bulk-select"
+                                    value=""
+                                    @onchange="RemoveBulkSubplotTagAsync">
+                                <option value="">@BulkRemoveTagPlaceholder</option>
+                                @foreach (string option in BulkRemovableSubplotTags)
+                                {
+                                    <option value="@option">@option</option>
+                                }
+                            </select>
+                        </label>
+                    </div>
+                }
+
+                <div class="project-storyboard-board"
+                     role="list"
+                     aria-label="Storyboard chapter columns"
+                     @onclick="ClearSelectionAsync">
                     @foreach (StoryboardChapterColumn column in ChapterColumns)
                     {
-                        <section class="storyboard-column" role="listitem" aria-label="@column.Chapter.Title">
+                        <section class="storyboard-column"
+                                 role="listitem"
+                                 aria-label="@column.Chapter.Title"
+                                 @onclick:stopPropagation="true">
                             <header class="storyboard-column-header">
                                 @if (!string.IsNullOrWhiteSpace(column.PartTitle))
                                 {
@@ -48,6 +172,10 @@
                                 <div class="storyboard-column-toolbar">
                                     <div class="storyboard-column-meta">
                                         @column.Scenes.Count scene@(column.Scenes.Count == 1 ? string.Empty : "s")
+                                    </div>
+                                    <div class="storyboard-column-insights">
+                                        <span>@column.DraftSceneCount draft@(column.DraftSceneCount == 1 ? string.Empty : "s")</span>
+                                        <span>POV: @(string.IsNullOrWhiteSpace(column.DominantPov) ? "Mixed" : column.DominantPov)</span>
                                     </div>
                                     <div class="storyboard-column-actions">
                                         <button type="button"
@@ -59,7 +187,7 @@
                                 </div>
                             </header>
 
-                            <div class="storyboard-column-body">
+                            <div class="storyboard-column-body" @onclick="ClearSelectionAsync">
                                 <div class="@GetColumnDropClass(column.Chapter.Id, null)"
                                      @ondragover:preventDefault
                                      @ondrop:preventDefault
@@ -83,16 +211,23 @@
                                                  class="@GetSceneDropClass(column.Chapter.Id, scene.SceneId)"
                                                  draggable="@(!_moveInFlight)"
                                                  @ondragstart="args => OnSceneDragStart(scene.SceneId, args)"
-                                                 @ondragend="OnSceneDragEnd">
+                                                 @ondragend="OnSceneDragEnd"
+                                                 @onclick:stopPropagation="true"
+                                                 @onclick="args => HandleSceneClickAsync(column.Chapter.Id, scene.SceneId, args)">
                                                 <SceneCard SceneId="@scene.SceneId"
                                                            Title="@scene.Title"
                                                            Summary="@scene.Summary"
                                                            WordCount="@scene.WordCount"
                                                            Status="@scene.Status"
-                                                           Tag="@scene.Tag"
                                                            Pov="@scene.Pov"
+                                                           SubplotTags="@scene.SubplotTags"
+                                                           NarrativePurpose="@scene.NarrativePurpose"
+                                                           AccentClass="@GetSceneAccentClass(scene)"
+                                                           IsSelected="@(SelectedSceneIds.Contains(scene.SceneId))"
                                                            HasNotes="@scene.HasNotes"
                                                            UpdatedUtc="@scene.UpdatedUtc"
+                                                           SaveTitleQuickEdit="HandleSceneTitleQuickEditAsync"
+                                                           SaveStatusQuickEdit="HandleSceneStatusQuickEditAsync"
                                                            OpenScene="OpenSceneAsync"
                                                            RevealInNavigator="RevealInNavigator" />
                                             </div>
@@ -104,19 +239,22 @@
                                                  @ondrop="args => OnColumnDropAsync(column.Chapter.Id, GetNextSceneId(column.Scenes, scene.SceneId), args)"></div>
                                         }
                                     }
+                                    <div class="storyboard-add-scene-anchor" @onclick:stopPropagation="true">
+                                        <PlanGatedButton Feature="@nameof(FeatureKey.ProjectStructureEditing)"
+                                                         Class="storyboard-add-scene"
+                                                         LockedTitle="Project structure changes are locked on your current plan."
+                                                         AriaLabel="Add scene"
+                                                         ShowLockIndicator="false"
+                                                         IsBusy="@(_addingSceneChapterId == column.Chapter.Id)"
+                                                         IsActionDisabled="@_moveInFlight"
+                                                         OnClick="() => AddSceneAsync(column.Chapter.Id)">
+                                            <span class="storyboard-add-scene__icon" aria-hidden="true"></span>
+                                            <span class="storyboard-add-scene__label">
+                                                @(_addingSceneChapterId == column.Chapter.Id ? "Adding scene..." : "Add scene")
+                                            </span>
+                                        </PlanGatedButton>
+                                    </div>
                                 </div>
-
-                                <PlanGatedButton Feature="@nameof(FeatureKey.ProjectStructureEditing)"
-                                                 Class="storyboard-add-scene"
-                                                 LockedTitle="Project structure changes are locked on your current plan."
-                                                 AriaLabel="Add scene"
-                                                 ShowLockIndicator="false"
-                                                 IsBusy="@(_addingSceneChapterId == column.Chapter.Id)"
-                                                 IsActionDisabled="@_moveInFlight"
-                                                 OnClick="() => AddSceneAsync(column.Chapter.Id)">
-                                    <span class="storyboard-add-scene__icon bi bi-plus-lg" aria-hidden="true"></span>
-                                    <span>@(_addingSceneChapterId == column.Chapter.Id ? "Adding..." : "Add scene")</span>
-                                </PlanGatedButton>
                             </div>
                         </section>
                     }
@@ -170,6 +308,27 @@
 @code {
     private IReadOnlyList<StoryboardChapterColumn> ChapterColumns => BuildChapterColumns();
     private StoryboardCoachSummary CoachSummary => BuildCoachSummary();
+    private IReadOnlyList<string> PovFilterOptions => GetFilterOptions(scene => scene.Pov);
+    private IReadOnlyList<string> StatusFilterOptions => GetFilterOptions(scene => scene.Status);
+    private IReadOnlyList<string> SubplotFilterOptions => GetFilterOptions(scene => scene.SubplotTags);
+    private IReadOnlyList<string> BulkRemovableSubplotTags => GetSelectedSceneCards()
+        .SelectMany(scene => scene.SubplotTags)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(tag => tag, StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+    private string BulkStatusPlaceholder => GetBulkPlaceholder(
+        GetSelectedSceneCards().Select(scene => NormalizeStatus(scene.Status)),
+        "Set status",
+        "Mixed status");
+    private string BulkNarrativePurposePlaceholder => GetBulkPlaceholder(
+        GetSelectedSceneCards().Select(scene => scene.NarrativePurpose),
+        "Set purpose",
+        "Mixed purpose");
+    private string BulkRemoveTagPlaceholder => BulkRemovableSubplotTags.Count == 0
+        ? "No shared tags"
+        : BulkRemovableSubplotTags.Count == 1
+            ? $"Remove {BulkRemovableSubplotTags[0]}"
+            : "Remove subplot tag";
 
     [Parameter]
     public ProjectDto? Project { get; set; }
@@ -180,6 +339,18 @@
     [Parameter]
     public EventCallback OnStructureChanged { get; set; }
 
+    [Parameter]
+    public Guid? SelectedSceneId { get; set; }
+
+    [Parameter]
+    public IReadOnlyCollection<Guid> SelectedSceneIds { get; set; } = Array.Empty<Guid>();
+
+    [Parameter]
+    public EventCallback<StoryboardSelectionChange> OnSelectionChanged { get; set; }
+
+    [Parameter]
+    public EventCallback<StoryboardSceneInspectorUpdate> OnSceneUpdated { get; set; }
+
     private List<ProjectNodeDto> _renderNodes = new();
     private Guid? _dragSceneId;
     private Guid? _dropChapterId;
@@ -189,6 +360,26 @@
     private Guid? _highlightedSceneId;
     private Guid? _pendingScrollSceneId;
     private string? _storyboardError;
+    private StoryboardColorMode _colorMode;
+    private string _povFilter = string.Empty;
+    private string _statusFilter = string.Empty;
+    private string _subplotFilter = string.Empty;
+    private string _bulkSubplotTagDraft = string.Empty;
+    private static readonly string[] BulkStatusOptions = ["Idea", "Draft", "Revised", "Final"];
+    private static readonly string[] BulkNarrativePurposeOptions =
+    [
+        "Setup",
+        "Inciting Incident",
+        "Turn",
+        "Escalation",
+        "Complication",
+        "Revelation",
+        "Relationship Beat",
+        "Reversal",
+        "Decision",
+        "Climax",
+        "Aftermath"
+    ];
 
     protected override void OnParametersSet()
     {
@@ -245,7 +436,7 @@
         return columns;
     }
 
-    private static void AppendChapterColumns(
+    private void AppendChapterColumns(
         ProjectNodeDto node,
         string? partTitle,
         IReadOnlyDictionary<Guid, List<ProjectNodeDto>> byParent,
@@ -272,6 +463,7 @@
                     TryExtractSceneSummary(scene),
                     scene.WordCountCache,
                     TryGetSceneMetadata(scene)))
+                .Where(ShouldIncludeScene)
                 .ToList();
 
             string? resolvedPartTitle = partTitle;
@@ -291,6 +483,29 @@
         {
             AppendChapterColumns(child, partTitle, byParent, byId, columns);
         }
+    }
+
+    private bool ShouldIncludeScene(StoryboardSceneCard scene)
+    {
+        if (!string.IsNullOrWhiteSpace(_povFilter)
+            && !string.Equals(scene.Pov, _povFilter, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_statusFilter)
+            && !string.Equals(scene.Status, _statusFilter, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_subplotFilter)
+            && !scene.SubplotTags.Any(tag => string.Equals(tag, _subplotFilter, StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        return true;
     }
 
     private static IReadOnlyList<ProjectNodeDto> GetChildren(
@@ -318,8 +533,9 @@
         SceneMetadata metadata = new(
             Summary: null,
             Status: null,
-            Tag: null,
             Pov: null,
+            SubplotTags: Array.Empty<string>(),
+            NarrativePurpose: null,
             HasNotes: scene.LinkedSectionId.HasValue,
             UpdatedUtc: scene.UpdatedUtc);
 
@@ -334,13 +550,16 @@
             JsonElement root = document.RootElement;
             string? summary = GetString(root, "summary")
                 ?? GetString(root, "subtitle")
-                ?? GetString(root, "narrativePurpose")
                 ?? GetString(root, "description");
             string? status = GetString(root, "status");
-            string? tag = GetString(root, "tag")
-                ?? GetString(root, "label");
             string? pov = GetString(root, "pov")
                 ?? GetString(root, "pointOfView");
+            string? narrativePurpose = GetString(root, "narrativePurpose");
+            IReadOnlyList<string> subplotTags = GetStringArray(root, "subplotTags");
+            if (subplotTags.Count == 0)
+            {
+                subplotTags = GetStringArray(root, "tags");
+            }
             bool hasNotes = metadata.HasNotes
                 || HasMeaningfulValue(root, "notes")
                 || HasMeaningfulValue(root, "notesText");
@@ -348,8 +567,9 @@
             return new SceneMetadata(
                 string.IsNullOrWhiteSpace(summary) ? null : summary.Trim(),
                 string.IsNullOrWhiteSpace(status) ? null : status.Trim(),
-                string.IsNullOrWhiteSpace(tag) ? null : tag.Trim(),
                 string.IsNullOrWhiteSpace(pov) ? null : pov.Trim(),
+                subplotTags,
+                string.IsNullOrWhiteSpace(narrativePurpose) ? null : narrativePurpose.Trim(),
                 hasNotes,
                 scene.UpdatedUtc);
         }
@@ -398,6 +618,235 @@
         }
 
         return false;
+    }
+
+    private static IReadOnlyList<string> GetStringArray(JsonElement element, string propertyName)
+    {
+        foreach (JsonProperty property in element.EnumerateObject())
+        {
+            if (!string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (property.Value.ValueKind != JsonValueKind.Array)
+            {
+                return Array.Empty<string>();
+            }
+
+            return property.Value
+                .EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.String)
+                .Select(item => item.GetString()?.Trim() ?? string.Empty)
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+
+        return Array.Empty<string>();
+    }
+
+    private void OnColorModeChanged(ChangeEventArgs args)
+    {
+        string? selectedValue = args.Value?.ToString();
+        if (!Enum.TryParse<StoryboardColorMode>(selectedValue, ignoreCase: true, out StoryboardColorMode parsedMode))
+        {
+            parsedMode = StoryboardColorMode.None;
+        }
+
+        _colorMode = parsedMode;
+    }
+
+    private void OnPovFilterChanged(ChangeEventArgs args)
+    {
+        _povFilter = args.Value?.ToString() ?? string.Empty;
+    }
+
+    private void OnStatusFilterChanged(ChangeEventArgs args)
+    {
+        _statusFilter = args.Value?.ToString() ?? string.Empty;
+    }
+
+    private void OnSubplotFilterChanged(ChangeEventArgs args)
+    {
+        _subplotFilter = args.Value?.ToString() ?? string.Empty;
+    }
+
+    private async Task HandleSceneClickAsync(Guid chapterId, Guid sceneId, MouseEventArgs args)
+    {
+        StoryboardSelectionChange selection = BuildSelectionChange(chapterId, sceneId, args);
+        _highlightedSceneId = sceneId;
+        _pendingScrollSceneId = sceneId;
+
+        if (OnSelectionChanged.HasDelegate)
+        {
+            await OnSelectionChanged.InvokeAsync(selection);
+        }
+    }
+
+    private Task ClearSelectionAsync()
+    {
+        if (SelectedSceneIds.Count == 0)
+        {
+            return Task.CompletedTask;
+        }
+
+        return OnSelectionChanged.HasDelegate
+            ? OnSelectionChanged.InvokeAsync(new StoryboardSelectionChange(null, Array.Empty<Guid>()))
+            : Task.CompletedTask;
+    }
+
+    private StoryboardSelectionChange BuildSelectionChange(Guid chapterId, Guid sceneId, MouseEventArgs args)
+    {
+        bool isToggle = args.CtrlKey || args.MetaKey;
+        bool isRange = args.ShiftKey;
+        HashSet<Guid> nextSelection = SelectedSceneIds.ToHashSet();
+
+        if (isRange)
+        {
+            Guid[] chapterSceneIds = ChapterColumns
+                .FirstOrDefault(column => column.Chapter.Id == chapterId)?
+                .Scenes
+                .Select(scene => scene.SceneId)
+                .ToArray()
+                ?? [];
+
+            Guid anchorSceneId = GetRangeAnchorSceneId(chapterId, chapterSceneIds, sceneId);
+            int anchorIndex = Array.IndexOf(chapterSceneIds, anchorSceneId);
+            int targetIndex = Array.IndexOf(chapterSceneIds, sceneId);
+            if (anchorIndex >= 0 && targetIndex >= 0)
+            {
+                int start = Math.Min(anchorIndex, targetIndex);
+                int end = Math.Max(anchorIndex, targetIndex);
+                nextSelection.Clear();
+                for (int index = start; index <= end; index++)
+                {
+                    nextSelection.Add(chapterSceneIds[index]);
+                }
+            }
+            else
+            {
+                nextSelection.Clear();
+                nextSelection.Add(sceneId);
+            }
+        }
+        else if (isToggle)
+        {
+            if (!nextSelection.Add(sceneId))
+            {
+                nextSelection.Remove(sceneId);
+            }
+        }
+        else
+        {
+            nextSelection.Clear();
+            nextSelection.Add(sceneId);
+        }
+
+        Guid? primarySceneId = nextSelection.Count == 0
+            ? null
+            : sceneId;
+
+        return new StoryboardSelectionChange(primarySceneId, nextSelection.ToArray());
+    }
+
+    private Guid GetRangeAnchorSceneId(Guid chapterId, IReadOnlyList<Guid> chapterSceneIds, Guid fallbackSceneId)
+    {
+        if (SelectedSceneId.HasValue && chapterSceneIds.Contains(SelectedSceneId.Value))
+        {
+            return SelectedSceneId.Value;
+        }
+
+        Guid chapterSelection = ChapterColumns
+            .FirstOrDefault(column => column.Chapter.Id == chapterId)?
+            .Scenes
+            .Select(scene => scene.SceneId)
+            .FirstOrDefault(sceneId => SelectedSceneIds.Contains(sceneId))
+            ?? Guid.Empty;
+        if (chapterSelection != Guid.Empty)
+        {
+            return chapterSelection;
+        }
+
+        return fallbackSceneId;
+    }
+
+    private IReadOnlyList<string> GetFilterOptions(Func<StoryboardSceneCard, IEnumerable<string?>> selector)
+    {
+        return BuildAllSceneCards()
+            .SelectMany(selector)
+            .Select(value => value?.Trim())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private IReadOnlyList<string> GetFilterOptions(Func<StoryboardSceneCard, string?> selector)
+    {
+        return BuildAllSceneCards()
+            .Select(selector)
+            .Select(value => value?.Trim())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private IReadOnlyList<StoryboardSceneCard> BuildAllSceneCards()
+    {
+        return _renderNodes
+            .Where(IsScene)
+            .Select(scene => new StoryboardSceneCard(
+                scene.Id,
+                scene.Title,
+                TryExtractSceneSummary(scene),
+                scene.WordCountCache,
+                TryGetSceneMetadata(scene)))
+            .ToArray();
+    }
+
+    private string GetSceneAccentClass(StoryboardSceneCard scene)
+    {
+        return _colorMode switch
+        {
+            StoryboardColorMode.Pov => GetPaletteAccentClass(scene.Pov),
+            StoryboardColorMode.Subplot => GetPaletteAccentClass(scene.SubplotTags.FirstOrDefault()),
+            StoryboardColorMode.Status => GetStatusAccentClass(scene.Status),
+            _ => "scene-card--accent-none"
+        };
+    }
+
+    private static string GetStatusAccentClass(string? status)
+    {
+        string normalized = status?.Trim().ToLowerInvariant() ?? string.Empty;
+        return normalized switch
+        {
+            "idea" => "scene-card--accent-status-idea",
+            "draft" => "scene-card--accent-status-draft",
+            "revised" => "scene-card--accent-status-revised",
+            "final" => "scene-card--accent-status-final",
+            _ => "scene-card--accent-none"
+        };
+    }
+
+    private static string GetPaletteAccentClass(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "scene-card--accent-none";
+        }
+
+        int hash = 17;
+        foreach (char character in value.Trim().ToLowerInvariant())
+        {
+            hash = (hash * 31) + character;
+        }
+
+        int index = ((hash & int.MaxValue) % 8) + 1;
+        return $"scene-card--accent-{index}";
     }
 
     private static bool IsPart(ProjectNodeDto node)
@@ -731,6 +1180,325 @@
             .ToList();
     }
 
+    private IReadOnlyList<StoryboardSceneCard> GetSelectedSceneCards()
+    {
+        if (SelectedSceneIds.Count == 0)
+        {
+            return Array.Empty<StoryboardSceneCard>();
+        }
+
+        HashSet<Guid> selectedIds = SelectedSceneIds.ToHashSet();
+        return BuildAllSceneCards()
+            .Where(scene => selectedIds.Contains(scene.SceneId))
+            .ToArray();
+    }
+
+    private void OnBulkSubplotTagDraftChanged(ChangeEventArgs args)
+    {
+        _bulkSubplotTagDraft = args.Value?.ToString() ?? string.Empty;
+    }
+
+    private async Task HandleBulkSubplotTagKeyDownAsync(KeyboardEventArgs args)
+    {
+        if (string.Equals(args.Key, "Enter", StringComparison.Ordinal))
+        {
+            await AddBulkSubplotTagAsync();
+        }
+    }
+
+    private async Task ApplyBulkStatusAsync(ChangeEventArgs args)
+    {
+        string? nextStatus = TryNormalizeStatus(args.Value?.ToString());
+        if (string.IsNullOrWhiteSpace(nextStatus))
+        {
+            return;
+        }
+
+        await ApplyBulkSceneCardUpdateAsync(
+            status: nextStatus,
+            errorFallback: "Bulk status update failed.");
+    }
+
+    private async Task ApplyBulkNarrativePurposeAsync(ChangeEventArgs args)
+    {
+        string? nextPurpose = NormalizeOptionalValue(args.Value?.ToString());
+        if (string.IsNullOrWhiteSpace(nextPurpose))
+        {
+            return;
+        }
+
+        await ApplyBulkSceneCardUpdateAsync(
+            narrativePurpose: nextPurpose,
+            errorFallback: "Bulk narrative purpose update failed.");
+    }
+
+    private async Task AddBulkSubplotTagAsync()
+    {
+        string? tag = NormalizeOptionalValue(_bulkSubplotTagDraft);
+        if (string.IsNullOrWhiteSpace(tag))
+        {
+            return;
+        }
+
+        await ApplyBulkSceneCardUpdateAsync(
+            subplotTagTransform: tags => tags
+                .Append(tag)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray(),
+            errorFallback: "Bulk subplot tag update failed.");
+
+        _bulkSubplotTagDraft = string.Empty;
+    }
+
+    private async Task RemoveBulkSubplotTagAsync(ChangeEventArgs args)
+    {
+        string? tagToRemove = NormalizeOptionalValue(args.Value?.ToString());
+        if (string.IsNullOrWhiteSpace(tagToRemove))
+        {
+            return;
+        }
+
+        await ApplyBulkSceneCardUpdateAsync(
+            subplotTagTransform: tags => tags
+                .Where(tag => !string.Equals(tag, tagToRemove, StringComparison.OrdinalIgnoreCase))
+                .ToArray(),
+            errorFallback: "Bulk subplot tag removal failed.");
+    }
+
+    private async Task ApplyBulkSceneCardUpdateAsync(
+        string? status = null,
+        string? narrativePurpose = null,
+        Func<IReadOnlyList<string>, IReadOnlyList<string>>? subplotTagTransform = null,
+        string errorFallback = "Bulk scene update failed.")
+    {
+        if (Project is null)
+        {
+            return;
+        }
+
+        IReadOnlyList<ProjectNodeDto> selectedNodes = GetSelectedSceneNodes();
+        if (selectedNodes.Count == 0)
+        {
+            return;
+        }
+
+        _storyboardError = null;
+        List<ProjectNodeDto> snapshot = _renderNodes.ToList();
+        Dictionary<Guid, string?> metadataBySceneId = new();
+
+        foreach (ProjectNodeDto node in selectedNodes)
+        {
+            SceneMetadata metadata = TryGetSceneMetadata(node);
+            IReadOnlyList<string>? subplotTags = subplotTagTransform is null
+                ? null
+                : NormalizeTags(subplotTagTransform(metadata.SubplotTags));
+            string metadataJson = UpdateSceneMetadata(
+                node.MetadataJson,
+                status: status,
+                pov: metadata.Pov,
+                subplotTags: subplotTags,
+                narrativePurpose: narrativePurpose);
+            metadataBySceneId[node.Id] = metadataJson;
+            InsertOrUpdateRenderNode(node with
+            {
+                MetadataJson = metadataJson,
+                UpdatedUtc = DateTimeOffset.UtcNow
+            });
+        }
+
+        foreach (ProjectNodeDto node in selectedNodes)
+        {
+            try
+            {
+                SceneCardDto? currentCard = await Http.GetFromJsonAsync<SceneCardDto>($"api/scenes/{node.Id}/scene-card");
+                IReadOnlyList<string> nextSubplotTags = subplotTagTransform is null
+                    ? currentCard?.SubplotTags ?? Array.Empty<string>()
+                    : NormalizeTags(subplotTagTransform(currentCard?.SubplotTags ?? Array.Empty<string>()));
+                SceneCardUpdateRequest payload = new(
+                    narrativePurpose ?? currentCard?.NarrativePurpose,
+                    currentCard?.EmotionalBeat,
+                    currentCard?.KeyEvents,
+                    currentCard?.OpenQuestions,
+                    currentCard?.PovCharacterId,
+                    currentCard?.PlaceId,
+                    currentCard?.TimelineEventId,
+                    currentCard?.TimeRef,
+                    currentCard?.Tags ?? Array.Empty<string>(),
+                    currentCard?.References ?? Array.Empty<SceneCardReferenceDto>(),
+                    currentCard?.Summary,
+                    status ?? NormalizeStatus(currentCard?.Status),
+                    nextSubplotTags);
+
+                using HttpResponseMessage sceneCardResponse =
+                    await Http.PutAsJsonAsync($"api/scenes/{node.Id}/scene-card", payload);
+                if (!sceneCardResponse.IsSuccessStatusCode)
+                {
+                    throw new InvalidOperationException(await ReadApiErrorAsync(sceneCardResponse, errorFallback));
+                }
+
+                using HttpResponseMessage nodeResponse = await Http.PatchAsJsonAsync(
+                    $"api/projects/{Project.Id}/nodes/{node.Id}",
+                    new ProjectNodePatchRequest(
+                        node.Title,
+                        node.ParentId,
+                        node.LinkedSectionId,
+                        metadataBySceneId[node.Id],
+                        node.NodeType));
+                if (!nodeResponse.IsSuccessStatusCode)
+                {
+                    throw new InvalidOperationException(await ReadApiErrorAsync(nodeResponse, errorFallback));
+                }
+
+                ProjectNodeDto updatedNode = _renderNodes.First(existing => existing.Id == node.Id);
+                await NotifySceneUpdatedAsync(updatedNode);
+            }
+            catch (Exception ex)
+            {
+                _storyboardError = ex.Message;
+                _renderNodes = snapshot;
+                await InvokeAsync(StateHasChanged);
+                return;
+            }
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private IReadOnlyList<ProjectNodeDto> GetSelectedSceneNodes()
+    {
+        if (SelectedSceneIds.Count == 0)
+        {
+            return Array.Empty<ProjectNodeDto>();
+        }
+
+        HashSet<Guid> selectedIds = SelectedSceneIds.ToHashSet();
+        return _renderNodes
+            .Where(node => selectedIds.Contains(node.Id) && IsScene(node))
+            .ToArray();
+    }
+
+    private async Task<bool> HandleSceneTitleQuickEditAsync(SceneCardTitleQuickEditRequest request)
+    {
+        if (Project is null)
+        {
+            return false;
+        }
+
+        ProjectNodeDto? existing = _renderNodes.FirstOrDefault(node => node.Id == request.SceneId);
+        if (existing is null)
+        {
+            return false;
+        }
+
+        ProjectNodeDto optimistic = existing with
+        {
+            Title = request.Title.Trim(),
+            UpdatedUtc = DateTimeOffset.UtcNow
+        };
+
+        InsertOrUpdateRenderNode(optimistic);
+        await NotifySceneUpdatedAsync(optimistic);
+
+        try
+        {
+            ProjectNodePatchRequest patch = new(
+                optimistic.Title,
+                existing.ParentId,
+                existing.LinkedSectionId,
+                existing.MetadataJson,
+                existing.NodeType);
+
+            using HttpResponseMessage response = await Http.PatchAsJsonAsync(
+                $"api/projects/{Project.Id}/nodes/{existing.Id}",
+                patch);
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new InvalidOperationException(await ReadApiErrorAsync(response, "Rename failed."));
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _storyboardError = ex.Message;
+            InsertOrUpdateRenderNode(existing);
+            await NotifySceneUpdatedAsync(existing);
+            return false;
+        }
+    }
+
+    private async Task<bool> HandleSceneStatusQuickEditAsync(SceneCardStatusQuickEditRequest request)
+    {
+        if (Project is null)
+        {
+            return false;
+        }
+
+        ProjectNodeDto? existing = _renderNodes.FirstOrDefault(node => node.Id == request.SceneId);
+        if (existing is null)
+        {
+            return false;
+        }
+
+        string optimisticMetadataJson = UpdateSceneMetadata(existing.MetadataJson, status: request.Status);
+        ProjectNodeDto optimistic = existing with
+        {
+            MetadataJson = optimisticMetadataJson,
+            UpdatedUtc = DateTimeOffset.UtcNow
+        };
+
+        InsertOrUpdateRenderNode(optimistic);
+        await NotifySceneUpdatedAsync(optimistic);
+
+        try
+        {
+            SceneCardDto? currentCard = await Http.GetFromJsonAsync<SceneCardDto>($"api/scenes/{existing.Id}/scene-card");
+            SceneCardUpdateRequest payload = new(
+                currentCard?.NarrativePurpose,
+                currentCard?.EmotionalBeat,
+                currentCard?.KeyEvents,
+                currentCard?.OpenQuestions,
+                currentCard?.PovCharacterId,
+                currentCard?.PlaceId,
+                currentCard?.TimelineEventId,
+                currentCard?.TimeRef,
+                currentCard?.Tags ?? Array.Empty<string>(),
+                currentCard?.References ?? Array.Empty<SceneCardReferenceDto>(),
+                currentCard?.Summary,
+                request.Status,
+                currentCard?.SubplotTags ?? Array.Empty<string>());
+
+            using HttpResponseMessage sceneCardResponse =
+                await Http.PutAsJsonAsync($"api/scenes/{existing.Id}/scene-card", payload);
+            if (!sceneCardResponse.IsSuccessStatusCode)
+            {
+                throw new InvalidOperationException(await ReadApiErrorAsync(sceneCardResponse, "Status update failed."));
+            }
+
+            using HttpResponseMessage nodeResponse = await Http.PatchAsJsonAsync(
+                $"api/projects/{Project.Id}/nodes/{existing.Id}",
+                new ProjectNodePatchRequest(
+                    existing.Title,
+                    existing.ParentId,
+                    existing.LinkedSectionId,
+                    optimisticMetadataJson,
+                    existing.NodeType));
+            if (!nodeResponse.IsSuccessStatusCode)
+            {
+                throw new InvalidOperationException(await ReadApiErrorAsync(nodeResponse, "Status update failed."));
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _storyboardError = ex.Message;
+            InsertOrUpdateRenderNode(existing);
+            await NotifySceneUpdatedAsync(existing);
+            return false;
+        }
+    }
+
     private static string GetSceneElementId(Guid sceneId)
     {
         return $"storyboard-scene-{sceneId:D}";
@@ -795,10 +1563,10 @@
             ProjectNodeCreateRequest request = new(
                 chapterId,
                 "scene",
-                "New Scene",
+                "New scene",
                 null,
                 null,
-                null);
+                "{\"status\":\"Draft\"}");
 
             using HttpResponseMessage response = await Http.PostAsJsonAsync(
                 $"api/projects/{Project.Id}/nodes",
@@ -811,10 +1579,18 @@
             ProjectNodeDto? created = await response.Content.ReadFromJsonAsync<ProjectNodeDto>();
             if (created is not null)
             {
-                InsertOrUpdateRenderNode(created);
-                _highlightedSceneId = created.Id;
-                _pendingScrollSceneId = created.Id;
+                ProjectNodeDto createdNode = created with
+                {
+                    Title = string.IsNullOrWhiteSpace(created.Title) ? "New scene" : created.Title,
+                    MetadataJson = string.IsNullOrWhiteSpace(created.MetadataJson) ? request.MetadataJson : created.MetadataJson
+                };
+
+                InsertOrUpdateRenderNode(createdNode);
+                _highlightedSceneId = createdNode.Id;
+                _pendingScrollSceneId = createdNode.Id;
                 await InvokeAsync(StateHasChanged);
+
+                await SelectSceneAsync(createdNode.Id);
             }
 
             if (OnStructureChanged.HasDelegate)
@@ -841,6 +1617,24 @@
 
         Navigation.NavigateTo($"projects/{Project.Id:D}/scenes/{sceneId:D}");
         return Task.CompletedTask;
+    }
+
+    private async Task SelectSceneAsync(Guid sceneId)
+    {
+        _highlightedSceneId = sceneId;
+        _pendingScrollSceneId = sceneId;
+        if (OnSelectionChanged.HasDelegate)
+        {
+            await OnSelectionChanged.InvokeAsync(new StoryboardSelectionChange(sceneId, [sceneId]));
+        }
+    }
+
+    private async Task NotifySceneUpdatedAsync(ProjectNodeDto node)
+    {
+        if (OnSceneUpdated.HasDelegate)
+        {
+            await OnSceneUpdated.InvokeAsync(new StoryboardSceneInspectorUpdate(node));
+        }
     }
 
     private void OpenStructure()
@@ -875,7 +1669,19 @@
     private sealed record StoryboardChapterColumn(
         ProjectNodeDto Chapter,
         string? PartTitle,
-        List<StoryboardSceneCard> Scenes);
+        List<StoryboardSceneCard> Scenes)
+    {
+        public int DraftSceneCount => Scenes.Count(scene => IsDraftStatus(scene.Status));
+
+        public string? DominantPov => Scenes
+            .Select(scene => scene.Pov?.Trim())
+            .Where(pov => !string.IsNullOrWhiteSpace(pov))
+            .GroupBy(pov => pov!, StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(group => group.Count())
+            .ThenBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.Key)
+            .FirstOrDefault();
+    }
 
     private StoryboardCoachSummary BuildCoachSummary()
     {
@@ -943,8 +1749,9 @@
         SceneMetadata Metadata)
     {
         public string? Status => Metadata.Status;
-        public string? Tag => Metadata.Tag;
         public string? Pov => Metadata.Pov;
+        public IReadOnlyList<string> SubplotTags => Metadata.SubplotTags;
+        public string? NarrativePurpose => Metadata.NarrativePurpose;
         public bool HasNotes => Metadata.HasNotes;
         public DateTimeOffset UpdatedUtc => Metadata.UpdatedUtc;
     }
@@ -952,8 +1759,9 @@
     private sealed record SceneMetadata(
         string? Summary,
         string? Status,
-        string? Tag,
         string? Pov,
+        IReadOnlyList<string> SubplotTags,
+        string? NarrativePurpose,
         bool HasNotes,
         DateTimeOffset UpdatedUtc);
 
@@ -961,6 +1769,175 @@
         int TotalChapters,
         int TotalScenes,
         List<string> Observations);
+
+    private static bool IsDraftStatus(string? status)
+    {
+        return string.IsNullOrWhiteSpace(status)
+            || string.Equals(status.Trim(), "Draft", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeStatus(string? status)
+    {
+        return TryNormalizeStatus(status) ?? "Draft";
+    }
+
+    private static string? TryNormalizeStatus(string? status)
+    {
+        string normalized = status?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return null;
+        }
+
+        foreach (string option in BulkStatusOptions)
+        {
+            if (string.Equals(option, normalized, StringComparison.OrdinalIgnoreCase))
+            {
+                return option;
+            }
+        }
+
+        return null;
+    }
+
+    private static string? NormalizeOptionalValue(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private static IReadOnlyList<string> NormalizeTags(IReadOnlyList<string>? tags)
+    {
+        return tags?
+            .Select(tag => tag?.Trim())
+            .Where(tag => !string.IsNullOrWhiteSpace(tag))
+            .Select(tag => tag!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray()
+            ?? Array.Empty<string>();
+    }
+
+    private static string GetBulkPlaceholder(IEnumerable<string?> values, string singleValueFallback, string mixedFallback)
+    {
+        string[] normalized = values
+            .Select(value => value?.Trim())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return normalized.Length switch
+        {
+            0 => singleValueFallback,
+            1 => normalized[0],
+            _ => mixedFallback
+        };
+    }
+
+    private enum StoryboardColorMode
+    {
+        None,
+        Pov,
+        Subplot,
+        Status
+    }
+
+    private static string UpdateSceneMetadata(
+        string? metadataJson,
+        string? summary = null,
+        string? status = null,
+        string? pov = null,
+        IReadOnlyList<string>? subplotTags = null,
+        string? narrativePurpose = null,
+        string? notesText = null)
+    {
+        JsonObject root = ParseMetadata(metadataJson);
+
+        if (summary is not null)
+        {
+            SetString(root, "summary", summary);
+        }
+
+        if (status is not null)
+        {
+            SetString(root, "status", status);
+        }
+
+        if (pov is not null)
+        {
+            SetString(root, "pov", pov);
+        }
+
+        if (subplotTags is not null)
+        {
+            SetStringArray(root, "subplotTags", subplotTags);
+        }
+
+        if (narrativePurpose is not null)
+        {
+            SetString(root, "narrativePurpose", narrativePurpose);
+        }
+
+        if (notesText is not null)
+        {
+            SetString(root, "notesText", notesText);
+        }
+
+        return root.ToJsonString();
+    }
+
+    private static JsonObject ParseMetadata(string? metadataJson)
+    {
+        if (string.IsNullOrWhiteSpace(metadataJson))
+        {
+            return new JsonObject();
+        }
+
+        try
+        {
+            JsonNode? node = JsonNode.Parse(metadataJson);
+            return node as JsonObject ?? new JsonObject();
+        }
+        catch
+        {
+            return new JsonObject();
+        }
+    }
+
+    private static void SetString(JsonObject root, string propertyName, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            root.Remove(propertyName);
+            return;
+        }
+
+        root[propertyName] = value.Trim();
+    }
+
+    private static void SetStringArray(JsonObject root, string propertyName, IReadOnlyList<string>? values)
+    {
+        IReadOnlyList<string> normalized = values?
+            .Select(value => value?.Trim())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray()
+            ?? Array.Empty<string>();
+
+        if (normalized.Count == 0)
+        {
+            root.Remove(propertyName);
+            return;
+        }
+
+        JsonArray array = new();
+        foreach (string value in normalized)
+        {
+            array.Add(value);
+        }
+
+        root[propertyName] = array;
+    }
 
     private void LogDnd(string message)
     {

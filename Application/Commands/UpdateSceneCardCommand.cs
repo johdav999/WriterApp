@@ -59,11 +59,14 @@ namespace WriterApp.Application.Commands
             record.EmotionalBeat = state.EmotionalBeat ?? string.Empty;
             record.KeyEvents = state.KeyEvents ?? string.Empty;
             record.OpenQuestions = state.OpenQuestions ?? string.Empty;
+            record.Summary = state.Summary;
+            record.Status = state.Status ?? "Draft";
             record.PovCharacterId = state.PovCharacterId;
             record.PlaceId = state.PlaceId;
             record.TimelineEventId = state.TimelineEventId;
             record.TimeRef = state.TimeRef;
             record.TagsJson = state.TagsJson;
+            record.SubplotTagsJson = state.SubplotTagsJson;
             record.ReferencesJson = state.ReferencesJson;
             record.UpdatedUtc = DateTimeOffset.UtcNow;
         }
@@ -74,11 +77,14 @@ namespace WriterApp.Application.Commands
             public string? EmotionalBeat { get; set; }
             public string? KeyEvents { get; set; }
             public string? OpenQuestions { get; set; }
+            public string? Summary { get; set; }
+            public string? Status { get; set; }
             public string? PovCharacterId { get; set; }
             public string? PlaceId { get; set; }
             public string? TimelineEventId { get; set; }
             public string? TimeRef { get; set; }
             public string? TagsJson { get; set; }
+            public string? SubplotTagsJson { get; set; }
             public string? ReferencesJson { get; set; }
         }
     }

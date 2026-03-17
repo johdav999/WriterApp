@@ -158,11 +158,14 @@ namespace WriterApp.Application.Documents
                                 EmotionalBeat = sectionCard.EmotionalBeat,
                                 KeyEvents = sectionCard.KeyEvents,
                                 OpenQuestions = sectionCard.OpenQuestions,
+                                Summary = sectionCard.Summary,
+                                Status = sectionCard.Status,
                                 PovCharacterId = sectionCard.PovCharacterId,
                                 PlaceId = sectionCard.PlaceId,
                                 TimelineEventId = sectionCard.TimelineEventId,
                                 TimeRef = sectionCard.TimeRef,
                                 TagsJson = sectionCard.TagsJson,
+                                SubplotTagsJson = sectionCard.SubplotTagsJson,
                                 ReferencesJson = sectionCard.ReferencesJson,
                                 UpdatedAtUtc = sectionCard.UpdatedUtc
                             });

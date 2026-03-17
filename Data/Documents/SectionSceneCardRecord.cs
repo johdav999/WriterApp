@@ -16,6 +16,10 @@ namespace WriterApp.Data.Documents
 
         public string? OpenQuestions { get; set; }
 
+        public string? Summary { get; set; }
+
+        public string? Status { get; set; }
+
         public string? PovCharacterId { get; set; }
 
         public string? PlaceId { get; set; }
@@ -25,6 +29,8 @@ namespace WriterApp.Data.Documents
         public string? TimeRef { get; set; }
 
         public string? TagsJson { get; set; }
+
+        public string? SubplotTagsJson { get; set; }
 
         public string? ReferencesJson { get; set; }
 

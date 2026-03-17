@@ -20,7 +20,10 @@ namespace WriterApp.Application.Documents
         string? TimelineEventId = null,
         string? TimeRef = null,
         IReadOnlyList<string>? Tags = null,
-        IReadOnlyList<SceneCardReferenceDto>? References = null);
+        IReadOnlyList<SceneCardReferenceDto>? References = null,
+        string? Summary = null,
+        string? Status = "Draft",
+        IReadOnlyList<string>? SubplotTags = null);
 
     public sealed record SectionSceneCardProposalDto(
         string? NarrativePurpose,
@@ -32,7 +35,10 @@ namespace WriterApp.Application.Documents
         string? TimelineEventId = null,
         string? TimeRef = null,
         IReadOnlyList<string>? Tags = null,
-        IReadOnlyList<SceneCardReferenceDto>? References = null);
+        IReadOnlyList<SceneCardReferenceDto>? References = null,
+        string? Summary = null,
+        string? Status = "Draft",
+        IReadOnlyList<string>? SubplotTags = null);
 
     public sealed record SectionSceneCardUpdateRequest(
         string? NarrativePurpose,
@@ -44,5 +50,8 @@ namespace WriterApp.Application.Documents
         string? TimelineEventId = null,
         string? TimeRef = null,
         IReadOnlyList<string>? Tags = null,
-        IReadOnlyList<SceneCardReferenceDto>? References = null);
+        IReadOnlyList<SceneCardReferenceDto>? References = null,
+        string? Summary = null,
+        string? Status = "Draft",
+        IReadOnlyList<string>? SubplotTags = null);
 }

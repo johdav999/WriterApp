@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Data.Sqlite;
+using Microsoft.Data.SqlClient;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -28,6 +29,13 @@ namespace WriterApp.Controllers
         private const int MaxTagLength = 30;
         private const int MaxTimeRefLength = 120;
         private const int MaxJsonPayloadChars = 8192;
+        private static readonly HashSet<string> AllowedStatuses = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "Idea",
+            "Draft",
+            "Revised",
+            "Final"
+        };
         private readonly ISectionRepository _sections;
         private readonly IUserIdResolver _userIdResolver;
         private readonly AppDbContext _dbContext;
@@ -84,7 +92,10 @@ namespace WriterApp.Controllers
                         sceneCard.TimelineEventId,
                         sceneCard.TimeRef,
                         DeserializeTags(sceneCard.TagsJson),
-                        DeserializeReferences(sceneCard.ReferencesJson)));
+                        DeserializeReferences(sceneCard.ReferencesJson),
+                        sceneCard.Summary,
+                        NormalizeStatus(sceneCard.Status),
+                        DeserializeTags(sceneCard.SubplotTagsJson)));
                 }
 
                 return Ok(new SectionSceneCardDto(
@@ -99,10 +110,14 @@ namespace WriterApp.Controllers
                     null,
                     null,
                     Array.Empty<string>(),
-                    Array.Empty<SceneCardReferenceDto>()));
+                    Array.Empty<SceneCardReferenceDto>(),
+                    null,
+                    "Draft",
+                    Array.Empty<string>()));
             }
 
             IReadOnlyList<string> tags = DeserializeTags(card.TagsJson);
+            IReadOnlyList<string> subplotTags = DeserializeTags(card.SubplotTagsJson);
             IReadOnlyList<SceneCardReferenceDto> references = DeserializeReferences(card.ReferencesJson);
             return Ok(new SectionSceneCardDto(
                 card.SectionId,
@@ -116,7 +131,10 @@ namespace WriterApp.Controllers
                 card.TimelineEventId,
                 card.TimeRef,
                 tags,
-                references));
+                references,
+                card.Summary,
+                NormalizeStatus(card.Status),
+                subplotTags));
         }
 
         [HttpPut("sections/{sectionId:guid}/scene-card")]
@@ -152,12 +170,24 @@ namespace WriterApp.Controllers
                 return BadRequest(new { message = $"each tag max length is {MaxTagLength}." });
             }
 
+            List<string> subplotTags = NormalizeTags(request.SubplotTags);
+            if (subplotTags.Count > MaxTags)
+            {
+                return BadRequest(new { message = $"subplotTags max entries is {MaxTags}." });
+            }
+
+            if (subplotTags.Any(tag => tag.Length > MaxTagLength))
+            {
+                return BadRequest(new { message = $"each subplot tag max length is {MaxTagLength}." });
+            }
+
             List<SceneCardReferenceDto> references = NormalizeReferences(request.References);
             string tagsJson = JsonSerializer.Serialize(tags, JsonOptions);
+            string subplotTagsJson = JsonSerializer.Serialize(subplotTags, JsonOptions);
             string referencesJson = JsonSerializer.Serialize(references, JsonOptions);
-            if ((tagsJson.Length + referencesJson.Length) > MaxJsonPayloadChars)
+            if ((tagsJson.Length + subplotTagsJson.Length + referencesJson.Length) > MaxJsonPayloadChars)
             {
-                return BadRequest(new { message = "Combined tags/references payload too large." });
+                return BadRequest(new { message = "Combined tags/subplotTags/references payload too large." });
             }
 
             SectionSceneCardRecord? card = await _dbContext.SectionSceneCards
@@ -172,11 +202,14 @@ namespace WriterApp.Controllers
                     EmotionalBeat = card.EmotionalBeat,
                     KeyEvents = card.KeyEvents,
                     OpenQuestions = card.OpenQuestions,
+                    Summary = card.Summary,
+                    Status = NormalizeStatus(card.Status),
                     PovCharacterId = card.PovCharacterId,
                     PlaceId = card.PlaceId,
                     TimelineEventId = card.TimelineEventId,
                     TimeRef = card.TimeRef,
                     TagsJson = card.TagsJson,
+                    SubplotTagsJson = card.SubplotTagsJson,
                     ReferencesJson = card.ReferencesJson
                 };
             UpdateSceneCardCommand.SceneCardState afterState = new()
@@ -185,11 +218,14 @@ namespace WriterApp.Controllers
                 EmotionalBeat = request.EmotionalBeat ?? string.Empty,
                 KeyEvents = request.KeyEvents ?? string.Empty,
                 OpenQuestions = request.OpenQuestions ?? string.Empty,
+                Summary = Normalize(request.Summary),
+                Status = NormalizeStatus(request.Status),
                 PovCharacterId = Normalize(request.PovCharacterId),
                 PlaceId = Normalize(request.PlaceId),
                 TimelineEventId = Normalize(request.TimelineEventId),
                 TimeRef = timeRef,
                 TagsJson = tagsJson,
+                SubplotTagsJson = subplotTagsJson,
                 ReferencesJson = referencesJson
             };
             if (undoEnabled)
@@ -218,11 +254,14 @@ namespace WriterApp.Controllers
                 card.EmotionalBeat = afterState.EmotionalBeat ?? string.Empty;
                 card.KeyEvents = afterState.KeyEvents ?? string.Empty;
                 card.OpenQuestions = afterState.OpenQuestions ?? string.Empty;
+                card.Summary = afterState.Summary;
+                card.Status = NormalizeStatus(afterState.Status);
                 card.PovCharacterId = afterState.PovCharacterId;
                 card.PlaceId = afterState.PlaceId;
                 card.TimelineEventId = afterState.TimelineEventId;
                 card.TimeRef = afterState.TimeRef;
                 card.TagsJson = afterState.TagsJson;
+                card.SubplotTagsJson = afterState.SubplotTagsJson;
                 card.ReferencesJson = afterState.ReferencesJson;
                 card.UpdatedUtc = DateTimeOffset.UtcNow;
                 await _dbContext.SaveChangesAsync(ct);
@@ -237,6 +276,7 @@ namespace WriterApp.Controllers
             await MirrorSectionSceneCardToScenesAsync(sectionId, updatedCard, ct);
             await _searchIndex.UpsertSceneCardAsync(section, updatedCard, ct);
             IReadOnlyList<string> updatedTags = DeserializeTags(updatedCard.TagsJson);
+            IReadOnlyList<string> updatedSubplotTags = DeserializeTags(updatedCard.SubplotTagsJson);
             IReadOnlyList<SceneCardReferenceDto> updatedReferences = DeserializeReferences(updatedCard.ReferencesJson);
 
             return Ok(new SectionSceneCardDto(
@@ -251,12 +291,26 @@ namespace WriterApp.Controllers
                 updatedCard.TimelineEventId,
                 updatedCard.TimeRef,
                 updatedTags,
-                updatedReferences));
+                updatedReferences,
+                updatedCard.Summary,
+                NormalizeStatus(updatedCard.Status),
+                updatedSubplotTags));
         }
 
         private static string? Normalize(string? value)
         {
             return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        }
+
+        private static string NormalizeStatus(string? status)
+        {
+            if (string.IsNullOrWhiteSpace(status))
+            {
+                return "Draft";
+            }
+
+            string trimmed = status.Trim();
+            return AllowedStatuses.Contains(trimmed) ? trimmed : "Draft";
         }
 
         private static List<string> NormalizeTags(IReadOnlyList<string>? tags)
@@ -399,11 +453,14 @@ namespace WriterApp.Controllers
                 sceneCard.EmotionalBeat = updatedCard.EmotionalBeat;
                 sceneCard.KeyEvents = updatedCard.KeyEvents;
                 sceneCard.OpenQuestions = updatedCard.OpenQuestions;
+                sceneCard.Summary = updatedCard.Summary;
+                sceneCard.Status = NormalizeStatus(updatedCard.Status);
                 sceneCard.PovCharacterId = updatedCard.PovCharacterId;
                 sceneCard.PlaceId = updatedCard.PlaceId;
                 sceneCard.TimelineEventId = updatedCard.TimelineEventId;
                 sceneCard.TimeRef = updatedCard.TimeRef;
                 sceneCard.TagsJson = updatedCard.TagsJson;
+                sceneCard.SubplotTagsJson = updatedCard.SubplotTagsJson;
                 sceneCard.ReferencesJson = updatedCard.ReferencesJson;
                 sceneCard.UpdatedAtUtc = updatedCard.UpdatedUtc;
             }
@@ -412,14 +469,38 @@ namespace WriterApp.Controllers
         private async Task EnsureSceneCardSchemaAsync(CancellationToken ct)
         {
             string provider = _dbContext.Database.ProviderName ?? string.Empty;
-            if (!provider.Contains("Sqlite", StringComparison.OrdinalIgnoreCase))
+            if (provider.Contains("Sqlite", StringComparison.OrdinalIgnoreCase))
             {
-                return;
+                await EnsureSceneCardSchemaSqliteAsync(ct);
             }
+            else if (provider.Contains("SqlServer", StringComparison.OrdinalIgnoreCase))
+            {
+                await EnsureSceneCardSchemaSqlServerAsync(ct);
+            }
+        }
 
+        private async Task EnsureSceneCardSchemaSqliteAsync(CancellationToken ct)
+        {
             await _dbContext.Database.OpenConnectionAsync(ct);
             try
             {
+                using (var create = _dbContext.Database.GetDbConnection().CreateCommand())
+                {
+                    create.CommandText =
+                        """
+                        CREATE TABLE IF NOT EXISTS SectionSceneCards (
+                            SectionId TEXT NOT NULL PRIMARY KEY,
+                            NarrativePurpose TEXT NULL,
+                            EmotionalBeat TEXT NULL,
+                            KeyEvents TEXT NULL,
+                            OpenQuestions TEXT NULL,
+                            UpdatedUtc TEXT NOT NULL,
+                            FOREIGN KEY (SectionId) REFERENCES Sections (Id) ON DELETE CASCADE
+                        );
+                        """;
+                    await create.ExecuteNonQueryAsync(ct);
+                }
+
                 using var command = _dbContext.Database.GetDbConnection().CreateCommand();
                 command.CommandText = "PRAGMA table_info('SectionSceneCards');";
                 HashSet<string> existingColumns = new(StringComparer.OrdinalIgnoreCase);
@@ -435,36 +516,9 @@ namespace WriterApp.Controllers
                     }
                 }
 
-                List<string> alterStatements = new();
-                if (!existingColumns.Contains("PovCharacterId"))
-                {
-                    alterStatements.Add("ALTER TABLE SectionSceneCards ADD COLUMN PovCharacterId TEXT NULL;");
-                }
-
-                if (!existingColumns.Contains("PlaceId"))
-                {
-                    alterStatements.Add("ALTER TABLE SectionSceneCards ADD COLUMN PlaceId TEXT NULL;");
-                }
-
-                if (!existingColumns.Contains("TimelineEventId"))
-                {
-                    alterStatements.Add("ALTER TABLE SectionSceneCards ADD COLUMN TimelineEventId TEXT NULL;");
-                }
-
-                if (!existingColumns.Contains("TimeRef"))
-                {
-                    alterStatements.Add("ALTER TABLE SectionSceneCards ADD COLUMN TimeRef TEXT NULL;");
-                }
-
-                if (!existingColumns.Contains("TagsJson"))
-                {
-                    alterStatements.Add("ALTER TABLE SectionSceneCards ADD COLUMN TagsJson TEXT NULL;");
-                }
-
-                if (!existingColumns.Contains("ReferencesJson"))
-                {
-                    alterStatements.Add("ALTER TABLE SectionSceneCards ADD COLUMN ReferencesJson TEXT NULL;");
-                }
+                List<string> alterStatements = BuildMissingSectionSceneCardColumnStatements(
+                    existingColumns,
+                    textType: "TEXT NULL");
 
                 foreach (string sql in alterStatements)
                 {
@@ -484,6 +538,126 @@ namespace WriterApp.Controllers
             {
                 await _dbContext.Database.CloseConnectionAsync();
             }
+        }
+
+        private async Task EnsureSceneCardSchemaSqlServerAsync(CancellationToken ct)
+        {
+            await _dbContext.Database.OpenConnectionAsync(ct);
+            try
+            {
+                using (var create = _dbContext.Database.GetDbConnection().CreateCommand())
+                {
+                    create.CommandText =
+                        """
+                        IF OBJECT_ID(N'dbo.SectionSceneCards', N'U') IS NULL
+                        BEGIN
+                            CREATE TABLE [dbo].[SectionSceneCards] (
+                                [SectionId] uniqueidentifier NOT NULL PRIMARY KEY,
+                                [NarrativePurpose] nvarchar(max) NULL,
+                                [EmotionalBeat] nvarchar(max) NULL,
+                                [KeyEvents] nvarchar(max) NULL,
+                                [OpenQuestions] nvarchar(max) NULL,
+                                [UpdatedUtc] datetimeoffset NOT NULL
+                            );
+                        END
+                        """;
+                    await create.ExecuteNonQueryAsync(ct);
+                }
+
+                using var command = _dbContext.Database.GetDbConnection().CreateCommand();
+                command.CommandText =
+                    """
+                    SELECT [COLUMN_NAME]
+                    FROM INFORMATION_SCHEMA.COLUMNS
+                    WHERE [TABLE_SCHEMA] = 'dbo' AND [TABLE_NAME] = 'SectionSceneCards';
+                    """;
+                HashSet<string> existingColumns = new(StringComparer.OrdinalIgnoreCase);
+
+                using (var reader = await command.ExecuteReaderAsync(ct))
+                {
+                    while (await reader.ReadAsync(ct))
+                    {
+                        if (reader.FieldCount > 0 && !reader.IsDBNull(0))
+                        {
+                            existingColumns.Add(reader.GetString(0));
+                        }
+                    }
+                }
+
+                List<string> alterStatements = BuildMissingSectionSceneCardColumnStatements(
+                    existingColumns,
+                    textType: "NVARCHAR(MAX) NULL");
+
+                foreach (string sql in alterStatements)
+                {
+                    using var alter = _dbContext.Database.GetDbConnection().CreateCommand();
+                    alter.CommandText = sql;
+                    try
+                    {
+                        await alter.ExecuteNonQueryAsync(ct);
+                    }
+                    catch (SqlException ex) when (ex.Number == 2705)
+                    {
+                    }
+                }
+            }
+            finally
+            {
+                await _dbContext.Database.CloseConnectionAsync();
+            }
+        }
+
+        private static List<string> BuildMissingSectionSceneCardColumnStatements(
+            IReadOnlySet<string> existingColumns,
+            string textType)
+        {
+            List<string> alterStatements = new();
+            if (!existingColumns.Contains("PovCharacterId"))
+            {
+                alterStatements.Add($"ALTER TABLE SectionSceneCards ADD PovCharacterId {textType};");
+            }
+
+            if (!existingColumns.Contains("Summary"))
+            {
+                alterStatements.Add($"ALTER TABLE SectionSceneCards ADD Summary {textType};");
+            }
+
+            if (!existingColumns.Contains("Status"))
+            {
+                alterStatements.Add($"ALTER TABLE SectionSceneCards ADD Status {textType};");
+            }
+
+            if (!existingColumns.Contains("PlaceId"))
+            {
+                alterStatements.Add($"ALTER TABLE SectionSceneCards ADD PlaceId {textType};");
+            }
+
+            if (!existingColumns.Contains("TimelineEventId"))
+            {
+                alterStatements.Add($"ALTER TABLE SectionSceneCards ADD TimelineEventId {textType};");
+            }
+
+            if (!existingColumns.Contains("TimeRef"))
+            {
+                alterStatements.Add($"ALTER TABLE SectionSceneCards ADD TimeRef {textType};");
+            }
+
+            if (!existingColumns.Contains("TagsJson"))
+            {
+                alterStatements.Add($"ALTER TABLE SectionSceneCards ADD TagsJson {textType};");
+            }
+
+            if (!existingColumns.Contains("SubplotTagsJson"))
+            {
+                alterStatements.Add($"ALTER TABLE SectionSceneCards ADD SubplotTagsJson {textType};");
+            }
+
+            if (!existingColumns.Contains("ReferencesJson"))
+            {
+                alterStatements.Add($"ALTER TABLE SectionSceneCards ADD ReferencesJson {textType};");
+            }
+
+            return alterStatements;
         }
     }
 }

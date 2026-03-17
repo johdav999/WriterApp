@@ -214,7 +214,7 @@ else
                                  AllowedTitle="Open storyboard workspace."
                                  LockedTitle="Storyboard requires the Professional plan."
                                  AriaLabel="Storyboard"
-                                 OnClick='() => SelectTab("storyboard")'>
+                                 OnClick="OpenStoryboardAsync">
                     Storyboard
                 </PlanGatedButton>
                 @if (_goalsEnabled)
@@ -242,15 +242,6 @@ else
             @if (_activeTab == "cover")
             {
                 <ProjectCoverStudio Project="_activeProject" />
-            }
-            else if (_activeTab == "storyboard")
-            {
-                @if (CanAccessStoryboard)
-                {
-                    <ProjectStoryboard Project="_activeProject"
-                                       Nodes="_nodes"
-                                       OnStructureChanged="RefreshActiveProjectFromStoryboardAsync" />
-                }
             }
             else if (_activeTab == "progress" && _goalsEnabled)
             {
@@ -840,6 +831,12 @@ else
             return;
         }
 
+        if (string.Equals(requestedTab, "storyboard", StringComparison.Ordinal))
+        {
+            Navigation.NavigateTo(GetStoryboardRoute(), replace: true);
+            return;
+        }
+
         bool tabChanged = !string.Equals(_activeTab, requestedTab, StringComparison.Ordinal);
         _activeTab = requestedTab;
 
@@ -984,19 +981,25 @@ else
     private async Task SelectTab(string tab)
     {
         _activeTab = NormalizeTab(tab);
-        if (string.Equals(_activeTab, "storyboard", StringComparison.Ordinal) && !CanAccessStoryboard)
-        {
-            Navigation.NavigateTo(
-                FeatureAccessService.GetUpgradePathWithReturn(
-                    FeatureKey.ProjectStoryboard,
-                    BuildProjectWorkspaceReturnUrl()));
-            return;
-        }
-
         if (_activeTab == "progress" && _goalsEnabled && _activeProject is not null)
         {
             await LoadProgressAsync(_activeProject.Id);
         }
+    }
+
+    private Task OpenStoryboardAsync()
+    {
+        if (!CanAccessStoryboard)
+        {
+            Navigation.NavigateTo(
+                FeatureAccessService.GetUpgradePathWithReturn(
+                    FeatureKey.ProjectStoryboard,
+                    GetStoryboardRoute()));
+            return Task.CompletedTask;
+        }
+
+        Navigation.NavigateTo(GetStoryboardRoute());
+        return Task.CompletedTask;
     }
 
     private string BuildProjectWorkspaceReturnUrl()
@@ -1005,6 +1008,15 @@ else
             ? $"/projects/{_activeProject.Id:D}"
             : ProjectId.HasValue
                 ? $"/projects/{ProjectId.Value:D}"
+                : "/projects";
+    }
+
+    private string GetStoryboardRoute()
+    {
+        return _activeProject is not null
+            ? $"/projects/{_activeProject.Id:D}/storyboard"
+            : ProjectId.HasValue
+                ? $"/projects/{ProjectId.Value:D}/storyboard"
                 : "/projects";
     }
 

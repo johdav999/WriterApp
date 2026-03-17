@@ -1,0 +1,848 @@
+@using System.Net.Http.Json
+@using System.Text.Json
+@using System.Text.Json.Nodes
+@using WriterApp.Application.AI
+@using WriterApp.Application.Documents
+@using WriterApp.Application.Subscriptions
+@using WriterApp.Client.Services
+@using WriterApp.Client.State
+@inject HttpClient Http
+@inject ILogger<StoryboardSceneInspector> Logger
+@inject FeatureAccessService FeatureAccessService
+
+<aside class="storyboard-inspector" aria-label="Scene inspector">
+    @if (SceneNode is null)
+    {
+        <div class="storyboard-inspector-empty">
+            @if (SelectionCount > 1)
+            {
+                <strong>Multiple scenes selected.</strong>
+                <span>Use the bulk action bar to update shared fields, or select a single scene to edit everything here.</span>
+            }
+            else
+            {
+                <strong>Select a scene to edit.</strong>
+                <span>Summary, status, POV, subplot tags, narrative purpose, notes, and AI actions will appear here.</span>
+            }
+        </div>
+    }
+    else
+    {
+        <div class="storyboard-inspector-header">
+            <div>
+                <h3>Scene</h3>
+                <p>Edit the selected storyboard card without leaving the board.</p>
+            </div>
+            @if (!string.IsNullOrWhiteSpace(_saveStatus))
+            {
+                <div class="storyboard-inspector-status">@_saveStatus</div>
+            }
+        </div>
+
+        <div class="storyboard-inspector-body">
+            <section class="storyboard-inspector-section">
+                <h4>Basic</h4>
+                <label class="storyboard-inspector-label" for="storyboard-scene-title">Title</label>
+                <input id="storyboard-scene-title"
+                       class="storyboard-inspector-input"
+                       value="@_title"
+                       @oninput="OnTitleInput"
+                       @onblur="SaveNowAsync"
+                       placeholder="Scene title" />
+
+                <label class="storyboard-inspector-label" for="storyboard-scene-summary">Summary</label>
+                <textarea id="storyboard-scene-summary"
+                          class="storyboard-inspector-textarea"
+                          rows="3"
+                          value="@_summary"
+                          @oninput="OnSummaryInput"
+                          placeholder="Briefly summarize the scene..."></textarea>
+
+                <label class="storyboard-inspector-label" for="storyboard-scene-notes">Notes</label>
+                <textarea id="storyboard-scene-notes"
+                          class="storyboard-inspector-textarea"
+                          rows="5"
+                          value="@_notes"
+                          @oninput="OnNotesInput"
+                          placeholder="Add scene notes..."></textarea>
+            </section>
+
+            <section class="storyboard-inspector-section">
+                <h4>Structure</h4>
+                <label class="storyboard-inspector-label" for="storyboard-scene-purpose">Narrative purpose</label>
+                <select id="storyboard-scene-purpose"
+                        class="storyboard-inspector-input"
+                        value="@_narrativePurpose"
+                        @onchange="OnNarrativePurposeChanged">
+                    @foreach (string purposeOption in GetNarrativePurposeOptions())
+                    {
+                        <option value="@purposeOption">@(string.IsNullOrEmpty(purposeOption) ? "Select purpose" : purposeOption)</option>
+                    }
+                </select>
+
+                <label class="storyboard-inspector-label" for="storyboard-scene-pov">POV</label>
+                <input id="storyboard-scene-pov"
+                       class="storyboard-inspector-input"
+                       value="@_povCharacterId"
+                       @oninput="OnPovInput"
+                       placeholder="e.g., Klara" />
+
+                <label class="storyboard-inspector-label" for="storyboard-scene-subplots">Subplot tags</label>
+                <input id="storyboard-scene-subplots"
+                       class="storyboard-inspector-input"
+                       value="@_subplotTagsText"
+                       @oninput="OnSubplotTagsInput"
+                       placeholder="betrayal, romance, rivalry" />
+
+                <label class="storyboard-inspector-label" for="storyboard-scene-emotional-beat">Emotional beat</label>
+                <textarea id="storyboard-scene-emotional-beat"
+                          class="storyboard-inspector-textarea"
+                          rows="2"
+                          value="@_emotionalBeat"
+                          @oninput="OnEmotionalBeatInput"
+                          placeholder="How the emotional tone shifts..."></textarea>
+
+                <label class="storyboard-inspector-label" for="storyboard-scene-key-events">Key events</label>
+                <textarea id="storyboard-scene-key-events"
+                          class="storyboard-inspector-textarea"
+                          rows="3"
+                          value="@_keyEvents"
+                          @oninput="OnKeyEventsInput"
+                          placeholder="- Bullet your key events..."></textarea>
+
+                <label class="storyboard-inspector-label" for="storyboard-scene-open-questions">Open questions</label>
+                <textarea id="storyboard-scene-open-questions"
+                          class="storyboard-inspector-textarea"
+                          rows="3"
+                          value="@_openQuestions"
+                          @oninput="OnOpenQuestionsInput"
+                          placeholder="Loose ends or questions to answer later..."></textarea>
+            </section>
+
+            <section class="storyboard-inspector-section">
+                <h4>Status</h4>
+                <label class="storyboard-inspector-label" for="storyboard-scene-status">Status</label>
+                <select id="storyboard-scene-status"
+                        class="storyboard-inspector-input"
+                        value="@_status"
+                        @onchange="OnStatusChanged">
+                    @foreach (string statusOption in SceneCardStatusOptions)
+                    {
+                        <option value="@statusOption">@statusOption</option>
+                    }
+                </select>
+            </section>
+
+            <section class="storyboard-inspector-section">
+                <h4>Storyboard coach</h4>
+                @if (!FeatureAccessService.CanUse(FeatureKey.SceneAiSuggestions))
+                {
+                    <div class="storyboard-inspector-empty">Upgrade to use AI scene-card actions.</div>
+                }
+                else
+                {
+                    <div class="storyboard-inspector-ai-actions">
+                        <PlanGatedButton Feature="@nameof(FeatureKey.SceneAiSuggestions)"
+                                         Class="storyboard-inspector-ai-button"
+                                         ShowLockIndicator="false"
+                                         IsActionDisabled="@(_aiInFlight || SceneNode is null)"
+                                         OnClick="@(() => RunSceneAiAsync("scene.suggest", "Generate a concise 1-2 sentence summary for this scene card based on the section text. Prefer updating the summary field and preserve existing scene metadata unless the text strongly suggests a correction."))">
+                            Generate summary
+                        </PlanGatedButton>
+                        <PlanGatedButton Feature="@nameof(FeatureKey.SceneAiSuggestions)"
+                                         Class="storyboard-inspector-ai-button"
+                                         ShowLockIndicator="false"
+                                         IsActionDisabled="@(_aiInFlight || SceneNode is null)"
+                                         OnClick="@(() => RunSceneAiAsync("scene.suggest", "Suggest the strongest narrative purpose for this scene based on the section text. Prioritize updating the narrative purpose field and only adjust other metadata if needed for consistency."))">
+                            Suggest narrative purpose
+                        </PlanGatedButton>
+                        <PlanGatedButton Feature="@nameof(FeatureKey.SceneAiSuggestions)"
+                                         Class="storyboard-inspector-ai-button"
+                                         ShowLockIndicator="false"
+                                         IsActionDisabled="@(_aiInFlight || SceneNode is null)"
+                                         OnClick="@(() => RunSceneAiAsync("scene.refine", "Improve the scene structure of this scene card using goal, conflict, and outcome framing. Strengthen summary, narrative purpose, key events, and open questions so the card clearly reflects what the character wants, what opposes them, and what changes by the end."))">
+                            Improve structure
+                        </PlanGatedButton>
+                    </div>
+
+                    @if (!string.IsNullOrWhiteSpace(_aiError))
+                    {
+                        <div class="storyboard-inspector-error">@_aiError</div>
+                    }
+
+                    @if (_aiProposal is not null)
+                    {
+                        <div class="storyboard-inspector-preview">
+                            <div class="storyboard-inspector-preview-title">AI suggestion</div>
+                            @if (!string.IsNullOrWhiteSpace(_aiExplanation))
+                            {
+                                <div class="storyboard-inspector-preview-explanation">@_aiExplanation</div>
+                            }
+                            <div class="storyboard-inspector-preview-grid">
+                                <div>
+                                    <strong>Summary</strong>
+                                    <div>@(string.IsNullOrWhiteSpace(_aiProposal.Summary) ? "(not provided)" : _aiProposal.Summary)</div>
+                                </div>
+                                <div>
+                                    <strong>Status</strong>
+                                    <div>@(string.IsNullOrWhiteSpace(_aiProposal.Status) ? "(not provided)" : _aiProposal.Status)</div>
+                                </div>
+                                <div>
+                                    <strong>Narrative purpose</strong>
+                                    <div>@(string.IsNullOrWhiteSpace(_aiProposal.NarrativePurpose) ? "(not provided)" : _aiProposal.NarrativePurpose)</div>
+                                </div>
+                                <div>
+                                    <strong>POV</strong>
+                                    <div>@(string.IsNullOrWhiteSpace(_aiProposal.PovCharacterId) ? "(not provided)" : _aiProposal.PovCharacterId)</div>
+                                </div>
+                                <div>
+                                    <strong>Subplot tags</strong>
+                                    <div>@GetTagDisplay(_aiProposal.SubplotTags)</div>
+                                </div>
+                                <div>
+                                    <strong>Open questions</strong>
+                                    <div>@(string.IsNullOrWhiteSpace(_aiProposal.OpenQuestions) ? "(not provided)" : _aiProposal.OpenQuestions)</div>
+                                </div>
+                            </div>
+                            <div class="storyboard-inspector-ai-actions">
+                                <button type="button" class="storyboard-inspector-primary" @onclick="ApplySceneAiProposalAsync">Apply</button>
+                                <button type="button" class="storyboard-inspector-secondary" @onclick="DiscardSceneAiProposal">Discard</button>
+                            </div>
+                        </div>
+                    }
+                }
+            </section>
+        </div>
+    }
+</aside>
+
+@code {
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly TimeSpan AutosaveDebounce = TimeSpan.FromMilliseconds(900);
+    private static readonly string[] SceneCardStatusOptions = ["Idea", "Draft", "Revised", "Final"];
+    private static readonly string[] SceneNarrativePurposeOptions =
+    [
+        string.Empty,
+        "Setup",
+        "Inciting Incident",
+        "Rising Action",
+        "Complication",
+        "Revelation",
+        "Relationship Beat",
+        "Reversal",
+        "Decision",
+        "Climax",
+        "Aftermath"
+    ];
+
+    [Parameter]
+    public Guid ProjectId { get; set; }
+
+    [Parameter]
+    public ProjectNodeDto? SceneNode { get; set; }
+
+    [Parameter]
+    public EventCallback<StoryboardSceneInspectorUpdate> SceneUpdated { get; set; }
+
+    [Parameter]
+    public int SelectionCount { get; set; }
+
+    private Guid? _loadedSceneId;
+    private string _title = string.Empty;
+    private string _summary = string.Empty;
+    private string _status = "Draft";
+    private string _narrativePurpose = string.Empty;
+    private string _povCharacterId = string.Empty;
+    private string _subplotTagsText = string.Empty;
+    private string _emotionalBeat = string.Empty;
+    private string _keyEvents = string.Empty;
+    private string _openQuestions = string.Empty;
+    private string _notes = string.Empty;
+    private string _saveStatus = string.Empty;
+    private string _aiError = string.Empty;
+    private string _scenePlainText = string.Empty;
+    private Guid? _documentId;
+    private Guid? _sectionId;
+    private string? _sceneMetadataJson;
+    private CancellationTokenSource? _saveCts;
+    private bool _saveInFlight;
+    private bool _loading;
+    private bool _aiInFlight;
+    private SectionSceneCardProposalDto? _aiProposal;
+    private string? _aiExplanation;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        Guid? sceneId = SceneNode?.Id;
+        if (_loadedSceneId == sceneId)
+        {
+            SyncFromCurrentNode();
+            return;
+        }
+
+        _saveCts?.Cancel();
+        _saveCts = null;
+        _loadedSceneId = sceneId;
+        _aiProposal = null;
+        _aiExplanation = null;
+        _aiError = string.Empty;
+        _saveStatus = string.Empty;
+
+        if (!sceneId.HasValue)
+        {
+            ResetFields();
+            return;
+        }
+
+        await LoadSceneAsync(sceneId.Value);
+    }
+
+    private void SyncFromCurrentNode()
+    {
+        if (SceneNode is null || _saveInFlight || _loading)
+        {
+            return;
+        }
+
+        _title = SceneNode.Title;
+
+        if (string.IsNullOrWhiteSpace(SceneNode.MetadataJson))
+        {
+            return;
+        }
+
+        try
+        {
+            JsonNode? parsed = JsonNode.Parse(SceneNode.MetadataJson);
+            JsonObject? root = parsed as JsonObject;
+            if (root is null)
+            {
+                return;
+            }
+
+            _status = NormalizeSceneCardStatus(root["status"]?.GetValue<string>());
+        }
+        catch
+        {
+        }
+    }
+
+    private async Task LoadSceneAsync(Guid sceneId)
+    {
+        _loading = true;
+        ResetFields();
+
+        try
+        {
+            _title = SceneNode?.Title ?? string.Empty;
+            _sceneMetadataJson = SceneNode?.MetadataJson;
+
+            SceneCardDto? card = await Http.GetFromJsonAsync<SceneCardDto>($"api/scenes/{sceneId}/scene-card");
+            SceneNotesDto? notes = await Http.GetFromJsonAsync<SceneNotesDto>($"api/scenes/{sceneId}/notes");
+            SceneContentDto? content = await Http.GetFromJsonAsync<SceneContentDto>($"api/projects/{ProjectId}/scenes/{sceneId}/content");
+
+            _summary = card?.Summary ?? string.Empty;
+            _status = NormalizeSceneCardStatus(card?.Status);
+            _narrativePurpose = card?.NarrativePurpose ?? string.Empty;
+            _povCharacterId = card?.PovCharacterId ?? string.Empty;
+            _subplotTagsText = string.Join(", ", card?.SubplotTags ?? Array.Empty<string>());
+            _emotionalBeat = card?.EmotionalBeat ?? string.Empty;
+            _keyEvents = card?.KeyEvents ?? string.Empty;
+            _openQuestions = card?.OpenQuestions ?? string.Empty;
+            _notes = notes?.NotesText ?? string.Empty;
+            _scenePlainText = PlainTextMapper.ToPlainText(content?.ContentJson ?? string.Empty);
+
+            try
+            {
+                using HttpResponseMessage response = await Http.PostAsync($"api/projects/{ProjectId}/nodes/{sceneId}/open-scene", null);
+                if (response.IsSuccessStatusCode)
+                {
+                    ProjectSceneOpenTargetDto? target = await response.Content.ReadFromJsonAsync<ProjectSceneOpenTargetDto>();
+                    _documentId = target?.DocumentId;
+                    _sectionId = target?.SectionId;
+                }
+            }
+            catch
+            {
+                _documentId = null;
+                _sectionId = null;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Storyboard scene inspector load failed. SceneNodeId={SceneNodeId}", sceneId);
+            _saveStatus = "Failed to load scene.";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void ResetFields()
+    {
+        _title = string.Empty;
+        _summary = string.Empty;
+        _status = "Draft";
+        _narrativePurpose = string.Empty;
+        _povCharacterId = string.Empty;
+        _subplotTagsText = string.Empty;
+        _emotionalBeat = string.Empty;
+        _keyEvents = string.Empty;
+        _openQuestions = string.Empty;
+        _notes = string.Empty;
+        _scenePlainText = string.Empty;
+        _documentId = null;
+        _sectionId = null;
+        _sceneMetadataJson = SceneNode?.MetadataJson;
+    }
+
+    private void OnTitleInput(ChangeEventArgs args)
+    {
+        _title = args.Value?.ToString() ?? string.Empty;
+        OnFieldChanged();
+    }
+
+    private void OnSummaryInput(ChangeEventArgs args)
+    {
+        _summary = args.Value?.ToString() ?? string.Empty;
+        OnFieldChanged();
+    }
+
+    private void OnNotesInput(ChangeEventArgs args)
+    {
+        _notes = args.Value?.ToString() ?? string.Empty;
+        OnFieldChanged();
+    }
+
+    private void OnNarrativePurposeChanged(ChangeEventArgs args)
+    {
+        _narrativePurpose = args.Value?.ToString() ?? string.Empty;
+        OnFieldChanged();
+    }
+
+    private void OnPovInput(ChangeEventArgs args)
+    {
+        _povCharacterId = args.Value?.ToString() ?? string.Empty;
+        OnFieldChanged();
+    }
+
+    private void OnSubplotTagsInput(ChangeEventArgs args)
+    {
+        _subplotTagsText = args.Value?.ToString() ?? string.Empty;
+        OnFieldChanged();
+    }
+
+    private void OnEmotionalBeatInput(ChangeEventArgs args)
+    {
+        _emotionalBeat = args.Value?.ToString() ?? string.Empty;
+        OnFieldChanged();
+    }
+
+    private void OnKeyEventsInput(ChangeEventArgs args)
+    {
+        _keyEvents = args.Value?.ToString() ?? string.Empty;
+        OnFieldChanged();
+    }
+
+    private void OnOpenQuestionsInput(ChangeEventArgs args)
+    {
+        _openQuestions = args.Value?.ToString() ?? string.Empty;
+        OnFieldChanged();
+    }
+
+    private void OnStatusChanged(ChangeEventArgs args)
+    {
+        _status = NormalizeSceneCardStatus(args.Value?.ToString());
+        OnFieldChanged();
+    }
+
+    private void OnFieldChanged()
+    {
+        _saveStatus = string.Empty;
+        QueueAutosave();
+    }
+
+    private void QueueAutosave()
+    {
+        if (SceneNode is null)
+        {
+            return;
+        }
+
+        _saveCts?.Cancel();
+        _saveCts = new CancellationTokenSource();
+        _ = DebouncedSaveAsync(_saveCts, SceneNode.Id);
+    }
+
+    private async Task DebouncedSaveAsync(CancellationTokenSource cts, Guid sceneId)
+    {
+        try
+        {
+            await Task.Delay(AutosaveDebounce, cts.Token);
+            if (cts.IsCancellationRequested || SceneNode?.Id != sceneId)
+            {
+                return;
+            }
+
+            await SaveNowAsync();
+        }
+        catch (TaskCanceledException)
+        {
+        }
+    }
+
+    private async Task SaveNowAsync()
+    {
+        if (_loading || _saveInFlight || SceneNode is null)
+        {
+            return;
+        }
+
+        _saveInFlight = true;
+        try
+        {
+            SceneCardUpdateRequest scenePayload = new(
+                NormalizeOptional(_narrativePurpose),
+                NormalizeOptional(_emotionalBeat),
+                NormalizeOptional(_keyEvents),
+                NormalizeOptional(_openQuestions),
+                NormalizeOptional(_povCharacterId),
+                null,
+                null,
+                null,
+                Array.Empty<string>(),
+                Array.Empty<SceneCardReferenceDto>(),
+                NormalizeOptional(_summary),
+                NormalizeSceneCardStatus(_status),
+                ParseTags(_subplotTagsText));
+
+            using HttpResponseMessage sceneResponse =
+                await Http.PutAsJsonAsync($"api/scenes/{SceneNode.Id}/scene-card", scenePayload);
+            if (!sceneResponse.IsSuccessStatusCode)
+            {
+                _saveStatus = "Failed to save scene.";
+                return;
+            }
+
+            SceneCardDto? updatedCard = await sceneResponse.Content.ReadFromJsonAsync<SceneCardDto>();
+
+            using HttpResponseMessage notesResponse =
+                await Http.PutAsJsonAsync($"api/scenes/{SceneNode.Id}/notes", new SceneNotesUpdateRequest(_notes ?? string.Empty));
+            if (!notesResponse.IsSuccessStatusCode)
+            {
+                _saveStatus = "Failed to save notes.";
+                return;
+            }
+
+            string nextMetadataJson = BuildMetadataJson(updatedCard, _notes, _sceneMetadataJson);
+            ProjectNodePatchRequest patch = new(
+                string.IsNullOrWhiteSpace(_title) ? "Untitled scene" : _title.Trim(),
+                SceneNode.ParentId,
+                SceneNode.LinkedSectionId,
+                nextMetadataJson,
+                SceneNode.NodeType);
+
+            using HttpResponseMessage patchResponse =
+                await Http.PatchAsJsonAsync($"api/projects/{ProjectId}/nodes/{SceneNode.Id}", patch);
+            if (!patchResponse.IsSuccessStatusCode)
+            {
+                _saveStatus = "Failed to save title.";
+                return;
+            }
+
+            _sceneMetadataJson = nextMetadataJson;
+            _title = patch.Title ?? _title;
+            _summary = updatedCard?.Summary ?? _summary;
+            _status = NormalizeSceneCardStatus(updatedCard?.Status ?? _status);
+            _narrativePurpose = updatedCard?.NarrativePurpose ?? _narrativePurpose;
+            _povCharacterId = updatedCard?.PovCharacterId ?? _povCharacterId;
+            _subplotTagsText = string.Join(", ", updatedCard?.SubplotTags ?? ParseTags(_subplotTagsText));
+
+            if (SceneUpdated.HasDelegate)
+            {
+                ProjectNodeDto updatedNode = SceneNode with
+                {
+                    Title = _title,
+                    MetadataJson = nextMetadataJson,
+                    UpdatedUtc = DateTimeOffset.UtcNow
+                };
+                await SceneUpdated.InvokeAsync(new StoryboardSceneInspectorUpdate(updatedNode));
+            }
+
+            _saveStatus = "Scene saved.";
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Storyboard scene inspector save failed. SceneNodeId={SceneNodeId}", SceneNode.Id);
+            _saveStatus = "Failed to save scene.";
+        }
+        finally
+        {
+            _saveInFlight = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task RunSceneAiAsync(string actionKey, string instruction)
+    {
+        if (_aiInFlight || SceneNode is null)
+        {
+            return;
+        }
+
+        if (_sectionId is null || _documentId is null)
+        {
+            _aiError = "AI needs linked scene text for this scene.";
+            return;
+        }
+
+        _aiInFlight = true;
+        _aiError = string.Empty;
+        try
+        {
+            string originalSnapshot = BuildSceneCardSnapshotJson();
+            AiActionExecuteRequestDto payload = new(
+                _documentId,
+                _sectionId,
+                null,
+                null,
+                null,
+                originalSnapshot,
+                _scenePlainText,
+                null,
+                new Dictionary<string, object?>
+                {
+                    ["instruction"] = instruction
+                });
+
+            using HttpResponseMessage response =
+                await Http.PostAsJsonAsync($"api/ai/actions/{actionKey}/execute", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                _aiError = await ReadApiErrorAsync(response, "AI action failed.");
+                return;
+            }
+
+            AiActionExecuteResponseDto? result =
+                await response.Content.ReadFromJsonAsync<AiActionExecuteResponseDto>();
+            if (result?.ProposedSceneCard is null)
+            {
+                _aiError = "AI action returned no scene card.";
+                return;
+            }
+
+            _aiProposal = result.ProposedSceneCard;
+            _aiExplanation = result.ProposalExplanation ?? result.ChangesSummary;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Storyboard scene inspector AI failed. SceneNodeId={SceneNodeId}", SceneNode.Id);
+            _aiError = "AI action failed.";
+        }
+        finally
+        {
+            _aiInFlight = false;
+        }
+    }
+
+    private async Task ApplySceneAiProposalAsync()
+    {
+        if (_aiProposal is null)
+        {
+            return;
+        }
+
+        ApplySuggestedValue(ref _summary, _aiProposal.Summary);
+        ApplySuggestedValue(ref _status, _aiProposal.Status);
+        ApplySuggestedValue(ref _narrativePurpose, _aiProposal.NarrativePurpose);
+        ApplySuggestedValue(ref _emotionalBeat, _aiProposal.EmotionalBeat);
+        ApplySuggestedValue(ref _keyEvents, _aiProposal.KeyEvents);
+        ApplySuggestedValue(ref _openQuestions, _aiProposal.OpenQuestions);
+        ApplySuggestedValue(ref _povCharacterId, _aiProposal.PovCharacterId);
+
+        IReadOnlyList<string> subplotTags = NormalizeTagList(_aiProposal.SubplotTags);
+        if (subplotTags.Count > 0)
+        {
+            _subplotTagsText = string.Join(", ", subplotTags);
+        }
+
+        _aiProposal = null;
+        _aiExplanation = null;
+        await SaveNowAsync();
+    }
+
+    private void DiscardSceneAiProposal()
+    {
+        _aiProposal = null;
+        _aiExplanation = null;
+        _aiError = string.Empty;
+    }
+
+    private string BuildSceneCardSnapshotJson()
+    {
+        SectionSceneCardProposalDto snapshot = new(
+            NormalizeOptional(_narrativePurpose),
+            NormalizeOptional(_emotionalBeat),
+            NormalizeOptional(_keyEvents),
+            NormalizeOptional(_openQuestions),
+            NormalizeOptional(_povCharacterId),
+            null,
+            null,
+            null,
+            Array.Empty<string>(),
+            Array.Empty<SceneCardReferenceDto>(),
+            NormalizeOptional(_summary),
+            NormalizeSceneCardStatus(_status),
+            ParseTags(_subplotTagsText));
+        return JsonSerializer.Serialize(snapshot, JsonOptions);
+    }
+
+    private IReadOnlyList<string> GetNarrativePurposeOptions()
+    {
+        if (string.IsNullOrWhiteSpace(_narrativePurpose)
+            || SceneNarrativePurposeOptions.Contains(_narrativePurpose, StringComparer.OrdinalIgnoreCase))
+        {
+            return SceneNarrativePurposeOptions;
+        }
+
+        return [.. SceneNarrativePurposeOptions, _narrativePurpose];
+    }
+
+    private static string BuildMetadataJson(SceneCardDto? card, string? notes, string? existingMetadataJson)
+    {
+        JsonObject root = ParseMetadata(existingMetadataJson);
+        SetString(root, "summary", card?.Summary);
+        SetString(root, "status", card?.Status);
+        SetString(root, "pov", card?.PovCharacterId);
+        SetString(root, "narrativePurpose", card?.NarrativePurpose);
+        SetStringArray(root, "subplotTags", card?.SubplotTags);
+        SetString(root, "notesText", notes);
+        return root.ToJsonString(JsonOptions);
+    }
+
+    private static JsonObject ParseMetadata(string? metadataJson)
+    {
+        if (string.IsNullOrWhiteSpace(metadataJson))
+        {
+            return new JsonObject();
+        }
+
+        try
+        {
+            JsonNode? node = JsonNode.Parse(metadataJson);
+            return node as JsonObject ?? new JsonObject();
+        }
+        catch
+        {
+            return new JsonObject();
+        }
+    }
+
+    private static void SetString(JsonObject root, string propertyName, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            root.Remove(propertyName);
+            return;
+        }
+
+        root[propertyName] = value.Trim();
+    }
+
+    private static void SetStringArray(JsonObject root, string propertyName, IReadOnlyList<string>? values)
+    {
+        IReadOnlyList<string> normalized = NormalizeTagList(values);
+        if (normalized.Count == 0)
+        {
+            root.Remove(propertyName);
+            return;
+        }
+
+        JsonArray array = new();
+        foreach (string value in normalized)
+        {
+            array.Add(value);
+        }
+
+        root[propertyName] = array;
+    }
+
+    private static IReadOnlyList<string> ParseTags(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return Array.Empty<string>();
+        }
+
+        return text
+            .Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(tag => tag.Trim())
+            .Where(tag => !string.IsNullOrWhiteSpace(tag))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static IReadOnlyList<string> NormalizeTagList(IReadOnlyList<string>? tags)
+    {
+        if (tags is null || tags.Count == 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        return tags
+            .Select(tag => tag?.Trim())
+            .Where(tag => !string.IsNullOrWhiteSpace(tag))
+            .Select(tag => tag!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static string NormalizeSceneCardStatus(string? status)
+    {
+        string normalized = status?.Trim() ?? string.Empty;
+        foreach (string option in SceneCardStatusOptions)
+        {
+            if (string.Equals(option, normalized, StringComparison.OrdinalIgnoreCase))
+            {
+                return option;
+            }
+        }
+
+        return "Draft";
+    }
+
+    private static string? NormalizeOptional(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private static void ApplySuggestedValue(ref string target, string? suggestion)
+    {
+        if (string.IsNullOrWhiteSpace(suggestion))
+        {
+            return;
+        }
+
+        target = suggestion.Trim();
+    }
+
+    private static string GetTagDisplay(IReadOnlyList<string>? tags)
+    {
+        IReadOnlyList<string> normalized = NormalizeTagList(tags);
+        return normalized.Count == 0 ? "(not provided)" : string.Join(", ", normalized);
+    }
+
+    private static async Task<string> ReadApiErrorAsync(HttpResponseMessage response, string fallback)
+    {
+        try
+        {
+            string payload = await response.Content.ReadAsStringAsync();
+            return string.IsNullOrWhiteSpace(payload) ? fallback : payload;
+        }
+        catch
+        {
+            return fallback;
+        }
+    }
+}

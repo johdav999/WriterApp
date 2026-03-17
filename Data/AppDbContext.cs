@@ -619,6 +619,7 @@ namespace WriterApp.Data
                 entity.HasKey(card => card.SectionId);
                 entity.Property(card => card.UpdatedUtc).IsRequired();
                 entity.Property(card => card.TimeRef).HasMaxLength(120);
+                entity.Property(card => card.Status).HasMaxLength(16);
                 entity.HasOne(card => card.Section)
                     .WithOne(section => section.SceneCard)
                     .HasForeignKey<SectionSceneCardRecord>(card => card.SectionId)
@@ -652,6 +653,7 @@ namespace WriterApp.Data
                 entity.HasKey(item => item.SceneNodeId);
                 entity.Property(item => item.UpdatedAtUtc).IsRequired();
                 entity.Property(item => item.TimeRef).HasMaxLength(120);
+                entity.Property(item => item.Status).HasMaxLength(16);
                 entity.HasOne(item => item.SceneNode)
                     .WithOne()
                     .HasForeignKey<SceneCardRecord>(item => item.SceneNodeId)
