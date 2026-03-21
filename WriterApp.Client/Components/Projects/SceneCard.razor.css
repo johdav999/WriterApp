@@ -124,10 +124,19 @@
     cursor: grab;
     user-select: none;
     touch-action: none;
+    opacity: 0.18;
+    transition: opacity 120ms ease, border-color 120ms ease, background 120ms ease, color 120ms ease;
 }
 
 .scene-card-drag-handle:active {
     cursor: grabbing;
+}
+
+.scene-card:hover .scene-card-drag-handle,
+.scene-card:focus-within .scene-card-drag-handle,
+.scene-card--selected .scene-card-drag-handle,
+.scene-card-drag-handle:focus-visible {
+    opacity: 1;
 }
 
 .scene-card-drag-dots {
@@ -263,30 +272,53 @@
     line-height: 1;
     cursor: help;
     flex: 0 0 auto;
+    opacity: 0.42;
+    transition: opacity 120ms ease, border-color 120ms ease, background 120ms ease, color 120ms ease;
+}
+
+.scene-card:hover .scene-card-warning,
+.scene-card:focus-within .scene-card-warning,
+.scene-card--selected .scene-card-warning,
+.scene-card-warning:focus-visible {
+    opacity: 1;
 }
 
 .scene-card-primary-meta {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 4px;
     min-height: 0;
 }
 
 .scene-card-pov {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    color: var(--color-text-muted);
-    font-size: 0.76rem;
+    gap: 5px;
+    color: color-mix(in srgb, var(--color-text-muted) 92%, transparent);
+    font-size: 0.71rem;
     line-height: 1.1;
     font-weight: 500;
     max-width: 100%;
+    letter-spacing: 0.01em;
+}
+
+.scene-card-pov-label {
+    color: color-mix(in srgb, var(--color-text-muted) 82%, transparent);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.scene-card-pov-value {
+    color: inherit;
+    font-weight: 500;
 }
 
 .scene-card-summary {
-    color: var(--color-text-muted);
-    font-size: 0.82rem;
-    line-height: 1.35;
+    color: color-mix(in srgb, var(--color-text-muted) 84%, transparent);
+    font-size: 0.74rem;
+    line-height: 1.2;
+    margin-top: -1px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -366,7 +398,7 @@
 .scene-card-menu {
     position: relative;
     flex: 0 0 auto;
-    opacity: var(--scene-card-disclosure-opacity);
+    opacity: 0.22;
     transition: opacity 120ms ease;
 }
 

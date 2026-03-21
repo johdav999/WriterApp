@@ -5,17 +5,36 @@
 @inject HttpClient Http
 @inject ILogger<StoryboardInsightsPanel> Logger
 
-<aside class="storyboard-insights" aria-label="Storyboard insights">
+<aside class="@GetRootClass()" aria-label="Storyboard insights">
     <div class="storyboard-insights-header">
-        <h2>Storyboard Insights</h2>
-        <p>Board-level structure signals drawn from the current chapter and scene layout.</p>
-        @if (SelectedSceneIds.Count == 1)
+        <div class="storyboard-insights-header-main">
+            <div class="storyboard-insights-header-copy">
+                <h2>Storyboard Insights</h2>
+                @if (!IsCollapsed)
+                {
+                    <p>Board-level structure signals drawn from the current chapter and scene layout.</p>
+                }
+            </div>
+            <button type="button"
+                    class="storyboard-insights-toggle"
+                    aria-expanded="@(!IsCollapsed)"
+                    aria-controls="@GetContentRegionId()"
+                    aria-label="@(IsCollapsed ? "Expand storyboard insights" : "Collapse storyboard insights")"
+                    title="@(IsCollapsed ? "Expand insights" : "Collapse insights")"
+                    @onclick="ToggleCollapsedAsync">
+                <span class="storyboard-insights-toggle__icon" aria-hidden="true">@(IsCollapsed ? "→" : "←")</span>
+                <span class="storyboard-insights-toggle__label">@(IsCollapsed ? "Insights" : "Collapse")</span>
+            </button>
+        </div>
+        @if (!IsCollapsed && SelectedSceneIds.Count == 1)
         {
             <div class="storyboard-insights-empty">Scene-level AI tools are available in the scene detail panel.</div>
         }
     </div>
 
-    <div class="storyboard-insights-scroll">
+    @if (!IsCollapsed)
+    {
+    <div class="storyboard-insights-scroll" id="storyboard-insights-content">
     <div class="storyboard-insights-stats">
         <div><strong>@Summary.TotalChapters</strong><span>chapters</span></div>
         <div><strong>@Summary.TotalScenes</strong><span>scenes</span></div>
@@ -311,6 +330,7 @@
         }
     </div>
     </div>
+    }
 </aside>
 
 @code {
@@ -336,6 +356,12 @@
     public IReadOnlyCollection<Guid> SelectedSceneIds { get; set; } = Array.Empty<Guid>();
 
     [Parameter]
+    public bool IsCollapsed { get; set; }
+
+    [Parameter]
+    public EventCallback<bool> IsCollapsedChanged { get; set; }
+
+    [Parameter]
     public Func<StoryboardNextSceneSuggestion, Task<bool>>? CreateSuggestedScene { get; set; }
 
     private bool _nextSceneInFlight;
@@ -352,6 +378,20 @@
 
     private StoryboardInsightsSummary Summary => BuildSummary();
     private IReadOnlyList<StoryboardPovCount> PovCounts => BuildPovCounts();
+
+    private string GetRootClass()
+    {
+        return IsCollapsed
+            ? "storyboard-insights storyboard-insights--collapsed"
+            : "storyboard-insights";
+    }
+
+    private Task ToggleCollapsedAsync()
+    {
+        return IsCollapsedChanged.InvokeAsync(!IsCollapsed);
+    }
+
+    private string? GetContentRegionId() => IsCollapsed ? null : "storyboard-insights-content";
 
     private async Task SuggestNextSceneAsync()
     {

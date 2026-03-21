@@ -33,57 +33,105 @@
                     {
                         <span class="project-storyboard-selection-count">@SelectedSceneIds.Count selected</span>
                     }
-                    <label class="project-storyboard-filter" for="storyboard-filter-pov">
-                        <span>POV</span>
-                        <select id="storyboard-filter-pov"
-                                class="project-storyboard-filter-select"
-                                value="@_povFilter"
-                                @onchange="OnPovFilterChanged">
-                            <option value="">All</option>
-                            @foreach (string option in PovFilterOptions)
+                    <div class="project-storyboard-filters">
+                        <button type="button"
+                                class="project-storyboard-filters-trigger"
+                                aria-expanded="@_filtersOpen"
+                                aria-controls="storyboard-filters-panel"
+                                @onclick="ToggleFilters">
+                            <span>Filters</span>
+                            @if (ActiveFilterCount > 0)
                             {
-                                <option value="@option">@option</option>
+                                <span class="project-storyboard-filters-trigger__count">@ActiveFilterCount</span>
                             }
-                        </select>
-                    </label>
-                    <label class="project-storyboard-filter" for="storyboard-filter-status">
-                        <span>Status</span>
-                        <select id="storyboard-filter-status"
-                                class="project-storyboard-filter-select"
-                                value="@_statusFilter"
-                                @onchange="OnStatusFilterChanged">
-                            <option value="">All</option>
-                            @foreach (string option in StatusFilterOptions)
-                            {
-                                <option value="@option">@option</option>
-                            }
-                        </select>
-                    </label>
-                    <label class="project-storyboard-filter" for="storyboard-filter-subplot">
-                        <span>Subplot</span>
-                        <select id="storyboard-filter-subplot"
-                                class="project-storyboard-filter-select"
-                                value="@_subplotFilter"
-                                @onchange="OnSubplotFilterChanged">
-                            <option value="">All</option>
-                            @foreach (string option in SubplotFilterOptions)
-                            {
-                                <option value="@option">@option</option>
-                            }
-                        </select>
-                    </label>
-                    <label class="project-storyboard-color-mode" for="storyboard-color-mode">
-                        <span>Color by:</span>
-                        <select id="storyboard-color-mode"
-                                class="project-storyboard-color-mode-select"
-                                value="@_colorMode"
-                                @onchange="OnColorModeChanged">
-                            <option value="@StoryboardColorMode.None">None</option>
-                            <option value="@StoryboardColorMode.Pov">POV</option>
-                            <option value="@StoryboardColorMode.Subplot">Subplot</option>
-                            <option value="@StoryboardColorMode.Status">Status</option>
-                        </select>
-                    </label>
+                        </button>
+
+                        @if (ActiveFilterSummaries.Count > 0)
+                        {
+                            <div class="project-storyboard-filter-chips" aria-label="Active filters">
+                                @foreach (string summary in ActiveFilterSummaries)
+                                {
+                                    <span class="project-storyboard-filter-chip">@summary</span>
+                                }
+                            </div>
+                        }
+
+                        @if (_filtersOpen)
+                        {
+                            <div id="storyboard-filters-panel"
+                                 class="project-storyboard-filters-panel"
+                                 @onclick:stopPropagation="true">
+                                <div class="project-storyboard-filters-panel__header">
+                                    <strong>Filter storyboard</strong>
+                                    @if (ActiveFilterCount > 0)
+                                    {
+                                        <button type="button"
+                                                class="project-storyboard-filters-clear"
+                                                @onclick="ClearFilters">
+                                            Clear all
+                                        </button>
+                                    }
+                                </div>
+
+                                <div class="project-storyboard-filters-grid">
+                                    <label class="project-storyboard-filter" for="storyboard-filter-pov">
+                                        <span>POV</span>
+                                        <select id="storyboard-filter-pov"
+                                                class="project-storyboard-filter-select"
+                                                value="@_povFilter"
+                                                @onchange="OnPovFilterChanged">
+                                            <option value="">All</option>
+                                            @foreach (string option in PovFilterOptions)
+                                            {
+                                                <option value="@option">@option</option>
+                                            }
+                                        </select>
+                                    </label>
+
+                                    <label class="project-storyboard-filter" for="storyboard-filter-status">
+                                        <span>Status</span>
+                                        <select id="storyboard-filter-status"
+                                                class="project-storyboard-filter-select"
+                                                value="@_statusFilter"
+                                                @onchange="OnStatusFilterChanged">
+                                            <option value="">All</option>
+                                            @foreach (string option in StatusFilterOptions)
+                                            {
+                                                <option value="@option">@option</option>
+                                            }
+                                        </select>
+                                    </label>
+
+                                    <label class="project-storyboard-filter" for="storyboard-filter-subplot">
+                                        <span>Subplot</span>
+                                        <select id="storyboard-filter-subplot"
+                                                class="project-storyboard-filter-select"
+                                                value="@_subplotFilter"
+                                                @onchange="OnSubplotFilterChanged">
+                                            <option value="">All</option>
+                                            @foreach (string option in SubplotFilterOptions)
+                                            {
+                                                <option value="@option">@option</option>
+                                            }
+                                        </select>
+                                    </label>
+
+                                    <label class="project-storyboard-color-mode" for="storyboard-color-mode">
+                                        <span>Color by</span>
+                                        <select id="storyboard-color-mode"
+                                                class="project-storyboard-color-mode-select"
+                                                value="@_colorMode"
+                                                @onchange="OnColorModeChanged">
+                                            <option value="@StoryboardColorMode.None">None</option>
+                                            <option value="@StoryboardColorMode.Pov">POV</option>
+                                            <option value="@StoryboardColorMode.Subplot">Subplot</option>
+                                            <option value="@StoryboardColorMode.Status">Status</option>
+                                        </select>
+                                    </label>
+                                </div>
+                            </div>
+                        }
+                    </div>
                 </div>
 
                 @if (SelectedSceneIds.Count >= 2)
@@ -301,6 +349,8 @@
     private IReadOnlyList<string> PovFilterOptions => GetFilterOptions(scene => scene.Pov);
     private IReadOnlyList<string> StatusFilterOptions => GetFilterOptions(scene => scene.Status);
     private IReadOnlyList<string> SubplotFilterOptions => GetFilterOptions(scene => scene.SubplotTags);
+    private IReadOnlyList<string> ActiveFilterSummaries => BuildActiveFilterSummaries();
+    private int ActiveFilterCount => ActiveFilterSummaries.Count;
     private IReadOnlyList<string> BulkRemovableSubplotTags => GetSelectedSceneCards()
         .SelectMany(scene => scene.SubplotTags)
         .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -358,6 +408,7 @@
     private string _povFilter = string.Empty;
     private string _statusFilter = string.Empty;
     private string _subplotFilter = string.Empty;
+    private bool _filtersOpen;
     private string _bulkSubplotTagDraft = string.Empty;
     private static readonly string[] BulkStatusOptions = ["Idea", "Draft", "Revised", "Final"];
     private static readonly string[] BulkNarrativePurposeOptions =
@@ -649,6 +700,56 @@
         }
 
         _colorMode = parsedMode;
+    }
+
+    private void ToggleFilters()
+    {
+        _filtersOpen = !_filtersOpen;
+    }
+
+    private void ClearFilters()
+    {
+        _povFilter = string.Empty;
+        _statusFilter = string.Empty;
+        _subplotFilter = string.Empty;
+        _colorMode = StoryboardColorMode.None;
+    }
+
+    private IReadOnlyList<string> BuildActiveFilterSummaries()
+    {
+        List<string> summaries = new();
+        if (!string.IsNullOrWhiteSpace(_povFilter))
+        {
+            summaries.Add($"POV: {_povFilter}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(_statusFilter))
+        {
+            summaries.Add($"Status: {_statusFilter}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(_subplotFilter))
+        {
+            summaries.Add($"Subplot: {_subplotFilter}");
+        }
+
+        if (_colorMode != StoryboardColorMode.None)
+        {
+            summaries.Add($"Color: {GetColorModeLabel(_colorMode)}");
+        }
+
+        return summaries;
+    }
+
+    private static string GetColorModeLabel(StoryboardColorMode colorMode)
+    {
+        return colorMode switch
+        {
+            StoryboardColorMode.Pov => "POV",
+            StoryboardColorMode.Subplot => "Subplot",
+            StoryboardColorMode.Status => "Status",
+            _ => "None"
+        };
     }
 
     private void OnPovFilterChanged(ChangeEventArgs args)

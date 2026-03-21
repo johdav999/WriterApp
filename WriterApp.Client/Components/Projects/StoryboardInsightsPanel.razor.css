@@ -14,6 +14,13 @@
     overflow: hidden;
 }
 
+.storyboard-insights--collapsed {
+    grid-template-rows: auto;
+    align-content: start;
+    justify-items: stretch;
+    padding: 10px 8px;
+}
+
 .storyboard-insights-scroll {
     display: grid;
     gap: var(--space-3);
@@ -26,6 +33,19 @@
 .storyboard-insights-header {
     display: grid;
     gap: 6px;
+}
+
+.storyboard-insights-header-main {
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+    gap: var(--space-2);
+}
+
+.storyboard-insights-header-copy {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
 }
 
 .storyboard-insights-header h2,
@@ -50,6 +70,70 @@
     color: var(--color-text-muted);
     font-size: 0.82rem;
     line-height: 1.45;
+}
+
+.storyboard-insights-toggle {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border: 1px solid color-mix(in srgb, var(--color-border) 84%, transparent);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--color-surface-2) 78%, transparent);
+    color: var(--color-text-muted);
+    font: inherit;
+    font-size: 0.78rem;
+    line-height: 1;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.storyboard-insights-toggle:hover,
+.storyboard-insights-toggle:focus-visible {
+    background: var(--color-surface-2);
+    color: var(--color-text);
+}
+
+.storyboard-insights-toggle__icon {
+    font-size: 0.9rem;
+    line-height: 1;
+}
+
+.storyboard-insights-toggle__label {
+    font-weight: 600;
+}
+
+.storyboard-insights--collapsed .storyboard-insights-header {
+    gap: 0;
+}
+
+.storyboard-insights--collapsed .storyboard-insights-header-main {
+    flex-direction: column;
+    align-items: stretch;
+}
+
+.storyboard-insights--collapsed .storyboard-insights-header-copy {
+    display: none;
+}
+
+.storyboard-insights--collapsed .storyboard-insights-toggle {
+    width: 100%;
+    min-height: 88px;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 6px;
+}
+
+.storyboard-insights--collapsed .storyboard-insights-toggle__icon {
+    font-size: 1rem;
+}
+
+.storyboard-insights--collapsed .storyboard-insights-toggle__label {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    letter-spacing: 0.04em;
 }
 
 .storyboard-insights-stats {
@@ -274,6 +358,10 @@
 }
 
 @media (max-width: 900px) {
+    .storyboard-insights--collapsed .storyboard-insights-toggle {
+        min-height: 72px;
+    }
+
     .storyboard-insights-scroll {
         padding-right: 0;
     }

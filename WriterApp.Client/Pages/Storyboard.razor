@@ -82,6 +82,8 @@
                                              Nodes="_nodes"
                                              SelectedSceneId="SingleSelectedSceneId"
                                              SelectedSceneIds="_selectedSceneIds"
+                                             IsCollapsed="_insightsCollapsed"
+                                             IsCollapsedChanged="HandleInsightsCollapsedChanged"
                                              CreateSuggestedScene="CreateSuggestedSceneAsync" />
                 </div>
             </div>
@@ -113,6 +115,7 @@
     private HashSet<Guid> _selectedSceneIds = new();
     private Guid? _primarySelectedSceneId;
     private ProjectStoryboard? _storyboardBoard;
+    private bool _insightsCollapsed;
 
     private Guid? SingleSelectedSceneId => _selectedSceneIds.Count == 1
         ? _primarySelectedSceneId is Guid primary && _selectedSceneIds.Contains(primary)
@@ -126,7 +129,16 @@
 
     private string GetLayoutClass()
     {
-        return "storyboard-page__layout";
+        return _insightsCollapsed
+            ? "storyboard-page__layout storyboard-page__layout--insights-collapsed"
+            : "storyboard-page__layout";
+    }
+
+    private Task HandleInsightsCollapsedChanged(bool isCollapsed)
+    {
+        _insightsCollapsed = isCollapsed;
+        StateHasChanged();
+        return Task.CompletedTask;
     }
 
     protected override async Task OnParametersSetAsync()

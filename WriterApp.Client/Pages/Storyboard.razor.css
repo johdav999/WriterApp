@@ -16,6 +16,10 @@
     overflow: hidden;
 }
 
+.storyboard-page__layout--insights-collapsed {
+    grid-template-columns: minmax(0, 2.45fr) 56px minmax(320px, 1fr);
+}
+
 .storyboard-page__panel {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
@@ -89,5 +93,10 @@
     .storyboard-page__layout {
         grid-template-columns: 1fr;
         grid-template-rows: minmax(320px, 1.4fr) minmax(260px, 1fr) minmax(320px, 1fr);
+    }
+
+    .storyboard-page__layout--insights-collapsed {
+        grid-template-columns: 1fr;
+        grid-template-rows: minmax(320px, 1.4fr) auto minmax(320px, 1fr);
     }
 }
