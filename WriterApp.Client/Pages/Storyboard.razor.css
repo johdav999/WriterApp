@@ -9,7 +9,7 @@
 
 .storyboard-page__layout {
     display: grid;
-    grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr) minmax(320px, 1fr);
+    grid-template-columns: minmax(0, 2.2fr) minmax(260px, 0.88fr) minmax(320px, 1fr);
     gap: var(--space-4);
     align-items: stretch;
     min-height: 0;

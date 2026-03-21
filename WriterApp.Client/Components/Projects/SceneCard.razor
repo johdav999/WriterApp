@@ -1,7 +1,8 @@
 @inject IJSRuntime JS
 
 <article class="@GetCardClass()"
-         aria-label="@Title">
+         aria-label="@Title"
+         title="@GetCardTooltip()">
     <div class="scene-card-top">
         <div class="scene-card-title-row">
             <span class="scene-card-drag-handle drag-handle"
@@ -121,46 +122,53 @@
         </div>
     </div>
 
-    @if (!string.IsNullOrWhiteSpace(Summary))
+    @if (HasPrimaryMetadata)
     {
-        <div class="scene-card-summary">@Summary</div>
-    }
-
-    @if (HasStructuredMetadata)
-    {
-        <div class="scene-card-metadata">
+        <div class="scene-card-primary-meta">
             @if (!string.IsNullOrWhiteSpace(Pov))
             {
-                <span class="scene-card-chip scene-card-chip--pov">
+                <span class="scene-card-pov">
                     <span class="scene-card-chip-dot" aria-hidden="true"></span>
-                    <span>POV: @Pov</span>
+                    <span>@Pov</span>
                 </span>
-            }
-            @foreach (string subplotTag in SubplotTags)
-            {
-                <span class="scene-card-chip">#@subplotTag</span>
-            }
-            @if (!string.IsNullOrWhiteSpace(NarrativePurpose))
-            {
-                <span class="scene-card-chip scene-card-chip--purpose">@NarrativePurpose</span>
-            }
-            @if (HasNotes)
-            {
-                <span class="scene-card-chip">Notes</span>
             }
         </div>
     }
 
-    @if (WordCount > 0 || UpdatedUtc.HasValue)
+    @if (!string.IsNullOrWhiteSpace(Summary))
     {
-        <div class="scene-card-footer">
-            @if (WordCount > 0)
+        <div class="scene-card-summary" title="@Summary">@Summary</div>
+    }
+
+    @if (HasSecondaryMetadata)
+    {
+        <div class="scene-card-secondary">
+            @if (HasStructuredMetadata)
             {
-                <div class="scene-card-meta">@WordCount words</div>
+                <div class="scene-card-metadata">
+                    @foreach (SceneCardChip chip in VisibleChips)
+                    {
+                        <span class="@GetChipClass(chip)">@chip.Label</span>
+                    }
+                    @if (HiddenChipCount > 0)
+                    {
+                        <span class="scene-card-chip scene-card-chip--overflow" title="@GetHiddenChipsTooltip()">+@HiddenChipCount</span>
+                    }
+                </div>
             }
-            @if (UpdatedUtc.HasValue)
+
+            @if (IsSelected && (WordCount > 0 || UpdatedUtc.HasValue))
             {
-                <div class="scene-card-meta">Updated @FormatRelativeDate(UpdatedUtc.Value)</div>
+                <div class="scene-card-footer">
+                    @if (WordCount > 0)
+                    {
+                        <div class="scene-card-meta">@WordCount words</div>
+                    }
+                    @if (UpdatedUtc.HasValue)
+                    {
+                        <div class="scene-card-meta">Updated @FormatRelativeDate(UpdatedUtc.Value)</div>
+                    }
+                </div>
             }
         </div>
     }
@@ -235,12 +243,19 @@
     private string _displayStatus = "Draft";
 
     private bool HasStructuredMetadata =>
-        !string.IsNullOrWhiteSpace(Pov)
-        || SubplotTags.Count > 0
+        SubplotTags.Count > 0
         || !string.IsNullOrWhiteSpace(NarrativePurpose)
         || HasNotes;
 
+    private bool HasPrimaryMetadata => !string.IsNullOrWhiteSpace(Pov);
+
+    private bool HasSecondaryMetadata => HasStructuredMetadata || WordCount > 0 || UpdatedUtc.HasValue;
+
     private bool HasWarnings => MissingFieldWarnings.Count > 0;
+
+    private IReadOnlyList<SceneCardChip> VisibleChips => BuildAllChips().Take(2).ToArray();
+
+    private int HiddenChipCount => Math.Max(0, BuildAllChips().Count - VisibleChips.Count);
 
     private IReadOnlyList<string> MissingFieldWarnings
     {
@@ -506,4 +521,66 @@
 
         return updatedUtc.ToLocalTime().ToString("yyyy-MM-dd");
     }
+
+    private string? GetCardTooltip()
+    {
+        List<string> parts = new();
+        if (!string.IsNullOrWhiteSpace(Summary))
+        {
+            parts.Add(Summary.Trim());
+        }
+
+        if (WordCount > 0)
+        {
+            parts.Add($"{WordCount} words");
+        }
+
+        if (UpdatedUtc.HasValue)
+        {
+            parts.Add($"Updated {FormatRelativeDate(UpdatedUtc.Value)}");
+        }
+
+        return parts.Count == 0 ? null : string.Join(" | ", parts);
+    }
+
+    private IReadOnlyList<SceneCardChip> BuildAllChips()
+    {
+        List<SceneCardChip> chips = new();
+        if (!string.IsNullOrWhiteSpace(NarrativePurpose))
+        {
+            chips.Add(new SceneCardChip(NarrativePurpose.Trim(), "purpose"));
+        }
+
+        if (HasNotes)
+        {
+            chips.Add(new SceneCardChip("Notes", "notes"));
+        }
+
+        foreach (string subplotTag in SubplotTags
+                     .Where(tag => !string.IsNullOrWhiteSpace(tag))
+                     .Select(tag => tag.Trim())
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            chips.Add(new SceneCardChip($"#{subplotTag}", "tag"));
+        }
+
+        return chips;
+    }
+
+    private string GetChipClass(SceneCardChip chip)
+    {
+        return chip.Kind switch
+        {
+            "purpose" => "scene-card-chip scene-card-chip--purpose",
+            _ => "scene-card-chip"
+        };
+    }
+
+    private string? GetHiddenChipsTooltip()
+    {
+        IReadOnlyList<SceneCardChip> hidden = BuildAllChips().Skip(VisibleChips.Count).ToArray();
+        return hidden.Count == 0 ? null : string.Join(" | ", hidden.Select(chip => chip.Label));
+    }
+
+    private sealed record SceneCardChip(string Label, string Kind);
 }
