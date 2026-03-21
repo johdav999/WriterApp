@@ -2,21 +2,21 @@
     /* The outer card stays stable; the inner scroll area owns vertical scrolling. */
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
-    gap: var(--space-4);
+    gap: var(--space-3);
     min-width: 0;
     min-height: 0;
     height: 100%;
-    padding: var(--space-4);
+    padding: var(--space-3);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
-    background: var(--color-surface-1);
-    box-shadow: var(--shadow-sm);
+    background: color-mix(in srgb, var(--color-surface-1) 92%, #f4f6fa 8%);
+    box-shadow: none;
     overflow: hidden;
 }
 
 .storyboard-insights-scroll {
     display: grid;
-    gap: var(--space-4);
+    gap: var(--space-3);
     min-height: 0;
     overflow-y: auto;
     overscroll-behavior-y: contain;
@@ -33,52 +33,71 @@
     margin: 0;
 }
 
+.storyboard-insights-header h2 {
+    font-size: 1rem;
+    font-weight: 650;
+    color: var(--color-text);
+}
+
+.storyboard-insights-section h3 {
+    font-size: 0.92rem;
+    font-weight: 650;
+    color: var(--color-text);
+}
+
 .storyboard-insights-header p {
     margin: 0;
     color: var(--color-text-muted);
-    font-size: var(--font-size-helper);
-    line-height: 1.5;
+    font-size: 0.82rem;
+    line-height: 1.45;
 }
 
 .storyboard-insights-stats {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--space-3);
+    gap: var(--space-2);
 }
 
 .storyboard-insights-stats div {
     display: grid;
     gap: 4px;
-    padding: var(--space-3);
-    border: 1px solid var(--color-border);
+    padding: 10px 12px;
+    border: 1px solid color-mix(in srgb, var(--color-border) 86%, transparent);
     border-radius: var(--radius-sm);
-    background: var(--color-surface-2);
+    background: color-mix(in srgb, var(--color-surface-2) 78%, transparent);
 }
 
 .storyboard-insights-stats strong {
-    font-size: 1.25rem;
-    color: var(--color-text);
+    font-size: 1.02rem;
+    color: color-mix(in srgb, var(--color-text) 88%, var(--color-text-muted) 12%);
 }
 
 .storyboard-insights-stats span,
 .storyboard-insights-empty {
     color: var(--color-text-muted);
-    font-size: var(--font-size-helper);
+    font-size: 0.8rem;
 }
 
 .storyboard-insights-section {
     display: grid;
     gap: var(--space-2);
+    padding-top: var(--space-2);
+    border-top: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
+}
+
+.storyboard-insights-section:first-of-type {
+    padding-top: 0;
+    border-top: 0;
 }
 
 .storyboard-insights-list {
     margin: 0;
     padding-left: 1.1rem;
     display: grid;
-    gap: 8px;
+    gap: 6px;
     color: var(--color-text);
-    font-size: var(--font-size-helper);
-    line-height: 1.5;
+    font-size: 0.84rem;
+    line-height: 1.45;
 }
 
 .storyboard-insights-actions {
@@ -91,12 +110,12 @@
     appearance: none;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
-    background: var(--color-surface-2);
+    background: color-mix(in srgb, var(--color-surface-2) 80%, transparent);
     color: var(--color-text);
     font: inherit;
-    font-size: var(--font-size-helper);
+    font-size: 0.82rem;
     line-height: 1.2;
-    padding: 8px 12px;
+    padding: 7px 11px;
     cursor: pointer;
 }
 
@@ -113,10 +132,10 @@
     display: grid;
     gap: var(--space-2);
     padding: var(--space-3);
-    border: 1px solid #bfd2f7;
+    border: 1px solid color-mix(in srgb, #bfd2f7 72%, var(--color-border) 28%);
     border-radius: var(--radius-sm);
     background:
-        linear-gradient(180deg, rgba(207, 217, 245, 0.18), rgba(255, 255, 255, 0)),
+        linear-gradient(180deg, rgba(207, 217, 245, 0.1), rgba(255, 255, 255, 0)),
         var(--color-surface-1);
 }
 
@@ -135,7 +154,7 @@
     background: #e8f0ff;
     color: #2457a6;
     border: 1px solid #bfd2f7;
-    font-size: 0.72rem;
+    font-size: 0.68rem;
     font-weight: 700;
     line-height: 1;
     white-space: nowrap;
@@ -144,8 +163,8 @@
 .storyboard-insights-suggestion__summary,
 .storyboard-insights-suggestion__rationale {
     color: var(--color-text-muted);
-    font-size: var(--font-size-helper);
-    line-height: 1.5;
+    font-size: 0.82rem;
+    line-height: 1.45;
 }
 
 .storyboard-insights-suggestion__chips {
@@ -160,9 +179,9 @@
     padding: 4px 8px;
     border: 1px solid var(--color-border);
     border-radius: 999px;
-    background: var(--color-surface-2);
+    background: color-mix(in srgb, var(--color-surface-2) 70%, transparent);
     color: var(--color-text-muted);
-    font-size: var(--font-size-caption);
+    font-size: 0.68rem;
     line-height: 1;
 }
 
@@ -174,7 +193,7 @@
 
 .storyboard-insights-suggestion-list {
     display: grid;
-    gap: var(--space-3);
+    gap: var(--space-2);
 }
 
 .storyboard-insights-suggestion--missing {
@@ -183,7 +202,7 @@
 
 .storyboard-insights-grouped-findings {
     display: grid;
-    gap: var(--space-3);
+    gap: var(--space-2);
     margin-top: var(--space-3);
 }
 
@@ -196,8 +215,8 @@
 .storyboard-insights-pov-summary h4 {
     margin: 0;
     color: var(--color-text);
-    font-size: var(--font-size-helper);
-    font-weight: 700;
+    font-size: 0.82rem;
+    font-weight: 650;
 }
 
 .storyboard-insights-pov-summary__chips {
@@ -209,10 +228,10 @@
 .storyboard-insights-subplot-group {
     display: grid;
     gap: var(--space-2);
-    padding: var(--space-3);
-    border: 1px solid var(--color-border);
+    padding: 10px 12px;
+    border: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent);
     border-radius: var(--radius-sm);
-    background: var(--color-surface-2);
+    background: color-mix(in srgb, var(--color-surface-2) 72%, transparent);
 }
 
 .storyboard-insights-pov-group {
@@ -222,8 +241,8 @@
 .storyboard-insights-subplot-group h4 {
     margin: 0;
     color: var(--color-text);
-    font-size: var(--font-size-helper);
-    font-weight: 700;
+    font-size: 0.84rem;
+    font-weight: 650;
 }
 
 .storyboard-insights-subplot-items {
@@ -234,10 +253,10 @@
 .storyboard-insights-subplot-item {
     display: grid;
     gap: 6px;
-    padding: var(--space-2);
+    padding: 8px 10px;
     border-radius: var(--radius-sm);
     background: var(--color-surface-1);
-    border: 1px solid #d6dce8;
+    border: 1px solid color-mix(in srgb, #d6dce8 80%, transparent);
 }
 
 .storyboard-insights-subplot-item__meta {
@@ -250,7 +269,7 @@
 .storyboard-insights-subplot-item__affected,
 .storyboard-insights-subplot-item__recommendation {
     color: var(--color-text-muted);
-    font-size: var(--font-size-helper);
+    font-size: 0.82rem;
     line-height: 1.45;
 }
 
