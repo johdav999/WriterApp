@@ -10,11 +10,6 @@
 @inject IJSRuntime JS
 
 <section class="project-storyboard" aria-label="Storyboard">
-    <div class="project-storyboard-header">
-        <h3>Storyboard</h3>
-        <p>Visual scene board for managing chapter and scene flow.</p>
-    </div>
-
     @if (!string.IsNullOrWhiteSpace(_storyboardError))
     {
         <div class="project-storyboard-error">@_storyboardError</div>
@@ -29,8 +24,8 @@
     }
     else
     {
-        <div class="project-storyboard-layout">
-            <div class="project-storyboard-main">
+        <div class="project-storyboard-main">
+            <div class="project-storyboard-toolbar">
                 <div class="project-storyboard-board-meta">
                     <span>@ChapterColumns.Count chapter@(ChapterColumns.Count == 1 ? string.Empty : "s")</span>
                     <span>Scroll horizontally to move across the manuscript.</span>
@@ -152,158 +147,153 @@
                         </label>
                     </div>
                 }
-
-                <div class="project-storyboard-board"
-                     role="list"
-                     aria-label="Storyboard chapter columns"
-                     @onclick="ClearSelectionAsync">
-                    @foreach (StoryboardChapterColumn column in ChapterColumns)
-                    {
-                        <section class="storyboard-column"
-                                 role="listitem"
-                                 aria-label="@column.Chapter.Title"
-                                 @onclick:stopPropagation="true">
-                            <header class="storyboard-column-header">
-                                @if (!string.IsNullOrWhiteSpace(column.PartTitle))
-                                {
-                                    <div class="storyboard-part-label">@column.PartTitle</div>
-                                }
-                                <h4>@column.Chapter.Title</h4>
-                                <div class="storyboard-column-toolbar">
-                                    <div class="storyboard-column-meta">
-                                        @column.Scenes.Count scene@(column.Scenes.Count == 1 ? string.Empty : "s")
-                                    </div>
-                                    <div class="storyboard-column-insights">
-                                        <span>@column.DraftSceneCount draft@(column.DraftSceneCount == 1 ? string.Empty : "s")</span>
-                                        <span>POV: @(string.IsNullOrWhiteSpace(column.DominantPov) ? "Mixed" : column.DominantPov)</span>
-                                    </div>
-                                    <div class="storyboard-column-actions">
-                                        <button type="button"
-                                                class="storyboard-column-action"
-                                                @onclick="() => OpenChapter(column.Chapter.Id)">
-                                            Open chapter
-                                        </button>
-                                    </div>
-                                </div>
-                            </header>
-
-                            <div class="storyboard-column-body" @onclick="ClearSelectionAsync">
-                                <div class="@GetColumnDropClass(column.Chapter.Id, null)"
-                                     @ondragover:preventDefault
-                                     @ondrop:preventDefault
-                                     @ondragover="args => OnColumnDragOver(column.Chapter.Id, null, args)"
-                                     @ondrop="args => OnColumnDropAsync(column.Chapter.Id, null, args)">
-                                    @if (column.Scenes.Count == 0)
-                                    {
-                                        <div class="storyboard-scene-empty">No scenes in this chapter yet.</div>
-                                    }
-                                    else
-                                    {
-                                        <div class="@GetGapDropClass(column.Chapter.Id, column.Scenes[0].SceneId)"
-                                             @ondragover:preventDefault
-                                             @ondrop:preventDefault
-                                             @ondragover="args => OnColumnDragOver(column.Chapter.Id, column.Scenes[0].SceneId, args)"
-                                             @ondrop="args => OnColumnDropAsync(column.Chapter.Id, column.Scenes[0].SceneId, args)"></div>
-
-                                        @foreach (StoryboardSceneCard scene in column.Scenes)
-                                        {
-                                            <div id="@GetSceneElementId(scene.SceneId)"
-                                                 class="@GetSceneDropClass(column.Chapter.Id, scene.SceneId)"
-                                                 draggable="@(!_moveInFlight)"
-                                                 @ondragstart="args => OnSceneDragStart(scene.SceneId, args)"
-                                                 @ondragend="OnSceneDragEnd"
-                                                 @onclick:stopPropagation="true"
-                                                 @onclick="args => HandleSceneClickAsync(column.Chapter.Id, scene.SceneId, args)">
-                                                <SceneCard SceneId="@scene.SceneId"
-                                                           Title="@scene.Title"
-                                                           Summary="@scene.Summary"
-                                                           WordCount="@scene.WordCount"
-                                                           Status="@scene.Status"
-                                                           Pov="@scene.Pov"
-                                                           SubplotTags="@scene.SubplotTags"
-                                                           NarrativePurpose="@scene.NarrativePurpose"
-                                                           AccentClass="@GetSceneAccentClass(scene)"
-                                                           IsSelected="@(SelectedSceneIds.Contains(scene.SceneId))"
-                                                           HasNotes="@scene.HasNotes"
-                                                           UpdatedUtc="@scene.UpdatedUtc"
-                                                           SaveTitleQuickEdit="HandleSceneTitleQuickEditAsync"
-                                                           SaveStatusQuickEdit="HandleSceneStatusQuickEditAsync"
-                                                           OpenScene="OpenSceneAsync"
-                                                           RevealInNavigator="RevealInNavigator" />
-                                            </div>
-
-                                            <div class="@GetGapDropClass(column.Chapter.Id, GetNextSceneId(column.Scenes, scene.SceneId))"
-                                                 @ondragover:preventDefault
-                                                 @ondrop:preventDefault
-                                                 @ondragover="args => OnColumnDragOver(column.Chapter.Id, GetNextSceneId(column.Scenes, scene.SceneId), args)"
-                                                 @ondrop="args => OnColumnDropAsync(column.Chapter.Id, GetNextSceneId(column.Scenes, scene.SceneId), args)"></div>
-                                        }
-                                    }
-                                    <div class="storyboard-add-scene-anchor" @onclick:stopPropagation="true">
-                                        <PlanGatedButton Feature="@nameof(FeatureKey.ProjectStructureEditing)"
-                                                         Class="storyboard-add-scene"
-                                                         LockedTitle="Project structure changes are locked on your current plan."
-                                                         AriaLabel="Add scene"
-                                                         ShowLockIndicator="false"
-                                                         IsBusy="@(_addingSceneChapterId == column.Chapter.Id)"
-                                                         IsActionDisabled="@_moveInFlight"
-                                                         OnClick="() => AddSceneAsync(column.Chapter.Id)">
-                                            <span class="storyboard-add-scene__icon" aria-hidden="true"></span>
-                                            <span class="storyboard-add-scene__label">
-                                                @(_addingSceneChapterId == column.Chapter.Id ? "Adding scene..." : "Add scene")
-                                            </span>
-                                        </PlanGatedButton>
-                                    </div>
-                                </div>
-                            </div>
-                        </section>
-                    }
-                </div>
             </div>
 
-            <aside class="storyboard-coach" aria-label="Storyboard coach">
-                <div class="storyboard-coach-header">
-                    <h4>Storyboard Coach</h4>
-                    <p>Deterministic structure observations from the current board.</p>
-                </div>
-
-                <div class="storyboard-coach-stats">
-                    <div><strong>@CoachSummary.TotalChapters</strong><span>chapters</span></div>
-                    <div><strong>@CoachSummary.TotalScenes</strong><span>scenes</span></div>
-                </div>
-
-                <div class="storyboard-coach-section">
-                    <h5>Observations</h5>
-                    @if (CoachSummary.Observations.Count == 0)
-                    {
-                        <div class="storyboard-coach-empty">No structural issues stand out right now.</div>
-                    }
-                    else
-                    {
-                        <ul class="storyboard-coach-list">
-                            @foreach (string observation in CoachSummary.Observations)
+            <div class="project-storyboard-board"
+                 role="list"
+                 aria-label="Storyboard chapter columns"
+                 @onclick="ClearSelectionAsync">
+                @foreach (StoryboardChapterColumn column in ChapterColumns)
+                {
+                    <section class="storyboard-column"
+                             role="listitem"
+                             aria-label="@column.Chapter.Title"
+                             @onclick:stopPropagation="true">
+                        <header class="storyboard-column-header">
+                            @if (!string.IsNullOrWhiteSpace(column.PartTitle))
                             {
-                                <li>@observation</li>
+                                <div class="storyboard-part-label">@column.PartTitle</div>
                             }
-                        </ul>
-                    }
-                </div>
+                            <h4>@column.Chapter.Title</h4>
+                            <div class="storyboard-column-toolbar">
+                                <div class="storyboard-column-meta">
+                                    @column.Scenes.Count scene@(column.Scenes.Count == 1 ? string.Empty : "s")
+                                </div>
+                                <div class="storyboard-column-insights">
+                                    <span>@column.DraftSceneCount draft@(column.DraftSceneCount == 1 ? string.Empty : "s")</span>
+                                    <span>POV: @(string.IsNullOrWhiteSpace(column.DominantPov) ? "Mixed" : column.DominantPov)</span>
+                                </div>
+                                <div class="storyboard-column-actions">
+                                    <button type="button"
+                                            class="storyboard-column-action"
+                                            @onclick="() => OpenChapter(column.Chapter.Id)">
+                                        Open chapter
+                                    </button>
+                                </div>
+                            </div>
+                        </header>
 
-                <div class="storyboard-coach-section">
-                    <h5>Actions</h5>
-                    <div class="storyboard-coach-actions">
-                        <button type="button" class="storyboard-coach-action" @onclick="OpenStructure">
-                            Open structure
-                        </button>
-                        <button type="button" class="storyboard-coach-action" @onclick="RefreshStoryboardAsync">
-                            Refresh storyboard
-                        </button>
-                    </div>
-                </div>
-            </aside>
+                        <div class="storyboard-column-body" @onclick="ClearSelectionAsync">
+                            <div class="@GetColumnDropClass(column.Chapter.Id, null)"
+                                 @ondragover:preventDefault
+                                 @ondrop:preventDefault
+                                 @ondragover="args => OnColumnDragOver(column.Chapter.Id, null, args)"
+                                 @ondrop="args => OnColumnDropAsync(column.Chapter.Id, null, args)">
+                                @if (column.Scenes.Count == 0)
+                                {
+                                    <div class="storyboard-scene-empty">No scenes in this chapter yet.</div>
+                                }
+                                else
+                                {
+                                    <div class="@GetGapDropClass(column.Chapter.Id, column.Scenes[0].SceneId)"
+                                         @ondragover:preventDefault
+                                         @ondrop:preventDefault
+                                         @ondragover="args => OnColumnDragOver(column.Chapter.Id, column.Scenes[0].SceneId, args)"
+                                         @ondrop="args => OnColumnDropAsync(column.Chapter.Id, column.Scenes[0].SceneId, args)"></div>
+
+                                    @foreach (StoryboardSceneCard scene in column.Scenes)
+                                    {
+                                        <div id="@GetSceneElementId(scene.SceneId)"
+                                             class="@GetSceneDropClass(column.Chapter.Id, scene.SceneId)"
+                                             draggable="@(!_moveInFlight)"
+                                             @ondragstart="args => OnSceneDragStart(scene.SceneId, args)"
+                                             @ondragend="OnSceneDragEnd"
+                                             @onclick:stopPropagation="true"
+                                             @onclick="args => HandleSceneClickAsync(column.Chapter.Id, scene.SceneId, args)">
+                                            <SceneCard SceneId="@scene.SceneId"
+                                                       Title="@scene.Title"
+                                                       Summary="@scene.Summary"
+                                                       WordCount="@scene.WordCount"
+                                                       Status="@scene.Status"
+                                                       Pov="@scene.Pov"
+                                                       SubplotTags="@scene.SubplotTags"
+                                                       NarrativePurpose="@scene.NarrativePurpose"
+                                                       AccentClass="@GetSceneAccentClass(scene)"
+                                                       IsSelected="@(SelectedSceneIds.Contains(scene.SceneId))"
+                                                       HasNotes="@scene.HasNotes"
+                                                       UpdatedUtc="@scene.UpdatedUtc"
+                                                       DuplicateScene="HandleDuplicateSceneAsync"
+                                                       DeleteScene="PromptDeleteScene"
+                                                       SaveTitleQuickEdit="HandleSceneTitleQuickEditAsync"
+                                                       SaveStatusQuickEdit="HandleSceneStatusQuickEditAsync"
+                                                       OpenScene="OpenSceneAsync"
+                                                       RevealInNavigator="RevealInNavigator" />
+                                        </div>
+
+                                        <div class="@GetGapDropClass(column.Chapter.Id, GetNextSceneId(column.Scenes, scene.SceneId))"
+                                             @ondragover:preventDefault
+                                             @ondrop:preventDefault
+                                             @ondragover="args => OnColumnDragOver(column.Chapter.Id, GetNextSceneId(column.Scenes, scene.SceneId), args)"
+                                             @ondrop="args => OnColumnDropAsync(column.Chapter.Id, GetNextSceneId(column.Scenes, scene.SceneId), args)"></div>
+                                    }
+                                }
+                                <div class="storyboard-add-scene-anchor" @onclick:stopPropagation="true">
+                                    <PlanGatedButton Feature="@nameof(FeatureKey.ProjectStructureEditing)"
+                                                     Class="storyboard-add-scene"
+                                                     LockedTitle="Project structure changes are locked on your current plan."
+                                                     AriaLabel="Add scene"
+                                                     ShowLockIndicator="false"
+                                                     IsBusy="@(_addingSceneChapterId == column.Chapter.Id)"
+                                                     IsActionDisabled="@_moveInFlight"
+                                                     OnClick="() => AddSceneAsync(column.Chapter.Id)">
+                                        <span class="storyboard-add-scene__icon" aria-hidden="true"></span>
+                                        <span class="storyboard-add-scene__label">
+                                            @(_addingSceneChapterId == column.Chapter.Id ? "Adding scene..." : "Add scene")
+                                        </span>
+                                    </PlanGatedButton>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+                }
+            </div>
         </div>
     }
 </section>
+
+@if (_pendingDeleteSceneId.HasValue)
+{
+    <div class="storyboard-modal-overlay" role="presentation">
+        <div class="storyboard-modal-backdrop" @onclick="CancelDeleteScene"></div>
+        <div class="storyboard-modal" role="dialog" aria-modal="true" aria-labelledby="deleteSceneTitle">
+            <div class="storyboard-modal-title" id="deleteSceneTitle">Delete this scene?</div>
+            <div class="storyboard-modal-body">
+                <p>This cannot be undone.</p>
+                @if (!string.IsNullOrWhiteSpace(_pendingDeleteSceneTitle))
+                {
+                    <div class="storyboard-modal-scene-label">Scene: @_pendingDeleteSceneTitle</div>
+                }
+            </div>
+            @if (!string.IsNullOrWhiteSpace(_deleteSceneError))
+            {
+                <div class="storyboard-modal-error">@_deleteSceneError</div>
+            }
+            <div class="storyboard-modal-actions">
+                <button type="button"
+                        class="storyboard-modal-danger"
+                        @onclick="ConfirmDeleteSceneAsync"
+                        disabled="@_deleteSceneInFlight">
+                    Delete
+                </button>
+                <button type="button"
+                        @onclick="CancelDeleteScene"
+                        disabled="@_deleteSceneInFlight">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+}
 
 @code {
     private IReadOnlyList<StoryboardChapterColumn> ChapterColumns => BuildChapterColumns();
@@ -360,6 +350,10 @@
     private Guid? _highlightedSceneId;
     private Guid? _pendingScrollSceneId;
     private string? _storyboardError;
+    private Guid? _pendingDeleteSceneId;
+    private string? _pendingDeleteSceneTitle;
+    private string? _deleteSceneError;
+    private bool _deleteSceneInFlight;
     private StoryboardColorMode _colorMode;
     private string _povFilter = string.Empty;
     private string _statusFilter = string.Empty;
@@ -1180,6 +1174,14 @@
             .ToList();
     }
 
+    public IReadOnlyList<ProjectNodeDto> GetRenderNodesSnapshot()
+    {
+        return _renderNodes
+            .OrderBy(existing => existing.ParentId)
+            .ThenBy(existing => existing.OrderIndex)
+            .ToList();
+    }
+
     private IReadOnlyList<StoryboardSceneCard> GetSelectedSceneCards()
     {
         if (SelectedSceneIds.Count == 0)
@@ -1499,9 +1501,290 @@
         }
     }
 
+    private async Task HandleDuplicateSceneAsync(Guid sceneId)
+    {
+        if (Project is null || _moveInFlight)
+        {
+            return;
+        }
+
+        ProjectNodeDto? sourceNode = _renderNodes.FirstOrDefault(node => node.Id == sceneId);
+        if (sourceNode is null)
+        {
+            return;
+        }
+
+        _storyboardError = null;
+        Guid? targetChapterId = sourceNode.ParentId;
+
+        try
+        {
+            Logger.LogInformation(
+                "Storyboard duplicate start. ProjectId={ProjectId} SourceNodeId={SourceNodeId} ChapterId={ChapterId}",
+                Project.Id,
+                sceneId,
+                targetChapterId);
+
+            SceneCardDto? sourceCard = await Http.GetFromJsonAsync<SceneCardDto>($"api/scenes/{sceneId}/scene-card");
+
+            using HttpResponseMessage duplicateResponse = await Http.PostAsJsonAsync(
+                $"api/projects/{Project.Id}/nodes/{sceneId}/duplicate",
+                new ProjectNodeDuplicateRequest(false));
+            if (!duplicateResponse.IsSuccessStatusCode)
+            {
+                throw new InvalidOperationException(await ReadApiErrorAsync(duplicateResponse, "Duplicate scene failed."));
+            }
+
+            ProjectNodeDuplicateResponse? payload =
+                await duplicateResponse.Content.ReadFromJsonAsync<ProjectNodeDuplicateResponse>();
+            if (payload is null)
+            {
+                throw new InvalidOperationException("Duplicate scene failed.");
+            }
+
+            foreach (ProjectNodeDto updatedNode in payload.UpdatedNodes)
+            {
+                InsertOrUpdateRenderNode(updatedNode);
+            }
+
+            foreach (ProjectNodeDto createdNode in payload.CreatedNodes)
+            {
+                InsertOrUpdateRenderNode(createdNode);
+            }
+
+            ProjectNodeDto? duplicatedNode = payload.CreatedNodes.FirstOrDefault(node => node.Id == payload.RootNodeId);
+            if (duplicatedNode is null)
+            {
+                throw new InvalidOperationException("Duplicate scene failed.");
+            }
+
+            string duplicateTitle = BuildDuplicateSceneTitle(sourceNode.Title);
+            string duplicateMetadataJson = sourceNode.MetadataJson ?? duplicatedNode.MetadataJson ?? string.Empty;
+            ProjectNodeDto patchedNode = duplicatedNode with
+            {
+                Title = duplicateTitle,
+                MetadataJson = duplicateMetadataJson,
+                UpdatedUtc = DateTimeOffset.UtcNow
+            };
+
+            using HttpResponseMessage patchResponse = await Http.PatchAsJsonAsync(
+                $"api/projects/{Project.Id}/nodes/{duplicatedNode.Id}",
+                new ProjectNodePatchRequest(
+                    duplicateTitle,
+                    duplicatedNode.ParentId,
+                    duplicatedNode.LinkedSectionId,
+                    duplicateMetadataJson,
+                    duplicatedNode.NodeType));
+            if (!patchResponse.IsSuccessStatusCode)
+            {
+                throw new InvalidOperationException(await ReadApiErrorAsync(patchResponse, "Duplicate scene failed."));
+            }
+
+            if (sourceCard is not null)
+            {
+                SceneCardUpdateRequest sceneCardPayload = new(
+                    sourceCard.NarrativePurpose,
+                    sourceCard.EmotionalBeat,
+                    sourceCard.KeyEvents,
+                    sourceCard.OpenQuestions,
+                    sourceCard.PovCharacterId,
+                    sourceCard.PlaceId,
+                    sourceCard.TimelineEventId,
+                    sourceCard.TimeRef,
+                    sourceCard.Tags ?? Array.Empty<string>(),
+                    Array.Empty<SceneCardReferenceDto>(),
+                    sourceCard.Summary,
+                    sourceCard.Status,
+                    sourceCard.SubplotTags ?? Array.Empty<string>());
+
+                using HttpResponseMessage sceneCardResponse =
+                    await Http.PutAsJsonAsync($"api/scenes/{duplicatedNode.Id}/scene-card", sceneCardPayload);
+                if (!sceneCardResponse.IsSuccessStatusCode)
+                {
+                    throw new InvalidOperationException(await ReadApiErrorAsync(sceneCardResponse, "Duplicate scene failed."));
+                }
+            }
+
+            InsertOrUpdateRenderNode(patchedNode);
+            _highlightedSceneId = patchedNode.Id;
+            _pendingScrollSceneId = patchedNode.Id;
+
+            foreach (ProjectNodeDto updatedNode in payload.UpdatedNodes)
+            {
+                await NotifySceneUpdatedAsync(updatedNode);
+            }
+
+            await NotifySceneUpdatedAsync(patchedNode);
+
+            Logger.LogInformation(
+                "Storyboard duplicate local sync applied. ProjectId={ProjectId} SourceNodeId={SourceNodeId} NewNodeId={NewNodeId} ChapterId={ChapterId} RefreshMode={RefreshMode}",
+                Project.Id,
+                sceneId,
+                patchedNode.Id,
+                patchedNode.ParentId,
+                "local-sync");
+
+            if (OnStructureChanged.HasDelegate)
+            {
+                await OnStructureChanged.InvokeAsync();
+            }
+
+            await SelectSceneAsync(patchedNode.Id);
+            await InvokeAsync(StateHasChanged);
+
+            Logger.LogInformation(
+                "Storyboard duplicate success. ProjectId={ProjectId} SourceNodeId={SourceNodeId} NewNodeId={NewNodeId} ChapterId={ChapterId}",
+                Project.Id,
+                sceneId,
+                patchedNode.Id,
+                patchedNode.ParentId);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(
+                ex,
+                "Storyboard duplicate failed. ProjectId={ProjectId} SourceNodeId={SourceNodeId} ChapterId={ChapterId}",
+                Project.Id,
+                sceneId,
+                targetChapterId);
+            _storyboardError = ex.Message;
+        }
+    }
+
+    private void PromptDeleteScene(Guid sceneId)
+    {
+        ProjectNodeDto? sceneNode = _renderNodes.FirstOrDefault(node => node.Id == sceneId);
+        if (sceneNode is null)
+        {
+            Logger.LogInformation(
+                "Storyboard delete prevented for stale scene. ProjectId={ProjectId} SceneId={SceneId}",
+                Project?.Id,
+                sceneId);
+            return;
+        }
+
+        _storyboardError = null;
+        _deleteSceneError = null;
+        _pendingDeleteSceneId = sceneId;
+        _pendingDeleteSceneTitle = string.IsNullOrWhiteSpace(sceneNode.Title) ? "Untitled scene" : sceneNode.Title.Trim();
+    }
+
+    private void CancelDeleteScene()
+    {
+        if (_deleteSceneInFlight)
+        {
+            return;
+        }
+
+        _pendingDeleteSceneId = null;
+        _pendingDeleteSceneTitle = null;
+        _deleteSceneError = null;
+    }
+
+    private async Task ConfirmDeleteSceneAsync()
+    {
+        if (Project is null || !_pendingDeleteSceneId.HasValue || _deleteSceneInFlight)
+        {
+            return;
+        }
+
+        Guid sceneId = _pendingDeleteSceneId.Value;
+        Guid? previousSelectedSceneId = SelectedSceneId;
+
+        _deleteSceneInFlight = true;
+        _deleteSceneError = null;
+        _storyboardError = null;
+
+        try
+        {
+            Logger.LogInformation(
+                "Storyboard delete start. ProjectId={ProjectId} SceneId={SceneId}",
+                Project.Id,
+                sceneId);
+
+            using HttpResponseMessage response = await Http.DeleteAsync($"api/projects/{Project.Id}/nodes/{sceneId}");
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new InvalidOperationException(await ReadApiErrorAsync(response, "Delete scene failed."));
+            }
+
+            if (SelectedSceneId == sceneId && OnSelectionChanged.HasDelegate)
+            {
+                await OnSelectionChanged.InvokeAsync(new StoryboardSelectionChange(null, Array.Empty<Guid>()));
+            }
+
+            (StoryboardSelectionChange nextSelection, Guid? nextSceneId) = RemoveSceneAndReselect(sceneId);
+
+            _pendingDeleteSceneId = null;
+            _pendingDeleteSceneTitle = null;
+            _deleteSceneError = null;
+
+            if (OnStructureChanged.HasDelegate)
+            {
+                await OnStructureChanged.InvokeAsync();
+            }
+
+            if (OnSelectionChanged.HasDelegate)
+            {
+                await OnSelectionChanged.InvokeAsync(nextSelection);
+            }
+
+            await InvokeAsync(StateHasChanged);
+
+            Logger.LogInformation(
+                "Storyboard delete local sync applied. ProjectId={ProjectId} SceneId={SceneId} PreviousSelectionId={PreviousSelectionId} NextSelectionId={NextSelectionId} RefreshMode={RefreshMode}",
+                Project.Id,
+                sceneId,
+                previousSelectedSceneId,
+                nextSceneId,
+                "local-sync");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(
+                ex,
+                "Storyboard delete failed. ProjectId={ProjectId} SceneId={SceneId}",
+                Project.Id,
+                sceneId);
+            _deleteSceneError = ex.Message;
+        }
+        finally
+        {
+            _deleteSceneInFlight = false;
+        }
+    }
+
+    public Task OpenSceneFromInspectorAsync(Guid sceneId)
+    {
+        return OpenSceneAsync(sceneId);
+    }
+
+    public Task RevealSceneInNavigatorAsync(Guid sceneId)
+    {
+        RevealInNavigator(sceneId);
+        return Task.CompletedTask;
+    }
+
+    public Task DuplicateSceneFromInspectorAsync(Guid sceneId)
+    {
+        return HandleDuplicateSceneAsync(sceneId);
+    }
+
+    public Task PromptDeleteSceneFromInspectorAsync(Guid sceneId)
+    {
+        PromptDeleteScene(sceneId);
+        return InvokeAsync(StateHasChanged);
+    }
+
     private static string GetSceneElementId(Guid sceneId)
     {
         return $"storyboard-scene-{sceneId:D}";
+    }
+
+    private static string BuildDuplicateSceneTitle(string? title)
+    {
+        string baseTitle = string.IsNullOrWhiteSpace(title) ? "Untitled scene" : title.Trim();
+        return $"Copy of {baseTitle}";
     }
 
     private string GetGapDropClass(Guid chapterId, Guid? beforeSceneId)
@@ -1530,6 +1813,97 @@
         return null;
     }
 
+    private Guid? GetDeleteSelectionTarget(Guid deletedSceneId)
+    {
+        foreach (StoryboardChapterColumn column in ChapterColumns)
+        {
+            int sceneIndex = column.Scenes.FindIndex(scene => scene.SceneId == deletedSceneId);
+            if (sceneIndex < 0)
+            {
+                continue;
+            }
+
+            if (sceneIndex + 1 < column.Scenes.Count)
+            {
+                return column.Scenes[sceneIndex + 1].SceneId;
+            }
+
+            if (sceneIndex - 1 >= 0)
+            {
+                return column.Scenes[sceneIndex - 1].SceneId;
+            }
+
+            break;
+        }
+
+        return ChapterColumns
+            .SelectMany(column => column.Scenes)
+            .Select(scene => scene.SceneId)
+            .FirstOrDefault(sceneId => sceneId != deletedSceneId);
+    }
+
+    private StoryboardSelectionChange BuildDeleteSelectionChange(Guid deletedSceneId, Guid? nextSceneId)
+    {
+        HashSet<Guid> remainingSelection = SelectedSceneIds
+            .Where(sceneId => sceneId != deletedSceneId)
+            .ToHashSet();
+
+        if (remainingSelection.Count > 0)
+        {
+            Guid primarySceneId = SelectedSceneId.HasValue && remainingSelection.Contains(SelectedSceneId.Value)
+                ? SelectedSceneId.Value
+                : remainingSelection.First();
+            return new StoryboardSelectionChange(primarySceneId, remainingSelection.ToArray());
+        }
+
+        if (nextSceneId.HasValue)
+        {
+            return new StoryboardSelectionChange(nextSceneId.Value, [nextSceneId.Value]);
+        }
+
+        return new StoryboardSelectionChange(null, Array.Empty<Guid>());
+    }
+
+    private (StoryboardSelectionChange Selection, Guid? NextSceneId) RemoveSceneAndReselect(Guid deletedSceneId)
+    {
+        Guid? nextSceneId = GetDeleteSelectionTarget(deletedSceneId);
+        StoryboardSelectionChange nextSelection = BuildDeleteSelectionChange(deletedSceneId, nextSceneId);
+
+        RemoveRenderNodeTree(deletedSceneId);
+
+        if (_highlightedSceneId == deletedSceneId)
+        {
+            _highlightedSceneId = nextSelection.PrimarySceneId;
+        }
+
+        if (_pendingScrollSceneId == deletedSceneId)
+        {
+            _pendingScrollSceneId = nextSelection.PrimarySceneId;
+        }
+
+        return (nextSelection, nextSceneId);
+    }
+
+    private void RemoveRenderNodeTree(Guid nodeId)
+    {
+        HashSet<Guid> idsToRemove = [nodeId];
+        bool added;
+        do
+        {
+            added = false;
+            foreach (ProjectNodeDto node in _renderNodes)
+            {
+                if (node.ParentId.HasValue && idsToRemove.Contains(node.ParentId.Value) && idsToRemove.Add(node.Id))
+                {
+                    added = true;
+                }
+            }
+        }
+        while (added);
+
+        _renderNodes.RemoveAll(node => idsToRemove.Contains(node.Id));
+    }
+
     private void ClearDropState()
     {
         _dragSceneId = null;
@@ -1550,7 +1924,7 @@
 
     private async Task AddSceneAsync(Guid chapterId)
     {
-        if (Project is null || _moveInFlight || _addingSceneChapterId == chapterId)
+        if (_addingSceneChapterId == chapterId)
         {
             return;
         }
@@ -1560,43 +1934,13 @@
 
         try
         {
-            ProjectNodeCreateRequest request = new(
-                chapterId,
-                "scene",
+            await CreateSceneInChapterAsync(chapterId, new StoryboardSceneSeed(
                 "New scene",
                 null,
+                "Draft",
                 null,
-                "{\"status\":\"Draft\"}");
-
-            using HttpResponseMessage response = await Http.PostAsJsonAsync(
-                $"api/projects/{Project.Id}/nodes",
-                request);
-            if (!response.IsSuccessStatusCode)
-            {
-                throw new InvalidOperationException(await ReadApiErrorAsync(response, "Add scene failed."));
-            }
-
-            ProjectNodeDto? created = await response.Content.ReadFromJsonAsync<ProjectNodeDto>();
-            if (created is not null)
-            {
-                ProjectNodeDto createdNode = created with
-                {
-                    Title = string.IsNullOrWhiteSpace(created.Title) ? "New scene" : created.Title,
-                    MetadataJson = string.IsNullOrWhiteSpace(created.MetadataJson) ? request.MetadataJson : created.MetadataJson
-                };
-
-                InsertOrUpdateRenderNode(createdNode);
-                _highlightedSceneId = createdNode.Id;
-                _pendingScrollSceneId = createdNode.Id;
-                await InvokeAsync(StateHasChanged);
-
-                await SelectSceneAsync(createdNode.Id);
-            }
-
-            if (OnStructureChanged.HasDelegate)
-            {
-                await OnStructureChanged.InvokeAsync();
-            }
+                Array.Empty<string>(),
+                null));
         }
         catch (Exception ex)
         {
@@ -1605,6 +1949,39 @@
         finally
         {
             _addingSceneChapterId = null;
+        }
+    }
+
+    public async Task<bool> CreateSuggestedSceneAsync(StoryboardNextSceneSuggestion suggestion)
+    {
+        if (Project is null || suggestion is null || _moveInFlight)
+        {
+            return false;
+        }
+
+        Guid? chapterId = GetPreferredChapterForSceneCreation(suggestion.PreferredChapterTitle);
+        if (!chapterId.HasValue)
+        {
+            _storyboardError = "No chapter is available for the suggested scene.";
+            return false;
+        }
+
+        try
+        {
+            StoryboardSceneSeed seed = new(
+                string.IsNullOrWhiteSpace(suggestion.Title) ? "New scene" : suggestion.Title.Trim(),
+                suggestion.Summary,
+                string.IsNullOrWhiteSpace(suggestion.Status) ? "Draft" : suggestion.Status.Trim(),
+                suggestion.PovCharacterId,
+                suggestion.SubplotTags ?? Array.Empty<string>(),
+                suggestion.NarrativePurpose);
+
+            return await CreateSceneInChapterAsync(chapterId.Value, seed);
+        }
+        catch (Exception ex)
+        {
+            _storyboardError = ex.Message;
+            return false;
         }
     }
 
@@ -1666,6 +2043,116 @@
         Navigation.NavigateTo($"projects/{Project.Id:D}?tab=structure&node={sceneId:D}");
     }
 
+    private async Task<bool> CreateSceneInChapterAsync(Guid chapterId, StoryboardSceneSeed seed)
+    {
+        if (Project is null || _moveInFlight)
+        {
+            return false;
+        }
+
+        string metadataJson = UpdateSceneMetadata(
+            null,
+            summary: seed.Summary,
+            status: seed.Status,
+            pov: seed.PovCharacterId,
+            subplotTags: seed.SubplotTags,
+            narrativePurpose: seed.NarrativePurpose);
+
+        ProjectNodeCreateRequest request = new(
+            chapterId,
+            "scene",
+            seed.Title,
+            null,
+            null,
+            metadataJson);
+
+        using HttpResponseMessage response = await Http.PostAsJsonAsync(
+            $"api/projects/{Project.Id}/nodes",
+            request);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException(await ReadApiErrorAsync(response, "Add scene failed."));
+        }
+
+        ProjectNodeDto? created = await response.Content.ReadFromJsonAsync<ProjectNodeDto>();
+        if (created is null)
+        {
+            return false;
+        }
+
+        ProjectNodeDto createdNode = created with
+        {
+            Title = string.IsNullOrWhiteSpace(created.Title) ? seed.Title : created.Title,
+            MetadataJson = string.IsNullOrWhiteSpace(created.MetadataJson) ? metadataJson : created.MetadataJson
+        };
+
+        SceneCardUpdateRequest payload = new(
+            seed.NarrativePurpose,
+            null,
+            null,
+            null,
+            seed.PovCharacterId,
+            null,
+            null,
+            null,
+            Array.Empty<string>(),
+            Array.Empty<SceneCardReferenceDto>(),
+            seed.Summary,
+            seed.Status,
+            seed.SubplotTags);
+
+        using HttpResponseMessage sceneCardResponse =
+            await Http.PutAsJsonAsync($"api/scenes/{createdNode.Id}/scene-card", payload);
+        if (!sceneCardResponse.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException(await ReadApiErrorAsync(sceneCardResponse, "Add scene failed."));
+        }
+
+        InsertOrUpdateRenderNode(createdNode);
+        _highlightedSceneId = createdNode.Id;
+        _pendingScrollSceneId = createdNode.Id;
+        await NotifySceneUpdatedAsync(createdNode);
+        await InvokeAsync(StateHasChanged);
+        await SelectSceneAsync(createdNode.Id);
+
+        if (OnStructureChanged.HasDelegate)
+        {
+            await OnStructureChanged.InvokeAsync();
+        }
+
+        return true;
+    }
+
+    private Guid? GetPreferredChapterForSceneCreation(string? preferredChapterTitle = null)
+    {
+        if (!string.IsNullOrWhiteSpace(preferredChapterTitle))
+        {
+            StoryboardChapterColumn? matchedChapter = ChapterColumns.FirstOrDefault(column =>
+                string.Equals(column.Chapter.Title?.Trim(), preferredChapterTitle.Trim(), StringComparison.OrdinalIgnoreCase));
+            if (matchedChapter is not null)
+            {
+                return matchedChapter.Chapter.Id;
+            }
+        }
+
+        if (SelectedSceneId.HasValue)
+        {
+            ProjectNodeDto? sceneNode = _renderNodes.FirstOrDefault(node => node.Id == SelectedSceneId.Value);
+            if (sceneNode?.ParentId is Guid chapterId)
+            {
+                return chapterId;
+            }
+        }
+
+        StoryboardChapterColumn? lastChapterWithScenes = ChapterColumns.LastOrDefault(column => column.Scenes.Count > 0);
+        if (lastChapterWithScenes is not null)
+        {
+            return lastChapterWithScenes.Chapter.Id;
+        }
+
+        return ChapterColumns.LastOrDefault()?.Chapter.Id;
+    }
+
     private sealed record StoryboardChapterColumn(
         ProjectNodeDto Chapter,
         string? PartTitle,
@@ -1688,8 +2175,15 @@
         IReadOnlyList<StoryboardChapterColumn> columns = ChapterColumns;
         int totalChapters = columns.Count;
         int totalScenes = columns.Sum(column => column.Scenes.Count);
+        int draftScenes = columns.Sum(column => column.DraftSceneCount);
+        int incompleteScenes = columns.Sum(column => column.Scenes.Count(scene =>
+            string.IsNullOrWhiteSpace(scene.Summary)
+            || string.IsNullOrWhiteSpace(scene.Pov)
+            || string.IsNullOrWhiteSpace(scene.NarrativePurpose)));
         double averageScenes = totalChapters == 0 ? 0 : (double)totalScenes / totalChapters;
         List<string> observations = new();
+        List<string> insights = new();
+        List<string> suggestions = new();
 
         foreach (StoryboardChapterColumn column in columns.Where(column => column.Scenes.Count == 0))
         {
@@ -1720,7 +2214,39 @@
             observations.Add("Scene distribution is uneven across chapters.");
         }
 
-        return new StoryboardCoachSummary(totalChapters, totalScenes, observations);
+        if (totalScenes > 0 && draftScenes >= Math.Max(3, (int)Math.Ceiling(totalScenes * 0.5)))
+        {
+            insights.Add("A large share of the board is still in draft, which may make pacing decisions less stable.");
+        }
+
+        if (totalChapters > 0 && columns.Count(column => column.Scenes.Count > 0) == 1)
+        {
+            insights.Add("Most of the visible story weight is concentrated in a single chapter, so overall structure may still be front-loaded.");
+        }
+
+        if (incompleteScenes > 0)
+        {
+            suggestions.Add($"Add summary, POV, or narrative purpose to the {incompleteScenes} incomplete scene{(incompleteScenes == 1 ? string.Empty : "s")} to make the board easier to scan.");
+        }
+
+        if (columns.Any(column => column.Scenes.Count == 0))
+        {
+            suggestions.Add("Fill empty chapters with at least one scene so every chapter has a visible structural role.");
+        }
+
+        if (totalChapters >= 3 && maxScenes - minScenes >= 4)
+        {
+            suggestions.Add("Rebalance scene counts across chapters to smooth the board’s pacing and reduce structural clustering.");
+        }
+
+        return new StoryboardCoachSummary(
+            totalChapters,
+            totalScenes,
+            draftScenes,
+            incompleteScenes,
+            observations,
+            insights,
+            suggestions);
     }
 
     private static bool IsGenericSceneTitle(string? title)
@@ -1768,7 +2294,19 @@
     private sealed record StoryboardCoachSummary(
         int TotalChapters,
         int TotalScenes,
-        List<string> Observations);
+        int DraftScenes,
+        int IncompleteScenes,
+        List<string> Observations,
+        List<string> Insights,
+        List<string> Suggestions);
+
+    private sealed record StoryboardSceneSeed(
+        string Title,
+        string? Summary,
+        string Status,
+        string? PovCharacterId,
+        IReadOnlyList<string> SubplotTags,
+        string? NarrativePurpose);
 
     private static bool IsDraftStatus(string? status)
     {

@@ -70,5 +70,27 @@ namespace WriterApp.Tests
             Assert.True(QualityIssueCapabilities.IsAutoProposable(issue));
             Assert.True(QualityIssueCapabilities.IsRepeatedWordIssue(issue));
         }
+
+        [Fact]
+        public void IsAutoProposable_PassiveVoiceRule_True()
+        {
+            PageQualityIssueDto issue = new(
+                "k4",
+                Guid.Empty,
+                Guid.Empty,
+                "style.passive_voice",
+                "passive-voice",
+                "info",
+                "Possible passive voice detected.",
+                "Consider using active voice for stronger clarity.",
+                "was tempered",
+                10,
+                22,
+                null,
+                DateTimeOffset.UtcNow);
+
+            Assert.True(QualityIssueCapabilities.IsAutoProposable(issue));
+            Assert.True(QualityIssueCapabilities.IsPassiveVoiceIssue(issue));
+        }
     }
 }

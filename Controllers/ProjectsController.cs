@@ -11,6 +11,8 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.SqlClient;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Configuration;
@@ -978,16 +980,25 @@ namespace WriterApp.Controllers
                 return NotFound();
             }
 
-            bool duplicateDeep = request?.Deep ?? sourceRoot.NodeType != ProjectNodeType.Scene;
-            Dictionary<Guid, List<ProjectNodeRecord>> childrenByParent = projectNodes
-                .Where(item => item.ParentId.HasValue)
-                .GroupBy(item => item.ParentId!.Value)
-                .ToDictionary(
-                    group => group.Key,
-                    group => group
-                        .OrderBy(item => item.OrderIndex)
-                        .ThenBy(item => item.Id)
-                        .ToList());
+            _logger.LogInformation(
+                "Project node duplicate start. ProjectId={ProjectId} NodeId={NodeId} ParentId={ParentId} Deep={Deep}",
+                projectId,
+                nodeId,
+                sourceRoot.ParentId,
+                request?.Deep ?? sourceRoot.NodeType != ProjectNodeType.Scene);
+
+            try
+            {
+                bool duplicateDeep = request?.Deep ?? sourceRoot.NodeType != ProjectNodeType.Scene;
+                Dictionary<Guid, List<ProjectNodeRecord>> childrenByParent = projectNodes
+                    .Where(item => item.ParentId.HasValue)
+                    .GroupBy(item => item.ParentId!.Value)
+                    .ToDictionary(
+                        group => group.Key,
+                        group => group
+                            .OrderBy(item => item.OrderIndex)
+                            .ThenBy(item => item.Id)
+                            .ToList());
 
             List<ProjectNodeRecord> sourceSubtree = new();
             void CollectSubtree(ProjectNodeRecord node, bool deep)
@@ -1070,6 +1081,11 @@ namespace WriterApp.Controllers
                             .OrderBy(item => item.CreatedAt)
                             .ThenBy(item => item.Id)
                             .ToList());
+
+            if (sourceSectionIds.Count > 0)
+            {
+                await EnsureSectionSceneCardSchemaAsync(ct);
+            }
 
             Dictionary<Guid, SectionSceneCardRecord> sceneCardsBySection = sourceSectionIds.Count == 0
                 ? new Dictionary<Guid, SectionSceneCardRecord>()
@@ -1267,8 +1283,6 @@ namespace WriterApp.Controllers
                 }
             }
 
-            await using IDbContextTransaction transaction = await _dbContext.Database.BeginTransactionAsync(ct);
-
             // Keep aggregate caches in sync without triggering a full project recalc.
             int duplicatedWordCountDelta = sourceRoot.WordCountCache;
             List<ProjectNodeRecord> aggregateNodesUpdated = new();
@@ -1289,7 +1303,6 @@ namespace WriterApp.Controllers
 
             project.UpdatedUtc = now;
             await _dbContext.SaveChangesAsync(ct);
-            await transaction.CommitAsync(ct);
 
             Guid newRootId = duplicatedIdMap[sourceRoot.Id];
             ProjectNodeRecord? newRoot = createdNodes.FirstOrDefault(item => item.Id == newRootId);
@@ -1298,20 +1311,46 @@ namespace WriterApp.Controllers
                 return StatusCode(500, new { message = "Duplicate node failed." });
             }
 
-            return Ok(new ProjectNodeDuplicateResponse(
+            _logger.LogInformation(
+                "Project node duplicate success. ProjectId={ProjectId} SourceNodeId={SourceNodeId} NewNodeId={NewNodeId} ParentId={ParentId} CreatedNodes={CreatedNodes} UpdatedNodes={UpdatedNodes} SourceSections={SourceSections} SourcePages={SourcePages}",
+                projectId,
+                nodeId,
                 newRoot.Id,
-                createdNodes
-                    .OrderBy(item => item.ParentId)
-                    .ThenBy(item => item.OrderIndex)
-                    .Select(ToDto)
-                    .ToList(),
+                newRoot.ParentId,
+                createdNodes.Count,
                 siblingsToShift
                     .Concat(aggregateNodesUpdated)
-                    .GroupBy(item => item.Id)
-                    .Select(group => group.First())
-                    .OrderBy(item => item.OrderIndex)
-                    .Select(ToDto)
-                    .ToList()));
+                    .Select(item => item.Id)
+                    .Distinct()
+                    .Count(),
+                sourceSectionIds.Count,
+                sourcePageIds.Count);
+
+                return Ok(new ProjectNodeDuplicateResponse(
+                    newRoot.Id,
+                    createdNodes
+                        .OrderBy(item => item.ParentId)
+                        .ThenBy(item => item.OrderIndex)
+                        .Select(ToDto)
+                        .ToList(),
+                    siblingsToShift
+                        .Concat(aggregateNodesUpdated)
+                        .GroupBy(item => item.Id)
+                        .Select(group => group.First())
+                        .OrderBy(item => item.OrderIndex)
+                        .Select(ToDto)
+                        .ToList()));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    ex,
+                    "Project node duplicate failed. ProjectId={ProjectId} NodeId={NodeId} ParentId={ParentId}",
+                    projectId,
+                    nodeId,
+                    sourceRoot.ParentId);
+                return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Duplicate scene failed." });
+            }
         }
 
         [HttpPost("{projectId:guid}/nodes/{nodeId:guid}/reorder")]
@@ -1500,35 +1539,283 @@ namespace WriterApp.Controllers
                 return NotFound();
             }
 
-            ProjectNodeRecord? node = await _dbContext.ProjectNodes
-                .FirstOrDefaultAsync(item => item.ProjectId == projectId && item.Id == nodeId, ct);
-            if (node is null)
+            try
             {
-                return NotFound();
+                IActionResult result = NoContent();
+                await _dbContext.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+                {
+                    await using var transaction = await _dbContext.Database.BeginTransactionAsync(ct);
+
+                    List<ProjectNodeRecord> projectNodes = await _dbContext.ProjectNodes
+                        .Where(item => item.ProjectId == projectId)
+                        .OrderBy(item => item.OrderIndex)
+                        .ToListAsync(ct);
+
+                    ProjectNodeRecord? node = projectNodes
+                        .FirstOrDefault(item => item.Id == nodeId);
+                    if (node is null)
+                    {
+                        result = NotFound();
+                        return;
+                    }
+
+                    Guid? parentId = node.ParentId;
+                    List<ProjectNodeRecord> siblings = projectNodes
+                        .Where(item => item.ParentId == parentId && item.Id != nodeId)
+                        .OrderBy(item => item.OrderIndex)
+                        .ToList();
+
+                    Dictionary<Guid, List<ProjectNodeRecord>> childrenByParent = projectNodes
+                        .Where(item => item.ParentId.HasValue)
+                        .GroupBy(item => item.ParentId!.Value)
+                        .ToDictionary(group => group.Key, group => group.OrderBy(item => item.OrderIndex).ToList());
+
+                    List<ProjectNodeRecord> subtree = new();
+                    void CollectSubtree(ProjectNodeRecord current)
+                    {
+                        subtree.Add(current);
+                        if (!childrenByParent.TryGetValue(current.Id, out List<ProjectNodeRecord>? children))
+                        {
+                            return;
+                        }
+
+                        foreach (ProjectNodeRecord child in children)
+                        {
+                            CollectSubtree(child);
+                        }
+                    }
+
+                    CollectSubtree(node);
+
+                    Guid[] sceneNodeIds = subtree
+                        .Where(item => item.NodeType == ProjectNodeType.Scene)
+                        .Select(item => item.Id)
+                        .ToArray();
+
+                    Guid[] candidateSectionIds = subtree
+                        .Where(item => item.NodeType == ProjectNodeType.Scene && item.LinkedSectionId.HasValue)
+                        .Select(item => item.LinkedSectionId!.Value)
+                        .Distinct()
+                        .ToArray();
+
+                    _logger.LogInformation(
+                        "Project node delete start. ProjectId={ProjectId} NodeId={NodeId} ParentId={ParentId} LinkedSectionId={LinkedSectionId} SceneNodes={SceneNodes} CandidateSectionIds={CandidateSectionIds}",
+                        projectId,
+                        nodeId,
+                        parentId,
+                        node.LinkedSectionId,
+                        sceneNodeIds.Length,
+                        candidateSectionIds.Length == 0 ? "<none>" : string.Join(",", candidateSectionIds));
+
+                    int deletedSceneAnnotations = 0;
+                    int deletedSceneQualityIssues = 0;
+                    int deletedSceneVersions = 0;
+                    int deletedSceneContents = 0;
+                    int deletedSceneNotes = 0;
+                    int deletedSceneCards = 0;
+                    int deletedProjectNodes = 0;
+                    int deletedPageAnnotations = 0;
+                    int deletedPageQualityIssues = 0;
+                    int deletedPageQualityIssueDismissals = 0;
+                    int deletedPageVersions = 0;
+                    int deletedPageNotes = 0;
+                    int deletedPages = 0;
+                    int deletedSectionNotes = 0;
+                    int deletedSectionSceneCards = 0;
+                    int deletedSections = 0;
+                    Guid[] sectionIdsToDelete = Array.Empty<Guid>();
+                    Guid[] retainedSectionIds = Array.Empty<Guid>();
+                    Dictionary<Guid, int> remainingSectionReferenceCounts = new();
+
+                    if (sceneNodeIds.Length > 0)
+                    {
+                        deletedSceneAnnotations = await _dbContext.SceneAnnotations.Where(item => sceneNodeIds.Contains(item.SceneNodeId)).ExecuteDeleteAsync(ct);
+                        deletedSceneQualityIssues = await _dbContext.SceneQualityIssues.Where(item => sceneNodeIds.Contains(item.SceneNodeId)).ExecuteDeleteAsync(ct);
+                        deletedSceneVersions = await _dbContext.SceneVersions.Where(item => sceneNodeIds.Contains(item.SceneNodeId)).ExecuteDeleteAsync(ct);
+                        deletedSceneContents = await _dbContext.SceneContents.Where(item => sceneNodeIds.Contains(item.SceneNodeId)).ExecuteDeleteAsync(ct);
+                        deletedSceneNotes = await _dbContext.SceneNotes.Where(item => sceneNodeIds.Contains(item.SceneNodeId)).ExecuteDeleteAsync(ct);
+                        deletedSceneCards = await _dbContext.SceneCards.Where(item => sceneNodeIds.Contains(item.SceneNodeId)).ExecuteDeleteAsync(ct);
+                    }
+
+                    HashSet<Guid> remainingNodeIds = subtree.Select(item => item.Id).ToHashSet();
+                    while (remainingNodeIds.Count > 0)
+                    {
+                        Guid[] leafIds = subtree
+                            .Where(item => remainingNodeIds.Contains(item.Id))
+                            .Where(item => !childrenByParent.TryGetValue(item.Id, out List<ProjectNodeRecord>? children)
+                                || children.All(child => !remainingNodeIds.Contains(child.Id)))
+                            .Select(item => item.Id)
+                            .ToArray();
+
+                        if (leafIds.Length == 0)
+                        {
+                            throw new InvalidOperationException("Delete node failed because the subtree could not be resolved leaf-first.");
+                        }
+
+                        deletedProjectNodes += await _dbContext.ProjectNodes
+                            .Where(item => leafIds.Contains(item.Id))
+                            .ExecuteDeleteAsync(ct);
+
+                        foreach (Guid leafId in leafIds)
+                        {
+                            remainingNodeIds.Remove(leafId);
+                        }
+                    }
+
+                    if (candidateSectionIds.Length > 0)
+                    {
+                        (sectionIdsToDelete, remainingSectionReferenceCounts) =
+                            await GetOrphanedSectionIdsAfterNodeDeleteAsync(projectId, candidateSectionIds, ct);
+                        retainedSectionIds = candidateSectionIds
+                            .Where(sectionId => !sectionIdsToDelete.Contains(sectionId))
+                            .ToArray();
+
+                        _logger.LogInformation(
+                            "Project node delete section resolution. ProjectId={ProjectId} NodeId={NodeId} CandidateSectionIds={CandidateSectionIds} DeletedSectionIds={DeletedSectionIds} RetainedSectionIds={RetainedSectionIds} RemainingReferenceCounts={RemainingReferenceCounts}",
+                            projectId,
+                            nodeId,
+                            string.Join(",", candidateSectionIds),
+                            sectionIdsToDelete.Length == 0 ? "<none>" : string.Join(",", sectionIdsToDelete),
+                            retainedSectionIds.Length == 0 ? "<none>" : string.Join(",", retainedSectionIds),
+                            remainingSectionReferenceCounts.Count == 0
+                                ? "<none>"
+                                : string.Join(",", remainingSectionReferenceCounts.Select(item => $"{item.Key}:{item.Value}")));
+                    }
+
+                    Guid[] pageIds = sectionIdsToDelete.Length == 0
+                        ? Array.Empty<Guid>()
+                        : await _dbContext.Pages
+                            .Where(item => sectionIdsToDelete.Contains(item.SectionId))
+                            .Select(item => item.Id)
+                            .ToArrayAsync(ct);
+
+                    if (pageIds.Length > 0)
+                    {
+                        deletedPageAnnotations = await _dbContext.PageAnnotations.Where(item => pageIds.Contains(item.PageId)).ExecuteDeleteAsync(ct);
+                        deletedPageQualityIssues = await _dbContext.PageQualityIssues.Where(item => pageIds.Contains(item.PageId)).ExecuteDeleteAsync(ct);
+                        deletedPageQualityIssueDismissals = await _dbContext.PageQualityIssueDismissals.Where(item => pageIds.Contains(item.PageId)).ExecuteDeleteAsync(ct);
+                        deletedPageVersions = await _dbContext.PageVersions.Where(item => pageIds.Contains(item.PageId)).ExecuteDeleteAsync(ct);
+                        deletedPageNotes = await _dbContext.PageNotes.Where(item => pageIds.Contains(item.PageId)).ExecuteDeleteAsync(ct);
+                        deletedPages = await _dbContext.Pages.Where(item => pageIds.Contains(item.Id)).ExecuteDeleteAsync(ct);
+                    }
+
+                    if (sectionIdsToDelete.Length > 0)
+                    {
+                        deletedSectionNotes = await _dbContext.SectionNotes.Where(item => sectionIdsToDelete.Contains(item.SectionId)).ExecuteDeleteAsync(ct);
+                        deletedSectionSceneCards = await _dbContext.SectionSceneCards.Where(item => sectionIdsToDelete.Contains(item.SectionId)).ExecuteDeleteAsync(ct);
+                        deletedSections = await _dbContext.Sections.Where(item => sectionIdsToDelete.Contains(item.Id)).ExecuteDeleteAsync(ct);
+                    }
+
+                    for (int i = 0; i < siblings.Count; i++)
+                    {
+                        if (siblings[i].OrderIndex != i)
+                        {
+                            siblings[i].OrderIndex = i;
+                            siblings[i].UpdatedUtc = DateTimeOffset.UtcNow;
+                        }
+                    }
+
+                    project.UpdatedUtc = DateTimeOffset.UtcNow;
+                    await _dbContext.SaveChangesAsync(ct);
+                    await transaction.CommitAsync(ct);
+                    await _wordCounts.RefreshProjectAsync(projectId, ct);
+
+                    _logger.LogInformation(
+                        "Project node delete success. ProjectId={ProjectId} NodeId={NodeId} LinkedSectionId={LinkedSectionId} DeletedProjectNodes={DeletedProjectNodes} DeletedSceneCards={DeletedSceneCards} DeletedSceneContents={DeletedSceneContents} DeletedSceneNotes={DeletedSceneNotes} DeletedPages={DeletedPages} DeletedSections={DeletedSections} DeletedSectionIds={DeletedSectionIds} RetainedSectionIds={RetainedSectionIds}",
+                        projectId,
+                        nodeId,
+                        node.LinkedSectionId,
+                        deletedProjectNodes,
+                        deletedSceneCards,
+                        deletedSceneContents,
+                        deletedSceneNotes,
+                        deletedPages,
+                        deletedSections,
+                        sectionIdsToDelete.Length == 0 ? "<none>" : string.Join(",", sectionIdsToDelete),
+                        retainedSectionIds.Length == 0 ? "<none>" : string.Join(",", retainedSectionIds));
+
+                    _logger.LogDebug(
+                        "Project node delete dependents. ProjectId={ProjectId} NodeId={NodeId} SceneAnnotations={SceneAnnotations} SceneQualityIssues={SceneQualityIssues} SceneVersions={SceneVersions} PageAnnotations={PageAnnotations} PageQualityIssues={PageQualityIssues} PageQualityIssueDismissals={PageQualityIssueDismissals} PageVersions={PageVersions} PageNotes={PageNotes} SectionNotes={SectionNotes} SectionSceneCards={SectionSceneCards}",
+                        projectId,
+                        nodeId,
+                        deletedSceneAnnotations,
+                        deletedSceneQualityIssues,
+                        deletedSceneVersions,
+                        deletedPageAnnotations,
+                        deletedPageQualityIssues,
+                        deletedPageQualityIssueDismissals,
+                        deletedPageVersions,
+                        deletedPageNotes,
+                        deletedSectionNotes,
+                        deletedSectionSceneCards);
+
+                    result = NoContent();
+                });
+                return result;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    ex,
+                    "Project node delete failed. ProjectId={ProjectId} NodeId={NodeId}",
+                    projectId,
+                    nodeId);
+                return StatusCode(StatusCodes.Status500InternalServerError, new
+                {
+                    message = BuildDeleteFailureMessage(ex)
+                });
+            }
+        }
+
+        private async Task<(Guid[] OrphanedSectionIds, Dictionary<Guid, int> RemainingReferenceCounts)> GetOrphanedSectionIdsAfterNodeDeleteAsync(
+            Guid projectId,
+            IReadOnlyCollection<Guid> candidateSectionIds,
+            CancellationToken ct)
+        {
+            if (candidateSectionIds.Count == 0)
+            {
+                return (Array.Empty<Guid>(), new Dictionary<Guid, int>());
             }
 
-            Guid? parentId = node.ParentId;
-            List<ProjectNodeRecord> siblings = await _dbContext.ProjectNodes
-                .Where(item => item.ProjectId == projectId && item.ParentId == parentId && item.Id != nodeId)
-                .OrderBy(item => item.OrderIndex)
+            List<(Guid SectionId, int Count)> remainingReferenceRows = await _dbContext.ProjectNodes
+                .Where(item => item.ProjectId == projectId
+                    && item.LinkedSectionId.HasValue
+                    && candidateSectionIds.Contains(item.LinkedSectionId.Value))
+                .GroupBy(item => item.LinkedSectionId!.Value)
+                .Select(group => new ValueTuple<Guid, int>(group.Key, group.Count()))
                 .ToListAsync(ct);
 
-            _dbContext.ProjectNodes.Remove(node);
+            Dictionary<Guid, int> remainingReferenceCounts = remainingReferenceRows
+                .ToDictionary(item => item.SectionId, item => item.Count);
 
-            for (int i = 0; i < siblings.Count; i++)
+            Guid[] orphanedSectionIds = candidateSectionIds
+                .Where(sectionId => !remainingReferenceCounts.ContainsKey(sectionId))
+                .ToArray();
+
+            return (orphanedSectionIds, remainingReferenceCounts);
+        }
+
+        private static string BuildDeleteFailureMessage(Exception ex)
+        {
+            Exception current = ex;
+            while (current.InnerException is not null)
             {
-                if (siblings[i].OrderIndex != i)
-                {
-                    siblings[i].OrderIndex = i;
-                    siblings[i].UpdatedUtc = DateTimeOffset.UtcNow;
-                }
+                current = current.InnerException;
             }
 
-            project.UpdatedUtc = DateTimeOffset.UtcNow;
-            await _dbContext.SaveChangesAsync(ct);
-            await _wordCounts.RefreshProjectAsync(projectId, ct);
+            string message = current.Message;
+            if (message.Contains("FK_ProjectNodes_Sections_LinkedSectionId", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Delete scene failed because the linked section is still referenced by another project node.";
+            }
 
-            return NoContent();
+            if (message.Contains("REFERENCE constraint", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("FOREIGN KEY constraint", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Delete scene failed because related storyboard or manuscript records are still linked.";
+            }
+
+            return "Delete scene failed. Related storyboard or manuscript records could not be removed.";
         }
 
         [HttpPost("{projectId:guid}/nodes/{nodeId:guid}/open-scene")]
@@ -1941,6 +2228,192 @@ namespace WriterApp.Controllers
             };
             result.ContentTypes.Add("application/problem+json");
             return result;
+        }
+
+        private async Task EnsureSectionSceneCardSchemaAsync(CancellationToken ct)
+        {
+            string provider = _dbContext.Database.ProviderName ?? string.Empty;
+            if (provider.Contains("Sqlite", StringComparison.OrdinalIgnoreCase))
+            {
+                await EnsureSectionSceneCardSchemaSqliteAsync(ct);
+                return;
+            }
+
+            if (provider.Contains("SqlServer", StringComparison.OrdinalIgnoreCase))
+            {
+                await EnsureSectionSceneCardSchemaSqlServerAsync(ct);
+            }
+        }
+
+        private async Task EnsureSectionSceneCardSchemaSqliteAsync(CancellationToken ct)
+        {
+            await _dbContext.Database.OpenConnectionAsync(ct);
+            try
+            {
+                using (var create = _dbContext.Database.GetDbConnection().CreateCommand())
+                {
+                    create.CommandText =
+                        """
+                        CREATE TABLE IF NOT EXISTS SectionSceneCards (
+                            SectionId TEXT NOT NULL PRIMARY KEY,
+                            NarrativePurpose TEXT NULL,
+                            EmotionalBeat TEXT NULL,
+                            KeyEvents TEXT NULL,
+                            OpenQuestions TEXT NULL,
+                            UpdatedUtc TEXT NOT NULL
+                        );
+                        """;
+                    await create.ExecuteNonQueryAsync(ct);
+                }
+
+                using var command = _dbContext.Database.GetDbConnection().CreateCommand();
+                command.CommandText = "PRAGMA table_info('SectionSceneCards');";
+                HashSet<string> existingColumns = new(StringComparer.OrdinalIgnoreCase);
+
+                using (var reader = await command.ExecuteReaderAsync(ct))
+                {
+                    while (await reader.ReadAsync(ct))
+                    {
+                        if (reader.FieldCount > 1 && !reader.IsDBNull(1))
+                        {
+                            existingColumns.Add(reader.GetString(1));
+                        }
+                    }
+                }
+
+                foreach (string sql in BuildMissingSectionSceneCardColumnStatements(existingColumns, "TEXT NULL"))
+                {
+                    using var alter = _dbContext.Database.GetDbConnection().CreateCommand();
+                    alter.CommandText = sql;
+                    try
+                    {
+                        await alter.ExecuteNonQueryAsync(ct);
+                    }
+                    catch (SqliteException ex) when (ex.SqliteErrorCode == 1 && ex.Message.Contains("duplicate column name", StringComparison.OrdinalIgnoreCase))
+                    {
+                    }
+                }
+            }
+            finally
+            {
+                await _dbContext.Database.CloseConnectionAsync();
+            }
+        }
+
+        private async Task EnsureSectionSceneCardSchemaSqlServerAsync(CancellationToken ct)
+        {
+            await _dbContext.Database.OpenConnectionAsync(ct);
+            try
+            {
+                using (var create = _dbContext.Database.GetDbConnection().CreateCommand())
+                {
+                    create.CommandText =
+                        """
+                        IF OBJECT_ID(N'dbo.SectionSceneCards', N'U') IS NULL
+                        BEGIN
+                            CREATE TABLE [dbo].[SectionSceneCards] (
+                                [SectionId] uniqueidentifier NOT NULL PRIMARY KEY,
+                                [NarrativePurpose] nvarchar(max) NULL,
+                                [EmotionalBeat] nvarchar(max) NULL,
+                                [KeyEvents] nvarchar(max) NULL,
+                                [OpenQuestions] nvarchar(max) NULL,
+                                [UpdatedUtc] datetimeoffset NOT NULL
+                            );
+                        END
+                        """;
+                    await create.ExecuteNonQueryAsync(ct);
+                }
+
+                using var command = _dbContext.Database.GetDbConnection().CreateCommand();
+                command.CommandText =
+                    """
+                    SELECT [COLUMN_NAME]
+                    FROM INFORMATION_SCHEMA.COLUMNS
+                    WHERE [TABLE_SCHEMA] = 'dbo' AND [TABLE_NAME] = 'SectionSceneCards';
+                    """;
+                HashSet<string> existingColumns = new(StringComparer.OrdinalIgnoreCase);
+
+                using (var reader = await command.ExecuteReaderAsync(ct))
+                {
+                    while (await reader.ReadAsync(ct))
+                    {
+                        if (reader.FieldCount > 0 && !reader.IsDBNull(0))
+                        {
+                            existingColumns.Add(reader.GetString(0));
+                        }
+                    }
+                }
+
+                foreach (string sql in BuildMissingSectionSceneCardColumnStatements(existingColumns, "NVARCHAR(MAX) NULL"))
+                {
+                    using var alter = _dbContext.Database.GetDbConnection().CreateCommand();
+                    alter.CommandText = sql;
+                    try
+                    {
+                        await alter.ExecuteNonQueryAsync(ct);
+                    }
+                    catch (SqlException ex) when (ex.Number == 2705)
+                    {
+                    }
+                }
+            }
+            finally
+            {
+                await _dbContext.Database.CloseConnectionAsync();
+            }
+        }
+
+        private static List<string> BuildMissingSectionSceneCardColumnStatements(
+            IReadOnlySet<string> existingColumns,
+            string textType)
+        {
+            List<string> alterStatements = new();
+            if (!existingColumns.Contains("PovCharacterId"))
+            {
+                alterStatements.Add($"ALTER TABLE SectionSceneCards ADD PovCharacterId {textType};");
+            }
+
+            if (!existingColumns.Contains("Summary"))
+            {
+                alterStatements.Add($"ALTER TABLE SectionSceneCards ADD Summary {textType};");
+            }
+
+            if (!existingColumns.Contains("Status"))
+            {
+                alterStatements.Add($"ALTER TABLE SectionSceneCards ADD Status {textType};");
+            }
+
+            if (!existingColumns.Contains("PlaceId"))
+            {
+                alterStatements.Add($"ALTER TABLE SectionSceneCards ADD PlaceId {textType};");
+            }
+
+            if (!existingColumns.Contains("TimelineEventId"))
+            {
+                alterStatements.Add($"ALTER TABLE SectionSceneCards ADD TimelineEventId {textType};");
+            }
+
+            if (!existingColumns.Contains("TimeRef"))
+            {
+                alterStatements.Add($"ALTER TABLE SectionSceneCards ADD TimeRef {textType};");
+            }
+
+            if (!existingColumns.Contains("TagsJson"))
+            {
+                alterStatements.Add($"ALTER TABLE SectionSceneCards ADD TagsJson {textType};");
+            }
+
+            if (!existingColumns.Contains("SubplotTagsJson"))
+            {
+                alterStatements.Add($"ALTER TABLE SectionSceneCards ADD SubplotTagsJson {textType};");
+            }
+
+            if (!existingColumns.Contains("ReferencesJson"))
+            {
+                alterStatements.Add($"ALTER TABLE SectionSceneCards ADD ReferencesJson {textType};");
+            }
+
+            return alterStatements;
         }
 
         private static bool IsTitleOnlyNodeRename(ProjectNodePatchRequest request, ProjectNodeRecord node)

@@ -1,0 +1,1394 @@
+@using System.Net.Http.Json
+@using System.Text.Json
+@using WriterApp.Application.Documents
+@using WriterApp.Application.Subscriptions
+@inject HttpClient Http
+@inject ILogger<StoryboardInsightsPanel> Logger
+
+<aside class="storyboard-insights" aria-label="Storyboard insights">
+    <div class="storyboard-insights-header">
+        <h2>Storyboard Insights</h2>
+        <p>Board-level structure signals drawn from the current chapter and scene layout.</p>
+        @if (SelectedSceneIds.Count == 1)
+        {
+            <div class="storyboard-insights-empty">Scene-level AI tools are available in the scene detail panel.</div>
+        }
+    </div>
+
+    <div class="storyboard-insights-scroll">
+    <div class="storyboard-insights-stats">
+        <div><strong>@Summary.TotalChapters</strong><span>chapters</span></div>
+        <div><strong>@Summary.TotalScenes</strong><span>scenes</span></div>
+        <div><strong>@Summary.DraftScenes</strong><span>draft scenes</span></div>
+        <div><strong>@Summary.IncompleteScenes</strong><span>incomplete scenes</span></div>
+    </div>
+
+    <div class="storyboard-insights-section">
+        <h3>Overview</h3>
+        <ul class="storyboard-insights-list">
+            <li>@Summary.TotalChapters chapter@(Summary.TotalChapters == 1 ? string.Empty : "s") currently mapped on the board.</li>
+            <li>@Summary.TotalScenes visible scene@(Summary.TotalScenes == 1 ? string.Empty : "s") across the current storyboard.</li>
+            <li>@Summary.DraftScenes draft scene@(Summary.DraftScenes == 1 ? string.Empty : "s") still need refinement.</li>
+            <li>@Summary.IncompleteScenes scene@(Summary.IncompleteScenes == 1 ? string.Empty : "s") are missing summary, POV, or narrative purpose.</li>
+        </ul>
+    </div>
+
+    <div class="storyboard-insights-section">
+        <h3>Observations</h3>
+        @if (Summary.Observations.Count == 0)
+        {
+            <div class="storyboard-insights-empty">No structural issues stand out right now.</div>
+        }
+        else
+        {
+            <ul class="storyboard-insights-list">
+                @foreach (string observation in Summary.Observations)
+                {
+                    <li>@observation</li>
+                }
+            </ul>
+        }
+    </div>
+
+    <div class="storyboard-insights-section">
+        <h3>Insights</h3>
+        @if (Summary.Insights.Count == 0)
+        {
+            <div class="storyboard-insights-empty">Higher-level structure insights will appear here as the board analysis expands.</div>
+        }
+        else
+        {
+            <ul class="storyboard-insights-list">
+                @foreach (string insight in Summary.Insights)
+                {
+                    <li>@insight</li>
+                }
+            </ul>
+        }
+
+        @if (_subplotContinuityFindings.Count > 0)
+        {
+            <div class="storyboard-insights-grouped-findings">
+                @foreach (IGrouping<string, StoryboardSubplotContinuityFinding> group in _subplotContinuityFindings
+                    .GroupBy(finding => finding.SubplotName, StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase))
+                {
+                    <div class="storyboard-insights-subplot-group">
+                        <h4>@group.Key</h4>
+                        <div class="storyboard-insights-subplot-items">
+                            @foreach (StoryboardSubplotContinuityFinding finding in group)
+                            {
+                                <div class="storyboard-insights-subplot-item">
+                                    <div class="storyboard-insights-subplot-item__meta">
+                                        <span class="storyboard-insights-chip">@finding.IssueType</span>
+                                    </div>
+                                    <div class="storyboard-insights-subplot-item__body">@finding.Explanation</div>
+                                    @if (finding.AffectedScenes.Count > 0)
+                                    {
+                                        <div class="storyboard-insights-subplot-item__affected">
+                                            Affected: @string.Join(", ", finding.AffectedScenes)
+                                        </div>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(finding.Recommendation))
+                                    {
+                                        <div class="storyboard-insights-subplot-item__recommendation">@finding.Recommendation</div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+
+        @if (PovCounts.Count > 0)
+        {
+            <div class="storyboard-insights-pov-summary">
+                <h4>POV distribution</h4>
+                <div class="storyboard-insights-pov-summary__chips">
+                    @foreach (StoryboardPovCount count in PovCounts)
+                    {
+                        <span class="storyboard-insights-chip">@count.Label: @count.SceneCount</span>
+                    }
+                </div>
+            </div>
+        }
+
+        @if (_povBalanceFindings.Count > 0)
+        {
+            <div class="storyboard-insights-grouped-findings">
+                @foreach (StoryboardPovBalanceFinding finding in _povBalanceFindings)
+                {
+                    <div class="storyboard-insights-subplot-group storyboard-insights-pov-group">
+                        <h4>@finding.Title</h4>
+                        <div class="storyboard-insights-subplot-items">
+                            <div class="storyboard-insights-subplot-item">
+                                <div class="storyboard-insights-subplot-item__meta">
+                                    @if (!string.IsNullOrWhiteSpace(finding.AffectedPov))
+                                    {
+                                        <span class="storyboard-insights-chip">POV: @finding.AffectedPov</span>
+                                    }
+                                    @foreach (string chapter in finding.AffectedChapters)
+                                    {
+                                        <span class="storyboard-insights-chip">Chapter: @chapter</span>
+                                    }
+                                </div>
+                                <div class="storyboard-insights-subplot-item__body">@finding.Explanation</div>
+                                @if (finding.AffectedScenes.Count > 0)
+                                {
+                                    <div class="storyboard-insights-subplot-item__affected">
+                                        Scenes: @string.Join(", ", finding.AffectedScenes)
+                                    </div>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(finding.Suggestion))
+                                {
+                                    <div class="storyboard-insights-subplot-item__recommendation">@finding.Suggestion</div>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+
+    <div class="storyboard-insights-section">
+        <h3>Suggestions</h3>
+        <div class="storyboard-insights-empty">
+            Storyboard-level analysis tools operate across the full board, not on the selected scene.
+        </div>
+        <div class="storyboard-insights-actions" aria-label="Storyboard AI suggestions">
+            <PlanGatedButton Feature="@nameof(FeatureKey.StoryCoach)"
+                             Class="storyboard-insights-action"
+                             LockedTitle="Upgrade to use storyboard structure suggestions."
+                             AllowedTitle="Suggest a strong next scene based on the current board."
+                             ShowLockIndicator="false"
+                             IsBusy="@_nextSceneInFlight"
+                             OnClick="SuggestNextSceneAsync">
+                @(_nextSceneInFlight ? "Thinking..." : "Suggest next scene")
+            </PlanGatedButton>
+            <PlanGatedButton Feature="@nameof(FeatureKey.StoryCoach)"
+                             Class="storyboard-insights-action"
+                             LockedTitle="Upgrade to detect missing scenes."
+                             AllowedTitle="Analyze the storyboard for likely missing scenes or weak transitions."
+                             ShowLockIndicator="false"
+                             IsBusy="@_missingScenesInFlight"
+                             OnClick="DetectMissingScenesAsync">
+                @(_missingScenesInFlight ? "Analyzing..." : "Detect missing scenes")
+            </PlanGatedButton>
+            <PlanGatedButton Feature="@nameof(FeatureKey.StoryCoach)"
+                             Class="storyboard-insights-action"
+                             LockedTitle="Upgrade to analyze POV balance."
+                             AllowedTitle="Analyze POV balance across the storyboard."
+                             ShowLockIndicator="false"
+                             IsBusy="@_povBalanceInFlight"
+                             OnClick="AnalyzePovBalanceAsync">
+                @(_povBalanceInFlight ? "Analyzing..." : "Analyze POV balance")
+            </PlanGatedButton>
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(_nextSceneError))
+        {
+            <div class="storyboard-insights-error">@_nextSceneError</div>
+        }
+
+        @if (_nextSceneSuggestion is not null)
+        {
+            <div class="storyboard-insights-suggestion">
+                <div class="storyboard-insights-suggestion__header">
+                    <strong>@_nextSceneSuggestion.Title</strong>
+                    <span class="storyboard-insights-suggestion__status">@_nextSceneSuggestion.Status</span>
+                </div>
+                @if (!string.IsNullOrWhiteSpace(_nextSceneSuggestion.Summary))
+                {
+                    <div class="storyboard-insights-suggestion__summary">@_nextSceneSuggestion.Summary</div>
+                }
+                <div class="storyboard-insights-suggestion__chips">
+                    @if (!string.IsNullOrWhiteSpace(_nextSceneSuggestion.PovCharacterId))
+                    {
+                        <span class="storyboard-insights-chip">POV: @_nextSceneSuggestion.PovCharacterId</span>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(_nextSceneSuggestion.NarrativePurpose))
+                    {
+                        <span class="storyboard-insights-chip">@_nextSceneSuggestion.NarrativePurpose</span>
+                    }
+                    @foreach (string tag in _nextSceneSuggestion.SubplotTags)
+                    {
+                        <span class="storyboard-insights-chip">#@tag</span>
+                    }
+                </div>
+                @if (!string.IsNullOrWhiteSpace(_nextSceneSuggestion.Rationale))
+                {
+                    <div class="storyboard-insights-suggestion__rationale">@_nextSceneSuggestion.Rationale</div>
+                }
+                <div class="storyboard-insights-suggestion__actions">
+                    <PlanGatedButton Feature="@nameof(FeatureKey.ProjectStructureEditing)"
+                                     Class="storyboard-insights-action"
+                                     LockedTitle="Upgrade to create scenes from storyboard suggestions."
+                                     AllowedTitle="Create this suggested scene in the storyboard."
+                                     ShowLockIndicator="false"
+                                     IsBusy="@_createSuggestedSceneInFlight"
+                                     OnClick="CreateSuggestedSceneAsync">
+                        @(_createSuggestedSceneInFlight ? "Creating..." : "Create scene")
+                    </PlanGatedButton>
+                    <button type="button"
+                            class="storyboard-insights-action"
+                            @onclick="DismissSuggestedScene"
+                            disabled="@_createSuggestedSceneInFlight">
+                        Dismiss
+                    </button>
+                </div>
+            </div>
+        }
+
+        @if (_missingSceneSuggestions.Count > 0)
+        {
+            <div class="storyboard-insights-suggestion-list">
+                @foreach (StoryboardNextSceneSuggestion suggestion in _missingSceneSuggestions)
+                {
+                    string suggestionKey = GetSuggestionKey(suggestion);
+                    <div class="storyboard-insights-suggestion storyboard-insights-suggestion--missing">
+                        <div class="storyboard-insights-suggestion__header">
+                            <strong>@suggestion.Title</strong>
+                            <span class="storyboard-insights-suggestion__status">@suggestion.Status</span>
+                        </div>
+                        @if (!string.IsNullOrWhiteSpace(suggestion.Summary))
+                        {
+                            <div class="storyboard-insights-suggestion__summary">@suggestion.Summary</div>
+                        }
+                        <div class="storyboard-insights-suggestion__chips">
+                            @if (!string.IsNullOrWhiteSpace(suggestion.PreferredChapterTitle))
+                            {
+                                <span class="storyboard-insights-chip">Chapter: @suggestion.PreferredChapterTitle</span>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(suggestion.NarrativePurpose))
+                            {
+                                <span class="storyboard-insights-chip">@suggestion.NarrativePurpose</span>
+                            }
+                            @foreach (string tag in suggestion.SubplotTags)
+                            {
+                                <span class="storyboard-insights-chip">#@tag</span>
+                            }
+                        </div>
+                        @if (!string.IsNullOrWhiteSpace(suggestion.Rationale))
+                        {
+                            <div class="storyboard-insights-suggestion__rationale">@suggestion.Rationale</div>
+                        }
+                        <div class="storyboard-insights-suggestion__actions">
+                            <PlanGatedButton Feature="@nameof(FeatureKey.ProjectStructureEditing)"
+                                             Class="storyboard-insights-action"
+                                             LockedTitle="Upgrade to create scenes from storyboard suggestions."
+                                             AllowedTitle="Add this suggested scene to the storyboard."
+                                             ShowLockIndicator="false"
+                                             IsBusy="@_missingSceneCreateInFlight.Contains(suggestionKey)"
+                                             OnClick="@(() => CreateMissingSceneAsync(suggestion))">
+                                @(_missingSceneCreateInFlight.Contains(suggestionKey) ? "Creating..." : "Add suggested scene")
+                            </PlanGatedButton>
+                            <button type="button"
+                                    class="storyboard-insights-action"
+                                    @onclick="@(() => DismissMissingScene(suggestion))"
+                                    disabled="@_missingSceneCreateInFlight.Contains(suggestionKey)">
+                                Dismiss
+                            </button>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+
+        @if (Summary.Suggestions.Count == 0)
+        {
+            <div class="storyboard-insights-empty">No storyboard-wide recommendations are available yet.</div>
+        }
+        else
+        {
+            <ul class="storyboard-insights-list">
+                @foreach (string suggestion in Summary.Suggestions)
+                {
+                    <li>@suggestion</li>
+                }
+            </ul>
+        }
+    </div>
+    </div>
+</aside>
+
+@code {
+    private const string SuggestNextSceneActionKey = "storyboard.suggest-next-scene";
+    private const string DetectMissingScenesActionKey = "storyboard.detect-missing-scenes";
+    private const string CheckSubplotContinuityActionKey = "storyboard.check-subplot-continuity";
+    private const string AnalyzePovBalanceActionKey = "storyboard.analyze-pov-balance";
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
+    [Parameter]
+    public ProjectDto? Project { get; set; }
+
+    [Parameter]
+    public Guid ProjectId { get; set; }
+
+    [Parameter]
+    public IReadOnlyList<ProjectNodeDto> Nodes { get; set; } = Array.Empty<ProjectNodeDto>();
+
+    [Parameter]
+    public Guid? SelectedSceneId { get; set; }
+
+    [Parameter]
+    public IReadOnlyCollection<Guid> SelectedSceneIds { get; set; } = Array.Empty<Guid>();
+
+    [Parameter]
+    public Func<StoryboardNextSceneSuggestion, Task<bool>>? CreateSuggestedScene { get; set; }
+
+    private bool _nextSceneInFlight;
+    private bool _missingScenesInFlight;
+    private bool _subplotContinuityInFlight;
+    private bool _povBalanceInFlight;
+    private bool _createSuggestedSceneInFlight;
+    private string? _nextSceneError;
+    private StoryboardNextSceneSuggestion? _nextSceneSuggestion;
+    private readonly HashSet<string> _missingSceneCreateInFlight = new(StringComparer.Ordinal);
+    private List<StoryboardNextSceneSuggestion> _missingSceneSuggestions = new();
+    private List<StoryboardSubplotContinuityFinding> _subplotContinuityFindings = new();
+    private List<StoryboardPovBalanceFinding> _povBalanceFindings = new();
+
+    private StoryboardInsightsSummary Summary => BuildSummary();
+    private IReadOnlyList<StoryboardPovCount> PovCounts => BuildPovCounts();
+
+    private async Task SuggestNextSceneAsync()
+    {
+        if (_nextSceneInFlight)
+        {
+            return;
+        }
+
+        Guid? anchorSceneId = GetAnchorSceneId();
+        if (!anchorSceneId.HasValue)
+        {
+            _nextSceneError = "Add at least one scene before asking for a next-scene suggestion.";
+            return;
+        }
+
+        _nextSceneInFlight = true;
+        _nextSceneError = null;
+
+        try
+        {
+            ProjectSceneOpenTargetDto? target = await ResolveAiTargetAsync(anchorSceneId.Value);
+            if (target?.DocumentId is null || target.SectionId is null)
+            {
+                _nextSceneError = "Unable to resolve storyboard context for AI.";
+                return;
+            }
+
+            IReadOnlyList<StoryboardChapterSummary> chapters = BuildChapterSummaries();
+            Dictionary<Guid, SceneCardDto?> sceneCards = await LoadSceneCardsAsync(chapters);
+            string contextJson = BuildStoryboardContextJson(chapters, sceneCards);
+
+            AiActionExecuteRequestDto payload = new(
+                target.DocumentId,
+                target.SectionId,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                new Dictionary<string, object?>
+                {
+                    ["instruction"] = "Suggest one strong next scene based on the current storyboard structure. Focus on what most naturally advances the story from here.",
+                    ["storyboard_context"] = contextJson,
+                    ["preferred_chapter_title"] = GetPreferredChapterTitle(chapters),
+                    ["selected_scene_title"] = GetSelectedSceneTitle()
+                });
+
+            using HttpResponseMessage response =
+                await Http.PostAsJsonAsync($"api/ai/actions/{SuggestNextSceneActionKey}/execute", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                _nextSceneError = await ReadApiErrorAsync(response, "Storyboard AI suggestion failed.");
+                return;
+            }
+
+            AiActionExecuteResponseDto? result = await response.Content.ReadFromJsonAsync<AiActionExecuteResponseDto>();
+            StoryboardNextSceneSuggestion? suggestion = ParseSuggestedScene(result?.ProposedText);
+            if (suggestion is null)
+            {
+                _nextSceneError = "Storyboard AI returned an invalid suggestion.";
+                return;
+            }
+
+            _nextSceneSuggestion = suggestion;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Storyboard next-scene suggestion failed. ProjectId={ProjectId}", ProjectId);
+            _nextSceneError = "Storyboard AI suggestion failed.";
+        }
+        finally
+        {
+            _nextSceneInFlight = false;
+        }
+    }
+
+    private async Task CreateSuggestedSceneAsync()
+    {
+        if (_createSuggestedSceneInFlight || _nextSceneSuggestion is null || CreateSuggestedScene is null)
+        {
+            return;
+        }
+
+        _createSuggestedSceneInFlight = true;
+        _nextSceneError = null;
+
+        try
+        {
+            bool created = await CreateSuggestedScene.Invoke(_nextSceneSuggestion);
+            if (created)
+            {
+                _nextSceneSuggestion = null;
+            }
+            else
+            {
+                _nextSceneError = "Failed to create the suggested scene.";
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Storyboard suggested scene creation failed. ProjectId={ProjectId}", ProjectId);
+            _nextSceneError = "Failed to create the suggested scene.";
+        }
+        finally
+        {
+            _createSuggestedSceneInFlight = false;
+        }
+    }
+
+    private async Task DetectMissingScenesAsync()
+    {
+        if (_missingScenesInFlight)
+        {
+            return;
+        }
+
+        Guid? anchorSceneId = GetAnchorSceneId();
+        if (!anchorSceneId.HasValue)
+        {
+            _nextSceneError = "Add at least one scene before asking for missing-scene analysis.";
+            return;
+        }
+
+        _missingScenesInFlight = true;
+        _nextSceneError = null;
+
+        try
+        {
+            ProjectSceneOpenTargetDto? target = await ResolveAiTargetAsync(anchorSceneId.Value);
+            if (target?.DocumentId is null || target.SectionId is null)
+            {
+                _nextSceneError = "Unable to resolve storyboard context for AI.";
+                return;
+            }
+
+            IReadOnlyList<StoryboardChapterSummary> chapters = BuildChapterSummaries();
+            Dictionary<Guid, SceneCardDto?> sceneCards = await LoadSceneCardsAsync(chapters);
+            string contextJson = BuildStoryboardContextJson(chapters, sceneCards);
+
+            AiActionExecuteRequestDto payload = new(
+                target.DocumentId,
+                target.SectionId,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                new Dictionary<string, object?>
+                {
+                    ["instruction"] = "Detect likely missing scenes, weak transitions, absent narrative steps, or neglected subplot continuations in the storyboard. Return suggestions, not certainties.",
+                    ["storyboard_context"] = contextJson,
+                    ["preferred_chapter_title"] = GetPreferredChapterTitle(chapters)
+                });
+
+            using HttpResponseMessage response =
+                await Http.PostAsJsonAsync($"api/ai/actions/{DetectMissingScenesActionKey}/execute", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                _nextSceneError = await ReadApiErrorAsync(response, "Missing-scene analysis failed.");
+                return;
+            }
+
+            AiActionExecuteResponseDto? result = await response.Content.ReadFromJsonAsync<AiActionExecuteResponseDto>();
+            IReadOnlyList<StoryboardNextSceneSuggestion> suggestions = ParseMissingSceneSuggestions(result?.ProposedText);
+            if (suggestions.Count == 0)
+            {
+                _nextSceneError = "No missing-scene suggestions were returned.";
+                return;
+            }
+
+            _missingSceneSuggestions = suggestions.ToList();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Storyboard missing-scene analysis failed. ProjectId={ProjectId}", ProjectId);
+            _nextSceneError = "Missing-scene analysis failed.";
+        }
+        finally
+        {
+            _missingScenesInFlight = false;
+        }
+    }
+
+    private async Task CreateMissingSceneAsync(StoryboardNextSceneSuggestion suggestion)
+    {
+        if (CreateSuggestedScene is null)
+        {
+            return;
+        }
+
+        string suggestionKey = GetSuggestionKey(suggestion);
+        if (!_missingSceneCreateInFlight.Add(suggestionKey))
+        {
+            return;
+        }
+
+        _nextSceneError = null;
+
+        try
+        {
+            bool created = await CreateSuggestedScene.Invoke(suggestion);
+            if (created)
+            {
+                _missingSceneSuggestions.RemoveAll(item => GetSuggestionKey(item) == suggestionKey);
+            }
+            else
+            {
+                _nextSceneError = "Failed to create the suggested scene.";
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Storyboard missing-scene creation failed. ProjectId={ProjectId}", ProjectId);
+            _nextSceneError = "Failed to create the suggested scene.";
+        }
+        finally
+        {
+            _missingSceneCreateInFlight.Remove(suggestionKey);
+        }
+    }
+
+    private async Task CheckSubplotContinuityAsync()
+    {
+        if (_subplotContinuityInFlight)
+        {
+            return;
+        }
+
+        Guid? anchorSceneId = GetAnchorSceneId();
+        if (!anchorSceneId.HasValue)
+        {
+            _nextSceneError = "Add at least one scene before checking subplot continuity.";
+            return;
+        }
+
+        _subplotContinuityInFlight = true;
+        _nextSceneError = null;
+
+        try
+        {
+            ProjectSceneOpenTargetDto? target = await ResolveAiTargetAsync(anchorSceneId.Value);
+            if (target?.DocumentId is null || target.SectionId is null)
+            {
+                _nextSceneError = "Unable to resolve storyboard context for AI.";
+                return;
+            }
+
+            IReadOnlyList<StoryboardChapterSummary> chapters = BuildChapterSummaries();
+            Dictionary<Guid, SceneCardDto?> sceneCards = await LoadSceneCardsAsync(chapters);
+            string contextJson = BuildStoryboardContextJson(chapters, sceneCards);
+
+            AiActionExecuteRequestDto payload = new(
+                target.DocumentId,
+                target.SectionId,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                new Dictionary<string, object?>
+                {
+                    ["instruction"] = "Check subplot continuity across the storyboard and flag structural risks such as abrupt returns, long disappearances, clustering, or missing resolution.",
+                    ["storyboard_context"] = contextJson,
+                    ["preferred_chapter_title"] = GetPreferredChapterTitle(chapters)
+                });
+
+            using HttpResponseMessage response =
+                await Http.PostAsJsonAsync($"api/ai/actions/{CheckSubplotContinuityActionKey}/execute", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                _nextSceneError = await ReadApiErrorAsync(response, "Subplot continuity analysis failed.");
+                return;
+            }
+
+            AiActionExecuteResponseDto? result = await response.Content.ReadFromJsonAsync<AiActionExecuteResponseDto>();
+            IReadOnlyList<StoryboardSubplotContinuityFinding> findings = ParseSubplotContinuityFindings(result?.ProposedText);
+            if (findings.Count == 0)
+            {
+                _nextSceneError = "No subplot continuity findings were returned.";
+                return;
+            }
+
+            _subplotContinuityFindings = findings.ToList();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Storyboard subplot continuity analysis failed. ProjectId={ProjectId}", ProjectId);
+            _nextSceneError = "Subplot continuity analysis failed.";
+        }
+        finally
+        {
+            _subplotContinuityInFlight = false;
+        }
+    }
+
+    private async Task AnalyzePovBalanceAsync()
+    {
+        if (_povBalanceInFlight)
+        {
+            return;
+        }
+
+        Guid? anchorSceneId = GetAnchorSceneId();
+        if (!anchorSceneId.HasValue)
+        {
+            _nextSceneError = "Add at least one scene before analyzing POV balance.";
+            return;
+        }
+
+        _povBalanceInFlight = true;
+        _nextSceneError = null;
+
+        try
+        {
+            ProjectSceneOpenTargetDto? target = await ResolveAiTargetAsync(anchorSceneId.Value);
+            if (target?.DocumentId is null || target.SectionId is null)
+            {
+                _nextSceneError = "Unable to resolve storyboard context for AI.";
+                return;
+            }
+
+            IReadOnlyList<StoryboardChapterSummary> chapters = BuildChapterSummaries();
+            Dictionary<Guid, SceneCardDto?> sceneCards = await LoadSceneCardsAsync(chapters);
+            string contextJson = BuildStoryboardContextJson(chapters, sceneCards);
+
+            AiActionExecuteRequestDto payload = new(
+                target.DocumentId,
+                target.SectionId,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                new Dictionary<string, object?>
+                {
+                    ["instruction"] = "Analyze POV balance across the storyboard. Flag dominance, long disappearances, abrupt switching, weak chapter-level consistency, and missing POV assignments.",
+                    ["storyboard_context"] = contextJson,
+                    ["preferred_chapter_title"] = GetPreferredChapterTitle(chapters)
+                });
+
+            using HttpResponseMessage response =
+                await Http.PostAsJsonAsync($"api/ai/actions/{AnalyzePovBalanceActionKey}/execute", payload);
+            if (!response.IsSuccessStatusCode)
+            {
+                _nextSceneError = await ReadApiErrorAsync(response, "POV balance analysis failed.");
+                return;
+            }
+
+            AiActionExecuteResponseDto? result = await response.Content.ReadFromJsonAsync<AiActionExecuteResponseDto>();
+            IReadOnlyList<StoryboardPovBalanceFinding> findings = ParsePovBalanceFindings(result?.ProposedText);
+            if (findings.Count == 0)
+            {
+                _nextSceneError = "No POV balance findings were returned.";
+                return;
+            }
+
+            _povBalanceFindings = findings.ToList();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Storyboard POV balance analysis failed. ProjectId={ProjectId}", ProjectId);
+            _nextSceneError = "POV balance analysis failed.";
+        }
+        finally
+        {
+            _povBalanceInFlight = false;
+        }
+    }
+
+    private void DismissSuggestedScene()
+    {
+        _nextSceneSuggestion = null;
+        _nextSceneError = null;
+    }
+
+    private void DismissMissingScene(StoryboardNextSceneSuggestion suggestion)
+    {
+        string suggestionKey = GetSuggestionKey(suggestion);
+        _missingSceneSuggestions.RemoveAll(item => GetSuggestionKey(item) == suggestionKey);
+    }
+
+    private StoryboardInsightsSummary BuildSummary()
+    {
+        IReadOnlyList<StoryboardChapterSummary> chapters = BuildChapterSummaries();
+        int totalChapters = chapters.Count;
+        int totalScenes = chapters.Sum(chapter => chapter.Scenes.Count);
+        int draftScenes = chapters.Sum(chapter => chapter.DraftSceneCount);
+        int incompleteScenes = chapters.Sum(chapter => chapter.Scenes.Count(scene =>
+            string.IsNullOrWhiteSpace(scene.Summary)
+            || string.IsNullOrWhiteSpace(scene.Pov)
+            || string.IsNullOrWhiteSpace(scene.NarrativePurpose)));
+        double averageScenes = totalChapters == 0 ? 0 : (double)totalScenes / totalChapters;
+        List<string> observations = new();
+        List<string> insights = new();
+        List<string> suggestions = new();
+
+        foreach (StoryboardChapterSummary chapter in chapters.Where(chapter => chapter.Scenes.Count == 0))
+        {
+            observations.Add($"{chapter.Title} has no scenes.");
+        }
+
+        if (averageScenes > 0)
+        {
+            foreach (StoryboardChapterSummary chapter in chapters.Where(chapter => chapter.Scenes.Count >= Math.Max(6, Math.Ceiling(averageScenes * 1.75))))
+            {
+                observations.Add($"{chapter.Title} contains {chapter.Scenes.Count} scenes, well above the project average of {averageScenes:0.#}.");
+            }
+        }
+
+        int genericTitles = chapters
+            .SelectMany(chapter => chapter.Scenes)
+            .Count(scene => IsGenericSceneTitle(scene.Title));
+        if (genericTitles > 0)
+        {
+            observations.Add($"{genericTitles} scene title{(genericTitles == 1 ? " is" : "s are")} still generic or very short.");
+        }
+
+        int maxScenes = chapters.Count == 0 ? 0 : chapters.Max(chapter => chapter.Scenes.Count);
+        int minScenes = chapters.Count == 0 ? 0 : chapters.Min(chapter => chapter.Scenes.Count);
+        if (totalChapters >= 3 && maxScenes - minScenes >= 4)
+        {
+            observations.Add("Scene distribution is uneven across chapters.");
+        }
+
+        if (totalScenes > 0 && draftScenes >= Math.Max(3, (int)Math.Ceiling(totalScenes * 0.5)))
+        {
+            insights.Add("A large share of the board is still in draft, which may make pacing decisions less stable.");
+        }
+
+        if (totalChapters > 0 && chapters.Count(chapter => chapter.Scenes.Count > 0) == 1)
+        {
+            insights.Add("Most of the visible story weight is concentrated in a single chapter, so overall structure may still be front-loaded.");
+        }
+
+        if (incompleteScenes > 0)
+        {
+            suggestions.Add($"Add summary, POV, or narrative purpose to the {incompleteScenes} incomplete scene{(incompleteScenes == 1 ? string.Empty : "s")} to make the board easier to scan.");
+        }
+
+        if (chapters.Any(chapter => chapter.Scenes.Count == 0))
+        {
+            suggestions.Add("Fill empty chapters with at least one scene so every chapter has a visible structural role.");
+        }
+
+        if (totalChapters >= 3 && maxScenes - minScenes >= 4)
+        {
+            suggestions.Add("Rebalance scene counts across chapters to smooth the board’s pacing and reduce structural clustering.");
+        }
+
+        return new StoryboardInsightsSummary(
+            totalChapters,
+            totalScenes,
+            draftScenes,
+            incompleteScenes,
+            observations,
+            insights,
+            suggestions);
+    }
+
+    private IReadOnlyList<StoryboardPovCount> BuildPovCounts()
+    {
+        return BuildChapterSummaries()
+            .SelectMany(chapter => chapter.Scenes)
+            .GroupBy(scene => string.IsNullOrWhiteSpace(scene.Pov) ? "Missing POV" : scene.Pov!.Trim(), StringComparer.OrdinalIgnoreCase)
+            .Select(group => new StoryboardPovCount(group.Key, group.Count()))
+            .OrderByDescending(item => item.SceneCount)
+            .ThenBy(item => item.Label, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private IReadOnlyList<StoryboardChapterSummary> BuildChapterSummaries()
+    {
+        if (Nodes.Count == 0)
+        {
+            return Array.Empty<StoryboardChapterSummary>();
+        }
+
+        Dictionary<Guid, List<ProjectNodeDto>> byParent = Nodes
+            .Where(node => node.ParentId.HasValue)
+            .GroupBy(node => node.ParentId!.Value)
+            .ToDictionary(
+                group => group.Key,
+                group => group.OrderBy(node => node.OrderIndex).ToList());
+
+        List<ProjectNodeDto> roots = Nodes
+            .Where(node => !node.ParentId.HasValue)
+            .OrderBy(node => node.OrderIndex)
+            .ToList();
+
+        List<StoryboardChapterSummary> chapters = new();
+        foreach (ProjectNodeDto root in roots)
+        {
+            AppendChapterSummaries(root, byParent, chapters);
+        }
+
+        return chapters;
+    }
+
+    private static void AppendChapterSummaries(
+        ProjectNodeDto node,
+        IReadOnlyDictionary<Guid, List<ProjectNodeDto>> byParent,
+        ICollection<StoryboardChapterSummary> chapters)
+    {
+        if (IsPart(node))
+        {
+            foreach (ProjectNodeDto child in GetChildren(node.Id, byParent))
+            {
+                AppendChapterSummaries(child, byParent, chapters);
+            }
+
+            return;
+        }
+
+        if (IsChapter(node))
+        {
+            List<StoryboardSceneSummary> scenes = GetChildren(node.Id, byParent)
+                .Where(IsScene)
+                .Select(scene =>
+                {
+                    StoryboardSceneMetadata metadata = ReadSceneMetadata(scene);
+                    return new StoryboardSceneSummary(
+                        scene.Id,
+                        node.Id,
+                        node.Title,
+                        scene.Title,
+                        metadata.Summary,
+                        metadata.Status,
+                        metadata.Pov,
+                        metadata.NarrativePurpose,
+                        metadata.SubplotTags);
+                })
+                .ToList();
+
+            chapters.Add(new StoryboardChapterSummary(node.Id, node.Title, scenes));
+            return;
+        }
+
+        foreach (ProjectNodeDto child in GetChildren(node.Id, byParent))
+        {
+            AppendChapterSummaries(child, byParent, chapters);
+        }
+    }
+
+    private async Task<ProjectSceneOpenTargetDto?> ResolveAiTargetAsync(Guid sceneId)
+    {
+        using HttpResponseMessage response = await Http.PostAsync($"api/projects/{ProjectId}/nodes/{sceneId}/open-scene", null);
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        return await response.Content.ReadFromJsonAsync<ProjectSceneOpenTargetDto>();
+    }
+
+    private async Task<Dictionary<Guid, SceneCardDto?>> LoadSceneCardsAsync(IReadOnlyList<StoryboardChapterSummary> chapters)
+    {
+        Guid[] sceneIds = chapters
+            .SelectMany(chapter => chapter.Scenes)
+            .Select(scene => scene.SceneId)
+            .Distinct()
+            .ToArray();
+
+        Task<KeyValuePair<Guid, SceneCardDto?>>[] tasks = sceneIds
+            .Select(async sceneId => new KeyValuePair<Guid, SceneCardDto?>(sceneId, await TryLoadSceneCardAsync(sceneId)))
+            .ToArray();
+
+        KeyValuePair<Guid, SceneCardDto?>[] results = await Task.WhenAll(tasks);
+        return results.ToDictionary(item => item.Key, item => item.Value);
+    }
+
+    private async Task<SceneCardDto?> TryLoadSceneCardAsync(Guid sceneId)
+    {
+        try
+        {
+            return await Http.GetFromJsonAsync<SceneCardDto>($"api/scenes/{sceneId}/scene-card");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogDebug(ex, "Storyboard insights could not load scene card. SceneId={SceneId}", sceneId);
+            return null;
+        }
+    }
+
+    private string BuildStoryboardContextJson(
+        IReadOnlyList<StoryboardChapterSummary> chapters,
+        IReadOnlyDictionary<Guid, SceneCardDto?> sceneCards)
+    {
+        object payload = new
+        {
+            projectTitle = Project?.Title,
+            preferredChapterTitle = GetPreferredChapterTitle(chapters),
+            selectedSceneTitle = GetSelectedSceneTitle(),
+            chapters = chapters.Select((chapter, chapterIndex) => new
+            {
+                order = chapterIndex + 1,
+                title = chapter.Title,
+                scenes = chapter.Scenes.Select((scene, sceneIndex) =>
+                {
+                    sceneCards.TryGetValue(scene.SceneId, out SceneCardDto? sceneCard);
+                    string? summary = string.IsNullOrWhiteSpace(sceneCard?.Summary) ? scene.Summary : sceneCard.Summary;
+                    string? narrativePurpose = string.IsNullOrWhiteSpace(sceneCard?.NarrativePurpose) ? scene.NarrativePurpose : sceneCard.NarrativePurpose;
+                    string? pov = string.IsNullOrWhiteSpace(sceneCard?.PovCharacterId) ? scene.Pov : sceneCard.PovCharacterId;
+                    IReadOnlyList<string> subplotTags = sceneCard?.SubplotTags?.Where(tag => !string.IsNullOrWhiteSpace(tag)).Select(tag => tag.Trim()).ToArray()
+                        ?? scene.SubplotTags;
+
+                    return new
+                    {
+                        order = sceneIndex + 1,
+                        title = scene.Title,
+                        summary,
+                        narrativePurpose,
+                        pov,
+                        subplotTags,
+                        emotionalBeat = sceneCard?.EmotionalBeat
+                    };
+                })
+            })
+        };
+
+        return JsonSerializer.Serialize(payload, JsonOptions);
+    }
+
+    private Guid? GetAnchorSceneId()
+    {
+        if (SelectedSceneId.HasValue && Nodes.Any(node => node.Id == SelectedSceneId.Value && IsScene(node)))
+        {
+            return SelectedSceneId.Value;
+        }
+
+        return BuildChapterSummaries()
+            .SelectMany(chapter => chapter.Scenes)
+            .LastOrDefault()
+            ?.SceneId;
+    }
+
+    private string? GetPreferredChapterTitle(IReadOnlyList<StoryboardChapterSummary> chapters)
+    {
+        if (SelectedSceneId.HasValue)
+        {
+            StoryboardChapterSummary? selectedChapter = chapters
+                .FirstOrDefault(chapter => chapter.Scenes.Any(scene => scene.SceneId == SelectedSceneId.Value));
+            if (selectedChapter is not null)
+            {
+                return selectedChapter.Title;
+            }
+        }
+
+        return chapters.LastOrDefault(chapter => chapter.Scenes.Count > 0)?.Title
+            ?? chapters.LastOrDefault()?.Title;
+    }
+
+    private string? GetSelectedSceneTitle()
+    {
+        if (!SelectedSceneId.HasValue)
+        {
+            return null;
+        }
+
+        return Nodes.FirstOrDefault(node => node.Id == SelectedSceneId.Value)?.Title;
+    }
+
+    private static StoryboardNextSceneSuggestion? ParseSuggestedScene(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return null;
+        }
+
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            JsonElement root = document.RootElement;
+            string? title = GetString(root, "title");
+            if (string.IsNullOrWhiteSpace(title))
+            {
+                return null;
+            }
+
+            return new StoryboardNextSceneSuggestion(
+                title.Trim(),
+                GetString(root, "summary"),
+                "Draft",
+                GetString(root, "povCharacterId") ?? GetString(root, "pov"),
+                GetStringArray(root, "subplotTags"),
+                GetString(root, "narrativePurpose"),
+                GetString(root, "rationale"),
+                GetString(root, "preferredChapterTitle") ?? GetString(root, "suggestedChapterPlacement"));
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static IReadOnlyList<StoryboardNextSceneSuggestion> ParseMissingSceneSuggestions(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return Array.Empty<StoryboardNextSceneSuggestion>();
+        }
+
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            JsonElement root = document.RootElement;
+            JsonElement suggestionsElement;
+            if (root.ValueKind == JsonValueKind.Array)
+            {
+                suggestionsElement = root;
+            }
+            else if (!TryGetProperty(root, "suggestions", out suggestionsElement) || suggestionsElement.ValueKind != JsonValueKind.Array)
+            {
+                return Array.Empty<StoryboardNextSceneSuggestion>();
+            }
+
+            List<StoryboardNextSceneSuggestion> suggestions = new();
+            foreach (JsonElement item in suggestionsElement.EnumerateArray())
+            {
+                string? title = GetString(item, "title") ?? GetString(item, "suggestedMissingSceneTitle");
+                if (string.IsNullOrWhiteSpace(title))
+                {
+                    continue;
+                }
+
+                suggestions.Add(new StoryboardNextSceneSuggestion(
+                    title.Trim(),
+                    GetString(item, "summary"),
+                    "Draft",
+                    GetString(item, "povCharacterId") ?? GetString(item, "pov"),
+                    GetStringArray(item, "subplotTags"),
+                    GetString(item, "narrativePurpose"),
+                    GetString(item, "rationale") ?? GetString(item, "reason"),
+                    GetString(item, "suggestedChapterPlacement") ?? GetString(item, "preferredChapterTitle")));
+            }
+
+            return suggestions;
+        }
+        catch
+        {
+            return Array.Empty<StoryboardNextSceneSuggestion>();
+        }
+    }
+
+    private static IReadOnlyList<StoryboardSubplotContinuityFinding> ParseSubplotContinuityFindings(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return Array.Empty<StoryboardSubplotContinuityFinding>();
+        }
+
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            JsonElement root = document.RootElement;
+            JsonElement findingsElement;
+            if (root.ValueKind == JsonValueKind.Array)
+            {
+                findingsElement = root;
+            }
+            else if (!TryGetProperty(root, "findings", out findingsElement) || findingsElement.ValueKind != JsonValueKind.Array)
+            {
+                return Array.Empty<StoryboardSubplotContinuityFinding>();
+            }
+
+            List<StoryboardSubplotContinuityFinding> findings = new();
+            foreach (JsonElement item in findingsElement.EnumerateArray())
+            {
+                string? subplotName = GetString(item, "subplotName");
+                string? issueType = GetString(item, "issueType");
+                string? explanation = GetString(item, "explanation");
+                if (string.IsNullOrWhiteSpace(subplotName)
+                    || string.IsNullOrWhiteSpace(issueType)
+                    || string.IsNullOrWhiteSpace(explanation))
+                {
+                    continue;
+                }
+
+                findings.Add(new StoryboardSubplotContinuityFinding(
+                    subplotName.Trim(),
+                    issueType.Trim(),
+                    explanation.Trim(),
+                    GetStringArray(item, "affectedScenes"),
+                    GetString(item, "recommendation")));
+            }
+
+            return findings;
+        }
+        catch
+        {
+            return Array.Empty<StoryboardSubplotContinuityFinding>();
+        }
+    }
+
+    private static bool TryGetProperty(JsonElement element, string propertyName, out JsonElement value)
+    {
+        foreach (JsonProperty property in element.EnumerateObject())
+        {
+            if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+            {
+                value = property.Value;
+                return true;
+            }
+        }
+
+        value = default;
+        return false;
+    }
+
+    private static async Task<string> ReadApiErrorAsync(HttpResponseMessage response, string fallbackMessage)
+    {
+        try
+        {
+            string body = await response.Content.ReadAsStringAsync();
+            if (string.IsNullOrWhiteSpace(body))
+            {
+                return fallbackMessage;
+            }
+
+            using JsonDocument document = JsonDocument.Parse(body);
+            if (document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.TryGetProperty("message", out JsonElement message)
+                && message.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(message.GetString()))
+            {
+                return message.GetString()!;
+            }
+
+            return fallbackMessage;
+        }
+        catch
+        {
+            return fallbackMessage;
+        }
+    }
+
+    private static IReadOnlyList<ProjectNodeDto> GetChildren(
+        Guid parentId,
+        IReadOnlyDictionary<Guid, List<ProjectNodeDto>> byParent)
+    {
+        return byParent.TryGetValue(parentId, out List<ProjectNodeDto>? children)
+            ? children
+            : Array.Empty<ProjectNodeDto>();
+    }
+
+    private static bool IsPart(ProjectNodeDto node) =>
+        string.Equals(node.NodeType, "part", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsChapter(ProjectNodeDto node) =>
+        string.Equals(node.NodeType, "chapter", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsScene(ProjectNodeDto node) =>
+        string.Equals(node.NodeType, "scene", StringComparison.OrdinalIgnoreCase);
+
+    private static StoryboardSceneMetadata ReadSceneMetadata(ProjectNodeDto scene)
+    {
+        StoryboardSceneMetadata metadata = new(null, null, null, null, Array.Empty<string>());
+        if (string.IsNullOrWhiteSpace(scene.MetadataJson))
+        {
+            return metadata;
+        }
+
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(scene.MetadataJson);
+            JsonElement root = document.RootElement;
+            return new StoryboardSceneMetadata(
+                GetString(root, "summary") ?? GetString(root, "subtitle") ?? GetString(root, "description"),
+                GetString(root, "status"),
+                GetString(root, "pov") ?? GetString(root, "pointOfView"),
+                GetString(root, "narrativePurpose"),
+                GetStringArray(root, "subplotTags"));
+        }
+        catch
+        {
+            return metadata;
+        }
+    }
+
+    private static string? GetString(JsonElement element, string propertyName)
+    {
+        foreach (JsonProperty property in element.EnumerateObject())
+        {
+            if (!string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            return property.Value.ValueKind == JsonValueKind.String
+                ? property.Value.GetString()
+                : property.Value.ToString();
+        }
+
+        return null;
+    }
+
+    private static IReadOnlyList<string> GetStringArray(JsonElement element, string propertyName)
+    {
+        foreach (JsonProperty property in element.EnumerateObject())
+        {
+            if (!string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (property.Value.ValueKind != JsonValueKind.Array)
+            {
+                return Array.Empty<string>();
+            }
+
+            return property.Value.EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(item.GetString()))
+                .Select(item => item.GetString()!.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+
+        return Array.Empty<string>();
+    }
+
+    private static string GetSuggestionKey(StoryboardNextSceneSuggestion suggestion)
+    {
+        return $"{suggestion.Title}|{suggestion.PreferredChapterTitle}|{suggestion.NarrativePurpose}";
+    }
+
+    private static IReadOnlyList<StoryboardPovBalanceFinding> ParsePovBalanceFindings(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return Array.Empty<StoryboardPovBalanceFinding>();
+        }
+
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(json);
+            JsonElement root = document.RootElement;
+            if (!TryGetProperty(root, "findings", out JsonElement findingsElement) || findingsElement.ValueKind != JsonValueKind.Array)
+            {
+                return Array.Empty<StoryboardPovBalanceFinding>();
+            }
+
+            return findingsElement.EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.Object)
+                .Select(item => new StoryboardPovBalanceFinding(
+                    GetString(item, "title") ?? "POV balance finding",
+                    GetString(item, "explanation") ?? string.Empty,
+                    GetString(item, "affectedPov"),
+                    GetStringArray(item, "affectedChapters"),
+                    GetStringArray(item, "affectedScenes"),
+                    GetString(item, "suggestion")))
+                .Where(item => !string.IsNullOrWhiteSpace(item.Explanation))
+                .ToArray();
+        }
+        catch
+        {
+            return Array.Empty<StoryboardPovBalanceFinding>();
+        }
+    }
+
+    private sealed record StoryboardSubplotContinuityFinding(
+        string SubplotName,
+        string IssueType,
+        string Explanation,
+        IReadOnlyList<string> AffectedScenes,
+        string? Recommendation);
+
+    private sealed record StoryboardPovBalanceFinding(
+        string Title,
+        string Explanation,
+        string? AffectedPov,
+        IReadOnlyList<string> AffectedChapters,
+        IReadOnlyList<string> AffectedScenes,
+        string? Suggestion);
+
+    private sealed record StoryboardPovCount(
+        string Label,
+        int SceneCount);
+
+    private static bool IsGenericSceneTitle(string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return true;
+        }
+
+        string normalized = title.Trim();
+        if (normalized.Length <= 4)
+        {
+            return true;
+        }
+
+        return normalized.StartsWith("scene", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("new scene", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("untitled", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsDraftStatus(string? status)
+    {
+        return string.IsNullOrWhiteSpace(status)
+            || string.Equals(status.Trim(), "Draft", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed record StoryboardInsightsSummary(
+        int TotalChapters,
+        int TotalScenes,
+        int DraftScenes,
+        int IncompleteScenes,
+        List<string> Observations,
+        List<string> Insights,
+        List<string> Suggestions);
+
+    private sealed record StoryboardChapterSummary(
+        Guid ChapterId,
+        string Title,
+        List<StoryboardSceneSummary> Scenes)
+    {
+        public int DraftSceneCount => Scenes.Count(scene => IsDraftStatus(scene.Status));
+    }
+
+    private sealed record StoryboardSceneSummary(
+        Guid SceneId,
+        Guid ChapterId,
+        string ChapterTitle,
+        string Title,
+        string? Summary,
+        string? Status,
+        string? Pov,
+        string? NarrativePurpose,
+        IReadOnlyList<string> SubplotTags);
+
+    private sealed record StoryboardSceneMetadata(
+        string? Summary,
+        string? Status,
+        string? Pov,
+        string? NarrativePurpose,
+        IReadOnlyList<string> SubplotTags);
+}

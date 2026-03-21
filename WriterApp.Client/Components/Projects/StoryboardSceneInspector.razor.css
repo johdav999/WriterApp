@@ -1,14 +1,25 @@
 .storyboard-inspector {
+    /* The inspector card stays mounted; only the inner scroll region changes content. */
     display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
     gap: var(--space-4);
-    align-self: start;
-    position: sticky;
-    top: var(--space-4);
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
     padding: var(--space-4);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
     background: var(--color-surface-1);
     box-shadow: var(--shadow-sm);
+    overflow: hidden;
+}
+
+.storyboard-inspector-scroll {
+    display: grid;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    padding-right: 4px;
 }
 
 .storyboard-inspector-empty,
@@ -39,7 +50,7 @@
     gap: var(--space-3);
 }
 
-.storyboard-inspector-header h3,
+.storyboard-inspector-header h2,
 .storyboard-inspector-section h4 {
     margin: 0;
 }
@@ -94,6 +105,11 @@
     gap: 8px;
 }
 
+.storyboard-inspector-actions {
+    display: grid;
+    gap: 8px;
+}
+
 .storyboard-inspector-ai-button,
 .storyboard-inspector-primary,
 .storyboard-inspector-secondary {
@@ -113,6 +129,17 @@
     background: #2457a6;
     border-color: #2457a6;
     color: #fff;
+}
+
+.storyboard-inspector-secondary--danger {
+    color: #b42318;
+    border-color: #f2c7c2;
+    background: #fff5f3;
+}
+
+.storyboard-inspector-secondary--danger:hover,
+.storyboard-inspector-secondary--danger:focus-visible {
+    background: #ffe8e4;
 }
 
 .storyboard-inspector-preview {
@@ -146,8 +173,8 @@
 }
 
 @media (max-width: 900px) {
-    .storyboard-inspector {
-        position: static;
+    .storyboard-inspector-scroll {
+        padding-right: 0;
     }
 
     .storyboard-inspector-preview-grid {

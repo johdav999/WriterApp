@@ -1,8 +1,33 @@
 .heroBanner {
-  background: linear-gradient(135deg, #2f855a 0%, #276749 100%);
-  color: #f7fafc;
-  padding: 4rem 0;
-  text-align: center;
+  background: var(--color-bg);
+  color: var(--color-text);
+  padding: 2.25rem 0 1.5rem;
+}
+
+.heroShell {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(260px, 0.7fr);
+  gap: 1.5rem;
+  align-items: center;
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 1.75rem;
+}
+
+.heroCopy {
+  max-width: 44rem;
+}
+
+.eyebrow,
+.sectionEyebrow {
+  margin: 0 0 0.75rem;
+  color: var(--color-text-subtle);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .heroTitle {
@@ -11,13 +36,63 @@
 
 .heroSubtitle {
   margin: 1rem auto 0;
-  max-width: 44rem;
-  font-size: 1.1rem;
+  max-width: 42rem;
+  font-size: 1.05rem;
+  line-height: 1.65;
+  color: var(--color-text-muted);
+}
+
+.heroActions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 1.5rem;
+}
+
+.heroPanel {
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 1.25rem 1.35rem;
+  box-shadow: var(--shadow-sm);
+}
+
+.heroPanelLabel {
+  color: var(--color-text-subtle);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.heroPanelValue {
+  margin-top: 0.5rem;
+  font-size: 1.45rem;
+  font-weight: 700;
+}
+
+.heroPanelText {
+  margin: 0.65rem 0 0;
+  color: var(--color-text-muted);
+  line-height: 1.6;
 }
 
 .mainSection {
-  background-color: #f7fafc;
+  background: var(--color-bg);
   padding: 3rem 0 4rem;
+}
+
+.sectionHeader {
+  max-width: 42rem;
+  margin-bottom: 1.25rem;
+}
+
+.sectionEyebrow {
+  color: var(--color-text-subtle);
+}
+
+.sectionTitle {
+  margin: 0;
 }
 
 .linkGrid {
@@ -27,24 +102,48 @@
 }
 
 .linkCard {
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: 0.75rem;
-  padding: 1.25rem;
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 1.35rem;
+  box-shadow: var(--shadow-sm);
+}
+
+.linkCard:hover {
+  border-color: var(--color-border-strong);
+  box-shadow: var(--shadow-md);
+}
+
+.cardMeta {
+  color: var(--color-text-subtle);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin-bottom: 0.75rem;
 }
 
 .cardTitle {
   margin-bottom: 0.5rem;
+  color: #15181d;
 }
 
 .cardText {
-  color: #1a202c;
+  color: var(--color-text-muted);
   margin-bottom: 1rem;
 }
 
 @media screen and (max-width: 996px) {
   .heroBanner {
-    padding: 2.5rem 0;
+    padding: 1.5rem 0 1rem;
+  }
+
+  .heroShell {
+    grid-template-columns: 1fr;
+    padding: 1.25rem;
+  }
+
+  .heroPanel {
+    max-width: 28rem;
   }
 
   .linkGrid {

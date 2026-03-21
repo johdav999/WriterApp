@@ -25,6 +25,12 @@
             <div class="storyboard-page__actions">
                 <button type="button"
                         class="secondary"
+                        title="Reload the storyboard data."
+                        @onclick="RefreshStoryboardAsync">
+                    Refresh storyboard
+                </button>
+                <button type="button"
+                        class="secondary"
                         title="Open the project structure workspace."
                         @onclick="OpenStructure">
                     Open structure
@@ -54,19 +60,44 @@
     }
     else
     {
-        <div class="storyboard-page__layout">
-            <ProjectStoryboard Project="_project"
-                               Nodes="_nodes"
-                               SelectedSceneId="SingleSelectedSceneId"
-                               SelectedSceneIds="_selectedSceneIds"
-                               OnSelectionChanged="HandleSelectionChangedAsync"
-                               OnSceneUpdated="OnSceneUpdatedAsync"
-                               OnStructureChanged="RefreshStoryboardAsync" />
+        <div class="@GetLayoutClass()">
+            <div class="storyboard-page__panel storyboard-page__panel--board">
+                <h2 class="storyboard-page__panel-title">Storyboard</h2>
+                <div class="storyboard-page__panel-body">
+                    <ProjectStoryboard @ref="_storyboardBoard"
+                                       Project="_project"
+                                       Nodes="_nodes"
+                                       SelectedSceneId="SingleSelectedSceneId"
+                                       SelectedSceneIds="_selectedSceneIds"
+                                       OnSelectionChanged="HandleSelectionChangedAsync"
+                                       OnSceneUpdated="OnSceneUpdatedAsync"
+                                       OnStructureChanged="HandleStructureChangedAsync" />
+                </div>
+            </div>
 
-            <StoryboardSceneInspector ProjectId="ProjectId"
-                                      SceneNode="SelectedSceneNode"
-                                      SelectionCount="_selectedSceneIds.Count"
-                                      SceneUpdated="OnSceneUpdatedAsync" />
+            <div class="storyboard-page__panel storyboard-page__panel--insights">
+                <div class="storyboard-page__panel-body">
+                    <StoryboardInsightsPanel Project="_project"
+                                             ProjectId="ProjectId"
+                                             Nodes="_nodes"
+                                             SelectedSceneId="SingleSelectedSceneId"
+                                             SelectedSceneIds="_selectedSceneIds"
+                                             CreateSuggestedScene="CreateSuggestedSceneAsync" />
+                </div>
+            </div>
+
+            <div class="storyboard-page__panel storyboard-page__panel--detail">
+                <div class="storyboard-page__panel-body">
+                    <StoryboardSceneInspector ProjectId="ProjectId"
+                                              SceneNode="SelectedSceneNode"
+                                              SelectionCount="_selectedSceneIds.Count"
+                                              OpenScene="OpenSelectedSceneAsync"
+                                              RevealInNavigator="RevealSelectedSceneInNavigatorAsync"
+                                              DuplicateScene="DuplicateSelectedSceneAsync"
+                                              DeleteScene="DeleteSelectedSceneAsync"
+                                              SceneUpdated="OnSceneUpdatedAsync" />
+                </div>
+            </div>
         </div>
     }
 </section>
@@ -81,6 +112,7 @@
     private string? _error;
     private HashSet<Guid> _selectedSceneIds = new();
     private Guid? _primarySelectedSceneId;
+    private ProjectStoryboard? _storyboardBoard;
 
     private Guid? SingleSelectedSceneId => _selectedSceneIds.Count == 1
         ? _primarySelectedSceneId is Guid primary && _selectedSceneIds.Contains(primary)
@@ -91,6 +123,11 @@
     private ProjectNodeDto? SelectedSceneNode => SingleSelectedSceneId.HasValue
         ? _nodes.FirstOrDefault(node => node.Id == SingleSelectedSceneId.Value)
         : null;
+
+    private string GetLayoutClass()
+    {
+        return "storyboard-page__layout";
+    }
 
     protected override async Task OnParametersSetAsync()
     {
@@ -163,14 +200,99 @@
         return LoadStoryboardAsync();
     }
 
-    private Task HandleSelectionChangedAsync(StoryboardSelectionChange selection)
+    private async Task HandleStructureChangedAsync()
+    {
+        if (_storyboardBoard is null)
+        {
+            Logger.LogInformation(
+                "Storyboard structure sync fallback refresh. ProjectId={ProjectId} Reason={Reason}",
+                ProjectId,
+                "board-unavailable");
+            await RefreshStoryboardAsync();
+            return;
+        }
+
+        IReadOnlyList<ProjectNodeDto> snapshot = _storyboardBoard.GetRenderNodesSnapshot();
+        if (snapshot.Count == 0 && _nodes.Count > 0)
+        {
+            Logger.LogWarning(
+                "Storyboard structure sync fallback refresh. ProjectId={ProjectId} Reason={Reason} PreviousNodeCount={PreviousNodeCount}",
+                ProjectId,
+                "empty-snapshot",
+                _nodes.Count);
+            await RefreshStoryboardAsync();
+            return;
+        }
+
+        Logger.LogInformation(
+            "Storyboard structure sync applied locally. ProjectId={ProjectId} NodeCount={NodeCount}",
+            ProjectId,
+            snapshot.Count);
+
+        _nodes.Clear();
+        _nodes.AddRange(snapshot);
+        PreserveSelectedScene();
+        SyncCurrentSceneState();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task<bool> CreateSuggestedSceneAsync(StoryboardNextSceneSuggestion suggestion)
+    {
+        if (_storyboardBoard is null)
+        {
+            return false;
+        }
+
+        return await _storyboardBoard.CreateSuggestedSceneAsync(suggestion);
+    }
+
+    private Task OpenSelectedSceneAsync(Guid sceneId)
+    {
+        return _storyboardBoard is null
+            ? Task.CompletedTask
+            : _storyboardBoard.OpenSceneFromInspectorAsync(sceneId);
+    }
+
+    private Task RevealSelectedSceneInNavigatorAsync(Guid sceneId)
+    {
+        return _storyboardBoard is null
+            ? Task.CompletedTask
+            : _storyboardBoard.RevealSceneInNavigatorAsync(sceneId);
+    }
+
+    private Task DuplicateSelectedSceneAsync(Guid sceneId)
+    {
+        return _storyboardBoard is null
+            ? Task.CompletedTask
+            : _storyboardBoard.DuplicateSceneFromInspectorAsync(sceneId);
+    }
+
+    private Task DeleteSelectedSceneAsync(Guid sceneId)
+    {
+        return _storyboardBoard is null
+            ? Task.CompletedTask
+            : _storyboardBoard.PromptDeleteSceneFromInspectorAsync(sceneId);
+    }
+
+    private async Task HandleSelectionChangedAsync(StoryboardSelectionChange selection)
     {
         _selectedSceneIds = selection.SelectedSceneIds
             .Where(sceneId => _nodes.Any(node => node.Id == sceneId))
             .ToHashSet();
-        _primarySelectedSceneId = selection.PrimarySceneId;
+
+        _primarySelectedSceneId = selection.PrimarySceneId.HasValue && _selectedSceneIds.Contains(selection.PrimarySceneId.Value)
+            ? selection.PrimarySceneId.Value
+            : _selectedSceneIds.FirstOrDefault();
+
+        Logger.LogInformation(
+            "Storyboard selection updated locally. ProjectId={ProjectId} RequestedPrimarySceneId={RequestedPrimarySceneId} EffectivePrimarySceneId={EffectivePrimarySceneId} SelectionCount={SelectionCount}",
+            ProjectId,
+            selection.PrimarySceneId,
+            _primarySelectedSceneId,
+            _selectedSceneIds.Count);
+
         SyncCurrentSceneState();
-        return Task.CompletedTask;
+        await InvokeAsync(StateHasChanged);
     }
 
     private Task OnSceneUpdatedAsync(StoryboardSceneInspectorUpdate update)
@@ -180,6 +302,27 @@
         {
             _nodes[index] = update.SceneNode;
         }
+        else
+        {
+            _nodes.Add(update.SceneNode);
+        }
+
+        _nodes.Sort(static (left, right) =>
+        {
+            int parentComparison = Nullable.Compare(left.ParentId, right.ParentId);
+            if (parentComparison != 0)
+            {
+                return parentComparison;
+            }
+
+            int orderComparison = left.OrderIndex.CompareTo(right.OrderIndex);
+            if (orderComparison != 0)
+            {
+                return orderComparison;
+            }
+
+            return left.Id.CompareTo(right.Id);
+        });
 
         if (_selectedSceneIds.Count == 0)
         {

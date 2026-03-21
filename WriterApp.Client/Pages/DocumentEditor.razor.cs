@@ -11259,6 +11259,11 @@ private const string PreviewBootstrapScript = @"
                 return await EnsureSentenceLengthRewriteFixAsync(issue);
             }
 
+            if (QualityIssueCapabilities.IsPassiveVoiceIssue(issue))
+            {
+                return await EnsurePassiveVoiceRewriteFixAsync(issue);
+            }
+
             return issue;
         }
 
@@ -11272,6 +11277,11 @@ private const string PreviewBootstrapScript = @"
             if (QualityIssueCapabilities.IsSentenceLengthIssue(issue))
             {
                 return "Couldn't split this sentence automatically.";
+            }
+
+            if (QualityIssueCapabilities.IsPassiveVoiceIssue(issue))
+            {
+                return "Couldn't rewrite this sentence into active voice automatically.";
             }
 
             return "Couldn't generate an automatic suggestion.";
@@ -11455,6 +11465,77 @@ private const string PreviewBootstrapScript = @"
             return updatedIssue;
         }
 
+        private async Task<PageQualityIssueDto> EnsurePassiveVoiceRewriteFixAsync(PageQualityIssueDto issue)
+        {
+            if (_pageEditor is null || _activeSection is null)
+            {
+                return issue;
+            }
+
+            bool alreadyRewrite =
+                issue.Fix is not null
+                && string.Equals(issue.Fix.Kind, "rewrite", StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(issue.Fix.Text)
+                && !string.IsNullOrWhiteSpace(issue.Fix.ExpectedText)
+                && !LooksLikeInstructionLeak(issue.Fix.Text);
+            if (alreadyRewrite)
+            {
+                return issue;
+            }
+
+            string plainText = await _pageEditor.GetPlainTextAsync() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(plainText))
+            {
+                return issue;
+            }
+
+            RepeatedWordApplyRange? applyRange = await BuildRepeatedWordApplyRangeAsync(issue, plainText);
+            if (applyRange is null || string.IsNullOrWhiteSpace(applyRange.Before))
+            {
+                return issue;
+            }
+
+            string rewritten = await GeneratePassiveVoiceRewriteAsync(issue, plainText, applyRange, strictMode: false);
+            string normalized = NormalizeContinuityRewriteCandidate(rewritten);
+            if (string.IsNullOrWhiteSpace(normalized)
+                || string.Equals(normalized.Trim(), applyRange.Before.Trim(), StringComparison.Ordinal))
+            {
+                rewritten = await GeneratePassiveVoiceRewriteAsync(issue, plainText, applyRange, strictMode: true);
+                normalized = NormalizeContinuityRewriteCandidate(rewritten);
+            }
+
+            if (string.IsNullOrWhiteSpace(normalized)
+                || LooksLikeInstructionLeak(normalized)
+                || string.Equals(normalized.Trim(), applyRange.Before.Trim(), StringComparison.Ordinal))
+            {
+                Logger.LogWarning(
+                    "Passive voice rewrite rejected. IssueKey={IssueKey}, Anchor={Anchor}",
+                    issue.IssueKey,
+                    issue.AnchorText ?? issue.Fix?.AnchorText ?? string.Empty);
+                return issue;
+            }
+
+            QualityIssueFixDto updatedFix = new(
+                "rewrite",
+                applyRange.PlainFrom,
+                applyRange.PlainTo,
+                normalized,
+                applyRange.Before,
+                issue.IssueKey,
+                applyRange.DocFrom,
+                applyRange.DocTo,
+                applyRange.Before);
+
+            PageQualityIssueDto updatedIssue = issue with
+            {
+                Fix = updatedFix,
+                AnchorText = applyRange.Before
+            };
+
+            UpsertQualityIssue(updatedIssue);
+            return updatedIssue;
+        }
+
         private async Task<string> GenerateSentenceLengthRewriteAsync(PageQualityIssueDto issue, string plainText, RepeatedWordApplyRange applyRange, bool strictMode)
         {
             if (_activeSection is null)
@@ -11574,6 +11655,60 @@ private const string PreviewBootstrapScript = @"
             }
         }
 
+        private async Task<string> GeneratePassiveVoiceRewriteAsync(PageQualityIssueDto issue, string plainText, RepeatedWordApplyRange applyRange, bool strictMode)
+        {
+            if (_activeSection is null)
+            {
+                return string.Empty;
+            }
+
+            string instruction = "Rewrite the text below in the SAME LANGUAGE as the input. Convert passive voice to active voice where possible while preserving meaning and tone. Return ONLY the rewritten span text (no explanation, no bullets, no quotes).";
+            if (strictMode)
+            {
+                instruction += " Your previous output was invalid. Return final rewritten prose only.";
+            }
+
+            Dictionary<string, object?> parameters = new()
+            {
+                ["instruction"] = instruction,
+                ["tone"] = "Neutral",
+                ["length"] = "Same",
+                ["preserve_terms"] = true
+            };
+
+            AiActionExecuteRequestDto request = new(
+                DocumentId,
+                _activeSection.Id,
+                _activePage?.Id,
+                applyRange.PlainFrom,
+                applyRange.PlainTo,
+                applyRange.Before,
+                plainText,
+                GetOutlineTextForAi(),
+                parameters);
+
+            try
+            {
+                using HttpResponseMessage result = await Http.PostAsJsonAsync("api/ai/actions/rewrite.selection/execute", request);
+                if (!result.IsSuccessStatusCode)
+                {
+                    await TryHandleAiQuotaExceededAsync(result);
+                    return string.Empty;
+                }
+
+                AiActionExecuteResponseDto? response = await result.Content.ReadFromJsonAsync<AiActionExecuteResponseDto>();
+                return response?.ProposedText ?? string.Empty;
+            }
+            catch
+            {
+                return string.Empty;
+            }
+            finally
+            {
+                await RefreshPlanUsageAsync();
+            }
+        }
+
         private async Task<RepeatedWordApplyRange?> BuildRepeatedWordApplyRangeAsync(PageQualityIssueDto issue, string plainText)
         {
             if (_pageEditor is null || string.IsNullOrWhiteSpace(plainText))
@@ -11656,6 +11791,16 @@ private const string PreviewBootstrapScript = @"
                     && string.Equals(issue.Fix.Kind, "rewrite", StringComparison.OrdinalIgnoreCase)
                     && !string.IsNullOrWhiteSpace(issue.Fix.Text)
                     && !LooksLikeInstructionLeak(issue.Fix.Text);
+            }
+
+            if (QualityIssueCapabilities.IsPassiveVoiceIssue(issue))
+            {
+                return issue.Fix is not null
+                    && string.Equals(issue.Fix.Kind, "rewrite", StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrWhiteSpace(issue.Fix.Text)
+                    && !string.IsNullOrWhiteSpace(issue.Fix.ExpectedText)
+                    && !LooksLikeInstructionLeak(issue.Fix.Text)
+                    && !string.Equals(issue.Fix.Text.Trim(), issue.Fix.ExpectedText.Trim(), StringComparison.OrdinalIgnoreCase);
             }
 
             return issue.Fix is not null;

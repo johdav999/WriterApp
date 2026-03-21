@@ -209,10 +209,7 @@
             return routeProjectId;
         }
 
-        if (segments.Length >= 2 &&
-            string.Equals(segments[0], "documents", StringComparison.OrdinalIgnoreCase) &&
-            Guid.TryParse(segments[1], out Guid routeDocumentId) &&
-            routeDocumentId != Guid.Empty)
+        if (TryGetRouteDocumentId(segments, out Guid routeDocumentId))
         {
             if (_projectIdByDocumentId.TryGetValue(routeDocumentId, out Guid cachedProjectId))
             {
@@ -230,6 +227,21 @@
         }
 
         return null;
+    }
+
+    private static bool TryGetRouteDocumentId(string[] segments, out Guid documentId)
+    {
+        if (segments.Length >= 2 &&
+            (string.Equals(segments[0], "documents", StringComparison.OrdinalIgnoreCase)
+             || string.Equals(segments[0], "synopsis", StringComparison.OrdinalIgnoreCase)) &&
+            Guid.TryParse(segments[1], out documentId) &&
+            documentId != Guid.Empty)
+        {
+            return true;
+        }
+
+        documentId = Guid.Empty;
+        return false;
     }
 
     private string[] GetRouteSegments()
