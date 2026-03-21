@@ -2,10 +2,15 @@ import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
 
+const appBaseUrl =
+  process.env.NODE_ENV === 'development'
+    ? 'http://localhost:5387'
+    : 'https://app.prosa-app.com';
+
 const config: Config = {
   title: 'Prosa Docs',
   tagline: 'Learn how to use Prosa to write, organize, and export your stories.',
-  favicon: 'img/favicon.ico',
+  favicon: 'img/logo.png',
 
   future: {
     v4: true,
@@ -42,24 +47,24 @@ const config: Config = {
   themeConfig: {
     image: 'img/docusaurus-social-card.jpg',
     colorMode: {
-      respectPrefersColorScheme: true,
+      defaultMode: 'light',
+      disableSwitch: true,
+      respectPrefersColorScheme: false,
     },
     navbar: {
-      title: 'Prosa Docs',
       logo: {
-        alt: 'Prosa Docs',
-        src: 'img/logo.svg',
+        alt: 'Prosa',
+        src: '/img/logo.png',
       },
       items: [
         {
-          type: 'docSidebar',
-          sidebarId: 'docs',
-          position: 'left',
-          label: 'Documentation',
+          href: `${appBaseUrl}/login?returnUrl=/projects`,
+          label: 'Sign in',
+          position: 'right',
         },
         {
-          href: 'https://github.com/johdav999/WriterApp',
-          label: 'GitHub',
+          href: `${appBaseUrl}/documents`,
+          label: 'Open App',
           position: 'right',
         },
       ],

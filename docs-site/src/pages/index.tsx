@@ -7,24 +7,53 @@ import styles from './index.module.css';
 export default function Home(): ReactNode {
   return (
     <Layout
-      title="Prosa Documentation"
+      title="Documentation"
       description="Learn how to use Prosa to write, organize, and export your stories.">
       <header className={styles.heroBanner}>
         <div className="container">
-          <Heading as="h1" className={styles.heroTitle}>
-            Prosa Documentation
-          </Heading>
-          <p className={styles.heroSubtitle}>
-            Learn how to use Prosa to write, organize, and export your stories.
-          </p>
+          <div className={styles.heroShell}>
+            <div className={styles.heroCopy}>
+              <Heading as="h1" className={styles.heroTitle}>
+                Documentation
+              </Heading>
+              <p className={styles.heroSubtitle}>
+                Learn how to write, organize, and export your stories with the same
+                language, structure, and workflow as the Prosa app.
+              </p>
+              <div className={styles.heroActions}>
+                <Link className="button button--primary" to="/docs/quickstart">
+                  Get Started
+                </Link>
+                <Link className="button button--secondary" to="/docs/user-guide">
+                  Writing Guide
+                </Link>
+              </div>
+            </div>
+
+            <aside className={styles.heroPanel} aria-label="Docs overview">
+              <div className={styles.heroPanelLabel}>Documentation</div>
+              <div className={styles.heroPanelValue}>3 core paths</div>
+              <p className={styles.heroPanelText}>
+                Start with setup, then move into writing workflows and AI tools.
+              </p>
+            </aside>
+          </div>
         </div>
       </header>
 
       <main className={styles.mainSection}>
         <div className="container">
+          <div className={styles.sectionHeader}>
+            <p className={styles.sectionEyebrow}>Explore the docs</p>
+            <Heading as="h2" className={styles.sectionTitle}>
+              Find the Prosa guide that matches your task
+            </Heading>
+          </div>
+
           <div className={styles.linkGrid}>
             <article className={styles.linkCard}>
-              <Heading as="h2" className={styles.cardTitle}>
+              <div className={styles.cardMeta}>01</div>
+              <Heading as="h3" className={styles.cardTitle}>
                 Getting Started
               </Heading>
               <p className={styles.cardText}>
@@ -36,7 +65,8 @@ export default function Home(): ReactNode {
             </article>
 
             <article className={styles.linkCard}>
-              <Heading as="h2" className={styles.cardTitle}>
+              <div className={styles.cardMeta}>02</div>
+              <Heading as="h3" className={styles.cardTitle}>
                 Writing
               </Heading>
               <p className={styles.cardText}>
@@ -48,7 +78,8 @@ export default function Home(): ReactNode {
             </article>
 
             <article className={styles.linkCard}>
-              <Heading as="h2" className={styles.cardTitle}>
+              <div className={styles.cardMeta}>03</div>
+              <Heading as="h3" className={styles.cardTitle}>
                 AI Writing Tools
               </Heading>
               <p className={styles.cardText}>

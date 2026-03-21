@@ -1,3 +1,4 @@
+@using System.Net
 @using System.Net.Http.Json
 @using System.Text.Json
 @using System.Text.Json.Nodes
@@ -13,24 +14,26 @@
 <aside class="storyboard-inspector" aria-label="Scene inspector">
     @if (SceneNode is null)
     {
-        <div class="storyboard-inspector-empty">
-            @if (SelectionCount > 1)
-            {
-                <strong>Multiple scenes selected.</strong>
-                <span>Use the bulk action bar to update shared fields, or select a single scene to edit everything here.</span>
-            }
-            else
-            {
-                <strong>Select a scene to edit.</strong>
-                <span>Summary, status, POV, subplot tags, narrative purpose, notes, and AI actions will appear here.</span>
-            }
+        <div class="storyboard-inspector-scroll">
+            <div class="storyboard-inspector-empty">
+                @if (SelectionCount > 1)
+                {
+                    <strong>Multiple scenes selected.</strong>
+                    <span>Use the bulk action bar to update shared fields, or select a single scene to edit everything here.</span>
+                }
+                else
+                {
+                    <strong>Select a scene to edit.</strong>
+                    <span>Summary, status, POV, subplot tags, narrative purpose, notes, and AI actions will appear here.</span>
+                }
+            </div>
         </div>
     }
     else
     {
         <div class="storyboard-inspector-header">
             <div>
-                <h3>Scene</h3>
+                <h2>Scene Detail</h2>
                 <p>Edit the selected storyboard card without leaving the board.</p>
             </div>
             @if (!string.IsNullOrWhiteSpace(_saveStatus))
@@ -39,8 +42,9 @@
             }
         </div>
 
-        <div class="storyboard-inspector-body">
-            <section class="storyboard-inspector-section">
+        <div class="storyboard-inspector-scroll">
+            <div class="storyboard-inspector-body">
+                <section class="storyboard-inspector-section">
                 <h4>Basic</h4>
                 <label class="storyboard-inspector-label" for="storyboard-scene-title">Title</label>
                 <input id="storyboard-scene-title"
@@ -65,9 +69,9 @@
                           value="@_notes"
                           @oninput="OnNotesInput"
                           placeholder="Add scene notes..."></textarea>
-            </section>
+                </section>
 
-            <section class="storyboard-inspector-section">
+                <section class="storyboard-inspector-section">
                 <h4>Structure</h4>
                 <label class="storyboard-inspector-label" for="storyboard-scene-purpose">Narrative purpose</label>
                 <select id="storyboard-scene-purpose"
@@ -117,9 +121,9 @@
                           value="@_openQuestions"
                           @oninput="OnOpenQuestionsInput"
                           placeholder="Loose ends or questions to answer later..."></textarea>
-            </section>
+                </section>
 
-            <section class="storyboard-inspector-section">
+                <section class="storyboard-inspector-section">
                 <h4>Status</h4>
                 <label class="storyboard-inspector-label" for="storyboard-scene-status">Status</label>
                 <select id="storyboard-scene-status"
@@ -131,9 +135,35 @@
                         <option value="@statusOption">@statusOption</option>
                     }
                 </select>
-            </section>
+                </section>
 
-            <section class="storyboard-inspector-section">
+                <section class="storyboard-inspector-section">
+                <h4>Actions</h4>
+                <div class="storyboard-inspector-actions">
+                    <button type="button"
+                            class="storyboard-inspector-secondary"
+                            @onclick="OpenSceneAsync">
+                        Open scene
+                    </button>
+                    <button type="button"
+                            class="storyboard-inspector-secondary"
+                            @onclick="RevealInNavigatorAsync">
+                        Reveal in navigator
+                    </button>
+                    <button type="button"
+                            class="storyboard-inspector-secondary"
+                            @onclick="DuplicateSceneAsync">
+                        Duplicate scene
+                    </button>
+                    <button type="button"
+                            class="storyboard-inspector-secondary storyboard-inspector-secondary--danger"
+                            @onclick="DeleteSceneAsync">
+                        Delete scene
+                    </button>
+                </div>
+                </section>
+
+                <section class="storyboard-inspector-section">
                 <h4>Storyboard coach</h4>
                 @if (!FeatureAccessService.CanUse(FeatureKey.SceneAiSuggestions))
                 {
@@ -145,21 +175,21 @@
                         <PlanGatedButton Feature="@nameof(FeatureKey.SceneAiSuggestions)"
                                          Class="storyboard-inspector-ai-button"
                                          ShowLockIndicator="false"
-                                         IsActionDisabled="@(_aiInFlight || SceneNode is null)"
+                                         IsActionDisabled="@(_aiInFlight || _loading || SceneNode is null)"
                                          OnClick="@(() => RunSceneAiAsync("scene.suggest", "Generate a concise 1-2 sentence summary for this scene card based on the section text. Prefer updating the summary field and preserve existing scene metadata unless the text strongly suggests a correction."))">
                             Generate summary
                         </PlanGatedButton>
                         <PlanGatedButton Feature="@nameof(FeatureKey.SceneAiSuggestions)"
                                          Class="storyboard-inspector-ai-button"
                                          ShowLockIndicator="false"
-                                         IsActionDisabled="@(_aiInFlight || SceneNode is null)"
+                                         IsActionDisabled="@(_aiInFlight || _loading || SceneNode is null)"
                                          OnClick="@(() => RunSceneAiAsync("scene.suggest", "Suggest the strongest narrative purpose for this scene based on the section text. Prioritize updating the narrative purpose field and only adjust other metadata if needed for consistency."))">
                             Suggest narrative purpose
                         </PlanGatedButton>
                         <PlanGatedButton Feature="@nameof(FeatureKey.SceneAiSuggestions)"
                                          Class="storyboard-inspector-ai-button"
                                          ShowLockIndicator="false"
-                                         IsActionDisabled="@(_aiInFlight || SceneNode is null)"
+                                         IsActionDisabled="@(_aiInFlight || _loading || SceneNode is null)"
                                          OnClick="@(() => RunSceneAiAsync("scene.refine", "Improve the scene structure of this scene card using goal, conflict, and outcome framing. Strengthen summary, narrative purpose, key events, and open questions so the card clearly reflects what the character wants, what opposes them, and what changes by the end."))">
                             Improve structure
                         </PlanGatedButton>
@@ -211,7 +241,8 @@
                         </div>
                     }
                 }
-            </section>
+                </section>
+            </div>
         </div>
     }
 </aside>
@@ -247,6 +278,18 @@
     [Parameter]
     public int SelectionCount { get; set; }
 
+    [Parameter]
+    public EventCallback<Guid> OpenScene { get; set; }
+
+    [Parameter]
+    public EventCallback<Guid> RevealInNavigator { get; set; }
+
+    [Parameter]
+    public EventCallback<Guid> DuplicateScene { get; set; }
+
+    [Parameter]
+    public EventCallback<Guid> DeleteScene { get; set; }
+
     private Guid? _loadedSceneId;
     private string _title = string.Empty;
     private string _summary = string.Empty;
@@ -270,6 +313,7 @@
     private bool _aiInFlight;
     private SectionSceneCardProposalDto? _aiProposal;
     private string? _aiExplanation;
+    private long _loadVersion;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -283,6 +327,7 @@
         _saveCts?.Cancel();
         _saveCts = null;
         _loadedSceneId = sceneId;
+        long loadVersion = Interlocked.Increment(ref _loadVersion);
         _aiProposal = null;
         _aiExplanation = null;
         _aiError = string.Empty;
@@ -291,10 +336,16 @@
         if (!sceneId.HasValue)
         {
             ResetFields();
+            Logger.LogInformation("Storyboard scene inspector cleared. ProjectId={ProjectId}", ProjectId);
             return;
         }
 
-        await LoadSceneAsync(sceneId.Value);
+        Logger.LogInformation(
+            "Storyboard scene inspector load requested. ProjectId={ProjectId} SceneNodeId={SceneNodeId}",
+            ProjectId,
+            sceneId.Value);
+
+        await LoadSceneAsync(sceneId.Value, loadVersion);
     }
 
     private void SyncFromCurrentNode()
@@ -327,19 +378,54 @@
         }
     }
 
-    private async Task LoadSceneAsync(Guid sceneId)
+    private async Task LoadSceneAsync(Guid sceneId, long loadVersion)
     {
         _loading = true;
         ResetFields();
 
         try
         {
+            if (ShouldIgnoreSceneLoad(sceneId, loadVersion))
+            {
+                Logger.LogInformation(
+                    "Storyboard scene inspector load ignored before request. ProjectId={ProjectId} SceneNodeId={SceneNodeId}",
+                    ProjectId,
+                    sceneId);
+                return;
+            }
+
             _title = SceneNode?.Title ?? string.Empty;
             _sceneMetadataJson = SceneNode?.MetadataJson;
 
             SceneCardDto? card = await Http.GetFromJsonAsync<SceneCardDto>($"api/scenes/{sceneId}/scene-card");
+            if (ShouldIgnoreSceneLoad(sceneId, loadVersion))
+            {
+                Logger.LogInformation(
+                    "Storyboard scene inspector scene card response ignored as stale. ProjectId={ProjectId} SceneNodeId={SceneNodeId}",
+                    ProjectId,
+                    sceneId);
+                return;
+            }
+
             SceneNotesDto? notes = await Http.GetFromJsonAsync<SceneNotesDto>($"api/scenes/{sceneId}/notes");
+            if (ShouldIgnoreSceneLoad(sceneId, loadVersion))
+            {
+                Logger.LogInformation(
+                    "Storyboard scene inspector notes response ignored as stale. ProjectId={ProjectId} SceneNodeId={SceneNodeId}",
+                    ProjectId,
+                    sceneId);
+                return;
+            }
+
             SceneContentDto? content = await Http.GetFromJsonAsync<SceneContentDto>($"api/projects/{ProjectId}/scenes/{sceneId}/content");
+            if (ShouldIgnoreSceneLoad(sceneId, loadVersion))
+            {
+                Logger.LogInformation(
+                    "Storyboard scene inspector content response ignored as stale. ProjectId={ProjectId} SceneNodeId={SceneNodeId}",
+                    ProjectId,
+                    sceneId);
+                return;
+            }
 
             _summary = card?.Summary ?? string.Empty;
             _status = NormalizeSceneCardStatus(card?.Status);
@@ -355,7 +441,7 @@
             try
             {
                 using HttpResponseMessage response = await Http.PostAsync($"api/projects/{ProjectId}/nodes/{sceneId}/open-scene", null);
-                if (response.IsSuccessStatusCode)
+                if (!ShouldIgnoreSceneLoad(sceneId, loadVersion) && response.IsSuccessStatusCode)
                 {
                     ProjectSceneOpenTargetDto? target = await response.Content.ReadFromJsonAsync<ProjectSceneOpenTargetDto>();
                     _documentId = target?.DocumentId;
@@ -368,6 +454,24 @@
                 _sectionId = null;
             }
         }
+        catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+        {
+            if (ShouldIgnoreSceneLoad(sceneId, loadVersion))
+            {
+                Logger.LogInformation(
+                    "Storyboard scene inspector stale/deleted load suppressed. ProjectId={ProjectId} SceneNodeId={SceneNodeId}",
+                    ProjectId,
+                    sceneId);
+                return;
+            }
+
+            Logger.LogInformation(
+                "Storyboard scene inspector load returned not found. ProjectId={ProjectId} SceneNodeId={SceneNodeId}",
+                ProjectId,
+                sceneId);
+            ResetFields();
+            _saveStatus = string.Empty;
+        }
         catch (Exception ex)
         {
             Logger.LogWarning(ex, "Storyboard scene inspector load failed. SceneNodeId={SceneNodeId}", sceneId);
@@ -375,8 +479,18 @@
         }
         finally
         {
-            _loading = false;
+            if (loadVersion == _loadVersion)
+            {
+                _loading = false;
+            }
         }
+    }
+
+    private bool ShouldIgnoreSceneLoad(Guid sceneId, long loadVersion)
+    {
+        return loadVersion != _loadVersion
+            || _loadedSceneId != sceneId
+            || SceneNode?.Id != sceneId;
     }
 
     private void ResetFields()
@@ -395,6 +509,26 @@
         _documentId = null;
         _sectionId = null;
         _sceneMetadataJson = SceneNode?.MetadataJson;
+    }
+
+    private Task OpenSceneAsync()
+    {
+        return SceneNode is null ? Task.CompletedTask : OpenScene.InvokeAsync(SceneNode.Id);
+    }
+
+    private Task RevealInNavigatorAsync()
+    {
+        return SceneNode is null ? Task.CompletedTask : RevealInNavigator.InvokeAsync(SceneNode.Id);
+    }
+
+    private Task DuplicateSceneAsync()
+    {
+        return SceneNode is null ? Task.CompletedTask : DuplicateScene.InvokeAsync(SceneNode.Id);
+    }
+
+    private Task DeleteSceneAsync()
+    {
+        return SceneNode is null ? Task.CompletedTask : DeleteScene.InvokeAsync(SceneNode.Id);
     }
 
     private void OnTitleInput(ChangeEventArgs args)
@@ -586,14 +720,14 @@
 
     private async Task RunSceneAiAsync(string actionKey, string instruction)
     {
-        if (_aiInFlight || SceneNode is null)
+        if (_aiInFlight || _loading || SceneNode is null)
         {
             return;
         }
 
-        if (_sectionId is null || _documentId is null)
+        if (string.IsNullOrWhiteSpace(_scenePlainText))
         {
-            _aiError = "AI needs linked scene text for this scene.";
+            _aiError = "AI needs scene text for this storyboard card.";
             return;
         }
 
@@ -601,10 +735,20 @@
         _aiError = string.Empty;
         try
         {
+            ProjectSceneOpenTargetDto? target = await ResolveAiTargetAsync(SceneNode.Id);
+            if (target?.DocumentId is null || target.SectionId is null)
+            {
+                _aiError = "AI needs linked scene text for this scene.";
+                return;
+            }
+
+            _documentId = target.DocumentId;
+            _sectionId = target.SectionId;
+
             string originalSnapshot = BuildSceneCardSnapshotJson();
             AiActionExecuteRequestDto payload = new(
-                _documentId,
-                _sectionId,
+                target.DocumentId,
+                target.SectionId,
                 null,
                 null,
                 null,
@@ -644,6 +788,17 @@
         {
             _aiInFlight = false;
         }
+    }
+
+    private async Task<ProjectSceneOpenTargetDto?> ResolveAiTargetAsync(Guid sceneId)
+    {
+        using HttpResponseMessage response = await Http.PostAsync($"api/projects/{ProjectId}/nodes/{sceneId}/open-scene", null);
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        return await response.Content.ReadFromJsonAsync<ProjectSceneOpenTargetDto>();
     }
 
     private async Task ApplySceneAiProposalAsync()
@@ -838,7 +993,44 @@
         try
         {
             string payload = await response.Content.ReadAsStringAsync();
-            return string.IsNullOrWhiteSpace(payload) ? fallback : payload;
+            if (string.IsNullOrWhiteSpace(payload))
+            {
+                return fallback;
+            }
+
+            try
+            {
+                using JsonDocument doc = JsonDocument.Parse(payload);
+                JsonElement root = doc.RootElement;
+                if (root.ValueKind == JsonValueKind.Object)
+                {
+                    if (root.TryGetProperty("detail", out JsonElement detail)
+                        && detail.ValueKind == JsonValueKind.String
+                        && !string.IsNullOrWhiteSpace(detail.GetString()))
+                    {
+                        return detail.GetString()!;
+                    }
+
+                    if (root.TryGetProperty("message", out JsonElement message)
+                        && message.ValueKind == JsonValueKind.String
+                        && !string.IsNullOrWhiteSpace(message.GetString()))
+                    {
+                        return message.GetString()!;
+                    }
+
+                    if (root.TryGetProperty("title", out JsonElement title)
+                        && title.ValueKind == JsonValueKind.String
+                        && !string.IsNullOrWhiteSpace(title.GetString()))
+                    {
+                        return title.GetString()!;
+                    }
+                }
+            }
+            catch (JsonException)
+            {
+            }
+
+            return payload;
         }
         catch
         {

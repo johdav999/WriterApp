@@ -314,6 +314,10 @@ builder.Services.AddSingleton<IAiAction, GenerateOutlineAction>();
 builder.Services.AddSingleton<IAiAction, SceneSuggestAction>();
 builder.Services.AddSingleton<IAiAction, SceneRefineAction>();
 builder.Services.AddSingleton<IAiAction, SceneFindOpenQuestionsAction>();
+builder.Services.AddSingleton<IAiAction, StoryboardSuggestNextSceneAction>();
+builder.Services.AddSingleton<IAiAction, StoryboardDetectMissingScenesAction>();
+builder.Services.AddSingleton<IAiAction, StoryboardCheckSubplotContinuityAction>();
+builder.Services.AddSingleton<IAiAction, StoryboardAnalyzePovBalanceAction>();
 builder.Services.AddSingleton<IAiAction, ProposeNextParagraphAction>();
 bool reviseToolsEnabled =
     builder.Configuration.GetValue<bool?>("AI:ReviseToolsEnabled")

@@ -582,6 +582,26 @@ namespace WriterApp.AI.Core
                 AiArtifact? textArtifact = result.Artifacts.FirstOrDefault(artifact => artifact.Modality == AiModality.Text);
                 proposedText = textArtifact?.TextContent ?? string.Empty;
             }
+            else if (string.Equals(action.ActionId, StoryboardSuggestNextSceneAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                AiArtifact? textArtifact = result.Artifacts.FirstOrDefault(artifact => artifact.Modality == AiModality.Text);
+                proposedText = textArtifact?.TextContent ?? string.Empty;
+            }
+            else if (string.Equals(action.ActionId, StoryboardDetectMissingScenesAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                AiArtifact? textArtifact = result.Artifacts.FirstOrDefault(artifact => artifact.Modality == AiModality.Text);
+                proposedText = textArtifact?.TextContent ?? string.Empty;
+            }
+            else if (string.Equals(action.ActionId, StoryboardCheckSubplotContinuityAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                AiArtifact? textArtifact = result.Artifacts.FirstOrDefault(artifact => artifact.Modality == AiModality.Text);
+                proposedText = textArtifact?.TextContent ?? string.Empty;
+            }
+            else if (string.Equals(action.ActionId, StoryboardAnalyzePovBalanceAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                AiArtifact? textArtifact = result.Artifacts.FirstOrDefault(artifact => artifact.Modality == AiModality.Text);
+                proposedText = textArtifact?.TextContent ?? string.Empty;
+            }
             else if (string.Equals(action.ActionId, GenerateCoverImageAction.ActionIdValue, StringComparison.Ordinal))
             {
                 AiArtifact? imageArtifact = result.Artifacts.FirstOrDefault(artifact => artifact.Modality == AiModality.Image);
@@ -702,6 +722,26 @@ namespace WriterApp.AI.Core
                 return "Section";
             }
 
+            if (string.Equals(actionId, StoryboardSuggestNextSceneAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Storyboard";
+            }
+
+            if (string.Equals(actionId, StoryboardDetectMissingScenesAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Storyboard";
+            }
+
+            if (string.Equals(actionId, StoryboardCheckSubplotContinuityAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Storyboard";
+            }
+
+            if (string.Equals(actionId, StoryboardAnalyzePovBalanceAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Storyboard";
+            }
+
             return "Selection";
         }
 
@@ -815,6 +855,26 @@ namespace WriterApp.AI.Core
             if (string.Equals(actionId, ProposeNextParagraphAction.ActionIdValue, StringComparison.Ordinal))
             {
                 return "Propose next paragraph";
+            }
+
+            if (string.Equals(actionId, StoryboardSuggestNextSceneAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Suggest next scene";
+            }
+
+            if (string.Equals(actionId, StoryboardDetectMissingScenesAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Detect missing scenes";
+            }
+
+            if (string.Equals(actionId, StoryboardCheckSubplotContinuityAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Check subplot continuity";
+            }
+
+            if (string.Equals(actionId, StoryboardAnalyzePovBalanceAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                return "Analyze POV balance";
             }
 
             if (IsReviseAction(actionId))

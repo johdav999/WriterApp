@@ -208,6 +208,94 @@ namespace WriterApp.AI.Providers.Mock
                 return Task.FromResult(sceneResult);
             }
 
+            if (string.Equals(request.ActionId, StoryboardSuggestNextSceneAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                string json = BuildMockStoryboardNextSceneJson(request);
+                AiArtifact storyboardArtifact = new(
+                    Guid.NewGuid(),
+                    AiModality.Text,
+                    "application/json",
+                    json,
+                    null,
+                    null);
+
+                return Task.FromResult(new AiResult(
+                    request.RequestId,
+                    new List<AiArtifact> { storyboardArtifact },
+                    new AiUsage(0, 0, TimeSpan.Zero),
+                    new Dictionary<string, object>
+                    {
+                        ["provider"] = ProviderId,
+                        ["model"] = "mock-text"
+                    }));
+            }
+
+            if (string.Equals(request.ActionId, StoryboardDetectMissingScenesAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                string json = BuildMockMissingScenesJson(request);
+                AiArtifact storyboardArtifact = new(
+                    Guid.NewGuid(),
+                    AiModality.Text,
+                    "application/json",
+                    json,
+                    null,
+                    null);
+
+                return Task.FromResult(new AiResult(
+                    request.RequestId,
+                    new List<AiArtifact> { storyboardArtifact },
+                    new AiUsage(0, 0, TimeSpan.Zero),
+                    new Dictionary<string, object>
+                    {
+                        ["provider"] = ProviderId,
+                        ["model"] = "mock-text"
+                    }));
+            }
+
+            if (string.Equals(request.ActionId, StoryboardCheckSubplotContinuityAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                string json = BuildMockSubplotContinuityJson();
+                AiArtifact storyboardArtifact = new(
+                    Guid.NewGuid(),
+                    AiModality.Text,
+                    "application/json",
+                    json,
+                    null,
+                    null);
+
+                return Task.FromResult(new AiResult(
+                    request.RequestId,
+                    new List<AiArtifact> { storyboardArtifact },
+                    new AiUsage(0, 0, TimeSpan.Zero),
+                    new Dictionary<string, object>
+                    {
+                        ["provider"] = ProviderId,
+                        ["model"] = "mock-text"
+                    }));
+            }
+
+            if (string.Equals(request.ActionId, StoryboardAnalyzePovBalanceAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                string json = BuildMockPovBalanceJson();
+                AiArtifact storyboardArtifact = new(
+                    Guid.NewGuid(),
+                    AiModality.Text,
+                    "application/json",
+                    json,
+                    null,
+                    null);
+
+                return Task.FromResult(new AiResult(
+                    request.RequestId,
+                    new List<AiArtifact> { storyboardArtifact },
+                    new AiUsage(0, 0, TimeSpan.Zero),
+                    new Dictionary<string, object>
+                    {
+                        ["provider"] = ProviderId,
+                        ["model"] = "mock-text"
+                    }));
+            }
+
             if (string.Equals(request.ActionId, ProposeNextParagraphAction.ActionIdValue, StringComparison.Ordinal))
             {
                 string text = BuildMockNextParagraph(request);
@@ -408,6 +496,66 @@ namespace WriterApp.AI.Providers.Mock
                     yield return new AiStreamEvent.TextDelta(chunk);
                     await Task.Delay(DeltaDelay, ct);
                 }
+                yield return new AiStreamEvent.Completed();
+                yield break;
+            }
+
+            if (string.Equals(request.ActionId, StoryboardSuggestNextSceneAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                string json = BuildMockStoryboardNextSceneJson(request);
+                yield return new AiStreamEvent.Started();
+                foreach (string chunk in ChunkText(json, MaxChunkSize))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    yield return new AiStreamEvent.TextDelta(chunk);
+                    await Task.Delay(DeltaDelay, ct);
+                }
+
+                yield return new AiStreamEvent.Completed();
+                yield break;
+            }
+
+            if (string.Equals(request.ActionId, StoryboardDetectMissingScenesAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                string json = BuildMockMissingScenesJson(request);
+                yield return new AiStreamEvent.Started();
+                foreach (string chunk in ChunkText(json, MaxChunkSize))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    yield return new AiStreamEvent.TextDelta(chunk);
+                    await Task.Delay(DeltaDelay, ct);
+                }
+
+                yield return new AiStreamEvent.Completed();
+                yield break;
+            }
+
+            if (string.Equals(request.ActionId, StoryboardCheckSubplotContinuityAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                string json = BuildMockSubplotContinuityJson();
+                yield return new AiStreamEvent.Started();
+                foreach (string chunk in ChunkText(json, MaxChunkSize))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    yield return new AiStreamEvent.TextDelta(chunk);
+                    await Task.Delay(DeltaDelay, ct);
+                }
+
+                yield return new AiStreamEvent.Completed();
+                yield break;
+            }
+
+            if (string.Equals(request.ActionId, StoryboardAnalyzePovBalanceAction.ActionIdValue, StringComparison.Ordinal))
+            {
+                string json = BuildMockPovBalanceJson();
+                yield return new AiStreamEvent.Started();
+                foreach (string chunk in ChunkText(json, MaxChunkSize))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    yield return new AiStreamEvent.TextDelta(chunk);
+                    await Task.Delay(DeltaDelay, ct);
+                }
+
                 yield return new AiStreamEvent.Completed();
                 yield break;
             }
@@ -659,6 +807,106 @@ namespace WriterApp.AI.Providers.Mock
             };
 
             return JsonSerializer.Serialize(card, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        }
+
+        private static string BuildMockStoryboardNextSceneJson(AiRequest request)
+        {
+            string preferredChapterTitle = GetInputValue(request, "preferred_chapter_title", "Current chapter");
+            string selectedSceneTitle = GetInputValue(request, "selected_scene_title", "the latest scene");
+
+            return JsonSerializer.Serialize(new
+            {
+                title = $"Aftermath in {preferredChapterTitle}",
+                summary = $"A follow-up scene that reacts to {selectedSceneTitle}, sharpens the consequences, and turns the story toward the next major decision.",
+                narrativePurpose = "Escalation",
+                povCharacterId = "Klara",
+                subplotTags = new[] { "aftermath", "decision" },
+                rationale = $"This scene extends the pressure created by {selectedSceneTitle} and gives the board a clear bridge into the next structural turn."
+            }, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        }
+
+        private static string BuildMockMissingScenesJson(AiRequest request)
+        {
+            string preferredChapterTitle = GetInputValue(request, "preferred_chapter_title", "Chapter 2");
+
+            return JsonSerializer.Serialize(new
+            {
+                suggestions = new object[]
+                {
+                    new
+                    {
+                        title = "Decision at the threshold",
+                        summary = "A bridging scene where the protagonist chooses a course of action instead of moving abruptly into the next complication.",
+                        narrativePurpose = "Decision",
+                        suggestedChapterPlacement = preferredChapterTitle,
+                        rationale = "The board jumps from setup into consequence without showing the choice that commits the character.",
+                        subplotTags = new[] { "decision", "bridge" }
+                    },
+                    new
+                    {
+                        title = "Subplot pressure returns",
+                        summary = "A short escalation beat that reintroduces the neglected subplot before it disappears for too long.",
+                        narrativePurpose = "Escalation",
+                        suggestedChapterPlacement = preferredChapterTitle,
+                        rationale = "A subplot is introduced but not continued, which weakens continuity and lowers tension.",
+                        subplotTags = new[] { "subplot", "pressure" }
+                    }
+                }
+            }, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        }
+
+        private static string BuildMockSubplotContinuityJson()
+        {
+            return JsonSerializer.Serialize(new
+            {
+                findings = new object[]
+                {
+                    new
+                    {
+                        subplotName = "decision",
+                        issueType = "disappears_too_long",
+                        explanation = "The decision subplot appears early, then vanishes for several scenes before returning without reinforcement.",
+                        affectedScenes = new[] { "Chapter 1 / The vow", "Chapter 3 / Aftermath in the hall" },
+                        recommendation = "Add or strengthen a mid-board reminder scene so the decision pressure keeps building."
+                    },
+                    new
+                    {
+                        subplotName = "pressure",
+                        issueType = "clustered_together",
+                        explanation = "Pressure-tagged scenes bunch together in one stretch, which can make the subplot feel repetitive instead of progressive.",
+                        affectedScenes = new[] { "Chapter 2 / Debt called in", "Chapter 2 / The second warning", "Chapter 2 / Cornered at dusk" },
+                        recommendation = "Spread one of these beats later or add a contrasting consequence scene before the next pressure spike."
+                    }
+                }
+            }, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        }
+
+        private static string BuildMockPovBalanceJson()
+        {
+            return JsonSerializer.Serialize(new
+            {
+                findings = new object[]
+                {
+                    new
+                    {
+                        title = "Lead POV dominates the opening stretch",
+                        explanation = "Mara carries most of the early scenes, which gives the board a clear anchor but leaves little contrast before the midpoint.",
+                        affectedPov = "Mara",
+                        affectedChapters = new[] { "Chapter 1", "Chapter 2" },
+                        affectedScenes = new[] { "Chapter 1 / New Scene", "Chapter 2 / Confrontation" },
+                        suggestion = "Add one earlier counterweight scene from another POV if you want wider tension sooner."
+                    },
+                    new
+                    {
+                        title = "Jon disappears for too long",
+                        explanation = "Jon is established, then absent across several scenes, which can make his thread feel paused instead of developing.",
+                        affectedPov = "Jon",
+                        affectedChapters = new[] { "Chapter 2", "Chapter 3" },
+                        affectedScenes = new[] { "Chapter 2 / Market Deal", "Chapter 3 / Bridge Fallout" },
+                        suggestion = "Reintroduce Jon with a short reaction or consequence beat before the next major turn."
+                    }
+                }
+            }, new JsonSerializerOptions(JsonSerializerDefaults.Web));
         }
 
         private static string BuildMockCharacterBibleJson(AiRequest request)

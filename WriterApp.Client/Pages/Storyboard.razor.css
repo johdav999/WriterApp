@@ -1,13 +1,40 @@
 .storyboard-page {
     display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr);
     gap: var(--space-4);
+    min-height: 0;
+    height: 100%;
+    overflow: hidden;
 }
 
 .storyboard-page__layout {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 360px;
+    grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr) minmax(320px, 1fr);
     gap: var(--space-4);
-    align-items: start;
+    align-items: stretch;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.storyboard-page__panel {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: var(--space-3);
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.storyboard-page__panel-body {
+    /* This wrapper keeps the panel scroll box mounted through Blazor rerenders. */
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.storyboard-page__panel-title {
+    margin: 0;
+    font-size: var(--font-size-section-title);
 }
 
 .storyboard-page__header {
@@ -61,5 +88,6 @@
 @media (max-width: 1200px) {
     .storyboard-page__layout {
         grid-template-columns: 1fr;
+        grid-template-rows: minmax(320px, 1.4fr) minmax(260px, 1fr) minmax(320px, 1fr);
     }
 }

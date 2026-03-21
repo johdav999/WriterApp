@@ -93,6 +93,7 @@
     justify-content: end;
     gap: 6px;
     flex-wrap: wrap;
+    position: relative;
 }
 
 .scene-card-title-row {
@@ -312,26 +313,75 @@
     flex: 0 0 auto;
 }
 
-.scene-card-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    padding-top: 4px;
+.scene-card-menu {
+    position: relative;
+    flex: 0 0 auto;
 }
 
-.scene-card-action {
+.scene-card-menu-button {
     appearance: none;
+    width: 32px;
+    height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    background: var(--color-surface-1);
+    color: var(--color-text-muted);
+    cursor: pointer;
+}
+
+.scene-card-menu-button:hover,
+.scene-card-menu-button:focus-visible {
+    background: var(--color-surface-2);
+    color: var(--color-text);
+}
+
+.scene-card-menu-button .material-symbols-rounded {
+    font-size: 1.1rem;
+}
+
+.scene-card-menu-popover {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 20;
+    min-width: 184px;
+    display: grid;
+    gap: 4px;
+    padding: 6px;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
-    background: var(--color-surface-2);
+    background: var(--color-surface-1);
+    box-shadow: var(--shadow-md);
+}
+
+.scene-card-menu-item {
+    appearance: none;
+    width: 100%;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
     color: var(--color-text);
     font: inherit;
     font-size: var(--font-size-helper);
     line-height: 1.2;
-    padding: 6px 10px;
+    padding: 9px 10px;
+    text-align: left;
     cursor: pointer;
 }
 
-.scene-card-action:hover {
-    background: var(--color-surface-3);
+.scene-card-menu-item:hover,
+.scene-card-menu-item:focus-visible {
+    background: var(--color-surface-2);
+}
+
+.scene-card-menu-item--danger {
+    color: #b42318;
+}
+
+.scene-card-menu-item--danger:hover,
+.scene-card-menu-item--danger:focus-visible {
+    background: #fff3f0;
 }

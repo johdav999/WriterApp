@@ -75,6 +75,49 @@
                     </button>
                 }
             }
+            <div class="scene-card-menu" @onclick:stopPropagation="true" @onpointerdown:stopPropagation="true">
+                <button type="button"
+                        class="scene-card-menu-button"
+                        aria-label="Scene actions"
+                        aria-haspopup="menu"
+                        aria-expanded="@_isMenuOpen"
+                        @onclick="ToggleMenu">
+                    <span class="material-symbols-rounded" aria-hidden="true">more_horiz</span>
+                </button>
+                @if (_isMenuOpen)
+                {
+                    <div class="scene-card-menu-popover" role="menu" aria-label="Scene actions">
+                        <button type="button"
+                                class="scene-card-menu-item"
+                                role="menuitem"
+                                @onpointerdown:stopPropagation="true"
+                                @onclick="OpenSceneFromMenuAsync">
+                            Open scene
+                        </button>
+                        <button type="button"
+                                class="scene-card-menu-item"
+                                role="menuitem"
+                                @onpointerdown:stopPropagation="true"
+                                @onclick="RevealInNavigatorFromMenuAsync">
+                            Reveal in navigator
+                        </button>
+                        <button type="button"
+                                class="scene-card-menu-item"
+                                role="menuitem"
+                                @onpointerdown:stopPropagation="true"
+                                @onclick="DuplicateSceneFromMenuAsync">
+                            Duplicate
+                        </button>
+                        <button type="button"
+                                class="scene-card-menu-item scene-card-menu-item--danger"
+                                role="menuitem"
+                                @onpointerdown:stopPropagation="true"
+                                @onclick="DeleteSceneFromMenuAsync">
+                            Delete
+                        </button>
+                    </div>
+                }
+            </div>
         </div>
     </div>
 
@@ -121,21 +164,6 @@
             }
         </div>
     }
-
-    <div class="scene-card-actions">
-        <button type="button"
-                class="scene-card-action"
-                @onclick:stopPropagation="true"
-                @onclick="() => OpenScene.InvokeAsync(SceneId)">
-            Open scene
-        </button>
-        <button type="button"
-                class="scene-card-action"
-                @onclick:stopPropagation="true"
-                @onclick="() => RevealInNavigator.InvokeAsync(SceneId)">
-            Reveal in navigator
-        </button>
-    </div>
 </article>
 
 @code {
@@ -179,6 +207,12 @@
     public EventCallback<Guid> OpenScene { get; set; }
 
     [Parameter]
+    public EventCallback<Guid> DuplicateScene { get; set; }
+
+    [Parameter]
+    public EventCallback<Guid> DeleteScene { get; set; }
+
+    [Parameter]
     public EventCallback<Guid> RevealInNavigator { get; set; }
 
     [Parameter]
@@ -194,6 +228,7 @@
     private bool _focusStatusSelectPending;
     private bool _isEditingTitle;
     private bool _isEditingStatus;
+    private bool _isMenuOpen;
     private string _titleDraft = string.Empty;
     private string _displayTitle = string.Empty;
     private string _statusDraft = "Draft";
@@ -247,6 +282,35 @@
             _displayStatus = normalizedStatus;
             _statusDraft = normalizedStatus;
         }
+    }
+
+    private void ToggleMenu()
+    {
+        _isMenuOpen = !_isMenuOpen;
+    }
+
+    private async Task OpenSceneFromMenuAsync()
+    {
+        _isMenuOpen = false;
+        await OpenScene.InvokeAsync(SceneId);
+    }
+
+    private async Task RevealInNavigatorFromMenuAsync()
+    {
+        _isMenuOpen = false;
+        await RevealInNavigator.InvokeAsync(SceneId);
+    }
+
+    private async Task DuplicateSceneFromMenuAsync()
+    {
+        _isMenuOpen = false;
+        await DuplicateScene.InvokeAsync(SceneId);
+    }
+
+    private async Task DeleteSceneFromMenuAsync()
+    {
+        _isMenuOpen = false;
+        await DeleteScene.InvokeAsync(SceneId);
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)

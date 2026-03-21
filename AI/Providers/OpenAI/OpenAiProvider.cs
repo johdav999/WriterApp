@@ -39,6 +39,10 @@ namespace WriterApp.AI.Providers.OpenAI
         private const string ActionSceneSuggest = "scene.suggest";
         private const string ActionSceneRefine = "scene.refine";
         private const string ActionSceneFindOpenQuestions = "scene.find-open-questions";
+        private const string ActionStoryboardSuggestNextScene = "storyboard.suggest-next-scene";
+        private const string ActionStoryboardDetectMissingScenes = "storyboard.detect-missing-scenes";
+        private const string ActionStoryboardCheckSubplotContinuity = "storyboard.check-subplot-continuity";
+        private const string ActionStoryboardAnalyzePovBalance = "storyboard.analyze-pov-balance";
         private const string ActionProposeNextParagraph = "propose.next-paragraph";
         private const string ActionTightenSelection = "tighten.selection";
         private const string ActionTightenSection = "tighten.section";
@@ -206,6 +210,106 @@ namespace WriterApp.AI.Providers.OpenAI
                         Guid.NewGuid(),
                         AiModality.Text,
                         "text/plain",
+                        outputText,
+                        null,
+                        null);
+
+                    AiUsage usage = new(inputTokens, outputTokens, stopwatch.Elapsed);
+                    LogUsage(request, _options.TextModel, outputTokens, stopwatch.Elapsed);
+
+                    return new AiResult(
+                        request.RequestId,
+                        new List<AiArtifact> { artifact },
+                        usage,
+                        new Dictionary<string, object>
+                        {
+                            ["provider"] = ProviderIdValue,
+                            ["model"] = _options.TextModel
+                        });
+                }
+
+                if (string.Equals(request.ActionId, ActionStoryboardSuggestNextScene, StringComparison.Ordinal))
+                {
+                    (string outputText, int inputTokens, int outputTokens) = await ExecuteStoryboardNextSceneAsync(request, apiKey, ct);
+                    AiArtifact artifact = new(
+                        Guid.NewGuid(),
+                        AiModality.Text,
+                        "application/json",
+                        outputText,
+                        null,
+                        null);
+
+                    AiUsage usage = new(inputTokens, outputTokens, stopwatch.Elapsed);
+                    LogUsage(request, _options.TextModel, outputTokens, stopwatch.Elapsed);
+
+                    return new AiResult(
+                        request.RequestId,
+                        new List<AiArtifact> { artifact },
+                        usage,
+                        new Dictionary<string, object>
+                        {
+                            ["provider"] = ProviderIdValue,
+                            ["model"] = _options.TextModel
+                        });
+                }
+
+                if (string.Equals(request.ActionId, ActionStoryboardDetectMissingScenes, StringComparison.Ordinal))
+                {
+                    (string outputText, int inputTokens, int outputTokens) = await ExecuteStoryboardDetectMissingScenesAsync(request, apiKey, ct);
+                    AiArtifact artifact = new(
+                        Guid.NewGuid(),
+                        AiModality.Text,
+                        "application/json",
+                        outputText,
+                        null,
+                        null);
+
+                    AiUsage usage = new(inputTokens, outputTokens, stopwatch.Elapsed);
+                    LogUsage(request, _options.TextModel, outputTokens, stopwatch.Elapsed);
+
+                    return new AiResult(
+                        request.RequestId,
+                        new List<AiArtifact> { artifact },
+                        usage,
+                        new Dictionary<string, object>
+                        {
+                            ["provider"] = ProviderIdValue,
+                            ["model"] = _options.TextModel
+                        });
+                }
+
+                if (string.Equals(request.ActionId, ActionStoryboardCheckSubplotContinuity, StringComparison.Ordinal))
+                {
+                    (string outputText, int inputTokens, int outputTokens) = await ExecuteStoryboardCheckSubplotContinuityAsync(request, apiKey, ct);
+                    AiArtifact artifact = new(
+                        Guid.NewGuid(),
+                        AiModality.Text,
+                        "application/json",
+                        outputText,
+                        null,
+                        null);
+
+                    AiUsage usage = new(inputTokens, outputTokens, stopwatch.Elapsed);
+                    LogUsage(request, _options.TextModel, outputTokens, stopwatch.Elapsed);
+
+                    return new AiResult(
+                        request.RequestId,
+                        new List<AiArtifact> { artifact },
+                        usage,
+                        new Dictionary<string, object>
+                        {
+                            ["provider"] = ProviderIdValue,
+                            ["model"] = _options.TextModel
+                        });
+                }
+
+                if (string.Equals(request.ActionId, ActionStoryboardAnalyzePovBalance, StringComparison.Ordinal))
+                {
+                    (string outputText, int inputTokens, int outputTokens) = await ExecuteStoryboardAnalyzePovBalanceAsync(request, apiKey, ct);
+                    AiArtifact artifact = new(
+                        Guid.NewGuid(),
+                        AiModality.Text,
+                        "application/json",
                         outputText,
                         null,
                         null);
@@ -741,6 +845,66 @@ namespace WriterApp.AI.Providers.OpenAI
             CancellationToken ct)
         {
             HttpRequestMessage requestMessage = BuildSceneCardRequest(request, apiKey);
+            HttpClient client = _httpClientFactory.CreateClient(nameof(OpenAiProvider));
+
+            using HttpResponseMessage response = await client.SendAsync(requestMessage, ct);
+            await EnsureSuccessAsync(response, ct);
+
+            string json = await response.Content.ReadAsStringAsync(ct);
+            return ExtractResponseTextAndUsage(json);
+        }
+
+        private async Task<(string OutputText, int InputTokens, int OutputTokens)> ExecuteStoryboardNextSceneAsync(
+            AiRequest request,
+            string apiKey,
+            CancellationToken ct)
+        {
+            HttpRequestMessage requestMessage = BuildStoryboardNextSceneRequest(request, apiKey);
+            HttpClient client = _httpClientFactory.CreateClient(nameof(OpenAiProvider));
+
+            using HttpResponseMessage response = await client.SendAsync(requestMessage, ct);
+            await EnsureSuccessAsync(response, ct);
+
+            string json = await response.Content.ReadAsStringAsync(ct);
+            return ExtractResponseTextAndUsage(json);
+        }
+
+        private async Task<(string OutputText, int InputTokens, int OutputTokens)> ExecuteStoryboardDetectMissingScenesAsync(
+            AiRequest request,
+            string apiKey,
+            CancellationToken ct)
+        {
+            HttpRequestMessage requestMessage = BuildStoryboardDetectMissingScenesRequest(request, apiKey);
+            HttpClient client = _httpClientFactory.CreateClient(nameof(OpenAiProvider));
+
+            using HttpResponseMessage response = await client.SendAsync(requestMessage, ct);
+            await EnsureSuccessAsync(response, ct);
+
+            string json = await response.Content.ReadAsStringAsync(ct);
+            return ExtractResponseTextAndUsage(json);
+        }
+
+        private async Task<(string OutputText, int InputTokens, int OutputTokens)> ExecuteStoryboardCheckSubplotContinuityAsync(
+            AiRequest request,
+            string apiKey,
+            CancellationToken ct)
+        {
+            HttpRequestMessage requestMessage = BuildStoryboardCheckSubplotContinuityRequest(request, apiKey);
+            HttpClient client = _httpClientFactory.CreateClient(nameof(OpenAiProvider));
+
+            using HttpResponseMessage response = await client.SendAsync(requestMessage, ct);
+            await EnsureSuccessAsync(response, ct);
+
+            string json = await response.Content.ReadAsStringAsync(ct);
+            return ExtractResponseTextAndUsage(json);
+        }
+
+        private async Task<(string OutputText, int InputTokens, int OutputTokens)> ExecuteStoryboardAnalyzePovBalanceAsync(
+            AiRequest request,
+            string apiKey,
+            CancellationToken ct)
+        {
+            HttpRequestMessage requestMessage = BuildStoryboardAnalyzePovBalanceRequest(request, apiKey);
             HttpClient client = _httpClientFactory.CreateClient(nameof(OpenAiProvider));
 
             using HttpResponseMessage response = await client.SendAsync(requestMessage, ct);
@@ -1414,6 +1578,116 @@ namespace WriterApp.AI.Providers.OpenAI
 
             ApplyAuthHeaders(requestMessage, apiKey);
             return requestMessage;
+        }
+
+        private HttpRequestMessage BuildStoryboardNextSceneRequest(AiRequest request, string apiKey)
+        {
+            string instruction = GetInputValue(request, "instruction", "Suggest one strong next scene for this storyboard.");
+            string storyboardContext = GetInputValue(request, "storyboard_context", string.Empty);
+            string preferredChapterTitle = GetInputValue(request, "preferred_chapter_title", string.Empty);
+            string selectedSceneTitle = GetInputValue(request, "selected_scene_title", string.Empty);
+
+            string systemPrompt = "You are a story structure editor. Return JSON only.";
+            StringBuilder userPrompt = new();
+            userPrompt.AppendLine("Suggest exactly one strong next scene for the storyboard.");
+            userPrompt.AppendLine("Return a JSON object with keys:");
+            userPrompt.AppendLine("title, summary, narrativePurpose, povCharacterId, subplotTags, rationale.");
+            userPrompt.AppendLine("Rules:");
+            userPrompt.AppendLine("- Keep title concise and specific.");
+            userPrompt.AppendLine("- Keep summary to 1-2 sentences.");
+            userPrompt.AppendLine("- narrativePurpose should be a short structural label such as Setup, Conflict, Escalation, Revelation, Decision, Climax, or Aftermath.");
+            userPrompt.AppendLine("- subplotTags must be a JSON array of short strings.");
+            userPrompt.AppendLine("- rationale should briefly explain why this is the strongest next scene now.");
+            userPrompt.AppendLine("- Return JSON only, with no prose outside the object.");
+            if (!string.IsNullOrWhiteSpace(preferredChapterTitle))
+            {
+                userPrompt.AppendLine($"Preferred chapter context: {preferredChapterTitle}");
+            }
+            if (!string.IsNullOrWhiteSpace(selectedSceneTitle))
+            {
+                userPrompt.AppendLine($"Selected scene context: {selectedSceneTitle}");
+            }
+            userPrompt.AppendLine("Storyboard context:");
+            userPrompt.AppendLine(storyboardContext);
+
+            return BuildStrictJsonRequest(systemPrompt, $"{instruction}\n\n{userPrompt}", apiKey);
+        }
+
+        private HttpRequestMessage BuildStoryboardDetectMissingScenesRequest(AiRequest request, string apiKey)
+        {
+            string instruction = GetInputValue(request, "instruction", "Detect likely missing scenes or weak transitions in this storyboard.");
+            string storyboardContext = GetInputValue(request, "storyboard_context", string.Empty);
+            string preferredChapterTitle = GetInputValue(request, "preferred_chapter_title", string.Empty);
+
+            string systemPrompt = "You are a story structure editor. Return JSON only.";
+            StringBuilder userPrompt = new();
+            userPrompt.AppendLine("Analyze the storyboard for likely missing narrative steps, weak transitions, abrupt jumps, or neglected subplot continuity.");
+            userPrompt.AppendLine("Return a JSON object with a top-level key: suggestions.");
+            userPrompt.AppendLine("suggestions must be an array of objects with keys:");
+            userPrompt.AppendLine("title, summary, narrativePurpose, suggestedChapterPlacement, rationale, subplotTags.");
+            userPrompt.AppendLine("Rules:");
+            userPrompt.AppendLine("- Treat results as suggestions, not certainties.");
+            userPrompt.AppendLine("- Prefer 2 to 4 high-value missing scenes.");
+            userPrompt.AppendLine("- suggestedChapterPlacement should name the best-fit chapter title.");
+            userPrompt.AppendLine("- summary should be short and practical.");
+            userPrompt.AppendLine("- subplotTags must be a JSON array of short strings.");
+            userPrompt.AppendLine("- Return JSON only, with no prose outside the object.");
+            if (!string.IsNullOrWhiteSpace(preferredChapterTitle))
+            {
+                userPrompt.AppendLine($"Current focus chapter: {preferredChapterTitle}");
+            }
+            userPrompt.AppendLine("Storyboard context:");
+            userPrompt.AppendLine(storyboardContext);
+
+            return BuildStrictJsonRequest(systemPrompt, $"{instruction}\n\n{userPrompt}", apiKey);
+        }
+
+        private HttpRequestMessage BuildStoryboardCheckSubplotContinuityRequest(AiRequest request, string apiKey)
+        {
+            string instruction = GetInputValue(request, "instruction", "Check subplot continuity across this storyboard.");
+            string storyboardContext = GetInputValue(request, "storyboard_context", string.Empty);
+
+            string systemPrompt = "You are a story structure editor. Return JSON only.";
+            StringBuilder userPrompt = new();
+            userPrompt.AppendLine("Analyze subplot continuity across the storyboard using subplot tags, scene order, and chapter order.");
+            userPrompt.AppendLine("Return a JSON object with a top-level key: findings.");
+            userPrompt.AppendLine("findings must be an array of objects with keys:");
+            userPrompt.AppendLine("subplotName, issueType, explanation, affectedScenes, recommendation.");
+            userPrompt.AppendLine("Rules:");
+            userPrompt.AppendLine("- Focus on actionable continuity problems, not vague praise.");
+            userPrompt.AppendLine("- issueType examples: disappears_too_long, introduced_not_developed, abrupt_return, clustered_together, lacks_resolution.");
+            userPrompt.AppendLine("- affectedScenes must be an array of short chapter/scene references.");
+            userPrompt.AppendLine("- recommendation should be optional but useful when present.");
+            userPrompt.AppendLine("- Do not treat untagged scenes as errors by default.");
+            userPrompt.AppendLine("- Return JSON only, with no prose outside the object.");
+            userPrompt.AppendLine("Storyboard context:");
+            userPrompt.AppendLine(storyboardContext);
+
+            return BuildStrictJsonRequest(systemPrompt, $"{instruction}\n\n{userPrompt}", apiKey);
+        }
+
+        private HttpRequestMessage BuildStoryboardAnalyzePovBalanceRequest(AiRequest request, string apiKey)
+        {
+            string instruction = GetInputValue(request, "instruction", "Analyze POV balance across this storyboard.");
+            string storyboardContext = GetInputValue(request, "storyboard_context", string.Empty);
+
+            string systemPrompt = "You are a story structure editor. Return JSON only.";
+            StringBuilder userPrompt = new();
+            userPrompt.AppendLine("Analyze POV balance across the storyboard using chapter order, scene order, POV assignment, and narrative purpose.");
+            userPrompt.AppendLine("Return a JSON object with a top-level key: findings.");
+            userPrompt.AppendLine("findings must be an array of objects with keys:");
+            userPrompt.AppendLine("title, explanation, affectedPov, affectedChapters, affectedScenes, suggestion.");
+            userPrompt.AppendLine("Rules:");
+            userPrompt.AppendLine("- Focus on POV dominance, long disappearance gaps, abrupt switching, weak chapter consistency, and missing POV assignment.");
+            userPrompt.AppendLine("- Make findings actionable and tied to specific parts of the board.");
+            userPrompt.AppendLine("- affectedPov may be empty when the issue concerns missing POV or overall chapter control.");
+            userPrompt.AppendLine("- affectedChapters and affectedScenes must be arrays of short references.");
+            userPrompt.AppendLine("- suggestion should be concrete when present.");
+            userPrompt.AppendLine("- Return JSON only, with no prose outside the object.");
+            userPrompt.AppendLine("Storyboard context:");
+            userPrompt.AppendLine(storyboardContext);
+
+            return BuildStrictJsonRequest(systemPrompt, $"{instruction}\n\n{userPrompt}", apiKey);
         }
 
         private HttpRequestMessage BuildNextParagraphRequest(AiRequest request, string apiKey)
