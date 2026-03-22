@@ -662,6 +662,10 @@ namespace WriterApp.Controllers
             for (int i = 0; i < sections.Count; i++)
             {
                 SectionRecord section = sections[i];
+                EnsureInternalNodePlacementAllowed(
+                    ProjectNodeType.Chapter,
+                    parent: null,
+                    $"document conversion for section '{section.Title}'");
                 ProjectNodeRecord chapter = new()
                 {
                     Id = Guid.NewGuid(),
@@ -676,6 +680,10 @@ namespace WriterApp.Controllers
                     UpdatedUtc = now
                 };
 
+                EnsureInternalNodePlacementAllowed(
+                    ProjectNodeType.Scene,
+                    chapter,
+                    $"document conversion for section '{section.Title}'");
                 ProjectNodeRecord scene = new()
                 {
                     Id = Guid.NewGuid(),
@@ -747,6 +755,38 @@ namespace WriterApp.Controllers
             return Ok(new ProjectTreeDto(ToDto(project, total), nodes.Select(ToDto).ToList()));
         }
 
+        [HttpGet("{projectId:guid}/integrity")]
+        public async Task<ActionResult<ProjectNodeIntegrityReportDto>> GetIntegrityReport(Guid projectId, CancellationToken ct)
+        {
+            if (!IsEnabled())
+            {
+                return NotFound();
+            }
+
+            string userId = _userIdResolver.ResolveUserId(User);
+            ActionResult? gate = await EnsureFeatureAllowedAsync(userId, FeatureKey.ProjectNavigator, "projects.navigator");
+            if (gate is not null)
+            {
+                return gate;
+            }
+
+            bool projectExists = await _dbContext.Projects
+                .AsNoTracking()
+                .AnyAsync(item => item.Id == projectId && item.OwnerUserId == userId, ct);
+            if (!projectExists)
+            {
+                return NotFound();
+            }
+
+            List<ProjectNodeRecord> nodes = await _dbContext.ProjectNodes
+                .AsNoTracking()
+                .Where(node => node.ProjectId == projectId)
+                .ToListAsync(ct);
+
+            IReadOnlyList<ProjectNodeIntegrityIssueDto> issues = BuildIntegrityIssueDtos(nodes);
+            return Ok(new ProjectNodeIntegrityReportDto(projectId, issues.Count, issues));
+        }
+
         [HttpPost("{projectId:guid}/nodes")]
         public async Task<ActionResult<ProjectNodeDto>> CreateNode(
             Guid projectId,
@@ -773,18 +813,31 @@ namespace WriterApp.Controllers
             }
 
             Guid? parentId = request.ParentId;
+            ProjectNodeRecord? parent = null;
             if (parentId.HasValue)
             {
-                bool parentExists = await _dbContext.ProjectNodes.AnyAsync(
-                    node => node.Id == parentId.Value && node.ProjectId == projectId,
-                    ct);
-                if (!parentExists)
+                parent = await _dbContext.ProjectNodes.FirstOrDefaultAsync(node => node.Id == parentId.Value, ct);
+                if (parent is null)
                 {
-                    return BadRequest(new { message = "Parent node not found in this project." });
+                    return BadRequest(new { message = "Parent node not found." });
+                }
+
+                if (parent.ProjectId != projectId)
+                {
+                    return BadRequest(new { message = "Parent node must belong to the same project." });
                 }
             }
 
-            ProjectNodeType nodeType = ParseNodeType(request.NodeType);
+            if (!TryParseNodeType(request.NodeType, out ProjectNodeType nodeType))
+            {
+                return BadRequest(new { message = "Node type is required and must be one of: part, chapter, scene, frontMatterItem." });
+            }
+
+            if (!ProjectNodeHierarchyValidator.IsPlacementAllowed(nodeType, parent?.NodeType))
+            {
+                return BadRequest(new { message = BuildInvalidPlacementMessage(nodeType, parent?.NodeType, parent?.Title) });
+            }
+
             Guid? linkedSectionId = request.LinkedSectionId;
             if (nodeType != ProjectNodeType.Scene)
             {
@@ -878,17 +931,50 @@ namespace WriterApp.Controllers
             }
 
             Guid? originalParentId = node.ParentId;
+            ProjectNodeType nextNodeType = node.NodeType;
+            if (!string.IsNullOrWhiteSpace(request.NodeType))
+            {
+                if (!TryParseNodeType(request.NodeType, out nextNodeType))
+                {
+                    return BadRequest(new { message = "Node type must be one of: part, chapter, scene, frontMatterItem." });
+                }
+            }
+
+            if (request.ParentId == node.Id)
+            {
+                return BadRequest(new { message = "A node cannot be its own parent." });
+            }
+
+            List<ProjectNodeRecord> projectNodes = await _dbContext.ProjectNodes
+                .Where(item => item.ProjectId == projectId)
+                .ToListAsync(ct);
+            Dictionary<Guid, ProjectNodeRecord> nodesById = projectNodes.ToDictionary(item => item.Id);
+            ProjectNodeRecord? proposedParent = null;
+            if (request.ParentId.HasValue)
+            {
+                if (!nodesById.TryGetValue(request.ParentId.Value, out proposedParent))
+                {
+                    return BadRequest(new { message = "Parent node not found in this project." });
+                }
+
+                if (ProjectNodeHierarchyValidator.WouldCreateCycle(node.Id, request.ParentId, nodesById))
+                {
+                    return BadRequest(new { message = "A node cannot be moved under itself or one of its descendants." });
+                }
+            }
+
+            if (!ProjectNodeHierarchyValidator.IsPlacementAllowed(nextNodeType, proposedParent?.NodeType))
+            {
+                return BadRequest(new { message = BuildInvalidPlacementMessage(nextNodeType, proposedParent?.NodeType, proposedParent?.Title) });
+            }
+
             if (!string.IsNullOrWhiteSpace(request.Title))
             {
                 node.Title = request.Title.Trim();
             }
 
             node.ParentId = request.ParentId;
-
-            if (!string.IsNullOrWhiteSpace(request.NodeType))
-            {
-                node.NodeType = ParseNodeType(request.NodeType);
-            }
+            node.NodeType = nextNodeType;
 
             if (node.NodeType != ProjectNodeType.Scene)
             {
@@ -990,6 +1076,7 @@ namespace WriterApp.Controllers
             try
             {
                 bool duplicateDeep = request?.Deep ?? sourceRoot.NodeType != ProjectNodeType.Scene;
+                IReadOnlyList<ProjectNodeIntegrityIssue> projectIssues = ProjectNodeHierarchyValidator.Evaluate(projectNodes);
                 Dictionary<Guid, List<ProjectNodeRecord>> childrenByParent = projectNodes
                     .Where(item => item.ParentId.HasValue)
                     .GroupBy(item => item.ParentId!.Value)
@@ -1001,8 +1088,14 @@ namespace WriterApp.Controllers
                             .ToList());
 
             List<ProjectNodeRecord> sourceSubtree = new();
+            HashSet<Guid> visitedSubtreeIds = new();
             void CollectSubtree(ProjectNodeRecord node, bool deep)
             {
+                if (!visitedSubtreeIds.Add(node.Id))
+                {
+                    return;
+                }
+
                 sourceSubtree.Add(node);
                 if (!deep)
                 {
@@ -1021,6 +1114,13 @@ namespace WriterApp.Controllers
             }
 
             CollectSubtree(sourceRoot, duplicateDeep);
+
+            HashSet<Guid> sourceNodeIds = sourceSubtree.Select(node => node.Id).ToHashSet();
+            ProjectNodeIntegrityIssue? blockingIssue = projectIssues.FirstOrDefault(issue => sourceNodeIds.Contains(issue.NodeId));
+            if (blockingIssue is not null)
+            {
+                return Conflict(new { message = $"Duplicate node blocked because the source subtree has an integrity issue: {blockingIssue.Message}" });
+            }
 
             DateTimeOffset now = DateTimeOffset.UtcNow;
             Guid? parentId = sourceRoot.ParentId;
@@ -2509,33 +2609,56 @@ namespace WriterApp.Controllers
                 .AnyAsync(row => row.document.OwnerUserId == userId, ct);
         }
 
-        private static ProjectNodeType ParseNodeType(string? value)
+        private static bool TryParseNodeType(string? value, out ProjectNodeType nodeType)
         {
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                return ProjectNodeType.Scene;
-            }
-
-            return value.Trim().ToLowerInvariant() switch
-            {
-                "part" => ProjectNodeType.Part,
-                "chapter" => ProjectNodeType.Chapter,
-                "frontmatteritem" => ProjectNodeType.FrontMatterItem,
-                "front_matter_item" => ProjectNodeType.FrontMatterItem,
-                "front-matter-item" => ProjectNodeType.FrontMatterItem,
-                _ => ProjectNodeType.Scene
-            };
+            return ProjectNodeHierarchyValidator.TryParseNodeType(value, out nodeType);
         }
 
         private static string NormalizeNodeType(ProjectNodeType nodeType)
         {
-            return nodeType switch
+            return ProjectNodeHierarchyValidator.NormalizeNodeType(nodeType);
+        }
+
+        private static void EnsureInternalNodePlacementAllowed(ProjectNodeType nodeType, ProjectNodeRecord? parent, string context)
+        {
+            if (ProjectNodeHierarchyValidator.IsPlacementAllowed(nodeType, parent?.NodeType))
             {
-                ProjectNodeType.Part => "part",
-                ProjectNodeType.Chapter => "chapter",
-                ProjectNodeType.FrontMatterItem => "frontMatterItem",
-                _ => "scene"
-            };
+                return;
+            }
+
+            throw new InvalidOperationException($"{context} produced an invalid node placement. {BuildInvalidPlacementMessage(nodeType, parent?.NodeType, parent?.Title)}");
+        }
+
+        private static string BuildInvalidPlacementMessage(ProjectNodeType nodeType, ProjectNodeType? parentNodeType, string? parentTitle)
+        {
+            string childLabel = NormalizeNodeType(nodeType);
+            if (!parentNodeType.HasValue)
+            {
+                return $"{childLabel} cannot be created at the project root.";
+            }
+
+            string parentLabel = NormalizeNodeType(parentNodeType.Value);
+            if (string.IsNullOrWhiteSpace(parentTitle))
+            {
+                return $"{childLabel} cannot be placed under {parentLabel}.";
+            }
+
+            return $"{childLabel} cannot be placed under {parentLabel} '{parentTitle}'.";
+        }
+
+        private static IReadOnlyList<ProjectNodeIntegrityIssueDto> BuildIntegrityIssueDtos(IReadOnlyList<ProjectNodeRecord> nodes)
+        {
+            return ProjectNodeHierarchyValidator.Evaluate(nodes)
+                .Select(issue => new ProjectNodeIntegrityIssueDto(
+                    issue.NodeId,
+                    issue.NodeType,
+                    issue.Title,
+                    issue.Code,
+                    issue.Message,
+                    issue.ParentId,
+                    issue.ParentNodeType,
+                    issue.ParentTitle))
+                .ToList();
         }
 
         private static string BuildDuplicateNodeTitle(string? title, IEnumerable<string> existingTitles)

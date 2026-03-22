@@ -152,13 +152,13 @@
                             </select>
                         </label>
                         <label class="project-storyboard-bulk-field" for="storyboard-bulk-purpose">
-                            <span>Purpose</span>
+                            <span>Role</span>
                             <select id="storyboard-bulk-purpose"
                                     class="project-storyboard-bulk-select"
                                     value=""
-                                    @onchange="ApplyBulkNarrativePurposeAsync">
-                                <option value="">@BulkNarrativePurposePlaceholder</option>
-                                @foreach (string option in BulkNarrativePurposeOptions)
+                                    @onchange="ApplyBulkNarrativeRoleAsync">
+                                <option value="">@BulkNarrativeRolePlaceholder</option>
+                                @foreach (string option in BulkNarrativeRoleOptions)
                                 {
                                     <option value="@option">@option</option>
                                 }
@@ -266,6 +266,8 @@
                                                        Pov="@scene.Pov"
                                                        SubplotTags="@scene.SubplotTags"
                                                        NarrativePurpose="@scene.NarrativePurpose"
+                                                       NarrativeRole="@scene.NarrativeRole"
+                                                       NarrativeIntent="@scene.NarrativeIntent"
                                                        AccentClass="@GetSceneAccentClass(scene)"
                                                        IsSelected="@(SelectedSceneIds.Contains(scene.SceneId))"
                                                        HasNotes="@scene.HasNotes"
@@ -360,10 +362,10 @@
         GetSelectedSceneCards().Select(scene => NormalizeStatus(scene.Status)),
         "Set status",
         "Mixed status");
-    private string BulkNarrativePurposePlaceholder => GetBulkPlaceholder(
-        GetSelectedSceneCards().Select(scene => scene.NarrativePurpose),
-        "Set purpose",
-        "Mixed purpose");
+    private string BulkNarrativeRolePlaceholder => GetBulkPlaceholder(
+        GetSelectedSceneCards().Select(scene => scene.NarrativeRole),
+        "Set role",
+        "Mixed role");
     private string BulkRemoveTagPlaceholder => BulkRemovableSubplotTags.Count == 0
         ? "No shared tags"
         : BulkRemovableSubplotTags.Count == 1
@@ -411,7 +413,7 @@
     private bool _filtersOpen;
     private string _bulkSubplotTagDraft = string.Empty;
     private static readonly string[] BulkStatusOptions = ["Idea", "Draft", "Revised", "Final"];
-    private static readonly string[] BulkNarrativePurposeOptions =
+    private static readonly string[] BulkNarrativeRoleOptions =
     [
         "Setup",
         "Inciting Incident",
@@ -581,6 +583,8 @@
             Pov: null,
             SubplotTags: Array.Empty<string>(),
             NarrativePurpose: null,
+            NarrativeRole: null,
+            NarrativeIntent: null,
             HasNotes: scene.LinkedSectionId.HasValue,
             UpdatedUtc: scene.UpdatedUtc);
 
@@ -599,7 +603,20 @@
             string? status = GetString(root, "status");
             string? pov = GetString(root, "pov")
                 ?? GetString(root, "pointOfView");
+            string? narrativeRole = GetString(root, "narrativeRole");
+            string? narrativeIntent = GetString(root, "narrativeIntent");
             string? narrativePurpose = GetString(root, "narrativePurpose");
+            if (string.IsNullOrWhiteSpace(narrativeRole)
+                && SceneNarrativeRoleCatalog.TryNormalize(narrativePurpose, out string? normalizedRole))
+            {
+                narrativeRole = normalizedRole;
+            }
+
+            if (string.IsNullOrWhiteSpace(narrativeIntent)
+                && string.IsNullOrWhiteSpace(narrativeRole))
+            {
+                narrativeIntent = NormalizeOptionalValue(narrativePurpose);
+            }
             IReadOnlyList<string> subplotTags = GetStringArray(root, "subplotTags");
             if (subplotTags.Count == 0)
             {
@@ -615,6 +632,8 @@
                 string.IsNullOrWhiteSpace(pov) ? null : pov.Trim(),
                 subplotTags,
                 string.IsNullOrWhiteSpace(narrativePurpose) ? null : narrativePurpose.Trim(),
+                string.IsNullOrWhiteSpace(narrativeRole) ? null : narrativeRole.Trim(),
+                string.IsNullOrWhiteSpace(narrativeIntent) ? null : narrativeIntent.Trim(),
                 hasNotes,
                 scene.UpdatedUtc);
         }
@@ -1322,7 +1341,7 @@
             errorFallback: "Bulk status update failed.");
     }
 
-    private async Task ApplyBulkNarrativePurposeAsync(ChangeEventArgs args)
+    private async Task ApplyBulkNarrativeRoleAsync(ChangeEventArgs args)
     {
         string? nextPurpose = NormalizeOptionalValue(args.Value?.ToString());
         if (string.IsNullOrWhiteSpace(nextPurpose))
@@ -1332,7 +1351,8 @@
 
         await ApplyBulkSceneCardUpdateAsync(
             narrativePurpose: nextPurpose,
-            errorFallback: "Bulk narrative purpose update failed.");
+            narrativeRole: NormalizeNarrativeRole(nextPurpose),
+            errorFallback: "Bulk narrative role update failed.");
     }
 
     private async Task AddBulkSubplotTagAsync()
@@ -1371,6 +1391,8 @@
     private async Task ApplyBulkSceneCardUpdateAsync(
         string? status = null,
         string? narrativePurpose = null,
+        string? narrativeRole = null,
+        string? narrativeIntent = null,
         Func<IReadOnlyList<string>, IReadOnlyList<string>>? subplotTagTransform = null,
         string errorFallback = "Bulk scene update failed.")
     {
@@ -1400,7 +1422,9 @@
                 status: status,
                 pov: metadata.Pov,
                 subplotTags: subplotTags,
-                narrativePurpose: narrativePurpose);
+                narrativePurpose: narrativePurpose,
+                narrativeRole: narrativeRole,
+                narrativeIntent: narrativeIntent);
             metadataBySceneId[node.Id] = metadataJson;
             InsertOrUpdateRenderNode(node with
             {
@@ -1430,7 +1454,9 @@
                     currentCard?.References ?? Array.Empty<SceneCardReferenceDto>(),
                     currentCard?.Summary,
                     status ?? NormalizeStatus(currentCard?.Status),
-                    nextSubplotTags);
+                    nextSubplotTags,
+                    narrativeRole ?? currentCard?.NarrativeRole,
+                    narrativeIntent ?? currentCard?.NarrativeIntent);
 
                 using HttpResponseMessage sceneCardResponse =
                     await Http.PutAsJsonAsync($"api/scenes/{node.Id}/scene-card", payload);
@@ -1569,7 +1595,9 @@
                 currentCard?.References ?? Array.Empty<SceneCardReferenceDto>(),
                 currentCard?.Summary,
                 request.Status,
-                currentCard?.SubplotTags ?? Array.Empty<string>());
+                currentCard?.SubplotTags ?? Array.Empty<string>(),
+                currentCard?.NarrativeRole,
+                currentCard?.NarrativeIntent);
 
             using HttpResponseMessage sceneCardResponse =
                 await Http.PutAsJsonAsync($"api/scenes/{existing.Id}/scene-card", payload);
@@ -1696,7 +1724,9 @@
                     Array.Empty<SceneCardReferenceDto>(),
                     sourceCard.Summary,
                     sourceCard.Status,
-                    sourceCard.SubplotTags ?? Array.Empty<string>());
+                    sourceCard.SubplotTags ?? Array.Empty<string>(),
+                    sourceCard.NarrativeRole,
+                    sourceCard.NarrativeIntent);
 
                 using HttpResponseMessage sceneCardResponse =
                     await Http.PutAsJsonAsync($"api/scenes/{duplicatedNode.Id}/scene-card", sceneCardPayload);
@@ -2041,6 +2071,8 @@
                 "Draft",
                 null,
                 Array.Empty<string>(),
+                null,
+                null,
                 null));
         }
         catch (Exception ex)
@@ -2075,7 +2107,9 @@
                 string.IsNullOrWhiteSpace(suggestion.Status) ? "Draft" : suggestion.Status.Trim(),
                 suggestion.PovCharacterId,
                 suggestion.SubplotTags ?? Array.Empty<string>(),
-                suggestion.NarrativePurpose);
+                suggestion.NarrativePurpose,
+                suggestion.NarrativeRole,
+                suggestion.NarrativeIntent);
 
             return await CreateSceneInChapterAsync(chapterId.Value, seed);
         }
@@ -2157,7 +2191,9 @@
             status: seed.Status,
             pov: seed.PovCharacterId,
             subplotTags: seed.SubplotTags,
-            narrativePurpose: seed.NarrativePurpose);
+            narrativePurpose: seed.NarrativePurpose,
+            narrativeRole: seed.NarrativeRole,
+            narrativeIntent: seed.NarrativeIntent);
 
         ProjectNodeCreateRequest request = new(
             chapterId,
@@ -2200,7 +2236,9 @@
             Array.Empty<SceneCardReferenceDto>(),
             seed.Summary,
             seed.Status,
-            seed.SubplotTags);
+            seed.SubplotTags,
+            seed.NarrativeRole,
+            seed.NarrativeIntent);
 
         using HttpResponseMessage sceneCardResponse =
             await Http.PutAsJsonAsync($"api/scenes/{createdNode.Id}/scene-card", payload);
@@ -2280,7 +2318,7 @@
         int incompleteScenes = columns.Sum(column => column.Scenes.Count(scene =>
             string.IsNullOrWhiteSpace(scene.Summary)
             || string.IsNullOrWhiteSpace(scene.Pov)
-            || string.IsNullOrWhiteSpace(scene.NarrativePurpose)));
+            || string.IsNullOrWhiteSpace(scene.NarrativeRole)));
         double averageScenes = totalChapters == 0 ? 0 : (double)totalScenes / totalChapters;
         List<string> observations = new();
         List<string> insights = new();
@@ -2327,7 +2365,7 @@
 
         if (incompleteScenes > 0)
         {
-            suggestions.Add($"Add summary, POV, or narrative purpose to the {incompleteScenes} incomplete scene{(incompleteScenes == 1 ? string.Empty : "s")} to make the board easier to scan.");
+            suggestions.Add($"Add summary, POV, or narrative role to the {incompleteScenes} incomplete scene{(incompleteScenes == 1 ? string.Empty : "s")} to make the board easier to scan.");
         }
 
         if (columns.Any(column => column.Scenes.Count == 0))
@@ -2379,6 +2417,8 @@
         public string? Pov => Metadata.Pov;
         public IReadOnlyList<string> SubplotTags => Metadata.SubplotTags;
         public string? NarrativePurpose => Metadata.NarrativePurpose;
+        public string? NarrativeRole => Metadata.NarrativeRole;
+        public string? NarrativeIntent => Metadata.NarrativeIntent;
         public bool HasNotes => Metadata.HasNotes;
         public DateTimeOffset UpdatedUtc => Metadata.UpdatedUtc;
     }
@@ -2389,6 +2429,8 @@
         string? Pov,
         IReadOnlyList<string> SubplotTags,
         string? NarrativePurpose,
+        string? NarrativeRole,
+        string? NarrativeIntent,
         bool HasNotes,
         DateTimeOffset UpdatedUtc);
 
@@ -2407,7 +2449,9 @@
         string Status,
         string? PovCharacterId,
         IReadOnlyList<string> SubplotTags,
-        string? NarrativePurpose);
+        string? NarrativePurpose,
+        string? NarrativeRole,
+        string? NarrativeIntent);
 
     private static bool IsDraftStatus(string? status)
     {
@@ -2442,6 +2486,13 @@
     private static string? NormalizeOptionalValue(string? value)
     {
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private static string? NormalizeNarrativeRole(string? value)
+    {
+        return SceneNarrativeRoleCatalog.TryNormalize(value, out string? normalizedRole)
+            ? normalizedRole
+            : null;
     }
 
     private static IReadOnlyList<string> NormalizeTags(IReadOnlyList<string>? tags)
@@ -2487,6 +2538,8 @@
         string? pov = null,
         IReadOnlyList<string>? subplotTags = null,
         string? narrativePurpose = null,
+        string? narrativeRole = null,
+        string? narrativeIntent = null,
         string? notesText = null)
     {
         JsonObject root = ParseMetadata(metadataJson);
@@ -2514,6 +2567,16 @@
         if (narrativePurpose is not null)
         {
             SetString(root, "narrativePurpose", narrativePurpose);
+        }
+
+        if (narrativeRole is not null)
+        {
+            SetString(root, "narrativeRole", narrativeRole);
+        }
+
+        if (narrativeIntent is not null)
+        {
+            SetString(root, "narrativeIntent", narrativeIntent);
         }
 
         if (notesText is not null)

@@ -11,6 +11,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using WriterApp.AI.Abstractions;
+using WriterApp.Application.Documents;
 
 namespace WriterApp.AI.Providers.OpenAI
 {
@@ -1490,6 +1491,8 @@ namespace WriterApp.AI.Providers.OpenAI
             string sectionTitle = GetInputValue(request, "section_title", string.Empty);
             string sectionText = GetInputValue(request, "section_text", string.Empty);
             string narrativePurpose = GetInputValue(request, "narrative_purpose", string.Empty);
+            string narrativeRole = GetInputValue(request, "narrative_role", string.Empty);
+            string narrativeIntent = GetInputValue(request, "narrative_intent", string.Empty);
             string emotionalBeat = GetInputValue(request, "emotional_beat", string.Empty);
             string keyEvents = GetInputValue(request, "key_events", string.Empty);
             string openQuestions = GetInputValue(request, "open_questions", string.Empty);
@@ -1503,8 +1506,10 @@ namespace WriterApp.AI.Providers.OpenAI
             string systemPrompt = "You are a story editor. Return JSON only.";
             StringBuilder userPrompt = new();
             userPrompt.AppendLine("Produce a JSON object with keys:");
-            userPrompt.AppendLine("narrativePurpose, emotionalBeat, keyEvents, openQuestions, povCharacterId, placeId, timelineEventId, timeRef, tags, references, explanation.");
+            userPrompt.AppendLine("narrativeRole, narrativeIntent, emotionalBeat, keyEvents, openQuestions, povCharacterId, placeId, timelineEventId, timeRef, tags, references, explanation.");
             userPrompt.AppendLine("Use concise, readable sentences. Keep user intent.");
+            userPrompt.AppendLine($"narrativeRole must be exactly one of: {string.Join(", ", SceneNarrativeRoleCatalog.Values)}.");
+            userPrompt.AppendLine("narrativeIntent should be a concise 1 sentence explanation of what the scene is trying to accomplish emotionally or dramatically.");
             userPrompt.AppendLine("Return tags as a JSON array of short strings.");
             userPrompt.AppendLine("Always include all keys. Use empty string for unknown string fields and [] for tags/references.");
             userPrompt.AppendLine("references must be a JSON array of objects: {\"kind\":\"...\",\"targetId\":\"...\",\"note\":\"...\"}.");
@@ -1519,7 +1524,9 @@ namespace WriterApp.AI.Providers.OpenAI
                 userPrompt.AppendLine(sectionText);
             }
             userPrompt.AppendLine("Existing scene card fields:");
-            userPrompt.AppendLine($"Narrative purpose: {narrativePurpose}");
+            userPrompt.AppendLine($"Legacy narrative purpose: {narrativePurpose}");
+            userPrompt.AppendLine($"Narrative role: {narrativeRole}");
+            userPrompt.AppendLine($"Narrative intent: {narrativeIntent}");
             userPrompt.AppendLine($"Emotional beat: {emotionalBeat}");
             userPrompt.AppendLine($"Key events: {keyEvents}");
             userPrompt.AppendLine($"Open questions: {openQuestions}");
@@ -1591,11 +1598,12 @@ namespace WriterApp.AI.Providers.OpenAI
             StringBuilder userPrompt = new();
             userPrompt.AppendLine("Suggest exactly one strong next scene for the storyboard.");
             userPrompt.AppendLine("Return a JSON object with keys:");
-            userPrompt.AppendLine("title, summary, narrativePurpose, povCharacterId, subplotTags, rationale.");
+            userPrompt.AppendLine("title, summary, narrativeRole, narrativeIntent, povCharacterId, subplotTags, rationale.");
             userPrompt.AppendLine("Rules:");
             userPrompt.AppendLine("- Keep title concise and specific.");
             userPrompt.AppendLine("- Keep summary to 1-2 sentences.");
-            userPrompt.AppendLine("- narrativePurpose should be a short structural label such as Setup, Conflict, Escalation, Revelation, Decision, Climax, or Aftermath.");
+            userPrompt.AppendLine($"- narrativeRole must be exactly one of: {string.Join(", ", SceneNarrativeRoleCatalog.Values)}.");
+            userPrompt.AppendLine("- narrativeIntent should be one concise sentence explaining what the scene is trying to accomplish emotionally or dramatically.");
             userPrompt.AppendLine("- subplotTags must be a JSON array of short strings.");
             userPrompt.AppendLine("- rationale should briefly explain why this is the strongest next scene now.");
             userPrompt.AppendLine("- Return JSON only, with no prose outside the object.");
@@ -1624,12 +1632,14 @@ namespace WriterApp.AI.Providers.OpenAI
             userPrompt.AppendLine("Analyze the storyboard for likely missing narrative steps, weak transitions, abrupt jumps, or neglected subplot continuity.");
             userPrompt.AppendLine("Return a JSON object with a top-level key: suggestions.");
             userPrompt.AppendLine("suggestions must be an array of objects with keys:");
-            userPrompt.AppendLine("title, summary, narrativePurpose, suggestedChapterPlacement, rationale, subplotTags.");
+            userPrompt.AppendLine("title, summary, narrativeRole, narrativeIntent, suggestedChapterPlacement, rationale, subplotTags.");
             userPrompt.AppendLine("Rules:");
             userPrompt.AppendLine("- Treat results as suggestions, not certainties.");
             userPrompt.AppendLine("- Prefer 2 to 4 high-value missing scenes.");
             userPrompt.AppendLine("- suggestedChapterPlacement should name the best-fit chapter title.");
             userPrompt.AppendLine("- summary should be short and practical.");
+            userPrompt.AppendLine($"- narrativeRole must be exactly one of: {string.Join(", ", SceneNarrativeRoleCatalog.Values)}.");
+            userPrompt.AppendLine("- narrativeIntent should be one concise sentence explaining what the scene is trying to accomplish emotionally or dramatically.");
             userPrompt.AppendLine("- subplotTags must be a JSON array of short strings.");
             userPrompt.AppendLine("- Return JSON only, with no prose outside the object.");
             if (!string.IsNullOrWhiteSpace(preferredChapterTitle))
@@ -1673,7 +1683,7 @@ namespace WriterApp.AI.Providers.OpenAI
 
             string systemPrompt = "You are a story structure editor. Return JSON only.";
             StringBuilder userPrompt = new();
-            userPrompt.AppendLine("Analyze POV balance across the storyboard using chapter order, scene order, POV assignment, and narrative purpose.");
+            userPrompt.AppendLine("Analyze POV balance across the storyboard using chapter order, scene order, POV assignment, and narrative role.");
             userPrompt.AppendLine("Return a JSON object with a top-level key: findings.");
             userPrompt.AppendLine("findings must be an array of objects with keys:");
             userPrompt.AppendLine("title, explanation, affectedPov, affectedChapters, affectedScenes, suggestion.");
@@ -1696,6 +1706,8 @@ namespace WriterApp.AI.Providers.OpenAI
             string sectionTitle = GetInputValue(request, "section_title", string.Empty);
             string recentContext = GetInputValue(request, "recent_context", string.Empty);
             string narrativePurpose = GetInputValue(request, "narrative_purpose", string.Empty);
+            string narrativeRole = GetInputValue(request, "narrative_role", string.Empty);
+            string narrativeIntent = GetInputValue(request, "narrative_intent", string.Empty);
             string emotionalBeat = GetInputValue(request, "emotional_beat", string.Empty);
             string keyEvents = GetInputValue(request, "key_events", string.Empty);
             string openQuestions = GetInputValue(request, "open_questions", string.Empty);
@@ -1722,7 +1734,9 @@ namespace WriterApp.AI.Providers.OpenAI
             }
 
             userPrompt.AppendLine("Scene metadata:");
-            userPrompt.AppendLine($"Narrative purpose: {narrativePurpose}");
+            userPrompt.AppendLine($"Legacy narrative purpose: {narrativePurpose}");
+            userPrompt.AppendLine($"Narrative role: {narrativeRole}");
+            userPrompt.AppendLine($"Narrative intent: {narrativeIntent}");
             userPrompt.AppendLine($"Emotional beat: {emotionalBeat}");
             userPrompt.AppendLine($"Key events: {keyEvents}");
             userPrompt.AppendLine($"Open questions: {openQuestions}");

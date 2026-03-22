@@ -59,7 +59,20 @@ export function toggleBlockquote(editor: any) {
     return;
   }
 
-  editor.chain().focus().toggleBlockquote().run();
+  const currentSelection = editor.state?.selection;
+  const storedSelection = editor.__writerLastSelectionDocRange;
+  const selectionToRestore = currentSelection && !currentSelection.empty
+    ? { from: currentSelection.from, to: currentSelection.to }
+    : storedSelection && Number.isFinite(storedSelection.from) && Number.isFinite(storedSelection.to) && storedSelection.to > storedSelection.from
+      ? { from: storedSelection.from, to: storedSelection.to }
+      : null;
+
+  let chain = editor.chain().focus();
+  if (selectionToRestore) {
+    chain = chain.setTextSelection(selectionToRestore);
+  }
+
+  chain.toggleBlockquote().run();
 }
 
 export function insertHorizontalRule(editor: any) {

@@ -82,7 +82,8 @@ public sealed class SearchIndexService : ISearchIndexService, ISearchIndexBackfi
             {
                 card.Summary,
                 card.Status,
-                card.NarrativePurpose,
+                card.NarrativeRole,
+                card.NarrativeIntent,
                 card.EmotionalBeat,
                 card.KeyEvents,
                 card.OpenQuestions

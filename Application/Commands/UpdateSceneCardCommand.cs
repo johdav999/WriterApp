@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using WriterApp.Data;
 using WriterApp.Data.Documents;
+using WriterApp.Application.Documents;
 
 namespace WriterApp.Application.Commands
 {
@@ -55,25 +56,46 @@ namespace WriterApp.Application.Commands
                 dbContext.SectionSceneCards.Add(record);
             }
 
-            record.NarrativePurpose = state.NarrativePurpose ?? string.Empty;
-            record.EmotionalBeat = state.EmotionalBeat ?? string.Empty;
-            record.KeyEvents = state.KeyEvents ?? string.Empty;
-            record.OpenQuestions = state.OpenQuestions ?? string.Empty;
-            record.Summary = state.Summary;
+            string? normalizedRole = SceneNarrativeRoleCatalog.NormalizeOptional(state.NarrativeRole);
+            string? normalizedIntent = SceneCardAiTextNormalizer.NormalizeAiText(state.NarrativeIntent);
+            if (normalizedRole is null && normalizedIntent is null)
+            {
+                (normalizedRole, normalizedIntent) = ResolveLegacyNarrativeFields(state.NarrativePurpose);
+            }
+
+            record.NarrativeRole = normalizedRole;
+            record.NarrativeIntent = normalizedIntent;
+            record.NarrativePurpose = SceneNarrativeRoleCatalog.ToLegacyPurpose(normalizedRole, normalizedIntent) ?? string.Empty;
+            record.EmotionalBeat = SceneCardAiTextNormalizer.NormalizeAiText(state.EmotionalBeat) ?? string.Empty;
+            record.KeyEvents = SceneCardAiTextNormalizer.NormalizeAiText(state.KeyEvents) ?? string.Empty;
+            record.OpenQuestions = SceneCardAiTextNormalizer.NormalizeAiText(state.OpenQuestions) ?? string.Empty;
+            record.Summary = SceneCardAiTextNormalizer.NormalizeAiText(state.Summary);
             record.Status = state.Status ?? "Draft";
-            record.PovCharacterId = state.PovCharacterId;
-            record.PlaceId = state.PlaceId;
-            record.TimelineEventId = state.TimelineEventId;
-            record.TimeRef = state.TimeRef;
+            record.PovCharacterId = SceneCardAiTextNormalizer.NormalizeAiText(state.PovCharacterId);
+            record.PlaceId = SceneCardAiTextNormalizer.NormalizeAiText(state.PlaceId);
+            record.TimelineEventId = SceneCardAiTextNormalizer.NormalizeAiText(state.TimelineEventId);
+            record.TimeRef = SceneCardAiTextNormalizer.NormalizeAiText(state.TimeRef);
             record.TagsJson = state.TagsJson;
             record.SubplotTagsJson = state.SubplotTagsJson;
             record.ReferencesJson = state.ReferencesJson;
             record.UpdatedUtc = DateTimeOffset.UtcNow;
         }
 
+        private static (string? NarrativeRole, string? NarrativeIntent) ResolveLegacyNarrativeFields(string? legacyNarrativePurpose)
+        {
+            if (SceneNarrativeRoleCatalog.TryNormalize(legacyNarrativePurpose, out string? normalizedRole))
+            {
+                return (normalizedRole, null);
+            }
+
+            return (null, SceneCardAiTextNormalizer.NormalizeAiText(legacyNarrativePurpose));
+        }
+
         public sealed class SceneCardState
         {
             public string? NarrativePurpose { get; set; }
+            public string? NarrativeRole { get; set; }
+            public string? NarrativeIntent { get; set; }
             public string? EmotionalBeat { get; set; }
             public string? KeyEvents { get; set; }
             public string? OpenQuestions { get; set; }

@@ -20,6 +20,8 @@
 @inject WriterApp.Client.State.CurrentDocumentStateService CurrentDocumentStateService
 @inject WriterApp.Client.State.CurrentSceneStateService CurrentSceneStateService
 @inject WriterApp.Client.State.CurrentProjectStateService CurrentProjectStateService
+@inject WriterApp.Client.State.ProjectStructureCacheService ProjectStructureCacheService
+@inject WriterApp.Client.State.ProjectProgressCacheService ProjectProgressCacheService
 @inject WriterApp.Client.Services.CoachRecommendationService CoachRecommendationService
 @inject FeatureAccessService FeatureAccessService
 @implements IAsyncDisposable
@@ -62,7 +64,7 @@
                                  IsActionDisabled="@(!CanAddSelectedNodeType())"
                                  LockedTitle="@ProjectStructureLockedMessage"
                                  OnClick="AddSelectedNodeTypeAsync">
-                    Add
+                    @GetAddActionButtonLabel()
                 </PlanGatedButton>
                 @if (_outlineTemplatesEnabled)
                 {
@@ -73,6 +75,7 @@
                         Templates...
                     </PlanGatedButton>
                 }
+                <span class="tree-actions-hint">@GetAddActionContextHint()</span>
             </div>
             <ul class="tree-list">
                 @foreach (ProjectNodeDto root in GetChildren(null))
@@ -253,7 +256,7 @@ else
                             <a class="link-button" href="@FeatureAccessService.GetUpgradePath()">Upgrade</a>
                         </div>
                     }
-                    else if (_progress is null)
+                    else if (_isProgressLoading || _progress is null)
                     {
                         <div class="projects-loading">Loading progress...</div>
                     }
@@ -421,7 +424,7 @@ else
                                              IsActionDisabled="@(!CanAddSelectedNodeType())"
                                              LockedTitle="@ProjectStructureLockedMessage"
                                              OnClick="AddSelectedNodeTypeAsync">
-                                Add
+                                @GetAddActionButtonLabel()
                             </PlanGatedButton>
                             @if (_outlineTemplatesEnabled)
                             {
@@ -432,6 +435,7 @@ else
                                     Templates...
                                 </PlanGatedButton>
                             }
+                            <span class="tree-actions-hint">@GetAddActionContextHint()</span>
                         </div>
                         <ul class="tree-list">
                             @foreach (ProjectNodeDto root in GetChildren(null))
@@ -507,7 +511,7 @@ else
                                                      Class="secondary"
                                                      OnClick="() => AddSceneUnderAsync(_selectedNode.Id)"
                                                      LockedTitle="@ProjectStructureLockedMessage">
-                                        Add scene under chapter
+                                        @GetSceneActionLabel(_selectedNode)
                                     </PlanGatedButton>
                                 }
                                 @if (IsScene(_selectedNode))
@@ -565,7 +569,7 @@ else
                                  LockedTitle="@ProjectStructureLockedMessage"
                                  ShowLockIndicator="false"
                                  OnClick="OnNodeMenuAddChapterAsync">
-                    Add chapter
+                    @GetChapterActionLabel(OpenNodeMenuNode)
                 </PlanGatedButton>
             }
             else if (IsChapter(OpenNodeMenuNode))
@@ -576,7 +580,7 @@ else
                                  LockedTitle="@ProjectStructureLockedMessage"
                                  ShowLockIndicator="false"
                                  OnClick="OnNodeMenuAddSceneAsync">
-                    Add scene
+                    @GetSceneActionLabel(OpenNodeMenuNode)
                 </PlanGatedButton>
             }
             else if (IsScene(OpenNodeMenuNode))
@@ -725,6 +729,8 @@ else
     private readonly List<OutlineTemplateDto> _outlineTemplates = new();
     private ProjectDto? _activeProject;
     private ProjectProgressDashboardDto? _progress;
+    private Guid? _progressProjectId;
+    private bool _isProgressLoading;
     private Guid? _selectedProjectId;
     private Guid? _selectedNodeId;
     private Guid? _selectedOutlineTemplateId;
@@ -840,9 +846,9 @@ else
         bool tabChanged = !string.Equals(_activeTab, requestedTab, StringComparison.Ordinal);
         _activeTab = requestedTab;
 
-        if (tabChanged && _activeTab == "progress" && _goalsEnabled && _activeProject is not null)
+        if (tabChanged && _activeProject is not null)
         {
-            await LoadProgressAsync(_activeProject.Id);
+            await OnProgressVisibilityChangedAsync();
         }
 
         ApplyRequestedNodeSelection();
@@ -859,28 +865,42 @@ else
         }
     }
 
-    private async Task LoadProjectsAsync()
+    private async Task LoadProjectsAsync(bool forceRefresh = false)
     {
         _loading = true;
         _error = null;
         try
         {
-            using HttpResponseMessage response = await Http.GetAsync("api/projects");
-            if (response.StatusCode == HttpStatusCode.NotFound)
+            IReadOnlyList<ProjectDto> projects;
+            if (!forceRefresh && ProjectStructureCacheService.TryGetProjects(out IReadOnlyList<ProjectDto> cachedProjects))
             {
-                _projectsEnabled = false;
-                return;
+                Logger.LogDebug("Navigator project list loaded from cache. Count={Count}", cachedProjects.Count);
+                projects = cachedProjects;
+            }
+            else
+            {
+                using HttpResponseMessage response = await Http.GetAsync("api/projects");
+                if (response.StatusCode == HttpStatusCode.NotFound)
+                {
+                    _projectsEnabled = false;
+                    ProjectStructureCacheService.InvalidateProjects("projects-disabled");
+                    return;
+                }
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    _error = await ReadApiErrorMessageAsync(response, "Failed to load projects.");
+                    return;
+                }
+
+                List<ProjectDto>? apiProjects = await response.Content.ReadFromJsonAsync<List<ProjectDto>>();
+                projects = (apiProjects ?? new List<ProjectDto>()).OrderByDescending(project => project.UpdatedUtc).ToArray();
+                ProjectStructureCacheService.SetProjects(projects);
+                Logger.LogDebug("Navigator project list loaded from API. Count={Count}", projects.Count);
             }
 
-            if (!response.IsSuccessStatusCode)
-            {
-                _error = await ReadApiErrorMessageAsync(response, "Failed to load projects.");
-                return;
-            }
-
-            List<ProjectDto>? projects = await response.Content.ReadFromJsonAsync<List<ProjectDto>>();
             _projects.Clear();
-            _projects.AddRange((projects ?? new List<ProjectDto>()).OrderByDescending(project => project.UpdatedUtc));
+            _projects.AddRange(projects);
 
             if (_projects.Count > 0)
             {
@@ -897,7 +917,7 @@ else
                 _activeProject = null;
                 _nodes.Clear();
                 _selectedNodeId = null;
-                _progress = null;
+                ClearProgressState();
                 RestartSessionTicker();
             }
         }
@@ -911,21 +931,55 @@ else
         }
     }
 
-    private async Task LoadTreeAsync(Guid projectId, bool includeProgress = true)
+    private async Task LoadTreeAsync(Guid projectId, bool includeProgress = true, bool forceRefresh = false)
     {
         _error = null;
-        using HttpResponseMessage response = await Http.GetAsync($"api/projects/{projectId}/tree");
-        if (!response.IsSuccessStatusCode)
+        ProjectTreeDto tree;
+        if (!forceRefresh && ProjectStructureCacheService.TryGetProjectTree(projectId, out ProjectTreeDto cachedTree))
         {
-            _error = await ReadApiErrorMessageAsync(response, "Failed to load project tree.");
-            return;
+            Logger.LogDebug("Navigator tree loaded from cache. ProjectId={ProjectId} NodeCount={NodeCount}", projectId, cachedTree.Nodes.Count);
+            tree = cachedTree;
+        }
+        else
+        {
+            if (forceRefresh)
+            {
+                Logger.LogDebug("ProjectStructureCache force refresh ProjectId={ProjectId} Reason={Reason}", projectId, "tree-reload");
+            }
+
+            using HttpResponseMessage response = await Http.GetAsync($"api/projects/{projectId}/tree");
+            if (!response.IsSuccessStatusCode)
+            {
+                _error = await ReadApiErrorMessageAsync(response, "Failed to load project tree.");
+                return;
+            }
+
+            ProjectTreeDto? apiTree = await response.Content.ReadFromJsonAsync<ProjectTreeDto>();
+            if (apiTree is null)
+            {
+                _error = "Failed to load project tree.";
+                return;
+            }
+
+            tree = apiTree;
+            ProjectStructureCacheService.SetProjectTree(tree);
+            Logger.LogDebug("Navigator tree loaded from API. ProjectId={ProjectId} NodeCount={NodeCount}", projectId, tree.Nodes.Count);
         }
 
-        ProjectTreeDto? tree = await response.Content.ReadFromJsonAsync<ProjectTreeDto>();
-        if (tree is null)
+        ApplyTree(tree);
+
+        if (includeProgress)
         {
-            _error = "Failed to load project tree.";
-            return;
+            await OnProgressVisibilityChangedAsync();
+        }
+    }
+
+    private void ApplyTree(ProjectTreeDto tree)
+    {
+        if (_progressProjectId.HasValue && _progressProjectId.Value != tree.Project.Id)
+        {
+            ProjectProgressCacheService.InvalidateProject(_progressProjectId.Value, "project-switch");
+            ClearProgressState();
         }
 
         _activeProject = tree.Project;
@@ -952,18 +1006,6 @@ else
         SyncInspectorRenameDraft();
 
         SyncCurrentSceneSelectionState();
-
-        if (includeProgress && _goalsEnabled)
-        {
-            try
-            {
-                await LoadProgressAsync(projectId);
-            }
-            catch (Exception ex)
-            {
-                Logger.LogWarning(ex, "Project progress refresh failed after loading tree. ProjectId={ProjectId}", projectId);
-            }
-        }
     }
 
     private IEnumerable<ProjectNodeDto> GetChildren(Guid? parentId)
@@ -981,10 +1023,7 @@ else
     private async Task SelectTab(string tab)
     {
         _activeTab = NormalizeTab(tab);
-        if (_activeTab == "progress" && _goalsEnabled && _activeProject is not null)
-        {
-            await LoadProgressAsync(_activeProject.Id);
-        }
+        await OnProgressVisibilityChangedAsync();
     }
 
     private Task OpenStoryboardAsync()
@@ -1054,24 +1093,80 @@ else
         return "structure";
     }
 
-    private async Task LoadProgressAsync(Guid projectId)
+    private bool ShouldShowProgressUi()
+    {
+        return !EmbedNavigator
+            && _goalsEnabled
+            && string.Equals(_activeTab, "progress", StringComparison.Ordinal);
+    }
+
+    private async Task OnProgressVisibilityChangedAsync()
+    {
+        if (!ShouldShowProgressUi())
+        {
+            RestartSessionTicker();
+            return;
+        }
+
+        if (_activeProject is null)
+        {
+            ClearProgressState();
+            RestartSessionTicker();
+            return;
+        }
+
+        await LoadProgressAsync(_activeProject.Id, reason: "progress-tab-visible");
+    }
+
+    private void ClearProgressState()
+    {
+        _progress = null;
+        _progressProjectId = null;
+        _isProgressLoading = false;
+    }
+
+    private async Task LoadProgressAsync(Guid projectId, bool forceRefresh = false, string reason = "visible-load")
     {
         _error = null;
+        if (!forceRefresh && _progressProjectId == projectId && _progress is not null)
+        {
+            Logger.LogDebug("Project progress already loaded. ProjectId={ProjectId} Reason={Reason}", projectId, reason);
+            return;
+        }
+
+        if (!forceRefresh && ProjectProgressCacheService.TryGetFresh(projectId, out ProjectProgressDashboardDto cachedProgress))
+        {
+            Logger.LogInformation("Project progress cache hit. ProjectId={ProjectId} Reason={Reason}", projectId, reason);
+            _progress = cachedProgress;
+            _progressProjectId = projectId;
+            _dailyTargetDraft = _progress.Goal.DailyTargetWords;
+            _weeklyTargetDraft = _progress.Goal.WeeklyTargetWords;
+            _timezoneDraft = string.IsNullOrWhiteSpace(_progress.Goal.Timezone) ? "UTC" : _progress.Goal.Timezone;
+            UpdateSessionTelemetry();
+            RestartSessionTicker();
+            return;
+        }
+
+        _isProgressLoading = true;
         try
         {
+            Logger.LogInformation("Project progress fetch. ProjectId={ProjectId} Reason={Reason}", projectId, reason);
             using HttpResponseMessage response = await Http.GetAsync($"api/projects/{projectId}/progress");
             if (!response.IsSuccessStatusCode)
             {
-                _progress = null;
+                ClearProgressState();
                 return;
             }
 
             _progress = await response.Content.ReadFromJsonAsync<ProjectProgressDashboardDto>();
             if (_progress is null)
             {
+                ClearProgressState();
                 return;
             }
 
+            _progressProjectId = projectId;
+            ProjectProgressCacheService.Set(projectId, _progress);
             _dailyTargetDraft = _progress.Goal.DailyTargetWords;
             _weeklyTargetDraft = _progress.Goal.WeeklyTargetWords;
             _timezoneDraft = string.IsNullOrWhiteSpace(_progress.Goal.Timezone) ? "UTC" : _progress.Goal.Timezone;
@@ -1081,8 +1176,12 @@ else
         catch (Exception ex)
         {
             Logger.LogWarning(ex, "Failed to load project progress. ProjectId={ProjectId}", projectId);
-            _progress = null;
+            ClearProgressState();
             return;
+        }
+        finally
+        {
+            _isProgressLoading = false;
         }
     }
 
@@ -1107,7 +1206,8 @@ else
             return;
         }
 
-        await LoadProgressAsync(_activeProject.Id);
+        ProjectProgressCacheService.InvalidateProject(_activeProject.Id, "goals-saved");
+        await LoadProgressAsync(_activeProject.Id, forceRefresh: true, reason: "goals-saved");
     }
 
     private async Task CreateMilestoneAsync()
@@ -1132,7 +1232,8 @@ else
 
         _milestoneTitleDraft = string.Empty;
         _milestoneTargetWordsDraft = null;
-        await LoadProgressAsync(_activeProject.Id);
+        ProjectProgressCacheService.InvalidateProject(_activeProject.Id, "milestone-created");
+        await LoadProgressAsync(_activeProject.Id, forceRefresh: true, reason: "milestone-created");
     }
 
     private async Task CompleteMilestoneAsync(Guid milestoneId)
@@ -1152,7 +1253,8 @@ else
             return;
         }
 
-        await LoadProgressAsync(_activeProject.Id);
+        ProjectProgressCacheService.InvalidateProject(_activeProject.Id, "milestone-completed");
+        await LoadProgressAsync(_activeProject.Id, forceRefresh: true, reason: "milestone-completed");
     }
 
     private async Task DeleteMilestoneAsync(Guid milestoneId)
@@ -1169,7 +1271,8 @@ else
             return;
         }
 
-        await LoadProgressAsync(_activeProject.Id);
+        ProjectProgressCacheService.InvalidateProject(_activeProject.Id, "milestone-deleted");
+        await LoadProgressAsync(_activeProject.Id, forceRefresh: true, reason: "milestone-deleted");
     }
 
     private async Task StartSessionAsync()
@@ -1187,7 +1290,8 @@ else
         }
 
         _sessionNotesDraft = string.Empty;
-        await LoadProgressAsync(_activeProject.Id);
+        ProjectProgressCacheService.InvalidateProject(_activeProject.Id, "session-started");
+        await LoadProgressAsync(_activeProject.Id, forceRefresh: true, reason: "session-started");
     }
 
     private async Task StopSessionAsync()
@@ -1208,7 +1312,8 @@ else
         }
 
         _sessionNotesDraft = string.Empty;
-        await LoadProgressAsync(_activeProject.Id);
+        ProjectProgressCacheService.InvalidateProject(_activeProject.Id, "session-stopped");
+        await LoadProgressAsync(_activeProject.Id, forceRefresh: true, reason: "session-stopped");
     }
 
     private void RestartSessionTicker()
@@ -1217,7 +1322,7 @@ else
         _sessionTickerCts?.Dispose();
         _sessionTickerCts = null;
 
-        if (_progress?.ActiveSession is null)
+        if (!ShouldShowProgressUi() || _progress?.ActiveSession is null)
         {
             _sessionElapsedSeconds = 0;
             _sessionLiveDelta = 0;
@@ -1257,24 +1362,12 @@ else
 
     private async Task RefreshLiveProgressAsync()
     {
-        if (_activeProject is null || _progress?.ActiveSession is null)
+        if (_activeProject is null || !ShouldShowProgressUi() || _progress?.ActiveSession is null)
         {
             return;
         }
 
-        using HttpResponseMessage response = await Http.GetAsync($"api/projects/{_activeProject.Id}/progress");
-        if (!response.IsSuccessStatusCode)
-        {
-            return;
-        }
-
-        ProjectProgressDashboardDto? latest = await response.Content.ReadFromJsonAsync<ProjectProgressDashboardDto>();
-        if (latest is null)
-        {
-            return;
-        }
-
-        _progress = latest;
+        await LoadProgressAsync(_activeProject.Id, forceRefresh: true, reason: "active-session-poll");
     }
 
     private void UpdateSessionTelemetry()
@@ -1888,6 +1981,14 @@ else
                 TotalWordCount = totalWords,
                 UpdatedUtc = DateTimeOffset.UtcNow
             };
+            int projectIndex = _projects.FindIndex(item => item.Id == _activeProject.Id);
+            if (projectIndex >= 0)
+            {
+                _projects[projectIndex] = _activeProject;
+            }
+            SyncProjectsCache();
+            SyncCurrentStructureCache();
+            ProjectProgressCacheService.InvalidateProject(_activeProject.Id, "structure-mutation");
         }
         catch (Exception ex)
         {
@@ -1904,16 +2005,56 @@ else
 
     private async Task RefreshProjectAsync(Guid projectId)
     {
-        await LoadTreeAsync(projectId);
+        ProjectStructureCacheService.InvalidateProject(projectId, "structure-mutation");
+        ProjectProgressCacheService.InvalidateProject(projectId, "structure-mutation");
+        Logger.LogDebug("ProjectStructureCache force refresh ProjectId={ProjectId} Reason={Reason}", projectId, "structure-mutation");
+        await LoadTreeAsync(projectId, forceRefresh: true);
+        await RefreshProjectsListAsync(projectId, forceRefresh: true);
+    }
 
-        using HttpResponseMessage projectsResponse = await Http.GetAsync("api/projects");
-        if (projectsResponse.IsSuccessStatusCode)
+    private async Task RefreshProjectsListAsync(Guid? preferredProjectId = null, bool forceRefresh = false)
+    {
+        IReadOnlyList<ProjectDto> projects;
+        if (!forceRefresh && ProjectStructureCacheService.TryGetProjects(out IReadOnlyList<ProjectDto> cachedProjects))
         {
-            List<ProjectDto>? projects = await projectsResponse.Content.ReadFromJsonAsync<List<ProjectDto>>();
-            _projects.Clear();
-            _projects.AddRange((projects ?? new List<ProjectDto>()).OrderByDescending(project => project.UpdatedUtc));
-            _activeProject = _projects.FirstOrDefault(project => project.Id == projectId) ?? _activeProject;
+            projects = cachedProjects;
         }
+        else
+        {
+            using HttpResponseMessage response = await Http.GetAsync("api/projects");
+            if (!response.IsSuccessStatusCode)
+            {
+                return;
+            }
+
+            List<ProjectDto>? apiProjects = await response.Content.ReadFromJsonAsync<List<ProjectDto>>();
+            projects = (apiProjects ?? new List<ProjectDto>()).OrderByDescending(project => project.UpdatedUtc).ToArray();
+            ProjectStructureCacheService.SetProjects(projects);
+        }
+
+        _projects.Clear();
+        _projects.AddRange(projects);
+        if (preferredProjectId.HasValue)
+        {
+            _activeProject = _projects.FirstOrDefault(project => project.Id == preferredProjectId.Value) ?? _activeProject;
+        }
+    }
+
+    private void SyncProjectsCache()
+    {
+        ProjectStructureCacheService.SetProjects(_projects);
+    }
+
+    private void SyncCurrentStructureCache()
+    {
+        if (_activeProject is null)
+        {
+            return;
+        }
+
+        ProjectStructureCacheService.SetProjectTree(new ProjectTreeDto(
+            _activeProject,
+            _nodes.OrderBy(node => node.ParentId).ThenBy(node => node.OrderIndex).ToArray()));
     }
 
     private async Task OnProjectSelectionChanged(ChangeEventArgs args)
@@ -2012,6 +2153,8 @@ else
         {
             _projects[projectIndex] = optimistic;
         }
+        SyncProjectsCache();
+        SyncCurrentStructureCache();
 
         try
         {
@@ -2025,6 +2168,8 @@ else
                 {
                     _projects[projectIndex] = snapshot;
                 }
+                SyncProjectsCache();
+                SyncCurrentStructureCache();
 
                 _projectNameStatus = $"Rename failed: {(int)response.StatusCode}";
                 return;
@@ -2033,6 +2178,8 @@ else
             _projectNameOriginal = next;
             _projectNameDraft = next;
             _isProjectNameEditing = false;
+            SyncProjectsCache();
+            SyncCurrentStructureCache();
         }
         catch (Exception ex)
         {
@@ -2042,6 +2189,8 @@ else
             {
                 _projects[projectIndex] = snapshot;
             }
+            SyncProjectsCache();
+            SyncCurrentStructureCache();
 
             _projectNameStatus = $"Rename failed: {ex.Message}";
         }
@@ -2072,7 +2221,8 @@ else
                 return;
             }
 
-            await LoadProjectsAsync();
+            ProjectStructureCacheService.InvalidateProjects("project-created");
+            await LoadProjectsAsync(forceRefresh: true);
             _selectedProjectId = created.Id;
             await LoadTreeAsync(created.Id);
             Navigation.NavigateTo($"projects/{created.Id}", replace: true);
@@ -2113,7 +2263,9 @@ else
                 return;
             }
 
-            await LoadProjectsAsync();
+            ProjectStructureCacheService.InvalidateProjects("project-imported");
+            ProjectStructureCacheService.SetProjectTree(tree);
+            await LoadProjectsAsync(forceRefresh: true);
             _selectedProjectId = tree.Project.Id;
             await LoadTreeAsync(tree.Project.Id);
             Navigation.NavigateTo($"projects/{tree.Project.Id}", replace: true);
@@ -2135,25 +2287,17 @@ else
 
     private async Task AddChapterAsync()
     {
-        Guid? parent = _selectedNode is not null && IsPart(_selectedNode) ? _selectedNode.Id : null;
+        Guid? parent = GetChapterAddParentId();
         await AddNodeInternalAsync(parent, "chapter", "New Chapter");
     }
 
     private async Task AddSceneAsync()
     {
-        if (_selectedNode is null)
+        Guid? parent = GetSceneAddParentId();
+        if (!parent.HasValue)
         {
+            _error = "Select a chapter to add a scene.";
             return;
-        }
-
-        Guid? parent = null;
-        if (IsChapter(_selectedNode))
-        {
-            parent = _selectedNode.Id;
-        }
-        else if (IsScene(_selectedNode))
-        {
-            parent = _selectedNode.ParentId;
         }
 
         await AddNodeInternalAsync(parent, "scene", "New Scene");
@@ -2172,16 +2316,25 @@ else
             return;
         }
 
-        switch (_addNodeType)
+        if (!ProjectNodeHierarchyRules.TryNormalizeNodeType(_addNodeType, out string normalizedType))
         {
-            case "chapter":
+            _error = "Select a valid node type.";
+            return;
+        }
+
+        switch (normalizedType)
+        {
+            case ProjectNodeHierarchyRules.Chapter:
                 await AddChapterAsync();
                 break;
-            case "scene":
+            case ProjectNodeHierarchyRules.Scene:
                 await AddSceneAsync();
                 break;
-            default:
+            case ProjectNodeHierarchyRules.Part:
                 await AddPartAsync();
+                break;
+            default:
+                _error = "This node type cannot be added from the navigator.";
                 break;
         }
     }
@@ -2193,12 +2346,118 @@ else
             return false;
         }
 
-        if (string.Equals(_addNodeType, "scene", StringComparison.OrdinalIgnoreCase))
+        if (!ProjectNodeHierarchyRules.TryNormalizeNodeType(_addNodeType, out string normalizedType))
         {
-            return _selectedNode is not null;
+            return false;
+        }
+
+        if (string.Equals(normalizedType, ProjectNodeHierarchyRules.Scene, StringComparison.Ordinal))
+        {
+            return GetSceneAddParentId().HasValue;
         }
 
         return true;
+    }
+
+    private Guid? GetChapterAddParentId()
+    {
+        return _selectedNode is not null && IsPart(_selectedNode)
+            ? _selectedNode.Id
+            : null;
+    }
+
+    private ProjectNodeDto? GetChapterAddParentNode()
+    {
+        return _selectedNode is not null && IsPart(_selectedNode)
+            ? _selectedNode
+            : null;
+    }
+
+    private ProjectNodeDto? GetSceneAddParentNode()
+    {
+        if (_selectedNode is null)
+        {
+            return null;
+        }
+
+        if (IsChapter(_selectedNode))
+        {
+            return _selectedNode;
+        }
+
+        if (IsScene(_selectedNode) && _selectedNode.ParentId.HasValue)
+        {
+            return _nodes.FirstOrDefault(node => node.Id == _selectedNode.ParentId.Value && IsChapter(node));
+        }
+
+        return null;
+    }
+
+    private Guid? GetSceneAddParentId()
+    {
+        return GetSceneAddParentNode()?.Id;
+    }
+
+    private string GetAddActionButtonLabel()
+    {
+        if (!ProjectNodeHierarchyRules.TryNormalizeNodeType(_addNodeType, out string normalizedType))
+        {
+            return "Add";
+        }
+
+        return normalizedType switch
+        {
+            ProjectNodeHierarchyRules.Part => "Add part at root",
+            ProjectNodeHierarchyRules.Chapter => GetChapterActionLabel(GetChapterAddParentNode()),
+            ProjectNodeHierarchyRules.Scene => GetSceneActionLabel(GetSceneAddParentNode()),
+            _ => "Add"
+        };
+    }
+
+    private string GetChapterActionLabel(ProjectNodeDto? parent)
+    {
+        return parent is null
+            ? "Add chapter at root"
+            : $"Add chapter under {GetDisplayNodeTitle(parent.Title, parent.NodeType)}";
+    }
+
+    private string GetSceneActionLabel(ProjectNodeDto? chapter)
+    {
+        return chapter is null
+            ? "Add scene"
+            : $"Add scene under {GetDisplayNodeTitle(chapter.Title, chapter.NodeType)}";
+    }
+
+    private string GetAddActionContextHint()
+    {
+        if (!ProjectNodeHierarchyRules.TryNormalizeNodeType(_addNodeType, out string normalizedType))
+        {
+            return "Select a valid node type.";
+        }
+
+        if (string.Equals(normalizedType, ProjectNodeHierarchyRules.Part, StringComparison.Ordinal))
+        {
+            return "Part will be added at the project root.";
+        }
+
+        if (string.Equals(normalizedType, ProjectNodeHierarchyRules.Chapter, StringComparison.Ordinal))
+        {
+            ProjectNodeDto? parent = GetChapterAddParentNode();
+            if (parent is not null)
+            {
+                return $"Chapter will be added under {GetDisplayNodeTitle(parent.Title, parent.NodeType)}.";
+            }
+
+            return "Chapter will be added at the project root.";
+        }
+
+        ProjectNodeDto? chapter = GetSceneAddParentNode();
+        if (chapter is not null)
+        {
+            return $"Scene will be added under {GetDisplayNodeTitle(chapter.Title, chapter.NodeType)}.";
+        }
+
+        return "Select a chapter to add a scene.";
     }
 
     private async Task RefreshOutlineTemplatesAvailabilityAsync()
@@ -2228,7 +2487,11 @@ else
         }
     }
 
-    public async Task RefreshActiveProjectTreeAsync()
+    public async Task RefreshActiveProjectTreeAsync(
+        bool forceRefresh = true,
+        bool invalidateCache = true,
+        bool includeProgress = true,
+        string reason = "manual-refresh")
     {
         if (!_projectsEnabled)
         {
@@ -2241,7 +2504,17 @@ else
             return;
         }
 
-        await LoadTreeAsync(projectId.Value);
+        if (invalidateCache)
+        {
+            ProjectStructureCacheService.InvalidateProjectTree(projectId.Value, reason);
+        }
+
+        if (forceRefresh)
+        {
+            Logger.LogDebug("ProjectStructureCache force refresh ProjectId={ProjectId} Reason={Reason}", projectId.Value, reason);
+        }
+
+        await LoadTreeAsync(projectId.Value, includeProgress: includeProgress, forceRefresh: forceRefresh);
         await InvokeAsync(StateHasChanged);
     }
 
@@ -2456,11 +2729,20 @@ else
 
         int mirrored = 0;
 
-        async Task MirrorSubtreeAsync(DocumentOutlineNodeDto source, Guid? parentProjectNodeId, int depth)
+        ProjectNodeDto? targetParentProjectNode = targetParentProjectNodeId.HasValue
+            ? _nodes.FirstOrDefault(node => node.Id == targetParentProjectNodeId.Value)
+            : null;
+
+        async Task MirrorSubtreeAsync(DocumentOutlineNodeDto source, ProjectNodeDto? parentProjectNode, int depth)
         {
-            string nodeType = InferProjectNodeType(source, depth);
+            if (!TryInferProjectNodeType(source, parentProjectNode, depth, out string nodeType, out string? inferenceError))
+            {
+                _outlineTemplateStatus = inferenceError ?? "Template could not be mirrored into the project structure.";
+                return;
+            }
+
             ProjectNodeDto? created = await CreateProjectNodeFromTemplateAsync(
-                parentProjectNodeId,
+                parentProjectNode?.Id,
                 nodeType,
                 source.Title,
                 source.LinkedSectionId,
@@ -2478,13 +2760,13 @@ else
 
             foreach (DocumentOutlineNodeDto child in children)
             {
-                await MirrorSubtreeAsync(child, created.Id, depth + 1);
+                await MirrorSubtreeAsync(child, created, depth + 1);
             }
         }
 
         foreach (DocumentOutlineNodeDto root in roots)
         {
-            await MirrorSubtreeAsync(root, targetParentProjectNodeId, 0);
+            await MirrorSubtreeAsync(root, targetParentProjectNode, 0);
         }
 
         return mirrored;
@@ -2502,11 +2784,29 @@ else
             return null;
         }
 
+        if (!ProjectNodeHierarchyRules.TryNormalizeNodeType(nodeType, out string normalizedNodeType))
+        {
+            _outlineTemplateStatus = "Template contains an unsupported project node type.";
+            return null;
+        }
+
+        ProjectNodeDto? parent = parentId.HasValue
+            ? _nodes.FirstOrDefault(node => node.Id == parentId.Value)
+            : null;
+        if (!ProjectNodeHierarchyRules.IsPlacementAllowed(normalizedNodeType, parent?.NodeType))
+        {
+            string parentLabel = parent is null
+                ? "the project root"
+                : $"{GetNodeTypeLabel(parent.NodeType)} '{GetDisplayNodeTitle(parent.Title, parent.NodeType)}'";
+            _outlineTemplateStatus = $"{GetNodeTypeLabel(normalizedNodeType)} cannot be created under {parentLabel}.";
+            return null;
+        }
+
         string safeTitle = string.IsNullOrWhiteSpace(title)
-            ? $"New {GetNodeTypeLabel(nodeType)}"
+            ? $"New {GetNodeTypeLabel(normalizedNodeType)}"
             : title.Trim();
 
-        ProjectNodeCreateRequest request = new(parentId, nodeType, safeTitle, null, linkedSectionId, metadataJson);
+        ProjectNodeCreateRequest request = new(parentId, normalizedNodeType, safeTitle, null, linkedSectionId, metadataJson);
         using HttpResponseMessage response = await Http.PostAsJsonAsync($"api/projects/{_activeProject.Id}/nodes", request);
         if (!response.IsSuccessStatusCode)
         {
@@ -2520,40 +2820,88 @@ else
         return await response.Content.ReadFromJsonAsync<ProjectNodeDto>();
     }
 
-    private static string InferProjectNodeType(DocumentOutlineNodeDto node, int depth)
+    private static bool TryInferProjectNodeType(
+        DocumentOutlineNodeDto node,
+        ProjectNodeDto? parentProjectNode,
+        int depth,
+        out string nodeType,
+        out string? error)
     {
+        error = null;
+        string? preferredType = null;
         if (TryGetNodeTypeFromMetadata(node.MetadataJson, out string metadataType))
         {
-            return metadataType;
+            preferredType = metadataType;
+        }
+        else if (node.LinkedSectionId.HasValue)
+        {
+            preferredType = "scene";
+        }
+        else
+        {
+            string title = node.Title?.Trim() ?? string.Empty;
+            if (title.StartsWith("scene", StringComparison.OrdinalIgnoreCase))
+            {
+                preferredType = "scene";
+            }
+            else if (title.StartsWith("chapter", StringComparison.OrdinalIgnoreCase))
+            {
+                preferredType = "chapter";
+            }
+            else if (title.StartsWith("part", StringComparison.OrdinalIgnoreCase))
+            {
+                preferredType = "part";
+            }
         }
 
-        if (node.LinkedSectionId.HasValue)
+        string fallbackType;
+        if (parentProjectNode is not null)
         {
-            return "scene";
+            if (IsPart(parentProjectNode))
+            {
+                fallbackType = "chapter";
+            }
+            else if (IsChapter(parentProjectNode))
+            {
+                fallbackType = "scene";
+            }
+            else
+            {
+                nodeType = string.Empty;
+                error = $"Templates cannot create child nodes under {GetNodeTypeLabel(parentProjectNode.NodeType).ToLowerInvariant()} '{GetDisplayNodeTitle(parentProjectNode.Title, parentProjectNode.NodeType)}'.";
+                return false;
+            }
+        }
+        else
+        {
+            fallbackType = string.Equals(preferredType, "scene", StringComparison.Ordinal)
+                ? "chapter"
+                : depth switch
+                {
+                    <= 0 => "part",
+                    1 => "chapter",
+                    _ => "scene"
+                };
         }
 
-        string title = node.Title?.Trim() ?? string.Empty;
-        if (title.StartsWith("scene", StringComparison.OrdinalIgnoreCase))
+        string candidate = preferredType ?? fallbackType;
+        if (!ProjectNodeHierarchyRules.IsPlacementAllowed(candidate, parentProjectNode?.NodeType))
         {
-            return "scene";
+            candidate = fallbackType;
         }
 
-        if (title.StartsWith("chapter", StringComparison.OrdinalIgnoreCase))
+        if (!ProjectNodeHierarchyRules.IsPlacementAllowed(candidate, parentProjectNode?.NodeType))
         {
-            return "chapter";
+            string parentLabel = parentProjectNode is null
+                ? "the project root"
+                : $"{GetNodeTypeLabel(parentProjectNode.NodeType).ToLowerInvariant()} '{GetDisplayNodeTitle(parentProjectNode.Title, parentProjectNode.NodeType)}'";
+            error = $"{GetNodeTypeLabel(candidate)} cannot be created under {parentLabel}.";
+            nodeType = string.Empty;
+            return false;
         }
 
-        if (title.StartsWith("part", StringComparison.OrdinalIgnoreCase))
-        {
-            return "part";
-        }
-
-        return depth switch
-        {
-            <= 0 => "part",
-            1 => "chapter",
-            _ => "scene"
-        };
+        nodeType = candidate;
+        return true;
     }
 
     private static bool TryGetNodeTypeFromMetadata(string? metadataJson, out string nodeType)
@@ -2682,7 +3030,25 @@ else
             return;
         }
 
-        ProjectNodeCreateRequest request = new(parentId, nodeType, title, null, null, null);
+        if (!ProjectNodeHierarchyRules.TryNormalizeNodeType(nodeType, out string normalizedNodeType))
+        {
+            _error = "Unsupported node type.";
+            return;
+        }
+
+        ProjectNodeDto? parent = parentId.HasValue
+            ? _nodes.FirstOrDefault(node => node.Id == parentId.Value)
+            : null;
+        if (!ProjectNodeHierarchyRules.IsPlacementAllowed(normalizedNodeType, parent?.NodeType))
+        {
+            string parentLabel = parent is null
+                ? "the project root"
+                : $"{GetNodeTypeLabel(parent.NodeType)} '{GetDisplayNodeTitle(parent.Title, parent.NodeType)}'";
+            _error = $"{GetNodeTypeLabel(normalizedNodeType)} cannot be created under {parentLabel}.";
+            return;
+        }
+
+        ProjectNodeCreateRequest request = new(parentId, normalizedNodeType, title, null, null, null);
         using HttpResponseMessage response = await Http.PostAsJsonAsync($"api/projects/{_activeProject.Id}/nodes", request);
         if (!response.IsSuccessStatusCode)
         {
@@ -3047,7 +3413,10 @@ else
             return;
         }
 
-        await LoadTreeAsync(_activeProject.Id, includeProgress: false);
+        ProjectStructureCacheService.InvalidateProjectTree(_activeProject.Id, "storyboard-structure-change");
+        ProjectProgressCacheService.InvalidateProject(_activeProject.Id, "storyboard-structure-change");
+        Logger.LogDebug("ProjectStructureCache force refresh ProjectId={ProjectId} Reason={Reason}", _activeProject.Id, "storyboard-structure-change");
+        await LoadTreeAsync(_activeProject.Id, includeProgress: false, forceRefresh: true);
     }
 
     private async Task OpenManuscriptAsync(Guid projectId)

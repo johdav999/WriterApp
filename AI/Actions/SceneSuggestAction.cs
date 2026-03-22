@@ -66,6 +66,8 @@ namespace WriterApp.AI.Actions
                 ["section_title"] = sectionTitle,
                 ["section_text"] = sectionText,
                 ["narrative_purpose"] = GetOption(input.Options, "narrative_purpose"),
+                ["narrative_role"] = GetOption(input.Options, "narrative_role"),
+                ["narrative_intent"] = GetOption(input.Options, "narrative_intent"),
                 ["emotional_beat"] = GetOption(input.Options, "emotional_beat"),
                 ["key_events"] = GetOption(input.Options, "key_events"),
                 ["open_questions"] = GetOption(input.Options, "open_questions"),

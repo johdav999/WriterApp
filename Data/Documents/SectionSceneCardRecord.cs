@@ -10,6 +10,10 @@ namespace WriterApp.Data.Documents
 
         public string? NarrativePurpose { get; set; }
 
+        public string? NarrativeRole { get; set; }
+
+        public string? NarrativeIntent { get; set; }
+
         public string? EmotionalBeat { get; set; }
 
         public string? KeyEvents { get; set; }

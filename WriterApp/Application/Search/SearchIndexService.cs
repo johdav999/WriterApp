@@ -347,7 +347,8 @@ LIMIT $limit;
                         Title: title,
                         Snippet: snippet,
                         Score: score,
-                        DocumentTitle: documentTitle));
+                        DocumentTitle: documentTitle,
+                        MatchKind: "content"));
                 }
 
                 _logger.LogDebug("Search complete. ResultCount={ResultCount}.", results.Count);

@@ -841,6 +841,7 @@ function buildFormattingState(editor) {
     const fontFamilyResult = getUniformTextStyleAttr(editor, "fontFamily");
     const fontSizeResult = getUniformTextStyleAttr(editor, "fontSize");
     const textAlignResult = getUniformBlockAttr(editor, "textAlign", ["paragraph", "heading"]);
+    const linkAttrs = editor.getAttributes("link") ?? {};
     const isInCodeBlock = selectionHasNodeType(editor, "codeBlock");
     const canBold = editor.can().chain().toggleBold().run();
     const canItalic = editor.can().chain().toggleItalic().run();
@@ -870,6 +871,7 @@ function buildFormattingState(editor) {
         canBlockquote,
         canHorizontalRule,
         isLink: editor.isActive("link"),
+        linkHref: typeof linkAttrs.href === "string" ? linkAttrs.href : "",
         blockType: getBlockType(editor),
         fontFamily: fontFamilyResult.mixed ? null : (fontFamilyResult.value ?? ""),
         fontSize: fontSizeResult.mixed ? null : normalizeFontSize(fontSizeResult.value),

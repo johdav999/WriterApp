@@ -69,6 +69,7 @@ else
     private int _currentPageIndex = 1;
     private string? _lastSearchHighlightQuery;
     private string? _pendingSearchHighlightQuery;
+    private string? _pendingSearchFocusQuery;
     private bool _searchHighlightActive;
     private IReadOnlyList<AiDecorationRange>? _pendingAiDecorations;
     private string? _lastAnnotationsFingerprint;
@@ -280,6 +281,13 @@ else
         {
             await ApplyContentToEditorAsync("afterRender");
         }
+
+        if (!string.IsNullOrWhiteSpace(_pendingSearchFocusQuery))
+        {
+            string pendingQuery = _pendingSearchFocusQuery;
+            _pendingSearchFocusQuery = null;
+            await FocusSearchAsync(pendingQuery);
+        }
     }
 
     private Task OnEditorReady(IJSObjectReference editor)
@@ -293,6 +301,10 @@ else
         _ = SetHeadingNumberingContextAsync();
         _ = ForceHeadingNumberingRebuildAsync("editorReady");
         _ = ApplySearchHighlightAsync(_pendingSearchHighlightQuery ?? SearchHighlightQuery);
+        if (!string.IsNullOrWhiteSpace(_pendingSearchFocusQuery))
+        {
+            _ = FocusSearchAsync(_pendingSearchFocusQuery);
+        }
         _ = ApplyAiDecorationsAsync();
         _ = ApplyAnnotationsAsync();
         _ = ApplyQualityIssuesAsync();
@@ -325,6 +337,12 @@ else
         await SetHeadingNumberingContextAsync();
         await ForceHeadingNumberingRebuildAsync("afterSetContent");
         await ApplySearchHighlightAsync(_pendingSearchHighlightQuery ?? SearchHighlightQuery);
+        if (!string.IsNullOrWhiteSpace(_pendingSearchFocusQuery))
+        {
+            string pendingQuery = _pendingSearchFocusQuery;
+            _pendingSearchFocusQuery = null;
+            await FocusSearchAsync(pendingQuery);
+        }
         _isLoadingPage = false;
     }
 
@@ -1010,6 +1028,29 @@ else
             _editorInstance,
             pageIndex,
             PageBreaks).AsTask();
+    }
+
+    public async Task FocusSearchAsync(string? query)
+    {
+        string normalized = query?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            await ClearSearchHighlightAsync();
+            _pendingSearchFocusQuery = null;
+            return;
+        }
+
+        if (_editorInstance is null)
+        {
+            _pendingSearchHighlightQuery = normalized;
+            _pendingSearchFocusQuery = normalized;
+            return;
+        }
+
+        _pendingSearchFocusQuery = null;
+        _lastSearchHighlightQuery = normalized;
+        await ApplySearchHighlightAsync(normalized);
+        await InvokeJsSafeAsync(() => JSRuntime.InvokeVoidAsync("tiptapEditor.scrollToSearchHighlight", _editorInstance));
     }
 
     public Task RefreshPageBreaksAsync()

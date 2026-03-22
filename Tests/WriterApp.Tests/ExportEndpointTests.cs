@@ -121,6 +121,88 @@ namespace WriterApp.Tests
             Assert.Contains("Scene One", payload.Html);
         }
 
+        [Fact]
+        public async Task ExportPrintPost_IncludesCoverImage_ForSectionScope()
+        {
+            Guid documentId = Guid.NewGuid();
+            Guid projectId = Guid.NewGuid();
+            Guid sectionId = Guid.NewGuid();
+            using AppDbContext dbContext = BuildDbContext();
+            SeedManuscriptWithEmptyPageAndSceneContent(dbContext, documentId, projectId, sectionId, "https://cdn.example.com/cover.png");
+
+            ExportService exportService = BuildExportService();
+            IConfiguration config = BuildConfig();
+            DocumentExportController controller = BuildController(dbContext, exportService, config);
+
+            ExportDocumentRequest request = new(
+                documentId,
+                "pdf",
+                null,
+                "section",
+                new[] { sectionId },
+                null,
+                null,
+                IncludeTitlePage: false,
+                IncludeToc: false,
+                TocDepth: 0,
+                ChapterBreakRules: null,
+                TitlePageTitle: null,
+                TitlePageSubtitle: null,
+                TitlePageAuthor: null,
+                TitlePageDraftLabel: null,
+                TitlePageDate: null,
+                IncludeCover: true);
+
+            ActionResult<DocumentExportController.ExportPrintPayload> result = await controller.ExportPrintPost(documentId, request, CancellationToken.None);
+            OkObjectResult ok = Assert.IsType<OkObjectResult>(result.Result);
+            DocumentExportController.ExportPrintPayload payload =
+                Assert.IsType<DocumentExportController.ExportPrintPayload>(ok.Value);
+
+            Assert.Contains("export-cover-page", payload.Html);
+            Assert.Contains("class=\"cover-image\"", payload.Html);
+            Assert.Contains("https://cdn.example.com/cover.png", payload.Html, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public async Task ExportPreview_IncludesCoverImage_ForSectionScope()
+        {
+            Guid documentId = Guid.NewGuid();
+            Guid projectId = Guid.NewGuid();
+            Guid sectionId = Guid.NewGuid();
+            using AppDbContext dbContext = BuildDbContext();
+            SeedManuscriptWithEmptyPageAndSceneContent(dbContext, documentId, projectId, sectionId, "https://cdn.example.com/cover.png");
+
+            ExportService exportService = BuildExportService();
+            ExportPreviewController controller = BuildPreviewController(dbContext, exportService);
+
+            ExportPreviewRequest request = new(
+                documentId,
+                null,
+                "pdf",
+                false,
+                "section",
+                new[] { sectionId },
+                null,
+                null,
+                IncludeTitlePage: false,
+                TocDepth: 0,
+                ChapterBreakRules: null,
+                TitlePageTitle: null,
+                TitlePageSubtitle: null,
+                TitlePageAuthor: null,
+                TitlePageDraftLabel: null,
+                TitlePageDate: null,
+                IncludeCover: true);
+
+            ActionResult<ExportPreviewResponse> result = await controller.Preview(request, CancellationToken.None);
+            OkObjectResult ok = Assert.IsType<OkObjectResult>(result.Result);
+            ExportPreviewResponse payload = Assert.IsType<ExportPreviewResponse>(ok.Value);
+
+            Assert.Contains("export-cover-page", payload.Html);
+            Assert.Contains("class=\"cover-image\"", payload.Html);
+            Assert.Contains("https://cdn.example.com/cover.png", payload.Html, StringComparison.Ordinal);
+        }
+
         private static AppDbContext BuildDbContext()
         {
             DbContextOptions<AppDbContext> options = new DbContextOptionsBuilder<AppDbContext>()
@@ -200,7 +282,8 @@ namespace WriterApp.Tests
             AppDbContext context,
             Guid documentId,
             Guid projectId,
-            Guid sectionId)
+            Guid sectionId,
+            string? coverImageUrl = null)
         {
             DateTimeOffset now = DateTimeOffset.UtcNow;
             Guid pageId = Guid.NewGuid();
@@ -211,6 +294,7 @@ namespace WriterApp.Tests
                 Id = projectId,
                 OwnerUserId = "user-1",
                 Title = "Project",
+                CoverImageUrl = coverImageUrl,
                 CreatedUtc = now,
                 UpdatedUtc = now
             });
@@ -275,6 +359,7 @@ namespace WriterApp.Tests
         {
             IExportRenderer[] renderers =
             {
+                new TemplatedHtmlExportRenderer(),
                 new DocxExportRenderer(
                     NullLogger<DocxExportRenderer>.Instance,
                     BuildConfig(("Exports:DocxFetchRemoteImages", "false")),
@@ -304,6 +389,29 @@ namespace WriterApp.Tests
                 new StubEntitlementService(),
                 configuration,
                 NullLogger<DocumentExportController>.Instance);
+
+            controller.ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext
+                {
+                    User = new ClaimsPrincipal(new ClaimsIdentity())
+                }
+            };
+
+            return controller;
+        }
+
+        private static ExportPreviewController BuildPreviewController(
+            AppDbContext context,
+            ExportService exportService)
+        {
+            ExportPreviewController controller = new(
+                context,
+                new StubUserIdResolver(),
+                new StubOutlineOrderResolver(),
+                exportService,
+                new StubExportTemplateResolver(),
+                NullLogger<ExportPreviewController>.Instance);
 
             controller.ControllerContext = new ControllerContext
             {
@@ -348,7 +456,30 @@ namespace WriterApp.Tests
         {
             public Task<WriterApp.Data.Exporting.ExportTemplate> ResolveAsync(string ownerUserId, Guid? templateId, CancellationToken ct)
             {
-                throw new InvalidOperationException("Templates are not used for DOCX/EPUB exports.");
+                DateTimeOffset now = DateTimeOffset.UtcNow;
+                return Task.FromResult(new WriterApp.Data.Exporting.ExportTemplate
+                {
+                    Id = templateId ?? Guid.NewGuid(),
+                    OwnerUserId = ownerUserId,
+                    Name = "Test Template",
+                    PageWidthMm = 148,
+                    PageHeightMm = 210,
+                    MarginTopMm = 20,
+                    MarginRightMm = 20,
+                    MarginBottomMm = 20,
+                    MarginLeftMm = 20,
+                    FontFamily = "Georgia",
+                    BodyFontSizePt = 12,
+                    LineHeight = 1.5m,
+                    ParagraphSpacingPt = 6,
+                    HeaderEnabled = false,
+                    FooterEnabled = false,
+                    PageNumbersEnabled = false,
+                    TocEnabled = true,
+                    TocDepth = 2,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                });
             }
         }
         private sealed class StubOutlineOrderResolver : IOutlineOrderResolver

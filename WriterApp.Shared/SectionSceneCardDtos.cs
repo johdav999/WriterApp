@@ -23,7 +23,9 @@ namespace WriterApp.Application.Documents
         IReadOnlyList<SceneCardReferenceDto>? References = null,
         string? Summary = null,
         string? Status = "Draft",
-        IReadOnlyList<string>? SubplotTags = null);
+        IReadOnlyList<string>? SubplotTags = null,
+        string? NarrativeRole = null,
+        string? NarrativeIntent = null);
 
     public sealed record SectionSceneCardProposalDto(
         string? NarrativePurpose,
@@ -38,7 +40,9 @@ namespace WriterApp.Application.Documents
         IReadOnlyList<SceneCardReferenceDto>? References = null,
         string? Summary = null,
         string? Status = "Draft",
-        IReadOnlyList<string>? SubplotTags = null);
+        IReadOnlyList<string>? SubplotTags = null,
+        string? NarrativeRole = null,
+        string? NarrativeIntent = null);
 
     public sealed record SectionSceneCardUpdateRequest(
         string? NarrativePurpose,
@@ -53,5 +57,7 @@ namespace WriterApp.Application.Documents
         IReadOnlyList<SceneCardReferenceDto>? References = null,
         string? Summary = null,
         string? Status = "Draft",
-        IReadOnlyList<string>? SubplotTags = null);
+        IReadOnlyList<string>? SubplotTags = null,
+        string? NarrativeRole = null,
+        string? NarrativeIntent = null);
 }

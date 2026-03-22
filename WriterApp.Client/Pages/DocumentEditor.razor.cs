@@ -62,6 +62,9 @@ namespace WriterApp.Client.Pages
         public string? SearchQuery { get; set; }
 
         [Inject]
+        public GlobalSearchNavigationService GlobalSearchNavigationService { get; set; } = default!;
+
+        [Inject]
         public HttpClient Http { get; set; } = default!;
 
         [Inject]
@@ -83,6 +86,9 @@ namespace WriterApp.Client.Pages
         public CurrentProjectStateService CurrentProjectStateService { get; set; } = default!;
 
         [Inject]
+        public ProjectProgressCacheService ProjectProgressCacheService { get; set; } = default!;
+
+        [Inject]
         public AuthMeStateService AuthMeStateService { get; set; } = default!;
 
         [Inject]
@@ -102,6 +108,9 @@ namespace WriterApp.Client.Pages
 
         [Inject]
         public OnboardingService OnboardingService { get; set; } = default!;
+
+        [Inject]
+        public AiCommandStatusService AiCommandStatusService { get; set; } = default!;
 
         [Inject]
         public OnboardingStateStore OnboardingStateStore { get; set; } = default!;
@@ -153,6 +162,10 @@ namespace WriterApp.Client.Pages
         private PageEditor.EditorStatusSnapshot _editorStatus = PageEditor.EditorStatusSnapshot.Empty;
         private DateTimeOffset _nextNavigatorRefreshUtc = DateTimeOffset.MinValue;
         private string _headingTraceId = string.Empty;
+        private string _activeSearchQuery = string.Empty;
+        private bool _pendingSearchTargetFocus;
+        private Guid _loadedRouteProjectId;
+        private Guid _loadedRouteSceneNodeId;
         private Guid? _draggedSectionId;
         private bool _isReorderingSections;
         private bool _dndDebugEnabled;
@@ -178,6 +191,12 @@ namespace WriterApp.Client.Pages
         private double _linkContextMenuY;
         private string? _linkContextMenuHref;
         private bool _isToolbarOverflowOpen;
+        private bool _toolbarOverflowNeedsPositioning;
+        private bool _toolbarOverflowAlignLeft;
+        private bool _toolbarOverflowOpenUpward;
+        private ElementReference _toolbarOverflowButtonRef;
+        private ElementReference _toolbarOverflowPanelRef;
+        private AiCommandStatusSnapshot _aiCommandStatus = AiCommandStatusSnapshot.Empty;
         private bool _isDocumentMenuOpen;
         private string _imageUploadInputKey = Guid.NewGuid().ToString("N");
         private bool _isFeedbackDialogOpen;
@@ -205,6 +224,7 @@ namespace WriterApp.Client.Pages
         private string? _templateActionError;
         private readonly List<ExportTemplateDto> _exportTemplates = new();
         private readonly List<ExportPresetDto> _exportPresets = new();
+        private const string NoTemplateOptionValue = "__default__";
         private Guid? _selectedTemplateId;
         private Guid? _selectedExportPresetId;
         private string _exportFormatSelection = "html";
@@ -534,7 +554,8 @@ namespace WriterApp.Client.Pages
         private int _notesEditVersion;
         private int _notesSavedVersion;
         private int _notesRetryAttempt;
-        private string _sceneNarrativePurpose = string.Empty;
+        private string _sceneNarrativeRole = string.Empty;
+        private string _sceneNarrativeIntent = string.Empty;
         private string _sceneSummary = string.Empty;
         private string _sceneCardMetadataStatus = "Draft";
         private string _sceneEmotionalBeat = string.Empty;
@@ -554,6 +575,8 @@ namespace WriterApp.Client.Pages
         private SectionSceneCardProposalDto? _sceneAiProposal;
         private string? _sceneAiExplanation;
         private Guid? _sceneAiProposalId;
+        private string _sceneAiSelectedField = "summary";
+        private string? _sceneAiProposalFieldKey;
         private string? _sceneAiError;
         private bool _sceneAiInFlight;
 
@@ -594,20 +617,8 @@ namespace WriterApp.Client.Pages
         private static readonly TimeSpan SceneCardAutosaveDebounce = TimeSpan.FromSeconds(2.5);
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
         private static readonly string[] SceneCardStatusOptions = ["Idea", "Draft", "Revised", "Final"];
-        private static readonly string[] SceneNarrativePurposeOptions =
-        [
-            string.Empty,
-            "Setup",
-            "Inciting Incident",
-            "Rising Action",
-            "Complication",
-            "Revelation",
-            "Relationship Beat",
-            "Reversal",
-            "Decision",
-            "Climax",
-            "Aftermath"
-        ];
+        private static readonly string[] SceneNarrativeRoleOptions =
+            [string.Empty, .. SceneNarrativeRoleCatalog.Values];
 
         private PageEditor.PageBreakOptions PageBreaks
         {
@@ -681,6 +692,9 @@ namespace WriterApp.Client.Pages
         {
             AuthMeStateService.Changed += OnAuthMeStateChanged;
             CurrentSceneStateService.Changed += HandleCurrentSceneStateChanged;
+            GlobalSearchNavigationService.Changed += OnGlobalSearchNavigationChanged;
+            AiCommandStatusService.Changed += OnAiCommandStatusChanged;
+            _aiCommandStatus = AiCommandStatusService.Current;
             await AuthMeStateService.RefreshAsync();
             await LoadAiUsageStatusAsync();
             await LoadAiActionsAsync();
@@ -760,6 +774,34 @@ namespace WriterApp.Client.Pages
                 _focusFeedbackDialogOnRender = false;
                 await _feedbackTypeSelectRef.FocusAsync();
             }
+
+            if (_isToolbarOverflowOpen && _toolbarOverflowNeedsPositioning)
+            {
+                _toolbarOverflowNeedsPositioning = false;
+                ToolbarDropdownPlacement placement;
+                try
+                {
+                    placement = await JSRuntime.InvokeAsync<ToolbarDropdownPlacement>(
+                        "tiptapEditor.getDropdownPosition",
+                        _toolbarOverflowButtonRef,
+                        _toolbarOverflowPanelRef);
+                }
+                catch (JSException)
+                {
+                    placement = new ToolbarDropdownPlacement(false, false);
+                }
+
+                _toolbarOverflowAlignLeft = placement.AlignLeft;
+                _toolbarOverflowOpenUpward = placement.OpenUpward;
+
+                await InvokeAsync(StateHasChanged);
+            }
+
+            if (_pendingSearchTargetFocus && !_isLoading && _pageEditor is not null)
+            {
+                _pendingSearchTargetFocus = false;
+                await _pageEditor.FocusSearchAsync(_activeSearchQuery);
+            }
         }
 
         protected override async Task OnParametersSetAsync()
@@ -788,9 +830,105 @@ namespace WriterApp.Client.Pages
             }
 
             CurrentDocumentStateService.SetCurrent(DocumentId, SectionId);
-            await LoadDocumentAsync();
+            if (CanReuseLoadedRouteTarget())
+            {
+                ApplyActiveSearchQuery(SearchQuery, focus: !string.IsNullOrWhiteSpace(SearchQuery));
+                ConsumePendingGlobalSearchTarget();
+            }
+            else if (CanActivateLoadedSection())
+            {
+                await ActivateLoadedSectionAsync(SectionId);
+                ConsumePendingGlobalSearchTarget();
+            }
+            else
+            {
+                await LoadDocumentAsync();
+                ConsumePendingGlobalSearchTarget();
+            }
+
             await RefreshOnboardingWalkthroughAsync();
             await EnsureOnboardingStarterTextAsync();
+        }
+
+        private bool CanReuseLoadedRouteTarget()
+        {
+            if (_loadedDocumentId == Guid.Empty || _activeSection is null)
+            {
+                return false;
+            }
+
+            if (_loadedDocumentId != DocumentId || _activeSection.Id != SectionId)
+            {
+                return false;
+            }
+
+            if (IsSceneRoute)
+            {
+                return _loadedRouteProjectId == ProjectId && _loadedRouteSceneNodeId == SceneNodeId;
+            }
+
+            return _loadedRouteProjectId == Guid.Empty && _loadedRouteSceneNodeId == Guid.Empty;
+        }
+
+        private bool CanActivateLoadedSection()
+        {
+            return !IsSceneRoute
+                && _loadedDocumentId == DocumentId
+                && DocumentId != Guid.Empty
+                && SectionId != Guid.Empty
+                && _sections.Any(section => section.Id == SectionId);
+        }
+
+        private void ApplyActiveSearchQuery(string? query, bool focus)
+        {
+            _activeSearchQuery = query?.Trim() ?? string.Empty;
+            if (focus && !string.IsNullOrWhiteSpace(_activeSearchQuery))
+            {
+                _pendingSearchTargetFocus = true;
+            }
+        }
+
+        private void ConsumePendingGlobalSearchTarget()
+        {
+            if (DocumentId == Guid.Empty || SectionId == Guid.Empty)
+            {
+                ApplyActiveSearchQuery(SearchQuery, focus: false);
+                return;
+            }
+
+            if (GlobalSearchNavigationService.TryConsume(DocumentId, SectionId, out GlobalSearchNavigationTarget? target)
+                && target is not null)
+            {
+                Logger.LogDebug(
+                    "Global search target consumed. DocumentId={DocumentId} SectionId={SectionId} PageId={PageId} EntityType={EntityType}",
+                    target.DocumentId,
+                    target.SectionId,
+                    target.PageId,
+                    target.EntityType);
+                ApplyActiveSearchQuery(target.Query, focus: true);
+                return;
+            }
+
+            ApplyActiveSearchQuery(SearchQuery, focus: false);
+        }
+
+        private void OnGlobalSearchNavigationChanged(GlobalSearchNavigationTarget? target)
+        {
+            if (target is null
+                || target.DocumentId != DocumentId
+                || target.SectionId != SectionId)
+            {
+                return;
+            }
+
+            _ = InvokeAsync(async () =>
+            {
+                ApplyActiveSearchQuery(target.Query, focus: true);
+                if (!_isLoading)
+                {
+                    await InvokeAsync(StateHasChanged);
+                }
+            });
         }
 
         private async Task<bool> EnsureLegacySectionTargetForSceneRouteAsync()
@@ -995,11 +1133,76 @@ namespace WriterApp.Client.Pages
                 await LoadAnnotationsAsync();
                 await LoadQualityIssuesAsync();
                 await LoadTranslationLinksAsync();
+                _loadedRouteProjectId = IsSceneRoute ? ProjectId : Guid.Empty;
+                _loadedRouteSceneNodeId = IsSceneRoute ? SceneNodeId : Guid.Empty;
             }
             catch (Exception ex)
             {
                 Logger.LogError(ex, "Document editor load failed.");
                 _loadError = "Failed to load the document.";
+            }
+            finally
+            {
+                _isLoading = false;
+            }
+        }
+
+        private async Task ActivateLoadedSectionAsync(Guid sectionId)
+        {
+            _isLoading = true;
+            _loadError = null;
+            ResetSectionRename();
+            CancelDeleteSection();
+            _continuityReport = null;
+            _selectedContinuityIssueKey = null;
+            await ClearContinuityHighlightsAsync();
+
+            try
+            {
+                SectionDto? targetSection = _sections.FirstOrDefault(section => section.Id == sectionId);
+                if (targetSection is null)
+                {
+                    await LoadDocumentAsync();
+                    return;
+                }
+
+                _headingTraceId = Guid.NewGuid().ToString("N");
+                _activeSection = targetSection;
+                await EnsureSectionHasPageAsync(targetSection.Id);
+                _sectionLanguageCode = targetSection.LanguageCode;
+                _sectionTranslationGroupId = targetSection.TranslationGroupId;
+
+                _activePage = GetPrimaryPage(targetSection.Id);
+                _qualityHasRunOnce = false;
+                if (_activePage is null)
+                {
+                    _loadError = "No pages available.";
+                    return;
+                }
+
+                SyncActiveSceneTitle();
+                ResetVersionStatusTracking();
+
+                await LastOpenedDocumentStateService.SaveAsync(DocumentId, targetSection.Id);
+                await RestoreContextPanelStateAsync();
+                await LoadHeadingPrefixCountersAsync();
+                ResetNotesAutosaveState();
+                _notesDraft = await LoadSectionNotesAsync(targetSection.Id, CancellationToken.None);
+                _notesStatus = null;
+                await LoadSceneCardAsync(targetSection.Id);
+                await LoadAiHistoryAsync();
+                await LoadBibleSnapshotsAsync();
+                await LoadPageVersionsAsync();
+                await LoadAnnotationsAsync();
+                await LoadQualityIssuesAsync();
+                await LoadTranslationLinksAsync();
+                _loadedRouteProjectId = Guid.Empty;
+                _loadedRouteSceneNodeId = Guid.Empty;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Document editor section activation failed.");
+                _loadError = "Failed to open the search result.";
             }
             finally
             {
@@ -1912,6 +2115,8 @@ namespace WriterApp.Client.Pages
 
         private async Task OnPageSaved(PageDto page)
         {
+            InvalidateActiveProjectProgressCache("content-save");
+
             if (_pagesBySection.TryGetValue(page.SectionId, out List<PageDto>? pages))
             {
                 int index = pages.FindIndex(item => item.Id == page.Id);
@@ -1939,6 +2144,19 @@ namespace WriterApp.Client.Pages
             await InvokeAsync(StateHasChanged);
         }
 
+        private void InvalidateActiveProjectProgressCache(string reason)
+        {
+            Guid projectId = ProjectId != Guid.Empty
+                ? ProjectId
+                : CurrentProjectStateService.ProjectId ?? Guid.Empty;
+            if (projectId == Guid.Empty)
+            {
+                return;
+            }
+
+            ProjectProgressCacheService.InvalidateProject(projectId, reason);
+        }
+
         private async Task FlushActiveEditorAsync(string reason)
         {
             if (_pageEditor is null)
@@ -1955,6 +2173,18 @@ namespace WriterApp.Client.Pages
             await EvaluateOnboardingCompletionAsync(forceTypingProbe: false);
             await InvokeAsync(StateHasChanged);
         }
+
+        private void OnAiCommandStatusChanged(AiCommandStatusSnapshot status)
+        {
+            _aiCommandStatus = status;
+            _ = InvokeAsync(StateHasChanged);
+        }
+
+        private string GetAiCommandStatusClass()
+        {
+            return _aiCommandStatus.IsInProgress ? "ai-command-status" : "ai-command-status is-complete";
+        }
+
         private bool IsContextPanelCollapsed()
         {
             return LayoutStateService.State.FocusMode || LayoutStateService.State.ContextCollapsed;
@@ -2063,7 +2293,7 @@ namespace WriterApp.Client.Pages
                 ContextTab.Ai => "Writing tools: Run AI edits on the selection or section.",
                 ContextTab.Continuity => "Consistency: Check characters, places, and timeline for contradictions.",
                 ContextTab.Quality => "Style & quality: Find clarity, pacing, and readability issues.",
-                ContextTab.Scene => "Scene card: Capture narrative purpose, beats, and open questions.",
+                ContextTab.Scene => "Scene card: Capture narrative role, intent, beats, and open questions.",
                 ContextTab.Navigator => "Project navigator: Open and move sections in the manuscript tree.",
                 ContextTab.Notes => "Notes: Save drafting reminders for this section.",
                 ContextTab.Annotations => "Annotations: Manage inline comments and TODO highlights.",
@@ -2393,6 +2623,8 @@ namespace WriterApp.Client.Pages
             LayoutStateService.Changed -= OnLayoutStateChanged;
             AuthMeStateService.Changed -= OnAuthMeStateChanged;
             CurrentSceneStateService.Changed -= HandleCurrentSceneStateChanged;
+            GlobalSearchNavigationService.Changed -= OnGlobalSearchNavigationChanged;
+            AiCommandStatusService.Changed -= OnAiCommandStatusChanged;
             OnboardingOverlayStateService.Clear();
             _notesAutosaveCts?.Cancel();
             _notesAutosaveCts?.Dispose();
@@ -2822,15 +3054,28 @@ namespace WriterApp.Client.Pages
                 return;
             }
 
-            string defaultLink = string.IsNullOrWhiteSpace(initialLink) ? string.Empty : initialLink.Trim();
+            string originalLink = !string.IsNullOrWhiteSpace(initialLink)
+                ? initialLink.Trim()
+                : (_formattingState.IsLink ? _formattingState.LinkHref?.Trim() ?? string.Empty : string.Empty);
+            string defaultLink = string.IsNullOrWhiteSpace(originalLink) ? string.Empty : originalLink;
             string? link = await JSRuntime.InvokeAsync<string?>("prompt", "Link URL", defaultLink);
-            if (string.IsNullOrWhiteSpace(link))
+            if (link is null)
             {
-                await InvokePageCommandAsync("unsetLink");
                 return;
             }
 
-            await InvokePageCommandAsync("setLink", link);
+            string normalized = link.Trim();
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                return;
+            }
+
+            if (string.Equals(normalized, originalLink, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            await InvokePageCommandAsync("setLink", normalized);
         }
 
         private Task OnLinkShortcutRequested()
@@ -2896,6 +3141,12 @@ namespace WriterApp.Client.Pages
         private void ToggleToolbarOverflow()
         {
             _isToolbarOverflowOpen = !_isToolbarOverflowOpen;
+            if (_isToolbarOverflowOpen)
+            {
+                _toolbarOverflowNeedsPositioning = true;
+                _toolbarOverflowAlignLeft = false;
+                _toolbarOverflowOpenUpward = false;
+            }
         }
 
         private void ToggleDocumentMenu()
@@ -2953,6 +3204,26 @@ namespace WriterApp.Client.Pages
         private string GetZoomLabel()
         {
             return $"{LayoutStateService.State.EditorZoomPercent}%";
+        }
+
+        private string GetToolbarOverflowPanelClass()
+        {
+            if (_toolbarOverflowAlignLeft && _toolbarOverflowOpenUpward)
+            {
+                return "editor-toolbar-overflow-panel is-align-left is-open-upward";
+            }
+
+            if (_toolbarOverflowAlignLeft)
+            {
+                return "editor-toolbar-overflow-panel is-align-left";
+            }
+
+            if (_toolbarOverflowOpenUpward)
+            {
+                return "editor-toolbar-overflow-panel is-open-upward";
+            }
+
+            return "editor-toolbar-overflow-panel";
         }
 
         private string GetBlockTypeValue()
@@ -3105,7 +3376,7 @@ namespace WriterApp.Client.Pages
         private RightPanelCoachContext BuildRightPanelCoachContext()
         {
             int missingFields = 0;
-            if (string.IsNullOrWhiteSpace(_sceneNarrativePurpose))
+            if (string.IsNullOrWhiteSpace(_sceneNarrativeRole))
             {
                 missingFields++;
             }
@@ -3340,7 +3611,7 @@ namespace WriterApp.Client.Pages
                 observations.Add("Capture narrative intent and beats to guide revisions.");
             }
 
-            observations.Add("Use purpose, emotional beat, and key events to anchor revisions.");
+            observations.Add("Use narrative role, narrative intent, emotional beat, and key events to anchor revisions.");
             List<CoachTipCandidate> candidates = new()
             {
                 new(
@@ -3476,7 +3747,7 @@ namespace WriterApp.Client.Pages
                     }
                     else if (_activePanelCategory == PanelCategory.Navigator)
                     {
-                        await RefreshNavigatorInspectorAsync(force: true);
+                        await RefreshNavigatorInspectorAsync();
                     }
                     else if (_activePanelCategory == PanelCategory.NotesTasks)
                     {
@@ -3645,7 +3916,11 @@ namespace WriterApp.Client.Pages
             _nextNavigatorRefreshUtc = now.AddSeconds(5);
             try
             {
-                await _navigatorPanel.RefreshActiveProjectTreeAsync();
+                await _navigatorPanel.RefreshActiveProjectTreeAsync(
+                    forceRefresh: force,
+                    invalidateCache: false,
+                    includeProgress: false,
+                    reason: force ? "navigator-panel-open" : "content-save");
             }
             catch (Exception ex)
             {
@@ -4202,7 +4477,7 @@ namespace WriterApp.Client.Pages
                     GetOutlineTextForAi(),
                     resolvedOptions);
 
-                using HttpResponseMessage result = await Http.PostAsJsonAsync($"api/ai/actions/{actionKey}/execute", request);
+                using HttpResponseMessage result = await PostAiActionAsync(actionKey, request);
                 if (!result.IsSuccessStatusCode)
                 {
                     if (await TryHandleEntitlementDeniedAsync(result, "ai.actions", "Upgrade to continue using AI features."))
@@ -4617,7 +4892,7 @@ namespace WriterApp.Client.Pages
 
             try
             {
-                using HttpResponseMessage result = await Http.PostAsJsonAsync("api/ai/actions/rewrite.selection/execute", request);
+                using HttpResponseMessage result = await PostAiActionAsync("rewrite.selection", request, commandLabel: "Rewrite selection");
                 if (!result.IsSuccessStatusCode)
                 {
                     await TryHandleAiQuotaExceededAsync(result);
@@ -5557,6 +5832,46 @@ namespace WriterApp.Client.Pages
             _promptStatus = "Preset executed. Review preview and apply.";
         }
 
+        private async Task<HttpResponseMessage> PostAiActionAsync(
+            string actionKey,
+            AiActionExecuteRequestDto request,
+            bool trackStatus = true,
+            string? commandLabel = null)
+        {
+            string label = string.IsNullOrWhiteSpace(commandLabel) ? GetActionLabel(actionKey) : commandLabel.Trim();
+            if (trackStatus)
+            {
+                AiCommandStatusService.Start(label);
+            }
+
+            try
+            {
+                HttpResponseMessage response = await Http.PostAsJsonAsync($"api/ai/actions/{actionKey}/execute", request);
+                if (trackStatus)
+                {
+                    if (response.IsSuccessStatusCode)
+                    {
+                        AiCommandStatusService.Complete(label);
+                    }
+                    else
+                    {
+                        AiCommandStatusService.Clear();
+                    }
+                }
+
+                return response;
+            }
+            catch
+            {
+                if (trackStatus)
+                {
+                    AiCommandStatusService.Clear();
+                }
+
+                throw;
+            }
+        }
+
         private string ResolvePresetActionKey(PromptPresetDto preset, string scope)
         {
             if (string.Equals(preset.Kind, "custom", StringComparison.OrdinalIgnoreCase))
@@ -5650,15 +5965,15 @@ namespace WriterApp.Client.Pages
             };
         }
 
-        private void OnSceneNarrativePurposeInput(ChangeEventArgs args)
+        private void OnSceneNarrativeRoleChanged(ChangeEventArgs args)
         {
-            _sceneNarrativePurpose = args.Value?.ToString() ?? string.Empty;
+            _sceneNarrativeRole = args.Value?.ToString() ?? string.Empty;
             OnSceneCardInputChanged();
         }
 
-        private void OnSceneNarrativePurposeChanged(ChangeEventArgs args)
+        private void OnSceneNarrativeIntentInput(ChangeEventArgs args)
         {
-            _sceneNarrativePurpose = args.Value?.ToString() ?? string.Empty;
+            _sceneNarrativeIntent = args.Value?.ToString() ?? string.Empty;
             OnSceneCardInputChanged();
         }
 
@@ -5769,7 +6084,8 @@ namespace WriterApp.Client.Pages
                         await Http.GetFromJsonAsync<SceneCardDto>($"api/scenes/{SceneNodeId}/scene-card");
                     _sceneSummary = card?.Summary ?? string.Empty;
                     _sceneCardMetadataStatus = NormalizeSceneCardStatus(card?.Status);
-                    _sceneNarrativePurpose = card?.NarrativePurpose ?? string.Empty;
+                    _sceneNarrativeRole = card?.NarrativeRole ?? GetNormalizedLegacyNarrativeRole(card?.NarrativePurpose) ?? string.Empty;
+                    _sceneNarrativeIntent = card?.NarrativeIntent ?? GetLegacyNarrativeIntent(card?.NarrativePurpose) ?? string.Empty;
                     _sceneEmotionalBeat = card?.EmotionalBeat ?? string.Empty;
                     _sceneKeyEvents = card?.KeyEvents ?? string.Empty;
                     _sceneOpenQuestions = card?.OpenQuestions ?? string.Empty;
@@ -5788,7 +6104,8 @@ namespace WriterApp.Client.Pages
 
                     _sceneSummary = card?.Summary ?? string.Empty;
                     _sceneCardMetadataStatus = NormalizeSceneCardStatus(card?.Status);
-                    _sceneNarrativePurpose = card?.NarrativePurpose ?? string.Empty;
+                    _sceneNarrativeRole = card?.NarrativeRole ?? GetNormalizedLegacyNarrativeRole(card?.NarrativePurpose) ?? string.Empty;
+                    _sceneNarrativeIntent = card?.NarrativeIntent ?? GetLegacyNarrativeIntent(card?.NarrativePurpose) ?? string.Empty;
                     _sceneEmotionalBeat = card?.EmotionalBeat ?? string.Empty;
                     _sceneKeyEvents = card?.KeyEvents ?? string.Empty;
                     _sceneOpenQuestions = card?.OpenQuestions ?? string.Empty;
@@ -5848,7 +6165,7 @@ namespace WriterApp.Client.Pages
             try
             {
                 SceneCardUpdateRequest scenePayload = new(
-                    _sceneNarrativePurpose,
+                    GetLegacyNarrativePurposeForSave(),
                     _sceneEmotionalBeat,
                     _sceneKeyEvents,
                     _sceneOpenQuestions,
@@ -5860,7 +6177,9 @@ namespace WriterApp.Client.Pages
                     ParseSceneReferences(_sceneReferencesJson),
                     NormalizeOptional(_sceneSummary),
                     NormalizeSceneCardStatus(_sceneCardMetadataStatus),
-                    ParseTags(_sceneSubplotTagsText));
+                    ParseTags(_sceneSubplotTagsText),
+                    NormalizeNarrativeRole(_sceneNarrativeRole),
+                    NormalizeOptional(_sceneNarrativeIntent));
 
                 HttpResponseMessage response;
                 if (IsSceneRoute)
@@ -5882,7 +6201,9 @@ namespace WriterApp.Client.Pages
                         scenePayload.References,
                         scenePayload.Summary,
                         scenePayload.Status,
-                        scenePayload.SubplotTags);
+                        scenePayload.SubplotTags,
+                        scenePayload.NarrativeRole,
+                        scenePayload.NarrativeIntent);
                     response = await Http.PutAsJsonAsync($"api/sections/{sectionId}/scene-card", payload);
                 }
 
@@ -5917,13 +6238,16 @@ namespace WriterApp.Client.Pages
                             legacy.References,
                             legacy.Summary,
                             legacy.Status,
-                            legacy.SubplotTags);
+                            legacy.SubplotTags,
+                            legacy.NarrativeRole,
+                            legacy.NarrativeIntent);
                 }
                 if (updated is not null)
                 {
                     _sceneSummary = updated.Summary ?? string.Empty;
                     _sceneCardMetadataStatus = NormalizeSceneCardStatus(updated.Status);
-                    _sceneNarrativePurpose = updated.NarrativePurpose ?? string.Empty;
+                    _sceneNarrativeRole = updated.NarrativeRole ?? GetNormalizedLegacyNarrativeRole(updated.NarrativePurpose) ?? string.Empty;
+                    _sceneNarrativeIntent = updated.NarrativeIntent ?? GetLegacyNarrativeIntent(updated.NarrativePurpose) ?? string.Empty;
                     _sceneEmotionalBeat = updated.EmotionalBeat ?? string.Empty;
                     _sceneKeyEvents = updated.KeyEvents ?? string.Empty;
                     _sceneOpenQuestions = updated.OpenQuestions ?? string.Empty;
@@ -5951,6 +6275,11 @@ namespace WriterApp.Client.Pages
 
         private async Task RunSceneAiAsync(string actionKey, string instruction)
         {
+            await RunSceneAiAsync(actionKey, instruction, proposalFieldKey: null);
+        }
+
+        private async Task RunSceneAiAsync(string actionKey, string instruction, string? proposalFieldKey)
+        {
             if (!CanUseFeature(FeatureKey.SceneAiSuggestions))
             {
                 _sceneAiError = GetFeatureTooltip(FeatureKey.SceneAiSuggestions);
@@ -5964,6 +6293,10 @@ namespace WriterApp.Client.Pages
             }
 
             _sceneAiInFlight = true;
+            _sceneAiProposal = null;
+            _sceneAiExplanation = null;
+            _sceneAiProposalId = null;
+            _sceneAiProposalFieldKey = null;
             _sceneAiError = null;
             try
             {
@@ -5984,7 +6317,7 @@ namespace WriterApp.Client.Pages
                     });
 
                 using HttpResponseMessage response =
-                    await Http.PostAsJsonAsync($"api/ai/actions/{actionKey}/execute", payload);
+                    await PostAiActionAsync(actionKey, payload);
                 if (!response.IsSuccessStatusCode)
                 {
                     if (await TryHandleEntitlementDeniedAsync(response, "ai.actions", "Upgrade to continue using AI features."))
@@ -6019,6 +6352,7 @@ namespace WriterApp.Client.Pages
                 _sceneAiProposal = result.ProposedSceneCard;
                 _sceneAiExplanation = result.ProposalExplanation ?? result.ChangesSummary;
                 _sceneAiProposalId = result.ProposalId;
+                _sceneAiProposalFieldKey = proposalFieldKey;
             }
             catch (Exception ex)
             {
@@ -6032,6 +6366,16 @@ namespace WriterApp.Client.Pages
             }
         }
 
+        private Task RunScopedSceneAiAsync()
+        {
+            SceneAiFieldOption option = GetSelectedSceneAiFieldOption();
+            string actionKey = string.Equals(option.Key, "openQuestions", StringComparison.Ordinal)
+                ? "scene.find-open-questions"
+                : "scene.suggest";
+
+            return RunSceneAiAsync(actionKey, BuildScopedSceneAiInstruction(option), option.Key);
+        }
+
         private async Task ApplySceneAiProposalAsync()
         {
             if (_sceneAiProposal is null || _activeSection is null || !_sceneAiProposalId.HasValue)
@@ -6040,32 +6384,40 @@ namespace WriterApp.Client.Pages
             }
 
             string beforeSnapshot = BuildSceneCardSnapshotJson();
-            ApplySuggestedValue(ref _sceneSummary, _sceneAiProposal.Summary);
-            ApplySuggestedValue(ref _sceneCardMetadataStatus, _sceneAiProposal.Status);
-            ApplySuggestedValue(ref _sceneNarrativePurpose, _sceneAiProposal.NarrativePurpose);
-            ApplySuggestedValue(ref _sceneEmotionalBeat, _sceneAiProposal.EmotionalBeat);
-            ApplySuggestedValue(ref _sceneKeyEvents, _sceneAiProposal.KeyEvents);
-            ApplySuggestedValue(ref _sceneOpenQuestions, _sceneAiProposal.OpenQuestions);
-            ApplySuggestedValue(ref _scenePovCharacterId, _sceneAiProposal.PovCharacterId);
-            ApplySuggestedValue(ref _scenePlaceId, _sceneAiProposal.PlaceId);
-            ApplySuggestedValue(ref _sceneTimelineEventId, _sceneAiProposal.TimelineEventId);
-            ApplySuggestedValue(ref _sceneTimeRef, _sceneAiProposal.TimeRef);
-
-            IReadOnlyList<string> normalizedTags = NormalizeTagList(_sceneAiProposal.Tags);
-            if (normalizedTags.Count > 0)
+            if (IsScopedSceneAiProposal())
             {
-                _sceneTagsText = string.Join(", ", normalizedTags);
+                ApplyScopedSceneAiProposal(_sceneAiProposalFieldKey!, _sceneAiProposal);
             }
-
-            IReadOnlyList<string> normalizedSubplotTags = NormalizeTagList(_sceneAiProposal.SubplotTags);
-            if (normalizedSubplotTags.Count > 0)
+            else
             {
-                _sceneSubplotTagsText = string.Join(", ", normalizedSubplotTags);
-            }
+                ApplySuggestedValue(ref _sceneSummary, _sceneAiProposal.Summary);
+                ApplySuggestedValue(ref _sceneCardMetadataStatus, _sceneAiProposal.Status);
+                ApplySuggestedValue(ref _sceneNarrativeRole, GetSceneProposalNarrativeRole(_sceneAiProposal));
+                ApplySuggestedValue(ref _sceneNarrativeIntent, GetSceneProposalNarrativeIntent(_sceneAiProposal));
+                ApplySuggestedValue(ref _sceneEmotionalBeat, _sceneAiProposal.EmotionalBeat);
+                ApplySuggestedValue(ref _sceneKeyEvents, _sceneAiProposal.KeyEvents);
+                ApplySuggestedValue(ref _sceneOpenQuestions, _sceneAiProposal.OpenQuestions);
+                ApplySuggestedValue(ref _scenePovCharacterId, _sceneAiProposal.PovCharacterId);
+                ApplySuggestedValue(ref _scenePlaceId, _sceneAiProposal.PlaceId);
+                ApplySuggestedValue(ref _sceneTimelineEventId, _sceneAiProposal.TimelineEventId);
+                ApplySuggestedValue(ref _sceneTimeRef, _sceneAiProposal.TimeRef);
 
-            if (_sceneAiProposal.References is not null && _sceneAiProposal.References.Count > 0)
-            {
-                _sceneReferencesJson = SerializeSceneReferences(_sceneAiProposal.References);
+                IReadOnlyList<string> normalizedTags = NormalizeTagList(_sceneAiProposal.Tags);
+                if (normalizedTags.Count > 0)
+                {
+                    _sceneTagsText = string.Join(", ", normalizedTags);
+                }
+
+                IReadOnlyList<string> normalizedSubplotTags = NormalizeTagList(_sceneAiProposal.SubplotTags);
+                if (normalizedSubplotTags.Count > 0)
+                {
+                    _sceneSubplotTagsText = string.Join(", ", normalizedSubplotTags);
+                }
+
+                if (_sceneAiProposal.References is not null && _sceneAiProposal.References.Count > 0)
+                {
+                    _sceneReferencesJson = SerializeSceneReferences(_sceneAiProposal.References);
+                }
             }
 
             await SaveSceneCardAsync(_activeSection.Id, isAutosave: false);
@@ -6075,6 +6427,7 @@ namespace WriterApp.Client.Pages
             _sceneAiProposal = null;
             _sceneAiExplanation = null;
             _sceneAiProposalId = null;
+            _sceneAiProposalFieldKey = null;
             await LoadAiHistoryAsync();
         }
 
@@ -6083,13 +6436,14 @@ namespace WriterApp.Client.Pages
             _sceneAiProposal = null;
             _sceneAiExplanation = null;
             _sceneAiProposalId = null;
+            _sceneAiProposalFieldKey = null;
             _sceneAiError = null;
         }
 
         private string BuildSceneCardSnapshotJson()
         {
             SectionSceneCardProposalDto snapshot = new(
-                _sceneNarrativePurpose,
+                GetLegacyNarrativePurposeForSave(),
                 _sceneEmotionalBeat,
                 _sceneKeyEvents,
                 _sceneOpenQuestions,
@@ -6101,7 +6455,9 @@ namespace WriterApp.Client.Pages
                 ParseSceneReferences(_sceneReferencesJson),
                 NormalizeOptional(_sceneSummary),
                 NormalizeSceneCardStatus(_sceneCardMetadataStatus),
-                ParseTags(_sceneSubplotTagsText));
+                ParseTags(_sceneSubplotTagsText),
+                NormalizeNarrativeRole(_sceneNarrativeRole),
+                NormalizeOptional(_sceneNarrativeIntent));
             return JsonSerializer.Serialize(snapshot, JsonOptions);
         }
 
@@ -6151,6 +6507,161 @@ namespace WriterApp.Client.Pages
             return string.Join(", ", normalized);
         }
 
+        private IEnumerable<SceneAiFieldOption> GetSceneAiFieldOptions()
+        {
+            yield return new SceneAiFieldOption("summary", "Summary");
+            yield return new SceneAiFieldOption("status", "Status");
+            yield return new SceneAiFieldOption("narrativeRole", "Narrative role");
+            yield return new SceneAiFieldOption("narrativeIntent", "Narrative intent");
+            yield return new SceneAiFieldOption("emotionalBeat", "Emotional beat");
+            yield return new SceneAiFieldOption("keyEvents", "Key events");
+            yield return new SceneAiFieldOption("openQuestions", "Open questions");
+            yield return new SceneAiFieldOption("povCharacterId", "POV");
+            yield return new SceneAiFieldOption("placeId", "Setting / place");
+            yield return new SceneAiFieldOption("timeRef", "Timeline marker");
+            yield return new SceneAiFieldOption("subplotTags", "Subplot tags");
+            yield return new SceneAiFieldOption("tags", "Tags");
+        }
+
+        private SceneAiFieldOption GetSelectedSceneAiFieldOption()
+        {
+            return GetSceneAiFieldOptions().FirstOrDefault(option => string.Equals(option.Key, _sceneAiSelectedField, StringComparison.Ordinal))
+                ?? new SceneAiFieldOption("summary", "Summary");
+        }
+
+        private static string GetSceneAiFieldPlaceholder(string key)
+        {
+            return key switch
+            {
+                "status" => "Draft",
+                _ => "(not provided)"
+            };
+        }
+
+        private bool IsScopedSceneAiProposal()
+        {
+            return _sceneAiProposal is not null && !string.IsNullOrWhiteSpace(_sceneAiProposalFieldKey);
+        }
+
+        private string GetSceneAiPreviewFieldLabel()
+        {
+            return GetSelectedSceneAiFieldOption().Label;
+        }
+
+        private string GetCurrentSceneAiFieldDisplay()
+        {
+            return GetSceneFieldDisplay(_sceneAiProposalFieldKey, proposal: null);
+        }
+
+        private string GetProposedSceneAiFieldDisplay()
+        {
+            return GetSceneFieldDisplay(_sceneAiProposalFieldKey, _sceneAiProposal);
+        }
+
+        private string GetSceneFieldDisplay(string? key, SectionSceneCardProposalDto? proposal)
+        {
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                return "(not provided)";
+            }
+
+            string? value = key switch
+            {
+                "summary" => proposal?.Summary ?? NormalizeOptional(_sceneSummary),
+                "status" => proposal is null ? NormalizeOptional(_sceneCardMetadataStatus) : NormalizeOptional(NormalizeSceneCardStatus(proposal.Status)),
+                "narrativeRole" => proposal is null ? NormalizeOptional(_sceneNarrativeRole) : GetSceneProposalNarrativeRole(proposal),
+                "narrativeIntent" => proposal is null ? NormalizeOptional(_sceneNarrativeIntent) : GetSceneProposalNarrativeIntent(proposal),
+                "emotionalBeat" => proposal?.EmotionalBeat ?? NormalizeOptional(_sceneEmotionalBeat),
+                "keyEvents" => proposal?.KeyEvents ?? NormalizeOptional(_sceneKeyEvents),
+                "openQuestions" => proposal?.OpenQuestions ?? NormalizeOptional(_sceneOpenQuestions),
+                "povCharacterId" => proposal?.PovCharacterId ?? NormalizeOptional(_scenePovCharacterId),
+                "placeId" => proposal?.PlaceId ?? NormalizeOptional(_scenePlaceId),
+                "timeRef" => proposal?.TimeRef ?? NormalizeOptional(_sceneTimeRef),
+                "subplotTags" => proposal is null ? NormalizeOptional(_sceneSubplotTagsText) : NormalizeOptional(GetSceneProposalTagsDisplay(proposal.SubplotTags)),
+                "tags" => proposal is null ? NormalizeOptional(_sceneTagsText) : NormalizeOptional(GetSceneProposalTagsDisplay(proposal.Tags)),
+                _ => null
+            };
+
+            if (string.IsNullOrWhiteSpace(value) || string.Equals(value, "(not provided)", StringComparison.Ordinal))
+            {
+                return GetSceneAiFieldPlaceholder(key);
+            }
+
+            return value;
+        }
+
+        private string BuildScopedSceneAiInstruction(SceneAiFieldOption option)
+        {
+            string currentValue = GetCurrentSceneAiFieldDisplay();
+            return option.Key switch
+            {
+                "summary" => $"Suggest ONLY an improved Summary for this scene card based on the section text. Return a concise 1-2 sentence summary. Leave every other scene card field unchanged. Current Summary: {currentValue}",
+                "status" => $"Suggest ONLY the Status field for this scene card based on the section text. Return a single best-fit status value. Leave every other scene card field unchanged. Current Status: {currentValue}",
+                "narrativeRole" => $"Suggest ONLY the Narrative role for this scene based on the section text. Treat it as the structural role of the scene in the story. Leave every other scene card field unchanged. Current Narrative role: {currentValue}",
+                "narrativeIntent" => $"Suggest ONLY the Narrative intent for this scene based on the section text. Treat it as the emotional or dramatic aim of the scene. Leave every other scene card field unchanged. Current Narrative intent: {currentValue}",
+                "emotionalBeat" => $"Suggest ONLY the Emotional beat for this scene based on the section text. Describe how the emotional energy shifts. Leave every other scene card field unchanged. Current Emotional beat: {currentValue}",
+                "keyEvents" => $"Suggest ONLY the Key events field for this scene based on the section text. Focus on the most important beats that happen in the scene. Leave every other scene card field unchanged. Current Key events: {currentValue}",
+                "openQuestions" => $"Find open questions in this section and update ONLY the Open questions field. Do not change any other scene card fields. Current Open questions: {currentValue}",
+                "povCharacterId" => $"Suggest ONLY the POV character for this scene based on the section text. Leave every other scene card field unchanged. Current POV: {currentValue}",
+                "placeId" => $"Suggest ONLY the Setting / place field for this scene based on the section text. Leave every other scene card field unchanged. Current Setting / place: {currentValue}",
+                "timeRef" => $"Suggest ONLY the Timeline marker field for this scene based on the section text. Leave every other scene card field unchanged. Current Timeline marker: {currentValue}",
+                "subplotTags" => $"Suggest ONLY the Subplot tags for this scene based on the section text. Return concise comma-separated style tag values. Leave every other scene card field unchanged. Current Subplot tags: {currentValue}",
+                "tags" => $"Suggest ONLY the Tags field for this scene based on the section text. Return concise comma-separated style tag values. Leave every other scene card field unchanged. Current Tags: {currentValue}",
+                _ => $"Suggest ONLY the {option.Label} field for this scene card based on the section text. Leave every other scene card field unchanged. Current value: {currentValue}"
+            };
+        }
+
+        private void ApplyScopedSceneAiProposal(string fieldKey, SectionSceneCardProposalDto proposal)
+        {
+            switch (fieldKey)
+            {
+                case "summary":
+                    ApplySuggestedValue(ref _sceneSummary, proposal.Summary);
+                    break;
+                case "status":
+                    ApplySuggestedValue(ref _sceneCardMetadataStatus, proposal.Status);
+                    break;
+                case "narrativeRole":
+                    ApplySuggestedValue(ref _sceneNarrativeRole, GetSceneProposalNarrativeRole(proposal));
+                    break;
+                case "narrativeIntent":
+                    ApplySuggestedValue(ref _sceneNarrativeIntent, GetSceneProposalNarrativeIntent(proposal));
+                    break;
+                case "emotionalBeat":
+                    ApplySuggestedValue(ref _sceneEmotionalBeat, proposal.EmotionalBeat);
+                    break;
+                case "keyEvents":
+                    ApplySuggestedValue(ref _sceneKeyEvents, proposal.KeyEvents);
+                    break;
+                case "openQuestions":
+                    ApplySuggestedValue(ref _sceneOpenQuestions, proposal.OpenQuestions);
+                    break;
+                case "povCharacterId":
+                    ApplySuggestedValue(ref _scenePovCharacterId, proposal.PovCharacterId);
+                    break;
+                case "placeId":
+                    ApplySuggestedValue(ref _scenePlaceId, proposal.PlaceId);
+                    break;
+                case "timeRef":
+                    ApplySuggestedValue(ref _sceneTimeRef, proposal.TimeRef);
+                    break;
+                case "subplotTags":
+                    IReadOnlyList<string> subplotTags = NormalizeTagList(proposal.SubplotTags);
+                    if (subplotTags.Count > 0)
+                    {
+                        _sceneSubplotTagsText = string.Join(", ", subplotTags);
+                    }
+                    break;
+                case "tags":
+                    IReadOnlyList<string> tags = NormalizeTagList(proposal.Tags);
+                    if (tags.Count > 0)
+                    {
+                        _sceneTagsText = string.Join(", ", tags);
+                    }
+                    break;
+            }
+        }
+
         private static void ApplySuggestedValue(ref string target, string? suggestion)
         {
             if (string.IsNullOrWhiteSpace(suggestion))
@@ -6175,15 +6686,77 @@ namespace WriterApp.Client.Pages
             return "Draft";
         }
 
-        private IReadOnlyList<string> GetNarrativePurposeOptions()
+        private static string? NormalizeNarrativeRole(string? value)
         {
-            if (string.IsNullOrWhiteSpace(_sceneNarrativePurpose)
-                || SceneNarrativePurposeOptions.Contains(_sceneNarrativePurpose, StringComparer.OrdinalIgnoreCase))
+            return SceneNarrativeRoleCatalog.TryNormalize(value, out string? normalizedRole)
+                ? normalizedRole
+                : null;
+        }
+
+        private string? GetLegacyNarrativePurposeForSave()
+        {
+            return SceneNarrativeRoleCatalog.ToLegacyPurpose(
+                NormalizeNarrativeRole(_sceneNarrativeRole),
+                NormalizeOptional(_sceneNarrativeIntent));
+        }
+
+        private static string? GetNormalizedLegacyNarrativeRole(string? legacyNarrativePurpose)
+        {
+            return SceneNarrativeRoleCatalog.TryNormalize(legacyNarrativePurpose, out string? normalizedRole)
+                ? normalizedRole
+                : null;
+        }
+
+        private static string? GetLegacyNarrativeIntent(string? legacyNarrativePurpose)
+        {
+            return GetNormalizedLegacyNarrativeRole(legacyNarrativePurpose) is null
+                ? NormalizeOptional(legacyNarrativePurpose)
+                : null;
+        }
+
+        private static string? GetSceneProposalNarrativeRole(SectionSceneCardProposalDto? proposal)
+        {
+            if (proposal is null)
             {
-                return SceneNarrativePurposeOptions;
+                return null;
             }
 
-            return [.. SceneNarrativePurposeOptions, _sceneNarrativePurpose];
+            return NormalizeNarrativeRole(proposal.NarrativeRole)
+                ?? GetNormalizedLegacyNarrativeRole(proposal.NarrativePurpose);
+        }
+
+        private static string? GetSceneProposalNarrativeIntent(SectionSceneCardProposalDto? proposal)
+        {
+            if (proposal is null)
+            {
+                return null;
+            }
+
+            return NormalizeOptional(proposal.NarrativeIntent)
+                ?? GetLegacyNarrativeIntent(proposal.NarrativePurpose);
+        }
+
+        private static string GetSceneProposalNarrativeRoleDisplay(SectionSceneCardProposalDto? proposal)
+        {
+            string? role = GetSceneProposalNarrativeRole(proposal);
+            return string.IsNullOrWhiteSpace(role) ? "(not provided)" : role;
+        }
+
+        private static string GetSceneProposalNarrativeIntentDisplay(SectionSceneCardProposalDto? proposal)
+        {
+            string? intent = GetSceneProposalNarrativeIntent(proposal);
+            return string.IsNullOrWhiteSpace(intent) ? "(not provided)" : intent;
+        }
+
+        private IReadOnlyList<string> GetNarrativeRoleOptions()
+        {
+            if (string.IsNullOrWhiteSpace(_sceneNarrativeRole)
+                || SceneNarrativeRoleOptions.Contains(_sceneNarrativeRole, StringComparer.OrdinalIgnoreCase))
+            {
+                return SceneNarrativeRoleOptions;
+            }
+
+            return [.. SceneNarrativeRoleOptions, _sceneNarrativeRole];
         }
 
 
@@ -7035,6 +7608,8 @@ private const string PreviewBootstrapScript = @"
 
         private sealed record PreviewMetrics(int PageCount, int CurrentPage, bool HasFrontMatter);
         private sealed record PreviewFit(double FitWidth, double FitPage);
+        private sealed record ToolbarDropdownPlacement(bool AlignLeft, bool OpenUpward);
+        private sealed record SceneAiFieldOption(string Key, string Label);
 
         private async Task OnExportDialogOpenAsync()
         {
@@ -7159,12 +7734,13 @@ private const string PreviewBootstrapScript = @"
                     _exportTemplates.AddRange(templates.OrderBy(template => template.Name));
                 }
 
-                if (_selectedTemplateId is null && _exportTemplates.Count > 0)
+                if (_selectedTemplateId.HasValue
+                    && _exportTemplates.All(template => template.Id != _selectedTemplateId.Value))
                 {
-                    ExportTemplateDto? manuscript = _exportTemplates
-                        .FirstOrDefault(template => string.Equals(template.PresetKey, "manuscript", StringComparison.OrdinalIgnoreCase));
-                    _selectedTemplateId = manuscript?.Id ?? _exportTemplates[0].Id;
+                    _selectedTemplateId = null;
                 }
+
+                ApplyDefaultTemplateSelection();
             }
             catch (Exception ex)
             {
@@ -7224,6 +7800,7 @@ private const string PreviewBootstrapScript = @"
                 presetId = _exportPresets.FirstOrDefault(preset => preset.IsGlobalDefault)?.Id;
             }
 
+            bool appliedPreset = false;
             if (presetId.HasValue)
             {
                 ExportPresetDto? preset = _exportPresets.FirstOrDefault(item => item.Id == presetId.Value);
@@ -7231,7 +7808,13 @@ private const string PreviewBootstrapScript = @"
                 {
                     _selectedExportPresetId = preset.Id;
                     ApplyExportPreset(preset);
+                    appliedPreset = true;
                 }
+            }
+
+            if (!appliedPreset)
+            {
+                ApplyDefaultTemplateSelection();
             }
         }
 
@@ -7271,13 +7854,13 @@ private const string PreviewBootstrapScript = @"
                 templateId = null;
             }
 
-            if (templateId.HasValue)
+            if (templateId.HasValue && CanUseFeature(FeatureKey.ExportTemplates))
             {
                 _selectedTemplateId = templateId;
             }
-            else if (_selectedTemplateId is null && _exportTemplates.Count > 0)
+            else
             {
-                _selectedTemplateId = _exportTemplates[0].Id;
+                _selectedTemplateId = null;
             }
 
             NormalizeExportFormatSelection();
@@ -7706,8 +8289,26 @@ private const string PreviewBootstrapScript = @"
 
         private string SelectedTemplateIdValue
         {
-            get => _selectedTemplateId?.ToString() ?? string.Empty;
+            get => _selectedTemplateId?.ToString() ?? NoTemplateOptionValue;
             set => _selectedTemplateId = Guid.TryParse(value, out Guid parsed) ? parsed : null;
+        }
+
+        private void ApplyDefaultTemplateSelection()
+        {
+            if (_selectedTemplateId.HasValue)
+            {
+                return;
+            }
+
+            if (!CanUseFeature(FeatureKey.ExportTemplates) || _exportTemplates.Count == 0)
+            {
+                _selectedTemplateId = null;
+                return;
+            }
+
+            ExportTemplateDto? manuscript = _exportTemplates
+                .FirstOrDefault(template => string.Equals(template.PresetKey, "manuscript", StringComparison.OrdinalIgnoreCase));
+            _selectedTemplateId = manuscript?.Id ?? _exportTemplates[0].Id;
         }
 
         private string SelectedPresetIdValue
@@ -7884,7 +8485,8 @@ private const string PreviewBootstrapScript = @"
                 _exportTemplates.RemoveAll(item => item.Id == template.Id);
                 if (_selectedTemplateId == template.Id)
                 {
-                    _selectedTemplateId = _exportTemplates.FirstOrDefault()?.Id;
+                    _selectedTemplateId = null;
+                    ApplyDefaultTemplateSelection();
                 }
             }
             catch (Exception ex)
@@ -8123,9 +8725,10 @@ private const string PreviewBootstrapScript = @"
             AiActionExecuteResponseDto? response;
             try
             {
-                using HttpResponseMessage result = await Http.PostAsJsonAsync(
-                    $"api/ai/actions/{action.ActionKey}/execute",
-                    request);
+                using HttpResponseMessage result = await PostAiActionAsync(
+                    action.ActionKey,
+                    request,
+                    commandLabel: action.Label);
                 if (!result.IsSuccessStatusCode)
                 {
                     if (await TryHandleEntitlementDeniedAsync(result, "ai.actions", "Upgrade to continue using AI features."))
@@ -8763,9 +9366,11 @@ private const string PreviewBootstrapScript = @"
 
             try
             {
-                using HttpResponseMessage retryResult = await Http.PostAsJsonAsync(
-                    $"api/ai/actions/{action.ActionKey}/execute",
-                    retryRequest);
+                using HttpResponseMessage retryResult = await PostAiActionAsync(
+                    action.ActionKey,
+                    retryRequest,
+                    trackStatus: false,
+                    commandLabel: action.Label);
                 if (!retryResult.IsSuccessStatusCode)
                 {
                     await TryHandleAiQuotaExceededAsync(retryResult);
@@ -8973,9 +9578,10 @@ private const string PreviewBootstrapScript = @"
             AiActionExecuteResponseDto? response;
             try
             {
-                using HttpResponseMessage result = await Http.PostAsJsonAsync(
-                    $"api/ai/actions/{action.ActionKey}/execute",
-                    request);
+                using HttpResponseMessage result = await PostAiActionAsync(
+                    action.ActionKey,
+                    request,
+                    commandLabel: action.Label);
                 if (!result.IsSuccessStatusCode)
                 {
                     if (await TryHandleEntitlementDeniedAsync(result, "ai.actions", "Upgrade to continue using AI features."))
@@ -11570,7 +12176,7 @@ private const string PreviewBootstrapScript = @"
 
             try
             {
-                using HttpResponseMessage result = await Http.PostAsJsonAsync("api/ai/actions/rewrite.selection/execute", request);
+                using HttpResponseMessage result = await PostAiActionAsync("rewrite.selection", request, commandLabel: "Rewrite selection");
                 if (!result.IsSuccessStatusCode)
                 {
                     await TryHandleAiQuotaExceededAsync(result);
@@ -11635,7 +12241,7 @@ private const string PreviewBootstrapScript = @"
 
             try
             {
-                using HttpResponseMessage result = await Http.PostAsJsonAsync("api/ai/actions/rewrite.selection/execute", request);
+                using HttpResponseMessage result = await PostAiActionAsync("rewrite.selection", request, commandLabel: "Rewrite selection");
                 if (!result.IsSuccessStatusCode)
                 {
                     await TryHandleAiQuotaExceededAsync(result);
@@ -11689,7 +12295,7 @@ private const string PreviewBootstrapScript = @"
 
             try
             {
-                using HttpResponseMessage result = await Http.PostAsJsonAsync("api/ai/actions/rewrite.selection/execute", request);
+                using HttpResponseMessage result = await PostAiActionAsync("rewrite.selection", request, commandLabel: "Rewrite selection");
                 if (!result.IsSuccessStatusCode)
                 {
                     await TryHandleAiQuotaExceededAsync(result);

@@ -28,12 +28,17 @@ namespace WriterApp.Tests
             ProjectRecord project = await db.Projects.SingleAsync(item => item.Id == result.ProjectId);
             Assert.Equal("My Novel", project.Title);
             Assert.Equal(1, await db.ProjectNodes.CountAsync(item => item.ProjectId == project.Id && item.NodeType == ProjectNodeType.Part));
+            Assert.Equal(1, await db.ProjectNodes.CountAsync(item => item.ProjectId == project.Id && item.NodeType == ProjectNodeType.Chapter));
             Assert.Equal(1, await db.ProjectNodes.CountAsync(item => item.ProjectId == project.Id && item.NodeType == ProjectNodeType.Scene));
             Assert.Equal(1, await db.Documents.CountAsync(item => item.ProjectId == project.Id && item.DocumentKind == DocumentKind.Manuscript));
             Assert.True(await db.Sections.AnyAsync());
             Assert.True(await db.Pages.AnyAsync());
 
             ProjectNodeRecord scene = await db.ProjectNodes.SingleAsync(item => item.Id == result.FirstSceneNodeId);
+            ProjectNodeRecord chapter = await db.ProjectNodes.SingleAsync(item => item.ProjectId == project.Id && item.NodeType == ProjectNodeType.Chapter);
+            ProjectNodeRecord part = await db.ProjectNodes.SingleAsync(item => item.ProjectId == project.Id && item.NodeType == ProjectNodeType.Part);
+            Assert.Equal(part.Id, chapter.ParentId);
+            Assert.Equal(chapter.Id, scene.ParentId);
             PageRecord page = await db.Pages.SingleAsync();
             SceneContentRecord sceneContent = await db.SceneContents.SingleAsync();
             Assert.Contains("The caf", page.Content);

@@ -50,7 +50,7 @@ else
                         <button type="button" class="@GetActiveClass(_formattingState.IsBold)" disabled="@(!_formattingState.CanBold)" title='@GetTooltip("Make selected text bold.")' @onclick="OnBoldRequested">Bold</button>
                         <button type="button" class="@GetActiveClass(_formattingState.IsItalic)" disabled="@(!_formattingState.CanItalic)" title='@GetTooltip("Italicize selected text.")' @onclick="OnItalicRequested">Italic</button>
                         <select class="editor-toolbar-select" value="@GetBlockTypeValue()" title='@GetTooltip("Change text style.")' @onchange="OnBlockTypeChanged" disabled="@(!_formattingState.CanApplyHeading)">
-                            <option value="paragraph">Paragraph</option>
+                            <option value="paragraph">Normal</option>
                             <option value="heading:1">Heading 1</option>
                             <option value="heading:2">Heading 2</option>
                         </select>

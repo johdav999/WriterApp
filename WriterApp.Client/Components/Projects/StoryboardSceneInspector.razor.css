@@ -83,6 +83,13 @@
     color: var(--color-text);
 }
 
+.storyboard-inspector-helper {
+    margin-top: -4px;
+    color: var(--color-text-muted);
+    font-size: var(--font-size-caption);
+    line-height: 1.35;
+}
+
 .storyboard-inspector-input,
 .storyboard-inspector-textarea {
     width: 100%;

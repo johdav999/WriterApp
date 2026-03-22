@@ -9,15 +9,17 @@
 
 .storyboard-page__layout {
     display: grid;
-    grid-template-columns: minmax(0, 2.2fr) minmax(260px, 0.88fr) minmax(320px, 1fr);
+    grid-template-columns: minmax(0, 1fr) 320px 360px;
     gap: var(--space-4);
     align-items: stretch;
     min-height: 0;
     overflow: hidden;
+    position: relative;
+    transition: grid-template-columns 220ms ease;
 }
 
 .storyboard-page__layout--insights-collapsed {
-    grid-template-columns: minmax(0, 2.45fr) 56px minmax(320px, 1fr);
+    grid-template-columns: minmax(0, 1fr) 360px;
 }
 
 .storyboard-page__panel {
@@ -39,6 +41,53 @@
 .storyboard-page__panel-title {
     margin: 0;
     font-size: var(--font-size-section-title);
+}
+
+.storyboard-page__panel--insights {
+    min-width: 0;
+}
+
+.storyboard-page__insights-rail {
+    appearance: none;
+    position: absolute;
+    top: 50%;
+    right: calc(360px + var(--space-2));
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border: 1px solid color-mix(in srgb, var(--color-border) 84%, transparent);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--color-surface-1) 92%, #f4f6fa 8%);
+    color: var(--color-text-muted);
+    font: inherit;
+    font-size: 0.8rem;
+    line-height: 1;
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+    cursor: pointer;
+    z-index: 2;
+    transition:
+        background 180ms ease,
+        color 180ms ease,
+        border-color 180ms ease,
+        box-shadow 180ms ease;
+}
+
+.storyboard-page__insights-rail:hover,
+.storyboard-page__insights-rail:focus-visible {
+    background: var(--color-surface-1);
+    color: var(--color-text);
+    border-color: var(--color-border);
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
+}
+
+.storyboard-page__insights-rail-icon {
+    font-size: 0.9rem;
+}
+
+.storyboard-page__insights-rail-label {
+    font-weight: 600;
 }
 
 .storyboard-page__header {
@@ -93,10 +142,18 @@
     .storyboard-page__layout {
         grid-template-columns: 1fr;
         grid-template-rows: minmax(320px, 1.4fr) minmax(260px, 1fr) minmax(320px, 1fr);
+        transition: none;
     }
 
     .storyboard-page__layout--insights-collapsed {
         grid-template-columns: 1fr;
-        grid-template-rows: minmax(320px, 1.4fr) auto minmax(320px, 1fr);
+        grid-template-rows: minmax(320px, 1.4fr) minmax(320px, 1fr);
+    }
+
+    .storyboard-page__insights-rail {
+        top: var(--space-3);
+        right: var(--space-3);
+        bottom: auto;
+        transform: none;
     }
 }

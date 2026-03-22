@@ -1,3 +1,4 @@
+@using WriterApp.Application.Documents
 @inject IJSRuntime JS
 
 <article class="@GetCardClass()"
@@ -201,6 +202,12 @@
     public string? NarrativePurpose { get; set; }
 
     [Parameter]
+    public string? NarrativeRole { get; set; }
+
+    [Parameter]
+    public string? NarrativeIntent { get; set; }
+
+    [Parameter]
     public string? AccentClass { get; set; }
 
     [Parameter]
@@ -245,7 +252,7 @@
 
     private bool HasStructuredMetadata =>
         SubplotTags.Count > 0
-        || !string.IsNullOrWhiteSpace(NarrativePurpose)
+        || !string.IsNullOrWhiteSpace(EffectiveNarrativeRole)
         || HasNotes;
 
     private bool HasPrimaryMetadata => !string.IsNullOrWhiteSpace(Pov);
@@ -273,14 +280,16 @@
                 warnings.Add("Missing POV");
             }
 
-            if (string.IsNullOrWhiteSpace(NarrativePurpose))
+            if (string.IsNullOrWhiteSpace(EffectiveNarrativeRole))
             {
-                warnings.Add("Missing narrative purpose");
+                warnings.Add("Missing narrative role");
             }
 
             return warnings;
         }
     }
+
+    private string? EffectiveNarrativeRole => NormalizeOptional(NarrativeRole) ?? NormalizeLegacyRole(NarrativePurpose);
 
     private string WarningTooltip => string.Join(" | ", MissingFieldWarnings);
 
@@ -531,6 +540,11 @@
             parts.Add(Summary.Trim());
         }
 
+        if (!string.IsNullOrWhiteSpace(NarrativeIntent))
+        {
+            parts.Add($"Intent: {NarrativeIntent.Trim()}");
+        }
+
         if (WordCount > 0)
         {
             parts.Add($"{WordCount} words");
@@ -547,9 +561,9 @@
     private IReadOnlyList<SceneCardChip> BuildAllChips()
     {
         List<SceneCardChip> chips = new();
-        if (!string.IsNullOrWhiteSpace(NarrativePurpose))
+        if (!string.IsNullOrWhiteSpace(EffectiveNarrativeRole))
         {
-            chips.Add(new SceneCardChip(NarrativePurpose.Trim(), "purpose"));
+            chips.Add(new SceneCardChip(EffectiveNarrativeRole.Trim(), "purpose"));
         }
 
         if (HasNotes)
@@ -581,6 +595,18 @@
     {
         IReadOnlyList<SceneCardChip> hidden = BuildAllChips().Skip(VisibleChips.Count).ToArray();
         return hidden.Count == 0 ? null : string.Join(" | ", hidden.Select(chip => chip.Label));
+    }
+
+    private static string? NormalizeOptional(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private static string? NormalizeLegacyRole(string? value)
+    {
+        return SceneNarrativeRoleCatalog.TryNormalize(value, out string? normalizedRole)
+            ? normalizedRole
+            : null;
     }
 
     private sealed record SceneCardChip(string Label, string Kind);

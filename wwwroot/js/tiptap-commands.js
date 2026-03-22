@@ -35,7 +35,8 @@ export function setParagraph(editor) {
         return;
     }
 
-    editor.chain().focus().setParagraph().run();
+    const { from, to } = editor.state.selection;
+    editor.chain().focus().setTextSelection({ from, to }).setParagraph().run();
 }
 
 export function toggleHeading(editor, level) {
@@ -43,7 +44,8 @@ export function toggleHeading(editor, level) {
         return;
     }
 
-    editor.chain().focus().toggleHeading({ level }).run();
+    const { from, to } = editor.state.selection;
+    editor.chain().focus().setTextSelection({ from, to }).toggleHeading({ level }).run();
 }
 
 export function setHeading(editor, level) {
@@ -51,7 +53,8 @@ export function setHeading(editor, level) {
         return;
     }
 
-    editor.chain().focus().setHeading({ level }).run();
+    const { from, to } = editor.state.selection;
+    editor.chain().focus().setTextSelection({ from, to }).setHeading({ level }).run();
 }
 
 export function toggleBlockquote(editor) {
@@ -59,7 +62,8 @@ export function toggleBlockquote(editor) {
         return;
     }
 
-    editor.chain().focus().toggleBlockquote().run();
+    const { from, to } = editor.state.selection;
+    editor.chain().focus().setTextSelection({ from, to }).toggleBlockquote().run();
 }
 
 export function insertHorizontalRule(editor) {
@@ -109,7 +113,8 @@ export function setLink(editor, href) {
         return;
     }
 
-    editor.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
+    const { from, to } = editor.state.selection;
+    editor.chain().focus().setTextSelection({ from, to }).extendMarkRange("link").setLink({ href: url }).run();
 }
 
 export function unsetLink(editor) {
@@ -117,7 +122,8 @@ export function unsetLink(editor) {
         return;
     }
 
-    editor.chain().focus().unsetLink().run();
+    const { from, to } = editor.state.selection;
+    editor.chain().focus().setTextSelection({ from, to }).unsetLink().run();
 }
 
 export function setFontSize(editor, size) {

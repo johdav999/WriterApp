@@ -2,6 +2,8 @@
 @using WriterApp.Application.Documents
 @inject HttpClient Http
 @inject NavigationManager Navigation
+@inject WriterApp.Client.State.CurrentDocumentStateService CurrentDocumentStateService
+@inject WriterApp.Client.State.GlobalSearchNavigationService GlobalSearchNavigationService
 
 <div class="global-search">
     <div class="global-search-field">
@@ -266,10 +268,71 @@
             return;
         }
 
-        string query = Uri.EscapeDataString(_query ?? string.Empty);
-        string pageQuery = item.PageId.HasValue ? $"&pageId={item.PageId}" : string.Empty;
-        Navigation.NavigateTo($"documents/{item.DocumentId}/sections/{sectionId}?search={query}{pageQuery}");
+        string normalizedQuery = _query?.Trim() ?? string.Empty;
+        GlobalSearchNavigationService.SetPending(new WriterApp.Client.State.GlobalSearchNavigationTarget(
+            item.DocumentId,
+            sectionId.Value,
+            item.PageId,
+            item.EntityType,
+            item.EntityId,
+            normalizedQuery));
+
         _isOpen = false;
+
+        if (IsCurrentEditorTarget(item.DocumentId, sectionId.Value))
+        {
+            return;
+        }
+
+        string? sceneRoute = await TryResolveSceneNavigationAsync(item);
+        if (!string.IsNullOrWhiteSpace(sceneRoute))
+        {
+            Navigation.NavigateTo(sceneRoute);
+            return;
+        }
+
+        Navigation.NavigateTo($"documents/{item.DocumentId}/sections/{sectionId.Value}");
+    }
+
+    private async Task<string?> TryResolveSceneNavigationAsync(SearchResultDto item)
+    {
+        if (!string.Equals(item.EntityType, "scenecard", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        if (item.SectionId is null || item.SectionId == Guid.Empty)
+        {
+            return null;
+        }
+
+        try
+        {
+            ProjectSceneOpenTargetDto? target = await Http.GetFromJsonAsync<ProjectSceneOpenTargetDto>(
+                $"api/sections/{item.SectionId.Value:D}/scene-target");
+            if (target is null || target.ProjectId == Guid.Empty || target.SceneNodeId == Guid.Empty)
+            {
+                return null;
+            }
+
+            return $"projects/{target.ProjectId:D}/scenes/{target.SceneNodeId:D}";
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private bool IsCurrentEditorTarget(Guid documentId, Guid sectionId)
+    {
+        string[] segments = GetRouteSegments();
+        bool isEditorRoute =
+            (segments.Length >= 2 && string.Equals(segments[0], "documents", StringComparison.OrdinalIgnoreCase))
+            || (segments.Length >= 2 && string.Equals(segments[0], "projects", StringComparison.OrdinalIgnoreCase));
+
+        return isEditorRoute
+            && CurrentDocumentStateService.DocumentId == documentId
+            && CurrentDocumentStateService.SectionId == sectionId;
     }
 
     private async Task<Guid?> ResolveSectionIdAsync(Guid documentId)

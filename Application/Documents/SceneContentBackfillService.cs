@@ -151,10 +151,26 @@ namespace WriterApp.Application.Documents
                         if (!existingSceneCards.Contains(scene.Id)
                             && sectionCardsById.TryGetValue(section.Id, out SectionSceneCardRecord? sectionCard))
                         {
+                            string? narrativeRole = SceneNarrativeRoleCatalog.NormalizeOptional(sectionCard.NarrativeRole);
+                            string? narrativeIntent = SceneNarrativeRoleCatalog.NormalizeOptional(sectionCard.NarrativeIntent);
+                            if (narrativeRole is null && narrativeIntent is null)
+                            {
+                                if (SceneNarrativeRoleCatalog.TryNormalize(sectionCard.NarrativePurpose, out string? normalizedRole))
+                                {
+                                    narrativeRole = normalizedRole;
+                                }
+                                else
+                                {
+                                    narrativeIntent = SceneNarrativeRoleCatalog.NormalizeOptional(sectionCard.NarrativePurpose);
+                                }
+                            }
+
                             _dbContext.SceneCards.Add(new SceneCardRecord
                             {
                                 SceneNodeId = scene.Id,
-                                NarrativePurpose = sectionCard.NarrativePurpose,
+                                NarrativePurpose = SceneNarrativeRoleCatalog.ToLegacyPurpose(narrativeRole, narrativeIntent),
+                                NarrativeRole = narrativeRole,
+                                NarrativeIntent = narrativeIntent,
                                 EmotionalBeat = sectionCard.EmotionalBeat,
                                 KeyEvents = sectionCard.KeyEvents,
                                 OpenQuestions = sectionCard.OpenQuestions,

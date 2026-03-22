@@ -7,6 +7,7 @@ namespace WriterApp.Application.Documents
 {
     public static class QualityRewriteOutputValidator
     {
+        private static readonly Regex WordTokenRegex = new(@"\b[\p{L}\p{N}']+\b", RegexOptions.Compiled | RegexOptions.CultureInvariant);
         private static QualityRewriteValidationOptions _options = new();
 
         public static void Configure(QualityRewriteValidationOptions? options)
@@ -171,12 +172,9 @@ namespace WriterApp.Application.Documents
                 return 0;
             }
 
-            bool useWordBoundary = ShouldUseWordBoundary(source, anchor);
-
-            if (useWordBoundary)
+            if (ShouldUseTokenMatching(source, anchor))
             {
-                string pattern = $@"(?<![\p{{L}}\p{{N}}]){Regex.Escape(anchor)}(?![\p{{L}}\p{{N}}])";
-                return Regex.Matches(source, pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant).Count;
+                return CountTokenOccurrences(source, anchor);
             }
 
             int count = 0;
@@ -191,6 +189,26 @@ namespace WriterApp.Application.Documents
 
                 count++;
                 start = index + Math.Max(1, anchor.Length);
+            }
+
+            return count;
+        }
+
+        private static int CountTokenOccurrences(string source, string anchor)
+        {
+            int count = 0;
+            foreach (Match match in WordTokenRegex.Matches(source))
+            {
+                if (!match.Success)
+                {
+                    continue;
+                }
+
+                string token = NormalizeAnchorToken(match.Value);
+                if (string.Equals(token, anchor, StringComparison.Ordinal))
+                {
+                    count++;
+                }
             }
 
             return count;
@@ -337,13 +355,8 @@ namespace WriterApp.Application.Documents
             return false;
         }
 
-        private static bool ShouldUseWordBoundary(string source, string anchor)
+        private static bool ShouldUseTokenMatching(string source, string anchor)
         {
-            if (anchor.Length < _options.StrictAnchorMinLength)
-            {
-                return false;
-            }
-
             if (!anchor.Any(char.IsLetterOrDigit))
             {
                 return false;

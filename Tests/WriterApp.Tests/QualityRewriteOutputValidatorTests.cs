@@ -176,5 +176,45 @@ namespace WriterApp.Tests
             Assert.Equal(4, candidateCount);
             Assert.Equal("repetition_increased", reason);
         }
+
+        [Fact]
+        public void CountOccurrences_IgnoresSubstringMatchesForStandaloneWord()
+        {
+            const string text = "During winter, Lin stepped in and stayed inside.";
+
+            int count = QualityRewriteOutputValidator.CountOccurrences(text, "in");
+
+            Assert.Equal(1, count);
+        }
+
+        [Fact]
+        public void CountOccurrences_NormalizesCaseAndTrailingPunctuation()
+        {
+            const string text = "Clock, clock. CLOCK!";
+
+            int count = QualityRewriteOutputValidator.CountOccurrences(text, "clock");
+
+            Assert.Equal(3, count);
+        }
+
+        [Fact]
+        public void TryValidateRepeatedWordReduction_DoesNotTreatSubstringAsRepetition()
+        {
+            const string original = "During the briefing, Lin stepped in quietly.";
+            const string candidate = "During the briefing, Lin slipped inside quietly.";
+
+            bool ok = QualityRewriteOutputValidator.TryValidateRepeatedWordReduction(
+                original,
+                candidate,
+                "in",
+                out int originalCount,
+                out int candidateCount,
+                out string? reason);
+
+            Assert.True(ok);
+            Assert.Equal(1, originalCount);
+            Assert.Equal(0, candidateCount);
+            Assert.Null(reason);
+        }
     }
 }

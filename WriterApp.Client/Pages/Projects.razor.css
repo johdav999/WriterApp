@@ -313,6 +313,13 @@
     padding: 0 var(--space-3);
 }
 
+.tree-actions-hint {
+    flex-basis: 100%;
+    margin-top: calc(var(--space-1) * -0.5);
+    font-size: var(--font-size-helper);
+    color: var(--color-text-muted);
+}
+
 .tree-list {
     list-style: none;
     margin: 0;
