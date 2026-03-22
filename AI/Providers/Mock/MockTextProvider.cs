@@ -795,7 +795,9 @@ namespace WriterApp.AI.Providers.Mock
             string sectionTitle = GetInputValue(request, "section_title", "Section");
             Dictionary<string, object?> card = new()
             {
-                ["narrativePurpose"] = $"Purpose for {sectionTitle}",
+                ["narrativeRole"] = "Complication",
+                ["narrativeIntent"] = $"Clarify what this scene is trying to accomplish in {sectionTitle}.",
+                ["narrativePurpose"] = "Complication",
                 ["emotionalBeat"] = "Emotional shift goes here.",
                 ["keyEvents"] = "- Key event 1\n- Key event 2",
                 ["openQuestions"] = mode == "open_questions" ? "- What happens next?" : "- Open thread to resolve.",
@@ -818,7 +820,9 @@ namespace WriterApp.AI.Providers.Mock
             {
                 title = $"Aftermath in {preferredChapterTitle}",
                 summary = $"A follow-up scene that reacts to {selectedSceneTitle}, sharpens the consequences, and turns the story toward the next major decision.",
-                narrativePurpose = "Escalation",
+                narrativeRole = "Aftermath",
+                narrativeIntent = $"Process the fallout from {selectedSceneTitle} and turn the pressure toward the next decision.",
+                narrativePurpose = "Aftermath",
                 povCharacterId = "Klara",
                 subplotTags = new[] { "aftermath", "decision" },
                 rationale = $"This scene extends the pressure created by {selectedSceneTitle} and gives the board a clear bridge into the next structural turn."
@@ -837,6 +841,8 @@ namespace WriterApp.AI.Providers.Mock
                     {
                         title = "Decision at the threshold",
                         summary = "A bridging scene where the protagonist chooses a course of action instead of moving abruptly into the next complication.",
+                        narrativeRole = "Decision",
+                        narrativeIntent = "Force the protagonist to choose a direction that commits the story to its next turn.",
                         narrativePurpose = "Decision",
                         suggestedChapterPlacement = preferredChapterTitle,
                         rationale = "The board jumps from setup into consequence without showing the choice that commits the character.",
@@ -846,7 +852,9 @@ namespace WriterApp.AI.Providers.Mock
                     {
                         title = "Subplot pressure returns",
                         summary = "A short escalation beat that reintroduces the neglected subplot before it disappears for too long.",
-                        narrativePurpose = "Escalation",
+                        narrativeRole = "Complication",
+                        narrativeIntent = "Reintroduce subplot pressure before the thread disappears and loses momentum.",
+                        narrativePurpose = "Complication",
                         suggestedChapterPlacement = preferredChapterTitle,
                         rationale = "A subplot is introduced but not continued, which weakens continuity and lowers tension.",
                         subplotTags = new[] { "subplot", "pressure" }

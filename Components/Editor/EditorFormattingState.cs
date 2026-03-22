@@ -16,6 +16,7 @@ namespace BlazorApp.Components.Editor
         public bool CanBlockquote { get; set; }
         public bool CanHorizontalRule { get; set; }
         public bool IsLink { get; set; }
+        public string? LinkHref { get; set; }
         public string? BlockType { get; set; }
         public string? FontFamily { get; set; }
         public string? FontSize { get; set; }

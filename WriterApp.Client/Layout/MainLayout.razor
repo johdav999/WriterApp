@@ -2,6 +2,7 @@
 @using WriterApp.Client.State
 @using WriterApp.Client.Components
 @using WriterApp.Client.Components.Search
+@using System.Linq
 @using System.Net.Http.Json
 @using WriterApp.Application.Documents
 @using WriterApp.Application.Subscriptions
@@ -10,6 +11,7 @@
 @inject CurrentDocumentStateService CurrentDocumentStateService
 @inject CurrentSceneStateService CurrentSceneStateService
 @inject CurrentProjectStateService CurrentProjectStateService
+@inject ProjectStructureCacheService ProjectStructureCacheService
 @inject LastOpenedDocumentStateService LastOpenedDocumentStateService
 @inject AuthMeStateService AuthMeStateService
 @inject OnboardingOverlayStateService OnboardingOverlayStateService
@@ -360,12 +362,33 @@
             return;
         }
 
+        if (ProjectStructureCacheService.TryGetProject(resolvedProjectId, out ProjectDto cachedProject))
+        {
+            string cachedProjectTitle = cachedProject.Title?.Trim() ?? string.Empty;
+            _breadcrumbProjectTitle = cachedProjectTitle;
+            _isProjectBreadcrumbLoading = false;
+            if (!string.IsNullOrWhiteSpace(cachedProjectTitle))
+            {
+                CurrentProjectStateService.CacheProject(resolvedProjectId, cachedProjectTitle);
+                CurrentProjectStateService.SetCurrent(resolvedProjectId, cachedProjectTitle);
+            }
+            return;
+        }
+
         _breadcrumbProjectTitle = string.Empty;
         _isProjectBreadcrumbLoading = true;
         try
         {
-            ProjectTreeDto? tree = await Http.GetFromJsonAsync<ProjectTreeDto>($"api/projects/{resolvedProjectId}/tree");
-            string title = tree?.Project?.Title?.Trim() ?? string.Empty;
+            List<ProjectDto>? projects = await Http.GetFromJsonAsync<List<ProjectDto>>("api/projects");
+            if (projects is not null)
+            {
+                ProjectStructureCacheService.SetProjects(projects);
+            }
+
+            string title = projects?
+                .FirstOrDefault(project => project.Id == resolvedProjectId)?
+                .Title?
+                .Trim() ?? string.Empty;
             if (_breadcrumbProjectId != resolvedProjectId)
             {
                 return;

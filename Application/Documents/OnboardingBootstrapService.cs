@@ -294,7 +294,8 @@ At one of those moments their eyes met.
         private Task<ProjectNodeRecord> EnsureNovelStructureAsync(ProjectRecord project, List<ProjectNodeRecord> nodes, CancellationToken ct)
         {
             ProjectNodeRecord act = EnsureNode(project, nodes, null, ProjectNodeType.Part, "Act I");
-            ProjectNodeRecord scene = EnsureNode(project, nodes, act.Id, ProjectNodeType.Scene, "Scene 1");
+            ProjectNodeRecord chapter = EnsureNode(project, nodes, act.Id, ProjectNodeType.Chapter, "Chapter 1");
+            ProjectNodeRecord scene = EnsureNode(project, nodes, chapter.Id, ProjectNodeType.Scene, "Scene 1");
             return Task.FromResult(scene);
         }
 
@@ -336,6 +337,21 @@ At one of those moments their eyes met.
             ProjectNodeType nodeType,
             string title)
         {
+            ProjectNodeRecord? parent = parentId.HasValue
+                ? knownNodes.FirstOrDefault(item => item.ProjectId == project.Id && item.Id == parentId.Value)
+                : null;
+            if (parentId.HasValue && parent is null)
+            {
+                throw new OnboardingBootstrapException("starter_structure_failed", "Starter structure referenced a missing parent node.");
+            }
+
+            if (!ProjectNodeHierarchyValidator.IsPlacementAllowed(nodeType, parent?.NodeType))
+            {
+                throw new OnboardingBootstrapException(
+                    "starter_structure_failed",
+                    $"Starter structure attempted an invalid node placement for {ProjectNodeHierarchyValidator.NormalizeNodeType(nodeType)}.");
+            }
+
             ProjectNodeRecord? existing = knownNodes.FirstOrDefault(item =>
                 item.ProjectId == project.Id
                 && item.ParentId == parentId

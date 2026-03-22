@@ -8,5 +8,7 @@ namespace WriterApp.Client.Components.Projects
         IReadOnlyList<string> SubplotTags,
         string? NarrativePurpose,
         string? Rationale,
-        string? PreferredChapterTitle = null);
+        string? PreferredChapterTitle = null,
+        string? NarrativeRole = null,
+        string? NarrativeIntent = null);
 }

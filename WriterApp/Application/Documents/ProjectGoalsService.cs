@@ -85,7 +85,7 @@ namespace WriterApp.Application.Documents
                 return null;
             }
 
-            await _projectWordCountService.RefreshProjectAsync(projectId, ct);
+            await _projectWordCountService.EnsureProjectCurrentAsync(projectId, ct);
             int totalWords = await GetProjectTotalWordsAsync(projectId, ct);
             bool milestonesChanged = await UpdateMilestoneCompletionAsync(projectId, totalWords, ct);
             if (milestonesChanged)
@@ -515,10 +515,18 @@ namespace WriterApp.Application.Documents
                 .Where(item => item.ProjectId == projectId)
                 .ToListAsync(ct);
 
-            Dictionary<Guid, int> nodeWords = await _dbContext.ProjectNodes
-                .AsNoTracking()
-                .Where(item => item.ProjectId == projectId)
-                .ToDictionaryAsync(item => item.Id, item => item.WordCountCache, ct);
+            Guid[] targetNodeIds = milestones
+                .Where(item => item.TargetNodeId.HasValue)
+                .Select(item => item.TargetNodeId!.Value)
+                .Distinct()
+                .ToArray();
+
+            Dictionary<Guid, int> nodeWords = targetNodeIds.Length == 0
+                ? new Dictionary<Guid, int>()
+                : await _dbContext.ProjectNodes
+                    .AsNoTracking()
+                    .Where(item => item.ProjectId == projectId && targetNodeIds.Contains(item.Id))
+                    .ToDictionaryAsync(item => item.Id, item => item.WordCountCache, ct);
 
             bool changed = false;
             DateTimeOffset now = DateTimeOffset.UtcNow;

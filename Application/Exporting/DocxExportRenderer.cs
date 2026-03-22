@@ -70,8 +70,13 @@ namespace WriterApp.Application.Exporting
 
                 if (ExportHelpers.ShouldIncludeCover(resolved))
                 {
-                    string coverHtml = $"<p><img src=\"{WebUtility.HtmlEncode(resolved.CoverImageUrl!)}\" alt=\"Project cover\" /></p>";
-                    converter.AppendHtml(coverHtml, breakOnH1: false, ref hasContent);
+                    if (!converter.AppendCoverImage(resolved.CoverImageUrl!))
+                    {
+                        string coverHtml = $"<p><img src=\"{WebUtility.HtmlEncode(resolved.CoverImageUrl!)}\" alt=\"Project cover\" /></p>";
+                        converter.AppendHtml(coverHtml, breakOnH1: false, ref hasContent);
+                    }
+
+                    hasContent = true;
                     converter.AppendPageBreak();
                 }
 
@@ -379,6 +384,25 @@ namespace WriterApp.Application.Exporting
                 Paragraph breakParagraph = new();
                 breakParagraph.Append(new Run(new Break { Type = BreakValues.Page }));
                 _body.Append(breakParagraph);
+            }
+
+            public bool AppendCoverImage(string src)
+            {
+                const long emusPerInch = 914400;
+                long maxWidthEmu = (long)(6.25 * emusPerInch);
+                long maxHeightEmu = (long)(9.0 * emusPerInch);
+                Paragraph paragraph = new();
+                paragraph.Append(new ParagraphProperties(
+                    new Justification { Val = JustificationValues.Center },
+                    new SpacingBetweenLines { Before = "0", After = "0" }));
+
+                if (!TryAppendImage(paragraph, src, true, maxWidthEmu, maxHeightEmu))
+                {
+                    return false;
+                }
+
+                _body.Append(paragraph);
+                return true;
             }
 
             public void AppendHtml(string html, bool breakOnH1, ref bool hasContent)
@@ -1152,6 +1176,21 @@ namespace WriterApp.Application.Exporting
                     return false;
                 }
 
+                return TryAppendImage(container, src, _fetchRemoteImages, null, null);
+            }
+
+            private bool TryAppendImage(
+                OpenXmlCompositeElement container,
+                string src,
+                bool allowRemote,
+                long? maxWidthEmu,
+                long? maxHeightEmu)
+            {
+                if (string.IsNullOrWhiteSpace(src))
+                {
+                    return false;
+                }
+
                 try
                 {
                     if (src.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
@@ -1162,10 +1201,10 @@ namespace WriterApp.Application.Exporting
                             return false;
                         }
 
-                        return AppendImageBytes(container, imageBytes, imagePartType);
+                        return AppendImageBytes(container, imageBytes, imagePartType, maxWidthEmu, maxHeightEmu);
                     }
 
-                    if (!_fetchRemoteImages)
+                    if (!allowRemote)
                     {
                         _logger.LogDebug("[DOCX] Remote image fetch disabled.");
                         return false;
@@ -1184,7 +1223,7 @@ namespace WriterApp.Application.Exporting
                         return false;
                     }
 
-                    return AppendImageBytes(container, bytes, partType);
+                    return AppendImageBytes(container, bytes, partType, maxWidthEmu, maxHeightEmu);
                 }
                 catch (Exception ex)
                 {
@@ -1193,7 +1232,12 @@ namespace WriterApp.Application.Exporting
                 }
             }
 
-            private bool AppendImageBytes(OpenXmlCompositeElement container, byte[] bytes, PartTypeInfo partType)
+            private bool AppendImageBytes(
+                OpenXmlCompositeElement container,
+                byte[] bytes,
+                PartTypeInfo partType,
+                long? maxWidthEmu,
+                long? maxHeightEmu)
             {
                 if (!TryGetImageDimensions(bytes, out int widthPx, out int heightPx))
                 {
@@ -1205,12 +1249,20 @@ namespace WriterApp.Application.Exporting
                 const long emusPerPx = 9525; // 96 DPI
                 long widthEmu = widthPx * emusPerPx;
                 long heightEmu = heightPx * emusPerPx;
-                long maxWidthEmu = (long)(6.5 * emusPerInch);
-                if (widthEmu > maxWidthEmu)
+                long appliedMaxWidthEmu = maxWidthEmu ?? (long)(6.5 * emusPerInch);
+                long? appliedMaxHeightEmu = maxHeightEmu;
+                if (widthEmu > appliedMaxWidthEmu)
                 {
-                    double scale = (double)maxWidthEmu / widthEmu;
-                    widthEmu = maxWidthEmu;
+                    double scale = (double)appliedMaxWidthEmu / widthEmu;
+                    widthEmu = appliedMaxWidthEmu;
                     heightEmu = (long)(heightEmu * scale);
+                }
+
+                if (appliedMaxHeightEmu.HasValue && heightEmu > appliedMaxHeightEmu.Value)
+                {
+                    double scale = (double)appliedMaxHeightEmu.Value / heightEmu;
+                    heightEmu = appliedMaxHeightEmu.Value;
+                    widthEmu = (long)(widthEmu * scale);
                 }
 
                 ImagePart imagePart = _mainPart.AddImagePart(partType);

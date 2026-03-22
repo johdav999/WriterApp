@@ -110,6 +110,47 @@ namespace WriterApp.Application.Documents
         IReadOnlyList<ProjectNodeDto> CreatedNodes,
         IReadOnlyList<ProjectNodeDto> UpdatedNodes);
 
+    public sealed record ProjectNodeIntegrityIssueDto(
+        Guid NodeId,
+        string NodeType,
+        string Title,
+        string Code,
+        string Message,
+        Guid? ParentId,
+        string? ParentNodeType,
+        string? ParentTitle);
+
+    public sealed record ProjectNodeIntegritySummaryDto(
+        int InvalidParentChildCombinations,
+        int ScenesNotUnderChapters,
+        int PartsWithNonRootParent,
+        int CrossProjectParentLinks,
+        int SelfParentRows,
+        int Cycles,
+        int ValidRootChapters);
+
+    public sealed record ProjectNodeIntegrityReportDto(
+        Guid ProjectId,
+        int IssueCount,
+        IReadOnlyList<ProjectNodeIntegrityIssueDto> Issues);
+
+    public sealed record ProjectNodeIntegrityIssueRowDto(
+        Guid ProjectId,
+        string ProjectTitle,
+        Guid NodeId,
+        string NodeTitle,
+        string NodeType,
+        Guid? ParentId,
+        string ViolationType,
+        string Message);
+
+    public sealed record ProjectNodeIntegrityAdminReportDto(
+        DateTimeOffset GeneratedAtUtc,
+        int ProjectCount,
+        int NodeCount,
+        ProjectNodeIntegritySummaryDto Summary,
+        IReadOnlyList<ProjectNodeIntegrityIssueRowDto> Issues);
+
     public sealed record ProjectSceneOpenTargetDto(
         Guid ProjectId,
         Guid SceneNodeId,

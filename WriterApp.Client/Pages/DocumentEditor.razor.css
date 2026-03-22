@@ -1063,15 +1063,30 @@
     top: calc(100% + 6px);
     right: 0;
     min-width: 180px;
+    max-width: min(280px, calc(100vw - 16px));
+    max-height: 70vh;
     display: flex;
     flex-direction: column;
     gap: 6px;
     padding: 8px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
     border-radius: var(--radius-md);
     background: var(--surface);
     border: 1px solid var(--color-border);
     box-shadow: var(--shadow-lg);
     z-index: 20;
+}
+
+.editor-toolbar-overflow-panel.is-align-left {
+    right: auto;
+    left: 0;
+}
+
+.editor-toolbar-overflow-panel.is-open-upward {
+    top: auto;
+    bottom: calc(100% + 6px);
 }
 
 .editor-toolbar-divider {
@@ -1463,6 +1478,34 @@
     font-weight: 600;
 }
 
+.ai-command-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: #1d4ed8;
+    font-weight: 600;
+}
+
+.ai-command-status.is-complete {
+    color: #0f766e;
+}
+
+.ai-command-spinner {
+    width: 0.8rem;
+    height: 0.8rem;
+    border-radius: 999px;
+    border: 2px solid rgba(29, 78, 216, 0.2);
+    border-top-color: currentColor;
+    animation: ai-command-spin 0.8s linear infinite;
+    flex: 0 0 auto;
+}
+
+@keyframes ai-command-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
 .editor-shell.is-print-layout .editor-viewport {
     background: var(--canvas-bg);
 }
@@ -1750,6 +1793,23 @@
 .editor-surface ::deep .tiptap-content img.ProseMirror-selectednode {
     outline: 2px solid rgba(37, 99, 235, 0.65);
     outline-offset: 2px;
+}
+
+.editor-surface ::deep .tiptap-content blockquote {
+    margin: 1rem 0;
+    padding: 0.85rem 1rem 0.85rem 1.1rem;
+    border-left: 4px solid rgba(30, 64, 175, 0.7);
+    background: rgba(219, 234, 254, 0.42);
+    color: #1e3a5f;
+    border-radius: 0 14px 14px 0;
+}
+
+.editor-surface ::deep .tiptap-content blockquote > :first-child {
+    margin-top: 0;
+}
+
+.editor-surface ::deep .tiptap-content blockquote > :last-child {
+    margin-bottom: 0;
 }
 
 .editor-surface ::deep .tableWrapper {
@@ -2134,6 +2194,24 @@
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
+}
+
+.scene-card-field-tools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: 8px;
+}
+
+.scene-card-field-tools-label {
+    font-size: 0.78rem;
+    color: var(--muted);
+    min-width: 150px;
+}
+
+.scene-card-field-select {
+    min-height: auto;
+    width: min(240px, 100%);
 }
 
 .scene-card-preview {

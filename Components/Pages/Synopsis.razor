@@ -97,7 +97,7 @@
 
     <aside class="synopsis-coach">
         <div class="coach-header">
-            <h2>Story Coach</h2>
+            <h2>Synopsis Coaching</h2>
             <div class="coach-subtitle">Guided prompts for your synopsis fields.</div>
             <div class="coach-hint">Suggestions are aligned with your full synopsis.</div>
         </div>
@@ -835,6 +835,13 @@
         grid-template-columns: minmax(0, 1fr) 320px;
         gap: 24px;
         padding: 24px;
+        min-height: calc(100vh - 96px);
+        align-items: start;
+    }
+
+    .synopsis-canvas {
+        min-width: 0;
+        min-height: 0;
     }
 
     .synopsis-header {
@@ -949,11 +956,19 @@
     }
 
     .synopsis-coach {
+        display: flex;
+        flex-direction: column;
         padding: 16px;
         border-radius: 12px;
         border: 1px solid #e2e6ee;
         background: #f8f9fb;
-        height: fit-content;
+        height: calc(100vh - 104px);
+        max-height: calc(100vh - 104px);
+        min-height: 0;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        box-sizing: border-box;
+        align-self: start;
         position: sticky;
         top: 80px;
     }

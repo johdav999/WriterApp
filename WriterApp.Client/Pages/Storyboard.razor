@@ -10,6 +10,7 @@
 @inject ILogger<Storyboard> Logger
 @inject CurrentProjectStateService CurrentProjectStateService
 @inject CurrentSceneStateService CurrentSceneStateService
+@inject ProjectStructureCacheService ProjectStructureCacheService
 @inject FeatureAccessService FeatureAccessService
 
 <PageTitle>Storyboard</PageTitle>
@@ -75,18 +76,21 @@
                 </div>
             </div>
 
-            <div class="storyboard-page__panel storyboard-page__panel--insights">
-                <div class="storyboard-page__panel-body">
-                    <StoryboardInsightsPanel Project="_project"
-                                             ProjectId="ProjectId"
-                                             Nodes="_nodes"
-                                             SelectedSceneId="SingleSelectedSceneId"
-                                             SelectedSceneIds="_selectedSceneIds"
-                                             IsCollapsed="_insightsCollapsed"
-                                             IsCollapsedChanged="HandleInsightsCollapsedChanged"
-                                             CreateSuggestedScene="CreateSuggestedSceneAsync" />
+            @if (!_insightsCollapsed)
+            {
+                <div class="storyboard-page__panel storyboard-page__panel--insights">
+                    <div class="storyboard-page__panel-body">
+                        <StoryboardInsightsPanel Project="_project"
+                                                 ProjectId="ProjectId"
+                                                 Nodes="_nodes"
+                                                 SelectedSceneId="SingleSelectedSceneId"
+                                                 SelectedSceneIds="_selectedSceneIds"
+                                                 IsCollapsed="_insightsCollapsed"
+                                                 IsCollapsedChanged="HandleInsightsCollapsedChanged"
+                                                 CreateSuggestedScene="CreateSuggestedSceneAsync" />
+                    </div>
                 </div>
-            </div>
+            }
 
             <div class="storyboard-page__panel storyboard-page__panel--detail">
                 <div class="storyboard-page__panel-body">
@@ -100,6 +104,19 @@
                                               SceneUpdated="OnSceneUpdatedAsync" />
                 </div>
             </div>
+
+            @if (_insightsCollapsed)
+            {
+                <button type="button"
+                        class="storyboard-page__insights-rail"
+                        aria-expanded="false"
+                        aria-label="Expand storyboard insights"
+                        title="Expand insights"
+                        @onclick="ExpandInsightsAsync">
+                    <span class="storyboard-page__insights-rail-icon" aria-hidden="true">&lt;</span>
+                    <span class="storyboard-page__insights-rail-label">Insights</span>
+                </button>
+            }
         </div>
     }
 </section>
@@ -141,6 +158,11 @@
         return Task.CompletedTask;
     }
 
+    private Task ExpandInsightsAsync()
+    {
+        return HandleInsightsCollapsedChanged(false);
+    }
+
     protected override async Task OnParametersSetAsync()
     {
         if (!FeatureAccessService.CanUse(FeatureKey.ProjectStoryboard))
@@ -156,30 +178,50 @@
         await LoadStoryboardAsync();
     }
 
-    private async Task LoadStoryboardAsync()
+    private async Task LoadStoryboardAsync(bool forceRefresh = false)
     {
         _loading = true;
         _error = null;
 
         try
         {
-            using HttpResponseMessage response = await Http.GetAsync($"api/projects/{ProjectId}/tree");
-            if (response.StatusCode == HttpStatusCode.NotFound)
+            ProjectTreeDto? tree = null;
+            if (!forceRefresh && ProjectStructureCacheService.TryGetProjectTree(ProjectId, out ProjectTreeDto cachedTree))
             {
-                _project = null;
-                _nodes.Clear();
-                return;
+                Logger.LogDebug("Storyboard tree loaded from cache. ProjectId={ProjectId} NodeCount={NodeCount}", ProjectId, cachedTree.Nodes.Count);
+                tree = cachedTree;
             }
-
-            if (!response.IsSuccessStatusCode)
+            else
             {
-                _error = "Failed to load storyboard.";
-                _project = null;
-                _nodes.Clear();
-                return;
-            }
+                if (forceRefresh)
+                {
+                    Logger.LogDebug("ProjectStructureCache force refresh ProjectId={ProjectId} Reason={Reason}", ProjectId, "storyboard-refresh");
+                }
 
-            ProjectTreeDto? tree = await response.Content.ReadFromJsonAsync<ProjectTreeDto>();
+                using HttpResponseMessage response = await Http.GetAsync($"api/projects/{ProjectId}/tree");
+                if (response.StatusCode == HttpStatusCode.NotFound)
+                {
+                    _project = null;
+                    _nodes.Clear();
+                    return;
+                }
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    _error = "Failed to load storyboard.";
+                    _project = null;
+                    _nodes.Clear();
+                    return;
+                }
+
+                tree = await response.Content.ReadFromJsonAsync<ProjectTreeDto>();
+                if (tree is not null)
+                {
+                    ProjectStructureCacheService.SetProjectTree(tree);
+                    Logger.LogDebug("Storyboard tree loaded from API. ProjectId={ProjectId} NodeCount={NodeCount}", ProjectId, tree.Nodes.Count);
+                }
+            }
+            
             if (tree?.Project is null)
             {
                 _error = "Failed to load storyboard.";
@@ -209,7 +251,7 @@
 
     private Task RefreshStoryboardAsync()
     {
-        return LoadStoryboardAsync();
+        return LoadStoryboardAsync(forceRefresh: true);
     }
 
     private async Task HandleStructureChangedAsync()

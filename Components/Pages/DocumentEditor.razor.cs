@@ -1537,14 +1537,23 @@ namespace BlazorApp.Components.Pages
 
         private async Task OnLinkRequested()
         {
-            string? url = await JSRuntime.InvokeAsync<string?>("prompt", "Paste link URL");
+            string? originalHref = string.IsNullOrWhiteSpace(_formattingState.LinkHref)
+                ? null
+                : _formattingState.LinkHref.Trim();
+            string? url = await JSRuntime.InvokeAsync<string?>("prompt", "Paste link URL", originalHref ?? string.Empty);
+
+            if (url is null)
+            {
+                return;
+            }
+
             if (string.IsNullOrWhiteSpace(url))
             {
                 await InvokePageCommandAsync("unsetLink");
                 return;
             }
 
-            await InvokePageCommandAsync("setLink", url);
+            await InvokePageCommandAsync("setLink", url.Trim());
         }
 
         private Task OnUndoRequested()

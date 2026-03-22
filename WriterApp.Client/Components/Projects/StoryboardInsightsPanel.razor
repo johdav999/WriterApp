@@ -48,7 +48,7 @@
             <li>@Summary.TotalChapters chapter@(Summary.TotalChapters == 1 ? string.Empty : "s") currently mapped on the board.</li>
             <li>@Summary.TotalScenes visible scene@(Summary.TotalScenes == 1 ? string.Empty : "s") across the current storyboard.</li>
             <li>@Summary.DraftScenes draft scene@(Summary.DraftScenes == 1 ? string.Empty : "s") still need refinement.</li>
-            <li>@Summary.IncompleteScenes scene@(Summary.IncompleteScenes == 1 ? string.Empty : "s") are missing summary, POV, or narrative purpose.</li>
+            <li>@Summary.IncompleteScenes scene@(Summary.IncompleteScenes == 1 ? string.Empty : "s") are missing summary, POV, or narrative role.</li>
         </ul>
     </div>
 
@@ -227,9 +227,9 @@
                     {
                         <span class="storyboard-insights-chip">POV: @_nextSceneSuggestion.PovCharacterId</span>
                     }
-                    @if (!string.IsNullOrWhiteSpace(_nextSceneSuggestion.NarrativePurpose))
+                    @if (!string.IsNullOrWhiteSpace(_nextSceneSuggestion.NarrativeRole))
                     {
-                        <span class="storyboard-insights-chip">@_nextSceneSuggestion.NarrativePurpose</span>
+                        <span class="storyboard-insights-chip">@_nextSceneSuggestion.NarrativeRole</span>
                     }
                     @foreach (string tag in _nextSceneSuggestion.SubplotTags)
                     {
@@ -280,9 +280,9 @@
                             {
                                 <span class="storyboard-insights-chip">Chapter: @suggestion.PreferredChapterTitle</span>
                             }
-                            @if (!string.IsNullOrWhiteSpace(suggestion.NarrativePurpose))
+                            @if (!string.IsNullOrWhiteSpace(suggestion.NarrativeRole))
                             {
-                                <span class="storyboard-insights-chip">@suggestion.NarrativePurpose</span>
+                                <span class="storyboard-insights-chip">@suggestion.NarrativeRole</span>
                             }
                             @foreach (string tag in suggestion.SubplotTags)
                             {
@@ -786,7 +786,7 @@
         int incompleteScenes = chapters.Sum(chapter => chapter.Scenes.Count(scene =>
             string.IsNullOrWhiteSpace(scene.Summary)
             || string.IsNullOrWhiteSpace(scene.Pov)
-            || string.IsNullOrWhiteSpace(scene.NarrativePurpose)));
+            || string.IsNullOrWhiteSpace(scene.NarrativeRole)));
         double averageScenes = totalChapters == 0 ? 0 : (double)totalScenes / totalChapters;
         List<string> observations = new();
         List<string> insights = new();
@@ -832,7 +832,7 @@
 
         if (incompleteScenes > 0)
         {
-            suggestions.Add($"Add summary, POV, or narrative purpose to the {incompleteScenes} incomplete scene{(incompleteScenes == 1 ? string.Empty : "s")} to make the board easier to scan.");
+            suggestions.Add($"Add summary, POV, or narrative role to the {incompleteScenes} incomplete scene{(incompleteScenes == 1 ? string.Empty : "s")} to make the board easier to scan.");
         }
 
         if (chapters.Any(chapter => chapter.Scenes.Count == 0))
@@ -924,7 +924,8 @@
                         metadata.Summary,
                         metadata.Status,
                         metadata.Pov,
-                        metadata.NarrativePurpose,
+                        metadata.NarrativeRole,
+                        metadata.NarrativeIntent,
                         metadata.SubplotTags);
                 })
                 .ToList();
@@ -996,7 +997,8 @@
                 {
                     sceneCards.TryGetValue(scene.SceneId, out SceneCardDto? sceneCard);
                     string? summary = string.IsNullOrWhiteSpace(sceneCard?.Summary) ? scene.Summary : sceneCard.Summary;
-                    string? narrativePurpose = string.IsNullOrWhiteSpace(sceneCard?.NarrativePurpose) ? scene.NarrativePurpose : sceneCard.NarrativePurpose;
+                    string? narrativeRole = string.IsNullOrWhiteSpace(sceneCard?.NarrativeRole) ? scene.NarrativeRole : sceneCard.NarrativeRole;
+                    string? narrativeIntent = string.IsNullOrWhiteSpace(sceneCard?.NarrativeIntent) ? scene.NarrativeIntent : sceneCard.NarrativeIntent;
                     string? pov = string.IsNullOrWhiteSpace(sceneCard?.PovCharacterId) ? scene.Pov : sceneCard.PovCharacterId;
                     IReadOnlyList<string> subplotTags = sceneCard?.SubplotTags?.Where(tag => !string.IsNullOrWhiteSpace(tag)).Select(tag => tag.Trim()).ToArray()
                         ?? scene.SubplotTags;
@@ -1006,7 +1008,8 @@
                         order = sceneIndex + 1,
                         title = scene.Title,
                         summary,
-                        narrativePurpose,
+                        narrativeRole,
+                        narrativeIntent,
                         pov,
                         subplotTags,
                         emotionalBeat = sceneCard?.EmotionalBeat
@@ -1074,15 +1077,19 @@
                 return null;
             }
 
+            string? narrativeRole = NormalizeNarrativeRole(GetString(root, "narrativeRole")) ?? NormalizeNarrativeRole(GetString(root, "narrativePurpose"));
+            string? narrativeIntent = GetString(root, "narrativeIntent") ?? NormalizeLegacyNarrativeIntent(GetString(root, "narrativePurpose"));
             return new StoryboardNextSceneSuggestion(
                 title.Trim(),
                 GetString(root, "summary"),
                 "Draft",
                 GetString(root, "povCharacterId") ?? GetString(root, "pov"),
                 GetStringArray(root, "subplotTags"),
-                GetString(root, "narrativePurpose"),
+                SceneNarrativeRoleCatalog.ToLegacyPurpose(narrativeRole, narrativeIntent),
                 GetString(root, "rationale"),
-                GetString(root, "preferredChapterTitle") ?? GetString(root, "suggestedChapterPlacement"));
+                GetString(root, "preferredChapterTitle") ?? GetString(root, "suggestedChapterPlacement"),
+                narrativeRole,
+                narrativeIntent);
         }
         catch
         {
@@ -1120,15 +1127,19 @@
                     continue;
                 }
 
+                string? narrativeRole = NormalizeNarrativeRole(GetString(item, "narrativeRole")) ?? NormalizeNarrativeRole(GetString(item, "narrativePurpose"));
+                string? narrativeIntent = GetString(item, "narrativeIntent") ?? NormalizeLegacyNarrativeIntent(GetString(item, "narrativePurpose"));
                 suggestions.Add(new StoryboardNextSceneSuggestion(
                     title.Trim(),
                     GetString(item, "summary"),
                     "Draft",
                     GetString(item, "povCharacterId") ?? GetString(item, "pov"),
                     GetStringArray(item, "subplotTags"),
-                    GetString(item, "narrativePurpose"),
+                    SceneNarrativeRoleCatalog.ToLegacyPurpose(narrativeRole, narrativeIntent),
                     GetString(item, "rationale") ?? GetString(item, "reason"),
-                    GetString(item, "suggestedChapterPlacement") ?? GetString(item, "preferredChapterTitle")));
+                    GetString(item, "suggestedChapterPlacement") ?? GetString(item, "preferredChapterTitle"),
+                    narrativeRole,
+                    narrativeIntent));
             }
 
             return suggestions;
@@ -1251,7 +1262,7 @@
 
     private static StoryboardSceneMetadata ReadSceneMetadata(ProjectNodeDto scene)
     {
-        StoryboardSceneMetadata metadata = new(null, null, null, null, Array.Empty<string>());
+        StoryboardSceneMetadata metadata = new(null, null, null, null, null, Array.Empty<string>());
         if (string.IsNullOrWhiteSpace(scene.MetadataJson))
         {
             return metadata;
@@ -1265,7 +1276,8 @@
                 GetString(root, "summary") ?? GetString(root, "subtitle") ?? GetString(root, "description"),
                 GetString(root, "status"),
                 GetString(root, "pov") ?? GetString(root, "pointOfView"),
-                GetString(root, "narrativePurpose"),
+                NormalizeNarrativeRole(GetString(root, "narrativeRole")) ?? NormalizeNarrativeRole(GetString(root, "narrativePurpose")),
+                GetString(root, "narrativeIntent") ?? NormalizeLegacyNarrativeIntent(GetString(root, "narrativePurpose")),
                 GetStringArray(root, "subplotTags"));
         }
         catch
@@ -1317,7 +1329,7 @@
 
     private static string GetSuggestionKey(StoryboardNextSceneSuggestion suggestion)
     {
-        return $"{suggestion.Title}|{suggestion.PreferredChapterTitle}|{suggestion.NarrativePurpose}";
+        return $"{suggestion.Title}|{suggestion.PreferredChapterTitle}|{suggestion.NarrativeRole}|{suggestion.NarrativeIntent}";
     }
 
     private static IReadOnlyList<StoryboardPovBalanceFinding> ParsePovBalanceFindings(string? json)
@@ -1422,13 +1434,29 @@
         string? Summary,
         string? Status,
         string? Pov,
-        string? NarrativePurpose,
+        string? NarrativeRole,
+        string? NarrativeIntent,
         IReadOnlyList<string> SubplotTags);
 
     private sealed record StoryboardSceneMetadata(
         string? Summary,
         string? Status,
         string? Pov,
-        string? NarrativePurpose,
+        string? NarrativeRole,
+        string? NarrativeIntent,
         IReadOnlyList<string> SubplotTags);
+
+    private static string? NormalizeNarrativeRole(string? value)
+    {
+        return SceneNarrativeRoleCatalog.TryNormalize(value, out string? normalizedRole)
+            ? normalizedRole
+            : null;
+    }
+
+    private static string? NormalizeLegacyNarrativeIntent(string? legacyNarrativePurpose)
+    {
+        return NormalizeNarrativeRole(legacyNarrativePurpose) is null && !string.IsNullOrWhiteSpace(legacyNarrativePurpose)
+            ? legacyNarrativePurpose.Trim()
+            : null;
+    }
 }

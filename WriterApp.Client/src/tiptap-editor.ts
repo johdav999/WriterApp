@@ -2353,6 +2353,7 @@ function buildFormattingState(editor) {
         canBlockquote,
         canHorizontalRule,
         isLink: editor.isActive("link"),
+        linkHref: editor.isActive("link") ? (editor.getAttributes("link")?.href ?? "") : "",
         isInTable: editor.isActive("table"),
         isHeaderCell: editor.isActive("tableHeader"),
         canInsertTable,
@@ -2701,6 +2702,7 @@ window.tiptapEditor = {
             }
 
             const { from, to } = editor.state.selection;
+            editor.__writerLastSelectionDocRange = { from, to };
             const prefix = editor.state.doc.textBetween(0, from, " ", " ");
             const selection = editor.state.doc.textBetween(from, to, " ", " ");
             const start = prefix.length;
@@ -2990,6 +2992,18 @@ window.tiptapEditor = {
         const decorations = buildSearchHighlightDecorations(editor, query);
         const tr = editor.view.state.tr.setMeta(searchHighlightDecorationsKey, decorations);
         editor.view.dispatch(tr);
+    },
+    scrollToSearchHighlight: function (editor) {
+        if (!editor || !editor.view?.dom) {
+            return;
+        }
+
+        const match = editor.view.dom.querySelector(".wa-search-highlight");
+        if (!(match instanceof HTMLElement)) {
+            return;
+        }
+
+        match.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
     },
     clearSearchHighlights: function (editor) {
         if (!editor || !editor.view) {

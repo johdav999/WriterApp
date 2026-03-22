@@ -74,6 +74,14 @@ namespace WriterApp.Application.Documents
             await _dbContext.SaveChangesAsync(ct);
         }
 
+        public async Task EnsureProjectCurrentAsync(Guid projectId, CancellationToken ct)
+        {
+            if (await NeedsRefreshAsync(projectId, ct))
+            {
+                await RefreshProjectAsync(projectId, ct);
+            }
+        }
+
         public async Task RefreshForSectionAsync(Guid sectionId, CancellationToken ct)
         {
             List<ProjectNodeRecord> affectedScenes = await _dbContext.ProjectNodes
@@ -116,6 +124,55 @@ namespace WriterApp.Application.Documents
                 projectId,
                 total,
                 nodes.Select(node => new ProjectNodeStatDto(node.Id, node.WordCountCache)).ToList());
+        }
+
+        private async Task<bool> NeedsRefreshAsync(Guid projectId, CancellationToken ct)
+        {
+            bool hasNodes = await _dbContext.ProjectNodes
+                .AsNoTracking()
+                .AnyAsync(node => node.ProjectId == projectId, ct);
+            if (!hasNodes)
+            {
+                return false;
+            }
+
+            bool hasStaleSceneCounts = await _dbContext.SceneContents
+                .AsNoTracking()
+                .Join(
+                    _dbContext.ProjectNodes.AsNoTracking()
+                        .Where(node => node.ProjectId == projectId && node.NodeType == ProjectNodeType.Scene),
+                    content => content.SceneNodeId,
+                    node => node.Id,
+                    (content, node) => new { content.UpdatedAtUtc, node.UpdatedUtc })
+                .AnyAsync(item => item.UpdatedAtUtc > item.UpdatedUtc, ct);
+            if (hasStaleSceneCounts)
+            {
+                return true;
+            }
+
+            bool hasStaleSectionCounts = await _dbContext.Pages
+                .AsNoTracking()
+                .Join(
+                    _dbContext.ProjectNodes.AsNoTracking()
+                        .Where(node => node.ProjectId == projectId && node.LinkedSectionId.HasValue),
+                    page => page.SectionId,
+                    node => node.LinkedSectionId!.Value,
+                    (page, node) => new { page.UpdatedAt, node.UpdatedUtc })
+                .AnyAsync(item => item.UpdatedAt > item.UpdatedUtc, ct);
+            if (hasStaleSectionCounts)
+            {
+                return true;
+            }
+
+            return await _dbContext.ProjectNodes
+                .AsNoTracking()
+                .Where(child => child.ProjectId == projectId && child.ParentId.HasValue)
+                .Join(
+                    _dbContext.ProjectNodes.AsNoTracking(),
+                    child => child.ParentId!.Value,
+                    parent => parent.Id,
+                    (child, parent) => new { ChildUpdatedUtc = child.UpdatedUtc, ParentUpdatedUtc = parent.UpdatedUtc })
+                .AnyAsync(item => item.ChildUpdatedUtc > item.ParentUpdatedUtc, ct);
         }
 
         private async Task<Dictionary<Guid, int>> LoadSectionWordCountsAsync(HashSet<Guid> sectionIds, CancellationToken ct)

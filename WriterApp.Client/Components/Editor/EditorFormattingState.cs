@@ -16,6 +16,7 @@ namespace WriterApp.Client.Components.Editor
         public bool CanBlockquote { get; set; }
         public bool CanHorizontalRule { get; set; }
         public bool IsLink { get; set; }
+        public string? LinkHref { get; set; }
         public bool IsInTable { get; set; }
         public bool IsHeaderCell { get; set; }
         public bool CanInsertTable { get; set; }

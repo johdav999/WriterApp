@@ -121,14 +121,14 @@ namespace WriterApp.Application.Exporting
         public static string BuildCoverPageBlock(string coverImageUrl)
         {
             return "<section class=\"export-cover-page\">"
-                + $"<img src=\"{WebUtility.HtmlEncode(coverImageUrl)}\" alt=\"Project cover\" />"
+                + $"<img src=\"{WebUtility.HtmlEncode(coverImageUrl)}\" class=\"cover-image\" alt=\"Project cover\" />"
                 + "</section>";
         }
 
         public static string BuildCoverPageCss()
         {
             return "    .export-cover-page { min-height: calc(var(--page-height, 279mm) - 2rem); display: flex; align-items: center; justify-content: center; padding: 0; break-after: page; page-break-after: always; }\n"
-                + "    .export-cover-page img { width: 100%; max-width: 420px; max-height: calc(var(--page-height, 279mm) - 4rem); object-fit: contain; display: block; margin: 0 auto; box-shadow: 0 18px 40px rgba(15, 23, 42, 0.16); }\n";
+                + "    .export-cover-page .cover-image { width: 100%; max-width: 420px; max-height: calc(var(--page-height, 279mm) - 4rem); object-fit: contain; display: block; margin: 0 auto; box-shadow: 0 18px 40px rgba(15, 23, 42, 0.16); }\n";
         }
 
         public static string BuildSectionHtml(SectionContent content, string sectionTitle, bool allowStripHeading = true)

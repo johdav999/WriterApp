@@ -30,6 +30,7 @@ namespace WriterApp.Controllers
             "Revised",
             "Final"
         };
+        private const int MaxNarrativeIntentLength = 1000;
         private readonly AppDbContext _dbContext;
         private readonly IUserIdResolver _userIdResolver;
 
@@ -81,7 +82,9 @@ namespace WriterApp.Controllers
                     Array.Empty<SceneCardReferenceDto>(),
                     null,
                     "Draft",
-                    Array.Empty<string>()));
+                    Array.Empty<string>(),
+                    null,
+                    null));
             }
 
             return Ok(ToDto(card));
@@ -121,16 +124,26 @@ namespace WriterApp.Controllers
                 _dbContext.SceneCards.Add(card);
             }
 
-            card.NarrativePurpose = request.NarrativePurpose ?? string.Empty;
-            card.EmotionalBeat = request.EmotionalBeat ?? string.Empty;
-            card.KeyEvents = request.KeyEvents ?? string.Empty;
-            card.OpenQuestions = request.OpenQuestions ?? string.Empty;
-            card.Summary = Normalize(request.Summary);
+            (string? narrativeRole, string? narrativeIntent) = ResolveNarrativeFields(
+                request.NarrativeRole,
+                request.NarrativeIntent,
+                request.NarrativePurpose);
+            if (!string.IsNullOrWhiteSpace(narrativeIntent) && narrativeIntent.Length > MaxNarrativeIntentLength)
+            {
+                return BadRequest(new { message = $"narrativeIntent max length is {MaxNarrativeIntentLength}." });
+            }
+            card.NarrativeRole = narrativeRole;
+            card.NarrativeIntent = NormalizeSceneField(narrativeIntent);
+            card.NarrativePurpose = SceneNarrativeRoleCatalog.ToLegacyPurpose(narrativeRole, narrativeIntent) ?? string.Empty;
+            card.EmotionalBeat = NormalizeSceneField(request.EmotionalBeat) ?? string.Empty;
+            card.KeyEvents = NormalizeSceneField(request.KeyEvents) ?? string.Empty;
+            card.OpenQuestions = NormalizeSceneField(request.OpenQuestions) ?? string.Empty;
+            card.Summary = NormalizeSceneField(request.Summary);
             card.Status = NormalizeStatus(request.Status);
-            card.PovCharacterId = Normalize(request.PovCharacterId);
-            card.PlaceId = Normalize(request.PlaceId);
-            card.TimelineEventId = Normalize(request.TimelineEventId);
-            card.TimeRef = Normalize(request.TimeRef);
+            card.PovCharacterId = NormalizeSceneField(request.PovCharacterId);
+            card.PlaceId = NormalizeSceneField(request.PlaceId);
+            card.TimelineEventId = NormalizeSceneField(request.TimelineEventId);
+            card.TimeRef = NormalizeSceneField(request.TimeRef);
             card.TagsJson = JsonSerializer.Serialize(NormalizeTags(request.Tags), JsonOptions);
             card.SubplotTagsJson = JsonSerializer.Serialize(NormalizeTags(request.SubplotTags), JsonOptions);
             card.ReferencesJson = JsonSerializer.Serialize(NormalizeReferences(request.References), JsonOptions);
@@ -142,22 +155,28 @@ namespace WriterApp.Controllers
 
         private static SceneCardDto ToDto(SceneCardRecord card)
         {
+            (string? narrativeRole, string? narrativeIntent) = ResolveNarrativeFields(
+                card.NarrativeRole,
+                card.NarrativeIntent,
+                card.NarrativePurpose);
             return new SceneCardDto(
                 card.SceneNodeId,
-                card.NarrativePurpose ?? string.Empty,
-                card.EmotionalBeat ?? string.Empty,
-                card.KeyEvents ?? string.Empty,
-                card.OpenQuestions ?? string.Empty,
+                SceneNarrativeRoleCatalog.ToLegacyPurpose(narrativeRole, narrativeIntent) ?? string.Empty,
+                NormalizeSceneField(card.EmotionalBeat) ?? string.Empty,
+                NormalizeSceneField(card.KeyEvents) ?? string.Empty,
+                NormalizeSceneField(card.OpenQuestions) ?? string.Empty,
                 card.UpdatedAtUtc,
-                card.PovCharacterId,
-                card.PlaceId,
-                card.TimelineEventId,
-                card.TimeRef,
+                NormalizeSceneField(card.PovCharacterId),
+                NormalizeSceneField(card.PlaceId),
+                NormalizeSceneField(card.TimelineEventId),
+                NormalizeSceneField(card.TimeRef),
                 DeserializeTags(card.TagsJson),
                 DeserializeReferences(card.ReferencesJson),
-                card.Summary,
+                NormalizeSceneField(card.Summary),
                 NormalizeStatus(card.Status),
-                DeserializeTags(card.SubplotTagsJson));
+                DeserializeTags(card.SubplotTagsJson),
+                narrativeRole,
+                NormalizeSceneField(narrativeIntent));
         }
 
         private async Task<bool> IsOwnedSceneAsync(Guid sceneNodeId, string userId, CancellationToken ct)
@@ -180,6 +199,43 @@ namespace WriterApp.Controllers
             return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
         }
 
+        private static string? NormalizeSceneField(string? value)
+        {
+            return SceneCardAiTextNormalizer.NormalizeAiText(Normalize(value));
+        }
+
+        private static (string? NarrativeRole, string? NarrativeIntent) ResolveNarrativeFields(
+            string? narrativeRole,
+            string? narrativeIntent,
+            string? legacyNarrativePurpose)
+        {
+            string? normalizedRole = Normalize(narrativeRole);
+            if (!string.IsNullOrWhiteSpace(normalizedRole)
+                && !SceneNarrativeRoleCatalog.TryNormalize(normalizedRole, out normalizedRole))
+            {
+                normalizedRole = null;
+            }
+
+            string? normalizedIntent = NormalizeSceneField(narrativeIntent);
+            if (!string.IsNullOrWhiteSpace(normalizedIntent) && normalizedIntent.Length > MaxNarrativeIntentLength)
+            {
+                normalizedIntent = normalizedIntent[..MaxNarrativeIntentLength].Trim();
+            }
+            if (normalizedRole is null && normalizedIntent is null)
+            {
+                if (SceneNarrativeRoleCatalog.TryNormalize(legacyNarrativePurpose, out string? legacyRole))
+                {
+                    normalizedRole = legacyRole;
+                }
+                else
+                {
+                    normalizedIntent = NormalizeSceneField(legacyNarrativePurpose);
+                }
+            }
+
+            return (normalizedRole, normalizedIntent);
+        }
+
         private static string NormalizeStatus(string? status)
         {
             if (string.IsNullOrWhiteSpace(status))
@@ -199,7 +255,7 @@ namespace WriterApp.Controllers
             }
 
             return tags
-                .Select(item => item?.Trim() ?? string.Empty)
+                .Select(item => NormalizeSceneField(item) ?? string.Empty)
                 .Where(item => !string.IsNullOrWhiteSpace(item))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
@@ -222,7 +278,7 @@ namespace WriterApp.Controllers
                     continue;
                 }
 
-                normalized.Add(new SceneCardReferenceDto(kind, targetId, Normalize(reference.Note)));
+                normalized.Add(new SceneCardReferenceDto(kind, targetId, NormalizeSceneField(reference.Note)));
             }
 
             return normalized;
@@ -237,8 +293,8 @@ namespace WriterApp.Controllers
 
             try
             {
-                List<string>? parsed = JsonSerializer.Deserialize<List<string>>(tagsJson, JsonOptions);
-                return parsed ?? new List<string>();
+                List<string> parsed = JsonSerializer.Deserialize<List<string>>(tagsJson, JsonOptions) ?? new List<string>();
+                return SceneCardAiTextNormalizer.NormalizeAiTextList(parsed);
             }
             catch (JsonException)
             {
@@ -290,6 +346,8 @@ namespace WriterApp.Controllers
                         CREATE TABLE IF NOT EXISTS SceneCards (
                             SceneNodeId TEXT NOT NULL PRIMARY KEY,
                             NarrativePurpose TEXT NULL,
+                            NarrativeRole TEXT NULL,
+                            NarrativeIntent TEXT NULL,
                             EmotionalBeat TEXT NULL,
                             KeyEvents TEXT NULL,
                             OpenQuestions TEXT NULL,
@@ -352,6 +410,8 @@ namespace WriterApp.Controllers
                             CREATE TABLE [dbo].[SceneCards] (
                                 [SceneNodeId] uniqueidentifier NOT NULL PRIMARY KEY,
                                 [NarrativePurpose] nvarchar(max) NULL,
+                                [NarrativeRole] nvarchar(max) NULL,
+                                [NarrativeIntent] nvarchar(max) NULL,
                                 [EmotionalBeat] nvarchar(max) NULL,
                                 [KeyEvents] nvarchar(max) NULL,
                                 [OpenQuestions] nvarchar(max) NULL,
@@ -410,6 +470,16 @@ namespace WriterApp.Controllers
             string textType)
         {
             List<string> alterStatements = new();
+            if (!existingColumns.Contains("NarrativeRole"))
+            {
+                alterStatements.Add($"ALTER TABLE SceneCards ADD NarrativeRole {textType};");
+            }
+
+            if (!existingColumns.Contains("NarrativeIntent"))
+            {
+                alterStatements.Add($"ALTER TABLE SceneCards ADD NarrativeIntent {textType};");
+            }
+
             if (!existingColumns.Contains("Summary"))
             {
                 alterStatements.Add($"ALTER TABLE SceneCards ADD Summary {textType};");

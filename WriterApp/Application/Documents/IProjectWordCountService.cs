@@ -8,6 +8,8 @@ namespace WriterApp.Application.Documents
     {
         Task RefreshProjectAsync(Guid projectId, CancellationToken ct);
 
+        Task EnsureProjectCurrentAsync(Guid projectId, CancellationToken ct);
+
         Task RefreshForSectionAsync(Guid sectionId, CancellationToken ct);
 
         Task<ProjectStatsDto?> GetProjectStatsAsync(string ownerUserId, Guid projectId, CancellationToken ct);

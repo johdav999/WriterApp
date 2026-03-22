@@ -1046,6 +1046,12 @@ namespace BlazorApp.Migrations
                     b.Property<string>("KeyEvents")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("NarrativeIntent")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("NarrativeRole")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("NarrativePurpose")
                         .HasColumnType("TEXT");
 
@@ -1284,6 +1290,12 @@ namespace BlazorApp.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<string>("KeyEvents")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("NarrativeIntent")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("NarrativeRole")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("NarrativePurpose")

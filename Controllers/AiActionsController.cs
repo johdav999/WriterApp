@@ -493,6 +493,8 @@ namespace WriterApp.Controllers
                         sectionId);
                 }
                 options["narrative_purpose"] = sceneCard?.NarrativePurpose ?? string.Empty;
+                options["narrative_role"] = sceneCard?.NarrativeRole ?? string.Empty;
+                options["narrative_intent"] = sceneCard?.NarrativeIntent ?? string.Empty;
                 options["emotional_beat"] = sceneCard?.EmotionalBeat ?? string.Empty;
                 options["key_events"] = sceneCard?.KeyEvents ?? string.Empty;
                 options["open_questions"] = sceneCard?.OpenQuestions ?? string.Empty;
@@ -1280,6 +1282,8 @@ namespace WriterApp.Controllers
                     : root;
 
                 string? narrativePurpose = GetFirstNullableString(payload, "narrativePurpose", "narrative_purpose");
+                string? narrativeRole = GetFirstNullableString(payload, "narrativeRole", "narrative_role");
+                string? narrativeIntent = GetFirstNullableString(payload, "narrativeIntent", "narrative_intent");
                 string? emotionalBeat = GetFirstNullableString(payload, "emotionalBeat", "emotional_beat");
                 string? keyEvents = GetFirstNullableString(payload, "keyEvents", "key_events");
                 string? openQuestions = GetFirstNullableString(payload, "openQuestions", "open_questions");
@@ -1287,6 +1291,8 @@ namespace WriterApp.Controllers
                 string? placeId = GetFirstNullableString(payload, "placeId", "settingPlace", "setting", "location", "place_id");
                 string? timelineEventId = GetFirstNullableString(payload, "timelineEventId", "timeline_event_id", "eventId");
                 string? timeRef = GetFirstNullableString(payload, "timeRef", "timelineMarker", "timeline_marker", "time_ref");
+                string? summary = GetFirstNullableString(payload, "summary", "sceneSummary", "scene_summary");
+                string? status = GetFirstNullableString(payload, "status", "sceneStatus", "scene_status");
                 List<string> tags = GetStringArray(payload, "tags");
                 if (tags.Count == 0)
                 {
@@ -1296,21 +1302,47 @@ namespace WriterApp.Controllers
                         tags = ParseCsvList(tagsText);
                     }
                 }
+                List<string> subplotTags = GetStringArray(payload, "subplotTags");
+                if (subplotTags.Count == 0)
+                {
+                    subplotTags = GetStringArray(payload, "subplot_tags");
+                }
+                if (subplotTags.Count == 0)
+                {
+                    string? subplotTagsText = GetFirstNullableString(payload, "subplotTags", "subplot_tags", "subplotTagsCsv", "subplotTagList");
+                    if (!string.IsNullOrWhiteSpace(subplotTagsText))
+                    {
+                        subplotTags = ParseCsvList(subplotTagsText);
+                    }
+                }
 
                 List<SceneCardReferenceDto> references = GetReferenceArray(payload, "references");
                 explanation = GetFirstNullableString(root, "explanation", "reasoning", "summary");
 
+                string? normalizedRole = NormalizeNarrativeRole(narrativeRole)
+                    ?? NormalizeNarrativeRole(narrativePurpose);
+                string? normalizedIntent = NormalizeNarrativeIntent(SceneCardAiTextNormalizer.NormalizeAiText(narrativeIntent));
+                if (normalizedRole is null && normalizedIntent is null)
+                {
+                    normalizedIntent = NormalizeLegacyNarrativeIntent(SceneCardAiTextNormalizer.NormalizeAiText(narrativePurpose));
+                }
+
                 proposal = new SectionSceneCardProposalDto(
-                    narrativePurpose ?? string.Empty,
-                    emotionalBeat ?? string.Empty,
-                    keyEvents ?? string.Empty,
-                    openQuestions ?? string.Empty,
-                    povCharacterId ?? string.Empty,
-                    placeId ?? string.Empty,
-                    timelineEventId ?? string.Empty,
-                    timeRef ?? string.Empty,
-                    tags,
-                    references);
+                    SceneNarrativeRoleCatalog.ToLegacyPurpose(normalizedRole, normalizedIntent) ?? string.Empty,
+                    SceneCardAiTextNormalizer.NormalizeAiText(emotionalBeat) ?? string.Empty,
+                    SceneCardAiTextNormalizer.NormalizeAiText(keyEvents) ?? string.Empty,
+                    SceneCardAiTextNormalizer.NormalizeAiText(openQuestions) ?? string.Empty,
+                    SceneCardAiTextNormalizer.NormalizeAiText(povCharacterId) ?? string.Empty,
+                    SceneCardAiTextNormalizer.NormalizeAiText(placeId) ?? string.Empty,
+                    SceneCardAiTextNormalizer.NormalizeAiText(timelineEventId) ?? string.Empty,
+                    SceneCardAiTextNormalizer.NormalizeAiText(timeRef) ?? string.Empty,
+                    SceneCardAiTextNormalizer.NormalizeAiTextList(tags),
+                    references,
+                    SceneCardAiTextNormalizer.NormalizeAiText(summary),
+                    NormalizeSceneCardStatus(status),
+                    SceneCardAiTextNormalizer.NormalizeAiTextList(subplotTags),
+                    normalizedRole,
+                    normalizedIntent);
 
                 return true;
             }
@@ -1946,6 +1978,57 @@ namespace WriterApp.Controllers
             }
 
             return value.ToString();
+        }
+
+        private static string? NormalizeNarrativeRole(string? value)
+        {
+            return SceneNarrativeRoleCatalog.TryNormalize(value, out string? normalizedRole)
+                ? normalizedRole
+                : null;
+        }
+
+        private static string? NormalizeNarrativeIntent(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return null;
+            }
+
+            string trimmed = value.Trim();
+            return trimmed.Length > 1000 ? trimmed[..1000].Trim() : trimmed;
+        }
+
+        private static string? NormalizeLegacyNarrativeIntent(string? legacyNarrativePurpose)
+        {
+            return NormalizeNarrativeRole(legacyNarrativePurpose) is null
+                ? NormalizeNarrativeIntent(legacyNarrativePurpose)
+                : null;
+        }
+
+        private static string NormalizeSceneCardStatus(string? status)
+        {
+            if (string.IsNullOrWhiteSpace(status))
+            {
+                return "Draft";
+            }
+
+            string trimmed = status.Trim();
+            if (string.Equals(trimmed, "Idea", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Idea";
+            }
+
+            if (string.Equals(trimmed, "Revised", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Revised";
+            }
+
+            if (string.Equals(trimmed, "Final", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Final";
+            }
+
+            return "Draft";
         }
 
         private async Task<ActionResult?> EnsureFeatureAllowedAsync(string userId, FeatureKey feature, string featureCode)

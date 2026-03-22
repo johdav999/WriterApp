@@ -4,6 +4,7 @@ import { SocialProof } from "@/components/social-proof"
 import { CoachingSection } from "@/components/coaching-section"
 import { HowItWorks } from "@/components/how-it-works"
 import { Features } from "@/components/features"
+import { StoryboardSection } from "@/components/storyboard-section"
 import { AiSection } from "@/components/ai-section"
 import { Pricing } from "@/components/pricing"
 import { UseCases } from "@/components/use-cases"
@@ -21,6 +22,7 @@ export default function Home() {
         <CoachingSection />
         <HowItWorks />
         <Features />
+        <StoryboardSection />
         <AiSection />
         <Pricing />
         <UseCases />

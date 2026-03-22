@@ -138,12 +138,6 @@ namespace WriterApp.Controllers
             string scope,
             CancellationToken ct)
         {
-            string normalized = scope.Trim().ToLowerInvariant();
-            if (normalized is not ("document" or "manuscript"))
-            {
-                return null;
-            }
-
             return await _dbContext.Documents
                 .AsNoTracking()
                 .Where(document => document.Id == documentId && document.OwnerUserId == userId)

@@ -34,6 +34,9 @@ builder.Services.AddScoped<WriterApp.Client.State.LayoutStateService>();
 builder.Services.AddScoped<WriterApp.Client.State.CurrentDocumentStateService>();
 builder.Services.AddScoped<WriterApp.Client.State.CurrentSceneStateService>();
 builder.Services.AddScoped<WriterApp.Client.State.CurrentProjectStateService>();
+builder.Services.AddScoped<WriterApp.Client.State.GlobalSearchNavigationService>();
+builder.Services.AddScoped<WriterApp.Client.State.ProjectStructureCacheService>();
+builder.Services.AddScoped<WriterApp.Client.State.ProjectProgressCacheService>();
 builder.Services.AddScoped<WriterApp.Client.State.DeletedAccountStateService>();
 builder.Services.AddScoped<WriterApp.Client.State.DuplicateAccountStateService>();
 builder.Services.AddScoped<WriterApp.Client.State.AuthMeStateService>();
@@ -48,5 +51,6 @@ builder.Services.AddScoped<RecoveryDraftService>();
 builder.Services.AddTransient<EditorSaveCoordinator>();
 builder.Services.AddSingleton<WriterApp.Client.State.LastOpenedDocumentStateService>();
 builder.Services.AddScoped<WriterApp.Client.Services.CoachRecommendationService>();
+builder.Services.AddScoped<AiCommandStatusService>();
 
 await builder.Build().RunAsync();

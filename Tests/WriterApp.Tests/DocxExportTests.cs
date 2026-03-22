@@ -529,6 +529,33 @@ namespace WriterApp.Tests
             Assert.True(levels.Max() <= 8);
         }
 
+        [Fact]
+        public void DocxExport_InsertsCoverImageAsFirstPage()
+        {
+            const string coverDataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aJ6wAAAAASUVORK5CYII=";
+            WriterDocument document = BuildDocument("<p>Hello export.</p>");
+            ExportService service = BuildExportService();
+            ExportResult result = service.ExportAsync(
+                document,
+                ExportKind.Document,
+                ExportFormat.Docx,
+                new ExportOptions(IncludeTitlePage: false, IncludeCover: true, CoverImageUrl: coverDataUrl),
+                "user",
+                null,
+                CancellationToken.None).GetAwaiter().GetResult();
+
+            using MemoryStream stream = new(result.Content);
+            using WordprocessingDocument wordDoc = WordprocessingDocument.Open(stream, false);
+            var paragraphs = wordDoc.MainDocumentPart?.Document?.Body?.Elements<Paragraph>().ToList()
+                ?? throw new InvalidOperationException("No document body.");
+
+            Assert.NotEmpty(paragraphs);
+            Assert.NotNull(paragraphs[0].Descendants<Drawing>().FirstOrDefault());
+            Assert.Contains(paragraphs, paragraph => paragraph.Descendants<Break>()
+                .Any(breakNode => breakNode.Type?.Value == BreakValues.Page));
+            Assert.Contains(paragraphs, paragraph => paragraph.ParagraphProperties?.ParagraphStyleId?.Val == "Heading2");
+        }
+
         private static ExportService BuildExportService()
         {
             IExportRenderer[] renderers =

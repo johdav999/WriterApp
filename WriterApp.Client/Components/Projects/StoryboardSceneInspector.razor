@@ -24,7 +24,7 @@
                 else
                 {
                     <strong>Select a scene to edit.</strong>
-                    <span>Summary, status, POV, subplot tags, narrative purpose, notes, and AI actions will appear here.</span>
+                    <span>Summary, status, POV, narrative role, intent, subplot tags, notes, and AI actions will appear here.</span>
                 }
             </div>
         </div>
@@ -73,16 +73,26 @@
 
                 <section class="storyboard-inspector-section">
                 <h4>Structure</h4>
-                <label class="storyboard-inspector-label" for="storyboard-scene-purpose">Narrative purpose</label>
-                <select id="storyboard-scene-purpose"
+                <label class="storyboard-inspector-label" for="storyboard-scene-role">Narrative role</label>
+                <div class="storyboard-inspector-helper">Choose the scene's structural function in the story.</div>
+                <select id="storyboard-scene-role"
                         class="storyboard-inspector-input"
-                        value="@_narrativePurpose"
-                        @onchange="OnNarrativePurposeChanged">
-                    @foreach (string purposeOption in GetNarrativePurposeOptions())
+                        value="@_narrativeRole"
+                        @onchange="OnNarrativeRoleChanged">
+                    @foreach (string purposeOption in GetNarrativeRoleOptions())
                     {
-                        <option value="@purposeOption">@(string.IsNullOrEmpty(purposeOption) ? "Select purpose" : purposeOption)</option>
+                        <option value="@purposeOption">@(string.IsNullOrEmpty(purposeOption) ? "Select role" : purposeOption)</option>
                     }
                 </select>
+
+                <label class="storyboard-inspector-label" for="storyboard-scene-intent">Narrative intent</label>
+                <div class="storyboard-inspector-helper">Describe what the scene is trying to accomplish emotionally or dramatically.</div>
+                <textarea id="storyboard-scene-intent"
+                          class="storyboard-inspector-textarea"
+                          rows="3"
+                          value="@_narrativeIntent"
+                          @oninput="OnNarrativeIntentInput"
+                          placeholder="Describe what this scene is trying to accomplish..."></textarea>
 
                 <label class="storyboard-inspector-label" for="storyboard-scene-pov">POV</label>
                 <input id="storyboard-scene-pov"
@@ -183,14 +193,14 @@
                                          Class="storyboard-inspector-ai-button"
                                          ShowLockIndicator="false"
                                          IsActionDisabled="@(_aiInFlight || _loading || SceneNode is null)"
-                                         OnClick="@(() => RunSceneAiAsync("scene.suggest", "Suggest the strongest narrative purpose for this scene based on the section text. Prioritize updating the narrative purpose field and only adjust other metadata if needed for consistency."))">
-                            Suggest narrative purpose
+                                         OnClick="@(() => RunSceneAiAsync("scene.suggest", "Suggest the strongest narrative role and narrative intent for this scene based on the section text. Treat narrative role as the structural classification and narrative intent as the emotional or dramatic aim of the scene. Prioritize updating those two fields and only adjust other metadata if needed for consistency."))">
+                            Suggest scene role/intent
                         </PlanGatedButton>
                         <PlanGatedButton Feature="@nameof(FeatureKey.SceneAiSuggestions)"
                                          Class="storyboard-inspector-ai-button"
                                          ShowLockIndicator="false"
                                          IsActionDisabled="@(_aiInFlight || _loading || SceneNode is null)"
-                                         OnClick="@(() => RunSceneAiAsync("scene.refine", "Improve the scene structure of this scene card using goal, conflict, and outcome framing. Strengthen summary, narrative purpose, key events, and open questions so the card clearly reflects what the character wants, what opposes them, and what changes by the end."))">
+                                         OnClick="@(() => RunSceneAiAsync("scene.refine", "Improve the scene structure of this scene card using goal, conflict, and outcome framing. Strengthen summary, narrative role, narrative intent, key events, and open questions so the card clearly reflects the scene's structural place, what the character wants, what opposes them, and what changes by the end."))">
                             Improve structure
                         </PlanGatedButton>
                     </div>
@@ -218,8 +228,12 @@
                                     <div>@(string.IsNullOrWhiteSpace(_aiProposal.Status) ? "(not provided)" : _aiProposal.Status)</div>
                                 </div>
                                 <div>
-                                    <strong>Narrative purpose</strong>
-                                    <div>@(string.IsNullOrWhiteSpace(_aiProposal.NarrativePurpose) ? "(not provided)" : _aiProposal.NarrativePurpose)</div>
+                                    <strong>Narrative role</strong>
+                                    <div>@(string.IsNullOrWhiteSpace(GetProposalNarrativeRole(_aiProposal)) ? "(not provided)" : GetProposalNarrativeRole(_aiProposal))</div>
+                                </div>
+                                <div>
+                                    <strong>Narrative intent</strong>
+                                    <div>@(string.IsNullOrWhiteSpace(GetProposalNarrativeIntent(_aiProposal)) ? "(not provided)" : GetProposalNarrativeIntent(_aiProposal))</div>
                                 </div>
                                 <div>
                                     <strong>POV</strong>
@@ -251,20 +265,8 @@
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly TimeSpan AutosaveDebounce = TimeSpan.FromMilliseconds(900);
     private static readonly string[] SceneCardStatusOptions = ["Idea", "Draft", "Revised", "Final"];
-    private static readonly string[] SceneNarrativePurposeOptions =
-    [
-        string.Empty,
-        "Setup",
-        "Inciting Incident",
-        "Rising Action",
-        "Complication",
-        "Revelation",
-        "Relationship Beat",
-        "Reversal",
-        "Decision",
-        "Climax",
-        "Aftermath"
-    ];
+    private static readonly string[] SceneNarrativeRoleOptions =
+        [string.Empty, .. SceneNarrativeRoleCatalog.Values];
 
     [Parameter]
     public Guid ProjectId { get; set; }
@@ -294,7 +296,8 @@
     private string _title = string.Empty;
     private string _summary = string.Empty;
     private string _status = "Draft";
-    private string _narrativePurpose = string.Empty;
+    private string _narrativeRole = string.Empty;
+    private string _narrativeIntent = string.Empty;
     private string _povCharacterId = string.Empty;
     private string _subplotTagsText = string.Empty;
     private string _emotionalBeat = string.Empty;
@@ -429,7 +432,8 @@
 
             _summary = card?.Summary ?? string.Empty;
             _status = NormalizeSceneCardStatus(card?.Status);
-            _narrativePurpose = card?.NarrativePurpose ?? string.Empty;
+            _narrativeRole = card?.NarrativeRole ?? GetNormalizedLegacyNarrativeRole(card?.NarrativePurpose) ?? string.Empty;
+            _narrativeIntent = card?.NarrativeIntent ?? GetLegacyNarrativeIntent(card?.NarrativePurpose) ?? string.Empty;
             _povCharacterId = card?.PovCharacterId ?? string.Empty;
             _subplotTagsText = string.Join(", ", card?.SubplotTags ?? Array.Empty<string>());
             _emotionalBeat = card?.EmotionalBeat ?? string.Empty;
@@ -498,7 +502,8 @@
         _title = string.Empty;
         _summary = string.Empty;
         _status = "Draft";
-        _narrativePurpose = string.Empty;
+        _narrativeRole = string.Empty;
+        _narrativeIntent = string.Empty;
         _povCharacterId = string.Empty;
         _subplotTagsText = string.Empty;
         _emotionalBeat = string.Empty;
@@ -549,9 +554,15 @@
         OnFieldChanged();
     }
 
-    private void OnNarrativePurposeChanged(ChangeEventArgs args)
+    private void OnNarrativeRoleChanged(ChangeEventArgs args)
     {
-        _narrativePurpose = args.Value?.ToString() ?? string.Empty;
+        _narrativeRole = args.Value?.ToString() ?? string.Empty;
+        OnFieldChanged();
+    }
+
+    private void OnNarrativeIntentInput(ChangeEventArgs args)
+    {
+        _narrativeIntent = args.Value?.ToString() ?? string.Empty;
         OnFieldChanged();
     }
 
@@ -637,7 +648,7 @@
         try
         {
             SceneCardUpdateRequest scenePayload = new(
-                NormalizeOptional(_narrativePurpose),
+                GetLegacyNarrativePurposeForSave(),
                 NormalizeOptional(_emotionalBeat),
                 NormalizeOptional(_keyEvents),
                 NormalizeOptional(_openQuestions),
@@ -649,7 +660,9 @@
                 Array.Empty<SceneCardReferenceDto>(),
                 NormalizeOptional(_summary),
                 NormalizeSceneCardStatus(_status),
-                ParseTags(_subplotTagsText));
+                ParseTags(_subplotTagsText),
+                NormalizeNarrativeRole(_narrativeRole),
+                NormalizeOptional(_narrativeIntent));
 
             using HttpResponseMessage sceneResponse =
                 await Http.PutAsJsonAsync($"api/scenes/{SceneNode.Id}/scene-card", scenePayload);
@@ -689,7 +702,8 @@
             _title = patch.Title ?? _title;
             _summary = updatedCard?.Summary ?? _summary;
             _status = NormalizeSceneCardStatus(updatedCard?.Status ?? _status);
-            _narrativePurpose = updatedCard?.NarrativePurpose ?? _narrativePurpose;
+            _narrativeRole = updatedCard?.NarrativeRole ?? GetNormalizedLegacyNarrativeRole(updatedCard?.NarrativePurpose) ?? _narrativeRole;
+            _narrativeIntent = updatedCard?.NarrativeIntent ?? GetLegacyNarrativeIntent(updatedCard?.NarrativePurpose) ?? _narrativeIntent;
             _povCharacterId = updatedCard?.PovCharacterId ?? _povCharacterId;
             _subplotTagsText = string.Join(", ", updatedCard?.SubplotTags ?? ParseTags(_subplotTagsText));
 
@@ -810,7 +824,8 @@
 
         ApplySuggestedValue(ref _summary, _aiProposal.Summary);
         ApplySuggestedValue(ref _status, _aiProposal.Status);
-        ApplySuggestedValue(ref _narrativePurpose, _aiProposal.NarrativePurpose);
+        ApplySuggestedValue(ref _narrativeRole, GetProposalNarrativeRole(_aiProposal));
+        ApplySuggestedValue(ref _narrativeIntent, GetProposalNarrativeIntent(_aiProposal));
         ApplySuggestedValue(ref _emotionalBeat, _aiProposal.EmotionalBeat);
         ApplySuggestedValue(ref _keyEvents, _aiProposal.KeyEvents);
         ApplySuggestedValue(ref _openQuestions, _aiProposal.OpenQuestions);
@@ -837,7 +852,7 @@
     private string BuildSceneCardSnapshotJson()
     {
         SectionSceneCardProposalDto snapshot = new(
-            NormalizeOptional(_narrativePurpose),
+            GetLegacyNarrativePurposeForSave(),
             NormalizeOptional(_emotionalBeat),
             NormalizeOptional(_keyEvents),
             NormalizeOptional(_openQuestions),
@@ -849,19 +864,21 @@
             Array.Empty<SceneCardReferenceDto>(),
             NormalizeOptional(_summary),
             NormalizeSceneCardStatus(_status),
-            ParseTags(_subplotTagsText));
+            ParseTags(_subplotTagsText),
+            NormalizeNarrativeRole(_narrativeRole),
+            NormalizeOptional(_narrativeIntent));
         return JsonSerializer.Serialize(snapshot, JsonOptions);
     }
 
-    private IReadOnlyList<string> GetNarrativePurposeOptions()
+    private IReadOnlyList<string> GetNarrativeRoleOptions()
     {
-        if (string.IsNullOrWhiteSpace(_narrativePurpose)
-            || SceneNarrativePurposeOptions.Contains(_narrativePurpose, StringComparer.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace(_narrativeRole)
+            || SceneNarrativeRoleOptions.Contains(_narrativeRole, StringComparer.OrdinalIgnoreCase))
         {
-            return SceneNarrativePurposeOptions;
+            return SceneNarrativeRoleOptions;
         }
 
-        return [.. SceneNarrativePurposeOptions, _narrativePurpose];
+        return [.. SceneNarrativeRoleOptions, _narrativeRole];
     }
 
     private static string BuildMetadataJson(SceneCardDto? card, string? notes, string? existingMetadataJson)
@@ -870,10 +887,62 @@
         SetString(root, "summary", card?.Summary);
         SetString(root, "status", card?.Status);
         SetString(root, "pov", card?.PovCharacterId);
+        SetString(root, "narrativeRole", card?.NarrativeRole);
+        SetString(root, "narrativeIntent", card?.NarrativeIntent);
         SetString(root, "narrativePurpose", card?.NarrativePurpose);
         SetStringArray(root, "subplotTags", card?.SubplotTags);
         SetString(root, "notesText", notes);
         return root.ToJsonString(JsonOptions);
+    }
+
+    private static string? NormalizeNarrativeRole(string? value)
+    {
+        return SceneNarrativeRoleCatalog.TryNormalize(value, out string? normalizedRole)
+            ? normalizedRole
+            : null;
+    }
+
+    private string? GetLegacyNarrativePurposeForSave()
+    {
+        return SceneNarrativeRoleCatalog.ToLegacyPurpose(
+            NormalizeNarrativeRole(_narrativeRole),
+            NormalizeOptional(_narrativeIntent));
+    }
+
+    private static string? GetNormalizedLegacyNarrativeRole(string? legacyNarrativePurpose)
+    {
+        return SceneNarrativeRoleCatalog.TryNormalize(legacyNarrativePurpose, out string? normalizedRole)
+            ? normalizedRole
+            : null;
+    }
+
+    private static string? GetLegacyNarrativeIntent(string? legacyNarrativePurpose)
+    {
+        return GetNormalizedLegacyNarrativeRole(legacyNarrativePurpose) is null
+            ? NormalizeOptional(legacyNarrativePurpose)
+            : null;
+    }
+
+    private static string? GetProposalNarrativeRole(SectionSceneCardProposalDto? proposal)
+    {
+        if (proposal is null)
+        {
+            return null;
+        }
+
+        return NormalizeNarrativeRole(proposal.NarrativeRole)
+            ?? GetNormalizedLegacyNarrativeRole(proposal.NarrativePurpose);
+    }
+
+    private static string? GetProposalNarrativeIntent(SectionSceneCardProposalDto? proposal)
+    {
+        if (proposal is null)
+        {
+            return null;
+        }
+
+        return NormalizeOptional(proposal.NarrativeIntent)
+            ?? GetLegacyNarrativeIntent(proposal.NarrativePurpose);
     }
 
     private static JsonObject ParseMetadata(string? metadataJson)

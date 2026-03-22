@@ -37,7 +37,9 @@ namespace WriterApp.Application.Documents
         IReadOnlyList<SceneCardReferenceDto>? References = null,
         string? Summary = null,
         string? Status = "Draft",
-        IReadOnlyList<string>? SubplotTags = null);
+        IReadOnlyList<string>? SubplotTags = null,
+        string? NarrativeRole = null,
+        string? NarrativeIntent = null);
 
     public sealed record SceneCardUpdateRequest(
         string? NarrativePurpose,
@@ -52,7 +54,9 @@ namespace WriterApp.Application.Documents
         IReadOnlyList<SceneCardReferenceDto>? References = null,
         string? Summary = null,
         string? Status = "Draft",
-        IReadOnlyList<string>? SubplotTags = null);
+        IReadOnlyList<string>? SubplotTags = null,
+        string? NarrativeRole = null,
+        string? NarrativeIntent = null);
 
     public sealed record SceneAnnotationDto(
         Guid Id,

@@ -196,6 +196,49 @@
     };
   }
 
+  const getDropdownPosition = function (triggerEl, menuEl) {
+      const margin = 8;
+      const gap = 6;
+      const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+
+      if (!triggerEl || !menuEl) {
+        return {
+          alignLeft: false,
+          openUpward: false
+        };
+      }
+
+      const triggerRect = triggerEl.getBoundingClientRect();
+      const menuRect = menuEl.getBoundingClientRect();
+
+      const availableBelow = viewportHeight - triggerRect.bottom - gap - margin;
+      const availableAbove = triggerRect.top - gap - margin;
+      const openUpward = menuRect.height > availableBelow && availableAbove > availableBelow;
+      const rightAlignedLeft = triggerRect.right - menuRect.width;
+      const leftAlignedRight = triggerRect.left + menuRect.width;
+      const alignLeft = rightAlignedLeft < margin && leftAlignedRight <= viewportWidth - margin;
+
+      return {
+        alignLeft,
+        openUpward
+      };
+    };
+  const attachDropdownPosition = () => {
+    if (window.tiptapEditor && !window.tiptapEditor.getDropdownPosition) {
+      window.tiptapEditor.getDropdownPosition = getDropdownPosition;
+    }
+  };
+
+  attachDropdownPosition();
+  window.setTimeout(attachDropdownPosition, 0);
+  window.setTimeout(attachDropdownPosition, 250);
+  window.setTimeout(attachDropdownPosition, 1000);
+
+  if (!api.getDropdownPosition) {
+    api.getDropdownPosition = getDropdownPosition;
+  }
+
   if (!api.scrollToAnnotation) {
     const clampPos = (value, min, max) => {
       const numeric = Number(value);

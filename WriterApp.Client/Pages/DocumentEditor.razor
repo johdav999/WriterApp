@@ -91,11 +91,7 @@ else
                         <button type="button" class='@($"{GetActiveClass(_formattingState.IsLink)} icon-only")' title='@GetTooltip("Insert or edit a link.")' aria-label="Link" @onclick="OnLinkRequested"><Icon Name="link" /></button>
                     </div>
                     <div class="editor-toolbar-group" aria-label="Table">
-                        <button type="button" class="icon-only" disabled="@(!_formattingState.CanInsertTable)" title='@GetTooltip("Insert a 3x3 table.")' aria-label="Table" @onclick="OnInsertTableRequested"><Icon Name="table_chart" /></button>
-                        <button type="button" class="icon-only" disabled="@(!_formattingState.CanAddTableRowAfter)" title='@GetTooltip("Add row below.")' aria-label="+Row" @onclick="OnAddTableRowAfterRequested"><Icon Name="table_rows" /></button>
-                        <button type="button" class="icon-only" disabled="@(!_formattingState.CanAddTableColumnAfter)" title='@GetTooltip("Add column to the right.")' aria-label="+Col" @onclick="OnAddTableColumnAfterRequested"><Icon Name="view_column" /></button>
-                        <button type="button" class='@($"{GetActiveClass(_formattingState.IsHeaderCell)} icon-only")' disabled="@(!_formattingState.CanToggleTableHeaderRow)" title='@GetTooltip("Toggle header row.")' aria-label="Header" @onclick="OnToggleTableHeaderRowRequested"><Icon Name="table_rows_narrow" /></button>
-                        <button type="button" class="icon-only" disabled="@(!_formattingState.CanDeleteTable)" title='@GetTooltip("Delete current table.")' aria-label="Del table" @onclick="OnDeleteTableRequested"><Icon Name="delete" Filled="true" /></button>
+                        <button type="button" class="icon-only" disabled="@(!_formattingState.CanInsertTable)" title='@GetTooltip("Insert a 3x3 table.")' aria-label="Insert table" @onclick="OnInsertTableRequested"><Icon Name="table_chart" /></button>
                     </div>
                     <div class="editor-toolbar-group" aria-label="Image">
                         <button type="button"
@@ -111,7 +107,6 @@ else
                                    accept="image/png,image/jpeg,image/gif,image/webp"
                                    OnChange="OnImageFileSelected" />
                         <button type="button" class="icon-only" disabled="@(!_formattingState.CanInsertImage)" title='@GetTooltip("Insert image from URL.")' aria-label="Image URL" @onclick="OnInsertImageFromUrlRequested"><Icon Name="language" /></button>
-                        <button type="button" class="icon-only" disabled="@(!_formattingState.CanRemoveImage)" title='@GetTooltip("Remove selected image.")' aria-label="Remove image" @onclick="OnRemoveImageRequested"><Icon Name="delete" Filled="true" /></button>
                     </div>
                     <div class="editor-toolbar-group" aria-label="Zoom">
                         <button type="button" class="icon-only" title='@GetTooltip("Decrease text size.")' aria-label="Zoom out" @onclick="OnZoomOutRequested"><Icon Name="zoom_out" /></button>
@@ -119,10 +114,19 @@ else
                         <button type="button" class="icon-only" title='@GetTooltip("Increase text size.")' aria-label="Zoom in" @onclick="OnZoomInRequested"><Icon Name="zoom_in" /></button>
                     </div>
                     <div class="editor-toolbar-group editor-toolbar-overflow" aria-label="More">
-                        <button type="button" class="icon-only" title='@GetTooltip("More formatting options.")' aria-label="More formatting options" @onclick="ToggleToolbarOverflow"><Icon Name="more_horiz" /></button>
+                        <button type="button"
+                                class="icon-only"
+                                title='@GetTooltip("More formatting options.")'
+                                aria-label="More formatting options"
+                                aria-haspopup="menu"
+                                aria-expanded="@_isToolbarOverflowOpen"
+                                @ref="_toolbarOverflowButtonRef"
+                                @onclick="ToggleToolbarOverflow"><Icon Name="more_horiz" /></button>
                         @if (_isToolbarOverflowOpen)
                         {
-                            <div class="editor-toolbar-overflow-panel">
+                            <div class="@GetToolbarOverflowPanelClass()"
+                                 role="menu"
+                                 @ref="_toolbarOverflowPanelRef">
                                 <button type="button" class='@($"{GetActiveClass(_formattingState.IsStrike)} icon-only")' disabled="@(!_formattingState.CanStrike)" title='@GetTooltip("Strikethrough text.")' aria-label="Strike" @onclick="OnStrikeRequested"><Icon Name="format_strikethrough" /></button>
                                 <button type="button" class='@($"{GetActiveClass(_formattingState.IsCode)} icon-only")' disabled="@(!_formattingState.CanCode)" title='@GetTooltip("Inline code.")' aria-label="Code" @onclick="OnCodeRequested"><Icon Name="code" /></button>
                                 <button type="button" class="icon-only" disabled="@(!_formattingState.CanApplyHeading)" title='@GetTooltip("Heading 3.")' aria-label="Heading 3" @onclick="() => OnHeadingRequested(3)"><Icon Name="looks_3" /></button>
@@ -135,15 +139,19 @@ else
                                 <button type="button" class='@($"{GetActiveClass(_formattingState.TextAlign == "right")} icon-only")' title='@GetTooltip("Align right.")' aria-label="Align right" @onclick='@(() => OnAlignRequested("right"))'><Icon Name="format_align_right" /></button>
                                 <button type="button" class="icon-only" title='@GetTooltip("Indent decrease.")' aria-label="Indent -" @onclick="OnIndentDecreaseRequested"><Icon Name="format_indent_decrease" /></button>
                                 <button type="button" class="icon-only" title='@GetTooltip("Indent increase.")' aria-label="Indent +" @onclick="OnIndentIncreaseRequested"><Icon Name="format_indent_increase" /></button>
+                                <div class="editor-toolbar-divider"></div>
+                                <div class="editor-toolbar-subtitle">Table</div>
                                 <button type="button" class="icon-only" disabled="@(!_formattingState.CanAddTableRowBefore)" title='@GetTooltip("Row above.")' aria-label="Row above" @onclick="OnAddTableRowBeforeRequested"><Icon Name="table_rows" /></button>
                                 <button type="button" class="icon-only" disabled="@(!_formattingState.CanAddTableRowAfter)" title='@GetTooltip("Row below.")' aria-label="Row below" @onclick="OnAddTableRowAfterRequested"><Icon Name="table_rows" /></button>
                                 <button type="button" class="icon-only" disabled="@(!_formattingState.CanDeleteTableRow)" title='@GetTooltip("Delete row.")' aria-label="Delete row" @onclick="OnDeleteTableRowRequested"><Icon Name="delete" Filled="true" /></button>
                                 <button type="button" class="icon-only" disabled="@(!_formattingState.CanAddTableColumnBefore)" title='@GetTooltip("Col left.")' aria-label="Col left" @onclick="OnAddTableColumnBeforeRequested"><Icon Name="view_column" /></button>
                                 <button type="button" class="icon-only" disabled="@(!_formattingState.CanAddTableColumnAfter)" title='@GetTooltip("Col right.")' aria-label="Col right" @onclick="OnAddTableColumnAfterRequested"><Icon Name="view_column" /></button>
                                 <button type="button" class="icon-only" disabled="@(!_formattingState.CanDeleteTableColumn)" title='@GetTooltip("Delete col.")' aria-label="Delete col" @onclick="OnDeleteTableColumnRequested"><Icon Name="delete" Filled="true" /></button>
+                                <button type="button" class='@($"{GetActiveClass(_formattingState.IsHeaderCell)} icon-only")' disabled="@(!_formattingState.CanToggleTableHeaderRow)" title='@GetTooltip("Toggle header row.")' aria-label="Header row" @onclick="OnToggleTableHeaderRowRequested"><Icon Name="table_rows_narrow" /></button>
                                 <button type="button" class="icon-only" disabled="@(!_formattingState.CanToggleTableHeaderColumn)" title='@GetTooltip("Header col.")' aria-label="Header col" @onclick="OnToggleTableHeaderColumnRequested"><Icon Name="view_column" Filled="true" /></button>
                                 <button type="button" class="icon-only" disabled="@(!_formattingState.CanMergeTableCells)" title='@GetTooltip("Merge cells.")' aria-label="Merge cells" @onclick="OnMergeTableCellsRequested"><Icon Name="join" /></button>
                                 <button type="button" class="icon-only" disabled="@(!_formattingState.CanSplitTableCell)" title='@GetTooltip("Split cell.")' aria-label="Split cell" @onclick="OnSplitTableCellRequested"><Icon Name="call_split" /></button>
+                                <button type="button" class="icon-only" disabled="@(!_formattingState.CanDeleteTable)" title='@GetTooltip("Delete current table.")' aria-label="Delete table" @onclick="OnDeleteTableRequested"><Icon Name="delete" Filled="true" /></button>
                             </div>
                         }
                     </div>
@@ -167,7 +175,6 @@ else
                        title='@GetTooltip("Open Prosa documentation")'
                        aria-label="Documentation">
                         <Icon Name="menu_book" />
-                        <span>Documentation</span>
                     </a>
                     @if (CanShowPromptLibrary && PinnedPromptPresets.Count > 0)
                     {
@@ -523,7 +530,7 @@ else
                                             HeadingNumberingScope="@GetHeadingNumberingScope()"
                                             HeadingNumberingPrefix="@_headingPrefixCounters"
                                             HeadingNumberingTraceId="@_headingTraceId"
-                                            SearchHighlightQuery="@SearchQuery"
+                                            SearchHighlightQuery="@_activeSearchQuery"
                                             FormattingChanged="OnFormattingChanged"
                                             SelectionChanged="OnSelectionChanged"
                                             LinkShortcutRequested="OnLinkShortcutRequested"
@@ -576,6 +583,16 @@ else
                             @if (!string.IsNullOrWhiteSpace(_continuityStatus))
                             {
                                 <span class="version-status" title="Continuity status.">@_continuityStatus</span>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(_aiCommandStatus.Message))
+                            {
+                                <span class="@GetAiCommandStatusClass()" title="AI command status.">
+                                    @if (_aiCommandStatus.IsInProgress)
+                                    {
+                                        <span class="ai-command-spinner" aria-hidden="true"></span>
+                                    }
+                                    @_aiCommandStatus.Message
+                                </span>
                             }
                         </div>
                     }
@@ -832,34 +849,25 @@ else
                                                      OnClick="@(() => RunSceneAiAsync("scene.refine", "Refine the scene card fields while keeping intent."))">
                                         Refine
                                     </PlanGatedButton>
-                                    <PlanGatedButton Feature="@nameof(FeatureKey.SceneAiSuggestions)"
-                                                     Class="btn btn-secondary"
-                                                     IsBusy="_sceneAiInFlight"
-                                                     AllowedTitle="@GetTooltip("Generate a concise summary for this scene.")"
-                                                     OnClick="@(() => RunSceneAiAsync("scene.suggest", "Generate a concise 1-2 sentence summary for this scene card based on the section text. Prefer updating the summary field and preserve existing scene metadata unless the text strongly suggests a correction."))">
-                                        Generate summary
-                                    </PlanGatedButton>
-                                    <PlanGatedButton Feature="@nameof(FeatureKey.SceneAiSuggestions)"
-                                                     Class="btn btn-secondary"
-                                                     IsBusy="_sceneAiInFlight"
-                                                     AllowedTitle="@GetTooltip("Suggest the narrative purpose for this scene.")"
-                                                     OnClick="@(() => RunSceneAiAsync("scene.suggest", "Suggest the strongest narrative purpose for this scene based on the section text. Prioritize updating the narrative purpose field and only adjust other metadata if needed for consistency."))">
-                                        Suggest narrative purpose
-                                    </PlanGatedButton>
-                                    <PlanGatedButton Feature="@nameof(FeatureKey.SceneAiSuggestions)"
-                                                     Class="btn btn-secondary"
-                                                     IsBusy="_sceneAiInFlight"
-                                                     AllowedTitle="@GetTooltip("Improve the scene structure using goal, conflict, and outcome framing.")"
-                                                     OnClick="@(() => RunSceneAiAsync("scene.refine", "Improve the scene structure of this scene card using goal, conflict, and outcome framing. Strengthen summary, narrative purpose, key events, and open questions so the card clearly reflects what the character wants, what opposes them, and what changes by the end."))">
-                                        Improve structure
-                                    </PlanGatedButton>
-                                    <PlanGatedButton Feature="@nameof(FeatureKey.SceneAiSuggestions)"
-                                                     Class="btn btn-secondary"
-                                                     IsBusy="_sceneAiInFlight"
-                                                     AllowedTitle="@GetTooltip("Identify unresolved story questions.")"
-                                                     OnClick="@(() => RunSceneAiAsync("scene.find-open-questions", "Find open questions in this section."))">
-                                        Find open questions
-                                    </PlanGatedButton>
+                                    <div class="scene-card-field-tools">
+                                        <label class="scene-card-field-tools-label" for="scene-ai-field-select">Select field to improve</label>
+                                        <select id="scene-ai-field-select"
+                                                class="notes-input scene-card-field-select"
+                                                value="@_sceneAiSelectedField"
+                                                @onchange="@((ChangeEventArgs args) => _sceneAiSelectedField = args.Value?.ToString() ?? "summary")">
+                                            @foreach (var option in GetSceneAiFieldOptions())
+                                            {
+                                                <option value="@option.Key">@option.Label</option>
+                                            }
+                                        </select>
+                                        <PlanGatedButton Feature="@nameof(FeatureKey.SceneAiSuggestions)"
+                                                         Class="btn btn-secondary"
+                                                         IsBusy="_sceneAiInFlight"
+                                                         AllowedTitle="@GetTooltip("Suggest an improvement for only the selected scene field.")"
+                                                         OnClick="RunScopedSceneAiAsync">
+                                            Improve selected field
+                                        </PlanGatedButton>
+                                    </div>
                                 </div>
                                 @if (!string.IsNullOrWhiteSpace(_sceneAiError))
                                 {
@@ -873,102 +881,132 @@ else
                                         {
                                             <div class="scene-card-preview-explanation">@_sceneAiExplanation</div>
                                         }
-                                        <div class="scene-card-preview-grid">
-                                            <div class="scene-card-preview-col">
-                                                <div class="scene-card-preview-label">Current</div>
-                                                <div class="scene-card-preview-field">
-                                                    <strong>Summary</strong>
-                                                    <div>@(string.IsNullOrWhiteSpace(_sceneSummary) ? "(not provided)" : _sceneSummary)</div>
+                                        @if (IsScopedSceneAiProposal())
+                                        {
+                                            <div class="scene-card-preview-grid">
+                                                <div class="scene-card-preview-col">
+                                                    <div class="scene-card-preview-label">Current</div>
+                                                    <div class="scene-card-preview-field">
+                                                        <strong>@GetSceneAiPreviewFieldLabel()</strong>
+                                                        <div>@GetCurrentSceneAiFieldDisplay()</div>
+                                                    </div>
                                                 </div>
-                                                <div class="scene-card-preview-field">
-                                                    <strong>Status</strong>
-                                                    <div>@(string.IsNullOrWhiteSpace(_sceneCardMetadataStatus) ? "(not provided)" : _sceneCardMetadataStatus)</div>
-                                                </div>
-                                                <div class="scene-card-preview-field">
-                                                    <strong>Narrative purpose</strong>
-                                                    <div>@_sceneNarrativePurpose</div>
-                                                </div>
-                                                <div class="scene-card-preview-field">
-                                                    <strong>Emotional beat</strong>
-                                                    <div>@_sceneEmotionalBeat</div>
-                                                </div>
-                                                <div class="scene-card-preview-field">
-                                                    <strong>Key events</strong>
-                                                    <div>@_sceneKeyEvents</div>
-                                                </div>
-                                                <div class="scene-card-preview-field">
-                                                    <strong>Open questions</strong>
-                                                    <div>@_sceneOpenQuestions</div>
-                                                </div>
-                                                <div class="scene-card-preview-field">
-                                                    <strong>POV character</strong>
-                                                    <div>@(string.IsNullOrWhiteSpace(_scenePovCharacterId) ? "(not provided)" : _scenePovCharacterId)</div>
-                                                </div>
-                                                <div class="scene-card-preview-field">
-                                                    <strong>Setting / place</strong>
-                                                    <div>@(string.IsNullOrWhiteSpace(_scenePlaceId) ? "(not provided)" : _scenePlaceId)</div>
-                                                </div>
-                                                <div class="scene-card-preview-field">
-                                                    <strong>Timeline marker</strong>
-                                                    <div>@(string.IsNullOrWhiteSpace(_sceneTimeRef) ? "(not provided)" : _sceneTimeRef)</div>
-                                                </div>
-                                                <div class="scene-card-preview-field">
-                                                    <strong>Subplot tags</strong>
-                                                    <div>@(string.IsNullOrWhiteSpace(_sceneSubplotTagsText) ? "(not provided)" : _sceneSubplotTagsText)</div>
-                                                </div>
-                                                <div class="scene-card-preview-field">
-                                                    <strong>Tags</strong>
-                                                    <div>@(string.IsNullOrWhiteSpace(_sceneTagsText) ? "(not provided)" : _sceneTagsText)</div>
+                                                <div class="scene-card-preview-col">
+                                                    <div class="scene-card-preview-label">Proposed</div>
+                                                    <div class="scene-card-preview-field">
+                                                        <strong>@GetSceneAiPreviewFieldLabel()</strong>
+                                                        <div>@GetProposedSceneAiFieldDisplay()</div>
+                                                    </div>
                                                 </div>
                                             </div>
-                                            <div class="scene-card-preview-col">
-                                                <div class="scene-card-preview-label">Proposed</div>
-                                                <div class="scene-card-preview-field">
-                                                    <strong>Summary</strong>
-                                                    <div>@_sceneAiProposal.Summary</div>
+                                        }
+                                        else
+                                        {
+                                            <div class="scene-card-preview-grid">
+                                                <div class="scene-card-preview-col">
+                                                    <div class="scene-card-preview-label">Current</div>
+                                                    <div class="scene-card-preview-field">
+                                                        <strong>Summary</strong>
+                                                        <div>@(string.IsNullOrWhiteSpace(_sceneSummary) ? "(not provided)" : _sceneSummary)</div>
+                                                    </div>
+                                                    <div class="scene-card-preview-field">
+                                                        <strong>Status</strong>
+                                                        <div>@(string.IsNullOrWhiteSpace(_sceneCardMetadataStatus) ? "(not provided)" : _sceneCardMetadataStatus)</div>
+                                                    </div>
+                                                    <div class="scene-card-preview-field">
+                                                        <strong>Narrative role</strong>
+                                                        <div>@(string.IsNullOrWhiteSpace(_sceneNarrativeRole) ? "(not provided)" : _sceneNarrativeRole)</div>
+                                                    </div>
+                                                    <div class="scene-card-preview-field">
+                                                        <strong>Narrative intent</strong>
+                                                        <div>@(string.IsNullOrWhiteSpace(_sceneNarrativeIntent) ? "(not provided)" : _sceneNarrativeIntent)</div>
+                                                    </div>
+                                                    <div class="scene-card-preview-field">
+                                                        <strong>Emotional beat</strong>
+                                                        <div>@_sceneEmotionalBeat</div>
+                                                    </div>
+                                                    <div class="scene-card-preview-field">
+                                                        <strong>Key events</strong>
+                                                        <div>@_sceneKeyEvents</div>
+                                                    </div>
+                                                    <div class="scene-card-preview-field">
+                                                        <strong>Open questions</strong>
+                                                        <div>@_sceneOpenQuestions</div>
+                                                    </div>
+                                                    <div class="scene-card-preview-field">
+                                                        <strong>POV character</strong>
+                                                        <div>@(string.IsNullOrWhiteSpace(_scenePovCharacterId) ? "(not provided)" : _scenePovCharacterId)</div>
+                                                    </div>
+                                                    <div class="scene-card-preview-field">
+                                                        <strong>Setting / place</strong>
+                                                        <div>@(string.IsNullOrWhiteSpace(_scenePlaceId) ? "(not provided)" : _scenePlaceId)</div>
+                                                    </div>
+                                                    <div class="scene-card-preview-field">
+                                                        <strong>Timeline marker</strong>
+                                                        <div>@(string.IsNullOrWhiteSpace(_sceneTimeRef) ? "(not provided)" : _sceneTimeRef)</div>
+                                                    </div>
+                                                    <div class="scene-card-preview-field">
+                                                        <strong>Subplot tags</strong>
+                                                        <div>@(string.IsNullOrWhiteSpace(_sceneSubplotTagsText) ? "(not provided)" : _sceneSubplotTagsText)</div>
+                                                    </div>
+                                                    <div class="scene-card-preview-field">
+                                                        <strong>Tags</strong>
+                                                        <div>@(string.IsNullOrWhiteSpace(_sceneTagsText) ? "(not provided)" : _sceneTagsText)</div>
+                                                    </div>
                                                 </div>
-                                                <div class="scene-card-preview-field">
-                                                    <strong>Status</strong>
-                                                    <div>@_sceneAiProposal.Status</div>
-                                                </div>
-                                                <div class="scene-card-preview-field">
-                                                    <strong>Narrative purpose</strong>
-                                                    <div>@_sceneAiProposal.NarrativePurpose</div>
-                                                </div>
-                                                <div class="scene-card-preview-field">
-                                                    <strong>Emotional beat</strong>
-                                                    <div>@_sceneAiProposal.EmotionalBeat</div>
-                                                </div>
-                                                <div class="scene-card-preview-field">
-                                                    <strong>Key events</strong>
-                                                    <div>@_sceneAiProposal.KeyEvents</div>
-                                                </div>
-                                                <div class="scene-card-preview-field">
-                                                    <strong>Open questions</strong>
-                                                    <div>@_sceneAiProposal.OpenQuestions</div>
-                                                </div>
-                                                <div class="scene-card-preview-field">
-                                                    <strong>POV character</strong>
-                                                    <div>@(string.IsNullOrWhiteSpace(_sceneAiProposal.PovCharacterId) ? "(not provided)" : _sceneAiProposal.PovCharacterId)</div>
-                                                </div>
-                                                <div class="scene-card-preview-field">
-                                                    <strong>Setting / place</strong>
-                                                    <div>@(string.IsNullOrWhiteSpace(_sceneAiProposal.PlaceId) ? "(not provided)" : _sceneAiProposal.PlaceId)</div>
-                                                </div>
-                                                <div class="scene-card-preview-field">
-                                                    <strong>Timeline marker</strong>
-                                                    <div>@(string.IsNullOrWhiteSpace(_sceneAiProposal.TimeRef) ? "(not provided)" : _sceneAiProposal.TimeRef)</div>
-                                                </div>
-                                                <div class="scene-card-preview-field">
-                                                    <strong>Subplot tags</strong>
-                                                    <div>@GetSceneProposalTagsDisplay(_sceneAiProposal.SubplotTags)</div>
-                                                </div>
-                                                <div class="scene-card-preview-field">
-                                                    <strong>Tags</strong>
-                                                    <div>@GetSceneProposalTagsDisplay(_sceneAiProposal.Tags)</div>
+                                                <div class="scene-card-preview-col">
+                                                    <div class="scene-card-preview-label">Proposed</div>
+                                                    <div class="scene-card-preview-field">
+                                                        <strong>Summary</strong>
+                                                        <div>@_sceneAiProposal.Summary</div>
+                                                    </div>
+                                                    <div class="scene-card-preview-field">
+                                                        <strong>Status</strong>
+                                                        <div>@_sceneAiProposal.Status</div>
+                                                    </div>
+                                                    <div class="scene-card-preview-field">
+                                                        <strong>Narrative role</strong>
+                                                        <div>@GetSceneProposalNarrativeRoleDisplay(_sceneAiProposal)</div>
+                                                    </div>
+                                                    <div class="scene-card-preview-field">
+                                                        <strong>Narrative intent</strong>
+                                                        <div>@GetSceneProposalNarrativeIntentDisplay(_sceneAiProposal)</div>
+                                                    </div>
+                                                    <div class="scene-card-preview-field">
+                                                        <strong>Emotional beat</strong>
+                                                        <div>@_sceneAiProposal.EmotionalBeat</div>
+                                                    </div>
+                                                    <div class="scene-card-preview-field">
+                                                        <strong>Key events</strong>
+                                                        <div>@_sceneAiProposal.KeyEvents</div>
+                                                    </div>
+                                                    <div class="scene-card-preview-field">
+                                                        <strong>Open questions</strong>
+                                                        <div>@_sceneAiProposal.OpenQuestions</div>
+                                                    </div>
+                                                    <div class="scene-card-preview-field">
+                                                        <strong>POV character</strong>
+                                                        <div>@(string.IsNullOrWhiteSpace(_sceneAiProposal.PovCharacterId) ? "(not provided)" : _sceneAiProposal.PovCharacterId)</div>
+                                                    </div>
+                                                    <div class="scene-card-preview-field">
+                                                        <strong>Setting / place</strong>
+                                                        <div>@(string.IsNullOrWhiteSpace(_sceneAiProposal.PlaceId) ? "(not provided)" : _sceneAiProposal.PlaceId)</div>
+                                                    </div>
+                                                    <div class="scene-card-preview-field">
+                                                        <strong>Timeline marker</strong>
+                                                        <div>@(string.IsNullOrWhiteSpace(_sceneAiProposal.TimeRef) ? "(not provided)" : _sceneAiProposal.TimeRef)</div>
+                                                    </div>
+                                                    <div class="scene-card-preview-field">
+                                                        <strong>Subplot tags</strong>
+                                                        <div>@GetSceneProposalTagsDisplay(_sceneAiProposal.SubplotTags)</div>
+                                                    </div>
+                                                    <div class="scene-card-preview-field">
+                                                        <strong>Tags</strong>
+                                                        <div>@GetSceneProposalTagsDisplay(_sceneAiProposal.Tags)</div>
+                                                    </div>
                                                 </div>
                                             </div>
-                                        </div>
+                                        }
                                         <div class="scene-card-preview-actions">
                                             <button type="button" class="btn btn-primary" @onclick="ApplySceneAiProposalAsync">Apply</button>
                                             <button type="button" class="btn btn-ghost" @onclick="DiscardSceneAiProposal">Discard</button>
@@ -992,17 +1030,24 @@ else
                                         <option value="@statusOption">@statusOption</option>
                                     }
                                 </select>
-                                <label class="scene-card-label" for="scene-narrative-purpose" title='@GetTooltip("Why this scene exists in the story.")'>Narrative purpose</label>
-                                <select id="scene-narrative-purpose"
+                                <label class="scene-card-label" for="scene-narrative-role" title='@GetTooltip("The scene's structural role in the story.")'>Narrative role</label>
+                                <select id="scene-narrative-role"
                                         class="notes-input scene-card-input"
-                                        value="@_sceneNarrativePurpose"
-                                        @onchange="OnSceneNarrativePurposeChanged"
-                                        title='@GetTooltip("Why this scene exists in the story.")'>
-                                    @foreach (string purposeOption in GetNarrativePurposeOptions())
+                                        value="@_sceneNarrativeRole"
+                                        @onchange="OnSceneNarrativeRoleChanged"
+                                        title='@GetTooltip("The scene's structural role in the story.")'>
+                                    @foreach (string purposeOption in GetNarrativeRoleOptions())
                                     {
-                                        <option value="@purposeOption">@(string.IsNullOrEmpty(purposeOption) ? "Select purpose" : purposeOption)</option>
+                                        <option value="@purposeOption">@(string.IsNullOrEmpty(purposeOption) ? "Select role" : purposeOption)</option>
                                     }
                                 </select>
+                                <label class="scene-card-label" for="scene-narrative-intent" title='@GetTooltip("What the scene is trying to accomplish emotionally or dramatically.")'>Narrative intent</label>
+                                <textarea id="scene-narrative-intent"
+                                          class="notes-input scene-card-input"
+                                          value="@_sceneNarrativeIntent"
+                                          @oninput="OnSceneNarrativeIntentInput"
+                                          title='@GetTooltip("What the scene is trying to accomplish emotionally or dramatically.")'
+                                          placeholder="Describe what this scene is trying to accomplish..."></textarea>
                                 <label class="scene-card-label" for="scene-emotional-beat" title='@GetTooltip("How the emotion changes in this scene.")'>Emotional beat</label>
                                 <textarea id="scene-emotional-beat"
                                           class="notes-input scene-card-input"
@@ -2248,11 +2293,15 @@ else
                             disabled="@(!string.Equals(_exportFormatSelection, "html", StringComparison.OrdinalIgnoreCase) &&
                                         !string.Equals(_exportFormatSelection, "pdf", StringComparison.OrdinalIgnoreCase) &&
                                         !string.Equals(_exportFormatSelection, "docx", StringComparison.OrdinalIgnoreCase))">
+                        <option value="__default__">Default formatting</option>
                         @foreach (ExportTemplateDto template in _exportTemplates)
                         {
                             <option value="@template.Id">@template.Name @GetPresetTag(template.PresetKey)</option>
                         }
                     </select>
+                    <div class="export-panel-note">
+                        Default formatting uses the built-in export layout. Saved templates require Professional.
+                    </div>
                 }
             </div>
             @if (string.Equals(_exportContentSelection, "document", StringComparison.OrdinalIgnoreCase))
@@ -2720,7 +2769,6 @@ else
         <div class="editor-context-menu-group">
             <div class="editor-context-menu-label">Image</div>
             <button type="button" disabled="@(!_formattingState.CanInsertImage)" @onclick="() => OnContextMenuCommand(OnInsertImageFromUrlRequested)">Insert from URL</button>
-            <button type="button" disabled="@(!_formattingState.CanRemoveImage)" @onclick="() => OnContextMenuCommand(OnRemoveImageRequested)">Remove image</button>
         </div>
         <div class="editor-context-menu-group">
             <div class="editor-context-menu-label">Other</div>
