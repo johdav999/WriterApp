@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using WriterApp.Application.Subscriptions;
 using WriterApp.Data;
 using WriterApp.Data.Subscriptions;
+using WriterApp.Shared.Billing;
 
 namespace WriterApp.Application.Billing
 {
@@ -16,6 +17,7 @@ namespace WriterApp.Application.Billing
         private readonly IUserEntitlementStore _userEntitlementStore;
         private readonly IEntitlementService _entitlementService;
         private readonly IStripePriceResolver _stripePriceResolver;
+        private readonly StripeOptions _stripeOptions;
         private readonly ILogger<StripeEntitlementSyncService> _logger;
 
         public StripeEntitlementSyncService(
@@ -23,12 +25,14 @@ namespace WriterApp.Application.Billing
             IUserEntitlementStore userEntitlementStore,
             IEntitlementService entitlementService,
             IStripePriceResolver stripePriceResolver,
+            StripeOptions stripeOptions,
             ILogger<StripeEntitlementSyncService> logger)
         {
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _userEntitlementStore = userEntitlementStore ?? throw new ArgumentNullException(nameof(userEntitlementStore));
             _entitlementService = entitlementService ?? throw new ArgumentNullException(nameof(entitlementService));
             _stripePriceResolver = stripePriceResolver ?? throw new ArgumentNullException(nameof(stripePriceResolver));
+            _stripeOptions = stripeOptions ?? throw new ArgumentNullException(nameof(stripeOptions));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -45,6 +49,21 @@ namespace WriterApp.Application.Billing
 
             UserEntitlement entitlement = await _userEntitlementStore.GetOrCreateAsync(userId, ct);
             string planBefore = entitlement.PlanKey ?? string.Empty;
+            string statusBefore = EntitlementAccessEvaluator.NormalizeSubscriptionStatus(entitlement.SubscriptionStatus);
+            BillingSubscriptionPolicyDecision accessBefore = BillingSubscriptionPolicy.Evaluate(statusBefore);
+            string activeMode = StripeBillingEnvironment.Normalize(_stripeOptions.Mode);
+            string previousStripeMode = StripeBillingEnvironment.ResolveStoredMode(entitlement, _stripeOptions);
+            if (StripeBillingEnvironment.IsModeMismatch(previousStripeMode, activeMode))
+            {
+                _logger.LogWarning(
+                    "Stripe entitlement sync overwriting opposite-mode linkage. UserId={UserId} StoredStripeMode={StoredStripeMode} ActiveStripeMode={ActiveStripeMode} StoredCustomerId={StoredCustomerId} StoredSubscriptionId={StoredSubscriptionId}",
+                    userId,
+                    previousStripeMode,
+                    activeMode,
+                    entitlement.StripeCustomerId ?? string.Empty,
+                    entitlement.StripeSubscriptionId ?? string.Empty);
+            }
+
             string? subscriptionId = ReadString(subscription, "id");
             string? resolvedCustomerId = stripeCustomerId;
             if (string.IsNullOrWhiteSpace(resolvedCustomerId))
@@ -54,11 +73,12 @@ namespace WriterApp.Application.Billing
 
             string? stripePriceId = ReadString(subscription, "items", "data", 0, "price", "id");
             string normalizedStatus = NormalizeStripeStatus(ReadString(subscription, "status"));
+            BillingSubscriptionPolicyDecision accessAfter = BillingSubscriptionPolicy.Evaluate(normalizedStatus);
             DateTimeOffset? nextPeriodStartUtc = ReadUnixTimestamp(subscription, "current_period_start");
             DateTimeOffset? nextCurrentPeriodEndUtc = ReadUnixTimestamp(subscription, "current_period_end");
             bool cancelAtPeriodEnd = ReadBool(subscription, "cancel_at_period_end") ?? false;
 
-            string nextPlanKey = ResolvePlanKey(stripePriceId, normalizedStatus);
+            string nextPlanKey = ResolvePlanKey(entitlement, stripePriceId, normalizedStatus);
             int nextBudget = ResolveBudget(nextPlanKey);
 
             if (nextPeriodStartUtc.HasValue && entitlement.PeriodStartUtc != nextPeriodStartUtc.Value)
@@ -69,6 +89,7 @@ namespace WriterApp.Application.Billing
             entitlement.PlanKey = nextPlanKey;
             entitlement.SubscriptionStatus = normalizedStatus;
             entitlement.AiMonthlyTokenBudget = nextBudget;
+            entitlement.StripeMode = activeMode;
             if (!string.IsNullOrWhiteSpace(resolvedCustomerId))
             {
                 entitlement.StripeCustomerId = resolvedCustomerId;
@@ -91,18 +112,39 @@ namespace WriterApp.Application.Billing
 
             await _dbContext.SaveChangesAsync(ct);
             _entitlementService.InvalidateForUser(userId);
+            if (!string.Equals(statusBefore, normalizedStatus, StringComparison.Ordinal)
+                || accessBefore.KeepsPaidAccess != accessAfter.KeepsPaidAccess)
+            {
+                _logger.LogInformation(
+                    "Stripe subscription policy state changed. UserId={UserId} StripeMode={StripeMode} StatusBefore={StatusBefore} StatusAfter={StatusAfter} PaidAccessBefore={PaidAccessBefore} PaidAccessAfter={PaidAccessAfter} PolicyBefore={PolicyBefore} PolicyAfter={PolicyAfter} CancelAtPeriodEnd={CancelAtPeriodEnd} CurrentPeriodEndUtc={CurrentPeriodEndUtc}",
+                    userId,
+                    activeMode,
+                    statusBefore,
+                    normalizedStatus,
+                    accessBefore.KeepsPaidAccess,
+                    accessAfter.KeepsPaidAccess,
+                    accessBefore.PolicyCode,
+                    accessAfter.PolicyCode,
+                    cancelAtPeriodEnd,
+                    nextCurrentPeriodEndUtc);
+            }
+
             _logger.LogInformation(
-                "Stripe entitlement sync applied. UserId={UserId} PlanBefore={PlanBefore} PlanAfter={PlanAfter} StripeCustomerId={StripeCustomerId} StripeSubscriptionId={StripeSubscriptionId} StripePriceId={StripePriceId}",
+                "Stripe entitlement sync applied. UserId={UserId} StripeMode={StripeMode} PlanBefore={PlanBefore} PlanAfter={PlanAfter} Status={Status} Policy={Policy} PaidAccess={PaidAccess} StripeCustomerId={StripeCustomerId} StripeSubscriptionId={StripeSubscriptionId} StripePriceId={StripePriceId}",
                 userId,
+                activeMode,
                 planBefore,
                 entitlement.PlanKey ?? string.Empty,
+                normalizedStatus,
+                accessAfter.PolicyCode,
+                accessAfter.KeepsPaidAccess,
                 resolvedCustomerId ?? string.Empty,
                 subscriptionId ?? string.Empty,
                 stripePriceId ?? string.Empty);
             return entitlement;
         }
 
-        private string ResolvePlanKey(string? stripePriceId, string normalizedStatus)
+        private string ResolvePlanKey(UserEntitlement entitlement, string? stripePriceId, string normalizedStatus)
         {
             if (string.Equals(normalizedStatus, "canceled", StringComparison.OrdinalIgnoreCase))
             {
@@ -118,11 +160,40 @@ namespace WriterApp.Application.Billing
                 }
             }
 
-            _logger.LogWarning(
-                "Stripe entitlement sync found unknown price id. PriceId={PriceId} Status={Status}. Defaulting to free plan.",
-                stripePriceId,
-                normalizedStatus);
+            string preservedPlanKey = UserEntitlementDefaults.NormalizePlanKey(entitlement.PlanKey);
+            BillingSubscriptionPolicyDecision policyDecision = BillingSubscriptionPolicy.Evaluate(normalizedStatus);
+            bool preserveExistingPaidPlan =
+                _stripeOptions.IsLiveMode
+                && policyDecision.KeepsPaidAccess
+                && IsPaidPlan(preservedPlanKey);
+
+            if (preserveExistingPaidPlan)
+            {
+                _logger.LogError(
+                    "Stripe entitlement sync found unmapped live price id and preserved prior paid plan. UserId={UserId} PriceId={PriceId} Status={Status} PreservedPlanKey={PreservedPlanKey} StripeSubscriptionId={StripeSubscriptionId}",
+                    entitlement.UserId,
+                    stripePriceId ?? string.Empty,
+                    normalizedStatus,
+                    preservedPlanKey,
+                    entitlement.StripeSubscriptionId ?? string.Empty);
+                return preservedPlanKey;
+            }
+
+            _logger.LogError(
+                "Stripe entitlement sync found unmapped Stripe price id. UserId={UserId} StripeMode={StripeMode} PriceId={PriceId} Status={Status} ExistingPlanKey={ExistingPlanKey} FallbackPlanKey={FallbackPlanKey}",
+                entitlement.UserId,
+                StripeBillingEnvironment.Normalize(_stripeOptions.Mode),
+                stripePriceId ?? string.Empty,
+                normalizedStatus,
+                preservedPlanKey,
+                UserEntitlementDefaults.FreePlanKey);
             return UserEntitlementDefaults.FreePlanKey;
+        }
+
+        private static bool IsPaidPlan(string planKey)
+        {
+            return string.Equals(planKey, UserEntitlementDefaults.StandardPlanKey, StringComparison.Ordinal)
+                || string.Equals(planKey, UserEntitlementDefaults.ProfessionalPlanKey, StringComparison.Ordinal);
         }
 
         private static int ResolveBudget(string planKey)
@@ -138,22 +209,7 @@ namespace WriterApp.Application.Billing
 
         private static string NormalizeStripeStatus(string? rawStatus)
         {
-            if (string.IsNullOrWhiteSpace(rawStatus))
-            {
-                return "active";
-            }
-
-            string status = rawStatus.Trim().ToLowerInvariant();
-            return status switch
-            {
-                "trialing" => "active",
-                "active" => "active",
-                "past_due" => "past_due",
-                "unpaid" => "unpaid",
-                "incomplete" => "incomplete",
-                "canceled" => "canceled",
-                _ => status
-            };
+            return BillingSubscriptionPolicy.NormalizeStatus(rawStatus);
         }
 
         private static string? ReadString(JsonElement element, params object[] path)

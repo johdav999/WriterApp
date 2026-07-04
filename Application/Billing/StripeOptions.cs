@@ -1,25 +1,43 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Microsoft.Extensions.Configuration;
 
 namespace WriterApp.Application.Billing
 {
     public sealed class StripeOptions
     {
+        public const string ConfigSectionName = "Stripe";
+        public const string LegacyBillingSectionName = "Stripe:Billing";
         public const string TestMode = "test";
         public const string LiveMode = "live";
-        public const string DefaultSuccessUrl = "/app/account?billing=success";
-        public const string DefaultCancelUrl = "/app/account?billing=cancel";
+        public const string DefaultSuccessUrl = "/app/account/billing?success=1&session_id={CHECKOUT_SESSION_ID}";
+        public const string DefaultCancelUrl = "/app/account/billing?canceled=1";
 
         public bool Enabled { get; init; }
-        public string Mode { get; init; } = TestMode;
+        public bool WebhookHandlingEnabled { get; init; } = true;
+        public string Mode { get; init; } = string.Empty;
         public string SecretKey { get; init; } = string.Empty;
         public string WebhookSecret { get; init; } = string.Empty;
-        public string PriceStandard { get; init; } = string.Empty;
-        public string PricePro { get; init; } = string.Empty;
-        public string SuccessUrl { get; init; } = DefaultSuccessUrl;
-        public string CancelUrl { get; init; } = DefaultCancelUrl;
+        public StripePriceOptions Prices { get; init; } = new();
+        public StripeCheckoutOptions Checkout { get; init; } = new();
         public string BillingPortalReturnUrl { get; init; } = string.Empty;
+        public bool LegacyBillingConfigFallbackUsed { get; init; }
+
+        public bool IsLiveMode => string.Equals(Mode, LiveMode, StringComparison.Ordinal);
+        public bool IsTestMode => string.Equals(Mode, TestMode, StringComparison.Ordinal);
+
+        public string CurrentStandardPriceId => IsLiveMode
+            ? Prices.Standard.LivePriceId
+            : Prices.Standard.TestPriceId;
+
+        public string CurrentProPriceId => IsLiveMode
+            ? Prices.Pro.LivePriceId
+            : Prices.Pro.TestPriceId;
+
+        public bool HasRequiredPricesForCurrentMode =>
+            !string.IsNullOrWhiteSpace(CurrentStandardPriceId)
+            && !string.IsNullOrWhiteSpace(CurrentProPriceId);
 
         public static StripeConfigurationResult Load(IConfiguration configuration, bool isDevelopment)
         {
@@ -28,36 +46,91 @@ namespace WriterApp.Application.Billing
                 throw new ArgumentNullException(nameof(configuration));
             }
 
-            StripeBillingOptions billingOptions = configuration
-                .GetSection("Stripe:Billing")
-                .Get<StripeBillingOptions>() ?? new StripeBillingOptions();
+            IConfigurationSection stripeSection = configuration.GetSection(ConfigSectionName);
+            IConfigurationSection legacyBillingSection = configuration.GetSection(LegacyBillingSectionName);
 
-            string mode = ReadSetting(configuration, "Mode");
-            string secretKey = ReadSetting(configuration, "SecretKey");
-            string webhookSecret = ReadSetting(configuration, "WebhookSecret");
-            string priceStandard = ReadSetting(configuration, "PriceStandard");
-            string pricePro = ReadSetting(configuration, "PricePro");
-            string successUrl = ReadSetting(configuration, "SuccessUrl");
-            string cancelUrl = ReadSetting(configuration, "CancelUrl");
-            string billingPortalReturnUrl = ReadSetting(configuration, "BillingPortalReturnUrl");
+            string mode = ReadCanonicalOrLegacy(configuration, stripeSection, legacyBillingSection, "Mode", "STRIPE_MODE");
+            string secretKey = ReadCanonicalOrLegacy(
+                configuration,
+                stripeSection,
+                legacyBillingSection,
+                "SecretKey",
+                "STRIPE_SECRET_KEY",
+                "STRIPE_SECRETKEY");
+            string webhookSecret = ReadCanonicalOrLegacy(
+                configuration,
+                stripeSection,
+                legacyBillingSection,
+                "WebhookSecret",
+                "STRIPE_WEBHOOK_SECRET",
+                "STRIPE_WEBHOOKSECRET");
+            string priceStandard = ReadCanonicalOrLegacy(
+                configuration,
+                stripeSection,
+                legacyBillingSection,
+                "Prices:Standard:CurrentPriceId",
+                "STRIPE_PRICE_STANDARD",
+                "STRIPE_PRICESTANDARD");
+            string pricePro = ReadCanonicalOrLegacy(
+                configuration,
+                stripeSection,
+                legacyBillingSection,
+                "Prices:Pro:CurrentPriceId",
+                "STRIPE_PRICE_PRO",
+                "STRIPE_PRICEPRO");
+            string livePriceStandard = ReadCanonicalOrLegacy(
+                configuration,
+                stripeSection,
+                legacyBillingSection,
+                "Prices:Standard:LivePriceId");
+            string testPriceStandard = ReadCanonicalOrLegacy(
+                configuration,
+                stripeSection,
+                legacyBillingSection,
+                "Prices:Standard:TestPriceId");
+            string livePricePro = ReadCanonicalOrLegacy(
+                configuration,
+                stripeSection,
+                legacyBillingSection,
+                "Prices:Pro:LivePriceId");
+            string testPricePro = ReadCanonicalOrLegacy(
+                configuration,
+                stripeSection,
+                legacyBillingSection,
+                "Prices:Pro:TestPriceId");
+            string successUrl = ReadCanonicalOrLegacy(
+                configuration,
+                stripeSection,
+                legacyBillingSection,
+                "Checkout:SuccessPath",
+                "STRIPE_SUCCESS_URL",
+                "STRIPE_SUCCESSURL");
+            string cancelUrl = ReadCanonicalOrLegacy(
+                configuration,
+                stripeSection,
+                legacyBillingSection,
+                "Checkout:CancelPath",
+                "STRIPE_CANCEL_URL",
+                "STRIPE_CANCELURL");
+            string checkoutBaseUrl = ReadCanonicalOrLegacy(
+                configuration,
+                stripeSection,
+                legacyBillingSection,
+                "Checkout:BaseUrl");
+            string billingPortalReturnUrl = ReadCanonicalOrLegacy(
+                configuration,
+                stripeSection,
+                legacyBillingSection,
+                "BillingPortalReturnUrl",
+                "STRIPE_BILLING_PORTAL_RETURN_URL",
+                "STRIPE_BILLINGPORTALRETURNURL");
 
-            if (string.IsNullOrWhiteSpace(mode) && !string.IsNullOrWhiteSpace(billingOptions.Mode))
-            {
-                mode = billingOptions.Mode;
-            }
-
-            if (string.IsNullOrWhiteSpace(secretKey) && !string.IsNullOrWhiteSpace(billingOptions.ApiKey))
-            {
-                secretKey = billingOptions.ApiKey;
-            }
-
-            if (string.IsNullOrWhiteSpace(webhookSecret) && !string.IsNullOrWhiteSpace(billingOptions.WebhookSecret))
-            {
-                webhookSecret = billingOptions.WebhookSecret;
-            }
+            bool? enabledSetting = ReadCanonicalOrLegacyBool(configuration, stripeSection, legacyBillingSection, "Enabled");
+            bool? webhookHandlingEnabledSetting = ReadCanonicalOrLegacyBool(configuration, stripeSection, legacyBillingSection, "WebhookHandlingEnabled");
+            bool legacyFallbackUsed = HasLegacyBillingValues(legacyBillingSection);
 
             string normalizedMode = string.IsNullOrWhiteSpace(mode)
-                ? TestMode
+                ? string.Empty
                 : mode.Trim().ToLowerInvariant();
             string normalizedSuccessUrl = string.IsNullOrWhiteSpace(successUrl)
                 ? DefaultSuccessUrl
@@ -66,120 +139,212 @@ namespace WriterApp.Application.Billing
                 ? DefaultCancelUrl
                 : cancelUrl.Trim();
 
-            if (string.IsNullOrWhiteSpace(priceStandard))
+            StripePriceOptions prices = new()
             {
-                priceStandard = string.Equals(normalizedMode, LiveMode, StringComparison.Ordinal)
-                    ? billingOptions.Prices.Standard.LivePriceId
-                    : billingOptions.Prices.Standard.TestPriceId;
+                Standard = new StripePlanPriceOptions
+                {
+                    LivePriceId = livePriceStandard.Trim(),
+                    TestPriceId = testPriceStandard.Trim()
+                },
+                Pro = new StripePlanPriceOptions
+                {
+                    LivePriceId = livePricePro.Trim(),
+                    TestPriceId = testPricePro.Trim()
+                }
+            };
+
+            if (!string.IsNullOrWhiteSpace(priceStandard))
+            {
+                if (string.Equals(normalizedMode, LiveMode, StringComparison.Ordinal))
+                {
+                    prices.Standard.LivePriceId = priceStandard.Trim();
+                }
+                else if (string.Equals(normalizedMode, TestMode, StringComparison.Ordinal))
+                {
+                    prices.Standard.TestPriceId = priceStandard.Trim();
+                }
             }
 
-            if (string.IsNullOrWhiteSpace(pricePro))
+            if (!string.IsNullOrWhiteSpace(pricePro))
             {
-                pricePro = string.Equals(normalizedMode, LiveMode, StringComparison.Ordinal)
-                    ? billingOptions.Prices.Pro.LivePriceId
-                    : billingOptions.Prices.Pro.TestPriceId;
+                if (string.Equals(normalizedMode, LiveMode, StringComparison.Ordinal))
+                {
+                    prices.Pro.LivePriceId = pricePro.Trim();
+                }
+                else if (string.Equals(normalizedMode, TestMode, StringComparison.Ordinal))
+                {
+                    prices.Pro.TestPriceId = pricePro.Trim();
+                }
             }
 
-            if (string.IsNullOrWhiteSpace(successUrl) && !string.IsNullOrWhiteSpace(billingOptions.Checkout.SuccessPath))
-            {
-                normalizedSuccessUrl = billingOptions.Checkout.SuccessPath.Trim();
-            }
-
-            if (string.IsNullOrWhiteSpace(cancelUrl) && !string.IsNullOrWhiteSpace(billingOptions.Checkout.CancelPath))
-            {
-                normalizedCancelUrl = billingOptions.Checkout.CancelPath.Trim();
-            }
+            bool requestedEnabled = enabledSetting ?? !string.IsNullOrWhiteSpace(secretKey);
+            bool webhookHandlingEnabled = webhookHandlingEnabledSetting ?? requestedEnabled;
 
             List<string> errors = new();
             List<string> warnings = new();
 
-            bool hasSecret = !string.IsNullOrWhiteSpace(secretKey);
-            if (!hasSecret)
+            if (!requestedEnabled)
             {
-                if (isDevelopment)
-                {
-                    warnings.Add("Stripe is disabled in development because Stripe__SecretKey is missing.");
-                }
-                else
-                {
-                    errors.Add("Stripe configuration invalid: Stripe__SecretKey is required in non-development environments.");
-                }
+                warnings.Add("Stripe billing is disabled.");
             }
-
-            if (hasSecret)
+            else
             {
-                if (!string.Equals(normalizedMode, TestMode, StringComparison.Ordinal)
+                if (string.IsNullOrWhiteSpace(normalizedMode))
+                {
+                    errors.Add("Stripe configuration invalid: Stripe:Mode is required when Stripe billing is enabled.");
+                }
+                else if (!string.Equals(normalizedMode, TestMode, StringComparison.Ordinal)
                     && !string.Equals(normalizedMode, LiveMode, StringComparison.Ordinal))
                 {
-                    errors.Add("Stripe configuration invalid: Stripe__Mode must be either 'test' or 'live'.");
+                    errors.Add("Stripe configuration invalid: Stripe:Mode must be either 'test' or 'live'.");
+                }
+
+                if (string.IsNullOrWhiteSpace(secretKey))
+                {
+                    errors.Add("Stripe configuration invalid: Stripe:SecretKey is required when Stripe billing is enabled.");
                 }
 
                 string? keyMode = InferModeFromSecretKey(secretKey);
-                if (keyMode is not null && !string.Equals(keyMode, normalizedMode, StringComparison.Ordinal))
+                if (!string.IsNullOrWhiteSpace(secretKey)
+                    && !string.IsNullOrWhiteSpace(normalizedMode)
+                    && keyMode is not null
+                    && !string.Equals(keyMode, normalizedMode, StringComparison.Ordinal))
                 {
-                    errors.Add($"Stripe configuration invalid: Stripe__Mode is '{normalizedMode}' but Stripe__SecretKey looks like '{keyMode}'.");
+                    errors.Add($"Stripe configuration invalid: Stripe:Mode is '{normalizedMode}' but Stripe:SecretKey looks like '{keyMode}'.");
                 }
 
-                if (string.IsNullOrWhiteSpace(webhookSecret))
+                if (webhookHandlingEnabled && string.IsNullOrWhiteSpace(webhookSecret))
                 {
-                    errors.Add("Stripe configuration invalid: Stripe__WebhookSecret is required when Stripe is enabled.");
+                    errors.Add("Stripe configuration invalid: Stripe:WebhookSecret is required when Stripe webhook handling is enabled.");
                 }
 
-                if (string.IsNullOrWhiteSpace(priceStandard))
+                if (string.Equals(normalizedMode, LiveMode, StringComparison.Ordinal))
                 {
-                    errors.Add("Stripe configuration invalid: Stripe__PriceStandard is required when Stripe is enabled.");
-                }
+                    if (string.IsNullOrWhiteSpace(prices.Standard.LivePriceId))
+                    {
+                        errors.Add("Stripe configuration invalid: Stripe:Prices:Standard:LivePriceId is required in live mode.");
+                    }
 
-                if (string.IsNullOrWhiteSpace(pricePro))
+                    if (string.IsNullOrWhiteSpace(prices.Pro.LivePriceId))
+                    {
+                        errors.Add("Stripe configuration invalid: Stripe:Prices:Pro:LivePriceId is required in live mode.");
+                    }
+                }
+                else if (string.Equals(normalizedMode, TestMode, StringComparison.Ordinal))
                 {
-                    errors.Add("Stripe configuration invalid: Stripe__PricePro is required when Stripe is enabled.");
-                }
+                    if (string.IsNullOrWhiteSpace(prices.Standard.TestPriceId))
+                    {
+                        errors.Add("Stripe configuration invalid: Stripe:Prices:Standard:TestPriceId is required in test mode.");
+                    }
 
-                // Legacy portal endpoint can infer a fallback if this is not configured.
+                    if (string.IsNullOrWhiteSpace(prices.Pro.TestPriceId))
+                    {
+                        errors.Add("Stripe configuration invalid: Stripe:Prices:Pro:TestPriceId is required in test mode.");
+                    }
+                }
+            }
+
+            if (legacyFallbackUsed)
+            {
+                warnings.Add("Stripe legacy configuration fallback was used from Stripe:Billing. Migrate to Stripe:* settings.");
             }
 
             StripeOptions options = new()
             {
-                Enabled = hasSecret && errors.Count == 0,
+                Enabled = requestedEnabled && errors.Count == 0,
+                WebhookHandlingEnabled = webhookHandlingEnabled,
                 Mode = normalizedMode,
                 SecretKey = secretKey.Trim(),
                 WebhookSecret = webhookSecret.Trim(),
-                PriceStandard = priceStandard.Trim(),
-                PricePro = pricePro.Trim(),
-                SuccessUrl = normalizedSuccessUrl,
-                CancelUrl = normalizedCancelUrl,
-                BillingPortalReturnUrl = billingPortalReturnUrl.Trim()
+                Prices = prices,
+                Checkout = new StripeCheckoutOptions
+                {
+                    SuccessPath = normalizedSuccessUrl,
+                    CancelPath = normalizedCancelUrl,
+                    BaseUrl = checkoutBaseUrl.Trim()
+                },
+                BillingPortalReturnUrl = billingPortalReturnUrl.Trim(),
+                LegacyBillingConfigFallbackUsed = legacyFallbackUsed
             };
 
             return new StripeConfigurationResult(options, errors, warnings);
         }
 
-        private static string ReadSetting(IConfiguration configuration, string key)
+        private static string ReadCanonicalOrLegacy(
+            IConfiguration configuration,
+            IConfigurationSection stripeSection,
+            IConfigurationSection legacyBillingSection,
+            string keyPath,
+            params string[] envKeys)
         {
-            string fromStripe = configuration[$"Stripe:{key}"] ?? string.Empty;
-            if (!string.IsNullOrWhiteSpace(fromStripe))
+            string? canonicalValue = stripeSection[keyPath];
+            if (!string.IsNullOrWhiteSpace(canonicalValue))
             {
-                return fromStripe;
+                return canonicalValue;
             }
 
-            string fromWriterAppStripe = configuration[$"WriterApp:Stripe:{key}"] ?? string.Empty;
-            if (!string.IsNullOrWhiteSpace(fromWriterAppStripe))
+            string? legacyValue = keyPath switch
             {
-                return fromWriterAppStripe;
-            }
-
-            return key switch
-            {
-                nameof(Mode) => ReadFirst(configuration, "STRIPE_MODE"),
-                nameof(SecretKey) => ReadFirst(configuration, "STRIPE_SECRET_KEY", "STRIPE_SECRETKEY"),
-                nameof(WebhookSecret) => ReadFirst(configuration, "STRIPE_WEBHOOK_SECRET", "STRIPE_WEBHOOKSECRET"),
-                nameof(PriceStandard) => ReadFirst(configuration, "STRIPE_PRICE_STANDARD", "STRIPE_PRICESTANDARD"),
-                nameof(PricePro) => ReadFirst(configuration, "STRIPE_PRICE_PRO", "STRIPE_PRICEPRO"),
-                nameof(SuccessUrl) => ReadFirst(configuration, "STRIPE_SUCCESS_URL", "STRIPE_SUCCESSURL"),
-                nameof(CancelUrl) => ReadFirst(configuration, "STRIPE_CANCEL_URL", "STRIPE_CANCELURL"),
-                nameof(BillingPortalReturnUrl) => ReadFirst(configuration, "STRIPE_BILLING_PORTAL_RETURN_URL", "STRIPE_BILLINGPORTALRETURNURL"),
-                _ => string.Empty
+                "SecretKey" => legacyBillingSection["ApiKey"],
+                "Prices:Standard:CurrentPriceId" => ReadLegacyCurrentPrice(legacyBillingSection, stripeSection["Mode"], "Standard"),
+                "Prices:Pro:CurrentPriceId" => ReadLegacyCurrentPrice(legacyBillingSection, stripeSection["Mode"], "Pro"),
+                _ => legacyBillingSection[keyPath]
             };
+            if (!string.IsNullOrWhiteSpace(legacyValue))
+            {
+                return legacyValue;
+            }
+
+            return ReadFirst(configuration, envKeys);
+        }
+
+        private static bool? ReadCanonicalOrLegacyBool(
+            IConfiguration configuration,
+            IConfigurationSection stripeSection,
+            IConfigurationSection legacyBillingSection,
+            string keyPath)
+        {
+            string? canonical = stripeSection[keyPath];
+            if (bool.TryParse(canonical, out bool canonicalValue))
+            {
+                return canonicalValue;
+            }
+
+            string? legacy = legacyBillingSection[keyPath];
+            if (bool.TryParse(legacy, out bool legacyValue))
+            {
+                return legacyValue;
+            }
+
+            string? environmentValue = configuration[$"STRIPE_{keyPath.ToUpperInvariant()}"];
+            if (bool.TryParse(environmentValue, out bool parsed))
+            {
+                return parsed;
+            }
+
+            return null;
+        }
+
+        private static string ReadLegacyCurrentPrice(IConfigurationSection legacyBillingSection, string? mode, string planKey)
+        {
+            string normalizedMode = string.IsNullOrWhiteSpace(mode) ? string.Empty : mode.Trim().ToLowerInvariant();
+            string liveOrTestKey = string.Equals(normalizedMode, LiveMode, StringComparison.Ordinal)
+                ? "LivePriceId"
+                : "TestPriceId";
+            return legacyBillingSection[$"Prices:{planKey}:{liveOrTestKey}"] ?? string.Empty;
+        }
+
+        private static bool HasLegacyBillingValues(IConfigurationSection legacyBillingSection)
+        {
+            foreach (IConfigurationSection child in legacyBillingSection.GetChildren())
+            {
+                if (!string.IsNullOrWhiteSpace(child.Value) || child.GetChildren().Any())
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static string ReadFirst(IConfiguration configuration, params string[] keys)
@@ -218,6 +383,25 @@ namespace WriterApp.Application.Billing
 
             return null;
         }
+    }
+
+    public sealed class StripePriceOptions
+    {
+        public StripePlanPriceOptions Standard { get; set; } = new();
+        public StripePlanPriceOptions Pro { get; set; } = new();
+    }
+
+    public sealed class StripePlanPriceOptions
+    {
+        public string LivePriceId { get; set; } = string.Empty;
+        public string TestPriceId { get; set; } = string.Empty;
+    }
+
+    public sealed class StripeCheckoutOptions
+    {
+        public string SuccessPath { get; set; } = StripeOptions.DefaultSuccessUrl;
+        public string CancelPath { get; set; } = StripeOptions.DefaultCancelUrl;
+        public string BaseUrl { get; set; } = string.Empty;
     }
 
     public sealed class StripeConfigurationResult

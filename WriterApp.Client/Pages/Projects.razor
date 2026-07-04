@@ -2627,7 +2627,7 @@ else
                 node.OrderIndex,
                 null,
                 node.MetadataJson,
-                node.LinkedSectionId))
+                null))
             .ToList();
     }
 
@@ -2745,7 +2745,7 @@ else
                 parentProjectNode?.Id,
                 nodeType,
                 source.Title,
-                source.LinkedSectionId,
+                null,
                 source.MetadataJson);
             if (created is null)
             {

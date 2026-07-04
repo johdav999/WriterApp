@@ -843,13 +843,10 @@ namespace WriterApp.Controllers
             {
                 linkedSectionId = null;
             }
-            else if (linkedSectionId.HasValue)
+            else if (linkedSectionId.HasValue
+                && !await IsSectionInProjectManuscriptAsync(userId, projectId, linkedSectionId.Value, ct))
             {
-                bool owned = await IsOwnedSectionAsync(userId, linkedSectionId.Value, ct);
-                if (!owned)
-                {
-                    return BadRequest(new { message = "Linked section does not belong to the user." });
-                }
+                linkedSectionId = null;
             }
 
             List<ProjectNodeRecord> siblings = await _dbContext.ProjectNodes
@@ -982,17 +979,17 @@ namespace WriterApp.Controllers
             }
             else if (request.LinkedSectionId.HasValue)
             {
-                bool owned = await IsOwnedSectionAsync(userId, request.LinkedSectionId.Value, ct);
-                if (!owned)
+                bool belongsToProject = await IsSectionInProjectManuscriptAsync(userId, projectId, request.LinkedSectionId.Value, ct);
+                if (belongsToProject)
                 {
-                    return BadRequest(new { message = "Linked section does not belong to the user." });
+                    node.LinkedSectionId = request.LinkedSectionId.Value;
+                }
+                else
+                {
+                    node.LinkedSectionId = null;
                 }
             }
 
-            if (node.NodeType == ProjectNodeType.Scene && request.LinkedSectionId.HasValue)
-            {
-                node.LinkedSectionId = request.LinkedSectionId;
-            }
             node.MetadataJson = request.MetadataJson;
             node.UpdatedUtc = DateTimeOffset.UtcNow;
 
@@ -1955,22 +1952,16 @@ namespace WriterApp.Controllers
                 return BadRequest(new { message = "Only scene nodes can be opened in the editor." });
             }
 
-            await EnsureSceneContentExistsAsync(project, node, ct);
-
-            await _dbContext.SaveChangesAsync(ct);
-
-            Guid? documentId = null;
-            Guid? sectionId = node.LinkedSectionId;
-            if (sectionId.HasValue)
+            SceneLinkResult? link = await _sceneLinking.EnsureSceneLinkedSectionAsync(project, node, userId, ct);
+            if (link is null)
             {
-                documentId = await _dbContext.Sections
-                    .AsNoTracking()
-                    .Where(section => section.Id == sectionId.Value)
-                    .Select(section => (Guid?)section.DocumentId)
-                    .FirstOrDefaultAsync(ct);
+                return BadRequest(new { message = "Scene could not be linked to this project's manuscript." });
             }
 
-            return Ok(new ProjectSceneOpenTargetDto(projectId, nodeId, documentId, sectionId, node.Title));
+            await EnsureSceneContentExistsAsync(project, node, ct);
+            await _dbContext.SaveChangesAsync(ct);
+
+            return Ok(new ProjectSceneOpenTargetDto(projectId, nodeId, link.DocumentId, link.SectionId, node.Title));
         }
 
         private async Task EnsureSceneContentExistsAsync(ProjectRecord project, ProjectNodeRecord sceneNode, CancellationToken ct)
@@ -2597,7 +2588,7 @@ namespace WriterApp.Controllers
             }
         }
 
-        private async Task<bool> IsOwnedSectionAsync(string userId, Guid sectionId, CancellationToken ct)
+        private async Task<bool> IsSectionInProjectManuscriptAsync(string userId, Guid projectId, Guid sectionId, CancellationToken ct)
         {
             return await _dbContext.Sections
                 .Where(section => section.Id == sectionId)
@@ -2606,7 +2597,9 @@ namespace WriterApp.Controllers
                     section => section.DocumentId,
                     document => document.Id,
                     (section, document) => new { section, document })
-                .AnyAsync(row => row.document.OwnerUserId == userId, ct);
+                .AnyAsync(row => row.document.OwnerUserId == userId
+                    && row.document.ProjectId == projectId
+                    && row.document.DocumentKind == DocumentKind.Manuscript, ct);
         }
 
         private static bool TryParseNodeType(string? value, out ProjectNodeType nodeType)

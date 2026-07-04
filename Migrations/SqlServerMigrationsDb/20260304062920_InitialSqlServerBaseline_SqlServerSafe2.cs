@@ -818,6 +818,8 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
                 {
                     SectionId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
                     NarrativePurpose = table.Column<string>(type: "nvarchar(max)", nullable: true),
+                    NarrativeIntent = table.Column<string>(type: "nvarchar(max)", nullable: true),
+                    NarrativeRole = table.Column<string>(type: "nvarchar(max)", nullable: true),
                     EmotionalBeat = table.Column<string>(type: "nvarchar(max)", nullable: true),
                     KeyEvents = table.Column<string>(type: "nvarchar(max)", nullable: true),
                     OpenQuestions = table.Column<string>(type: "nvarchar(max)", nullable: true),
@@ -1008,6 +1010,8 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
                 {
                     SceneNodeId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
                     NarrativePurpose = table.Column<string>(type: "nvarchar(max)", nullable: true),
+                    NarrativeIntent = table.Column<string>(type: "nvarchar(max)", nullable: true),
+                    NarrativeRole = table.Column<string>(type: "nvarchar(max)", nullable: true),
                     EmotionalBeat = table.Column<string>(type: "nvarchar(max)", nullable: true),
                     KeyEvents = table.Column<string>(type: "nvarchar(max)", nullable: true),
                     OpenQuestions = table.Column<string>(type: "nvarchar(max)", nullable: true),

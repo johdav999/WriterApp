@@ -1,10 +1,14 @@
 using System;
 using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using WriterApp.Data;
 
 #nullable disable
 
 namespace BlazorApp.Migrations
 {
+    [DbContext(typeof(AppDbContext))]
+    [Migration("20260314152000_AddAdminRoleAssignments")]
     public partial class AddAdminRoleAssignments : Migration
     {
         protected override void Up(MigrationBuilder migrationBuilder)

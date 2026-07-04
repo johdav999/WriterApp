@@ -115,6 +115,8 @@ namespace WriterApp.Application.Billing
                 ["line_items[0][quantity]"] = "1",
                 ["metadata[userId]"] = userId,
                 ["metadata[planKey]"] = planKey,
+                ["subscription_data[metadata][userId]"] = userId,
+                ["subscription_data[metadata][planKey]"] = planKey,
                 ["success_url"] = successUrl,
                 ["cancel_url"] = cancelUrl
             };

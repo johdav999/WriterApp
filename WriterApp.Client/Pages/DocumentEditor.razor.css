@@ -1511,7 +1511,7 @@
 }
 
 .editor-shell.is-print-layout ::deep .editor-canvas {
-    background: var(--canvas-bg);
+    background: transparent;
     padding: 0;
 }
 
@@ -1519,6 +1519,10 @@
     width: calc(var(--page-width-px) * var(--editor-font-scale, 1));
     margin-left: auto;
     margin-right: auto;
+    background: #ffffff;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
+    border-radius: 4px;
 }
 
 .editor-shell.is-print-layout ::deep .page-lane > div:not(.pagebreak-overlay) {
@@ -1527,7 +1531,7 @@
 }
 
 .editor-shell.is-print-layout .editor-content {
-    background: transparent;
+    background: #ffffff;
     max-width: calc(var(--page-width-px) * var(--editor-font-scale, 1));
     position: relative;
     z-index: 1;
@@ -1541,37 +1545,16 @@
 }
 
 .editor-shell.is-print-layout ::deep .pagebreak-overlay {
-    /* Page backgrounds must sit behind ProseMirror content. */
-    position: absolute;
-    inset: 0;
-    z-index: 0 !important;
-    pointer-events: none;
-    width: 100% !important;
-    height: 100% !important;
+    display: none !important;
 }
 
 .editor-shell.is-print-layout ::deep .pagebreak-line,
-.editor-shell.is-print-layout ::deep .pagebreak-marker {
-    display: none;
-}
-
-.editor-shell.is-print-layout ::deep .pagebreak-sheet {
-    position: absolute;
-    background: #ffffff;
-    border-radius: 4px;
-    border: 1px solid rgba(15, 23, 42, 0.08);
-    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
-    z-index: 0 !important;
-    pointer-events: none;
-    left: 0 !important;
-    width: 100% !important;
-    height: var(--page-height-px);
-}
-
+.editor-shell.is-print-layout ::deep .pagebreak-marker,
+.editor-shell.is-print-layout ::deep .pagebreak-sheet,
 .editor-shell.is-print-layout ::deep .wa-page-gap {
-    display: block;
+    display: none !important;
     width: 100%;
-    height: var(--page-gap-px);
+    height: 0 !important;
     background: transparent;
     margin: 0;
     padding: 0;

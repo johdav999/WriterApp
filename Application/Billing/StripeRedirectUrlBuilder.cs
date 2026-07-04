@@ -1,6 +1,5 @@
 using System;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.Options;
 using WriterApp.Shared;
 
 namespace WriterApp.Application.Billing
@@ -8,17 +7,22 @@ namespace WriterApp.Application.Billing
     public sealed class StripeRedirectUrlBuilder
     {
         private readonly AppUrlOptions _appUrlOptions;
-        private readonly StripeBillingOptions _stripeBillingOptions;
+        private readonly StripeOptions _stripeOptions;
 
         public StripeRedirectUrlBuilder(
-            IOptions<AppUrlOptions> appUrlOptions,
-            IOptions<StripeBillingOptions> stripeBillingOptions)
+            Microsoft.Extensions.Options.IOptions<AppUrlOptions> appUrlOptions,
+            StripeOptions stripeOptions)
         {
             _appUrlOptions = appUrlOptions?.Value ?? throw new ArgumentNullException(nameof(appUrlOptions));
-            _stripeBillingOptions = stripeBillingOptions?.Value ?? throw new ArgumentNullException(nameof(stripeBillingOptions));
+            _stripeOptions = stripeOptions ?? throw new ArgumentNullException(nameof(stripeOptions));
         }
 
         public string ResolveBaseUrl(HttpRequest request)
+        {
+            return ResolveBaseUrlContext(request).BaseUrl;
+        }
+
+        public StripeBaseUrlResolution ResolveBaseUrlContext(HttpRequest request)
         {
             if (request is null)
             {
@@ -27,16 +31,33 @@ namespace WriterApp.Application.Billing
 
             if (TryNormalizeBaseUrl(_appUrlOptions.PublicBaseUrl, out string configuredBaseUrl))
             {
-                return configuredBaseUrl;
+                return new StripeBaseUrlResolution(
+                    configuredBaseUrl,
+                    "AppUrls:PublicBaseUrl",
+                    request.Host.Value ?? string.Empty,
+                    request.Scheme ?? string.Empty,
+                    request.PathBase.Value ?? string.Empty,
+                    LooksLikeAzureHost(request.Host.Host));
             }
 
-            // Keep the older checkout-specific setting as a compatibility fallback.
-            if (TryNormalizeBaseUrl(_stripeBillingOptions.Checkout.BaseUrl, out string legacyCheckoutBaseUrl))
+            if (TryNormalizeBaseUrl(_stripeOptions.Checkout.BaseUrl, out string configuredCheckoutBaseUrl))
             {
-                return legacyCheckoutBaseUrl;
+                return new StripeBaseUrlResolution(
+                    configuredCheckoutBaseUrl,
+                    "Stripe:Checkout:BaseUrl",
+                    request.Host.Value ?? string.Empty,
+                    request.Scheme ?? string.Empty,
+                    request.PathBase.Value ?? string.Empty,
+                    LooksLikeAzureHost(request.Host.Host));
             }
 
-            return $"{request.Scheme}://{request.Host}{request.PathBase}".TrimEnd('/');
+            return new StripeBaseUrlResolution(
+                $"{request.Scheme}://{request.Host}{request.PathBase}".TrimEnd('/'),
+                "RequestHost",
+                request.Host.Value ?? string.Empty,
+                request.Scheme ?? string.Empty,
+                request.PathBase.Value ?? string.Empty,
+                LooksLikeAzureHost(request.Host.Host));
         }
 
         public string BuildAbsoluteUrl(HttpRequest request, string? configuredUrl, string fallbackRelativePath)
@@ -82,5 +103,19 @@ namespace WriterApp.Application.Billing
             return string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
                 || string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
         }
+
+        private static bool LooksLikeAzureHost(string? host)
+        {
+            return !string.IsNullOrWhiteSpace(host)
+                && host.Contains(".azurewebsites.net", StringComparison.OrdinalIgnoreCase);
+        }
     }
+
+    public sealed record StripeBaseUrlResolution(
+        string BaseUrl,
+        string Source,
+        string RequestHost,
+        string RequestScheme,
+        string RequestPathBase,
+        bool RequestHostLooksLikeAzureAppService);
 }

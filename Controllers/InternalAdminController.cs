@@ -65,6 +65,7 @@ namespace WriterApp.Controllers
             entitlement.StripeCustomerId = null;
             entitlement.StripeSubscriptionId = null;
             entitlement.StripePriceId = null;
+            entitlement.StripeMode = null;
             entitlement.CurrentPeriodEndUtc = null;
             entitlement.CancelAtPeriodEnd = false;
             entitlement.SubscriptionStatus = "None";

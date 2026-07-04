@@ -1,27 +1,84 @@
 @using WriterApp.Client.Services
+@using WriterApp.Client.State
+@implements IDisposable
 @inject EasyAuthMeClient EasyAuthMeClient
+@inject AuthMeStateService AuthMeStateService
+@inject ClientLogoutService ClientLogoutService
 
 @if (!_loaded)
 {
-    <span class="app-link">Checking sign-in...</span>
+    <span class="user-badge-label">Checking sign-in...</span>
 }
 else if (_state.IsAuthenticated)
 {
-    <span class="app-link">@(BuildSignedInLabel())</span>
+    <div class="user-badge">
+        <span class="user-badge-label">@(BuildSignedInLabel())</span>
+        <button type="button"
+                class="user-badge-action"
+                @onclick="OnLogoutAsync"
+                disabled="@_logoutInProgress"
+                aria-label="Log out">
+            Logout
+        </button>
+    </div>
 }
 else
 {
-    <span class="app-link">Not signed in</span>
+    <span class="user-badge-label">Not signed in</span>
 }
 
 @code {
     private bool _loaded;
+    private bool _logoutInProgress;
     private EasyAuthMeState _state = EasyAuthMeState.NotSignedIn;
 
     protected override async Task OnInitializedAsync()
     {
+        AuthMeStateService.Changed += HandleAuthMeStateChanged;
+        await RefreshStateAsync();
+    }
+
+    public void Dispose()
+    {
+        AuthMeStateService.Changed -= HandleAuthMeStateChanged;
+    }
+
+    private async Task RefreshStateAsync()
+    {
+        if (!AuthMeStateService.IsLoaded)
+        {
+            await AuthMeStateService.RefreshAsync();
+        }
+
+        if (!AuthMeStateService.IsAuthenticated)
+        {
+            _state = EasyAuthMeState.NotSignedIn;
+            _loaded = true;
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
         _state = await EasyAuthMeClient.GetAsync();
         _loaded = true;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void HandleAuthMeStateChanged()
+    {
+        _ = InvokeAsync(RefreshStateAsync);
+    }
+
+    private async Task OnLogoutAsync()
+    {
+        if (_logoutInProgress)
+        {
+            return;
+        }
+
+        _logoutInProgress = true;
+        _state = EasyAuthMeState.NotSignedIn;
+        await InvokeAsync(StateHasChanged);
+        await ClientLogoutService.BeginLogoutAsync();
     }
 
     private string BuildSignedInLabel()

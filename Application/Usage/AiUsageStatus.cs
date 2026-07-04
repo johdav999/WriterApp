@@ -5,12 +5,14 @@ namespace WriterApp.Application.Usage
     public sealed class AiUsageStatus
     {
         public AiUsageStatus(
+            string planKey,
             string planName,
             bool aiEnabled,
             int quotaTotal,
             int quotaUsed,
             int quotaRemaining)
         {
+            PlanKey = planKey;
             PlanName = planName;
             AiEnabled = aiEnabled;
             QuotaTotal = quotaTotal;
@@ -18,6 +20,7 @@ namespace WriterApp.Application.Usage
             QuotaRemaining = quotaRemaining;
         }
 
+        public string PlanKey { get; }
         public string PlanName { get; }
         public bool AiEnabled { get; }
         public int QuotaTotal { get; }

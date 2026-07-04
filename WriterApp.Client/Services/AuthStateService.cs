@@ -43,6 +43,15 @@ namespace WriterApp.Client.Services
         public string? UserId => _cached.UserId;
         public IReadOnlyDictionary<string, string> Claims => _cached.Claims;
 
+        public void Reset()
+        {
+            _cached = AuthState.Anonymous;
+            _hasResolvedState = true;
+            _cachedAtUtc = DateTimeOffset.UtcNow;
+            _deletedAccountStateService.Clear();
+            _duplicateAccountStateService.Clear();
+        }
+
         public async Task<AuthState> GetAsync(bool forceRefresh = false, CancellationToken ct = default)
         {
             DateTimeOffset now = DateTimeOffset.UtcNow;

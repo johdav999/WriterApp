@@ -34,6 +34,7 @@ using WriterApp.AI.Actions;
 using WriterApp.AI.Core;
 using WriterApp.AI.Providers.Mock;
 using WriterApp.AI.Providers.OpenAI;
+using WriterApp.Application.AI;
 using WriterApp.Application.Security;
 using WriterApp.Application.Billing;
 using WriterApp.Application.Subscriptions;
@@ -70,10 +71,22 @@ StripeConfigurationResult stripeConfiguration = StripeOptions.Load(
     builder.Configuration,
     builder.Environment.IsDevelopment());
 
+AppUrlOptions configuredAppUrlOptions =
+    builder.Configuration.GetSection("AppUrls").Get<AppUrlOptions>()
+    ?? new AppUrlOptions();
+
 if (stripeConfiguration.Errors.Count > 0)
 {
     throw new InvalidOperationException(
         "Stripe startup configuration failed:" + Environment.NewLine + string.Join(Environment.NewLine, stripeConfiguration.Errors));
+}
+
+if (!builder.Environment.IsDevelopment()
+    && stripeConfiguration.Options.Enabled
+    && !TryResolveAbsoluteHttpUrl(configuredAppUrlOptions.PublicBaseUrl))
+{
+    throw new InvalidOperationException(
+        "Stripe production configuration invalid: AppUrls:PublicBaseUrl must be configured to an absolute http(s) URL when Stripe billing is enabled.");
 }
 
 // Auth mode configuration:
@@ -197,7 +210,6 @@ builder.Services.AddSingleton<StripeApiClient>();
 builder.Services.AddScoped<StripeEntitlementSyncService>();
 builder.Services.AddScoped<IStripeClientFacade, StripeClientFacade>();
 builder.Services.Configure<AppUrlOptions>(builder.Configuration.GetSection("AppUrls"));
-builder.Services.Configure<StripeBillingOptions>(builder.Configuration.GetSection("Stripe:Billing"));
 builder.Services.AddSingleton<StripeRedirectUrlBuilder>();
 builder.Services.AddScoped<IStripePriceResolver, StripePriceResolver>();
 
@@ -244,6 +256,7 @@ builder.Services.AddSingleton<IClock, WriterApp.Application.Usage.SystemClock>()
 builder.Services.AddScoped<IAiQuotaService, AiQuotaService>();
 builder.Services.AddScoped<IAiUsageStatusService, AiUsageStatusService>();
 builder.Services.AddScoped<IAiUsagePolicy, AiUsagePolicy>();
+builder.Services.AddScoped<IOnboardingDemoEligibilityService, OnboardingDemoEligibilityService>();
 builder.Services.AddSingleton<ISectionImportService, SectionImportService>();
 builder.Services.AddScoped<IBibleStore, EfCoreBibleStore>();
 builder.Services.AddSingleton<BiblePatchApplier>();
@@ -436,24 +449,19 @@ foreach (string warning in stripeConfiguration.Warnings)
 }
 
 app.Logger.LogInformation(
-    "Stripe configuration loaded. Enabled={Enabled}, Mode={Mode}, WebhookConfigured={WebhookConfigured}, StandardPriceConfigured={StandardPriceConfigured}, ProPriceConfigured={ProPriceConfigured}.",
+    "Stripe configuration loaded. Enabled={Enabled}, Mode={Mode}, WebhookHandlingEnabled={WebhookHandlingEnabled}, SecretKeyPresent={SecretKeyPresent}, WebhookSecretPresent={WebhookSecretPresent}, StandardPriceConfigured={StandardPriceConfigured}, ProPriceConfigured={ProPriceConfigured}, LegacyFallbackUsed={LegacyFallbackUsed}.",
     stripeConfiguration.Options.Enabled,
     stripeConfiguration.Options.Mode,
+    stripeConfiguration.Options.WebhookHandlingEnabled,
+    !string.IsNullOrWhiteSpace(stripeConfiguration.Options.SecretKey),
     !string.IsNullOrWhiteSpace(stripeConfiguration.Options.WebhookSecret),
-    !string.IsNullOrWhiteSpace(stripeConfiguration.Options.PriceStandard),
-    !string.IsNullOrWhiteSpace(stripeConfiguration.Options.PricePro));
-
-StripeBillingOptions stripeBillingOptions = app.Services.GetRequiredService<IOptions<StripeBillingOptions>>().Value;
+    !string.IsNullOrWhiteSpace(stripeConfiguration.Options.CurrentStandardPriceId),
+    !string.IsNullOrWhiteSpace(stripeConfiguration.Options.CurrentProPriceId),
+    stripeConfiguration.Options.LegacyBillingConfigFallbackUsed);
 app.Logger.LogInformation(
-    "Stripe billing mode configured. Mode={Mode}, ApiKeyPresent={ApiKeyPresent}, StandardPriceConfigured={StandardConfigured}, ProPriceConfigured={ProConfigured}.",
-    stripeBillingOptions.Mode,
-    !string.IsNullOrWhiteSpace(stripeBillingOptions.ApiKey),
-    !string.IsNullOrWhiteSpace(stripeBillingOptions.Prices.Standard.LivePriceId) || !string.IsNullOrWhiteSpace(stripeBillingOptions.Prices.Standard.TestPriceId),
-    !string.IsNullOrWhiteSpace(stripeBillingOptions.Prices.Pro.LivePriceId) || !string.IsNullOrWhiteSpace(stripeBillingOptions.Prices.Pro.TestPriceId));
-if (string.IsNullOrWhiteSpace(stripeBillingOptions.ApiKey))
-{
-    app.Logger.LogWarning("Stripe checkout endpoints are disabled because Stripe:Billing:ApiKey is not configured.");
-}
+    "Stripe public URL configuration loaded. PublicBaseUrl={PublicBaseUrl} CheckoutBaseUrl={CheckoutBaseUrl}",
+    configuredAppUrlOptions.PublicBaseUrl ?? string.Empty,
+    stripeConfiguration.Options.Checkout.BaseUrl ?? string.Empty);
 
 // Manual verification:
 // 1) Local: delete sqlite file, start app, verify migrations create schema and startup logs "Migrations ok; schema up to date."
@@ -528,6 +536,11 @@ using (IServiceScope scope = app.Services.CreateScope())
     else
     {
         logger.LogInformation("Database auto-migrate on startup is disabled. Skipping EF migrations.");
+    }
+
+    if (app.Environment.IsDevelopment() && dbContext.Database.IsSqlite())
+    {
+        RepairLocalSqliteAuthSchema(dbContext, logger);
     }
 
     bool adminApiEnabled = app.Configuration.GetValue<bool?>("Admin:EnableAdminApi") ?? false;
@@ -1067,6 +1080,7 @@ app.MapGet("/api/ai/status", async (
 
         return Results.Ok(new AiUsageStatusDto
         {
+            PlanKey = status.PlanKey,
             Plan = status.PlanName,
             AiEnabled = aiOptions.Enabled && status.AiEnabled,
             UiEnabled = aiOptions.Enabled && aiOptions.UI.ShowAiMenu,
@@ -1840,6 +1854,7 @@ app.MapPost("/api/admin/stripe/resync", async (
     }
 
     ILogger logger = loggerFactory.CreateLogger("AdminStripeResync");
+    string activeStripeMode = StripeBillingEnvironment.Normalize(stripeOptions.Mode);
 
     JsonDocument subscriptionDoc;
     try
@@ -1898,22 +1913,53 @@ app.MapPost("/api/admin/stripe/resync", async (
         }
 
         string? resolvedUserId = ReadJsonString(subscription, "metadata", "userId");
+        UserEntitlement? matchedEntitlement = null;
         if (string.IsNullOrWhiteSpace(resolvedUserId) && !string.IsNullOrWhiteSpace(resolvedSubscriptionId))
         {
-            resolvedUserId = await dbContext.UserEntitlements
+            matchedEntitlement = await dbContext.UserEntitlements
                 .AsNoTracking()
                 .Where(item => item.StripeSubscriptionId == resolvedSubscriptionId)
-                .Select(item => item.UserId)
                 .FirstOrDefaultAsync(ct);
+            if (matchedEntitlement is not null)
+            {
+                string storedMode = StripeBillingEnvironment.ResolveStoredMode(matchedEntitlement, stripeOptions);
+                if (StripeBillingEnvironment.IsModeMismatch(storedMode, activeStripeMode))
+                {
+                    logger.LogWarning(
+                        "Admin Stripe resync ignored opposite-mode subscription linkage. UserId={UserId} StoredStripeMode={StoredStripeMode} ActiveStripeMode={ActiveStripeMode} SubscriptionId={SubscriptionId}",
+                        matchedEntitlement.UserId,
+                        storedMode,
+                        activeStripeMode,
+                        resolvedSubscriptionId);
+                    matchedEntitlement = null;
+                }
+            }
+
+            resolvedUserId = matchedEntitlement?.UserId;
         }
 
         if (string.IsNullOrWhiteSpace(resolvedUserId) && !string.IsNullOrWhiteSpace(normalizedCustomerId))
         {
-            resolvedUserId = await dbContext.UserEntitlements
+            matchedEntitlement = await dbContext.UserEntitlements
                 .AsNoTracking()
                 .Where(item => item.StripeCustomerId == normalizedCustomerId)
-                .Select(item => item.UserId)
                 .FirstOrDefaultAsync(ct);
+            if (matchedEntitlement is not null)
+            {
+                string storedMode = StripeBillingEnvironment.ResolveStoredMode(matchedEntitlement, stripeOptions);
+                if (StripeBillingEnvironment.IsModeMismatch(storedMode, activeStripeMode))
+                {
+                    logger.LogWarning(
+                        "Admin Stripe resync ignored opposite-mode customer linkage. UserId={UserId} StoredStripeMode={StoredStripeMode} ActiveStripeMode={ActiveStripeMode} CustomerId={CustomerId}",
+                        matchedEntitlement.UserId,
+                        storedMode,
+                        activeStripeMode,
+                        normalizedCustomerId);
+                    matchedEntitlement = null;
+                }
+            }
+
+            resolvedUserId = matchedEntitlement?.UserId;
         }
 
         if (string.IsNullOrWhiteSpace(resolvedUserId))
@@ -1945,12 +1991,335 @@ app.MapPost("/api/admin/stripe/resync", async (
             userId = entitlement.UserId,
             planKey = entitlement.PlanKey,
             subscriptionStatus = entitlement.SubscriptionStatus,
+            stripeMode = entitlement.StripeMode,
             stripeCustomerId = entitlement.StripeCustomerId,
             stripeSubscriptionId = entitlement.StripeSubscriptionId,
             stripePriceId = entitlement.StripePriceId,
             entitlementUpdatedUtc = entitlement.UpdatedUtc
         });
     }
+})
+.RequireAuthorization("AdminOnly");
+
+app.MapGet("/api/admin/stripe/price-mapping-health", async (
+        AppDbContext dbContext,
+        StripeOptions stripeOptions,
+        IStripePriceResolver stripePriceResolver,
+        CancellationToken ct) =>
+{
+    string activeMode = StripeBillingEnvironment.Normalize(stripeOptions.Mode);
+
+    string[] configurationIssues = BuildStripePriceConfigurationIssues(stripeOptions)
+        .ToArray();
+
+    var entitlementRows = await dbContext.UserEntitlements
+        .AsNoTracking()
+        .Where(item => !string.IsNullOrWhiteSpace(item.StripePriceId))
+        .Select(item => new
+        {
+            item.UserId,
+            item.StripeMode,
+            item.StripePriceId,
+            item.PlanKey,
+            item.SubscriptionStatus,
+            item.StripeSubscriptionId,
+            item.UpdatedUtc
+        })
+        .ToListAsync(ct);
+
+    var unknownPriceRows = entitlementRows
+        .Where(item => string.IsNullOrWhiteSpace(stripePriceResolver.ResolvePlanKey(item.StripePriceId!)))
+        .ToArray();
+
+    var unknownPriceEntitlements = unknownPriceRows
+        .OrderByDescending(item => item.UpdatedUtc)
+        .Take(100)
+        .Select(item => new
+        {
+            item.UserId,
+            stripeMode = item.StripeMode,
+            stripePriceId = item.StripePriceId,
+            planKey = item.PlanKey,
+            subscriptionStatus = item.SubscriptionStatus,
+            stripeSubscriptionId = item.StripeSubscriptionId,
+            item.UpdatedUtc
+        })
+        .ToArray();
+
+    return Results.Ok(new
+    {
+        stripeEnabled = stripeOptions.Enabled,
+        stripeMode = activeMode,
+        configuredPrices = new
+        {
+            standard = new
+            {
+                live = stripeOptions.Prices.Standard.LivePriceId,
+                test = stripeOptions.Prices.Standard.TestPriceId
+            },
+            pro = new
+            {
+                live = stripeOptions.Prices.Pro.LivePriceId,
+                test = stripeOptions.Prices.Pro.TestPriceId
+            }
+        },
+        knownMappedPrices = new[]
+        {
+            new { planKey = "standard", stripeMode = StripeOptions.LiveMode, priceId = stripeOptions.Prices.Standard.LivePriceId },
+            new { planKey = "standard", stripeMode = StripeOptions.TestMode, priceId = stripeOptions.Prices.Standard.TestPriceId },
+            new { planKey = "pro", stripeMode = StripeOptions.LiveMode, priceId = stripeOptions.Prices.Pro.LivePriceId },
+            new { planKey = "pro", stripeMode = StripeOptions.TestMode, priceId = stripeOptions.Prices.Pro.TestPriceId }
+        }.Where(item => !string.IsNullOrWhiteSpace(item.priceId)),
+        configurationIssues,
+        unknownPriceEntitlements,
+        unknownPriceEntitlementCount = unknownPriceRows.Length
+    });
+})
+.RequireAuthorization("AdminOnly");
+
+app.MapGet("/api/admin/stripe/readiness", async (
+        AppDbContext dbContext,
+        StripeOptions stripeOptions,
+        IStripePriceResolver stripePriceResolver,
+        IOptions<AppUrlOptions> appUrlOptionsAccessor,
+        CancellationToken ct) =>
+{
+    string activeMode = StripeBillingEnvironment.Normalize(stripeOptions.Mode);
+    AppUrlOptions appUrlOptions = appUrlOptionsAccessor.Value ?? new AppUrlOptions();
+
+    string[] configuredModePriceIssues = BuildStripePriceConfigurationIssuesForMode(stripeOptions, activeMode).ToArray();
+
+    var entitlementRows = await dbContext.UserEntitlements
+        .AsNoTracking()
+        .Where(item =>
+            !string.IsNullOrWhiteSpace(item.StripeCustomerId)
+            || !string.IsNullOrWhiteSpace(item.StripeSubscriptionId)
+            || !string.IsNullOrWhiteSpace(item.StripePriceId))
+        .Select(item => new
+        {
+            item.UserId,
+            item.StripeMode,
+            item.StripeCustomerId,
+            item.StripeSubscriptionId,
+            item.StripePriceId,
+            item.PlanKey,
+            item.SubscriptionStatus,
+            item.UpdatedUtc
+        })
+        .ToListAsync(ct);
+
+    var mixedModeEntitlements = entitlementRows
+        .Where(item =>
+        {
+            string storedMode = NormalizeStripeRecordMode(item.StripeMode);
+            return !string.IsNullOrWhiteSpace(storedMode)
+                && !string.Equals(storedMode, StripeBillingEnvironment.LegacyMode, StringComparison.Ordinal)
+                && !string.Equals(storedMode, activeMode, StringComparison.Ordinal);
+        })
+        .OrderByDescending(item => item.UpdatedUtc)
+        .Take(100)
+        .Select(item => new
+        {
+            item.UserId,
+            stripeMode = item.StripeMode,
+            item.StripeCustomerId,
+            item.StripeSubscriptionId,
+            item.StripePriceId,
+            item.PlanKey,
+            item.SubscriptionStatus,
+            item.UpdatedUtc
+        })
+        .ToArray();
+
+    var unknownPriceRows = entitlementRows
+        .Where(item => !string.IsNullOrWhiteSpace(item.StripePriceId))
+        .Where(item => string.IsNullOrWhiteSpace(stripePriceResolver.ResolvePlanKey(item.StripePriceId!)))
+        .ToArray();
+
+    var recentWebhookDeliveries = await dbContext.StripeEventLogs
+        .AsNoTracking()
+        .OrderByDescending(item => item.ReceivedUtc)
+        .Take(20)
+        .Select(item => new
+        {
+            item.StripeEventId,
+            item.StripeMode,
+            item.Type,
+            item.Status,
+            item.ReceivedUtc,
+            item.ProcessedUtc,
+            item.UserId,
+            item.Error
+        })
+        .ToListAsync(ct);
+
+    DateTime recentWindowStartUtc = DateTime.UtcNow.AddDays(-7);
+    var recentWebhookCounts = await dbContext.StripeEventLogs
+        .AsNoTracking()
+        .Where(item => item.ReceivedUtc >= recentWindowStartUtc)
+        .GroupBy(item => item.Status)
+        .Select(group => new
+        {
+            status = group.Key,
+            count = group.Count()
+        })
+        .ToListAsync(ct);
+
+    var recentSyncOutcomes = entitlementRows
+        .OrderByDescending(item => item.UpdatedUtc)
+        .Take(20)
+        .Select(item => new
+        {
+            item.UserId,
+            stripeMode = item.StripeMode,
+            item.PlanKey,
+            item.SubscriptionStatus,
+            item.StripeCustomerId,
+            item.StripeSubscriptionId,
+            item.StripePriceId,
+            item.UpdatedUtc,
+            policy = EntitlementAccessEvaluator.Evaluate(new UserEntitlement
+            {
+                UserId = item.UserId,
+                PlanKey = item.PlanKey ?? string.Empty,
+                SubscriptionStatus = item.SubscriptionStatus ?? string.Empty,
+                AiMonthlyTokenBudget = 0
+            }).BlockReason.ToString()
+        })
+        .ToArray();
+
+    List<string> blockedReasons = new();
+    List<string> warningReasons = new();
+
+    if (!stripeOptions.Enabled)
+    {
+        blockedReasons.Add("Stripe billing is disabled.");
+    }
+
+    if (string.IsNullOrWhiteSpace(activeMode))
+    {
+        blockedReasons.Add("Stripe mode is missing.");
+    }
+
+    if (stripeOptions.Enabled && string.IsNullOrWhiteSpace(stripeOptions.SecretKey))
+    {
+        blockedReasons.Add("Stripe secret key is missing.");
+    }
+
+    if (stripeOptions.Enabled && stripeOptions.WebhookHandlingEnabled && string.IsNullOrWhiteSpace(stripeOptions.WebhookSecret))
+    {
+        blockedReasons.Add("Stripe webhook secret is missing while webhook handling is enabled.");
+    }
+
+    foreach (string issue in configuredModePriceIssues)
+    {
+        blockedReasons.Add(issue);
+    }
+
+    bool portalConfigured = IsStripeBillingPortalConfigured(stripeOptions, appUrlOptions);
+    if (stripeOptions.Enabled && !portalConfigured)
+    {
+        warningReasons.Add("Billing portal fallback URLs are not configured explicitly. Portal sessions depend on request-derived base URLs.");
+    }
+
+    if (mixedModeEntitlements.Length > 0)
+    {
+        warningReasons.Add($"Found {mixedModeEntitlements.Length} persisted Stripe linkage records for the opposite billing mode.");
+    }
+
+    if (unknownPriceRows.Length > 0)
+    {
+        warningReasons.Add($"Found {unknownPriceRows.Length} entitlements tied to unknown Stripe price IDs.");
+    }
+
+    int recentWebhookErrors = recentWebhookCounts
+        .Where(item => string.Equals(item.status, "Error", StringComparison.OrdinalIgnoreCase))
+        .Sum(item => item.count);
+    if (recentWebhookErrors > 0)
+    {
+        warningReasons.Add($"Recent Stripe webhook processing errors detected in the last 7 days: {recentWebhookErrors}.");
+    }
+
+    string readiness = blockedReasons.Count > 0
+        ? "blocked"
+        : warningReasons.Count > 0
+            ? "warning"
+            : "ready";
+
+    return Results.Ok(new
+    {
+        readiness,
+        checklistSummary = new
+        {
+            ready = readiness == "ready",
+            warning = readiness == "warning",
+            blocked = readiness == "blocked"
+        },
+        blockedReasons,
+        warningReasons,
+        stripe = new
+        {
+            enabled = stripeOptions.Enabled,
+            mode = activeMode,
+            secretKeyPresent = !string.IsNullOrWhiteSpace(stripeOptions.SecretKey),
+            webhookHandlingEnabled = stripeOptions.WebhookHandlingEnabled,
+            webhookSecretPresent = !string.IsNullOrWhiteSpace(stripeOptions.WebhookSecret),
+            currentModePricesConfigured = stripeOptions.HasRequiredPricesForCurrentMode,
+            standardPriceConfigured = !string.IsNullOrWhiteSpace(stripeOptions.CurrentStandardPriceId),
+            proPriceConfigured = !string.IsNullOrWhiteSpace(stripeOptions.CurrentProPriceId),
+            legacyConfigFallbackUsed = stripeOptions.LegacyBillingConfigFallbackUsed
+        },
+        billingPortal = new
+        {
+            configuredEnoughToOperate = portalConfigured,
+            billingPortalReturnUrlConfigured = !string.IsNullOrWhiteSpace(stripeOptions.BillingPortalReturnUrl),
+            publicBaseUrlConfigured = !string.IsNullOrWhiteSpace(appUrlOptions.PublicBaseUrl),
+            checkoutBaseUrlConfigured = !string.IsNullOrWhiteSpace(stripeOptions.Checkout.BaseUrl)
+        },
+        configuredPrices = new
+        {
+            standard = new
+            {
+                liveConfigured = !string.IsNullOrWhiteSpace(stripeOptions.Prices.Standard.LivePriceId),
+                testConfigured = !string.IsNullOrWhiteSpace(stripeOptions.Prices.Standard.TestPriceId)
+            },
+            pro = new
+            {
+                liveConfigured = !string.IsNullOrWhiteSpace(stripeOptions.Prices.Pro.LivePriceId),
+                testConfigured = !string.IsNullOrWhiteSpace(stripeOptions.Prices.Pro.TestPriceId)
+            }
+        },
+        dangerousStates = new
+        {
+            mixedModeBillingRecordCount = mixedModeEntitlements.Length,
+            unknownPriceMappingCount = unknownPriceRows.Length,
+            recentWebhookErrorCount = recentWebhookErrors
+        },
+        knownMappedPrices = new[]
+        {
+            new { planKey = "standard", stripeMode = StripeOptions.LiveMode, priceId = stripeOptions.Prices.Standard.LivePriceId },
+            new { planKey = "standard", stripeMode = StripeOptions.TestMode, priceId = stripeOptions.Prices.Standard.TestPriceId },
+            new { planKey = "pro", stripeMode = StripeOptions.LiveMode, priceId = stripeOptions.Prices.Pro.LivePriceId },
+            new { planKey = "pro", stripeMode = StripeOptions.TestMode, priceId = stripeOptions.Prices.Pro.TestPriceId }
+        }.Where(item => !string.IsNullOrWhiteSpace(item.priceId)),
+        mixedModeBillingRecords = mixedModeEntitlements,
+        unknownPriceMappings = unknownPriceRows
+            .OrderByDescending(item => item.UpdatedUtc)
+            .Take(100)
+            .Select(item => new
+            {
+                item.UserId,
+                stripeMode = item.StripeMode,
+                item.StripePriceId,
+                item.PlanKey,
+                item.SubscriptionStatus,
+                item.StripeSubscriptionId,
+                item.UpdatedUtc
+            }),
+        recentWebhookStatusCounts = recentWebhookCounts,
+        recentWebhookDeliveries,
+        recentSyncOutcomes
+    });
 })
 .RequireAuthorization("AdminOnly");
 
@@ -2158,9 +2527,10 @@ app.MapGet("/api/auth/me", async (
               Roles = roles,
               IsAdminAccess = adminAccess.IsAdminAccess,
               AdminAccessSource = adminAccess.Source.ToString(),
-              PlanKey = evaluatedAccess?.EffectivePlanKey ?? UserEntitlementDefaults.FreePlanKey,
+              PlanKey = UserEntitlementDefaults.NormalizePlanKey(provisioning.Entitlement?.PlanKey),
               EffectivePlanKey = evaluatedAccess?.EffectivePlanKey ?? UserEntitlementDefaults.FreePlanKey,
-              SubscriptionStatus = provisioning.Entitlement?.SubscriptionStatus,
+              SubscriptionStatus = evaluatedAccess?.NormalizedSubscriptionStatus
+                  ?? EntitlementAccessEvaluator.NormalizeSubscriptionStatus(provisioning.Entitlement?.SubscriptionStatus),
               CurrentPeriodEndUtc = provisioning.Entitlement?.CurrentPeriodEndUtc,
               CancelAtPeriodEnd = provisioning.Entitlement?.CancelAtPeriodEnd ?? false,
               IsPaidAccessActive = evaluatedAccess?.IsPaidAccessActive ?? false,
@@ -2845,6 +3215,135 @@ static bool SqliteTableExists(AppDbContext dbContext, string tableName)
     }
 }
 
+static void RepairLocalSqliteAuthSchema(AppDbContext dbContext, ILogger logger)
+{
+    try
+    {
+        dbContext.Database.OpenConnection();
+        DbConnection connection = dbContext.Database.GetDbConnection();
+
+        ExecuteSqliteNonQuery(
+            connection,
+            """
+            CREATE TABLE IF NOT EXISTS "DeletedUserIdentities" (
+                "UserId" TEXT NOT NULL CONSTRAINT "PK_DeletedUserIdentities" PRIMARY KEY,
+                "Email" TEXT NULL,
+                "DisplayName" TEXT NULL,
+                "DeletedByAdminUserId" TEXT NULL,
+                "DeletedByAdminEmail" TEXT NULL,
+                "Reason" TEXT NULL,
+                "DeletedAtUtc" TEXT NOT NULL
+            );
+            """);
+        ExecuteSqliteNonQuery(
+            connection,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_DeletedUserIdentities_DeletedAtUtc"
+            ON "DeletedUserIdentities" ("DeletedAtUtc");
+            """);
+
+        EnsureSqliteColumn(connection, "UserProfiles", "Email", "\"Email\" TEXT NULL", logger);
+
+        ExecuteSqliteNonQuery(
+            connection,
+            """
+            CREATE TABLE IF NOT EXISTS "ExternalIdentityLinks" (
+                "Id" TEXT NOT NULL CONSTRAINT "PK_ExternalIdentityLinks" PRIMARY KEY,
+                "UserId" TEXT NOT NULL,
+                "Provider" TEXT NULL,
+                "Issuer" TEXT NULL,
+                "Subject" TEXT NULL,
+                "ObjectIdentifier" TEXT NULL,
+                "EmailAtLinkTime" TEXT NULL,
+                "CreatedUtc" TEXT NOT NULL,
+                "LastSeenUtc" TEXT NOT NULL
+            );
+            """);
+        ExecuteSqliteNonQuery(
+            connection,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_ExternalIdentityLinks_UserId"
+            ON "ExternalIdentityLinks" ("UserId");
+            """);
+        ExecuteSqliteNonQuery(
+            connection,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_ExternalIdentityLinks_EmailAtLinkTime"
+            ON "ExternalIdentityLinks" ("EmailAtLinkTime");
+            """);
+        ExecuteSqliteNonQuery(
+            connection,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_ExternalIdentityLinks_Provider_Issuer_Subject_ObjectIdentifier"
+            ON "ExternalIdentityLinks" ("Provider", "Issuer", "Subject", "ObjectIdentifier");
+            """);
+
+        ExecuteSqliteNonQuery(
+            connection,
+            """
+            CREATE TABLE IF NOT EXISTS "AdminRoleAssignments" (
+                "UserId" TEXT NOT NULL CONSTRAINT "PK_AdminRoleAssignments" PRIMARY KEY,
+                "AssignedByUserId" TEXT NULL,
+                "AssignedByEmail" TEXT NULL,
+                "AssignedUtc" TEXT NOT NULL
+            );
+            """);
+        ExecuteSqliteNonQuery(
+            connection,
+            """
+            CREATE INDEX IF NOT EXISTS "IX_AdminRoleAssignments_AssignedUtc"
+            ON "AdminRoleAssignments" ("AssignedUtc");
+            """);
+
+        EnsureSqliteColumn(connection, "UserEntitlements", "StripeMode", "\"StripeMode\" TEXT NULL", logger);
+        EnsureSqliteColumn(connection, "Projects", "CoverImageUrl", "\"CoverImageUrl\" TEXT NULL", logger);
+
+        logger.LogInformation("Local SQLite auth schema repair completed.");
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning(ex, "Local SQLite auth schema repair failed.");
+    }
+    finally
+    {
+        dbContext.Database.CloseConnection();
+    }
+}
+
+static void EnsureSqliteColumn(
+    DbConnection connection,
+    string tableName,
+    string columnName,
+    string columnDefinition,
+    ILogger logger)
+{
+    if (!SqliteColumnExists(connection, tableName, columnName))
+    {
+        ExecuteSqliteNonQuery(connection, $"ALTER TABLE \"{tableName}\" ADD COLUMN {columnDefinition};");
+        logger.LogInformation("Local SQLite schema repair added column {Table}.{Column}.", tableName, columnName);
+    }
+}
+
+static bool SqliteColumnExists(DbConnection connection, string tableName, string columnName)
+{
+    using DbCommand command = connection.CreateCommand();
+    string escapedTableName = tableName.Replace("'", "''", StringComparison.Ordinal);
+    command.CommandText = $"SELECT name FROM pragma_table_info('{escapedTableName}') WHERE lower(name) = lower($columnName) LIMIT 1;";
+    DbParameter parameter = command.CreateParameter();
+    parameter.ParameterName = "$columnName";
+    parameter.Value = columnName;
+    command.Parameters.Add(parameter);
+    object? result = command.ExecuteScalar();
+    return result is not null;
+}
+
+static void ExecuteSqliteNonQuery(DbConnection connection, string sql)
+{
+    using DbCommand command = connection.CreateCommand();
+    command.CommandText = sql;
+    command.ExecuteNonQuery();
+}
+
 static void LogExceptionChain(ILogger logger, Exception ex)
 {
     Exception? current = ex.InnerException;
@@ -3126,6 +3625,95 @@ static async Task WriteApiProblemDetailsAsync(
     problem.Extensions["traceId"] = context.TraceIdentifier;
     problem.Extensions["correlationId"] = correlationId;
     await context.Response.WriteAsJsonAsync(problem);
+}
+
+static IEnumerable<string> BuildStripePriceConfigurationIssues(StripeOptions stripeOptions)
+{
+    if (string.IsNullOrWhiteSpace(stripeOptions.Prices.Standard.LivePriceId))
+    {
+        yield return "Missing configured live Standard price id.";
+    }
+
+    if (string.IsNullOrWhiteSpace(stripeOptions.Prices.Pro.LivePriceId))
+    {
+        yield return "Missing configured live Pro price id.";
+    }
+
+    if (string.IsNullOrWhiteSpace(stripeOptions.Prices.Standard.TestPriceId))
+    {
+        yield return "Missing configured test Standard price id.";
+    }
+
+    if (string.IsNullOrWhiteSpace(stripeOptions.Prices.Pro.TestPriceId))
+    {
+        yield return "Missing configured test Pro price id.";
+    }
+}
+
+static IEnumerable<string> BuildStripePriceConfigurationIssuesForMode(StripeOptions stripeOptions, string activeMode)
+{
+    if (string.Equals(activeMode, StripeOptions.LiveMode, StringComparison.Ordinal))
+    {
+        if (string.IsNullOrWhiteSpace(stripeOptions.Prices.Standard.LivePriceId))
+        {
+            yield return "Live mode is active but the live Standard price id is missing.";
+        }
+
+        if (string.IsNullOrWhiteSpace(stripeOptions.Prices.Pro.LivePriceId))
+        {
+            yield return "Live mode is active but the live Professional price id is missing.";
+        }
+
+        yield break;
+    }
+
+    if (string.Equals(activeMode, StripeOptions.TestMode, StringComparison.Ordinal))
+    {
+        if (string.IsNullOrWhiteSpace(stripeOptions.Prices.Standard.TestPriceId))
+        {
+            yield return "Test mode is active but the test Standard price id is missing.";
+        }
+
+        if (string.IsNullOrWhiteSpace(stripeOptions.Prices.Pro.TestPriceId))
+        {
+            yield return "Test mode is active but the test Professional price id is missing.";
+        }
+    }
+}
+
+static bool IsStripeBillingPortalConfigured(StripeOptions stripeOptions, AppUrlOptions appUrlOptions)
+{
+    if (TryResolveAbsoluteHttpUrl(stripeOptions.BillingPortalReturnUrl))
+    {
+        return true;
+    }
+
+    if (!string.IsNullOrWhiteSpace(stripeOptions.BillingPortalReturnUrl))
+    {
+        return !string.IsNullOrWhiteSpace(appUrlOptions.PublicBaseUrl)
+            || !string.IsNullOrWhiteSpace(stripeOptions.Checkout.BaseUrl);
+    }
+
+    return !string.IsNullOrWhiteSpace(appUrlOptions.PublicBaseUrl)
+        || !string.IsNullOrWhiteSpace(stripeOptions.Checkout.BaseUrl);
+}
+
+static bool TryResolveAbsoluteHttpUrl(string? value)
+{
+    return !string.IsNullOrWhiteSpace(value)
+        && Uri.TryCreate(value.Trim(), UriKind.Absolute, out Uri? uri)
+        && (string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase));
+}
+
+static string NormalizeStripeRecordMode(string? rawMode)
+{
+    if (string.IsNullOrWhiteSpace(rawMode))
+    {
+        return string.Empty;
+    }
+
+    return rawMode.Trim().ToLowerInvariant();
 }
 
 

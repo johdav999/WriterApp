@@ -12,6 +12,7 @@ namespace WriterApp.Data.Subscriptions
         public int AiMonthlyTokenBudget { get; set; }
         public int AiTokensUsedThisPeriod { get; set; }
         public DateTimeOffset PeriodStartUtc { get; set; }
+        public string? StripeMode { get; set; }
         public string? StripeCustomerId { get; set; }
         public string? StripeSubscriptionId { get; set; }
         public string? StripePriceId { get; set; }

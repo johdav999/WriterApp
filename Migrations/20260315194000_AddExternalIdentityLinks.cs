@@ -1,10 +1,14 @@
 using System;
 using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using WriterApp.Data;
 
 #nullable disable
 
 namespace BlazorApp.Migrations
 {
+    [DbContext(typeof(AppDbContext))]
+    [Migration("20260315194000_AddExternalIdentityLinks")]
     public partial class AddExternalIdentityLinks : Migration
     {
         protected override void Up(MigrationBuilder migrationBuilder)

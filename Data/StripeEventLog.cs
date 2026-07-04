@@ -9,6 +9,9 @@ public class StripeEventLog
     [MaxLength(100)]
     public string StripeEventId { get; set; } = default!;
 
+    [MaxLength(16)]
+    public string StripeMode { get; set; } = default!;
+
     [MaxLength(100)]
     public string Type { get; set; } = default!;
 

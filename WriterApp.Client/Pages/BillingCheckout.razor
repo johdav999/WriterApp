@@ -6,6 +6,7 @@
 @using System.Net.Http.Json
 @using WriterApp.Client.State
 @using WriterApp.Client.Utilities
+@using WriterApp.Shared.Billing
 @inject NavigationManager Navigation
 @inject HttpClient Http
 @inject AuthMeStateService AuthMeStateService
@@ -86,7 +87,7 @@
                 @(_actionInFlight && _actionName == "portal" ? "Opening portal..." : "Manage payment method")
             </button>
 
-            @if (!string.Equals(_effectivePlan, "free", StringComparison.OrdinalIgnoreCase))
+            @if (!string.Equals(_currentPlan, "free", StringComparison.OrdinalIgnoreCase))
             {
                 <button type="button" class="secondary" @onclick="HandleSubscriptionActionAsync" disabled="@_actionInFlight">
                     @GetSubscriptionActionButtonText()
@@ -107,11 +108,10 @@
     private string? _errorMessage;
     private string _currentPlan = "free";
     private string _currentPlanDisplay = "Free";
+    private string _subscriptionStatus = string.Empty;
     private string _subscriptionStatusDisplay = "-";
-    private string _effectivePlan = "free";
     private DateTimeOffset? _currentPeriodEndUtc;
     private bool _cancelAtPeriodEnd;
-    private bool _isPaidAccessActive;
     private bool _hasStripeCustomer;
     private bool _showSuccessBanner;
     private bool _showCanceledBanner;
@@ -134,7 +134,7 @@
         || string.Equals(_currentPlan, "pro", StringComparison.OrdinalIgnoreCase)
         || string.Equals(_currentPlan, "professional", StringComparison.OrdinalIgnoreCase);
 
-    private bool ShowPortalExplanation => _hasStripeCustomer && !string.Equals(_effectivePlan, "free", StringComparison.OrdinalIgnoreCase);
+    private bool ShowPortalExplanation => _hasStripeCustomer && !string.Equals(_currentPlan, "free", StringComparison.OrdinalIgnoreCase);
 
     protected override async Task OnInitializedAsync()
     {
@@ -292,15 +292,14 @@
             }
 
             _currentPlan = NormalizePlan(auth.PlanKey);
-            _effectivePlan = NormalizePlan(auth.EffectivePlanKey ?? auth.PlanKey);
             _currentPlanDisplay = ToPlanDisplayName(_currentPlan);
-            _subscriptionStatusDisplay = string.IsNullOrWhiteSpace(auth.SubscriptionStatus)
-                ? "-"
-                : auth.SubscriptionStatus;
+            _subscriptionStatus = BillingSubscriptionPolicy.NormalizeStatus(auth.SubscriptionStatus);
             _currentPeriodEndUtc = auth.CurrentPeriodEndUtc;
             _cancelAtPeriodEnd = auth.CancelAtPeriodEnd;
-            _isPaidAccessActive = auth.IsPaidAccessActive;
             _hasStripeCustomer = !string.IsNullOrWhiteSpace(auth.StripeCustomerId);
+            _subscriptionStatusDisplay = string.Equals(_currentPlan, "free", StringComparison.OrdinalIgnoreCase) && !_hasStripeCustomer
+                ? "Not subscribed"
+                : BillingSubscriptionPolicy.GetStatusDisplayLabel(_subscriptionStatus);
             await AuthMeStateService.RefreshAsync(force: force, serverEntitlementUpdatedUtc: auth.EntitlementUpdatedUtc);
         }
         catch
@@ -459,62 +458,43 @@
 
     private string GetBillingLifecycleMessage()
     {
-        if (string.Equals(_effectivePlan, "free", StringComparison.OrdinalIgnoreCase))
-        {
-            return "You are on the Free plan. Upgrading starts a Stripe-managed subscription. Canceling a paid plan does not delete your account.";
-        }
-
-        string planLabel = ToPlanDisplayName(_effectivePlan);
-        string formattedDate = FormatBillingDate(_currentPeriodEndUtc);
-
-        if (_cancelAtPeriodEnd && _currentPeriodEndUtc.HasValue)
-        {
-            return $"Your {planLabel} plan is scheduled to cancel on {formattedDate}. After that, your account continues on the Free plan.";
-        }
-
-        if (_isPaidAccessActive && _currentPeriodEndUtc.HasValue)
-        {
-            return $"Your {planLabel} plan renews on {formattedDate}.";
-        }
-
-        if (_currentPeriodEndUtc.HasValue)
-        {
-            return $"Your {planLabel} plan keeps access until {formattedDate}.";
-        }
-
-        return $"Your {planLabel} plan is active.";
+        return BillingSubscriptionPolicy.BuildLifecycleMessage(
+            _currentPlan,
+            _currentPlanDisplay,
+            _subscriptionStatus,
+            _currentPeriodEndUtc,
+            _cancelAtPeriodEnd);
     }
 
     private string GetPortalExplanation()
     {
-        if (_cancelAtPeriodEnd && _currentPeriodEndUtc.HasValue)
-        {
-            return "Manage payment method or resume the subscription in the Stripe billing portal. Canceling the subscription does not delete your account.";
-        }
-
-        return "Manage payment method, change plan, or cancel subscription in the Stripe billing portal. Canceling the subscription does not delete your account. After cancellation, your account continues on the Free plan.";
+        return BillingSubscriptionPolicy.BuildPortalExplanation(
+            _currentPlan,
+            _subscriptionStatus,
+            _currentPeriodEndUtc,
+            _cancelAtPeriodEnd);
     }
 
     private string GetStandardActionLabel()
     {
-        if (string.Equals(_effectivePlan, "standard", StringComparison.OrdinalIgnoreCase) && !_cancelAtPeriodEnd)
+        if (string.Equals(_currentPlan, "standard", StringComparison.OrdinalIgnoreCase) && !_cancelAtPeriodEnd)
         {
             return "Current plan";
         }
 
-        return string.Equals(_effectivePlan, "free", StringComparison.OrdinalIgnoreCase)
+        return string.Equals(_currentPlan, "free", StringComparison.OrdinalIgnoreCase)
             ? "Upgrade to Standard"
             : "Change plan to Standard";
     }
 
     private string GetProfessionalActionLabel()
     {
-        if (string.Equals(_effectivePlan, "pro", StringComparison.OrdinalIgnoreCase) && !_cancelAtPeriodEnd)
+        if (string.Equals(_currentPlan, "pro", StringComparison.OrdinalIgnoreCase) && !_cancelAtPeriodEnd)
         {
             return "Current plan";
         }
 
-        return string.Equals(_effectivePlan, "free", StringComparison.OrdinalIgnoreCase)
+        return string.Equals(_currentPlan, "free", StringComparison.OrdinalIgnoreCase)
             ? "Upgrade to Professional"
             : "Change plan to Professional";
     }
@@ -547,11 +527,11 @@
         if (string.IsNullOrWhiteSpace(expectedPlan) || string.Equals(expectedPlan, "free", StringComparison.OrdinalIgnoreCase))
         {
             return !string.Equals(_currentPlan, "free", StringComparison.OrdinalIgnoreCase)
-                && IsSubscriptionLifecycleActive(_subscriptionStatusDisplay);
+                && IsSubscriptionLifecycleActive(_subscriptionStatus);
         }
 
         return string.Equals(_currentPlan, expectedPlan, StringComparison.OrdinalIgnoreCase)
-            && IsSubscriptionLifecycleActive(_subscriptionStatusDisplay);
+            && IsSubscriptionLifecycleActive(_subscriptionStatus);
     }
 
     private static string ResolveReturnUrl(Dictionary<string, string> query)
@@ -577,13 +557,7 @@
 
     private static bool IsSubscriptionLifecycleActive(string? subscriptionStatus)
     {
-        if (string.IsNullOrWhiteSpace(subscriptionStatus))
-        {
-            return false;
-        }
-
-        string normalized = subscriptionStatus.Trim().ToLowerInvariant();
-        return normalized is "active" or "trialing";
+        return BillingSubscriptionPolicy.Evaluate(subscriptionStatus).KeepsPaidAccess;
     }
 
     private static string ToPlanDisplayName(string normalizedPlan)

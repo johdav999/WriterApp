@@ -1008,13 +1008,13 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
                     b.Property<string>("AuthorName")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("CoverImageUrl")
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<DateTimeOffset>("CreatedUtc")
                         .HasColumnType("datetimeoffset");
 
                     b.Property<string>("DefaultExportSettingsJson")
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("CoverImageUrl")
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("Genre")
@@ -1115,10 +1115,10 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
                     b.Property<string>("NarrativeIntent")
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<string>("NarrativeRole")
+                    b.Property<string>("NarrativePurpose")
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<string>("NarrativePurpose")
+                    b.Property<string>("NarrativeRole")
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("OpenQuestions")
@@ -1131,6 +1131,16 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("ReferencesJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Status")
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<string>("SubplotTagsJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Summary")
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("TagsJson")
@@ -1362,10 +1372,10 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
                     b.Property<string>("NarrativeIntent")
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<string>("NarrativeRole")
+                    b.Property<string>("NarrativePurpose")
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<string>("NarrativePurpose")
+                    b.Property<string>("NarrativeRole")
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("OpenQuestions")
@@ -1378,6 +1388,16 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("ReferencesJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Status")
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<string>("SubplotTagsJson")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Summary")
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("TagsJson")
@@ -1660,6 +1680,54 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
                     b.ToTable("SearchIndexEntries", (string)null);
                 });
 
+            modelBuilder.Entity("WriterApp.Data.Security.ExternalIdentityLink", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("EmailAtLinkTime")
+                        .HasMaxLength(320)
+                        .HasColumnType("nvarchar(320)");
+
+                    b.Property<string>("Issuer")
+                        .HasMaxLength(512)
+                        .HasColumnType("nvarchar(512)");
+
+                    b.Property<DateTime>("LastSeenUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("ObjectIdentifier")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("Provider")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("Subject")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EmailAtLinkTime");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("Provider", "Issuer", "Subject", "ObjectIdentifier");
+
+                    b.ToTable("ExternalIdentityLinks");
+                });
+
             modelBuilder.Entity("WriterApp.Data.StripeEventLog", b =>
                 {
                     b.Property<string>("StripeEventId")
@@ -1681,6 +1749,13 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
 
+                    b.Property<string>("StripeMode")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)")
+                        .HasDefaultValue("legacy");
+
                     b.Property<string>("Type")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -1693,6 +1768,8 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
                     b.HasKey("StripeEventId");
 
                     b.HasIndex("ReceivedUtc");
+
+                    b.HasIndex("StripeMode", "ReceivedUtc");
 
                     b.ToTable("StripeEventLogs");
                 });
@@ -1790,7 +1867,7 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
                         {
                             PlanId = new Guid("83d8f8f0-6d2f-4d68-b7df-4192dce1a6f5"),
                             Key = "ai.monthly_tokens",
-                            Value = "200000"
+                            Value = "250000"
                         },
                         new
                         {
@@ -1941,13 +2018,17 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("StripeCustomerId")
-                        .HasColumnType("nvarchar(max)");
+                        .HasColumnType("nvarchar(450)");
+
+                    b.Property<string>("StripeMode")
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
 
                     b.Property<string>("StripePriceId")
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("StripeSubscriptionId")
-                        .HasColumnType("nvarchar(max)");
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<string>("SubscriptionStatus")
                         .IsRequired()
@@ -1957,6 +2038,10 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
                         .HasColumnType("datetimeoffset");
 
                     b.HasKey("UserId");
+
+                    b.HasIndex("StripeMode", "StripeCustomerId");
+
+                    b.HasIndex("StripeMode", "StripeSubscriptionId");
 
                     b.ToTable("UserEntitlements");
                 });
@@ -1992,12 +2077,12 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
                     b.Property<DateTime>("CreatedUtc")
                         .HasColumnType("datetime2");
 
+                    b.Property<string>("DisplayName")
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<string>("Email")
                         .HasMaxLength(320)
                         .HasColumnType("nvarchar(320)");
-
-                    b.Property<string>("DisplayName")
-                        .HasColumnType("nvarchar(max)");
 
                     b.Property<bool>("HasCompletedOnboarding")
                         .ValueGeneratedOnAdd()

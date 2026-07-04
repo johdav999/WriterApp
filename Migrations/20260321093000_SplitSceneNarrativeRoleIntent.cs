@@ -1,9 +1,13 @@
 using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using WriterApp.Data;
 
 #nullable disable
 
 namespace BlazorApp.Migrations
 {
+    [DbContext(typeof(AppDbContext))]
+    [Migration("20260321093000_SplitSceneNarrativeRoleIntent")]
     public partial class SplitSceneNarrativeRoleIntent : Migration
     {
         protected override void Up(MigrationBuilder migrationBuilder)

@@ -27,7 +27,7 @@ namespace WriterApp.Application.Usage
         {
             if (string.IsNullOrWhiteSpace(userId))
             {
-                AiUsageStatus emptyStatus = new("Free", false, 0, 0, 0);
+                AiUsageStatus emptyStatus = new(UserEntitlementDefaults.FreePlanKey, "Free", false, 0, 0, 0);
                 _logger.LogInformation(
                     "AI entitlements resolved: userId={UserId} plan={PlanName} ai.enabled={AiEnabled} quotaTotal={QuotaTotal} quotaRemaining={QuotaRemaining}",
                     userId,
@@ -47,6 +47,7 @@ namespace WriterApp.Application.Usage
             int quotaRemaining = Math.Max(0, quotaTotal - quotaUsed);
 
             AiUsageStatus status = new(
+                entitlements.PlanKey,
                 entitlements.PlanName,
                 aiEnabled,
                 quotaTotal,

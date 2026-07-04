@@ -114,6 +114,19 @@ namespace WriterApp.Application.Documents
                 {
                     linkedSection = null;
                 }
+
+                if (linkedSection is not null)
+                {
+                    bool sharedWithAnotherScene = await _dbContext.ProjectNodes
+                        .AnyAsync(item => item.ProjectId == project.Id
+                            && item.Id != sceneNode.Id
+                            && item.NodeType == ProjectNodeType.Scene
+                            && item.LinkedSectionId == linkedSection.Id, ct);
+                    if (sharedWithAnotherScene)
+                    {
+                        linkedSection = null;
+                    }
+                }
             }
 
             if (linkedSection is null)
@@ -235,37 +248,26 @@ namespace WriterApp.Application.Documents
             string sectionTitle = string.IsNullOrWhiteSpace(sceneNode.Title) ? "New scene" : sceneNode.Title.Trim();
             DateTimeOffset now = DateTimeOffset.UtcNow;
 
-            SectionRecord? existingSection = _dbContext.Sections.Local
-                .FirstOrDefault(item => item.DocumentId == manuscript.Id && string.Equals(item.Title, sectionTitle, StringComparison.OrdinalIgnoreCase))
-                ?? await _dbContext.Sections
-                    .Where(item => item.DocumentId == manuscript.Id && item.Title == sectionTitle)
-                    .OrderBy(item => item.OrderIndex)
-                    .FirstOrDefaultAsync(ct);
+            int nextOrder = await _dbContext.Sections
+                .Where(item => item.DocumentId == manuscript.Id)
+                .Select(item => (int?)item.OrderIndex)
+                .MaxAsync(ct) ?? -1;
+            nextOrder += 1;
 
-            bool sectionCreated = false;
-            if (existingSection is null)
+            SectionRecord existingSection = new()
             {
-                int nextOrder = await _dbContext.Sections
-                    .Where(item => item.DocumentId == manuscript.Id)
-                    .Select(item => (int?)item.OrderIndex)
-                    .MaxAsync(ct) ?? -1;
-                nextOrder += 1;
-
-                existingSection = new SectionRecord
-                {
-                    Id = Guid.NewGuid(),
-                    DocumentId = manuscript.Id,
-                    Title = sectionTitle,
-                    NarrativePurpose = null,
-                    LanguageCode = manuscript.LanguageCode,
-                    TranslationGroupId = manuscript.TranslationGroupId,
-                    OrderIndex = nextOrder,
-                    CreatedAt = now,
-                    UpdatedAt = now
-                };
-                _dbContext.Sections.Add(existingSection);
-                sectionCreated = true;
-            }
+                Id = Guid.NewGuid(),
+                DocumentId = manuscript.Id,
+                Title = sectionTitle,
+                NarrativePurpose = null,
+                LanguageCode = manuscript.LanguageCode,
+                TranslationGroupId = manuscript.TranslationGroupId,
+                OrderIndex = nextOrder,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            _dbContext.Sections.Add(existingSection);
+            bool sectionCreated = true;
 
             bool pageCreated = false;
             PageRecord? existingPage = _dbContext.Pages.Local

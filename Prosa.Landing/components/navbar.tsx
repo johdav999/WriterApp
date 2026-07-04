@@ -12,6 +12,8 @@ const navLinks = [
   { label: "FAQ", href: "#faq" },
 ]
 
+const supportHref = "mailto:hello@prosa-app.com"
+
 export function Navbar() {
   const [mobileOpen, setMobileOpen] = useState(false)
 
@@ -32,6 +34,9 @@ export function Navbar() {
           </a>
 
           <div className="hidden items-center justify-end gap-3 md:col-start-3 md:row-span-2 md:row-start-1 md:flex md:self-center">
+            <Button variant="outline" size="sm" asChild>
+              <a href={supportHref}>Support</a>
+            </Button>
             <Button variant="ghost" size="sm" asChild>
               <a href={APP_LINKS.login}>Sign in</a>
             </Button>
@@ -85,6 +90,9 @@ export function Navbar() {
             ))}
           </ul>
           <div className="mt-4 flex flex-col gap-2">
+            <Button variant="outline" size="sm" asChild>
+              <a href={supportHref}>Support</a>
+            </Button>
             <Button variant="outline" size="sm" asChild>
               <a href={APP_LINKS.login}>Sign in</a>
             </Button>

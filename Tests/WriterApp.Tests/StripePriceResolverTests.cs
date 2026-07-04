@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Options;
 using WriterApp.Application.Billing;
 using Xunit;
 
@@ -9,8 +8,8 @@ namespace WriterApp.Tests
         [Fact]
         public void ResolvePriceId_UsesTestPrice_WhenModeIsTest()
         {
-            StripeBillingOptions options = CreateOptions("Test");
-            StripePriceResolver resolver = new(Options.Create(options));
+            StripeOptions options = CreateOptions("Test");
+            StripePriceResolver resolver = new(options);
 
             string priceId = resolver.ResolvePriceId("standard", out string normalized);
 
@@ -21,8 +20,8 @@ namespace WriterApp.Tests
         [Fact]
         public void ResolvePriceId_UsesLivePrice_WhenModeIsLive()
         {
-            StripeBillingOptions options = CreateOptions("Live");
-            StripePriceResolver resolver = new(Options.Create(options));
+            StripeOptions options = CreateOptions("Live");
+            StripePriceResolver resolver = new(options);
 
             string priceId = resolver.ResolvePriceId("pro", out string normalized);
 
@@ -33,8 +32,8 @@ namespace WriterApp.Tests
         [Fact]
         public void ResolvePlanKey_MapsKnownPriceIds()
         {
-            StripeBillingOptions options = CreateOptions("Test");
-            StripePriceResolver resolver = new(Options.Create(options));
+            StripeOptions options = CreateOptions("Test");
+            StripePriceResolver resolver = new(options);
 
             Assert.Equal("standard", resolver.ResolvePlanKey("price_live_standard"));
             Assert.Equal("standard", resolver.ResolvePlanKey("price_test_standard"));
@@ -55,19 +54,19 @@ namespace WriterApp.Tests
             Assert.Equal(expected, actual);
         }
 
-        private static StripeBillingOptions CreateOptions(string mode)
+        private static StripeOptions CreateOptions(string mode)
         {
-            return new StripeBillingOptions
+            return new StripeOptions
             {
                 Mode = mode,
-                Prices = new StripeBillingPricesOptions
+                Prices = new StripePriceOptions
                 {
-                    Standard = new StripeBillingPlanPriceOptions
+                    Standard = new StripePlanPriceOptions
                     {
                         LivePriceId = "price_live_standard",
                         TestPriceId = "price_test_standard"
                     },
-                    Pro = new StripeBillingPlanPriceOptions
+                    Pro = new StripePlanPriceOptions
                     {
                         LivePriceId = "price_live_pro",
                         TestPriceId = "price_test_pro"

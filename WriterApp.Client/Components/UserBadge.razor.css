@@ -1,0 +1,35 @@
+.user-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.user-badge-label {
+    color: var(--color-text-muted);
+    font-size: 0.95rem;
+    white-space: nowrap;
+}
+
+.user-badge-action {
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    background: var(--color-surface-1);
+    color: var(--color-text);
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.88rem;
+    padding: 6px 12px;
+    transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.user-badge-action:hover:not(:disabled),
+.user-badge-action:focus-visible {
+    border-color: var(--color-border-strong);
+    background: var(--color-surface-2);
+    outline: none;
+}
+
+.user-badge-action:disabled {
+    cursor: wait;
+    opacity: 0.7;
+}

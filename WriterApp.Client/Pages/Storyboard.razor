@@ -283,6 +283,7 @@
             ProjectId,
             snapshot.Count);
 
+        ProjectStructureCacheService.InvalidateProjectTree(ProjectId, "storyboard-structure-change");
         _nodes.Clear();
         _nodes.AddRange(snapshot);
         PreserveSelectedScene();
