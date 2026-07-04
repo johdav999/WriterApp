@@ -2,6 +2,7 @@
 @page "/app/account"
 @implements IDisposable
 @using WriterApp.Client.State
+@using WriterApp.Shared.Billing
 @inject AuthMeStateService AuthMeStateService
 @inject NavigationManager Navigation
 
@@ -14,7 +15,7 @@
     </header>
 
     <section class="account-card">
-        <div class="account-row"><strong>Plan:</strong> @AuthMeStateService.EffectivePlanKey</div>
+        <div class="account-row"><strong>Plan:</strong> @AuthMeStateService.PlanKey</div>
         <div class="account-row"><strong>Subscription status:</strong> @GetSubscriptionStatusDisplay()</div>
         <div class="account-row">@GetBillingLifecycleMessage()</div>
         @if (AuthMeStateService.AiMonthlyTokenBudget > 0)
@@ -71,49 +72,35 @@
 
     private string GetSubscriptionStatusDisplay()
     {
-        return string.IsNullOrWhiteSpace(AuthMeStateService.SubscriptionStatus)
-            ? "-"
-            : AuthMeStateService.SubscriptionStatus;
+        if (string.Equals(AuthMeStateService.PlanKey, "Free", StringComparison.OrdinalIgnoreCase)
+            && string.IsNullOrWhiteSpace(AuthMeStateService.StripeCustomerId))
+        {
+            return "Not subscribed";
+        }
+
+        return BillingSubscriptionPolicy.GetStatusDisplayLabel(AuthMeStateService.SubscriptionStatus);
     }
 
     private string GetBillingLifecycleMessage()
     {
-        string planLabel = AuthMeStateService.EffectivePlanKey;
-        string formattedDate = FormatBillingDate(AuthMeStateService.CurrentPeriodEndUtc);
-
-        if (string.Equals(planLabel, "Free", StringComparison.OrdinalIgnoreCase))
-        {
-            return "You are on the Free plan. Upgrading starts a Stripe-managed subscription. Canceling a paid plan does not delete your account.";
-        }
-
-        if (AuthMeStateService.CancelAtPeriodEnd && AuthMeStateService.CurrentPeriodEndUtc.HasValue)
-        {
-            return $"Your {planLabel} plan is scheduled to cancel on {formattedDate}. After that, your account continues on the Free plan.";
-        }
-
-        if (AuthMeStateService.IsPaidAccessActive && AuthMeStateService.CurrentPeriodEndUtc.HasValue)
-        {
-            return $"Your {planLabel} plan renews on {formattedDate}.";
-        }
-
-        if (AuthMeStateService.CurrentPeriodEndUtc.HasValue)
-        {
-            return $"Your {planLabel} plan keeps access until {formattedDate}.";
-        }
-
-        return $"Your {planLabel} plan is active.";
+        return BillingSubscriptionPolicy.BuildLifecycleMessage(
+            AuthMeStateService.PlanKey,
+            AuthMeStateService.PlanKey,
+            AuthMeStateService.SubscriptionStatus,
+            AuthMeStateService.CurrentPeriodEndUtc,
+            AuthMeStateService.CancelAtPeriodEnd);
     }
 
     private bool TryGetUpgradeHref(out string href, out string label)
     {
-        if (string.Equals(AuthMeStateService.EffectivePlanKey, "Free", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(AuthMeStateService.PlanKey, "Free", StringComparison.OrdinalIgnoreCase))
         {
             href = "/start?plan=standard";
             label = "Upgrade to Standard";
             return true;
         }
 
-        if (string.Equals(AuthMeStateService.EffectivePlanKey, "Standard", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(AuthMeStateService.PlanKey, "Standard", StringComparison.OrdinalIgnoreCase))
         {
             href = "/start?plan=pro";
             label = "Change plan";
@@ -133,12 +120,5 @@
     private void NavigateToUpgrade(string href)
     {
         Navigation.NavigateTo(href, forceLoad: true);
-    }
-
-    private static string FormatBillingDate(DateTimeOffset? value)
-    {
-        return value.HasValue
-            ? value.Value.ToLocalTime().ToString("yyyy-MM-dd")
-            : "-";
     }
 }

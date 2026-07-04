@@ -17,6 +17,7 @@ using WriterApp.Application.Billing;
 using WriterApp.Application.Subscriptions;
 using WriterApp.Data;
 using WriterApp.Data.Subscriptions;
+using WriterApp.Shared.Billing;
 
 namespace WriterApp.Controllers
 {
@@ -59,10 +60,12 @@ namespace WriterApp.Controllers
         [HttpPost("webhook")]
         public async Task<IActionResult> HandleWebhook(CancellationToken ct)
         {
-            if (!_stripeOptions.Enabled || string.IsNullOrWhiteSpace(_stripeOptions.WebhookSecret))
+            if (!_stripeOptions.Enabled || !_stripeOptions.WebhookHandlingEnabled || string.IsNullOrWhiteSpace(_stripeOptions.WebhookSecret))
             {
                 return StatusCode(StatusCodes.Status503ServiceUnavailable, "Stripe webhook is not configured.");
             }
+
+            string activeMode = StripeBillingEnvironment.Normalize(_stripeOptions.Mode);
 
             string payload;
             using (StreamReader reader = new(Request.Body, Encoding.UTF8))
@@ -109,15 +112,29 @@ namespace WriterApp.Controllers
                 }
 
                 _logger.LogInformation(
-                    "Stripe webhook received. EventId={EventId} EventType={EventType} StripeRequestId={StripeRequestId} CustomerId={CustomerId} SubscriptionId={SubscriptionId} UserId={UserId}",
+                    "Stripe webhook received. EventId={EventId} EventType={EventType} StripeMode={StripeMode} StripeRequestId={StripeRequestId} CustomerId={CustomerId} SubscriptionId={SubscriptionId} CheckoutSessionId={CheckoutSessionId} PaymentIntentId={PaymentIntentId} UserId={UserId}",
                     eventId,
                     eventType,
+                    activeMode,
                     stripeRequestId,
                     customerId ?? string.Empty,
                     subscriptionId ?? string.Empty,
+                    ReadString(dataObject, "id") ?? string.Empty,
+                    ReadString(dataObject, "payment_intent") ?? string.Empty,
                     userIdFromPayload ?? string.Empty);
 
-                StripeEventLog eventLog = await GetOrCreateEventLogAsync(eventId, eventType, ct);
+                StripeEventLog eventLog = await GetOrCreateEventLogAsync(eventId, eventType, activeMode, ct);
+                if (StripeBillingEnvironment.IsModeMismatch(eventLog.StripeMode, activeMode))
+                {
+                    _logger.LogWarning(
+                        "Stripe webhook ignored due to stored event mode mismatch. EventId={EventId} EventType={EventType} StoredStripeMode={StoredStripeMode} ActiveStripeMode={ActiveStripeMode}",
+                        eventId,
+                        eventType,
+                        eventLog.StripeMode,
+                        activeMode);
+                    return Ok();
+                }
+
                 if (string.Equals(eventLog.Status, StatusProcessed, StringComparison.OrdinalIgnoreCase)
                     || string.Equals(eventLog.Status, StatusSkipped, StringComparison.OrdinalIgnoreCase)
                     || string.Equals(eventLog.Status, StatusNoUser, StringComparison.OrdinalIgnoreCase))
@@ -169,7 +186,7 @@ namespace WriterApp.Controllers
             }
         }
 
-        private async Task<StripeEventLog> GetOrCreateEventLogAsync(string eventId, string eventType, CancellationToken ct)
+        private async Task<StripeEventLog> GetOrCreateEventLogAsync(string eventId, string eventType, string activeMode, CancellationToken ct)
         {
             StripeEventLog? existing = await _dbContext.StripeEventLogs
                 .FirstOrDefaultAsync(item => item.StripeEventId == eventId, ct);
@@ -181,6 +198,7 @@ namespace WriterApp.Controllers
             StripeEventLog created = new()
             {
                 StripeEventId = eventId,
+                StripeMode = activeMode,
                 Type = eventType,
                 ReceivedUtc = DateTime.UtcNow,
                 Status = StatusError,
@@ -229,30 +247,61 @@ namespace WriterApp.Controllers
         {
             string? userId = ReadString(session, "client_reference_id")
                 ?? ReadString(session, "metadata", "userId");
-            if (string.IsNullOrWhiteSpace(userId))
-            {
-                return WebhookHandleResult.Skipped();
-            }
-
             string? customerId = ReadString(session, "customer");
             string? subscriptionId = ReadString(session, "subscription");
+            string? sessionId = ReadString(session, "id");
+            if (string.IsNullOrWhiteSpace(userId) && !string.IsNullOrWhiteSpace(subscriptionId))
+            {
+                (userId, _) = await ResolveSubscriptionUserIdAsync(
+                    sessionId ?? "checkout.session.completed",
+                    default,
+                    customerId,
+                    subscriptionId,
+                    ct);
+            }
+
+            if (string.IsNullOrWhiteSpace(userId))
+            {
+                _logger.LogWarning(
+                    "Stripe checkout.session.completed missing durable user mapping. CheckoutSessionId={CheckoutSessionId} CustomerId={CustomerId} SubscriptionId={SubscriptionId}",
+                    sessionId ?? string.Empty,
+                    customerId ?? string.Empty,
+                    subscriptionId ?? string.Empty);
+                return WebhookHandleResult.NoUser("checkout.session.completed did not include a resolvable user id.");
+            }
+
             if (!string.IsNullOrWhiteSpace(subscriptionId))
             {
                 using JsonDocument subscription = await _stripeApiClient.GetSubscriptionAsync(
                     _stripeOptions.SecretKey,
                     subscriptionId,
                     ct);
-                await _stripeEntitlementSyncService.SyncFromSubscriptionAsync(userId, customerId, subscription.RootElement, ct);
+                UserEntitlement updated = await _stripeEntitlementSyncService.SyncFromSubscriptionAsync(userId, customerId, subscription.RootElement, ct);
+                _logger.LogInformation(
+                    "Stripe checkout.session.completed synced entitlement. CheckoutSessionId={CheckoutSessionId} UserId={UserId} PlanKey={PlanKey} SubscriptionStatus={SubscriptionStatus} StripeCustomerId={StripeCustomerId} StripeSubscriptionId={StripeSubscriptionId} StripePriceId={StripePriceId}",
+                    sessionId ?? string.Empty,
+                    updated.UserId,
+                    updated.PlanKey ?? string.Empty,
+                    updated.SubscriptionStatus ?? string.Empty,
+                    updated.StripeCustomerId ?? string.Empty,
+                    updated.StripeSubscriptionId ?? string.Empty,
+                    updated.StripePriceId ?? string.Empty);
                 return WebhookHandleResult.Processed(userId);
             }
 
             UserEntitlement entitlement = await _userEntitlementStore.GetOrCreateAsync(userId, ct);
+            entitlement.StripeMode = StripeBillingEnvironment.Normalize(_stripeOptions.Mode);
             entitlement.StripeCustomerId = customerId ?? entitlement.StripeCustomerId;
             entitlement.StripeSubscriptionId = subscriptionId ?? entitlement.StripeSubscriptionId;
             entitlement.SubscriptionStatus = "active";
             entitlement.CancelAtPeriodEnd = false;
             entitlement.UpdatedUtc = DateTimeOffset.UtcNow;
             await _dbContext.SaveChangesAsync(ct);
+            _logger.LogInformation(
+                "Stripe checkout.session.completed applied fallback entitlement update. CheckoutSessionId={CheckoutSessionId} UserId={UserId} StripeCustomerId={StripeCustomerId}",
+                sessionId ?? string.Empty,
+                entitlement.UserId,
+                entitlement.StripeCustomerId ?? string.Empty);
             return WebhookHandleResult.Processed(userId);
         }
 
@@ -286,7 +335,16 @@ namespace WriterApp.Controllers
                     $"No user mapping found for subscription event. customerId={customerId ?? string.Empty} subscriptionId={subscriptionId ?? string.Empty}");
             }
 
-            await _stripeEntitlementSyncService.SyncFromSubscriptionAsync(userId!, customerId, subscription, ct);
+            UserEntitlement updated = await _stripeEntitlementSyncService.SyncFromSubscriptionAsync(userId!, customerId, subscription, ct);
+            _logger.LogInformation(
+                "Stripe subscription webhook synced entitlement. EventId={EventId} UserId={UserId} PlanKey={PlanKey} SubscriptionStatus={SubscriptionStatus} StripeCustomerId={StripeCustomerId} StripeSubscriptionId={StripeSubscriptionId} StripePriceId={StripePriceId}",
+                eventId,
+                updated.UserId,
+                updated.PlanKey ?? string.Empty,
+                updated.SubscriptionStatus ?? string.Empty,
+                updated.StripeCustomerId ?? string.Empty,
+                updated.StripeSubscriptionId ?? string.Empty,
+                updated.StripePriceId ?? string.Empty);
             return WebhookHandleResult.Processed(userId);
         }
 
@@ -330,27 +388,25 @@ namespace WriterApp.Controllers
 
             if (!string.IsNullOrWhiteSpace(subscriptionId))
             {
-                string? bySubscription = await _dbContext.UserEntitlements
+                UserEntitlement? bySubscription = await _dbContext.UserEntitlements
                     .AsNoTracking()
                     .Where(item => item.StripeSubscriptionId == subscriptionId)
-                    .Select(item => item.UserId)
                     .FirstOrDefaultAsync(ct);
-                if (!string.IsNullOrWhiteSpace(bySubscription))
+                if (TryGetModeCompatibleUserId(bySubscription, "subscription", subscriptionId, out string? bySubscriptionUserId))
                 {
-                    return (bySubscription, "DbSubscription");
+                    return (bySubscriptionUserId, "DbSubscription");
                 }
             }
 
             if (!string.IsNullOrWhiteSpace(customerId))
             {
-                string? byCustomer = await _dbContext.UserEntitlements
+                UserEntitlement? byCustomer = await _dbContext.UserEntitlements
                     .AsNoTracking()
                     .Where(item => item.StripeCustomerId == customerId)
-                    .Select(item => item.UserId)
                     .FirstOrDefaultAsync(ct);
-                if (!string.IsNullOrWhiteSpace(byCustomer))
+                if (TryGetModeCompatibleUserId(byCustomer, "customer", customerId, out string? byCustomerUserId))
                 {
-                    return (byCustomer, "DbCustomer");
+                    return (byCustomerUserId, "DbCustomer");
                 }
             }
 
@@ -361,30 +417,60 @@ namespace WriterApp.Controllers
         {
             string? customerId = ReadString(invoice, "customer");
             string? subscriptionId = ReadString(invoice, "subscription");
-            UserEntitlement? entitlement = await ResolveEntitlementAsync(customerId, subscriptionId, ct);
-            if (entitlement is null)
-            {
-                return WebhookHandleResult.Skipped();
-            }
-
             if (!string.IsNullOrWhiteSpace(subscriptionId))
             {
                 using JsonDocument subscription = await _stripeApiClient.GetSubscriptionAsync(
                     _stripeOptions.SecretKey,
                     subscriptionId,
                     ct);
-                await _stripeEntitlementSyncService.SyncFromSubscriptionAsync(
-                    entitlement.UserId,
-                    customerId,
+                (string? resolvedUserId, string resolutionSource) = await ResolveSubscriptionUserIdAsync(
+                    "invoice.paid",
                     subscription.RootElement,
+                    customerId,
+                    subscriptionId,
                     ct);
-                return WebhookHandleResult.Processed(entitlement.UserId);
+                if (!string.IsNullOrWhiteSpace(resolvedUserId))
+                {
+                    UserEntitlement updated = await _stripeEntitlementSyncService.SyncFromSubscriptionAsync(
+                        resolvedUserId!,
+                        customerId,
+                        subscription.RootElement,
+                        ct);
+                    _logger.LogInformation(
+                        "Stripe invoice.paid synced entitlement from subscription. UserId={UserId} ResolutionSource={ResolutionSource} PlanKey={PlanKey} SubscriptionStatus={SubscriptionStatus} StripeCustomerId={StripeCustomerId} StripeSubscriptionId={StripeSubscriptionId} StripePriceId={StripePriceId}",
+                        updated.UserId,
+                        resolutionSource,
+                        updated.PlanKey ?? string.Empty,
+                        updated.SubscriptionStatus ?? string.Empty,
+                        updated.StripeCustomerId ?? string.Empty,
+                        updated.StripeSubscriptionId ?? string.Empty,
+                        updated.StripePriceId ?? string.Empty);
+                    return WebhookHandleResult.Processed(updated.UserId);
+                }
+            }
+
+            UserEntitlement? entitlement = await ResolveEntitlementAsync(customerId, subscriptionId, ct);
+            if (entitlement is null)
+            {
+                _logger.LogWarning(
+                    "Stripe invoice.paid could not resolve entitlement. CustomerId={CustomerId} SubscriptionId={SubscriptionId}",
+                    customerId ?? string.Empty,
+                    subscriptionId ?? string.Empty);
+                return WebhookHandleResult.NoUser(
+                    $"invoice.paid could not resolve entitlement. customerId={customerId ?? string.Empty} subscriptionId={subscriptionId ?? string.Empty}");
             }
 
             entitlement.SubscriptionStatus = "active";
+            entitlement.StripeMode = StripeBillingEnvironment.Normalize(_stripeOptions.Mode);
             entitlement.CancelAtPeriodEnd = false;
             entitlement.UpdatedUtc = DateTimeOffset.UtcNow;
             await _dbContext.SaveChangesAsync(ct);
+            _logger.LogInformation(
+                "Stripe invoice.paid fallback applied entitlement status. UserId={UserId} StripeMode={StripeMode} Status={Status} PaidAccessPolicy={PolicyCode}",
+                entitlement.UserId,
+                StripeBillingEnvironment.Normalize(_stripeOptions.Mode),
+                entitlement.SubscriptionStatus,
+                BillingSubscriptionPolicy.Evaluate(entitlement.SubscriptionStatus).PolicyCode);
             return WebhookHandleResult.Processed(entitlement.UserId);
         }
 
@@ -392,29 +478,59 @@ namespace WriterApp.Controllers
         {
             string? customerId = ReadString(invoice, "customer");
             string? subscriptionId = ReadString(invoice, "subscription");
-            UserEntitlement? entitlement = await ResolveEntitlementAsync(customerId, subscriptionId, ct);
-            if (entitlement is null)
-            {
-                return WebhookHandleResult.Skipped();
-            }
-
             if (!string.IsNullOrWhiteSpace(subscriptionId))
             {
                 using JsonDocument subscription = await _stripeApiClient.GetSubscriptionAsync(
                     _stripeOptions.SecretKey,
                     subscriptionId,
                     ct);
-                await _stripeEntitlementSyncService.SyncFromSubscriptionAsync(
-                    entitlement.UserId,
-                    customerId,
+                (string? resolvedUserId, string resolutionSource) = await ResolveSubscriptionUserIdAsync(
+                    "invoice.payment_failed",
                     subscription.RootElement,
+                    customerId,
+                    subscriptionId,
                     ct);
-                return WebhookHandleResult.Processed(entitlement.UserId);
+                if (!string.IsNullOrWhiteSpace(resolvedUserId))
+                {
+                    UserEntitlement updated = await _stripeEntitlementSyncService.SyncFromSubscriptionAsync(
+                        resolvedUserId!,
+                        customerId,
+                        subscription.RootElement,
+                        ct);
+                    _logger.LogInformation(
+                        "Stripe invoice.payment_failed synced entitlement from subscription. UserId={UserId} ResolutionSource={ResolutionSource} PlanKey={PlanKey} SubscriptionStatus={SubscriptionStatus} StripeCustomerId={StripeCustomerId} StripeSubscriptionId={StripeSubscriptionId} StripePriceId={StripePriceId}",
+                        updated.UserId,
+                        resolutionSource,
+                        updated.PlanKey ?? string.Empty,
+                        updated.SubscriptionStatus ?? string.Empty,
+                        updated.StripeCustomerId ?? string.Empty,
+                        updated.StripeSubscriptionId ?? string.Empty,
+                        updated.StripePriceId ?? string.Empty);
+                    return WebhookHandleResult.Processed(updated.UserId);
+                }
+            }
+
+            UserEntitlement? entitlement = await ResolveEntitlementAsync(customerId, subscriptionId, ct);
+            if (entitlement is null)
+            {
+                _logger.LogWarning(
+                    "Stripe invoice.payment_failed could not resolve entitlement. CustomerId={CustomerId} SubscriptionId={SubscriptionId}",
+                    customerId ?? string.Empty,
+                    subscriptionId ?? string.Empty);
+                return WebhookHandleResult.NoUser(
+                    $"invoice.payment_failed could not resolve entitlement. customerId={customerId ?? string.Empty} subscriptionId={subscriptionId ?? string.Empty}");
             }
 
             entitlement.SubscriptionStatus = "past_due";
+            entitlement.StripeMode = StripeBillingEnvironment.Normalize(_stripeOptions.Mode);
             entitlement.UpdatedUtc = DateTimeOffset.UtcNow;
             await _dbContext.SaveChangesAsync(ct);
+            _logger.LogWarning(
+                "Stripe invoice.payment_failed fallback applied entitlement status. UserId={UserId} StripeMode={StripeMode} Status={Status} PaidAccessPolicy={PolicyCode}",
+                entitlement.UserId,
+                StripeBillingEnvironment.Normalize(_stripeOptions.Mode),
+                entitlement.SubscriptionStatus,
+                BillingSubscriptionPolicy.Evaluate(entitlement.SubscriptionStatus).PolicyCode);
             return WebhookHandleResult.Processed(entitlement.UserId);
         }
 
@@ -424,19 +540,69 @@ namespace WriterApp.Controllers
             {
                 UserEntitlement? bySubscription = await _dbContext.UserEntitlements
                     .FirstOrDefaultAsync(item => item.StripeSubscriptionId == subscriptionId, ct);
-                if (bySubscription is not null)
+                if (TryGetModeCompatibleEntitlement(bySubscription, "subscription", subscriptionId, out UserEntitlement? matchedBySubscription))
                 {
-                    return bySubscription;
+                    return matchedBySubscription;
                 }
             }
 
             if (!string.IsNullOrWhiteSpace(customerId))
             {
-                return await _dbContext.UserEntitlements
+                UserEntitlement? byCustomer = await _dbContext.UserEntitlements
                     .FirstOrDefaultAsync(item => item.StripeCustomerId == customerId, ct);
+                if (TryGetModeCompatibleEntitlement(byCustomer, "customer", customerId, out UserEntitlement? matchedByCustomer))
+                {
+                    return matchedByCustomer;
+                }
             }
 
             return null;
+        }
+
+        private bool TryGetModeCompatibleUserId(
+            UserEntitlement? entitlement,
+            string identifierKind,
+            string identifierValue,
+            out string? userId)
+        {
+            userId = null;
+            if (!TryGetModeCompatibleEntitlement(entitlement, identifierKind, identifierValue, out UserEntitlement? matchedEntitlement))
+            {
+                return false;
+            }
+
+            userId = matchedEntitlement!.UserId;
+            return true;
+        }
+
+        private bool TryGetModeCompatibleEntitlement(
+            UserEntitlement? entitlement,
+            string identifierKind,
+            string identifierValue,
+            out UserEntitlement? matchedEntitlement)
+        {
+            matchedEntitlement = null;
+            if (entitlement is null)
+            {
+                return false;
+            }
+
+            string activeMode = StripeBillingEnvironment.Normalize(_stripeOptions.Mode);
+            string storedMode = StripeBillingEnvironment.ResolveStoredMode(entitlement, _stripeOptions);
+            if (StripeBillingEnvironment.IsModeMismatch(storedMode, activeMode))
+            {
+                _logger.LogWarning(
+                    "Stripe webhook ignored opposite-mode entitlement linkage. IdentifierKind={IdentifierKind} IdentifierValue={IdentifierValue} UserId={UserId} StoredStripeMode={StoredStripeMode} ActiveStripeMode={ActiveStripeMode}",
+                    identifierKind,
+                    identifierValue,
+                    entitlement.UserId,
+                    storedMode,
+                    activeMode);
+                return false;
+            }
+
+            matchedEntitlement = entitlement;
+            return true;
         }
 
         private static bool IsStripeSignatureValid(string header, string payload, string webhookSecret)

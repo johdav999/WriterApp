@@ -1052,6 +1052,12 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
                     b.Property<string>("KeyEvents")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("NarrativeIntent")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("NarrativeRole")
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<string>("NarrativePurpose")
                         .HasColumnType("nvarchar(max)");
 
@@ -1291,6 +1297,12 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("KeyEvents")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("NarrativeIntent")
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("NarrativeRole")
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("NarrativePurpose")

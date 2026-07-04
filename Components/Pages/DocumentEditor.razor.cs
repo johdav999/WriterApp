@@ -5042,9 +5042,14 @@ namespace BlazorApp.Components.Pages
                 return "AI is not enabled for your plan.";
             }
 
-            if (IsAiQuotaExceeded)
+            if (_aiUsageStatus?.ShouldShowAiLimitMessage == true)
             {
                 return "You've reached your monthly AI limit.";
+            }
+
+            if (_aiUsageStatus?.ShouldShowAiUpgradeHint == true)
+            {
+                return "Upgrade to Standard or Professional to use AI features.";
             }
 
             return "AI usage is not available.";
@@ -5069,6 +5074,7 @@ namespace BlazorApp.Components.Pages
 
                 _aiUsageStatus = new AiUsageStatusDto
                 {
+                    PlanKey = status.PlanKey,
                     Plan = status.PlanName,
                     AiEnabled = aiOptions.Enabled && status.AiEnabled,
                     UiEnabled = aiOptions.Enabled && aiOptions.UI.ShowAiMenu,

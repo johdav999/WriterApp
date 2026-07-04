@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
+using WriterApp.Application.Billing;
 using WriterApp.Application.Subscriptions;
 using WriterApp.Data.AI;
 using WriterApp.Data.Admin;
@@ -138,12 +139,15 @@ namespace WriterApp.Data
                 entity.Property(entitlement => entitlement.AiMonthlyTokenBudget).IsRequired();
                 entity.Property(entitlement => entitlement.AiTokensUsedThisPeriod).IsRequired();
                 entity.Property(entitlement => entitlement.PeriodStartUtc).IsRequired();
+                entity.Property(entitlement => entitlement.StripeMode).HasMaxLength(16);
                 entity.Property(entitlement => entitlement.StripeCustomerId);
                 entity.Property(entitlement => entitlement.StripeSubscriptionId);
                 entity.Property(entitlement => entitlement.StripePriceId);
                 entity.Property(entitlement => entitlement.CurrentPeriodEndUtc);
                 entity.Property(entitlement => entitlement.CancelAtPeriodEnd).HasDefaultValue(false).IsRequired();
                 entity.Property(entitlement => entitlement.UpdatedUtc).IsRequired();
+                entity.HasIndex(entitlement => new { entitlement.StripeMode, entitlement.StripeSubscriptionId });
+                entity.HasIndex(entitlement => new { entitlement.StripeMode, entitlement.StripeCustomerId });
             });
 
             builder.Entity<AdminAuditEvent>(entity =>
@@ -205,6 +209,11 @@ namespace WriterApp.Data
                 entity.Property(x => x.StripeEventId)
                     .HasMaxLength(100);
 
+                entity.Property(x => x.StripeMode)
+                    .HasMaxLength(16)
+                    .HasDefaultValue(StripeBillingEnvironment.LegacyMode)
+                    .IsRequired();
+
                 entity.Property(x => x.Type)
                     .HasMaxLength(100)
                     .IsRequired();
@@ -220,6 +229,7 @@ namespace WriterApp.Data
                     .HasMaxLength(100);
 
                 entity.HasIndex(x => x.ReceivedUtc);
+                entity.HasIndex(x => new { x.StripeMode, x.ReceivedUtc });
             });
 
             builder.Entity<Plan>(entity =>

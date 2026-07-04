@@ -25,6 +25,7 @@ using WriterApp.Data;
 using WriterApp.Data.Documents;
 using WriterApp.Data.Subscriptions;
 using WriterApp.Domain.Documents;
+using WriterApp.Shared;
 
 namespace WriterApp.Controllers
 {
@@ -40,6 +41,7 @@ namespace WriterApp.Controllers
         private readonly AppDbContext _dbContext;
         private readonly IUserIdResolver _userIdResolver;
         private readonly IEntitlementService _entitlementService;
+        private readonly IOnboardingDemoEligibilityService _onboardingDemoEligibilityService;
         private readonly IAiActionHistoryStore _historyStore;
         private readonly IVersionHistoryService _versionHistory;
         private readonly ILogger<AiActionsController> _logger;
@@ -61,6 +63,7 @@ namespace WriterApp.Controllers
             AppDbContext dbContext,
             IUserIdResolver userIdResolver,
             IEntitlementService entitlementService,
+            IOnboardingDemoEligibilityService onboardingDemoEligibilityService,
             IAiActionHistoryStore historyStore,
             IVersionHistoryService versionHistory,
             ILogger<AiActionsController> logger)
@@ -72,6 +75,7 @@ namespace WriterApp.Controllers
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
             _entitlementService = entitlementService ?? throw new ArgumentNullException(nameof(entitlementService));
+            _onboardingDemoEligibilityService = onboardingDemoEligibilityService ?? throw new ArgumentNullException(nameof(onboardingDemoEligibilityService));
             _historyStore = historyStore ?? throw new ArgumentNullException(nameof(historyStore));
             _versionHistory = versionHistory ?? throw new ArgumentNullException(nameof(versionHistory));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -342,16 +346,6 @@ namespace WriterApp.Controllers
                 return Unauthorized();
             }
 
-            FeatureKey? gatedFeature = ResolveFeatureForAction(actionKey);
-            if (gatedFeature.HasValue)
-            {
-                ActionResult? gate = await EnsureFeatureAllowedAsync(userId, gatedFeature.Value, actionKey);
-                if (gate is not null)
-                {
-                    return gate;
-                }
-            }
-
             DocumentRecord? documentRecord = await _documents.GetAsync(documentId, userId, ct);
             if (documentRecord is null)
             {
@@ -390,15 +384,56 @@ namespace WriterApp.Controllers
                 return NotFound();
             }
 
-            bool onboardingDemoRequested = IsOnboardingDemoRequested(request.Parameters);
+            bool onboardingDemoRequested = IsOnboardingDemoRequested(actionKey, request.Parameters);
             bool onboardingDemoAllowed = false;
             if (onboardingDemoRequested)
             {
-                onboardingDemoAllowed = await IsAllowedOnboardingDemoRequestAsync(userId, actionKey, sectionId, ct);
+                OnboardingDemoEligibilityResult eligibility = await _onboardingDemoEligibilityService.EvaluateSectionAiDemoAsync(
+                    userId,
+                    documentId,
+                    sectionId,
+                    actionKey,
+                    ct);
+                onboardingDemoAllowed = eligibility.IsEligible;
                 if (onboardingDemoAllowed)
                 {
                     HttpContext.Items[OnboardingDemoAiUsage.HttpContextValidatedKey] = true;
                 }
+                else
+                {
+                    _logger.LogInformation(
+                        "Onboarding demo request not eligible. TraceId={TraceId}, CorrelationId={CorrelationId}, UserId={UserId}, ActionKey={ActionKey}, DocumentId={DocumentId}, SectionId={SectionId}, Reason={Reason}, CandidateSceneCount={CandidateSceneCount}",
+                        HttpContext.TraceIdentifier,
+                        correlationId,
+                        userId,
+                        actionKey,
+                        documentId,
+                        sectionId,
+                        eligibility.Reason,
+                        eligibility.CandidateSceneCount);
+                }
+            }
+
+            FeatureKey? gatedFeature = ResolveFeatureForAction(actionKey);
+            if (gatedFeature.HasValue && !onboardingDemoAllowed)
+            {
+                ActionResult? gate = await EnsureFeatureAllowedAsync(userId, gatedFeature.Value, actionKey);
+                if (gate is not null)
+                {
+                    return gate;
+                }
+            }
+            else if (gatedFeature.HasValue && onboardingDemoAllowed)
+            {
+                _logger.LogInformation(
+                    "Onboarding demo bypassed normal feature gating. TraceId={TraceId}, CorrelationId={CorrelationId}, UserId={UserId}, ActionKey={ActionKey}, DocumentId={DocumentId}, SectionId={SectionId}, FeatureKey={FeatureKey}",
+                    HttpContext.TraceIdentifier,
+                    correlationId,
+                    userId,
+                    actionKey,
+                    documentId,
+                    sectionId,
+                    gatedFeature.Value);
             }
 
             if (action.RequiresSelection && (!request.SelectionStart.HasValue || !request.SelectionEnd.HasValue))
@@ -830,46 +865,9 @@ namespace WriterApp.Controllers
             };
         }
 
-        private static bool IsOnboardingDemoRequested(Dictionary<string, object?>? parameters)
+        private static bool IsOnboardingDemoRequested(string actionKey, Dictionary<string, object?>? parameters)
         {
-            if (parameters is null
-                || !parameters.TryGetValue(OnboardingDemoAiUsage.RequestParameterKey, out object? value)
-                || value is null)
-            {
-                return false;
-            }
-
-            return value is bool boolean
-                ? boolean
-                : value is string text && bool.TryParse(text, out bool parsed) && parsed;
-        }
-
-        private async Task<bool> IsAllowedOnboardingDemoRequestAsync(
-            string userId,
-            string actionKey,
-            Guid sectionId,
-            CancellationToken ct)
-        {
-            if (!string.Equals(actionKey, OnboardingDemoAiUsage.DemoActionKey, StringComparison.Ordinal))
-            {
-                return false;
-            }
-
-            UserProfile? profile = await _dbContext.UserProfiles
-                .AsNoTracking()
-                .FirstOrDefaultAsync(item => item.UserId == userId, ct);
-            if (profile?.HasCompletedOnboarding == true)
-            {
-                return false;
-            }
-
-            string? metadataJson = await _dbContext.ProjectNodes
-                .AsNoTracking()
-                .Where(item => item.LinkedSectionId == sectionId && item.NodeType == ProjectNodeType.Scene)
-                .Select(item => item.MetadataJson)
-                .FirstOrDefaultAsync(ct);
-
-            return OnboardingDemoSceneMetadata.IsDemoScene(metadataJson);
+            return OnboardingAiDemoRequest.IsRequested(actionKey, parameters);
         }
 
         private static (int StatusCode, string ErrorCode, string Detail) MapProviderException(AiProviderException exception)

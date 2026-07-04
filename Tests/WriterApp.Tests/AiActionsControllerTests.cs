@@ -17,7 +17,9 @@ using WriterApp.Application.Security;
 using WriterApp.Application.Subscriptions;
 using WriterApp.Controllers;
 using WriterApp.Data;
+using WriterApp.Data.Admin;
 using WriterApp.Data.Documents;
+using WriterApp.Data.Subscriptions;
 using Xunit;
 
 namespace WriterApp.Tests
@@ -140,7 +142,267 @@ namespace WriterApp.Tests
             Assert.Equal("ai.misconfigured", problem.Extensions["code"]?.ToString());
         }
 
-        private static AiActionsController BuildController(AppDbContext db, IAiOrchestrator orchestrator)
+        [Fact]
+        public async Task ExecuteAction_OnboardingDemoTighten_AllowsFreeUserDuringOnboarding()
+        {
+            await using AppDbContext db = BuildDbContext();
+            SeedDocumentGraph(db, out Guid documentId, out Guid sectionId, out Guid pageId);
+            SeedOnboardingDemoScene(db, sectionId, completedOnboarding: false);
+
+            AiActionsController controller = BuildController(
+                db,
+                new StubAiOrchestrator(success: true, providerFailure: false),
+                new StubEntitlementService(PlanTier.Free));
+            AiActionExecuteRequestDto request = new(
+                documentId,
+                sectionId,
+                pageId,
+                null,
+                null,
+                null,
+                "Maya checked her phone at 08:05 and sighed.",
+                null,
+                new Dictionary<string, object?>
+                {
+                    [OnboardingDemoAiUsage.RequestParameterKey] = true,
+                    [OnboardingDemoAiUsage.InstructionParameterKey] = "tighten the character description"
+                });
+
+            ActionResult<AiActionExecuteResponseDto> result = await controller.ExecuteAction(
+                TightenSectionAction.ActionIdValue,
+                request,
+                CancellationToken.None);
+
+            OkObjectResult ok = Assert.IsType<OkObjectResult>(result.Result);
+            AiActionExecuteResponseDto payload = Assert.IsType<AiActionExecuteResponseDto>(ok.Value);
+            Assert.NotEqual(Guid.Empty, payload.ProposalId);
+            Assert.Equal("Tightened demo text.", payload.ProposedText);
+            Assert.True(controller.HttpContext.Items.ContainsKey(OnboardingDemoAiUsage.HttpContextValidatedKey));
+        }
+
+        [Fact]
+        public async Task ExecuteAction_TightenSection_ReturnsPaymentRequired_ForFreeUserOutsideOnboarding()
+        {
+            await using AppDbContext db = BuildDbContext();
+            SeedDocumentGraph(db, out Guid documentId, out Guid sectionId, out Guid pageId);
+
+            AiActionsController controller = BuildController(
+                db,
+                new StubAiOrchestrator(success: true, providerFailure: false),
+                new StubEntitlementService(PlanTier.Free));
+            AiActionExecuteRequestDto request = new(
+                documentId,
+                sectionId,
+                pageId,
+                null,
+                null,
+                null,
+                "Maya checked her phone at 08:05 and sighed.",
+                null,
+                new Dictionary<string, object?>
+                {
+                    [OnboardingDemoAiUsage.InstructionParameterKey] = "tighten the character description"
+                });
+
+            ActionResult<AiActionExecuteResponseDto> result = await controller.ExecuteAction(
+                TightenSectionAction.ActionIdValue,
+                request,
+                CancellationToken.None);
+
+            ObjectResult blocked = Assert.IsType<ObjectResult>(result.Result);
+            Assert.Equal(StatusCodes.Status402PaymentRequired, blocked.StatusCode);
+            ProblemDetails problem = Assert.IsType<ProblemDetails>(blocked.Value);
+            Assert.Equal("entitlement_denied", problem.Extensions["code"]?.ToString());
+            Assert.False(controller.HttpContext.Items.ContainsKey(OnboardingDemoAiUsage.HttpContextValidatedKey));
+        }
+
+        [Fact]
+        public async Task ExecuteAction_OnboardingDemoTighten_ReturnsPaymentRequired_AfterOnboardingCompleted()
+        {
+            await using AppDbContext db = BuildDbContext();
+            SeedDocumentGraph(db, out Guid documentId, out Guid sectionId, out Guid pageId);
+            SeedOnboardingDemoScene(db, sectionId, completedOnboarding: true);
+
+            AiActionsController controller = BuildController(
+                db,
+                new StubAiOrchestrator(success: true, providerFailure: false),
+                new StubEntitlementService(PlanTier.Free));
+            AiActionExecuteRequestDto request = new(
+                documentId,
+                sectionId,
+                pageId,
+                null,
+                null,
+                null,
+                "Maya checked her phone at 08:05 and sighed.",
+                null,
+                new Dictionary<string, object?>
+                {
+                    [OnboardingDemoAiUsage.RequestParameterKey] = true,
+                    [OnboardingDemoAiUsage.InstructionParameterKey] = "tighten the character description"
+                });
+
+            ActionResult<AiActionExecuteResponseDto> result = await controller.ExecuteAction(
+                TightenSectionAction.ActionIdValue,
+                request,
+                CancellationToken.None);
+
+            ObjectResult blocked = Assert.IsType<ObjectResult>(result.Result);
+            Assert.Equal(StatusCodes.Status402PaymentRequired, blocked.StatusCode);
+            Assert.False(controller.HttpContext.Items.ContainsKey(OnboardingDemoAiUsage.HttpContextValidatedKey));
+        }
+
+        [Fact]
+        public async Task ExecuteAction_OnboardingDemoTighten_ReturnsPaymentRequired_ForNonDemoScene()
+        {
+            await using AppDbContext db = BuildDbContext();
+            SeedDocumentGraph(db, out Guid documentId, out Guid sectionId, out Guid pageId);
+            SeedUserProfile(db, completedOnboarding: false);
+
+            AiActionsController controller = BuildController(
+                db,
+                new StubAiOrchestrator(success: true, providerFailure: false),
+                new StubEntitlementService(PlanTier.Free));
+            AiActionExecuteRequestDto request = new(
+                documentId,
+                sectionId,
+                pageId,
+                null,
+                null,
+                null,
+                "Maya checked her phone at 08:05 and sighed.",
+                null,
+                new Dictionary<string, object?>
+                {
+                    [OnboardingDemoAiUsage.RequestParameterKey] = true,
+                    [OnboardingDemoAiUsage.InstructionParameterKey] = "tighten the character description"
+                });
+
+            ActionResult<AiActionExecuteResponseDto> result = await controller.ExecuteAction(
+                TightenSectionAction.ActionIdValue,
+                request,
+                CancellationToken.None);
+
+            ObjectResult blocked = Assert.IsType<ObjectResult>(result.Result);
+            Assert.Equal(StatusCodes.Status402PaymentRequired, blocked.StatusCode);
+            Assert.False(controller.HttpContext.Items.ContainsKey(OnboardingDemoAiUsage.HttpContextValidatedKey));
+        }
+
+        [Fact]
+        public async Task ExecuteAction_OnboardingDemoTighten_AllowsFreeUser_WhenSecondLinkedSceneIsDemo()
+        {
+            await using AppDbContext db = BuildDbContext();
+            SeedDocumentGraph(db, out Guid documentId, out Guid sectionId, out Guid pageId);
+            SeedUserProfile(db, completedOnboarding: false);
+            SeedLinkedScene(db, sectionId, metadataJson: null, updatedUtc: DateTimeOffset.UtcNow.AddMinutes(-5));
+            SeedLinkedScene(db, sectionId, OnboardingDemoSceneMetadata.Merge(null), DateTimeOffset.UtcNow);
+            db.SaveChanges();
+
+            AiActionsController controller = BuildController(
+                db,
+                new StubAiOrchestrator(success: true, providerFailure: false),
+                new StubEntitlementService(PlanTier.Free));
+            AiActionExecuteRequestDto request = new(
+                documentId,
+                sectionId,
+                pageId,
+                null,
+                null,
+                null,
+                "Maya checked her phone at 08:05 and sighed.",
+                null,
+                new Dictionary<string, object?>
+                {
+                    [OnboardingDemoAiUsage.RequestParameterKey] = true,
+                    [OnboardingDemoAiUsage.InstructionParameterKey] = "tighten the character description"
+                });
+
+            ActionResult<AiActionExecuteResponseDto> result = await controller.ExecuteAction(
+                TightenSectionAction.ActionIdValue,
+                request,
+                CancellationToken.None);
+
+            OkObjectResult ok = Assert.IsType<OkObjectResult>(result.Result);
+            AiActionExecuteResponseDto payload = Assert.IsType<AiActionExecuteResponseDto>(ok.Value);
+            Assert.Equal("Tightened demo text.", payload.ProposedText);
+            Assert.True(controller.HttpContext.Items.ContainsKey(OnboardingDemoAiUsage.HttpContextValidatedKey));
+        }
+
+        [Fact]
+        public async Task ExecuteAction_OnboardingDemoFlaggedButUnsupportedAction_ReturnsPaymentRequired_ForFreeUser()
+        {
+            await using AppDbContext db = BuildDbContext();
+            SeedDocumentGraph(db, out Guid documentId, out Guid sectionId, out Guid pageId);
+            SeedOnboardingDemoScene(db, sectionId, completedOnboarding: false);
+
+            AiActionsController controller = BuildController(
+                db,
+                new StubAiOrchestrator(success: true, providerFailure: false),
+                new StubEntitlementService(PlanTier.Free));
+            AiActionExecuteRequestDto request = new(
+                documentId,
+                sectionId,
+                pageId,
+                null,
+                null,
+                null,
+                "Maya checked her phone at 08:05 and sighed.",
+                null,
+                new Dictionary<string, object?>
+                {
+                    [OnboardingDemoAiUsage.RequestParameterKey] = true,
+                    [OnboardingDemoAiUsage.InstructionParameterKey] = "tighten the character description"
+                });
+
+            ActionResult<AiActionExecuteResponseDto> result = await controller.ExecuteAction(
+                ExpandSectionAction.ActionIdValue,
+                request,
+                CancellationToken.None);
+
+            ObjectResult blocked = Assert.IsType<ObjectResult>(result.Result);
+            Assert.Equal(StatusCodes.Status402PaymentRequired, blocked.StatusCode);
+            Assert.False(controller.HttpContext.Items.ContainsKey(OnboardingDemoAiUsage.HttpContextValidatedKey));
+        }
+
+        [Fact]
+        public async Task ExecuteAction_TightenSection_AllowsProfessionalUser_WithoutOnboardingBypass()
+        {
+            await using AppDbContext db = BuildDbContext();
+            SeedDocumentGraph(db, out Guid documentId, out Guid sectionId, out Guid pageId);
+
+            AiActionsController controller = BuildController(
+                db,
+                new StubAiOrchestrator(success: true, providerFailure: false),
+                new StubEntitlementService(PlanTier.Professional));
+            AiActionExecuteRequestDto request = new(
+                documentId,
+                sectionId,
+                pageId,
+                null,
+                null,
+                null,
+                "Maya checked her phone at 08:05 and sighed.",
+                null,
+                new Dictionary<string, object?>
+                {
+                    [OnboardingDemoAiUsage.InstructionParameterKey] = "tighten the character description"
+                });
+
+            ActionResult<AiActionExecuteResponseDto> result = await controller.ExecuteAction(
+                TightenSectionAction.ActionIdValue,
+                request,
+                CancellationToken.None);
+
+            OkObjectResult ok = Assert.IsType<OkObjectResult>(result.Result);
+            AiActionExecuteResponseDto payload = Assert.IsType<AiActionExecuteResponseDto>(ok.Value);
+            Assert.Equal("Tightened demo text.", payload.ProposedText);
+            Assert.False(controller.HttpContext.Items.ContainsKey(OnboardingDemoAiUsage.HttpContextValidatedKey));
+        }
+
+        private static AiActionsController BuildController(
+            AppDbContext db,
+            IAiOrchestrator orchestrator,
+            IEntitlementService? entitlementService = null)
         {
             IConfiguration config = new ConfigurationBuilder()
                 .AddInMemoryCollection(new Dictionary<string, string?>())
@@ -152,7 +414,8 @@ namespace WriterApp.Tests
                 new PageRepository(db),
                 db,
                 new StubUserIdResolver(),
-                new StubEntitlementService(),
+                entitlementService ?? new StubEntitlementService(),
+                new OnboardingDemoEligibilityService(db, NullLogger<OnboardingDemoEligibilityService>.Instance),
                 new InMemoryAiActionHistoryStore(),
                 new StubVersionHistoryService(),
                 NullLogger<AiActionsController>.Instance);
@@ -253,6 +516,45 @@ namespace WriterApp.Tests
             db.SaveChanges();
         }
 
+        private static void SeedOnboardingDemoScene(AppDbContext db, Guid sectionId, bool completedOnboarding)
+        {
+            SeedLinkedScene(db, sectionId, OnboardingDemoSceneMetadata.Merge(null), DateTimeOffset.UtcNow);
+            SeedUserProfile(db, completedOnboarding);
+            db.SaveChanges();
+        }
+
+        private static void SeedLinkedScene(AppDbContext db, Guid sectionId, string? metadataJson, DateTimeOffset updatedUtc)
+        {
+            ProjectRecord project = db.Projects.Single();
+
+            db.ProjectNodes.Add(new ProjectNodeRecord
+            {
+                Id = Guid.NewGuid(),
+                ProjectId = project.Id,
+                NodeType = ProjectNodeType.Scene,
+                LinkedSectionId = sectionId,
+                MetadataJson = metadataJson,
+                Title = "Scene",
+                UpdatedUtc = updatedUtc
+            });
+        }
+
+        private static void SeedUserProfile(AppDbContext db, bool completedOnboarding)
+        {
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            ProjectRecord project = db.Projects.Single();
+
+            db.UserProfiles.Add(new UserProfile
+            {
+                UserId = project.OwnerUserId,
+                DisplayName = "User",
+                HasCompletedOnboarding = completedOnboarding,
+                OnboardingStep = completedOnboarding ? 10 : 4,
+                CreatedUtc = now.UtcDateTime,
+                UpdatedUtc = now.UtcDateTime
+            });
+        }
+
         private sealed class StubUserIdResolver : IUserIdResolver
         {
             public string ResolveUserId(ClaimsPrincipal user) => "user-1";
@@ -260,19 +562,41 @@ namespace WriterApp.Tests
 
         private sealed class StubEntitlementService : IEntitlementService
         {
+            private readonly PlanTier _tier;
+
+            public StubEntitlementService(PlanTier tier = PlanTier.Professional)
+            {
+                _tier = tier;
+            }
+
             public Task<UserEntitlements> GetEntitlementsAsync(string userId)
             {
                 Dictionary<string, string> entitlements = new(StringComparer.OrdinalIgnoreCase)
                 {
-                    ["ai.enabled"] = "true"
+                    ["ai.enabled"] = _tier == PlanTier.Free ? "false" : "true"
                 };
 
-                return Task.FromResult(new UserEntitlements(userId, "professional", "professional", entitlements));
+                string planKey = _tier switch
+                {
+                    PlanTier.Standard => "standard",
+                    PlanTier.Professional => "professional",
+                    _ => "free"
+                };
+
+                return Task.FromResult(new UserEntitlements(userId, planKey, planKey, entitlements));
             }
 
-            public PlanTier GetUserTier(UserEntitlements entitlements) => PlanTier.Professional;
+            public PlanTier GetUserTier(UserEntitlements entitlements) => _tier;
 
-            public Task<bool> HasAsync(string userId, string entitlementKey) => Task.FromResult(true);
+            public Task<bool> HasAsync(string userId, string entitlementKey)
+            {
+                if (string.Equals(entitlementKey, "ai.enabled", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Task.FromResult(_tier != PlanTier.Free);
+                }
+
+                return Task.FromResult(_tier != PlanTier.Free);
+            }
 
             public Task<int?> GetIntAsync(string userId, string entitlementKey) => Task.FromResult<int?>(null);
 
@@ -302,7 +626,8 @@ namespace WriterApp.Tests
 
         private sealed class StubAiOrchestrator : IAiOrchestrator
         {
-            private readonly IAiAction _action = new SceneSuggestAction();
+            private readonly IReadOnlyList<IAiAction> _actions =
+                new IAiAction[] { new SceneSuggestAction(), new TightenSectionAction(), new ExpandSectionAction() };
             private readonly bool _success;
             private readonly bool _providerFailure;
 
@@ -312,10 +637,10 @@ namespace WriterApp.Tests
                 _providerFailure = providerFailure;
             }
 
-            public IReadOnlyList<IAiAction> Actions => new[] { _action };
+            public IReadOnlyList<IAiAction> Actions => _actions;
 
             public IAiAction? GetAction(string actionId)
-                => string.Equals(actionId, SceneSuggestAction.ActionIdValue, StringComparison.Ordinal) ? _action : null;
+                => _actions.FirstOrDefault(action => string.Equals(action.ActionId, actionId, StringComparison.Ordinal));
 
             public bool CanRunAction(string actionId) => true;
 
@@ -332,6 +657,28 @@ namespace WriterApp.Tests
                 if (!_success)
                 {
                     return Task.FromResult(AiExecutionResult.Blocked("ai.blocked", "Blocked."));
+                }
+
+                if (string.Equals(actionId, TightenSectionAction.ActionIdValue, StringComparison.Ordinal)
+                    || string.Equals(actionId, ExpandSectionAction.ActionIdValue, StringComparison.Ordinal))
+                {
+                    AiProposal reviseProposal = new(
+                        Guid.NewGuid(),
+                        input.ActiveSectionId,
+                        "Tighten demo text",
+                        actionId,
+                        "mock",
+                        Guid.NewGuid(),
+                        DateTime.UtcNow,
+                        null,
+                        new List<ProposedOperation>(),
+                        new List<Guid>(),
+                        "Tightened demo text.",
+                        "section",
+                        null,
+                        input.SelectedText,
+                        null);
+                    return Task.FromResult(AiExecutionResult.Success(reviseProposal));
                 }
 
                 AiProposal proposal = new(

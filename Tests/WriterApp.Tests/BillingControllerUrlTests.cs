@@ -47,6 +47,21 @@ namespace WriterApp.Tests
         }
 
         [Fact]
+        public void ResolveBaseUrlContext_ReportsCanonicalSource_WhenConfigured()
+        {
+            StripeRedirectUrlBuilder builder = CreateRedirectUrlBuilder(
+                publicBaseUrl: "https://app.prosa-app.com/",
+                checkoutBaseUrl: string.Empty);
+            DefaultHttpContext httpContext = CreateHttpContext("https", "prosa-fgg2cxhbdja2hwee.swedencentral-01.azurewebsites.net");
+
+            StripeBaseUrlResolution result = builder.ResolveBaseUrlContext(httpContext.Request);
+
+            Assert.Equal("https://app.prosa-app.com", result.BaseUrl);
+            Assert.Equal("AppUrls:PublicBaseUrl", result.Source);
+            Assert.True(result.RequestHostLooksLikeAzureAppService);
+        }
+
+        [Fact]
         public void ResolveBaseUrl_FallsBackToLegacyCheckoutBaseUrl_WhenCanonicalMissing()
         {
             StripeRedirectUrlBuilder builder = CreateRedirectUrlBuilder(
@@ -85,6 +100,21 @@ namespace WriterApp.Tests
             Assert.Equal("https://prosa-fgg2cxhbdja2hwee.swedencentral-01.azurewebsites.net/app/account", result);
         }
 
+        [Fact]
+        public void ResolveBaseUrlContext_FallsBackToRequestHost_WhenNoConfiguredBaseUrlExists()
+        {
+            StripeRedirectUrlBuilder builder = CreateRedirectUrlBuilder(
+                publicBaseUrl: string.Empty,
+                checkoutBaseUrl: string.Empty);
+            DefaultHttpContext httpContext = CreateHttpContext("https", "prosa-fgg2cxhbdja2hwee.swedencentral-01.azurewebsites.net");
+
+            StripeBaseUrlResolution result = builder.ResolveBaseUrlContext(httpContext.Request);
+
+            Assert.Equal("https://prosa-fgg2cxhbdja2hwee.swedencentral-01.azurewebsites.net", result.BaseUrl);
+            Assert.Equal("RequestHost", result.Source);
+            Assert.True(result.RequestHostLooksLikeAzureAppService);
+        }
+
         private static string InvokeBuildCheckoutUrl(string baseUrl, string path)
         {
             MethodInfo? method = typeof(BillingController).GetMethod(
@@ -104,13 +134,13 @@ namespace WriterApp.Tests
                 {
                     PublicBaseUrl = publicBaseUrl
                 }),
-                Options.Create(new StripeBillingOptions
+                new StripeOptions
                 {
-                    Checkout = new StripeBillingCheckoutOptions
+                    Checkout = new StripeCheckoutOptions
                     {
                         BaseUrl = checkoutBaseUrl
                     }
-                }));
+                });
         }
 
         private static DefaultHttpContext CreateHttpContext(string scheme, string host)

@@ -1709,6 +1709,13 @@ namespace BlazorApp.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("StripeMode")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("legacy");
+
                     b.Property<string>("Error")
                         .HasMaxLength(2000)
                         .HasColumnType("TEXT");
@@ -1736,6 +1743,8 @@ namespace BlazorApp.Migrations
                     b.HasKey("StripeEventId");
 
                     b.HasIndex("ReceivedUtc");
+
+                    b.HasIndex("StripeMode", "ReceivedUtc");
 
                     b.ToTable("StripeEventLogs");
                 });
@@ -1770,6 +1779,10 @@ namespace BlazorApp.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("StripeMode")
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("StripeCustomerId")
                         .HasColumnType("TEXT");
 
@@ -1787,6 +1800,10 @@ namespace BlazorApp.Migrations
                         .HasColumnType("TEXT");
 
                     b.HasKey("UserId");
+
+                    b.HasIndex("StripeMode", "StripeCustomerId");
+
+                    b.HasIndex("StripeMode", "StripeSubscriptionId");
 
                     b.ToTable("UserEntitlements");
                 });

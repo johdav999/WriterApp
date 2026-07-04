@@ -15,16 +15,7 @@
         <div class="project-storyboard-error">@_storyboardError</div>
     }
 
-    @if (ChapterColumns.Count == 0)
-    {
-        <div class="project-storyboard-empty">
-            <strong>No scenes yet.</strong>
-            <span>Add scenes in Structure or Navigator to begin.</span>
-        </div>
-    }
-    else
-    {
-        <div class="project-storyboard-main">
+    <div class="project-storyboard-main">
             <div class="project-storyboard-toolbar">
                 <div class="project-storyboard-board-meta">
                     <span>@ChapterColumns.Count chapter@(ChapterColumns.Count == 1 ? string.Empty : "s")</span>
@@ -200,10 +191,11 @@
             <div class="project-storyboard-board"
                  role="list"
                  aria-label="Storyboard chapter columns"
-                 @onclick="ClearSelectionAsync">
+                 @onclick="HandleBoardBackgroundClickAsync">
                 @foreach (StoryboardChapterColumn column in ChapterColumns)
                 {
-                    <section class="storyboard-column"
+                    <section id="@GetChapterElementId(column.Chapter.Id)"
+                             class="storyboard-column"
                              role="listitem"
                              aria-label="@column.Chapter.Title"
                              @onclick:stopPropagation="true">
@@ -212,15 +204,69 @@
                             {
                                 <div class="storyboard-part-label">@column.PartTitle</div>
                             }
-                            <h4>@column.Chapter.Title</h4>
+                            <div class="storyboard-column-title-row">
+                                @if (column.IsPartPlaceholder)
+                                {
+                                    <h4>@GetChapterDisplayTitle(column.Chapter.Title)</h4>
+                                }
+                                else if (_editingChapterId == column.Chapter.Id)
+                                {
+                                    <input class="storyboard-column-title-input"
+                                           value="@_chapterTitleDraft"
+                                           @ref="_chapterTitleInputRef"
+                                           @oninput="OnChapterTitleDraftChanged"
+                                           @onkeydown:stopPropagation="true"
+                                           @onkeydown="args => HandleChapterTitleKeyDownAsync(column.Chapter, args)"
+                                           @onblur="() => CommitChapterTitleEditAsync(column.Chapter)" />
+                                }
+                                else
+                                {
+                                    <h4>@GetChapterDisplayTitle(column.Chapter.Title)</h4>
+                                }
+                                @if (!column.IsPartPlaceholder)
+                                {
+                                    <div class="storyboard-column-menu" @onclick:stopPropagation="true" @onpointerdown:stopPropagation="true">
+                                        <button type="button"
+                                                class="storyboard-column-menu-button"
+                                                aria-label="Chapter actions"
+                                                aria-haspopup="menu"
+                                                aria-expanded="@(_openChapterMenuId == column.Chapter.Id)"
+                                                @onclick="() => ToggleChapterMenu(column.Chapter.Id)">
+                                            <span class="material-symbols-rounded" aria-hidden="true">more_horiz</span>
+                                        </button>
+                                        @if (_openChapterMenuId == column.Chapter.Id)
+                                        {
+                                            <div class="storyboard-column-menu-popover" role="menu" aria-label="Chapter actions">
+                                                <button type="button"
+                                                        class="storyboard-column-menu-item"
+                                                        role="menuitem"
+                                                        @onpointerdown:stopPropagation="true"
+                                                        @onclick="() => StartChapterRenameAsync(column.Chapter)">
+                                                    Rename
+                                                </button>
+                                                <button type="button"
+                                                        class="storyboard-column-menu-item storyboard-column-menu-item--danger"
+                                                        role="menuitem"
+                                                        @onpointerdown:stopPropagation="true"
+                                                        @onclick="() => PromptDeleteChapter(column.Chapter.Id)">
+                                                    Delete chapter
+                                                </button>
+                                            </div>
+                                        }
+                                    </div>
+                                }
+                            </div>
                             <div class="storyboard-column-toolbar">
                                 <div class="storyboard-column-meta">
-                                    @column.Scenes.Count scene@(column.Scenes.Count == 1 ? string.Empty : "s")
+                                    @(column.IsPartPlaceholder ? "0 chapters" : $"{column.Scenes.Count} scene{(column.Scenes.Count == 1 ? string.Empty : "s")}")
                                 </div>
-                                <div class="storyboard-column-insights">
-                                    <span>@column.DraftSceneCount draft@(column.DraftSceneCount == 1 ? string.Empty : "s")</span>
-                                    <span>POV: @(string.IsNullOrWhiteSpace(column.DominantPov) ? "Mixed" : column.DominantPov)</span>
-                                </div>
+                                @if (!column.IsPartPlaceholder)
+                                {
+                                    <div class="storyboard-column-insights">
+                                        <span>@column.DraftSceneCount draft@(column.DraftSceneCount == 1 ? string.Empty : "s")</span>
+                                        <span>POV: @(string.IsNullOrWhiteSpace(column.DominantPov) ? "Mixed" : column.DominantPov)</span>
+                                    </div>
+                                }
                                 <div class="storyboard-column-actions">
                                     <button type="button"
                                             class="storyboard-column-action"
@@ -232,6 +278,27 @@
                         </header>
 
                         <div class="storyboard-column-body" @onclick="ClearSelectionAsync">
+                            @if (column.IsPartPlaceholder)
+                            {
+                                <div class="storyboard-scene-empty">No chapters in this part yet.</div>
+                                <div class="storyboard-add-scene-anchor" @onclick:stopPropagation="true">
+                                    <PlanGatedButton Feature="@nameof(FeatureKey.ProjectStructureEditing)"
+                                                     Class="storyboard-add-scene storyboard-add-scene--chapter"
+                                                     LockedTitle="Project structure changes are locked on your current plan."
+                                                     AriaLabel="Add chapter"
+                                                     ShowLockIndicator="false"
+                                                     IsBusy="@_addingChapterInFlight"
+                                                     IsActionDisabled="@(_moveInFlight || _deleteChapterInFlight)"
+                                                     OnClick="() => AddChapterAsync(column.Chapter.Id)">
+                                        <span class="storyboard-add-scene__icon" aria-hidden="true"></span>
+                                        <span class="storyboard-add-scene__label">
+                                            @(_addingChapterInFlight ? "Adding chapter..." : "Add chapter")
+                                        </span>
+                                    </PlanGatedButton>
+                                </div>
+                            }
+                            else
+                            {
                             <div class="@GetColumnDropClass(column.Chapter.Id, null)"
                                  @ondragover:preventDefault
                                  @ondrop:preventDefault
@@ -290,12 +357,12 @@
                                 <div class="storyboard-add-scene-anchor" @onclick:stopPropagation="true">
                                     <PlanGatedButton Feature="@nameof(FeatureKey.ProjectStructureEditing)"
                                                      Class="storyboard-add-scene"
-                                                     LockedTitle="Project structure changes are locked on your current plan."
-                                                     AriaLabel="Add scene"
-                                                     ShowLockIndicator="false"
-                                                     IsBusy="@(_addingSceneChapterId == column.Chapter.Id)"
-                                                     IsActionDisabled="@_moveInFlight"
-                                                     OnClick="() => AddSceneAsync(column.Chapter.Id)">
+                                                 LockedTitle="Project structure changes are locked on your current plan."
+                                                 AriaLabel="Add scene"
+                                                 ShowLockIndicator="false"
+                                                 IsBusy="@(_addingSceneChapterId == column.Chapter.Id)"
+                                                 IsActionDisabled="@(_moveInFlight || _addingChapterInFlight)"
+                                                 OnClick="() => AddSceneAsync(column.Chapter.Id)">
                                         <span class="storyboard-add-scene__icon" aria-hidden="true"></span>
                                         <span class="storyboard-add-scene__label">
                                             @(_addingSceneChapterId == column.Chapter.Id ? "Adding scene..." : "Add scene")
@@ -303,12 +370,33 @@
                                     </PlanGatedButton>
                                 </div>
                             </div>
+                            }
                         </div>
                     </section>
                 }
+
+                <section class="storyboard-column storyboard-column--add"
+                         role="listitem"
+                         aria-label="Add chapter"
+                         @onclick:stopPropagation="true">
+                    <div class="storyboard-column-add-placeholder">
+                        <PlanGatedButton Feature="@nameof(FeatureKey.ProjectStructureEditing)"
+                                         Class="storyboard-add-scene storyboard-add-scene--chapter"
+                                         LockedTitle="Project structure changes are locked on your current plan."
+                                         AriaLabel="Add chapter"
+                                         ShowLockIndicator="false"
+                                         IsBusy="@_addingChapterInFlight"
+                                         IsActionDisabled="@(_moveInFlight || _deleteChapterInFlight)"
+                                         OnClick="() => AddChapterAsync(null)">
+                            <span class="storyboard-add-scene__icon" aria-hidden="true"></span>
+                            <span class="storyboard-add-scene__label">
+                                @(_addingChapterInFlight ? "Adding chapter..." : "Add chapter")
+                            </span>
+                        </PlanGatedButton>
+                    </div>
+                </section>
             </div>
-        </div>
-    }
+    </div>
 </section>
 
 @if (_pendingDeleteSceneId.HasValue)
@@ -338,6 +426,36 @@
                 <button type="button"
                         @onclick="CancelDeleteScene"
                         disabled="@_deleteSceneInFlight">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_pendingDeleteChapterId.HasValue)
+{
+    <div class="storyboard-modal-overlay" role="presentation">
+        <div class="storyboard-modal-backdrop" @onclick="CancelDeleteChapter"></div>
+        <div class="storyboard-modal" role="dialog" aria-modal="true" aria-labelledby="deleteChapterTitle">
+            <div class="storyboard-modal-title" id="deleteChapterTitle">Delete chapter '@_pendingDeleteChapterTitle'?</div>
+            <div class="storyboard-modal-body">
+                <p>This will also delete all scenes in this chapter.</p>
+            </div>
+            @if (!string.IsNullOrWhiteSpace(_deleteChapterError))
+            {
+                <div class="storyboard-modal-error">@_deleteChapterError</div>
+            }
+            <div class="storyboard-modal-actions">
+                <button type="button"
+                        class="storyboard-modal-danger"
+                        @onclick="ConfirmDeleteChapterAsync"
+                        disabled="@_deleteChapterInFlight">
+                    Delete
+                </button>
+                <button type="button"
+                        @onclick="CancelDeleteChapter"
+                        disabled="@_deleteChapterInFlight">
                     Cancel
                 </button>
             </div>
@@ -399,13 +517,25 @@
     private Guid? _dropBeforeSceneId;
     private bool _moveInFlight;
     private Guid? _addingSceneChapterId;
+    private bool _addingChapterInFlight;
     private Guid? _highlightedSceneId;
     private Guid? _pendingScrollSceneId;
+    private Guid? _pendingScrollChapterId;
     private string? _storyboardError;
     private Guid? _pendingDeleteSceneId;
     private string? _pendingDeleteSceneTitle;
     private string? _deleteSceneError;
     private bool _deleteSceneInFlight;
+    private Guid? _pendingDeleteChapterId;
+    private string? _pendingDeleteChapterTitle;
+    private string? _deleteChapterError;
+    private bool _deleteChapterInFlight;
+    private Guid? _editingChapterId;
+    private Guid? _savingChapterTitleId;
+    private string _chapterTitleDraft = string.Empty;
+    private ElementReference _chapterTitleInputRef;
+    private bool _focusChapterTitleInputPending;
+    private Guid? _openChapterMenuId;
     private StoryboardColorMode _colorMode;
     private string _povFilter = string.Empty;
     private string _statusFilter = string.Empty;
@@ -444,14 +574,25 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!_pendingScrollSceneId.HasValue)
+        if (_pendingScrollChapterId.HasValue)
         {
-            return;
+            Guid chapterId = _pendingScrollChapterId.Value;
+            _pendingScrollChapterId = null;
+            await JS.InvokeVoidAsync("tiptapEditor.scrollToElement", GetChapterElementId(chapterId));
         }
 
-        Guid sceneId = _pendingScrollSceneId.Value;
-        _pendingScrollSceneId = null;
-        await JS.InvokeVoidAsync("tiptapEditor.scrollToElement", GetSceneElementId(sceneId));
+        if (_pendingScrollSceneId.HasValue)
+        {
+            Guid sceneId = _pendingScrollSceneId.Value;
+            _pendingScrollSceneId = null;
+            await JS.InvokeVoidAsync("tiptapEditor.scrollToElement", GetSceneElementId(sceneId));
+        }
+
+        if (_focusChapterTitleInputPending)
+        {
+            _focusChapterTitleInputPending = false;
+            await JS.InvokeVoidAsync("writerProjectsMenu.focusAndSelectInput", _chapterTitleInputRef);
+        }
     }
 
     private IReadOnlyList<StoryboardChapterColumn> BuildChapterColumns()
@@ -492,7 +633,16 @@
     {
         if (IsPart(node))
         {
-            foreach (ProjectNodeDto child in GetChildren(node.Id, byParent))
+            List<ProjectNodeDto> children = GetChildren(node.Id, byParent).ToList();
+            bool hasChapterDescendant = children.Any(IsChapter)
+                || children.Any(child => HasChapterDescendant(child.Id, byParent));
+            if (!hasChapterDescendant)
+            {
+                columns.Add(new StoryboardChapterColumn(node, "Part", new List<StoryboardSceneCard>(), IsPartPlaceholder: true));
+                return;
+            }
+
+            foreach (ProjectNodeDto child in children)
             {
                 AppendChapterColumns(child, node.Title, byParent, byId, columns);
             }
@@ -562,6 +712,19 @@
         return byParent.TryGetValue(parentId, out List<ProjectNodeDto>? children)
             ? children
             : Array.Empty<ProjectNodeDto>();
+    }
+
+    private static bool HasChapterDescendant(
+        Guid parentId,
+        IReadOnlyDictionary<Guid, List<ProjectNodeDto>> byParent)
+    {
+        if (!byParent.TryGetValue(parentId, out List<ProjectNodeDto>? children))
+        {
+            return false;
+        }
+
+        return children.Any(IsChapter)
+            || children.Any(child => HasChapterDescendant(child.Id, byParent));
     }
 
     private static string? TryExtractSceneSummary(ProjectNodeDto scene)
@@ -978,6 +1141,11 @@
         return string.Equals(node.NodeType, "scene", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static string GetChapterDisplayTitle(string? title)
+    {
+        return string.IsNullOrWhiteSpace(title) ? "Untitled chapter" : title.Trim();
+    }
+
     private void OnSceneDragStart(Guid sceneId, DragEventArgs args)
     {
         if (_moveInFlight)
@@ -1292,6 +1460,141 @@
             .OrderBy(existing => existing.ParentId)
             .ThenBy(existing => existing.OrderIndex)
             .ToList();
+    }
+
+    private int GetNextOrderIndex(Guid? parentId)
+    {
+        return _renderNodes
+            .Where(node => node.ParentId == parentId)
+            .Select(node => (int?)node.OrderIndex)
+            .Max() switch
+            {
+                int max => max + 1,
+                _ => 0
+            };
+    }
+
+    private static string GetChapterElementId(Guid chapterId)
+    {
+        return $"storyboard-chapter-{chapterId:D}";
+    }
+
+    private async Task HandleBoardBackgroundClickAsync()
+    {
+        _openChapterMenuId = null;
+        await ClearSelectionAsync();
+    }
+
+    private void ToggleChapterMenu(Guid chapterId)
+    {
+        _openChapterMenuId = _openChapterMenuId == chapterId ? null : chapterId;
+    }
+
+    private async Task StartChapterRenameAsync(ProjectNodeDto chapter)
+    {
+        _openChapterMenuId = null;
+        _storyboardError = null;
+        _editingChapterId = chapter.Id;
+        _chapterTitleDraft = GetChapterDisplayTitle(chapter.Title);
+        _focusChapterTitleInputPending = true;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void OnChapterTitleDraftChanged(ChangeEventArgs args)
+    {
+        _chapterTitleDraft = args.Value?.ToString() ?? string.Empty;
+    }
+
+    private async Task HandleChapterTitleKeyDownAsync(ProjectNodeDto chapter, KeyboardEventArgs args)
+    {
+        if (string.Equals(args.Key, "Enter", StringComparison.Ordinal))
+        {
+            await CommitChapterTitleEditAsync(chapter);
+            return;
+        }
+
+        if (string.Equals(args.Key, "Escape", StringComparison.Ordinal))
+        {
+            CancelChapterRename();
+        }
+    }
+
+    private void CancelChapterRename()
+    {
+        if (_savingChapterTitleId.HasValue)
+        {
+            return;
+        }
+
+        _editingChapterId = null;
+        _chapterTitleDraft = string.Empty;
+        _focusChapterTitleInputPending = false;
+    }
+
+    private async Task CommitChapterTitleEditAsync(ProjectNodeDto chapter)
+    {
+        if (Project is null || _editingChapterId != chapter.Id || _savingChapterTitleId == chapter.Id)
+        {
+            return;
+        }
+
+        ProjectNodeDto? existing = _renderNodes.FirstOrDefault(node => node.Id == chapter.Id);
+        if (existing is null)
+        {
+            CancelChapterRename();
+            return;
+        }
+
+        string nextTitle = GetChapterDisplayTitle(_chapterTitleDraft);
+        _editingChapterId = null;
+        _chapterTitleDraft = string.Empty;
+
+        if (string.Equals(nextTitle, GetChapterDisplayTitle(existing.Title), StringComparison.Ordinal))
+        {
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        _savingChapterTitleId = chapter.Id;
+        ProjectNodeDto optimistic = existing with
+        {
+            Title = nextTitle,
+            UpdatedUtc = DateTimeOffset.UtcNow
+        };
+
+        InsertOrUpdateRenderNode(optimistic);
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            using HttpResponseMessage response = await Http.PatchAsJsonAsync(
+                $"api/projects/{Project.Id}/nodes/{chapter.Id}",
+                new ProjectNodePatchRequest(
+                    optimistic.Title,
+                    existing.ParentId,
+                    existing.LinkedSectionId,
+                    existing.MetadataJson,
+                    existing.NodeType));
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new InvalidOperationException(await ReadApiErrorAsync(response, "Rename chapter failed."));
+            }
+
+            if (OnStructureChanged.HasDelegate)
+            {
+                await OnStructureChanged.InvokeAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _storyboardError = ex.Message;
+            InsertOrUpdateRenderNode(existing);
+            await InvokeAsync(StateHasChanged);
+        }
+        finally
+        {
+            _savingChapterTitleId = null;
+        }
     }
 
     public IReadOnlyList<ProjectNodeDto> GetRenderNodesSnapshot()
@@ -1784,6 +2087,7 @@
 
     private void PromptDeleteScene(Guid sceneId)
     {
+        _openChapterMenuId = null;
         ProjectNodeDto? sceneNode = _renderNodes.FirstOrDefault(node => node.Id == sceneId);
         if (sceneNode is null)
         {
@@ -1800,6 +2104,25 @@
         _pendingDeleteSceneTitle = string.IsNullOrWhiteSpace(sceneNode.Title) ? "Untitled scene" : sceneNode.Title.Trim();
     }
 
+    private void PromptDeleteChapter(Guid chapterId)
+    {
+        ProjectNodeDto? chapterNode = _renderNodes.FirstOrDefault(node => node.Id == chapterId && IsChapter(node));
+        if (chapterNode is null)
+        {
+            Logger.LogInformation(
+                "Storyboard chapter delete prevented for stale chapter. ProjectId={ProjectId} ChapterId={ChapterId}",
+                Project?.Id,
+                chapterId);
+            return;
+        }
+
+        _openChapterMenuId = null;
+        _storyboardError = null;
+        _deleteChapterError = null;
+        _pendingDeleteChapterId = chapterId;
+        _pendingDeleteChapterTitle = GetChapterDisplayTitle(chapterNode.Title);
+    }
+
     private void CancelDeleteScene()
     {
         if (_deleteSceneInFlight)
@@ -1810,6 +2133,18 @@
         _pendingDeleteSceneId = null;
         _pendingDeleteSceneTitle = null;
         _deleteSceneError = null;
+    }
+
+    private void CancelDeleteChapter()
+    {
+        if (_deleteChapterInFlight)
+        {
+            return;
+        }
+
+        _pendingDeleteChapterId = null;
+        _pendingDeleteChapterTitle = null;
+        _deleteChapterError = null;
     }
 
     private async Task ConfirmDeleteSceneAsync()
@@ -1882,6 +2217,73 @@
         finally
         {
             _deleteSceneInFlight = false;
+        }
+    }
+
+    private async Task ConfirmDeleteChapterAsync()
+    {
+        if (Project is null || !_pendingDeleteChapterId.HasValue || _deleteChapterInFlight)
+        {
+            return;
+        }
+
+        Guid chapterId = _pendingDeleteChapterId.Value;
+        List<ProjectNodeDto> snapshot = _renderNodes.ToList();
+        StoryboardSelectionChange previousSelection = new(SelectedSceneId, SelectedSceneIds.ToArray());
+        HashSet<Guid> removedSceneIds = GetSceneIdsInNodeTree(chapterId);
+
+        _deleteChapterInFlight = true;
+        _deleteChapterError = null;
+        _storyboardError = null;
+
+        try
+        {
+            RemoveRenderNodeTree(chapterId);
+            StoryboardSelectionChange nextSelection = BuildSelectionAfterRemovedScenes(removedSceneIds);
+            _pendingDeleteChapterId = null;
+            _pendingDeleteChapterTitle = null;
+
+            if (_editingChapterId == chapterId)
+            {
+                CancelChapterRename();
+            }
+
+            if (OnSelectionChanged.HasDelegate)
+            {
+                await OnSelectionChanged.InvokeAsync(nextSelection);
+            }
+
+            await InvokeAsync(StateHasChanged);
+
+            using HttpResponseMessage response = await Http.DeleteAsync($"api/projects/{Project.Id}/nodes/{chapterId}");
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new InvalidOperationException(await ReadApiErrorAsync(response, "Delete chapter failed."));
+            }
+
+            if (OnStructureChanged.HasDelegate)
+            {
+                await OnStructureChanged.InvokeAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _deleteChapterError = ex.Message;
+            _storyboardError = ex.Message;
+            _renderNodes = snapshot;
+            _pendingDeleteChapterId = chapterId;
+            _pendingDeleteChapterTitle = GetChapterDisplayTitle(snapshot.FirstOrDefault(node => node.Id == chapterId)?.Title);
+
+            if (OnSelectionChanged.HasDelegate)
+            {
+                await OnSelectionChanged.InvokeAsync(previousSelection);
+            }
+
+            await InvokeAsync(StateHasChanged);
+        }
+        finally
+        {
+            _deleteChapterInFlight = false;
         }
     }
 
@@ -2015,7 +2417,38 @@
         return (nextSelection, nextSceneId);
     }
 
-    private void RemoveRenderNodeTree(Guid nodeId)
+    private HashSet<Guid> GetSceneIdsInNodeTree(Guid nodeId)
+    {
+        HashSet<Guid> nodeIds = GetNodeTreeIds(nodeId);
+        return _renderNodes
+            .Where(node => nodeIds.Contains(node.Id) && IsScene(node))
+            .Select(node => node.Id)
+            .ToHashSet();
+    }
+
+    private StoryboardSelectionChange BuildSelectionAfterRemovedScenes(IReadOnlySet<Guid> removedSceneIds)
+    {
+        HashSet<Guid> remainingSelection = SelectedSceneIds
+            .Where(sceneId => !removedSceneIds.Contains(sceneId))
+            .ToHashSet();
+
+        if (remainingSelection.Count > 0)
+        {
+            Guid primarySceneId = SelectedSceneId.HasValue && remainingSelection.Contains(SelectedSceneId.Value)
+                ? SelectedSceneId.Value
+                : remainingSelection.First();
+            return new StoryboardSelectionChange(primarySceneId, remainingSelection.ToArray());
+        }
+
+        Guid nextSceneId = BuildAllSceneCards()
+            .Select(scene => scene.SceneId)
+            .FirstOrDefault();
+        return nextSceneId != Guid.Empty
+            ? new StoryboardSelectionChange(nextSceneId, [nextSceneId])
+            : new StoryboardSelectionChange(null, Array.Empty<Guid>());
+    }
+
+    private HashSet<Guid> GetNodeTreeIds(Guid nodeId)
     {
         HashSet<Guid> idsToRemove = [nodeId];
         bool added;
@@ -2032,6 +2465,12 @@
         }
         while (added);
 
+        return idsToRemove;
+    }
+
+    private void RemoveRenderNodeTree(Guid nodeId)
+    {
+        HashSet<Guid> idsToRemove = GetNodeTreeIds(nodeId);
         _renderNodes.RemoveAll(node => idsToRemove.Contains(node.Id));
     }
 
@@ -2051,6 +2490,82 @@
         }
 
         Navigation.NavigateTo($"projects/{Project.Id:D}?tab=structure&node={chapterId:D}");
+    }
+
+    private async Task AddChapterAsync(Guid? parentPartId)
+    {
+        if (Project is null || _addingChapterInFlight)
+        {
+            return;
+        }
+
+        _addingChapterInFlight = true;
+        _storyboardError = null;
+        _openChapterMenuId = null;
+
+        int orderIndex = GetNextOrderIndex(parentPartId);
+        Guid temporaryId = Guid.NewGuid();
+        ProjectNodeDto temporaryChapter = new(
+            temporaryId,
+            Project.Id,
+            parentPartId,
+            "chapter",
+            "New Chapter",
+            orderIndex,
+            null,
+            null,
+            0,
+            DateTimeOffset.UtcNow);
+
+        InsertOrUpdateRenderNode(temporaryChapter);
+        _pendingScrollChapterId = temporaryId;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            ProjectNodeCreateRequest request = new(
+                parentPartId,
+                "chapter",
+                "New Chapter",
+                orderIndex,
+                null,
+                null);
+
+            using HttpResponseMessage response = await Http.PostAsJsonAsync(
+                $"api/projects/{Project.Id}/nodes",
+                request);
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new InvalidOperationException(await ReadApiErrorAsync(response, "Add chapter failed."));
+            }
+
+            ProjectNodeDto? created = await response.Content.ReadFromJsonAsync<ProjectNodeDto>();
+            if (created is null)
+            {
+                throw new InvalidOperationException("Add chapter failed.");
+            }
+
+            _renderNodes.RemoveAll(node => node.Id == temporaryId);
+            InsertOrUpdateRenderNode(created);
+            _pendingScrollChapterId = created.Id;
+
+            if (OnStructureChanged.HasDelegate)
+            {
+                await OnStructureChanged.InvokeAsync();
+            }
+
+            await StartChapterRenameAsync(created);
+        }
+        catch (Exception ex)
+        {
+            _renderNodes.RemoveAll(node => node.Id == temporaryId);
+            _storyboardError = ex.Message;
+            await InvokeAsync(StateHasChanged);
+        }
+        finally
+        {
+            _addingChapterInFlight = false;
+        }
     }
 
     private async Task AddSceneAsync(Guid chapterId)
@@ -2295,7 +2810,8 @@
     private sealed record StoryboardChapterColumn(
         ProjectNodeDto Chapter,
         string? PartTitle,
-        List<StoryboardSceneCard> Scenes)
+        List<StoryboardSceneCard> Scenes,
+        bool IsPartPlaceholder = false)
     {
         public int DraftSceneCount => Scenes.Count(scene => IsDraftStatus(scene.Status));
 

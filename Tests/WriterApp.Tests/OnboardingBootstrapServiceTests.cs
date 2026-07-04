@@ -41,8 +41,10 @@ namespace WriterApp.Tests
             Assert.Equal(chapter.Id, scene.ParentId);
             PageRecord page = await db.Pages.SingleAsync();
             SceneContentRecord sceneContent = await db.SceneContents.SingleAsync();
-            Assert.Contains("The caf", page.Content);
+            Assert.Contains("Café", page.Content);
             Assert.Contains("their eyes met", page.Content);
+            Assert.DoesNotContain("caf&#", page.Content, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("cafÃ©", page.Content, StringComparison.OrdinalIgnoreCase);
             Assert.Equal(page.Content, sceneContent.ContentJson);
             Assert.True(OnboardingDemoSceneMetadata.IsDemoScene(scene.MetadataJson));
         }

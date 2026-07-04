@@ -28,6 +28,7 @@ using WriterApp.Client.State;
 using WriterApp.Application.Usage;
 using WriterApp.Client.Components.Editor;
 using WriterApp.Client.Services;
+using WriterApp.Shared;
 using WriterApp.Shared.Localization;
 using SelectionDocRange = WriterApp.Client.Components.Editor.PageEditor.SelectionDocRange;
 
@@ -38,10 +39,10 @@ namespace WriterApp.Client.Pages
         private const string ContextPanelStateStoragePrefix = "writerapp.editor.contextpanel.v1";
         private const int OnboardingMinTypedCharacters = 100;
         private const string OnboardingDemoSceneHtml =
-            "<p>The caf&#233; was quiet that afternoon, the kind of quiet that settles softly between the clink of cups and the low murmur of strangers. Outside, the street moved slowly through a pale autumn light.</p>"
-            + "<p>He had chosen the table by the window without thinking much about it. It was simply where he always sat when he came here&mdash;close enough to watch the world passing by, far enough away from everyone else.</p>"
+            "<p>The Café was quiet that afternoon, the kind of quiet that settles softly between the clink of cups and the low murmur of strangers. Outside, the street moved slowly through a pale autumn light.</p>"
+            + "<p>He had chosen the table by the window without thinking much about it. It was simply where he always sat when he came here - close enough to watch the world passing by, far enough away from everyone else.</p>"
             + "<p>He noticed her only after she had already been sitting there for several minutes.</p>"
-            + "<p>She was across the room, near the bookshelf, a cup of coffee resting untouched in front of her. She was reading something on her phone, though from time to time her eyes lifted, drifting around the room as if searching for something she couldn&#39;t quite name.</p>"
+            + "<p>She was across the room, near the bookshelf, a cup of coffee resting untouched in front of her. She was reading something on her phone, though from time to time her eyes lifted, drifting around the room as if searching for something she couldn't quite name.</p>"
             + "<p>At one of those moments their eyes met.</p>";
         private const string OnboardingDemoAiInstruction =
             "Tighten the character description. Focus especially on the woman across the room. Sharpen the visual details and make the prose more precise without rewriting the whole scene. Return only the revised section text.";
@@ -604,7 +605,7 @@ namespace WriterApp.Client.Pages
         private const int SectionTitleMaxLength = 120;
         private const int PageBreakHeightPx = 980;
         private const int PageBreakGutterOffsetPx = 28;
-        private const int PageBreakGapPx = 32;
+        private const int PageBreakGapPx = 0;
         private const int PagePaddingX = 20;
         private const int PagePaddingY = 24;
         private static readonly TimeSpan NotesAutosaveDebounce = TimeSpan.FromMilliseconds(700);
@@ -626,7 +627,7 @@ namespace WriterApp.Client.Pages
             {
                 LayoutState state = LayoutStateService.State;
                 string mode = state.PrintLayoutEnabled ? "print" : "simple";
-                bool showRule = !state.PrintLayoutEnabled;
+                bool showRule = false;
                 bool debug = IsDevelopmentEnvironment();
                 return new PageEditor.PageBreakOptions(
                     PageBreakHeightPx,
@@ -8652,15 +8653,22 @@ private const string PreviewBootstrapScript = @"
         }
 
         private async Task OnAiActionSelected(AiActionOption action)
+            => await OnAiActionSelected(action, allowOnboardingDemoBypass: false);
+
+        private async Task OnAiActionSelected(AiActionOption action, bool allowOnboardingDemoBypass)
         {
-            if (!IsAiAvailable)
+            bool onboardingDemoBypass = OnboardingAiDemoRequest.ShouldBypassClientGates(
+                allowOnboardingDemoBypass,
+                action.ActionKey,
+                action.Parameters);
+            if (!IsAiAvailable && !onboardingDemoBypass)
             {
                 ShowAiMessage(GetAiBlockedMessage());
                 await InvokeAsync(StateHasChanged);
                 return;
             }
 
-            if (!CanUseAiAction(action))
+            if (!CanUseAiAction(action) && !onboardingDemoBypass)
             {
                 ShowAiMessage(GetAiActionUpgradeTooltip(action));
                 await InvokeAsync(StateHasChanged);
@@ -8731,16 +8739,30 @@ private const string PreviewBootstrapScript = @"
                     commandLabel: action.Label);
                 if (!result.IsSuccessStatusCode)
                 {
-                    if (await TryHandleEntitlementDeniedAsync(result, "ai.actions", "Upgrade to continue using AI features."))
+                    if (!onboardingDemoBypass
+                        && await TryHandleEntitlementDeniedAsync(result, "ai.actions", "Upgrade to continue using AI features."))
                     {
                         ShowAiMessage(_entitlementUserMessage);
                         await InvokeAsync(StateHasChanged);
                         return;
                     }
 
-                    if (await TryHandlePlanUpgradeRequiredAsync(result))
+                    if (!onboardingDemoBypass
+                        && await TryHandlePlanUpgradeRequiredAsync(result))
                     {
                         return;
+                    }
+
+                    if (onboardingDemoBypass
+                        && (result.StatusCode == HttpStatusCode.PaymentRequired
+                            || result.StatusCode == HttpStatusCode.Forbidden))
+                    {
+                        Logger.LogWarning(
+                            "Onboarding AI demo request was not granted by the server. ActionKey={ActionKey}, StatusCode={StatusCode}, DocumentId={DocumentId}, SectionId={SectionId}",
+                            action.ActionKey,
+                            (int)result.StatusCode,
+                            DocumentId,
+                            _activeSection?.Id);
                     }
 
                     if (await TryHandleAiQuotaExceededAsync(result))
@@ -9035,11 +9057,11 @@ private const string PreviewBootstrapScript = @"
             {
                 "Novel" => (
                     "Welcome — let's start your novel.",
-                    "We created Act I with Scene 1 and loaded a sample caf&#233; scene so you can begin drafting right away.",
+                    "We created Act I with Scene 1 and loaded a sample Café scene so you can begin drafting right away.",
                     "Watch AI tighten the character description, then compare the before and after."),
                 "ShortStory" => (
                     "Welcome — let's start your short story.",
-                    "We created a Draft with Scene 1, loaded a sample caf&#233; scene, and added Ending Notes for your closing idea.",
+                    "We created a Draft with Scene 1, loaded a sample Café scene, and added Ending Notes for your closing idea.",
                     "Watch AI tighten the character description, then compare the before and after."),
                 "NonFiction" => (
                     "Welcome — let's start your non-fiction draft.",
@@ -9051,7 +9073,7 @@ private const string PreviewBootstrapScript = @"
                     "Watch AI tighten the character description, then compare the before and after."),
                 _ => (
                     "Welcome — let's start writing.",
-                    "We created a clean Draft with Scene 1 and loaded a sample caf&#233; scene so you can jump in quickly.",
+                    "We created a clean Draft with Scene 1 and loaded a sample Café scene so you can jump in quickly.",
                     "Watch AI tighten the character description, then compare the before and after.")
             };
 
@@ -9212,6 +9234,13 @@ private const string PreviewBootstrapScript = @"
 
                 await EnsureOnboardingStarterTextAsync();
                 Guid beforeProposalId = _pendingAiProposal?.ProposalId ?? Guid.Empty;
+                Logger.LogInformation(
+                    "Onboarding AI demo requested. DocumentId={DocumentId}, SectionId={SectionId}, AiUiEnabled={AiUiEnabled}, AiEntitled={AiEntitled}, QuotaExceeded={QuotaExceeded}",
+                    DocumentId,
+                    _activeSection?.Id,
+                    IsAiUiEnabled,
+                    IsAiEntitled,
+                    IsAiQuotaExceeded);
 
                 _onboardingWalkthroughStatus = "Running AI demo: \"tighten the character description\".";
                 AiActionOption onboardingDemo = new(
@@ -9226,7 +9255,7 @@ private const string PreviewBootstrapScript = @"
                     OnboardingDemoAiInstruction,
                     false);
 
-                await OnAiActionSelected(onboardingDemo);
+                await OnAiActionSelected(onboardingDemo, allowOnboardingDemoBypass: true);
 
                 bool aiSucceeded = _pendingAiProposal is not null
                     && _pendingAiProposal.ProposalId != beforeProposalId
@@ -9234,6 +9263,11 @@ private const string PreviewBootstrapScript = @"
 
                 if (aiSucceeded)
                 {
+                    Logger.LogInformation(
+                        "Onboarding AI demo completed. DocumentId={DocumentId}, SectionId={SectionId}, ProposalId={ProposalId}",
+                        DocumentId,
+                        _activeSection?.Id,
+                        _pendingAiProposal?.ProposalId);
                     await OnboardingService.SetStepAsync(8);
                     await OnboardingStateStore.RefreshAsync();
                     await EvaluateOnboardingCompletionAsync(forceTypingProbe: false);
@@ -9241,10 +9275,18 @@ private const string PreviewBootstrapScript = @"
                 }
                 else if (IsAiQuotaExceeded)
                 {
+                    Logger.LogWarning(
+                        "Onboarding AI demo did not complete because quota is exceeded. DocumentId={DocumentId}, SectionId={SectionId}",
+                        DocumentId,
+                        _activeSection?.Id);
                     _onboardingWalkthroughStatus = "AI demo did not complete. You can continue onboarding and try again.";
                 }
                 else
                 {
+                    Logger.LogWarning(
+                        "Onboarding AI demo did not complete without quota exhaustion. DocumentId={DocumentId}, SectionId={SectionId}",
+                        DocumentId,
+                        _activeSection?.Id);
                     _onboardingWalkthroughStatus = "AI demo did not complete. You can continue without AI.";
                 }
             }
@@ -9836,6 +9878,7 @@ private const string PreviewBootstrapScript = @"
                 _isAiQuotaDialogOpen = true;
                 _aiUsageStatus = new AiUsageStatusDto
                 {
+                    PlanKey = _aiQuotaPlanName,
                     Plan = _aiQuotaPlanName,
                     AiEnabled = _aiUsageStatus?.AiEnabled ?? true,
                     UiEnabled = _aiUsageStatus?.UiEnabled ?? true,
@@ -10982,9 +11025,14 @@ private const string PreviewBootstrapScript = @"
                 return "AI is not enabled for your plan.";
             }
 
-            if (IsAiQuotaExceeded)
+            if (_aiUsageStatus?.ShouldShowAiLimitMessage == true)
             {
                 return "You've reached your monthly AI limit.";
+            }
+
+            if (_aiUsageStatus?.ShouldShowAiUpgradeHint == true)
+            {
+                return "Upgrade to Standard or Professional to use AI features.";
             }
 
             return "AI usage is not available.";

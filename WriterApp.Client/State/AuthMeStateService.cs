@@ -5,6 +5,7 @@ using System.Net.Http.Json;
 using System.Threading.Tasks;
 using WriterApp.Application.Security;
 using WriterApp.Client.Utilities;
+using WriterApp.Shared.Billing;
 
 namespace WriterApp.Client.State
 {
@@ -33,6 +34,7 @@ namespace WriterApp.Client.State
         public string PlanKey { get; private set; } = "Free";
         public string EffectivePlanKey { get; private set; } = "Free";
         public string SubscriptionStatus { get; private set; } = string.Empty;
+        public string StripeCustomerId { get; private set; } = string.Empty;
         public DateTimeOffset? CurrentPeriodEndUtc { get; private set; }
         public bool CancelAtPeriodEnd { get; private set; }
         public bool IsPaidAccessActive { get; private set; }
@@ -43,6 +45,14 @@ namespace WriterApp.Client.State
         public int AiTokensUsedThisPeriod { get; private set; }
         public DateTimeOffset PeriodStartUtc { get; private set; }
         public DateTimeOffset EntitlementUpdatedUtc { get; private set; }
+
+        public void Reset()
+        {
+            _refreshInProgress = false;
+            _deletedAccountStateService.Clear();
+            _duplicateAccountStateService.Clear();
+            Apply(false, "Free", "Free", string.Empty, string.Empty, null, false, false, false, "None", 0, 0, DateTimeOffset.MinValue, DateTimeOffset.MinValue);
+        }
 
         public async Task RefreshAsync(bool force = false, DateTimeOffset? serverEntitlementUpdatedUtc = null)
         {
@@ -92,7 +102,7 @@ namespace WriterApp.Client.State
                 {
                     _deletedAccountStateService.Clear();
                     _duplicateAccountStateService.Clear();
-                    Apply(false, "Free", "Free", string.Empty, null, false, false, false, "None", 0, 0, DateTimeOffset.MinValue, DateTimeOffset.MinValue);
+                    Apply(false, "Free", "Free", string.Empty, string.Empty, null, false, false, false, "None", 0, 0, DateTimeOffset.MinValue, DateTimeOffset.MinValue);
                     return;
                 }
 
@@ -100,7 +110,7 @@ namespace WriterApp.Client.State
                 {
                     _deletedAccountStateService.Clear();
                     _duplicateAccountStateService.Clear();
-                    Apply(false, "Free", "Free", string.Empty, null, false, false, false, "None", 0, 0, DateTimeOffset.MinValue, DateTimeOffset.MinValue);
+                    Apply(false, "Free", "Free", string.Empty, string.Empty, null, false, false, false, "None", 0, 0, DateTimeOffset.MinValue, DateTimeOffset.MinValue);
                     return;
                 }
 
@@ -109,7 +119,7 @@ namespace WriterApp.Client.State
                 {
                     _deletedAccountStateService.Clear();
                     _duplicateAccountStateService.Clear();
-                    Apply(false, "Free", "Free", string.Empty, null, false, false, false, "None", 0, 0, DateTimeOffset.MinValue, DateTimeOffset.MinValue);
+                    Apply(false, "Free", "Free", string.Empty, string.Empty, null, false, false, false, "None", 0, 0, DateTimeOffset.MinValue, DateTimeOffset.MinValue);
                     return;
                 }
 
@@ -120,6 +130,7 @@ namespace WriterApp.Client.State
                     NormalizePlanKey(auth.PlanKey),
                     NormalizePlanKey(auth.EffectivePlanKey ?? auth.PlanKey),
                     NormalizeSubscriptionStatus(auth.SubscriptionStatus),
+                    auth.StripeCustomerId ?? string.Empty,
                     auth.CurrentPeriodEndUtc,
                     auth.CancelAtPeriodEnd,
                     auth.IsPaidAccessActive,
@@ -139,7 +150,7 @@ namespace WriterApp.Client.State
             }
         }
 
-        private void Apply(bool isAuthenticated, string planKey, string effectivePlanKey, string subscriptionStatus, DateTimeOffset? currentPeriodEndUtc, bool cancelAtPeriodEnd, bool isPaidAccessActive, bool isAdminAccess, string adminAccessSource, int budget, int used, DateTimeOffset periodStartUtc, DateTimeOffset entitlementUpdatedUtc)
+        private void Apply(bool isAuthenticated, string planKey, string effectivePlanKey, string subscriptionStatus, string stripeCustomerId, DateTimeOffset? currentPeriodEndUtc, bool cancelAtPeriodEnd, bool isPaidAccessActive, bool isAdminAccess, string adminAccessSource, int budget, int used, DateTimeOffset periodStartUtc, DateTimeOffset entitlementUpdatedUtc)
         {
             bool changed = IsLoaded != true
                 || IsAuthenticated != isAuthenticated
@@ -148,6 +159,7 @@ namespace WriterApp.Client.State
                 || !string.Equals(PlanKey, planKey, StringComparison.Ordinal)
                 || !string.Equals(EffectivePlanKey, effectivePlanKey, StringComparison.Ordinal)
                 || !string.Equals(SubscriptionStatus, subscriptionStatus, StringComparison.Ordinal)
+                || !string.Equals(StripeCustomerId, stripeCustomerId, StringComparison.Ordinal)
                 || CurrentPeriodEndUtc != currentPeriodEndUtc
                 || CancelAtPeriodEnd != cancelAtPeriodEnd
                 || IsPaidAccessActive != isPaidAccessActive
@@ -167,6 +179,7 @@ namespace WriterApp.Client.State
             PlanKey = planKey;
             EffectivePlanKey = effectivePlanKey;
             SubscriptionStatus = subscriptionStatus;
+            StripeCustomerId = stripeCustomerId;
             CurrentPeriodEndUtc = currentPeriodEndUtc;
             CancelAtPeriodEnd = cancelAtPeriodEnd;
             IsPaidAccessActive = isPaidAccessActive;
@@ -197,6 +210,7 @@ namespace WriterApp.Client.State
                 || !string.Equals(PlanKey, "Free", StringComparison.Ordinal)
                 || !string.Equals(EffectivePlanKey, "Free", StringComparison.Ordinal)
                 || !string.Equals(SubscriptionStatus, string.Empty, StringComparison.Ordinal)
+                || !string.Equals(StripeCustomerId, string.Empty, StringComparison.Ordinal)
                 || CurrentPeriodEndUtc != null
                 || CancelAtPeriodEnd
                 || IsPaidAccessActive
@@ -216,6 +230,7 @@ namespace WriterApp.Client.State
             PlanKey = "Free";
             EffectivePlanKey = "Free";
             SubscriptionStatus = string.Empty;
+            StripeCustomerId = string.Empty;
             CurrentPeriodEndUtc = null;
             CancelAtPeriodEnd = false;
             IsPaidAccessActive = false;
@@ -246,6 +261,7 @@ namespace WriterApp.Client.State
                 || !string.Equals(PlanKey, "Free", StringComparison.Ordinal)
                 || !string.Equals(EffectivePlanKey, "Free", StringComparison.Ordinal)
                 || !string.Equals(SubscriptionStatus, string.Empty, StringComparison.Ordinal)
+                || !string.Equals(StripeCustomerId, string.Empty, StringComparison.Ordinal)
                 || CurrentPeriodEndUtc != null
                 || CancelAtPeriodEnd
                 || IsPaidAccessActive
@@ -265,6 +281,7 @@ namespace WriterApp.Client.State
             PlanKey = "Free";
             EffectivePlanKey = "Free";
             SubscriptionStatus = string.Empty;
+            StripeCustomerId = string.Empty;
             CurrentPeriodEndUtc = null;
             CancelAtPeriodEnd = false;
             IsPaidAccessActive = false;
@@ -300,7 +317,7 @@ namespace WriterApp.Client.State
 
         private static string NormalizeSubscriptionStatus(string? raw)
         {
-            return string.IsNullOrWhiteSpace(raw) ? string.Empty : raw.Trim();
+            return BillingSubscriptionPolicy.NormalizeStatus(raw);
         }
 
         private static string NormalizeAdminAccessSource(string? raw)

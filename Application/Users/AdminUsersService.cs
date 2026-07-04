@@ -1001,6 +1001,11 @@ namespace WriterApp.Application.Users
                     entitlement.PeriodStartUtc = nowOffset;
                     entitlement.StripeSubscriptionId = null;
                     entitlement.StripePriceId = null;
+                    if (string.IsNullOrWhiteSpace(entitlement.StripeCustomerId))
+                    {
+                        entitlement.StripeMode = null;
+                    }
+
                     entitlement.CurrentPeriodEndUtc = null;
                     entitlement.CancelAtPeriodEnd = false;
                     entitlement.UpdatedUtc = nowOffset;
@@ -1201,9 +1206,24 @@ namespace WriterApp.Application.Users
                 throw new InvalidOperationException("Entitlement store is not configured.");
             }
             UserEntitlement entitlement = await _userEntitlementStore.GetOrCreateAsync(normalizedUserId, ct);
+            string activeStripeMode = StripeBillingEnvironment.Normalize(_stripeOptions.Mode);
+            string storedStripeMode = StripeBillingEnvironment.ResolveStoredMode(entitlement, _stripeOptions);
 
             string? customerId = entitlement.StripeCustomerId;
             string? subscriptionId = entitlement.StripeSubscriptionId;
+            if (StripeBillingEnvironment.IsModeMismatch(storedStripeMode, activeStripeMode))
+            {
+                _logger.LogWarning(
+                    "Admin Stripe sync ignored opposite-mode linkage. UserId={UserId} StoredStripeMode={StoredStripeMode} ActiveStripeMode={ActiveStripeMode} StoredCustomerId={StoredCustomerId} StoredSubscriptionId={StoredSubscriptionId}",
+                    normalizedUserId,
+                    storedStripeMode,
+                    activeStripeMode,
+                    customerId ?? string.Empty,
+                    subscriptionId ?? string.Empty);
+                customerId = null;
+                subscriptionId = null;
+            }
+
             if (string.IsNullOrWhiteSpace(customerId))
             {
                 customerId = await _stripeApiClient.FindCustomerByUserIdAsync(_stripeOptions.SecretKey, normalizedUserId, ct);

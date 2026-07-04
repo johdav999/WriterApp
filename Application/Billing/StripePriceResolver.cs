@@ -1,15 +1,14 @@
 using System;
-using Microsoft.Extensions.Options;
 
 namespace WriterApp.Application.Billing
 {
     public sealed class StripePriceResolver : IStripePriceResolver
     {
-        private readonly StripeBillingOptions _options;
+        private readonly StripeOptions _options;
 
-        public StripePriceResolver(IOptions<StripeBillingOptions> options)
+        public StripePriceResolver(StripeOptions options)
         {
-            _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
+            _options = options ?? throw new ArgumentNullException(nameof(options));
         }
 
         public string ResolvePriceId(string planKey, out string normalizedPlanKey)
@@ -20,7 +19,7 @@ namespace WriterApp.Application.Billing
             }
 
             normalizedPlanKey = planKey.Trim().ToLowerInvariant();
-            StripeBillingPlanPriceOptions prices = normalizedPlanKey switch
+            StripePlanPriceOptions prices = normalizedPlanKey switch
             {
                 "standard" => _options.Prices.Standard,
                 "pro" => _options.Prices.Pro,

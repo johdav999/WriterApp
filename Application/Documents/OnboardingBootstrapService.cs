@@ -32,13 +32,13 @@ namespace WriterApp.Application.Documents
     public sealed class OnboardingBootstrapService : IOnboardingBootstrapService
     {
         private const string DemoSceneText = """
-The café was quiet that afternoon, the kind of quiet that settles softly between the clink of cups and the low murmur of strangers. Outside, the street moved slowly through a pale autumn light.
+The Café was quiet that afternoon, the kind of quiet that settles softly between the clink of cups and the low murmur of strangers. Outside, the street moved slowly through a pale autumn light.
 
-He had chosen the table by the window without thinking much about it. It was simply where he always sat when he came here—close enough to watch the world passing by, far enough away from everyone else.
+He had chosen the table by the window without thinking much about it. It was simply where he always sat when he came here - close enough to watch the world passing by, far enough away from everyone else.
 
 He noticed her only after she had already been sitting there for several minutes.
 
-She was across the room, near the bookshelf, a cup of coffee resting untouched in front of her. She was reading something on her phone, though from time to time her eyes lifted, drifting around the room as if searching for something she couldn’t quite name.
+She was across the room, near the bookshelf, a cup of coffee resting untouched in front of her. She was reading something on her phone, though from time to time her eyes lifted, drifting around the room as if searching for something she couldn't quite name.
 
 At one of those moments their eyes met.
 """;

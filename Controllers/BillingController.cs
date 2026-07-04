@@ -9,13 +9,13 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using WriterApp.Application.Billing;
 using WriterApp.Application.Security;
 using WriterApp.Application.Subscriptions;
 using WriterApp.Data;
 using WriterApp.Data.Subscriptions;
 using WriterApp.Shared;
+using WriterApp.Shared.Billing;
 
 namespace WriterApp.Controllers
 {
@@ -28,7 +28,6 @@ namespace WriterApp.Controllers
         private readonly IUserIdResolver _userIdResolver;
         private readonly IUserEntitlementStore _userEntitlementStore;
         private readonly StripeOptions _stripeOptions;
-        private readonly StripeBillingOptions _stripeBillingOptions;
         private readonly IStripePriceResolver _stripePriceResolver;
         private readonly IStripeClientFacade _stripeClientFacade;
         private readonly StripeEntitlementSyncService _stripeEntitlementSyncService;
@@ -41,7 +40,6 @@ namespace WriterApp.Controllers
             IUserIdResolver userIdResolver,
             IUserEntitlementStore userEntitlementStore,
             StripeOptions stripeOptions,
-            IOptions<StripeBillingOptions> stripeBillingOptions,
             IStripePriceResolver stripePriceResolver,
             IStripeClientFacade stripeClientFacade,
             StripeEntitlementSyncService stripeEntitlementSyncService,
@@ -53,7 +51,6 @@ namespace WriterApp.Controllers
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
             _userEntitlementStore = userEntitlementStore ?? throw new ArgumentNullException(nameof(userEntitlementStore));
             _stripeOptions = stripeOptions ?? throw new ArgumentNullException(nameof(stripeOptions));
-            _stripeBillingOptions = stripeBillingOptions?.Value ?? throw new ArgumentNullException(nameof(stripeBillingOptions));
             _stripePriceResolver = stripePriceResolver ?? throw new ArgumentNullException(nameof(stripePriceResolver));
             _stripeClientFacade = stripeClientFacade ?? throw new ArgumentNullException(nameof(stripeClientFacade));
             _stripeEntitlementSyncService = stripeEntitlementSyncService ?? throw new ArgumentNullException(nameof(stripeEntitlementSyncService));
@@ -65,17 +62,17 @@ namespace WriterApp.Controllers
         [HttpGet("status")]
         public ActionResult<BillingStatusResponse> GetBillingStatus()
         {
-            bool hasSecretKey = !string.IsNullOrWhiteSpace(_stripeBillingOptions.ApiKey);
-            bool hasWebhookSecret = !string.IsNullOrWhiteSpace(_stripeBillingOptions.WebhookSecret);
+            bool hasSecretKey = !string.IsNullOrWhiteSpace(_stripeOptions.SecretKey);
+            bool hasWebhookSecret = !string.IsNullOrWhiteSpace(_stripeOptions.WebhookSecret);
             bool hasStandardPrice =
-                !string.IsNullOrWhiteSpace(_stripeBillingOptions.Prices.Standard.TestPriceId)
-                || !string.IsNullOrWhiteSpace(_stripeBillingOptions.Prices.Standard.LivePriceId);
+                !string.IsNullOrWhiteSpace(_stripeOptions.Prices.Standard.TestPriceId)
+                || !string.IsNullOrWhiteSpace(_stripeOptions.Prices.Standard.LivePriceId);
             bool hasProPrice =
-                !string.IsNullOrWhiteSpace(_stripeBillingOptions.Prices.Pro.TestPriceId)
-                || !string.IsNullOrWhiteSpace(_stripeBillingOptions.Prices.Pro.LivePriceId);
+                !string.IsNullOrWhiteSpace(_stripeOptions.Prices.Pro.TestPriceId)
+                || !string.IsNullOrWhiteSpace(_stripeOptions.Prices.Pro.LivePriceId);
 
             return Ok(new BillingStatusResponse(
-                _stripeBillingOptions.Mode,
+                _stripeOptions.Mode,
                 hasSecretKey,
                 hasSecretKey && hasWebhookSecret,
                 hasStandardPrice,
@@ -88,13 +85,23 @@ namespace WriterApp.Controllers
             [FromBody] CreateBillingCheckoutRequest request,
             CancellationToken ct)
         {
-            if (string.IsNullOrWhiteSpace(_stripeBillingOptions.ApiKey))
+            if (!_stripeOptions.Enabled || string.IsNullOrWhiteSpace(_stripeOptions.SecretKey))
             {
+                _logger.LogWarning(
+                    "Stripe checkout session request blocked because Stripe is not configured. Enabled={Enabled} Mode={Mode} SecretKeyPresent={SecretKeyPresent} WebhookSecretPresent={WebhookSecretPresent} CurrentStandardPriceConfigured={CurrentStandardPriceConfigured} CurrentProPriceConfigured={CurrentProPriceConfigured} LegacyBillingConfigFallbackUsed={LegacyBillingConfigFallbackUsed}",
+                    _stripeOptions.Enabled,
+                    _stripeOptions.Mode,
+                    !string.IsNullOrWhiteSpace(_stripeOptions.SecretKey),
+                    !string.IsNullOrWhiteSpace(_stripeOptions.WebhookSecret),
+                    !string.IsNullOrWhiteSpace(_stripeOptions.CurrentStandardPriceId),
+                    !string.IsNullOrWhiteSpace(_stripeOptions.CurrentProPriceId),
+                    _stripeOptions.LegacyBillingConfigFallbackUsed);
+
                 return StatusCode(StatusCodes.Status503ServiceUnavailable, new ProblemDetails
                 {
                     Status = StatusCodes.Status503ServiceUnavailable,
                     Title = "Billing unavailable",
-                    Detail = "Stripe checkout is disabled because Stripe:Billing:ApiKey is not configured."
+                    Detail = "Stripe checkout is disabled because Stripe is not configured."
                 });
             }
 
@@ -116,20 +123,37 @@ namespace WriterApp.Controllers
 
             string userId = _userIdResolver.ResolveUserId(User);
             UserEntitlement entitlement = await _userEntitlementStore.GetOrCreateAsync(userId, ct);
-            string customerId = await EnsureStripeCustomerIdAsync(entitlement, userId, allowCreate: true, _stripeBillingOptions.ApiKey, ct);
+            string customerId = await EnsureStripeCustomerIdAsync(entitlement, userId, allowCreate: true, _stripeOptions.SecretKey, ct);
 
-            string baseUrl = _stripeRedirectUrlBuilder.ResolveBaseUrl(Request);
+            StripeBaseUrlResolution baseUrlResolution = _stripeRedirectUrlBuilder.ResolveBaseUrlContext(Request);
+            string baseUrl = baseUrlResolution.BaseUrl;
             string successUrl = AppendQueryParameter(
-                BuildCheckoutUrl(baseUrl, _stripeBillingOptions.Checkout.SuccessPath),
+                BuildCheckoutUrl(baseUrl, _stripeOptions.Checkout.SuccessPath),
                 "plan",
                 normalizedPlanKey);
-            string cancelUrl = BuildCheckoutUrl(baseUrl, _stripeBillingOptions.Checkout.CancelPath);
+            string cancelUrl = BuildCheckoutUrl(baseUrl, _stripeOptions.Checkout.CancelPath);
+
+            _logger.LogInformation(
+                "Stripe checkout session request prepared. UserId={UserId} PlanKey={PlanKey} PriceId={PriceId} StripeMode={StripeMode} StripeCustomerId={StripeCustomerId} SuccessUrl={SuccessUrl} CancelUrl={CancelUrl} BaseUrl={BaseUrl} BaseUrlSource={BaseUrlSource} RequestHost={RequestHost} RequestScheme={RequestScheme} RequestPathBase={RequestPathBase} RequestHostLooksLikeAzureAppService={RequestHostLooksLikeAzureAppService}",
+                userId,
+                normalizedPlanKey,
+                priceId,
+                GetActiveStripeMode(),
+                customerId,
+                successUrl,
+                cancelUrl,
+                baseUrlResolution.BaseUrl,
+                baseUrlResolution.Source,
+                baseUrlResolution.RequestHost,
+                baseUrlResolution.RequestScheme,
+                baseUrlResolution.RequestPathBase,
+                baseUrlResolution.RequestHostLooksLikeAzureAppService);
 
             string checkoutUrl;
             try
             {
                 checkoutUrl = await _stripeApiClient.CreateCheckoutSessionAsync(
-                    _stripeBillingOptions.ApiKey,
+                    _stripeOptions.SecretKey,
                     customerId,
                     userId,
                     normalizedPlanKey,
@@ -177,6 +201,7 @@ namespace WriterApp.Controllers
             }
 
             entitlement.StripePriceId = priceId;
+            entitlement.StripeMode = GetActiveStripeMode();
             entitlement.UpdatedUtc = DateTimeOffset.UtcNow;
             await _dbContext.SaveChangesAsync(ct);
 
@@ -214,6 +239,12 @@ namespace WriterApp.Controllers
             }
 
             string portalReturnUrl = _stripeRedirectUrlBuilder.BuildAbsoluteUrl(Request, _stripeOptions.BillingPortalReturnUrl, "/app/account");
+            _logger.LogInformation(
+                "Stripe billing portal request prepared. UserId={UserId} StripeCustomerId={StripeCustomerId} StripeMode={StripeMode} PortalReturnUrl={PortalReturnUrl}",
+                userId,
+                customerId,
+                GetActiveStripeMode(),
+                portalReturnUrl);
 
             string portalUrl;
             try
@@ -370,7 +401,8 @@ namespace WriterApp.Controllers
             string userId = _userIdResolver.ResolveUserId(User);
             UserEntitlement entitlement = await _userEntitlementStore.GetOrCreateAsync(userId, ct);
             string correlationId = Request.Headers["X-Correlation-ID"].FirstOrDefault() ?? HttpContext.TraceIdentifier;
-            bool hasSubscription = !string.IsNullOrWhiteSpace(entitlement.StripeSubscriptionId);
+            bool hasSubscription = !string.IsNullOrWhiteSpace(entitlement.StripeSubscriptionId)
+                && !StripeBillingEnvironment.IsModeMismatch(ResolveStoredStripeMode(entitlement), GetActiveStripeMode());
 
             if (hasSubscription)
             {
@@ -429,22 +461,23 @@ namespace WriterApp.Controllers
                 }
 
                 _logger.LogInformation(
-                    "Upgrade URL created. UserId={UserId} PlanKey={PlanKey} Route=portal CorrelationId={CorrelationId} Feature={Feature}",
+                    "Upgrade URL created. UserId={UserId} PlanKey={PlanKey} Route=portal CorrelationId={CorrelationId} Feature={Feature} PortalReturnUrl={PortalReturnUrl}",
                     userId,
                     normalizedPlanKey,
                     correlationId,
-                    feature ?? string.Empty);
+                    feature ?? string.Empty,
+                    portalReturnUrl);
 
                 return Ok(new BillingUrlResponse(portalUrl));
             }
 
-            if (string.IsNullOrWhiteSpace(_stripeBillingOptions.ApiKey))
+            if (!_stripeOptions.Enabled || string.IsNullOrWhiteSpace(_stripeOptions.SecretKey))
             {
                 return StatusCode(StatusCodes.Status503ServiceUnavailable, new ProblemDetails
                 {
                     Status = StatusCodes.Status503ServiceUnavailable,
                     Title = "Billing unavailable",
-                    Detail = "Stripe checkout is disabled because Stripe:Billing:ApiKey is not configured."
+                    Detail = "Stripe checkout is disabled because Stripe is not configured."
                 });
             }
 
@@ -462,19 +495,28 @@ namespace WriterApp.Controllers
                     Detail = ex.Message
                 });
             }
-            string stripeCustomerId = await EnsureStripeCustomerIdAsync(entitlement, userId, allowCreate: true, _stripeBillingOptions.ApiKey, ct);
-            string baseUrl = _stripeRedirectUrlBuilder.ResolveBaseUrl(Request);
+            string stripeCustomerId = await EnsureStripeCustomerIdAsync(entitlement, userId, allowCreate: true, _stripeOptions.SecretKey, ct);
+            StripeBaseUrlResolution baseUrlResolution = _stripeRedirectUrlBuilder.ResolveBaseUrlContext(Request);
+            string baseUrl = baseUrlResolution.BaseUrl;
             string successUrl = AppendQueryParameter(
-                BuildCheckoutUrl(baseUrl, _stripeBillingOptions.Checkout.SuccessPath),
+                BuildCheckoutUrl(baseUrl, _stripeOptions.Checkout.SuccessPath),
                 "plan",
                 normalizedPlanKey);
-            string cancelUrl = BuildCheckoutUrl(baseUrl, _stripeBillingOptions.Checkout.CancelPath);
+            string cancelUrl = BuildCheckoutUrl(baseUrl, _stripeOptions.Checkout.CancelPath);
             _logger.LogInformation(
-                "Upgrade checkout redirect URLs prepared. CorrelationId={CorrelationId} PlanKey={PlanKey} Feature={Feature} BaseUrl={BaseUrl} SuccessUrl={SuccessUrl} CancelUrl={CancelUrl}",
+                "Upgrade checkout redirect URLs prepared. CorrelationId={CorrelationId} UserId={UserId} PlanKey={PlanKey} Feature={Feature} PriceId={PriceId} StripeMode={StripeMode} BaseUrl={BaseUrl} BaseUrlSource={BaseUrlSource} RequestHost={RequestHost} RequestScheme={RequestScheme} RequestPathBase={RequestPathBase} RequestHostLooksLikeAzureAppService={RequestHostLooksLikeAzureAppService} SuccessUrl={SuccessUrl} CancelUrl={CancelUrl}",
                 correlationId,
+                userId,
                 normalizedPlanKey,
                 feature ?? string.Empty,
-                baseUrl,
+                priceId,
+                GetActiveStripeMode(),
+                baseUrlResolution.BaseUrl,
+                baseUrlResolution.Source,
+                baseUrlResolution.RequestHost,
+                baseUrlResolution.RequestScheme,
+                baseUrlResolution.RequestPathBase,
+                baseUrlResolution.RequestHostLooksLikeAzureAppService,
                 successUrl,
                 cancelUrl);
 
@@ -514,7 +556,7 @@ namespace WriterApp.Controllers
             try
             {
                 checkoutUrl = await _stripeApiClient.CreateCheckoutSessionAsync(
-                    _stripeBillingOptions.ApiKey,
+                    _stripeOptions.SecretKey,
                     stripeCustomerId,
                     userId,
                     normalizedPlanKey,
@@ -565,6 +607,7 @@ namespace WriterApp.Controllers
             }
 
             entitlement.StripePriceId = priceId;
+            entitlement.StripeMode = GetActiveStripeMode();
             entitlement.UpdatedUtc = DateTimeOffset.UtcNow;
             await _dbContext.SaveChangesAsync(ct);
 
@@ -585,7 +628,7 @@ namespace WriterApp.Controllers
             [FromQuery(Name = "session_id")] string? sessionIdSnakeCase,
             CancellationToken ct)
         {
-            if (string.IsNullOrWhiteSpace(_stripeBillingOptions.ApiKey))
+            if (!_stripeOptions.Enabled || string.IsNullOrWhiteSpace(_stripeOptions.SecretKey))
             {
                 return StatusCode(StatusCodes.Status503ServiceUnavailable, CreateApiError("stripe_not_configured", "Stripe is not configured."));
             }
@@ -605,7 +648,7 @@ namespace WriterApp.Controllers
 
             try
             {
-                using JsonDocument session = await _stripeClientFacade.GetCheckoutSessionAsync(_stripeBillingOptions.ApiKey, normalizedSessionId, ct);
+                using JsonDocument session = await _stripeClientFacade.GetCheckoutSessionAsync(_stripeOptions.SecretKey, normalizedSessionId, ct);
                 if (!IsSessionOwnedByUser(session.RootElement, userId))
                 {
                     _logger.LogWarning("Checkout status forbidden due to ownership mismatch. UserId={UserId} SessionSuffix={SessionSuffix}", userId, Last6(normalizedSessionId));
@@ -618,7 +661,7 @@ namespace WriterApp.Controllers
                 {
                     string? customerId = ReadString(session.RootElement, "customer");
                     using JsonDocument subscription = await _stripeClientFacade.GetSubscriptionAsync(
-                        _stripeBillingOptions.ApiKey,
+                        _stripeOptions.SecretKey,
                         dto.SubscriptionId,
                         ct);
                     await _stripeEntitlementSyncService.SyncFromSubscriptionAsync(
@@ -643,7 +686,7 @@ namespace WriterApp.Controllers
             [FromBody] SyncEntitlementsRequest request,
             CancellationToken ct)
         {
-            if (string.IsNullOrWhiteSpace(_stripeBillingOptions.ApiKey))
+            if (!_stripeOptions.Enabled || string.IsNullOrWhiteSpace(_stripeOptions.SecretKey))
             {
                 return StatusCode(StatusCodes.Status503ServiceUnavailable, CreateApiError("stripe_not_configured", "Stripe is not configured."));
             }
@@ -665,7 +708,7 @@ namespace WriterApp.Controllers
                     return BadRequest(CreateApiError("invalid_session_id", "sessionId must start with 'cs_'."));
                 }
 
-                using JsonDocument session = await _stripeClientFacade.GetCheckoutSessionAsync(_stripeBillingOptions.ApiKey, sessionId, ct);
+                using JsonDocument session = await _stripeClientFacade.GetCheckoutSessionAsync(_stripeOptions.SecretKey, sessionId, ct);
                 if (!IsSessionOwnedByUser(session.RootElement, userId))
                 {
                     _logger.LogWarning("Sync entitlements forbidden due to ownership mismatch. UserId={UserId} SessionSuffix={SessionSuffix}", userId, Last6(sessionId));
@@ -681,10 +724,24 @@ namespace WriterApp.Controllers
                 return BadRequest(CreateApiError("invalid_subscription_id", "subscriptionId could not be resolved."));
             }
 
-            _logger.LogInformation("Sync entitlements invoked. UserId={UserId} SubscriptionId={SubscriptionId}", userId, subscriptionId);
+            _logger.LogInformation(
+                "Sync entitlements invoked. UserId={UserId} SubscriptionId={SubscriptionId} StripeCustomerId={StripeCustomerId} SessionIdPresent={SessionIdPresent} StripeMode={StripeMode}",
+                userId,
+                subscriptionId,
+                customerId ?? string.Empty,
+                !string.IsNullOrWhiteSpace(request.SessionId),
+                GetActiveStripeMode());
 
-            using JsonDocument subscription = await _stripeClientFacade.GetSubscriptionAsync(_stripeBillingOptions.ApiKey, subscriptionId, ct);
+            using JsonDocument subscription = await _stripeClientFacade.GetSubscriptionAsync(_stripeOptions.SecretKey, subscriptionId, ct);
             UserEntitlement updated = await _stripeEntitlementSyncService.SyncFromSubscriptionAsync(userId, customerId, subscription.RootElement, ct);
+            _logger.LogInformation(
+                "Sync entitlements completed. UserId={UserId} PlanKey={PlanKey} SubscriptionStatus={SubscriptionStatus} StripeCustomerId={StripeCustomerId} StripeSubscriptionId={StripeSubscriptionId} StripePriceId={StripePriceId}",
+                updated.UserId,
+                updated.PlanKey ?? string.Empty,
+                updated.SubscriptionStatus ?? string.Empty,
+                updated.StripeCustomerId ?? string.Empty,
+                updated.StripeSubscriptionId ?? string.Empty,
+                updated.StripePriceId ?? string.Empty);
             return Ok(BuildSyncEntitlementsResponse(updated));
         }
 
@@ -695,12 +752,22 @@ namespace WriterApp.Controllers
             string secretKey,
             CancellationToken ct)
         {
+            string activeMode = GetActiveStripeMode();
+            string storedMode = ResolveStoredStripeMode(entitlement);
+            bool hasModeMismatch = StripeBillingEnvironment.IsModeMismatch(storedMode, activeMode);
             string? customerId = entitlement.StripeCustomerId;
+            if (hasModeMismatch)
+            {
+                LogStripeModeMismatch("customer lookup", entitlement, storedMode);
+                customerId = null;
+            }
+
             if (!string.IsNullOrWhiteSpace(customerId))
             {
                 bool exists = await _stripeApiClient.CustomerExistsAsync(secretKey, customerId, ct);
                 if (exists)
                 {
+                    await StampStripeModeIfNeededAsync(entitlement, activeMode, ct);
                     return customerId;
                 }
             }
@@ -708,6 +775,12 @@ namespace WriterApp.Controllers
             string? found = await _stripeApiClient.FindCustomerByUserIdAsync(secretKey, userId, ct);
             if (!string.IsNullOrWhiteSpace(found))
             {
+                if (hasModeMismatch)
+                {
+                    ClearStoredSubscriptionState(entitlement);
+                }
+
+                entitlement.StripeMode = activeMode;
                 entitlement.StripeCustomerId = found;
                 entitlement.UpdatedUtc = DateTimeOffset.UtcNow;
                 await _dbContext.SaveChangesAsync(ct);
@@ -720,6 +793,12 @@ namespace WriterApp.Controllers
             }
 
             string created = await _stripeApiClient.CreateCustomerAsync(secretKey, userId, ct);
+            if (hasModeMismatch)
+            {
+                ClearStoredSubscriptionState(entitlement);
+            }
+
+            entitlement.StripeMode = activeMode;
             entitlement.StripeCustomerId = created;
             entitlement.UpdatedUtc = DateTimeOffset.UtcNow;
             await _dbContext.SaveChangesAsync(ct);
@@ -731,8 +810,16 @@ namespace WriterApp.Controllers
             string userId,
             CancellationToken ct)
         {
+            string activeMode = GetActiveStripeMode();
+            string storedMode = ResolveStoredStripeMode(entitlement);
             string? customerId = entitlement.StripeCustomerId;
             string? subscriptionId = entitlement.StripeSubscriptionId;
+            if (StripeBillingEnvironment.IsModeMismatch(storedMode, activeMode))
+            {
+                LogStripeModeMismatch("managed subscription lookup", entitlement, storedMode);
+                customerId = null;
+                subscriptionId = null;
+            }
 
             if (string.IsNullOrWhiteSpace(customerId) && !string.IsNullOrWhiteSpace(subscriptionId))
             {
@@ -740,6 +827,7 @@ namespace WriterApp.Controllers
                 string? resolvedCustomerId = ReadString(subscriptionById.RootElement, "customer");
                 if (!string.IsNullOrWhiteSpace(resolvedCustomerId))
                 {
+                    entitlement.StripeMode = activeMode;
                     entitlement.StripeCustomerId = resolvedCustomerId;
                     entitlement.UpdatedUtc = DateTimeOffset.UtcNow;
                     await _dbContext.SaveChangesAsync(ct);
@@ -753,6 +841,7 @@ namespace WriterApp.Controllers
                 customerId = await _stripeApiClient.FindCustomerByUserIdAsync(_stripeOptions.SecretKey, userId, ct);
                 if (!string.IsNullOrWhiteSpace(customerId))
                 {
+                    entitlement.StripeMode = activeMode;
                     entitlement.StripeCustomerId = customerId;
                     entitlement.UpdatedUtc = DateTimeOffset.UtcNow;
                     await _dbContext.SaveChangesAsync(ct);
@@ -787,6 +876,7 @@ namespace WriterApp.Controllers
                 throw new InvalidOperationException("Stripe returned a subscription without an id.");
             }
 
+            entitlement.StripeMode = activeMode;
             entitlement.StripeCustomerId = customerId;
             entitlement.StripeSubscriptionId = selectedId;
             entitlement.UpdatedUtc = DateTimeOffset.UtcNow;
@@ -795,6 +885,48 @@ namespace WriterApp.Controllers
             JsonDocument subscription = JsonDocument.Parse(selected.GetRawText());
             listDoc.Dispose();
             return (customerId, subscription);
+        }
+
+        private string GetActiveStripeMode()
+        {
+            return StripeBillingEnvironment.Normalize(_stripeOptions.Mode);
+        }
+
+        private string ResolveStoredStripeMode(UserEntitlement entitlement)
+        {
+            return StripeBillingEnvironment.ResolveStoredMode(entitlement, _stripeOptions);
+        }
+
+        private async Task StampStripeModeIfNeededAsync(UserEntitlement entitlement, string activeMode, CancellationToken ct)
+        {
+            if (string.Equals(StripeBillingEnvironment.Normalize(entitlement.StripeMode), activeMode, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            entitlement.StripeMode = activeMode;
+            entitlement.UpdatedUtc = DateTimeOffset.UtcNow;
+            await _dbContext.SaveChangesAsync(ct);
+        }
+
+        private static void ClearStoredSubscriptionState(UserEntitlement entitlement)
+        {
+            entitlement.StripeSubscriptionId = null;
+            entitlement.StripePriceId = null;
+            entitlement.CurrentPeriodEndUtc = null;
+            entitlement.CancelAtPeriodEnd = false;
+        }
+
+        private void LogStripeModeMismatch(string operation, UserEntitlement entitlement, string storedMode)
+        {
+            _logger.LogWarning(
+                "Stripe linkage mode mismatch detected. Operation={Operation} UserId={UserId} StoredStripeMode={StoredStripeMode} ActiveStripeMode={ActiveStripeMode} StoredCustomerId={StoredCustomerId} StoredSubscriptionId={StoredSubscriptionId}",
+                operation,
+                entitlement.UserId,
+                storedMode,
+                GetActiveStripeMode(),
+                entitlement.StripeCustomerId ?? string.Empty,
+                entitlement.StripeSubscriptionId ?? string.Empty);
         }
 
         private SyncEntitlementsResponse BuildSyncEntitlementsResponse(UserEntitlement entitlement)
@@ -926,9 +1058,7 @@ namespace WriterApp.Controllers
 
         private static string NormalizeSubscriptionStatus(string? subscriptionStatus)
         {
-            return string.IsNullOrWhiteSpace(subscriptionStatus)
-                ? string.Empty
-                : subscriptionStatus.Trim().ToLowerInvariant();
+            return BillingSubscriptionPolicy.NormalizeStatus(subscriptionStatus);
         }
 
         private static object CreateApiError(string code, string message, string? upgradePath = null)

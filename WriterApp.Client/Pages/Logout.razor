@@ -5,6 +5,7 @@
 @inject NavigationManager Navigation
 @inject IWebAssemblyHostEnvironment HostEnvironment
 @inject IOptions<WriterAuthOptions> AuthOptions
+@inject WriterApp.Client.Services.ClientLogoutService ClientLogoutService
 
 <PageTitle>Sign out</PageTitle>
 
@@ -13,8 +14,10 @@
 @code {
     private string _statusMessage = "Signing out...";
 
-    protected override Task OnInitializedAsync()
+    protected override async Task OnInitializedAsync()
     {
+        await ClientLogoutService.ClearClientStateAsync();
+
         Uri currentUri = Navigation.ToAbsoluteUri(Navigation.Uri);
         Dictionary<string, string> query = QueryStringParser.Parse(currentUri.Query);
         string returnUrl = SafeReturnUrl.ResolveFromQuery(
@@ -25,11 +28,10 @@
         {
             _statusMessage = "Signed out (dev). Redirecting...";
             Navigation.NavigateTo(returnUrl, forceLoad: true);
-            return Task.CompletedTask;
+            return;
         }
 
         string logoutUrl = EasyAuthUrlBuilder.BuildLogoutUrl(Navigation.BaseUri, returnUrl, AuthOptions.Value, SafeReturnUrl.DefaultHomePath);
         Navigation.NavigateTo(logoutUrl, forceLoad: true);
-        return Task.CompletedTask;
     }
 }

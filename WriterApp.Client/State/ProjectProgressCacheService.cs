@@ -65,6 +65,12 @@ namespace WriterApp.Client.State
                 removed);
         }
 
+        public void Clear()
+        {
+            _entriesByProjectId.Clear();
+            _logger.LogDebug("ProjectProgressCache invalidated Scope=All Reason=clear");
+        }
+
         private sealed record CacheEntry(ProjectProgressDashboardDto Progress, DateTimeOffset CachedAtUtc);
     }
 }

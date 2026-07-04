@@ -143,6 +143,15 @@ namespace WriterApp.Application.Subscriptions
                 {
                     fallbackPlan = UserEntitlementDefaults.NormalizePlanKey(resolved);
                 }
+                else if (IsPaidPlan(entitlement.PlanKey))
+                {
+                    fallbackPlan = UserEntitlementDefaults.NormalizePlanKey(entitlement.PlanKey);
+                    _logger.LogError(
+                        "Admin plan override revert found unmapped Stripe price id and preserved current paid plan. UserId={UserId} PriceId={PriceId} PreservedPlanKey={PreservedPlanKey}",
+                        userId,
+                        entitlement.StripePriceId,
+                        fallbackPlan);
+                }
             }
 
             fallbackPlan = UserEntitlementDefaults.NormalizePlanKey(fallbackPlan);
@@ -159,6 +168,13 @@ namespace WriterApp.Application.Subscriptions
             entitlement.UpdatedUtc = now;
             await _dbContext.SaveChangesAsync(ct);
             _entitlementService.InvalidateForUser(userId);
+        }
+
+        private static bool IsPaidPlan(string? planKey)
+        {
+            string normalizedPlan = UserEntitlementDefaults.NormalizePlanKey(planKey);
+            return string.Equals(normalizedPlan, UserEntitlementDefaults.StandardPlanKey, StringComparison.Ordinal)
+                || string.Equals(normalizedPlan, UserEntitlementDefaults.ProfessionalPlanKey, StringComparison.Ordinal);
         }
 
         private static string NormalizeRequestedPlanKey(string rawPlanKey)
