@@ -25,7 +25,9 @@ From an elevated PowerShell session, add the required workload to Visual Studio 
   --config "$PWD\WriterApp.vsconfig"
 ```
 
-The validated toolchain target is .NET SDK 10.0.400 with latest-patch roll-forward, .NET runtime 10.0.11, Visual Studio 2026 18.9.2, and MAUI 10.0.20. On 2026-09-27 this machine's Visual Studio 2026 instance did not yet contain the MAUI workload; its older Visual Studio 2022 instance contained MAUI 9 components only. Windows and iOS host restore therefore remain blocked until the Visual Studio 2026 workload installation is approved and completed.
+The toolchain was verified on 2026-09-27 with .NET SDK 10.0.400 and latest-patch roll-forward, .NET runtime 10.0.11, Visual Studio 2026 18.9.2, MAUI 10.0.20, and the iOS workload manifest 26.5.10301. Visual Studio 2026 supplies the `android`, `ios`, `maccatalyst`, and `maui-windows` workloads on this machine. `Microsoft.Maui.Sdk/10.0.20` is installed under the system .NET packs directory.
+
+The verified Windows flow restores and builds the desktop host with zero warnings, includes the shared Razor static assets beneath `_content/WriterApp.Device.Shared`, and launches a responsive `WriterApp.Desktop` process. The main solution also builds in Release with zero warnings and all 383 tests pass.
 
 Restore and verify the cross-platform layer on any supported development system:
 
@@ -43,9 +45,7 @@ dotnet build WriterApp.Desktop/WriterApp.Desktop.csproj --configuration Debug --
 dotnet run --project WriterApp.Desktop/WriterApp.Desktop.csproj --framework net10.0-windows10.0.19041.0
 ```
 
-Restore the iOS project on Windows or macOS. Compiling, running, signing, and publishing it requires a Mac with a compatible Xcode installation; Visual Studio on Windows can use a paired Mac:
-
-Windows can restore and evaluate the iOS project after `maui-ios` is installed. The first platform-specific build step invokes Apple's toolchain and requires the paired Mac/Xcode environment; signing and publishing additionally require the Apple developer certificate and provisioning profile.
+Restore the iOS project on Windows or macOS. With the iOS workload installed, Windows can restore the project and compile its `iossimulator-x64` managed assembly with zero warnings. Running the iOS Simulator, building for a physical iPhone or iPad, producing an app bundle/archive, signing, and publishing cross into Apple's toolchain and require a paired Mac with a compatible Xcode installation. Device signing and distribution additionally require an Apple developer certificate and provisioning profile.
 
 ```powershell
 dotnet restore WriterApp.iOS/WriterApp.iOS.csproj

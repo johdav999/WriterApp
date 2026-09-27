@@ -1,6 +1,6 @@
 namespace WriterApp.Desktop;
 
-public partial class App : Application
+public partial class App : Microsoft.Maui.Controls.Application
 {
     public App()
     {
