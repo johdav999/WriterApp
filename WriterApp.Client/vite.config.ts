@@ -23,11 +23,6 @@ export default defineConfig({
       formats: ["iife"],
       fileName: () => "tiptap-editor.bundle.js"
     },
-    rollupOptions: {
-      output: {
-        inlineDynamicImports: true
-      }
-    },
     target: "es2020"
   }
 });

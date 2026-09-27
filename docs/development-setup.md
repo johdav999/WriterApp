@@ -42,3 +42,11 @@ SQLite databases, `App_Data`, logs, deployment archives, publish output, and Jav
 `.github/workflows/ci.yml` builds the TipTap bundle, restores and builds the solution, runs the test project, and checks the authentication navigation guardrail on pushes and pull requests to `main`.
 
 The test step currently reports failures without blocking the workflow because the pre-existing suite has 47 failing tests (335 passing as of 2026-09-27). Remove `continue-on-error` after those baseline failures are repaired.
+
+## Known baseline debt
+
+- The solution builds with 59 compiler/analyzer warnings.
+- The test suite has 47 failures and 335 passes.
+- `WriterApp.Client` has 28 moderate npm advisories in TipTap 2.x. The fix requires migrating the editor and all TipTap extensions to 3.31.3 or newer.
+- `docs-site` has 22 npm advisories (21 moderate and 1 high) in the current Docusaurus dependency tree. Docusaurus 3.10.2 is the latest published release and does not yet resolve them.
+- The active Git tree is clean of the accidentally committed nested repository and generated artifacts, but those blobs remain in Git history. A coordinated history rewrite and force-push is required to reduce existing clone size.
