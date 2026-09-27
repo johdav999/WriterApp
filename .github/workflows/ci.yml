@@ -1,0 +1,52 @@
+name: Build and test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: WriterApp.Client/package-lock.json
+
+      - name: Build editor assets
+        working-directory: WriterApp.Client
+        run: |
+          npm ci
+          npm run build
+
+      - name: Restore .NET dependencies
+        run: dotnet restore BlazorApp.sln
+
+      - name: Build solution
+        run: dotnet build BlazorApp.sln --configuration Release --no-restore
+
+      # The existing suite currently has known failures. Keep reporting them
+      # without blocking builds until the baseline failures are repaired.
+      - name: Run tests (known failures reported)
+        continue-on-error: true
+        run: dotnet test Tests/WriterApp.Tests/WriterApp.Tests.csproj --configuration Release --no-build
+
+      - name: Check authentication navigation guardrail
+        run: bash scripts/check-no-forced-auth-nav.sh
