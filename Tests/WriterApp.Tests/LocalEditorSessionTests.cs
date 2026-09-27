@@ -85,7 +85,7 @@ public sealed class LocalEditorSessionTests : IDisposable
         Assert.Equal("Updated elsewhere", (await repository.LoadAsync(document.DocumentId))!.Title);
     }
 
-    private sealed class DelayedStore(ILocalDocumentStore inner) : ILocalDocumentStore
+    internal sealed class DelayedStore(ILocalDocumentStore inner) : ILocalDocumentStore
     {
         public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

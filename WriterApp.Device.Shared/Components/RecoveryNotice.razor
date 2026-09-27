@@ -1,0 +1,59 @@
+@inject LocalRecoveryService Recovery
+@inject NavigationManager Navigation
+
+@if (_error is not null) { <p role="alert">@_error</p> }
+@if (_found is not null)
+{
+    @foreach (string issue in _found.Issues) { <p role="alert">@issue</p> }
+    @foreach (LocalRecoveryRecord record in _found.Records.Where(r => DocumentId is null || r.Document.DocumentId == DocumentId))
+    {
+        <section aria-label="Recover unsaved writing">
+            <h2>Unsaved writing found: @record.Document.Title</h2>
+            <p>Saved for recovery @record.SavedAtUtc.ToLocalTime().ToString("g"). Restore opens a separate copy and preserves the original.</p>
+            <button disabled="@_busy" @onclick="() => RestoreAsync(record)">Restore as a copy</button>
+            @if (_confirm == record.RecoveryId)
+            {
+                <span>Discard this unsaved writing permanently?</span>
+                <button disabled="@_busy" @onclick="() => DiscardAsync(record)">Confirm discard</button>
+                <button @onclick="() => _confirm = null">Cancel</button>
+            }
+            else { <button disabled="@_busy" @onclick="() => _confirm = record.RecoveryId">Discard recovery…</button> }
+        </section>
+    }
+}
+
+@code {
+    [Parameter] public Guid? DocumentId { get; set; }
+    [Parameter] public EventCallback Resolved { get; set; }
+    private LocalRecoveryList? _found;
+    private string? _error;
+    private Guid? _confirm;
+    private bool _busy;
+    protected override async Task OnInitializedAsync()
+    {
+        try { _found = await Recovery.DiscoverAsync(); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        { _error = "Unable to check recovery files. Check local storage access and reopen the library."; }
+    }
+    private async Task RestoreAsync(LocalRecoveryRecord record)
+    {
+        _busy = true;
+        try
+        {
+            LocalDocument copy = await Recovery.RestoreAsync(record);
+            await Resolved.InvokeAsync();
+            Navigation.NavigateTo($"/documents/{copy.DocumentId}");
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException)
+        { _error = "Recovery failed. The recovery file remains available; check storage and retry."; }
+        finally { _busy = false; }
+    }
+    private async Task DiscardAsync(LocalRecoveryRecord record)
+    {
+        _busy = true;
+        try { await Recovery.DiscardAsync(record.RecoveryId); _found = await Recovery.DiscoverAsync(); await Resolved.InvokeAsync(); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        { _error = "Could not discard the recovery file. Check storage and retry."; }
+        finally { _busy = false; }
+    }
+}

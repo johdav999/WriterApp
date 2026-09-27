@@ -2,6 +2,10 @@
 @using WriterApp.Device.Shared.Components
 @using Microsoft.JSInterop
 @inject LocalDocumentRepository Documents
+@inject LocalRecoveryStore RecoveryStore
+@inject LocalRecoveryService Recovery
+@inject DeviceSaveLifetime Lifetime
+@implements IDisposable
 
 <PageTitle>@(_session?.Document.Title ?? "Document") · Prosa</PageTitle>
 <NavigationLock OnBeforeInternalNavigation="BeforeNavigationAsync" ConfirmExternalNavigation="@(_session?.IsDirty == true)" />
@@ -16,13 +20,19 @@
     else
     {
         LocalDocument document = _session.Document;
-        DeviceDocumentStatus status = DeviceDocumentStatus.For(document, _saveFailed ? LocalSaveState.Error : _busy ? LocalSaveState.Saving : _session.SaveState);
+        DeviceDocumentStatus status = DeviceDocumentStatus.For(document, _saveFailed || _autosave?.Error is not null ? LocalSaveState.Error : _busy ? LocalSaveState.Saving : _session.SaveState);
         <header class="workspace-heading">
             <div><p class="workspace-eyebrow">Local document</p><h1 tabindex="-1">@document.Title</h1></div>
             <span class="workspace-status" role="status" title="@status.Detail">@status.Label</span>
         </header>
         @if (_error is not null) { <p class="workspace-notice" role="alert">@_error</p> }
-        @if (document.DeletedAtUtc is not null)
+        @if (_autosave?.Error is not null) { <p role="alert">@_autosave.Error</p> }
+        @if (_hasRecovery)
+        {
+            <RecoveryNotice @key="DocumentId" DocumentId="DocumentId" Resolved="ReloadAfterRecoveryAsync" />
+            <p>Resolve the recovery record before continuing to edit this document.</p>
+        }
+        else if (document.DeletedAtUtc is not null)
         {
             <p class="workspace-notice">This document is in Trash. Restore it from the library before editing.</p>
         }
@@ -43,7 +53,7 @@
                 </select>
                 <button type="button" disabled="@_busy" @onclick="SaveButtonAsync">Save on this device</button>
             </div>
-            <p class="workspace-help">Ctrl+S to save · Ctrl+B bold · Ctrl+I italic · Ctrl+K link · Ctrl+Z undo · Ctrl+Y redo. Pages save before you switch or return to the library.</p>
+            <p class="workspace-help">Autosaves on this device after typing pauses. Ctrl+S to retry/save · Ctrl+B bold · Ctrl+I italic · Ctrl+K link · Ctrl+Z undo · Ctrl+Y redo.</p>
             LocalPage selected = document.Sections.SelectMany(section => section.Pages).Single(item => item.PageId == _selectedPage);
             <DeviceTextEditor @key="selected.PageId" @ref="_editor"
                               Content="@_session.ContentFor(selected)" Format="@_session.FormatFor(selected)"
@@ -64,12 +74,21 @@
     private string? _error;
     private bool _busy;
     private bool _saveFailed;
+    private bool _hasRecovery;
+    private LocalAutosaveCoordinator? _autosave;
+    private readonly SemaphoreSlim _flushGate = new(1, 1);
+    private Func<bool, Task<bool>>? _lifetimeFlush;
+    private bool _disposed;
 
     protected override async Task OnParametersSetAsync()
     {
         if (_session?.Document.DocumentId == DocumentId) return;
+        _autosave?.Dispose();
+        _autosave = null;
         _session = null;
         _editor = null;
+        _selectedPage = null;
+        _hasRecovery = false;
         _error = null;
         _saveFailed = false;
         Guid loadingId = DocumentId;
@@ -78,21 +97,39 @@
             LocalDocument? document = await Documents.LoadAsync(loadingId);
             if (DocumentId != loadingId) return;
             if (document is null) { _error = "This document was not found on this device."; return; }
+            bool hasRecovery = (await Recovery.DiscoverAsync()).Records.Any(r => r.Document.DocumentId == loadingId);
+            if (DocumentId != loadingId || _disposed) return;
             _session = new LocalEditorSession(Documents, document);
+            _hasRecovery = hasRecovery;
+            _autosave = new LocalAutosaveCoordinator(_session, RecoveryStore, () => InvokeAsync(SaveButtonAsync));
+            _autosave.Changed += OnSaveChanged;
+            _lifetimeFlush = closing => InvokeFlushAsync(closing);
+            Lifetime.Flush = _lifetimeFlush;
             _selectedPage = document.Sections.SelectMany(section => section.Pages).FirstOrDefault()?.PageId;
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         { _error = error is LocalDocumentReadException read ? read.Issue.Message : "Unable to read local storage. Check access and try again."; }
     }
 
-    private void OnEdited(Guid pageId, string html) => _session?.Edit(pageId, html);
+    private Task OnEdited(Guid pageId, string html) => _autosave?.EditAsync(pageId, html) ?? Task.CompletedTask;
+
+    private void OnSaveChanged() { if (!_disposed) _ = InvokeAsync(StateHasChanged); }
+    private async Task<bool> InvokeFlushAsync(bool closing)
+    {
+        bool saved = false;
+        await InvokeAsync(async () => saved = await SaveCurrentAsync(releaseEditor: !closing));
+        return saved;
+    }
+    private async Task ReloadAfterRecoveryAsync()
+    { _hasRecovery = (await Recovery.DiscoverAsync()).Records.Any(r => r.Document.DocumentId == DocumentId); await InvokeAsync(StateHasChanged); }
 
     private async Task SaveButtonAsync() => await SaveCurrentAsync();
 
     private async Task<bool> SaveCurrentAsync(bool releaseEditor = true)
     {
-        if (_session is null) return true;
-        if (_busy) return false;
+        if (_session is null || _hasRecovery || _disposed) return true;
+        await _flushGate.WaitAsync();
+        if (_session is null || _hasRecovery || _disposed) { _flushGate.Release(); return true; }
         _busy = true;
         _saveFailed = false;
         _error = null;
@@ -105,7 +142,7 @@
                 await _editor.FlushAsync();
             }
             StateHasChanged();
-            await _session.SaveAsync();
+            await _autosave!.SaveAsync();
             saved = true;
             return true;
         }
@@ -120,11 +157,16 @@
         finally
         {
             _busy = false;
-            if (_editor is not null && (releaseEditor || !saved))
+            try
             {
-                try { await _editor.SetEditableAsync(true); }
-                catch (JSException) { }
+                if (_editor is not null && (releaseEditor || !saved))
+                {
+                    try { await _editor.SetEditableAsync(true); }
+                    catch (JSException) { }
+                }
             }
+            finally { _flushGate.Release(); }
+            if (!_disposed) StateHasChanged();
         }
     }
 
@@ -141,5 +183,12 @@
             context.PreventNavigation();
             if (_editor is not null) await _editor.SetEditableAsync(true);
         }
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        _autosave?.Dispose();
+        if (Lifetime.Flush == _lifetimeFlush) Lifetime.Flush = null;
     }
 }

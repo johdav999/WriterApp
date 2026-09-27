@@ -14,6 +14,15 @@ public sealed class LocalEditorSession(LocalDocumentRepository repository, Local
     public string ContentFor(LocalPage page) => _pending.GetValueOrDefault(page.PageId, page.Content);
     public LocalContentFormat FormatFor(LocalPage page) => _pending.ContainsKey(page.PageId) ? LocalContentFormat.Html : page.ContentFormat;
 
+    public LocalDocument Snapshot() => Document with
+    {
+        Sections = Document.Sections.Select(section => section with
+        {
+            Pages = section.Pages.Select(page => _pending.TryGetValue(page.PageId, out string? html)
+                ? page with { Content = html, ContentFormat = LocalContentFormat.Html } : page).ToArray()
+        }).ToArray()
+    };
+
     public void Edit(Guid pageId, string html)
     {
         if (Document.DeletedAtUtc is not null) throw new InvalidOperationException("Restore the document before editing.");
