@@ -54,3 +54,7 @@ The scaffold establishes native startup, shared routing, backend configuration, 
 6. Adding platform CI runners once signing credentials and Apple build infrastructure are available.
 
 Changes limited to these device projects do not match the Azure landing-site workflow's `Prosa.Landing/**` path filter and therefore do not trigger that deployment.
+
+## Release 1 implementation
+
+Use the ordered [Release 1 desktop implementation prompts](release-1-desktop-prompts.md) to build the offline editor, native authentication, paid synchronization, AI actions, export, packaging, and final release validation.
