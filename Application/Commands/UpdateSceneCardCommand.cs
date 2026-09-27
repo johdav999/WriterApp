@@ -71,9 +71,9 @@ namespace WriterApp.Application.Commands
             record.OpenQuestions = SceneCardAiTextNormalizer.NormalizeAiText(state.OpenQuestions) ?? string.Empty;
             record.Summary = SceneCardAiTextNormalizer.NormalizeAiText(state.Summary);
             record.Status = state.Status ?? "Draft";
-            record.PovCharacterId = SceneCardAiTextNormalizer.NormalizeAiText(state.PovCharacterId);
-            record.PlaceId = SceneCardAiTextNormalizer.NormalizeAiText(state.PlaceId);
-            record.TimelineEventId = SceneCardAiTextNormalizer.NormalizeAiText(state.TimelineEventId);
+            record.PovCharacterId = NormalizeIdentifier(state.PovCharacterId);
+            record.PlaceId = NormalizeIdentifier(state.PlaceId);
+            record.TimelineEventId = NormalizeIdentifier(state.TimelineEventId);
             record.TimeRef = SceneCardAiTextNormalizer.NormalizeAiText(state.TimeRef);
             record.TagsJson = state.TagsJson;
             record.SubplotTagsJson = state.SubplotTagsJson;
@@ -89,6 +89,11 @@ namespace WriterApp.Application.Commands
             }
 
             return (null, SceneCardAiTextNormalizer.NormalizeAiText(legacyNarrativePurpose));
+        }
+
+        private static string? NormalizeIdentifier(string? value)
+        {
+            return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
         }
 
         public sealed class SceneCardState

@@ -73,7 +73,7 @@ namespace WriterApp.Controllers
                 sceneNodeId,
                 userId,
                 note.NotesText?.Length ?? 0);
-            return Ok(new SceneNotesDto(sceneNodeId, note.NotesText, note.UpdatedAtUtc));
+            return Ok(new SceneNotesDto(sceneNodeId, note.NotesText ?? string.Empty, note.UpdatedAtUtc));
         }
 
         [HttpPut]

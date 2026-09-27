@@ -704,7 +704,6 @@ namespace WriterApp.AI.Core
                 CostMicros = null,
                 DocumentId = input.Document.DocumentId,
                 SectionId = input.ActiveSectionId,
-                TimestampUtc = DateTime.UtcNow,
                 CorrelationId = result.RequestId
             };
 
@@ -738,7 +737,6 @@ namespace WriterApp.AI.Core
                 CostMicros = null,
                 DocumentId = input.Document.DocumentId,
                 SectionId = input.ActiveSectionId,
-                TimestampUtc = DateTime.UtcNow,
                 CorrelationId = Guid.NewGuid()
             };
 

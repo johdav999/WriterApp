@@ -68,6 +68,7 @@ namespace WriterApp.Tests
                 CreatedUtc = DateTimeOffset.UtcNow,
                 UpdatedUtc = DateTimeOffset.UtcNow
             };
+            document.ProjectId = project.Id;
             db.Projects.Add(project);
 
             ProjectNodeRecord chapter = new()
@@ -161,6 +162,7 @@ namespace WriterApp.Tests
                 CreatedUtc = DateTimeOffset.UtcNow,
                 UpdatedUtc = DateTimeOffset.UtcNow
             };
+            document.ProjectId = project.Id;
             db.Projects.Add(project);
 
             ProjectNodeRecord scene = new()

@@ -2723,53 +2723,6 @@ static bool TryAuthorizeAdminRequest(HttpContext context, IConfiguration configu
     return true;
 }
 
-static bool TryParseAdminPlanKey(string input, out string normalizedPlanKey)
-{
-    normalizedPlanKey = UserEntitlementDefaults.FreePlanKey;
-    if (string.IsNullOrWhiteSpace(input))
-    {
-        return false;
-    }
-
-    string value = input.Trim();
-    if (value.Equals("free", StringComparison.OrdinalIgnoreCase))
-    {
-        normalizedPlanKey = UserEntitlementDefaults.FreePlanKey;
-        return true;
-    }
-
-    if (value.Equals("standard", StringComparison.OrdinalIgnoreCase))
-    {
-        normalizedPlanKey = UserEntitlementDefaults.StandardPlanKey;
-        return true;
-    }
-
-    if (value.Equals("pro", StringComparison.OrdinalIgnoreCase)
-        || value.Equals("professional", StringComparison.OrdinalIgnoreCase))
-    {
-        normalizedPlanKey = UserEntitlementDefaults.ProfessionalPlanKey;
-        return true;
-    }
-
-    return false;
-}
-
-static bool IsResetUsageRequested(IQueryCollection query)
-{
-    if (!query.TryGetValue("resetUsage", out StringValues resetUsageValues))
-    {
-        return false;
-    }
-
-    string raw = resetUsageValues.ToString();
-    if (bool.TryParse(raw, out bool parsed))
-    {
-        return parsed;
-    }
-
-    return string.Equals(raw, "1", StringComparison.OrdinalIgnoreCase);
-}
-
 static string BuildRedirectQueryWithSafeReturnUrl(HttpContext context, string fallback)
 {
     QueryString queryString = context.Request.QueryString;
@@ -3591,18 +3544,6 @@ static bool IsSqliteBusyException(Exception ex)
     }
 
     return false;
-}
-
-static bool IsUniqueConstraintViolation(DbUpdateException ex)
-{
-    if (ex.InnerException is SqliteException sqliteEx)
-    {
-        return sqliteEx.SqliteErrorCode == 19
-               || sqliteEx.Message.Contains("UNIQUE constraint failed", StringComparison.OrdinalIgnoreCase);
-    }
-
-    return ex.InnerException?.Message.Contains("duplicate", StringComparison.OrdinalIgnoreCase) == true
-           || ex.Message.Contains("duplicate", StringComparison.OrdinalIgnoreCase);
 }
 
 static async Task WriteApiProblemDetailsAsync(

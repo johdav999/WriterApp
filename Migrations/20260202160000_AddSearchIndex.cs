@@ -1,9 +1,13 @@
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
+using WriterApp.Data;
 
 #nullable disable
 
 namespace BlazorApp.Migrations
 {
+    [DbContext(typeof(AppDbContext))]
+    [Migration("20260202160000_AddSearchIndex")]
     public sealed class AddSearchIndex : Migration
     {
         protected override void Up(MigrationBuilder migrationBuilder)

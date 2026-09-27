@@ -197,7 +197,7 @@ namespace WriterApp.Application.Continuity
                 }
 
                 int candidate = i + 1;
-                while (candidate < max && IsSentenceTrailing(text[candidate]))
+                while (candidate < max && IsSentenceClosingPunctuation(text[candidate]))
                 {
                     candidate++;
                 }
@@ -260,7 +260,9 @@ namespace WriterApp.Application.Continuity
 
         private static bool IsSentenceTerminal(char ch) => ch == '.' || ch == '!' || ch == '?';
 
-        private static bool IsSentenceTrailing(char ch) => char.IsWhiteSpace(ch) || ch == '"' || ch == '\'' || ch == ')' || ch == ']' || ch == '\u201d' || ch == '\u2019';
+        private static bool IsSentenceClosingPunctuation(char ch) => ch == '"' || ch == '\'' || ch == ')' || ch == ']' || ch == '\u201d' || ch == '\u2019';
+
+        private static bool IsSentenceTrailing(char ch) => char.IsWhiteSpace(ch) || IsSentenceClosingPunctuation(ch);
 
         private static bool IsWordChar(char ch) => char.IsLetterOrDigit(ch) || ch == '_' || ch == '\u2019' || ch == '\'';
     }
@@ -292,15 +294,15 @@ namespace WriterApp.Application.Continuity
                 return false;
             }
 
-            if (HasMidWordJoin(middle, right))
-            {
-                error = "Suggestion ends mid-word against surrounding text.";
-                return false;
-            }
-
             if (HasLargeEdgeOverlap(middle, right, minOverlapChars: 18))
             {
                 error = "Suggestion duplicates trailing text from the kept suffix.";
+                return false;
+            }
+
+            if (HasMidWordJoin(middle, right))
+            {
+                error = "Suggestion ends mid-word against surrounding text.";
                 return false;
             }
 

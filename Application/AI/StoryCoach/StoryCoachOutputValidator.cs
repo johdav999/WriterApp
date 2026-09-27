@@ -10,6 +10,9 @@ namespace WriterApp.Application.AI.StoryCoach
         private static readonly Regex HeadingRegex = new(
             @"^\s*#{1,6}\s+",
             RegexOptions.Compiled | RegexOptions.CultureInvariant);
+        private static readonly Regex GenericFieldLabelRegex = new(
+            @"(^|\n)\s*[\p{L}][\p{L}\p{N} _-]{1,40}\s*:\s+",
+            RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
         public static bool TryValidate(string proposedText, string focusFieldKey, string existingValue, out string reason)
         {
@@ -59,6 +62,11 @@ namespace WriterApp.Application.AI.StoryCoach
 
         private static bool ContainsFieldLabel(string text, string focusFieldKey)
         {
+            if (GenericFieldLabelRegex.IsMatch(text))
+            {
+                return true;
+            }
+
             foreach (SynopsisFieldDefinition field in SynopsisFieldCatalog.Fields)
             {
                 if (string.Equals(field.Key, focusFieldKey, StringComparison.OrdinalIgnoreCase))

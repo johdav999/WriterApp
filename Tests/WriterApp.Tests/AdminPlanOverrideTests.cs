@@ -125,8 +125,9 @@ namespace WriterApp.Tests
             const string userId = "user-override-pro";
             SeedStripeDerivedStandardEntitlement(dbContext, userId, "price_standard");
 
-            AdminPlanOverrideService service = BuildService(dbContext);
-            IEntitlementService entitlementService = BuildEntitlementService(dbContext);
+            IUserEntitlementStore entitlementStore = BuildEntitlementStore(dbContext);
+            IEntitlementService entitlementService = BuildEntitlementService(dbContext, entitlementStore);
+            AdminPlanOverrideService service = BuildService(dbContext, entitlementStore, entitlementService);
 
             UserEntitlements before = await entitlementService.GetEntitlementsAsync(userId);
             Assert.Equal("standard", before.PlanKey);
@@ -155,8 +156,9 @@ namespace WriterApp.Tests
             const string userId = "user-clear-override";
             SeedStripeDerivedStandardEntitlement(dbContext, userId, "price_standard");
 
-            AdminPlanOverrideService service = BuildService(dbContext);
-            IEntitlementService entitlementService = BuildEntitlementService(dbContext);
+            IUserEntitlementStore entitlementStore = BuildEntitlementStore(dbContext);
+            IEntitlementService entitlementService = BuildEntitlementService(dbContext, entitlementStore);
+            AdminPlanOverrideService service = BuildService(dbContext, entitlementStore, entitlementService);
 
             await service.SetOverride(
                 userId,
@@ -208,10 +210,13 @@ namespace WriterApp.Tests
             dbContext.SaveChanges();
         }
 
-        private static AdminPlanOverrideService BuildService(AppDbContext dbContext)
+        private static AdminPlanOverrideService BuildService(
+            AppDbContext dbContext,
+            IUserEntitlementStore? entitlementStore = null,
+            IEntitlementService? entitlementService = null)
         {
-            IUserEntitlementStore entitlementStore = BuildEntitlementStore(dbContext);
-            IEntitlementService entitlementService = BuildEntitlementService(dbContext, entitlementStore);
+            entitlementStore ??= BuildEntitlementStore(dbContext);
+            entitlementService ??= BuildEntitlementService(dbContext, entitlementStore);
             return new AdminPlanOverrideService(
                 dbContext,
                 entitlementStore,

@@ -275,7 +275,7 @@ namespace WriterApp.Application.Security
             }
 
             string trimmed = rawValue.Trim();
-            if (TryParseJsonArray(trimmed, out IReadOnlyList<string>? items))
+            if (TryParseJsonArray(trimmed, out IReadOnlyList<string>? items) && items is not null)
             {
                 foreach (string item in items)
                 {

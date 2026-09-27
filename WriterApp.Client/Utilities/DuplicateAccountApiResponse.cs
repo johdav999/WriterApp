@@ -33,7 +33,7 @@ namespace WriterApp.Client.Utilities
                     new JsonSerializerOptions(JsonSerializerDefaults.Web));
                 ReplaceContent(response, payload, response.Content.Headers.ContentType);
 
-                if (!string.Equals(duplicate?.Code, AuthDuplicateAccountDto.DuplicateCode, StringComparison.Ordinal))
+                if (duplicate is null || !string.Equals(duplicate.Code, AuthDuplicateAccountDto.DuplicateCode, StringComparison.Ordinal))
                 {
                     return null;
                 }

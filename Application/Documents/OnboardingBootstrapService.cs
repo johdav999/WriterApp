@@ -157,8 +157,11 @@ At one of those moments their eyes met.
         {
             sceneNode.MetadataJson = OnboardingDemoSceneMetadata.Merge(sceneNode.MetadataJson);
 
-            PageRecord? page = await _dbContext.Pages
-                .FirstOrDefaultAsync(
+            PageRecord? page = _dbContext.Pages.Local
+                .FirstOrDefault(item => item.DocumentId == link.DocumentId
+                    && item.SectionId == link.SectionId
+                    && item.OrderIndex == 0)
+                ?? await _dbContext.Pages.FirstOrDefaultAsync(
                     item => item.DocumentId == link.DocumentId
                         && item.SectionId == link.SectionId
                         && item.OrderIndex == 0,
@@ -178,8 +181,9 @@ At one of those moments their eyes met.
             page.Content = demoHtml;
             page.UpdatedAt = now;
 
-            SceneContentRecord? sceneContent = await _dbContext.SceneContents
-                .FirstOrDefaultAsync(item => item.SceneNodeId == sceneNode.Id, ct);
+            SceneContentRecord? sceneContent = _dbContext.SceneContents.Local
+                .FirstOrDefault(item => item.SceneNodeId == sceneNode.Id)
+                ?? await _dbContext.SceneContents.FirstOrDefaultAsync(item => item.SceneNodeId == sceneNode.Id, ct);
             if (sceneContent is null)
             {
                 sceneContent = new SceneContentRecord
@@ -208,19 +212,20 @@ At one of those moments their eyes met.
 
             return string.Join(
                 string.Empty,
-                paragraphs.Select(paragraph => $"<p>{System.Net.WebUtility.HtmlEncode(paragraph)}</p>"));
+                paragraphs.Select(paragraph => $"<p>{System.Text.Encodings.Web.HtmlEncoder.Create(System.Text.Unicode.UnicodeRanges.All).Encode(paragraph)}</p>"));
         }
 
         private async Task<(ProjectRecord Project, bool Created)> GetOrCreateBootstrapProjectAsync(string ownerUserId, string projectTitle, CancellationToken ct)
         {
-            List<ProjectCandidate> candidates = await _dbContext.Projects
+            List<ProjectCandidate> candidates = (await _dbContext.Projects
                 .Where(item => item.OwnerUserId == ownerUserId)
-                .OrderByDescending(item => item.UpdatedUtc)
                 .Select(item => new ProjectCandidate(
                     item,
                     _dbContext.ProjectNodes.Any(node => node.ProjectId == item.Id),
                     _dbContext.ProjectNodes.Any(node => node.ProjectId == item.Id && node.NodeType == ProjectNodeType.Scene)))
-                .ToListAsync(ct);
+                .ToListAsync(ct))
+                .OrderByDescending(item => item.Project.UpdatedUtc)
+                .ToList();
 
             ProjectRecord? selected =
                 candidates.FirstOrDefault(item => item.HasSceneNodes && string.Equals(item.Project.Title, projectTitle, StringComparison.OrdinalIgnoreCase))?.Project

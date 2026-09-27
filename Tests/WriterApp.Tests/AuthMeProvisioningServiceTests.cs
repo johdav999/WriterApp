@@ -138,7 +138,7 @@ namespace WriterApp.Tests
             Assert.False(result.CreatedEntitlement);
             Assert.NotNull(result.DuplicateEmail);
             Assert.Equal("externalid", result.DuplicateEmail!.CurrentLoginProvider);
-            Assert.Equal(1, await dbContext.UserProfiles.CountAsync());
+            Assert.Equal(1, await dbContext.UserProfiles.CountAsync(profile => profile.UserId != "seed-system"));
             Assert.Equal(0, await dbContext.UserEntitlements.CountAsync());
             Assert.Equal(0, await dbContext.ExternalIdentityLinks.CountAsync());
         }

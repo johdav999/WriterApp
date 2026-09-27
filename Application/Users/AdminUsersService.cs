@@ -120,6 +120,7 @@ namespace WriterApp.Application.Users
 
             IQueryable<AdminUserRow> query =
                 from profile in _dbContext.UserProfiles.AsNoTracking()
+                where profile.UserId != "seed-system"
                 join entitlement in _dbContext.UserEntitlements.AsNoTracking()
                     on profile.UserId equals entitlement.UserId into entitlements
                 from entitlement in entitlements.DefaultIfEmpty()

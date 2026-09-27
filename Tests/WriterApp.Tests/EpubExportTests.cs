@@ -14,18 +14,18 @@ namespace WriterApp.Tests
     public sealed class EpubExportTests
     {
         [Fact]
-        public void EpubExport_BuildsZipWithRequiredEntries()
+        public async Task EpubExport_BuildsZipWithRequiredEntries()
         {
             Document document = BuildDocument("<h1>Chapter One</h1><p>Hello EPUB.</p>");
             ExportService service = BuildExportService();
-            ExportResult result = service.ExportAsync(
+            ExportResult result = await service.ExportAsync(
                 document,
                 ExportKind.Document,
                 ExportFormat.Epub,
                 new ExportOptions(IncludeTitlePage: false, ChapterBreakRules: new[] { "h1" }),
                 "user",
                 null,
-                CancellationToken.None).GetAwaiter().GetResult();
+                CancellationToken.None);
 
             using MemoryStream stream = new(result.Content);
             using ZipArchive archive = new(stream, ZipArchiveMode.Read);
@@ -42,18 +42,18 @@ namespace WriterApp.Tests
         }
 
         [Fact]
-        public void EpubExport_OpfReferencesChapters()
+        public async Task EpubExport_OpfReferencesChapters()
         {
             Document document = BuildDocument("<h1>Chapter One</h1><p>Hello EPUB.</p>");
             ExportService service = BuildExportService();
-            ExportResult result = service.ExportAsync(
+            ExportResult result = await service.ExportAsync(
                 document,
                 ExportKind.Document,
                 ExportFormat.Epub,
                 new ExportOptions(IncludeTitlePage: false, ChapterBreakRules: new[] { "h1" }),
                 "user",
                 null,
-                CancellationToken.None).GetAwaiter().GetResult();
+                CancellationToken.None);
 
             using MemoryStream stream = new(result.Content);
             using ZipArchive archive = new(stream, ZipArchiveMode.Read);

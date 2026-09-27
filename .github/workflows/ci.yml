@@ -42,10 +42,7 @@ jobs:
       - name: Build solution
         run: dotnet build BlazorApp.sln --configuration Release --no-restore
 
-      # The existing suite currently has known failures. Keep reporting them
-      # without blocking builds until the baseline failures are repaired.
-      - name: Run tests (known failures reported)
-        continue-on-error: true
+      - name: Run tests
         run: dotnet test Tests/WriterApp.Tests/WriterApp.Tests.csproj --configuration Release --no-build
 
       - name: Check authentication navigation guardrail

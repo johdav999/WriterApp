@@ -1951,9 +1951,14 @@ namespace WriterApp.Controllers
                 {
                     children = roots;
                 }
-                else if (!byParent.TryGetValue(parentId.Value, out children))
+                else if (!byParent.TryGetValue(parentId.Value, out List<DocumentOutlineNodeDto>? foundChildren)
+                    || foundChildren is null)
                 {
                     return;
+                }
+                else
+                {
+                    children = foundChildren;
                 }
 
                 foreach (DocumentOutlineNodeDto child in children)

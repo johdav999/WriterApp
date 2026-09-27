@@ -97,7 +97,7 @@ namespace WriterApp.Tests
         public async Task PatchNode_RejectsSelfParent_WithoutMutatingData()
         {
             await using AppDbContext db = BuildDbContext();
-            SeedProjectSkeleton(db, out Guid projectId, out _, out Guid chapterId, out Guid sceneId);
+            SeedProjectSkeleton(db, out Guid projectId, out Guid partId, out Guid chapterId, out Guid sceneId);
             ProjectsController controller = BuildController(db);
 
             ActionResult<ProjectNodeDto> result = await controller.PatchNode(
@@ -108,7 +108,7 @@ namespace WriterApp.Tests
 
             Assert.IsType<BadRequestObjectResult>(result.Result);
             ProjectNodeRecord persisted = await db.ProjectNodes.SingleAsync(node => node.Id == chapterId);
-            Assert.Null(persisted.ParentId);
+            Assert.Equal(partId, persisted.ParentId);
             Assert.Equal(ProjectNodeType.Chapter, persisted.NodeType);
             Assert.Equal(sceneId, await db.ProjectNodes.Where(node => node.ParentId == chapterId).Select(node => node.Id).SingleAsync());
         }

@@ -75,7 +75,7 @@ namespace WriterApp.Tests
                 Kind = "ai.text",
                 Provider = "mock",
                 Model = "mock",
-                InputTokens = 200000,
+                InputTokens = UserEntitlementDefaults.StandardMonthlyTokenBudget,
                 OutputTokens = 0,
                 TimestampUtc = clock.UtcNow
             };

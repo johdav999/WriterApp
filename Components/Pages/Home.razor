@@ -2239,11 +2239,11 @@
 
     private Task MoveSectionAsync(Guid sectionId, int direction)
     {
-        return ExecuteSafeAsync("MoveSectionAsync", async () =>
+        return ExecuteSafeAsync("MoveSectionAsync", () =>
         {
             if (_orderedSections.Count <= 1 || direction == 0)
             {
-                return;
+                return Task.CompletedTask;
             }
 
             Chapter chapter = GetPrimaryChapter();
@@ -2255,7 +2255,7 @@
             int targetIndex = index + direction;
             if (index < 0 || targetIndex < 0 || targetIndex >= ordered.Count)
             {
-                return;
+                return Task.CompletedTask;
             }
 
             Section section = ordered[index];
@@ -2265,6 +2265,7 @@
             _commandProcessor.Execute(new ReorderSectionsCommand(
                 chapter.ChapterId,
                 ordered.Select(entry => entry.SectionId).ToList()));
+            return Task.CompletedTask;
         });
     }
 
@@ -2335,13 +2336,13 @@
 
     private Task OnDrop(Guid targetSectionId, DropPosition position)
     {
-        return ExecuteSafeAsync("OnDrop", async () =>
+        return ExecuteSafeAsync("OnDrop", () =>
         {
             Logger.LogInformation("Drop: target {TargetSectionId} position {Position} dragging {DraggingSectionId}", targetSectionId, position, _draggingSectionId);
             if (_draggingSectionId is null || _draggingSectionId == targetSectionId)
             {
                 Logger.LogInformation("Drop ignored: invalid dragging state.");
-                return;
+                return Task.CompletedTask;
             }
 
             Guid sourceSectionId = _draggingSectionId.Value;
@@ -2356,7 +2357,7 @@
             if (sourceIndex < 0 || targetIndex < 0)
             {
                 Logger.LogWarning("Drop aborted: sourceIndex {SourceIndex} targetIndex {TargetIndex}", sourceIndex, targetIndex);
-                return;
+                return Task.CompletedTask;
             }
 
             Section moving = ordered[sourceIndex];
@@ -2374,6 +2375,7 @@
             _commandProcessor.Execute(new ReorderSectionsCommand(
                 chapter.ChapterId,
                 ordered.Select(entry => entry.SectionId).ToList()));
+            return Task.CompletedTask;
         });
     }
 

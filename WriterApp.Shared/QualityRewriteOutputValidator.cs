@@ -310,7 +310,7 @@ namespace WriterApp.Application.Documents
 
             if (token.Length < _options.StrictAnchorMinLength)
             {
-                return false;
+                return ContainsCjk(token) && token.Length >= 2;
             }
 
             if (!token.Any(char.IsLetterOrDigit))

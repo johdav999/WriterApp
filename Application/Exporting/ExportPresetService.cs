@@ -168,11 +168,13 @@ namespace WriterApp.Application.Exporting
                 return projectPresetId;
             }
 
-            ExportPreset? globalDefault = await _dbContext.ExportPresets
+            List<ExportPreset> globalDefaults = await _dbContext.ExportPresets
                 .AsNoTracking()
                 .Where(preset => preset.OwnerUserId == userId && preset.IsGlobalDefault)
+                .ToListAsync(ct);
+            ExportPreset? globalDefault = globalDefaults
                 .OrderByDescending(preset => preset.UpdatedAt)
-                .FirstOrDefaultAsync(ct);
+                .FirstOrDefault();
 
             return globalDefault?.Id;
         }

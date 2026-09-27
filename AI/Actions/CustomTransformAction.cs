@@ -41,7 +41,7 @@ namespace WriterApp.AI.Actions
                 : new TextRange(0, sectionText.Length);
             string sourceText = ExtractRange(sectionText, range);
 
-            string template = GetOption(input.Options, "template");
+            string template = GetOption(input.Options, "template") ?? string.Empty;
             if (string.IsNullOrWhiteSpace(template))
             {
                 throw new InvalidOperationException("Custom template is required.");
@@ -56,7 +56,16 @@ namespace WriterApp.AI.Actions
             string normalizedTemplate = NormalizeTemplate(template);
             ValidateTemplate(normalizedTemplate);
             bool strictTokens = GetOptionBool(input.Options, "strictTokens", false);
-            string expanded = ExpandTemplate(normalizedTemplate, input.Options, strictTokens);
+            Dictionary<string, object?> templateOptions = input.Options is null
+                ? new Dictionary<string, object?>()
+                : new Dictionary<string, object?>(input.Options, StringComparer.Ordinal);
+            string contextText = GetOption(input.Options, "section_text_override", sourceText) ?? sourceText;
+            if (!templateOptions.ContainsKey("context"))
+            {
+                templateOptions["context"] = contextText;
+            }
+
+            string expanded = ExpandTemplate(normalizedTemplate, templateOptions, strictTokens);
             string instruction =
                 $"{expanded}\n\nReturn only revised text. Preserve names, POV, facts, and paragraph breaks. Keep the same language as input. No markdown. No commentary.";
 
@@ -79,8 +88,8 @@ namespace WriterApp.AI.Actions
             Dictionary<string, object> inputs = new()
             {
                 ["instruction"] = instruction,
-                ["tone"] = GetOption(input.Options, "tone", "Neutral"),
-                ["length"] = GetOption(input.Options, "length", "Same"),
+                ["tone"] = GetOption(input.Options, "tone", "Neutral") ?? "Neutral",
+                ["length"] = GetOption(input.Options, "length", "Same") ?? "Same",
                 ["preserve_terms"] = true
             };
 
@@ -210,7 +219,7 @@ namespace WriterApp.AI.Actions
             return text.Substring(start, Math.Max(0, end - start));
         }
 
-        private static string GetOption(Dictionary<string, object?>? options, string key, string fallback = "")
+        private static string? GetOption(Dictionary<string, object?>? options, string key, string? fallback = "")
         {
             if (options is null || !options.TryGetValue(key, out object? value) || value is null)
             {

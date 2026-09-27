@@ -49,6 +49,7 @@ namespace WriterApp.Tests
             DocumentRecord document = new()
             {
                 Id = Guid.NewGuid(),
+                Project = CreateProject(),
                 OwnerUserId = "user-1",
                 Title = "Draft",
                 CreatedAt = DateTimeOffset.UtcNow,
@@ -90,6 +91,7 @@ namespace WriterApp.Tests
             DocumentRecord document = new()
             {
                 Id = Guid.NewGuid(),
+                Project = CreateProject(),
                 OwnerUserId = "user-1",
                 Title = "Draft",
                 CreatedAt = DateTimeOffset.UtcNow,
@@ -135,6 +137,19 @@ namespace WriterApp.Tests
                 null,
                 null,
                 null);
+        }
+
+        private static ProjectRecord CreateProject()
+        {
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            return new ProjectRecord
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = "user-1",
+                Title = "Project",
+                CreatedUtc = now,
+                UpdatedUtc = now
+            };
         }
 
         private static AppDbContext BuildDbContext(SqliteConnection connection)

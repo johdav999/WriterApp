@@ -120,13 +120,14 @@ WHERE "Id" = {0};
 
             db.Database.ExecuteSqlRaw("""
 INSERT INTO "SearchIndexEntries" (
-    "EntityType","EntityId","DocumentId","SectionId","PageId","Title","Content","UpdatedAt"
+    "EntityType","EntityId","DocumentId","ProjectId","SectionId","PageId","Title","Content","UpdatedAt"
 ) VALUES (
-    'page', {0}, {1}, {2}, {3}, 'Page 1', 'Contains Test marker', '2026-01-01T00:00:00.0000000Z'
+    'page', {0}, {1}, {2}, {3}, {4}, 'Page 1', 'Contains Test marker', '2026-01-01T00:00:00.0000000Z'
 );
 """,
                 page.Id.ToString("D").ToLowerInvariant(),
                 document.Id.ToString("D").ToLowerInvariant(),
+                projectId.ToString("D").ToLowerInvariant(),
                 section.Id.ToString("D").ToLowerInvariant(),
                 page.Id.ToString("D").ToLowerInvariant());
 

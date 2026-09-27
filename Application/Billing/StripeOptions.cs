@@ -24,8 +24,8 @@ namespace WriterApp.Application.Billing
         public string BillingPortalReturnUrl { get; init; } = string.Empty;
         public bool LegacyBillingConfigFallbackUsed { get; init; }
 
-        public bool IsLiveMode => string.Equals(Mode, LiveMode, StringComparison.Ordinal);
-        public bool IsTestMode => string.Equals(Mode, TestMode, StringComparison.Ordinal);
+        public bool IsLiveMode => string.Equals(Mode?.Trim(), LiveMode, StringComparison.OrdinalIgnoreCase);
+        public bool IsTestMode => string.Equals(Mode?.Trim(), TestMode, StringComparison.OrdinalIgnoreCase);
 
         public string CurrentStandardPriceId => IsLiveMode
             ? Prices.Standard.LivePriceId

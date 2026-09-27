@@ -193,7 +193,7 @@ namespace WriterApp.Tests
             Assert.True(ContinuityJson.TryParseContinuityReport(result.Proposal!.ProposedText, out ContinuityReport? report));
             Assert.NotNull(report);
             ContinuityIssue issue = Assert.Single(report!.Issues);
-            Assert.True(string.IsNullOrWhiteSpace(issue.SuggestedFix));
+            Assert.True(string.IsNullOrWhiteSpace(issue.SuggestedFix), $"Unexpected suggested fix: '{issue.SuggestedFix}'");
         }
 
         private static IAiOrchestrator BuildOrchestrator(params IAiAction[] actions)

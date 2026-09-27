@@ -19,7 +19,7 @@ namespace WriterApp.Tests
     public sealed class DocxExportTests
     {
         [Fact]
-        public void DocxExport_IncludesHeadingsMarksListsAndPageBreaks()
+        public async Task DocxExport_IncludesHeadingsMarksListsAndPageBreaks()
         {
             WriterDocument document = BuildDocument(
                 "<h1>Chapter One</h1>" +
@@ -28,14 +28,14 @@ namespace WriterApp.Tests
 
             ExportService service = BuildExportService();
             ExportOptions options = new(IncludeTitlePage: false, ChapterBreakRules: new[] { "h1" });
-            ExportResult result = service.ExportAsync(
+            ExportResult result = await service.ExportAsync(
                 document,
                 ExportKind.Document,
                 ExportFormat.Docx,
                 options,
                 "user",
                 null,
-                CancellationToken.None).GetAwaiter().GetResult();
+                CancellationToken.None);
 
             using MemoryStream stream = new(result.Content);
             using WordprocessingDocument wordDoc = WordprocessingDocument.Open(stream, false);
@@ -57,18 +57,18 @@ namespace WriterApp.Tests
         }
 
         [Fact]
-        public void DocxExport_BulletsUseSymbolFontGlyph()
+        public async Task DocxExport_BulletsUseSymbolFontGlyph()
         {
             WriterDocument document = BuildDocument("<ul><li>Bullet</li></ul>");
             ExportService service = BuildExportService();
-            ExportResult result = service.ExportAsync(
+            ExportResult result = await service.ExportAsync(
                 document,
                 ExportKind.Document,
                 ExportFormat.Docx,
                 new ExportOptions(IncludeTitlePage: false),
                 "user",
                 null,
-                CancellationToken.None).GetAwaiter().GetResult();
+                CancellationToken.None);
 
             using MemoryStream stream = new(result.Content);
             using WordprocessingDocument wordDoc = WordprocessingDocument.Open(stream, false);
@@ -88,18 +88,18 @@ namespace WriterApp.Tests
         }
 
         [Fact]
-        public void DocxExport_HyperlinksCreateRelationships()
+        public async Task DocxExport_HyperlinksCreateRelationships()
         {
             WriterDocument document = BuildDocument("<p>See <a href=\"https://example.com\"><strong>this</strong> link</a>.</p>");
             ExportService service = BuildExportService();
-            ExportResult result = service.ExportAsync(
+            ExportResult result = await service.ExportAsync(
                 document,
                 ExportKind.Document,
                 ExportFormat.Docx,
                 new ExportOptions(IncludeTitlePage: false),
                 "user",
                 null,
-                CancellationToken.None).GetAwaiter().GetResult();
+                CancellationToken.None);
 
             using MemoryStream stream = new(result.Content);
             using WordprocessingDocument wordDoc = WordprocessingDocument.Open(stream, false);
@@ -112,18 +112,18 @@ namespace WriterApp.Tests
         }
 
         [Fact]
-        public void DocxExport_BrCreatesLineBreak()
+        public async Task DocxExport_BrCreatesLineBreak()
         {
             WriterDocument document = BuildDocument("<p>Hello<br>World</p>");
             ExportService service = BuildExportService();
-            ExportResult result = service.ExportAsync(
+            ExportResult result = await service.ExportAsync(
                 document,
                 ExportKind.Document,
                 ExportFormat.Docx,
                 new ExportOptions(IncludeTitlePage: false),
                 "user",
                 null,
-                CancellationToken.None).GetAwaiter().GetResult();
+                CancellationToken.None);
 
             using MemoryStream stream = new(result.Content);
             using WordprocessingDocument wordDoc = WordprocessingDocument.Open(stream, false);
@@ -133,18 +133,18 @@ namespace WriterApp.Tests
         }
 
         [Fact]
-        public void DocxExport_PreservesWhitespaceWhenNeeded()
+        public async Task DocxExport_PreservesWhitespaceWhenNeeded()
         {
             WriterDocument document = BuildDocument("<p>Hello  world</p>");
             ExportService service = BuildExportService();
-            ExportResult result = service.ExportAsync(
+            ExportResult result = await service.ExportAsync(
                 document,
                 ExportKind.Document,
                 ExportFormat.Docx,
                 new ExportOptions(IncludeTitlePage: false),
                 "user",
                 null,
-                CancellationToken.None).GetAwaiter().GetResult();
+                CancellationToken.None);
 
             using MemoryStream stream = new(result.Content);
             using WordprocessingDocument wordDoc = WordprocessingDocument.Open(stream, false);
@@ -155,18 +155,18 @@ namespace WriterApp.Tests
         }
 
         [Fact]
-        public void DocxExport_SetsDocumentDefaults()
+        public async Task DocxExport_SetsDocumentDefaults()
         {
             WriterDocument document = BuildDocument("<p>Defaults</p>");
             ExportService service = BuildExportService();
-            ExportResult result = service.ExportAsync(
+            ExportResult result = await service.ExportAsync(
                 document,
                 ExportKind.Document,
                 ExportFormat.Docx,
                 new ExportOptions(IncludeTitlePage: false),
                 "user",
                 null,
-                CancellationToken.None).GetAwaiter().GetResult();
+                CancellationToken.None);
 
             using MemoryStream stream = new(result.Content);
             using WordprocessingDocument wordDoc = WordprocessingDocument.Open(stream, false);
@@ -196,18 +196,18 @@ namespace WriterApp.Tests
         }
 
         [Fact]
-        public void DocxExport_IncludesTocField()
+        public async Task DocxExport_IncludesTocField()
         {
             WriterDocument document = BuildDocument("<h1>Chapter One</h1><p>Body</p>");
             ExportService service = BuildExportService();
-            ExportResult result = service.ExportAsync(
+            ExportResult result = await service.ExportAsync(
                 document,
                 ExportKind.Document,
                 ExportFormat.Docx,
                 new ExportOptions(IncludeTitlePage: false, IncludeToc: true),
                 "user",
                 null,
-                CancellationToken.None).GetAwaiter().GetResult();
+                CancellationToken.None);
 
             using MemoryStream stream = new(result.Content);
             using WordprocessingDocument wordDoc = WordprocessingDocument.Open(stream, false);
@@ -219,18 +219,18 @@ namespace WriterApp.Tests
         }
 
         [Fact]
-        public void DocxExport_AddsHeaderFooterWithPageNumber()
+        public async Task DocxExport_AddsHeaderFooterWithPageNumber()
         {
             WriterDocument document = BuildDocument("<p>Body</p>");
             ExportService service = BuildExportService();
-            ExportResult result = service.ExportAsync(
+            ExportResult result = await service.ExportAsync(
                 document,
                 ExportKind.Document,
                 ExportFormat.Docx,
                 new ExportOptions(IncludeTitlePage: false),
                 "user",
                 null,
-                CancellationToken.None).GetAwaiter().GetResult();
+                CancellationToken.None);
 
             using MemoryStream stream = new(result.Content);
             using WordprocessingDocument wordDoc = WordprocessingDocument.Open(stream, false);
@@ -251,18 +251,18 @@ namespace WriterApp.Tests
         }
 
         [Fact]
-        public void DocxExport_TablesRenderRowsAndCells()
+        public async Task DocxExport_TablesRenderRowsAndCells()
         {
             WriterDocument document = BuildDocument("<table><tr><td>A</td><td>B</td></tr><tr><td>C</td><td>D</td></tr></table>");
             ExportService service = BuildExportService();
-            ExportResult result = service.ExportAsync(
+            ExportResult result = await service.ExportAsync(
                 document,
                 ExportKind.Document,
                 ExportFormat.Docx,
                 new ExportOptions(IncludeTitlePage: false),
                 "user",
                 null,
-                CancellationToken.None).GetAwaiter().GetResult();
+                CancellationToken.None);
 
             using MemoryStream stream = new(result.Content);
             using WordprocessingDocument wordDoc = WordprocessingDocument.Open(stream, false);
@@ -273,7 +273,7 @@ namespace WriterApp.Tests
         }
 
         [Fact]
-        public void DocxExport_TableHeaderAndRichCellContentArePreserved()
+        public async Task DocxExport_TableHeaderAndRichCellContentArePreserved()
         {
             string html = """
                           <table>
@@ -298,14 +298,14 @@ namespace WriterApp.Tests
 
             WriterDocument document = BuildDocument(html);
             ExportService service = BuildExportService();
-            ExportResult result = service.ExportAsync(
+            ExportResult result = await service.ExportAsync(
                 document,
                 ExportKind.Document,
                 ExportFormat.Docx,
                 new ExportOptions(IncludeTitlePage: false),
                 "user",
                 null,
-                CancellationToken.None).GetAwaiter().GetResult();
+                CancellationToken.None);
 
             using MemoryStream stream = new(result.Content);
             using WordprocessingDocument wordDoc = WordprocessingDocument.Open(stream, false);
@@ -319,18 +319,18 @@ namespace WriterApp.Tests
         }
 
         [Fact]
-        public void DocxExport_BlockquoteAddsIndent()
+        public async Task DocxExport_BlockquoteAddsIndent()
         {
             WriterDocument document = BuildDocument("<blockquote>Quote</blockquote>");
             ExportService service = BuildExportService();
-            ExportResult result = service.ExportAsync(
+            ExportResult result = await service.ExportAsync(
                 document,
                 ExportKind.Document,
                 ExportFormat.Docx,
                 new ExportOptions(IncludeTitlePage: false),
                 "user",
                 null,
-                CancellationToken.None).GetAwaiter().GetResult();
+                CancellationToken.None);
 
             using MemoryStream stream = new(result.Content);
             using WordprocessingDocument wordDoc = WordprocessingDocument.Open(stream, false);
@@ -341,18 +341,18 @@ namespace WriterApp.Tests
         }
 
         [Fact]
-        public void DocxExport_CodeBlockUsesMonospaceAndBreaks()
+        public async Task DocxExport_CodeBlockUsesMonospaceAndBreaks()
         {
             WriterDocument document = BuildDocument("<pre><code>line1\nline2</code></pre>");
             ExportService service = BuildExportService();
-            ExportResult result = service.ExportAsync(
+            ExportResult result = await service.ExportAsync(
                 document,
                 ExportKind.Document,
                 ExportFormat.Docx,
                 new ExportOptions(IncludeTitlePage: false),
                 "user",
                 null,
-                CancellationToken.None).GetAwaiter().GetResult();
+                CancellationToken.None);
 
             using MemoryStream stream = new(result.Content);
             using WordprocessingDocument wordDoc = WordprocessingDocument.Open(stream, false);
@@ -367,21 +367,21 @@ namespace WriterApp.Tests
         }
 
         [Fact]
-        public void DocxExport_DataUriImageCreatesImagePart()
+        public async Task DocxExport_DataUriImageCreatesImagePart()
         {
             string pngBase64 =
                 "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO0nJ9sAAAAASUVORK5CYII=";
             string html = $"<p>Image <img src=\"data:image/png;base64,{pngBase64}\" /></p>";
             WriterDocument document = BuildDocument(html);
             ExportService service = BuildExportService();
-            ExportResult result = service.ExportAsync(
+            ExportResult result = await service.ExportAsync(
                 document,
                 ExportKind.Document,
                 ExportFormat.Docx,
                 new ExportOptions(IncludeTitlePage: false),
                 "user",
                 null,
-                CancellationToken.None).GetAwaiter().GetResult();
+                CancellationToken.None);
 
             using MemoryStream stream = new(result.Content);
             using WordprocessingDocument wordDoc = WordprocessingDocument.Open(stream, false);
@@ -390,43 +390,43 @@ namespace WriterApp.Tests
         }
 
         [Fact]
-        public void DocxExport_DataUriImageKeepsParagraphOrder()
+        public async Task DocxExport_DataUriImageKeepsParagraphOrder()
         {
             string pngBase64 =
                 "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO0nJ9sAAAAASUVORK5CYII=";
             string html = $"<p>Before image</p><p><img src=\"data:image/png;base64,{pngBase64}\" alt=\"Sample\" width=\"320\" /></p><p>After image</p>";
             WriterDocument document = BuildDocument(html);
             ExportService service = BuildExportService();
-            ExportResult result = service.ExportAsync(
+            ExportResult result = await service.ExportAsync(
                 document,
                 ExportKind.Document,
                 ExportFormat.Docx,
                 new ExportOptions(IncludeTitlePage: false),
                 "user",
                 null,
-                CancellationToken.None).GetAwaiter().GetResult();
+                CancellationToken.None);
 
             using MemoryStream stream = new(result.Content);
             using WordprocessingDocument wordDoc = WordprocessingDocument.Open(stream, false);
             var paragraphs = wordDoc.MainDocumentPart!.Document!.Body!.Elements<Paragraph>().ToList();
-            Assert.True(paragraphs.Any(p => p.InnerText.Contains("Before image", StringComparison.Ordinal)));
-            Assert.True(paragraphs.Any(p => p.InnerText.Contains("After image", StringComparison.Ordinal)));
+            Assert.Contains(paragraphs, p => p.InnerText.Contains("Before image", StringComparison.Ordinal));
+            Assert.Contains(paragraphs, p => p.InnerText.Contains("After image", StringComparison.Ordinal));
             Assert.NotEmpty(wordDoc.MainDocumentPart!.Document!.Body!.Descendants<Drawing>());
         }
 
         [Fact]
-        public void DocxExport_RemoteImageDisabledFallsBackToPlaceholder()
+        public async Task DocxExport_RemoteImageDisabledFallsBackToPlaceholder()
         {
             WriterDocument document = BuildDocument("<p><img src=\"https://example.com/image.png\" /></p>");
             ExportService service = BuildExportService();
-            ExportResult result = service.ExportAsync(
+            ExportResult result = await service.ExportAsync(
                 document,
                 ExportKind.Document,
                 ExportFormat.Docx,
                 new ExportOptions(IncludeTitlePage: false),
                 "user",
                 null,
-                CancellationToken.None).GetAwaiter().GetResult();
+                CancellationToken.None);
 
             using MemoryStream stream = new(result.Content);
             using WordprocessingDocument wordDoc = WordprocessingDocument.Open(stream, false);
@@ -435,7 +435,7 @@ namespace WriterApp.Tests
         }
 
         [Fact]
-        public void DocxExport_OrderedListsUseSeparateNumberingInstances()
+        public async Task DocxExport_OrderedListsUseSeparateNumberingInstances()
         {
             WriterDocument document = BuildDocument(
                 "<ol><li>First list item</li></ol>" +
@@ -443,14 +443,14 @@ namespace WriterApp.Tests
                 "<ol><li>Second list item</li></ol>");
 
             ExportService service = BuildExportService();
-            ExportResult result = service.ExportAsync(
+            ExportResult result = await service.ExportAsync(
                 document,
                 ExportKind.Document,
                 ExportFormat.Docx,
                 new ExportOptions(IncludeTitlePage: false),
                 "user",
                 null,
-                CancellationToken.None).GetAwaiter().GetResult();
+                CancellationToken.None);
 
             using MemoryStream stream = new(result.Content);
             using WordprocessingDocument wordDoc = WordprocessingDocument.Open(stream, false);
@@ -469,19 +469,19 @@ namespace WriterApp.Tests
         }
 
         [Fact]
-        public void DocxExport_NestedListsUseIncrementedLevels()
+        public async Task DocxExport_NestedListsUseIncrementedLevels()
         {
             WriterDocument document = BuildDocument("<ul><li>Outer<ul><li>Inner</li></ul></li></ul>");
 
             ExportService service = BuildExportService();
-            ExportResult result = service.ExportAsync(
+            ExportResult result = await service.ExportAsync(
                 document,
                 ExportKind.Document,
                 ExportFormat.Docx,
                 new ExportOptions(IncludeTitlePage: false),
                 "user",
                 null,
-                CancellationToken.None).GetAwaiter().GetResult();
+                CancellationToken.None);
 
             using MemoryStream stream = new(result.Content);
             using WordprocessingDocument wordDoc = WordprocessingDocument.Open(stream, false);
@@ -499,7 +499,7 @@ namespace WriterApp.Tests
         }
 
         [Fact]
-        public void DocxExport_ClampsListDepthToEight()
+        public async Task DocxExport_ClampsListDepthToEight()
         {
             string html = string.Concat(Enumerable.Repeat("<ul><li>", 10))
                 + "Deep"
@@ -507,14 +507,14 @@ namespace WriterApp.Tests
 
             WriterDocument document = BuildDocument(html);
             ExportService service = BuildExportService();
-            ExportResult result = service.ExportAsync(
+            ExportResult result = await service.ExportAsync(
                 document,
                 ExportKind.Document,
                 ExportFormat.Docx,
                 new ExportOptions(IncludeTitlePage: false),
                 "user",
                 null,
-                CancellationToken.None).GetAwaiter().GetResult();
+                CancellationToken.None);
 
             using MemoryStream stream = new(result.Content);
             using WordprocessingDocument wordDoc = WordprocessingDocument.Open(stream, false);
@@ -530,19 +530,19 @@ namespace WriterApp.Tests
         }
 
         [Fact]
-        public void DocxExport_InsertsCoverImageAsFirstPage()
+        public async Task DocxExport_InsertsCoverImageAsFirstPage()
         {
             const string coverDataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aJ6wAAAAASUVORK5CYII=";
             WriterDocument document = BuildDocument("<p>Hello export.</p>");
             ExportService service = BuildExportService();
-            ExportResult result = service.ExportAsync(
+            ExportResult result = await service.ExportAsync(
                 document,
                 ExportKind.Document,
                 ExportFormat.Docx,
                 new ExportOptions(IncludeTitlePage: false, IncludeCover: true, CoverImageUrl: coverDataUrl),
                 "user",
                 null,
-                CancellationToken.None).GetAwaiter().GetResult();
+                CancellationToken.None);
 
             using MemoryStream stream = new(result.Content);
             using WordprocessingDocument wordDoc = WordprocessingDocument.Open(stream, false);

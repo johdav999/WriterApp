@@ -677,7 +677,7 @@ namespace WriterApp.Tests
                         "section",
                         null,
                         input.SelectedText,
-                        null);
+                        "Tightened demo text.");
                     return Task.FromResult(AiExecutionResult.Success(reviseProposal));
                 }
 

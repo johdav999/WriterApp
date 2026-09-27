@@ -31,6 +31,7 @@ namespace WriterApp.Tests
             DocumentRecord doc = new()
             {
                 Id = Guid.NewGuid(),
+                Project = CreateProject(),
                 OwnerUserId = "user",
                 Title = "Doc",
                 CreatedAt = DateTimeOffset.UtcNow,
@@ -109,6 +110,7 @@ namespace WriterApp.Tests
             DocumentRecord doc = new()
             {
                 Id = Guid.NewGuid(),
+                Project = CreateProject(),
                 OwnerUserId = "user",
                 Title = "Doc",
                 CreatedAt = DateTimeOffset.UtcNow,
@@ -158,6 +160,7 @@ namespace WriterApp.Tests
             DocumentRecord doc = new()
             {
                 Id = Guid.NewGuid(),
+                Project = CreateProject(),
                 OwnerUserId = "user",
                 Title = "Doc",
                 CreatedAt = DateTimeOffset.UtcNow,
@@ -236,7 +239,7 @@ namespace WriterApp.Tests
                 new[] { "reveal", "fight" },
                 new[] { new SceneCardReferenceDto("character", "chr_1", "Track arc") });
 
-            string json = JsonSerializer.Serialize(dto);
+            string json = JsonSerializer.Serialize(dto, new JsonSerializerOptions(JsonSerializerDefaults.Web));
             Assert.Contains("\"povCharacterId\":\"chr_1\"", json, StringComparison.Ordinal);
             Assert.Contains("\"placeId\":\"plc_1\"", json, StringComparison.Ordinal);
             Assert.Contains("\"timelineEventId\":\"evt_1\"", json, StringComparison.Ordinal);
@@ -261,6 +264,7 @@ namespace WriterApp.Tests
                 DocumentRecord doc = new()
                 {
                     Id = Guid.NewGuid(),
+                    Project = CreateProject(),
                     OwnerUserId = "user",
                     Title = "Doc",
                     CreatedAt = DateTimeOffset.UtcNow,
@@ -320,6 +324,19 @@ namespace WriterApp.Tests
                 AppDbContext db = checkScope.ServiceProvider.GetRequiredService<AppDbContext>();
                 Assert.Equal("{\"purpose\":\"new\"}", (await db.DocumentOutlineNodes.FirstAsync()).MetadataJson);
             }
+        }
+
+        private static ProjectRecord CreateProject()
+        {
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+            return new ProjectRecord
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = "user",
+                Title = "Project",
+                CreatedUtc = now,
+                UpdatedUtc = now
+            };
         }
     }
 }

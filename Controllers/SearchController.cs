@@ -73,7 +73,24 @@ namespace WriterApp.Controllers
             int projectEntryCount = await _searchIndex.GetProjectEntryCountAsync(userId, normalizedProjectId, ct);
             if (projectEntryCount == 0)
             {
-                await _searchIndex.RebuildProjectIndexAsync(userId, normalizedProjectId, ct);
+                try
+                {
+                    await _searchIndex.RebuildProjectIndexAsync(userId, normalizedProjectId, ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    return Ok(Array.Empty<SearchResultDto>());
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(
+                        ex,
+                        "Search index rebuild failed. CorrelationId={CorrelationId} UserId={UserId} ProjectId={ProjectId}",
+                        correlationId,
+                        userId,
+                        normalizedProjectId);
+                    return Ok(Array.Empty<SearchResultDto>());
+                }
             }
 
             IReadOnlyList<SearchResultDto> results;

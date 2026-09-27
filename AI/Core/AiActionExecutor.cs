@@ -152,7 +152,9 @@ namespace WriterApp.AI.Core
                 .Take(maxMergedIssues)
                 .ToList();
 
-            string mergedJson = JsonSerializer.Serialize(new ContinuityReport(schemaVersion, sortedIssues));
+            string mergedJson = JsonSerializer.Serialize(
+                new ContinuityReport(schemaVersion, sortedIssues),
+                new JsonSerializerOptions(JsonSerializerDefaults.Web));
             AiArtifact mergedArtifact = new(
                 Guid.NewGuid(),
                 AiModality.Text,
@@ -224,7 +226,9 @@ namespace WriterApp.AI.Core
 
                 try
                 {
-                    ContinuityReport? parsed = JsonSerializer.Deserialize<ContinuityReport>(candidate);
+                    ContinuityReport? parsed = JsonSerializer.Deserialize<ContinuityReport>(
+                        candidate,
+                        new JsonSerializerOptions(JsonSerializerDefaults.Web));
                     if (parsed?.Issues is null)
                     {
                         continue;
@@ -567,7 +571,9 @@ namespace WriterApp.AI.Core
                             sanitizedFixCount);
                     }
 
-                    proposedText = JsonSerializer.Serialize(parsedReport with { Issues = normalizedIssues });
+                    proposedText = JsonSerializer.Serialize(
+                        parsedReport with { Issues = normalizedIssues },
+                        new JsonSerializerOptions(JsonSerializerDefaults.Web));
                 }
             }
             else if (string.Equals(action.ActionId, ProposeNextParagraphAction.ActionIdValue, StringComparison.Ordinal))
@@ -1188,6 +1194,7 @@ namespace WriterApp.AI.Core
             return lowered.Contains("remove duplicate paragraph", StringComparison.Ordinal)
                 || lowered.Contains("remove repeated paragraph", StringComparison.Ordinal)
                 || lowered.Contains("remove the repeated paragraphs", StringComparison.Ordinal)
+                || lowered.StartsWith("adjust ", StringComparison.Ordinal)
                 || lowered.Contains("maintain narrative clarity", StringComparison.Ordinal)
                 || lowered.Contains("improve narrative clarity", StringComparison.Ordinal)
                 || lowered.Contains("as an ai", StringComparison.Ordinal)
@@ -1202,6 +1209,11 @@ namespace WriterApp.AI.Core
         {
             string candidate = (text ?? string.Empty).Trim();
             if (string.IsNullOrWhiteSpace(candidate))
+            {
+                return string.Empty;
+            }
+
+            if (Regex.IsMatch(candidate, @"^(?:adjust|change|fix|rewrite|update|make|ensure|move|remove|replace|delete|insert)\b", RegexOptions.IgnoreCase))
             {
                 return string.Empty;
             }

@@ -237,7 +237,7 @@ namespace WriterApp.Application.Commands
                 }
 
                 TextRange range = GetAiCommandRange(aiCommand, sectionPlainTextLength);
-                if (mergedRanges.TryGetValue(aiCommand.AiEditGroupId, out TextRange existing))
+                if (mergedRanges.TryGetValue(aiCommand.AiEditGroupId, out TextRange? existing) && existing is not null)
                 {
                     int start = Math.Min(existing.Start, range.Start);
                     int end = Math.Max(existing.Start + existing.Length, range.Start + range.Length);

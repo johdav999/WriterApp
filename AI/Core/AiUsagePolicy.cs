@@ -85,7 +85,7 @@ namespace WriterApp.AI.Core
             bool aiEnabled = await _entitlementService.HasAsync(userId, "ai.enabled");
             if (!aiEnabled)
             {
-                return new AiUsageDecision(false, userId, "plan_upgrade_required", "AI is not enabled for your plan.");
+                return new AiUsageDecision(false, userId, "ai.disabled", "AI is not enabled for your plan.");
             }
 
             if (string.Equals(actionId, GenerateCoverImageAction.ActionIdValue, StringComparison.Ordinal))
@@ -93,7 +93,7 @@ namespace WriterApp.AI.Core
                 bool imagesEnabled = await _entitlementService.HasAsync(userId, "ai.images.cover");
                 if (!imagesEnabled)
                 {
-                    return new AiUsageDecision(false, userId, "plan_upgrade_required", "Cover image generation is not enabled for your plan.");
+                    return new AiUsageDecision(false, userId, "ai.images.cover_disabled", "Cover image generation is not enabled for your plan.");
                 }
             }
 
@@ -101,6 +101,33 @@ namespace WriterApp.AI.Core
             if (IsRateLimited(userId, requestsPerMinute))
             {
                 return new AiUsageDecision(false, userId, "ai.rate_limited", "Too many AI requests. Try again in a minute.");
+            }
+
+            int? monthlyTokens = await _entitlementService.GetIntAsync(userId, "ai.monthly_tokens");
+            int monthlyLimit = monthlyTokens ?? 0;
+            if (monthlyLimit <= 0)
+            {
+                return new AiUsageDecision(false, userId, "ai.quota_exceeded", "AI usage quota is exhausted.");
+            }
+
+            UsageSnapshot monthlySnapshot = await _usageMeter.GetCurrentPeriodAsync(userId, TotalKind);
+            int monthlyUsed = monthlySnapshot.TotalInputTokens + monthlySnapshot.TotalOutputTokens;
+            if (monthlyUsed >= monthlyLimit)
+            {
+                return new AiUsageDecision(false, userId, "ai.quota_exceeded", "AI usage quota is exhausted.");
+            }
+
+            int? dailyCap = await _entitlementService.GetIntAsync(userId, "ai.daily_tokens_cap");
+            if (dailyCap is > 0)
+            {
+                DateTime now = _clock.UtcNow;
+                DateTime dayStart = new(now.Year, now.Month, now.Day, 0, 0, 0, DateTimeKind.Utc);
+                UsageSnapshot dailySnapshot = await _usageMeter.GetRangeAsync(userId, TotalKind, dayStart, dayStart.AddDays(1));
+                int dailyUsed = dailySnapshot.TotalInputTokens + dailySnapshot.TotalOutputTokens;
+                if (dailyUsed >= dailyCap.Value)
+                {
+                    return new AiUsageDecision(false, userId, "ai.quota_exceeded", "Daily AI usage cap reached.");
+                }
             }
 
             return new AiUsageDecision(true, userId, null, null);

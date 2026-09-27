@@ -36,7 +36,7 @@ namespace WriterApp.Client.Utilities
                     new JsonSerializerOptions(JsonSerializerDefaults.Web));
                 ReplaceContent(response, payload, response.Content.Headers.ContentType);
 
-                if (!string.Equals(deleted?.Code, DeletedCode, StringComparison.Ordinal))
+                if (deleted is null || !string.Equals(deleted.Code, DeletedCode, StringComparison.Ordinal))
                 {
                     return null;
                 }

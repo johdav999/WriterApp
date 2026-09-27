@@ -53,7 +53,7 @@ namespace WriterApp.Tests
 
             ObjectResult forbidden = Assert.IsType<ObjectResult>(result.Result);
             Assert.Equal(StatusCodes.Status403Forbidden, forbidden.StatusCode);
-            Assert.Empty(await dbContext.UserProfiles.ToListAsync());
+            Assert.Empty(await dbContext.UserProfiles.Where(profile => profile.UserId != "seed-system").ToListAsync());
         }
 
         private static AppDbContext BuildDbContext(SqliteConnection connection)

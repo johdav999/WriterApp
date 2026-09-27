@@ -36,11 +36,11 @@ namespace WriterApp.Tests
         [Fact]
         public void ParagraphLengthRule_LongParagraph_ProducesReplaceFix()
         {
-            const string text =
-                "Sara opened the door and looked down the hallway where the lights flickered in the cold draft. " +
-                "She called for Maya and waited while the old floorboards creaked beneath her shoes. " +
-                "Outside, rain hit the windows in uneven bursts and drowned out the distant traffic from the avenue. " +
-                "When no one answered, she stepped forward, checked her phone, and forced herself to keep moving.";
+            string text = string.Join(
+                " ",
+                Enumerable.Repeat(
+                    "Sara opened the door and looked down the hallway where the lights flickered in the cold draft.",
+                    14));
 
             QualityCheckContext context = BuildContext(text);
             ParagraphLengthRule rule = new();

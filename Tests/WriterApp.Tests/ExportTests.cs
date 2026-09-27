@@ -1,6 +1,7 @@
 using System;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using WriterApp.Application.Exporting;
 using WriterApp.Application.State;
 using WriterApp.Data.Exporting;
@@ -24,42 +25,42 @@ namespace WriterApp.Tests
         }
 
         [Fact]
-        public void DocumentExport_DoesNotIncludeSynopsis()
+        public async Task DocumentExport_DoesNotIncludeSynopsis()
         {
             Document document = DocumentFactory.CreateNewDocument();
             document.Synopsis.Premise = "SYNOPSIS_ONLY_TEXT";
             ReplaceFirstSectionContent(document, "Body text.");
 
             ExportService service = BuildExportService();
-            ExportResult result = service.ExportAsync(
+            ExportResult result = await service.ExportAsync(
                 document,
                 ExportKind.Document,
                 ExportFormat.Markdown,
                 new ExportOptions(),
                 "user",
                 null,
-                CancellationToken.None).GetAwaiter().GetResult();
+                CancellationToken.None);
 
             string output = Encoding.UTF8.GetString(result.Content);
             Assert.DoesNotContain("SYNOPSIS_ONLY_TEXT", output);
         }
 
         [Fact]
-        public void SynopsisExport_DoesNotIncludeDocumentContent()
+        public async Task SynopsisExport_DoesNotIncludeDocumentContent()
         {
             Document document = DocumentFactory.CreateNewDocument();
             document.Synopsis.Premise = "Synopsis premise";
             ReplaceFirstSectionContent(document, "DOC_ONLY_TEXT");
 
             ExportService service = BuildExportService();
-            ExportResult result = service.ExportAsync(
+            ExportResult result = await service.ExportAsync(
                 document,
                 ExportKind.Synopsis,
                 ExportFormat.Markdown,
                 new ExportOptions(),
                 "user",
                 null,
-                CancellationToken.None).GetAwaiter().GetResult();
+                CancellationToken.None);
 
             string output = Encoding.UTF8.GetString(result.Content);
             Assert.DoesNotContain("DOC_ONLY_TEXT", output);
@@ -67,42 +68,42 @@ namespace WriterApp.Tests
         }
 
         [Fact]
-        public void DocumentExport_Html_DoesNotIncludeSynopsis()
+        public async Task DocumentExport_Html_DoesNotIncludeSynopsis()
         {
             Document document = DocumentFactory.CreateNewDocument();
             document.Synopsis.Premise = "SYNOPSIS_ONLY_TEXT";
             ReplaceFirstSectionContent(document, "Body text.");
 
             ExportService service = BuildExportService();
-            ExportResult result = service.ExportAsync(
+            ExportResult result = await service.ExportAsync(
                 document,
                 ExportKind.Document,
                 ExportFormat.Html,
                 new ExportOptions(),
                 "user",
                 null,
-                CancellationToken.None).GetAwaiter().GetResult();
+                CancellationToken.None);
 
             string output = Encoding.UTF8.GetString(result.Content);
             Assert.DoesNotContain("SYNOPSIS_ONLY_TEXT", output);
         }
 
         [Fact]
-        public void SynopsisExport_Html_DoesNotIncludeDocumentContent()
+        public async Task SynopsisExport_Html_DoesNotIncludeDocumentContent()
         {
             Document document = DocumentFactory.CreateNewDocument();
             document.Synopsis.Premise = "Synopsis premise";
             ReplaceFirstSectionContent(document, "DOC_ONLY_TEXT");
 
             ExportService service = BuildExportService();
-            ExportResult result = service.ExportAsync(
+            ExportResult result = await service.ExportAsync(
                 document,
                 ExportKind.Synopsis,
                 ExportFormat.Html,
                 new ExportOptions(),
                 "user",
                 null,
-                CancellationToken.None).GetAwaiter().GetResult();
+                CancellationToken.None);
 
             string output = Encoding.UTF8.GetString(result.Content);
             Assert.DoesNotContain("DOC_ONLY_TEXT", output);
@@ -110,21 +111,21 @@ namespace WriterApp.Tests
         }
 
         [Fact]
-        public void SynopsisExport_Docx_UsesSynopsisFileName()
+        public async Task SynopsisExport_Docx_UsesSynopsisFileName()
         {
             Document document = DocumentFactory.CreateNewDocument();
             document = document with { Metadata = document.Metadata with { Title = "My Book" } };
             document.Synopsis.Premise = "Synopsis premise";
 
             ExportService service = BuildExportService();
-            ExportResult result = service.ExportAsync(
+            ExportResult result = await service.ExportAsync(
                 document,
                 ExportKind.Synopsis,
                 ExportFormat.Docx,
                 new ExportOptions(),
                 "user",
                 null,
-                CancellationToken.None).GetAwaiter().GetResult();
+                CancellationToken.None);
 
             Assert.Equal("application/vnd.openxmlformats-officedocument.wordprocessingml.document", result.MimeType);
             Assert.Contains("Synopsis.docx", result.FileName, StringComparison.OrdinalIgnoreCase);

@@ -229,6 +229,15 @@ namespace WriterApp.Tests
                 UpdatedAt = now
             };
 
+            context.Projects.Add(new ProjectRecord
+            {
+                Id = document.ProjectId,
+                OwnerUserId = document.OwnerUserId,
+                Title = "Export Project",
+                CreatedUtc = now,
+                UpdatedUtc = now
+            });
+
             SectionRecord section = new()
             {
                 Id = Guid.NewGuid(),

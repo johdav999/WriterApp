@@ -26,7 +26,7 @@ namespace WriterApp.Tests
                 200);
 
             PageVersionDiffBlockDto block = Assert.Single(result.Blocks);
-            Assert.True(string.Equals("changed", block.Status, StringComparison.OrdinalIgnoreCase));
+            Assert.Equal("changed", block.Status, ignoreCase: true);
             Assert.Contains(block.InlineSegments ?? Array.Empty<PageVersionDiffSpanDto>(),
                 span => span.Kind.Equals("added", StringComparison.OrdinalIgnoreCase)
                         && span.Text.Contains("Added", StringComparison.OrdinalIgnoreCase));
@@ -49,7 +49,7 @@ namespace WriterApp.Tests
                 200);
 
             PageVersionDiffBlockDto block = Assert.Single(result.Blocks);
-            Assert.True(string.Equals("changed", block.Status, StringComparison.OrdinalIgnoreCase));
+            Assert.Equal("changed", block.Status, ignoreCase: true);
             Assert.Contains(block.InlineSegments ?? Array.Empty<PageVersionDiffSpanDto>(),
                 span => span.Kind.Equals("removed", StringComparison.OrdinalIgnoreCase)
                         && span.Text.Contains("brave", StringComparison.OrdinalIgnoreCase));

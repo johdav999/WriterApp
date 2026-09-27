@@ -109,7 +109,7 @@ namespace WriterApp.Application.AI
                 return OnboardingDemoEligibilityResult.Denied("onboarding-complete", sectionId);
             }
 
-            SceneMetadataCandidate[] candidates = await (
+            SceneMetadataCandidate[] candidates = (await (
                     from node in _dbContext.ProjectNodes.AsNoTracking()
                     join project in _dbContext.Projects.AsNoTracking() on node.ProjectId equals project.Id
                     join section in _dbContext.Sections.AsNoTracking() on node.LinkedSectionId equals section.Id
@@ -117,13 +117,15 @@ namespace WriterApp.Application.AI
                           && node.NodeType == ProjectNodeType.Scene
                           && node.LinkedSectionId == sectionId
                           && section.DocumentId == documentId
-                    orderby node.UpdatedUtc descending, node.Id
                     select new SceneMetadataCandidate(
                         node.Id,
                         section.Id,
                         node.MetadataJson,
                         node.UpdatedUtc))
-                .ToArrayAsync(ct);
+                .ToArrayAsync(ct))
+                .OrderByDescending(candidate => candidate.UpdatedUtc)
+                .ThenBy(candidate => candidate.SceneNodeId)
+                .ToArray();
 
             _logger.LogInformation(
                 "Onboarding demo metadata candidates found. UserId={UserId} ActionKey={ActionKey} DocumentId={DocumentId} SectionId={SectionId} Count={Count}",

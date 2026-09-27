@@ -89,9 +89,10 @@ namespace WriterApp.Tests
             IArtifactStore artifactStore = new InMemoryArtifactStore();
             IAiOrchestrator orchestrator = BuildOrchestrator(policy, usageMeter, provider, artifactStore);
 
+            AiActionInput input = BuildInput();
             AiExecutionResult result = await orchestrator.ExecuteActionAsync(
                 GenerateCoverImageAction.ActionIdValue,
-                BuildInput(),
+                input,
                 CancellationToken.None);
 
             Assert.True(result.Succeeded);
@@ -101,7 +102,7 @@ namespace WriterApp.Tests
             UsageSnapshot usageSnapshot = await usageMeter.GetCurrentPeriodAsync("user-pro", "ai.total");
             Assert.Equal(TestImageProvider.ImageTokenCost, usageSnapshot.TotalOutputTokens);
 
-            Document document = DocumentFactory.CreateNewDocument();
+            Document document = input.Document;
             DocumentState state = new(document);
             CommandProcessor processor = new(state);
             IAiProposalApplier applier = new DefaultProposalApplier(artifactStore);

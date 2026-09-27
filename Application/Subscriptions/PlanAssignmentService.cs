@@ -65,8 +65,9 @@ namespace WriterApp.Application.Subscriptions
                 throw new PlanAssignmentException(PlanAssignmentErrorCode.InvalidPlanKey, "planKey is required.");
             }
 
+            string normalizedPlanKey = planKey.Trim().ToLowerInvariant();
             Plan? plan = await _dbContext.Plans
-                .FirstOrDefaultAsync(entry => entry.Key == planKey, cancellationToken);
+                .FirstOrDefaultAsync(entry => entry.Key == normalizedPlanKey, cancellationToken);
             if (plan is null)
             {
                 throw new PlanAssignmentException(PlanAssignmentErrorCode.PlanNotFound, $"Plan '{planKey}' was not found.");

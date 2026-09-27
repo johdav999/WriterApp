@@ -221,6 +221,7 @@ namespace WriterApp.Tests
                 CreatedUtc = DateTimeOffset.UtcNow,
                 UpdatedUtc = DateTimeOffset.UtcNow
             };
+            document.ProjectId = project.Id;
             db.Projects.Add(project);
             db.ProjectNodes.Add(new ProjectNodeRecord
             {

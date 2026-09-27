@@ -59,7 +59,7 @@ namespace WriterApp.Tests
             Assert.Equal("Section notes", copiedSectionNote.NotesText);
 
             PageAnnotationRecord copiedAnnotation = await db.PageAnnotations.SingleAsync(annotation => annotation.PageId == copiedPages[0].Id);
-            Assert.True(string.Equals("todo", copiedAnnotation.Kind, StringComparison.OrdinalIgnoreCase));
+            Assert.Equal("todo", copiedAnnotation.Kind, ignoreCase: true);
             Assert.Equal("Remember this", copiedAnnotation.Content);
 
             Assert.NotNull(await db.PageNotes.FindAsync(copiedPages[0].Id));
