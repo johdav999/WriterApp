@@ -9,6 +9,7 @@ h1 { font-family: Georgia, serif; font-size: clamp(2.1rem, 6vw, 3.7rem); font-we
 .create-panel, .document-card, .empty-state, .confirm-panel, .storage-issues { background: #fff; border: 1px solid #ded9cf; border-radius: .95rem; box-shadow: 0 .5rem 1.8rem rgb(38 31 21 / 5%); }
 .create-panel { align-items: end; display: grid; gap: 1.25rem; grid-template-columns: minmax(12rem, 1fr) minmax(18rem, 2fr); padding: 1.25rem; }
 .create-panel label { color: #251f35; display: block; font-size: 1.12rem; font-weight: 750; }
+.create-panel h2 { font-size: 1.12rem; margin: 0; }
 .create-panel p { color: #655f55; line-height: 1.4; margin: .35rem 0 0; }
 .create-controls, .inline-controls, .document-actions, .confirm-actions { align-items: center; display: flex; flex-wrap: wrap; gap: .55rem; }
 .create-controls input { flex: 1 1 13rem; }

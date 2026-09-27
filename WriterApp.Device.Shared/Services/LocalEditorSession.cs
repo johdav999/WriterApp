@@ -14,6 +14,14 @@ public sealed class LocalEditorSession(LocalDocumentRepository repository, Local
     public string ContentFor(LocalPage page) => _pending.GetValueOrDefault(page.PageId, page.Content);
     public LocalContentFormat FormatFor(LocalPage page) => _pending.ContainsKey(page.PageId) ? LocalContentFormat.Html : page.ContentFormat;
 
+    public void AdoptSavedDocument(LocalDocument saved)
+    {
+        if (saved.DocumentId != Document.DocumentId || IsDirty || saved.LocalRevision <= Document.LocalRevision)
+            throw new InvalidOperationException("The editor cannot adopt a stale or unsaved document.");
+        Document = saved;
+        SaveState = LocalSaveState.Saved;
+    }
+
     public LocalDocument Snapshot() => Document with
     {
         Sections = Document.Sections.Select(section => section with

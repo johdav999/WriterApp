@@ -168,12 +168,18 @@ The editor now sends Rewrite, Expand, Shorten, Summarize, and Custom requests th
 
 Prompt 9 validation: **520 tests pass**, including 20 new AI request, transport, failure, cancellation, and backup cases. All 12 browser editor checks pass. The Release solution, Windows Debug host, and iOS managed Debug host build with zero warnings. Live AI and sync verification still requires native registration and a configured staging backend.
 
+### Offline desktop import and export (Release 1, Prompt 10)
+
+Windows now uses native file pickers for UTF-8 text and restricted HTML import, with new-document import as the default and an explicit Append/Replace choice for the selected page of an existing section. Local HTML and plain-text export works without a sign-in or server document. See [Desktop import and export](desktop-import-export.md) for the formats, safety limits, overwrite behavior, and manual Windows checks. DOCX and PDF remain server-dependent and are not exposed in this offline flow. Next desktop work: **Prompt 11, packaging, updates, and diagnostics**.
+
+Prompt 10 validation: **535 tests pass**, including 15 new import/export cases. The Release solution, Windows Debug host, and iOS managed Debug host build with zero warnings. Native Windows picker and overwrite behavior still need hands-on verification before release.
+
 ## Remaining release work
 
 The app now has native startup, shared document library and navigation, backend configuration, and a versioned local document repository. Product functionality still requires:
 
 1. Manually verifying Windows deactivation, orderly close, and forced-process recovery; add iOS lifecycle integration when implementing that host.
-2. Adding device-safe import and export flows and deciding which additional web formatting features to support.
+2. Deciding which additional web formatting features to support and adding native iOS file dialogs when that host is implemented.
 3. Configuring Azure/native registrations and verifying Windows sign-in end to end; implement the iOS authentication adapter when building that host.
 4. Rehearsing/applying the synchronization migrations in staging, then verifying authenticated Windows/web sync and AI actions against a configured staging provider.
 5. Adding Windows packaging/signing and Apple bundle identifiers, provisioning profiles, capabilities, privacy declarations, and App Store metadata.

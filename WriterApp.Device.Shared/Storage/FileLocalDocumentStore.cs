@@ -28,6 +28,16 @@ public sealed class FileLocalDocumentStore : ILocalDocumentStore
             return document;
         }, cancellationToken);
 
+    public Task<LocalDocument> CreateImportedAsync(string title, string html, CancellationToken cancellationToken = default) =>
+        LockedAsync(async () =>
+        {
+            ArgumentNullException.ThrowIfNull(html);
+            LocalDocument document = LocalDocumentCodec.NewDocument(Guid.NewGuid(), CleanTitle(title),
+                _time.GetUtcNow(), html, LocalContentFormat.Html);
+            await WriteAsync(document, cancellationToken);
+            return document;
+        }, cancellationToken);
+
     public Task<LocalDocument?> GetAsync(Guid documentId, CancellationToken cancellationToken = default) =>
         LockedAsync(() => ReadAsync(documentId, cancellationToken), cancellationToken);
 

@@ -92,6 +92,7 @@ public sealed class LocalEditorSessionTests : IDisposable
         public async Task<LocalDocument> SaveAsync(LocalDocument document, CancellationToken cancellationToken = default)
         { Started.TrySetResult(); await Release.Task.WaitAsync(cancellationToken); return await inner.SaveAsync(document, cancellationToken); }
         public Task<LocalDocument> CreateAsync(string title, CancellationToken cancellationToken = default) => inner.CreateAsync(title, cancellationToken);
+        public Task<LocalDocument> CreateImportedAsync(string title, string html, CancellationToken cancellationToken = default) => inner.CreateImportedAsync(title, html, cancellationToken);
         public Task<LocalDocument?> GetAsync(Guid id, CancellationToken cancellationToken = default) => inner.GetAsync(id, cancellationToken);
         public Task<LocalDocumentList> ListAsync(LocalDocumentScope scope = LocalDocumentScope.Active, CancellationToken cancellationToken = default) => inner.ListAsync(scope, cancellationToken);
         public Task<LocalDocument> RenameAsync(Guid id, long revision, string title, CancellationToken cancellationToken = default) => inner.RenameAsync(id, revision, title, cancellationToken);

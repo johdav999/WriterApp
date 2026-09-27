@@ -24,6 +24,13 @@ public sealed class LocalDocumentLibrary(LocalDocumentRepository repository)
         return document;
     }
 
+    public async Task<LocalDocument> CreateImportedAsync(DevicePreparedImport import, CancellationToken cancellationToken = default)
+    {
+        LocalDocument document = await repository.CreateImportedAsync(import.Title, import.Html, cancellationToken);
+        await RefreshAsync(LocalDocumentScope.Active, cancellationToken);
+        return document;
+    }
+
     public async Task<LocalDocument> RenameAsync(LocalDocument document, string title, CancellationToken cancellationToken = default)
     {
         LocalDocument renamed = await repository.RenameAsync(document, title, cancellationToken);

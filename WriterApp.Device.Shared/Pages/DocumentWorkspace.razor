@@ -8,6 +8,7 @@
 @inject DeviceAiService Ai
 @inject DeviceAiUndoStore AiUndo
 @inject DeviceSyncEngine Sync
+@inject DeviceDocumentTransfer Transfer
 @implements IDisposable
 
 <PageTitle>@(_session?.Document.Title ?? "Document") · Prosa</PageTitle>
@@ -44,7 +45,7 @@
         {
             <div class="workspace-controls">
                 <label for="page-selection">Section / page</label>
-                <select id="page-selection" @bind:get="_selectedPage" @bind:set="SwitchPageAsync" disabled="@(_busy || _aiBusy || _applyingAi)">
+                <select id="page-selection" @bind:get="_selectedPage" @bind:set="SwitchPageAsync" disabled="@(_busy || _aiBusy || _applyingAi || _transferBusy)">
                     @foreach (LocalSection section in document.Sections)
                     {
                         <optgroup label="@section.Title">
@@ -55,7 +56,7 @@
                         </optgroup>
                     }
                 </select>
-                <button type="button" disabled="@_busy" @onclick="SaveButtonAsync">Save on this device</button>
+                <button type="button" disabled="@(_busy || _transferBusy)" @onclick="SaveButtonAsync">Save on this device</button>
             </div>
             <p class="workspace-help">Autosaves on this device after typing pauses. Ctrl+S to retry/save · Ctrl+B bold · Ctrl+I italic · Ctrl+K link · Ctrl+Z undo · Ctrl+Y redo.</p>
             <section class="workspace-ai" aria-label="AI writing actions">
@@ -64,15 +65,15 @@
                 @if (document.ServerDocumentId is null)
                 { <p>Enable cloud sync for this document before using AI.</p> }
                 <div class="workspace-ai-actions">
-                    <button type="button" disabled="@(_busy || _aiBusy || document.ServerDocumentId is null)" @onclick="() => RunAiAsync(DeviceAiAction.Rewrite)">Rewrite selection</button>
-                    <button type="button" disabled="@(_busy || _aiBusy || document.ServerDocumentId is null)" @onclick="() => RunAiAsync(DeviceAiAction.Expand)">Expand selection</button>
-                    <button type="button" disabled="@(_busy || _aiBusy || document.ServerDocumentId is null)" @onclick="() => RunAiAsync(DeviceAiAction.Shorten)">Shorten selection</button>
-                    <button type="button" disabled="@(_busy || _aiBusy || document.ServerDocumentId is null)" @onclick="() => RunAiAsync(DeviceAiAction.Summarize)">Summarize section</button>
+                    <button type="button" disabled="@(_busy || _aiBusy || _transferBusy || document.ServerDocumentId is null)" @onclick="() => RunAiAsync(DeviceAiAction.Rewrite)">Rewrite selection</button>
+                    <button type="button" disabled="@(_busy || _aiBusy || _transferBusy || document.ServerDocumentId is null)" @onclick="() => RunAiAsync(DeviceAiAction.Expand)">Expand selection</button>
+                    <button type="button" disabled="@(_busy || _aiBusy || _transferBusy || document.ServerDocumentId is null)" @onclick="() => RunAiAsync(DeviceAiAction.Shorten)">Shorten selection</button>
+                    <button type="button" disabled="@(_busy || _aiBusy || _transferBusy || document.ServerDocumentId is null)" @onclick="() => RunAiAsync(DeviceAiAction.Summarize)">Summarize section</button>
                 </div>
                 <label for="custom-ai-instruction">Custom instruction</label>
                 <textarea id="custom-ai-instruction" @bind="_customAiInstruction" maxlength="2000" rows="2"
-                          disabled="@(_busy || _aiBusy)" placeholder="Describe the change you want"></textarea>
-                <button type="button" disabled="@(_busy || _aiBusy || document.ServerDocumentId is null)" @onclick="() => RunAiAsync(DeviceAiAction.Custom)">Preview custom action</button>
+                          disabled="@(_busy || _aiBusy || _transferBusy)" placeholder="Describe the change you want"></textarea>
+                <button type="button" disabled="@(_busy || _aiBusy || _transferBusy || document.ServerDocumentId is null)" @onclick="() => RunAiAsync(DeviceAiAction.Custom)">Preview custom action</button>
                 @if (_aiBusy)
                 {
                     <p role="status">Preparing an AI proposal. Your writing is unchanged.</p>
@@ -89,20 +90,43 @@
                         <pre>@proposal.SourceText</pre>
                         <h4>Proposed text</h4><pre>@proposal.ProposedText</pre>
                         <p>@(proposal.Prepared.ApplyMode == "append" ? "Apply adds this text at the end of the current page." : "Apply replaces only the selected text.")</p>
-                        <button type="button" disabled="@(_busy || _aiBusy || _applyingAi)" @onclick="ApplyAiAsync">Apply</button>
-                        <button type="button" disabled="@(_busy || _aiBusy || _applyingAi)" @onclick="DismissAi">Dismiss</button>
+                        <button type="button" disabled="@(_busy || _aiBusy || _applyingAi || _transferBusy)" @onclick="ApplyAiAsync">Apply</button>
+                        <button type="button" disabled="@(_busy || _aiBusy || _applyingAi || _transferBusy)" @onclick="DismissAi">Dismiss</button>
                     </div>
                 }
                 @if (_aiUndo is { AfterHtml: not null } && _aiUndo.PageId == _selectedPage)
-                { <button type="button" disabled="@(_busy || _aiBusy || _applyingAi)" @onclick="UndoAiAsync">Restore writing before last AI apply</button> }
+                { <button type="button" disabled="@(_busy || _aiBusy || _applyingAi || _transferBusy)" @onclick="UndoAiAsync">Restore writing before last AI apply</button> }
                 @if (_aiPendingUndo is { } pending && pending.PageId == _selectedPage)
                 {
                     <details><summary>Writing saved before an interrupted AI apply</summary><pre>@pending.BeforeHtml</pre></details>
-                    <button type="button" disabled="@(_busy || _aiBusy || _applyingAi)" @onclick="RestorePendingCopyAsync">Save this earlier writing as a separate local copy</button>
+                    <button type="button" disabled="@(_busy || _aiBusy || _applyingAi || _transferBusy)" @onclick="RestorePendingCopyAsync">Save this earlier writing as a separate local copy</button>
                 }
                 @if (_aiRecoveredCopy is { } recovered)
                 { <a href="@($"/documents/{recovered}")">Open recovered copy</a> }
             </section>
+            @if (Transfer.IsAvailable)
+            {
+                <section class="workspace-transfer" aria-label="Local import and export">
+                    <h2>Import and export</h2>
+                    <p>Import UTF-8 .txt, .html, or .htm (up to 5 MB) into this page of the current section. Unsupported formatting, scripts, images, and active content are removed. Choose how the imported writing changes this page.</p>
+                    <label for="import-mode">Import into @document.Sections.Single(s => s.Pages.Any(p => p.PageId == _selectedPage)).Title / @document.Sections.SelectMany(s => s.Pages).Single(p => p.PageId == _selectedPage).Title</label>
+                    <select id="import-mode" @bind="_importModeChoice" disabled="@(_busy || _aiBusy || _transferBusy)">
+                        <option value="">Choose append or replace</option>
+                        <option value="append">Append after this page's writing</option>
+                        <option value="replace">Replace this page's writing</option>
+                    </select>
+                    <button type="button" disabled="@(_busy || _aiBusy || _transferBusy || string.IsNullOrEmpty(_importModeChoice))" @onclick="ImportIntoPageAsync">Choose file and import</button>
+                    <p>Export the entire local document without signing in or syncing. HTML keeps supported formatting and opens in a browser or word processor; plain text keeps the words and section order. Legacy JSON pages must be opened and saved first.</p>
+                    <label for="export-format">Export format</label>
+                    <select id="export-format" @bind="_exportFormat" disabled="@(_busy || _aiBusy || _transferBusy)">
+                        <option value="Html">HTML document (.html)</option>
+                        <option value="Text">Plain text (.txt)</option>
+                    </select>
+                    <button type="button" disabled="@(_busy || _aiBusy || _transferBusy)" @onclick="ExportDocumentAsync">Choose save location</button>
+                    @if (_transferMessage is not null) { <p role="status">@_transferMessage</p> }
+                    @if (_transferError is not null) { <p role="alert">@_transferError</p> }
+                </section>
+            }
             LocalPage selected = document.Sections.SelectMany(section => section.Pages).Single(item => item.PageId == _selectedPage);
             <DeviceTextEditor @key="selected.PageId" @ref="_editor"
                               Content="@_session.ContentFor(selected)" Format="@_session.FormatFor(selected)"
@@ -139,6 +163,11 @@
     private DeviceAiUndoRecord? _aiPendingUndo;
     private Guid? _aiRecoveredCopy;
     private CancellationTokenSource? _aiRequest;
+    private bool _transferBusy;
+    private string _importModeChoice = "";
+    private DeviceExportFormat _exportFormat = DeviceExportFormat.Html;
+    private string? _transferMessage;
+    private string? _transferError;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -146,6 +175,7 @@
         if (_editingId is { } previous) Documents.EndEditing(previous);
         _aiRequest?.Cancel();
         _aiProposal = null; _aiUndo = null; _aiPendingUndo = null; _aiRecoveredCopy = null; _aiError = null; _aiMessage = null;
+        _transferMessage = null; _transferError = null; _importModeChoice = "";
         _editingId = DocumentId;
         Documents.BeginEditing(DocumentId);
         _autosave?.Dispose();
@@ -183,7 +213,7 @@
 
     private async Task RunAiAsync(DeviceAiAction action)
     {
-        if (_aiBusy || _busy || _applyingAi || _session is null || _editor is null || _selectedPage is null || _hasRecovery) return;
+        if (_aiBusy || _busy || _applyingAi || _transferBusy || _session is null || _editor is null || _selectedPage is null || _hasRecovery) return;
         _aiProposal = null; _aiError = null; _aiMessage = null; _aiBusy = true;
         using var request = new CancellationTokenSource();
         _aiRequest = request;
@@ -220,7 +250,7 @@
 
     private async Task ApplyAiAsync()
     {
-        if (_aiProposal is not { } proposal || _editor is null || _selectedPage != proposal.Prepared.LocalPageId || _busy || _applyingAi) return;
+        if (_aiProposal is not { } proposal || _editor is null || _selectedPage != proposal.Prepared.LocalPageId || _busy || _applyingAi || _transferBusy) return;
         _applyingAi = true;
         _aiError = null;
         try
@@ -244,7 +274,7 @@
     }
     private async Task UndoAiAsync()
     {
-        if (_aiUndo is not { AfterHtml: not null } record || _editor is null || _selectedPage != record.PageId || _busy) return;
+        if (_aiUndo is not { AfterHtml: not null } record || _editor is null || _selectedPage != record.PageId || _busy || _transferBusy) return;
         _aiError = null;
         try
         {
@@ -256,7 +286,7 @@
     }
     private async Task RestorePendingCopyAsync()
     {
-        if (_aiPendingUndo is not { } record || _busy) return;
+        if (_aiPendingUndo is not { } record || _busy || _transferBusy) return;
         try
         {
             LocalDocument source = await Documents.LoadAsync(DocumentId) ?? throw new IOException("Document missing.");
@@ -274,6 +304,76 @@
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException)
         { _aiError = "Could not create the recovery copy. The earlier source remains in the AI backup file."; }
+    }
+
+    private async Task ImportIntoPageAsync()
+    {
+        if (_transferBusy || _busy || _aiBusy || _applyingAi || _session is null || _editor is null
+            || _selectedPage is null || _hasRecovery || _importModeChoice is not ("append" or "replace")) return;
+        _transferBusy = true; _transferError = null; _transferMessage = null;
+        bool committed = false;
+        try
+        {
+            DevicePreparedImport? import = await Transfer.PickImportAsync();
+            if (import is null) { _transferMessage = "Import canceled. Your writing is unchanged."; return; }
+            if (!await SaveCurrentAsync(releaseEditor: false)) return;
+            LocalDocument latest = await CurrentForTransferAsync();
+            LocalDocument saved = await Transfer.ImportPageAsync(latest, _selectedPage.Value, import,
+                _importModeChoice == "append" ? DeviceImportMode.Append : DeviceImportMode.Replace);
+            committed = true;
+            _session.AdoptSavedDocument(saved);
+            string html = saved.Sections.SelectMany(s => s.Pages).Single(p => p.PageId == _selectedPage).Content;
+            await _editor.SetContentAsync(html);
+            _aiProposal = null;
+            _transferMessage = "Imported and saved on this device. Cloud sync will pick up the local change when available.";
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException
+            or ArgumentException or JSException or System.Runtime.InteropServices.COMException)
+        {
+            _transferError = committed
+                ? "The import was saved locally, but the editor could not refresh. Reopen this document to see it."
+                : error is InvalidDataException ? error.Message
+                : error is LocalDocumentConflictException ? "This document changed during import. Review the current version and try again."
+                : "Import failed. The existing writing was not changed.";
+        }
+        finally
+        {
+            try { if (_editor is not null) await _editor.SetEditableAsync(true); } catch (JSException) { }
+            _transferBusy = false;
+        }
+    }
+
+    private async Task ExportDocumentAsync()
+    {
+        if (_transferBusy || _busy || _aiBusy || _applyingAi || _session is null || _editor is null || _hasRecovery) return;
+        _transferBusy = true; _transferError = null; _transferMessage = null;
+        try
+        {
+            if (!await SaveCurrentAsync(releaseEditor: false)) return;
+            LocalDocument latest = await CurrentForTransferAsync();
+            bool saved = await Transfer.ExportAsync(latest, _exportFormat);
+            _transferMessage = saved ? "Document exported to the chosen file." : "Export canceled. No file was written.";
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException
+            or ArgumentException or JSException or System.Runtime.InteropServices.COMException)
+        {
+            _transferError = error is InvalidDataException ? error.Message
+                : error is LocalDocumentConflictException ? "This document changed during export. Review it and try again."
+                : "Export failed. Your local document was not changed.";
+        }
+        finally
+        {
+            try { if (_editor is not null) await _editor.SetEditableAsync(true); } catch (JSException) { }
+            _transferBusy = false;
+        }
+    }
+
+    private async Task<LocalDocument> CurrentForTransferAsync()
+    {
+        LocalDocument latest = await Documents.LoadAsync(DocumentId) ?? throw new IOException("Document missing.");
+        if (_session is null || DeviceSyncMapping.Fingerprint(latest) != DeviceSyncMapping.Fingerprint(_session.Document))
+            throw new LocalDocumentConflictException(DocumentId);
+        return latest;
     }
 
     private void OnSaveChanged() { if (!_disposed) _ = InvokeAsync(StateHasChanged); }
@@ -335,13 +435,13 @@
 
     private async Task SwitchPageAsync(Guid? id)
     {
-        if (id is null || id == _selectedPage) return;
+        if (id is null || id == _selectedPage || _transferBusy) return;
         if (await SaveCurrentAsync(releaseEditor: false)) { _selectedPage = id; _editor = null; }
     }
 
     private async Task BeforeNavigationAsync(LocationChangingContext context)
     {
-        if (_applyingAi) { context.PreventNavigation(); return; }
+        if (_applyingAi || _transferBusy) { context.PreventNavigation(); return; }
         if (!await SaveCurrentAsync(releaseEditor: false) || _session?.IsDirty == true)
         {
             context.PreventNavigation();

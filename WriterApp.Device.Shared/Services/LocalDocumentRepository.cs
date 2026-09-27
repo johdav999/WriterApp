@@ -15,6 +15,8 @@ public sealed class LocalDocumentRepository(ILocalDocumentStore store)
     { var result = await task; Changed?.Invoke(); return result; }
     public Task<LocalDocument> CreateAsync(string title, CancellationToken cancellationToken = default) =>
         Notify(store.CreateAsync(title, cancellationToken));
+    public Task<LocalDocument> CreateImportedAsync(string title, string html, CancellationToken cancellationToken = default) =>
+        Notify(store.CreateImportedAsync(title, html, cancellationToken));
     public Task<LocalDocument?> LoadAsync(Guid id, CancellationToken cancellationToken = default) =>
         store.GetAsync(id, cancellationToken);
     public Task<LocalDocumentList> ListAsync(LocalDocumentScope scope = LocalDocumentScope.Active, CancellationToken cancellationToken = default) =>

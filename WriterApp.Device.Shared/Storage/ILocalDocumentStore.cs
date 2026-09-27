@@ -3,6 +3,7 @@ namespace WriterApp.Device.Shared.Storage;
 public interface ILocalDocumentStore
 {
     Task<LocalDocument> CreateAsync(string title, CancellationToken cancellationToken = default);
+    Task<LocalDocument> CreateImportedAsync(string title, string html, CancellationToken cancellationToken = default);
     Task<LocalDocument?> GetAsync(Guid documentId, CancellationToken cancellationToken = default);
     Task<LocalDocumentList> ListAsync(LocalDocumentScope scope = LocalDocumentScope.Active, CancellationToken cancellationToken = default);
     // Saves an existing snapshot, checking LocalRevision and returning the new revision.

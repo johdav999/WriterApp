@@ -11,6 +11,7 @@ public static class MauiProgram
         builder.UseMauiApp<App>();
         builder.Services.AddSingleton<IDeviceIdentityClient>(_ =>
             new Authentication.MsalDeviceIdentityClient(DeviceAuthOptions.FromEnvironment()));
+        builder.Services.AddSingleton<IDeviceFileDialog, WindowsDeviceFileDialog>();
 
         Uri apiBaseAddress = DeviceHostOptions.ResolveApiBaseAddress(
             Environment.GetEnvironmentVariable("WRITERAPP_API_BASE_URL"));

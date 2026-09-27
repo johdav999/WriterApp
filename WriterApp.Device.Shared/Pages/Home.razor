@@ -3,6 +3,7 @@
 @inject LocalDocumentLibrary Library
 @inject NavigationManager Navigation
 @inject DeviceSyncEngine Sync
+@inject DeviceDocumentTransfer Transfer
 @implements IDisposable
 
 <PageTitle>My documents · Prosa</PageTitle>
@@ -31,6 +32,14 @@
             <button class="button button-primary" type="submit" disabled="@_busy">Create document</button>
         </div>
     </form>
+
+    @if (Transfer.IsAvailable)
+    {
+        <section class="create-panel" aria-label="Import a new document">
+            <div><h2>Import a document</h2><p>Choose a UTF-8 .txt, .html, or .htm file (up to 5 MB). Supported text formatting is kept; scripts, images, styles, and other active content are removed. The original file is never changed.</p></div>
+            <div class="create-controls"><button class="button button-quiet" type="button" disabled="@_busy" @onclick="ImportNewAsync">Choose file and create local document</button></div>
+        </section>
+    }
 
     @if (_message is not null)
     {
@@ -232,6 +241,17 @@
         });
     }
 
+    private async Task ImportNewAsync()
+    {
+        await ExecuteAsync(async () =>
+        {
+            DevicePreparedImport? import = await Transfer.PickImportAsync();
+            if (import is null) { _message = "Import canceled. No document was created."; return; }
+            LocalDocument document = await Library.CreateImportedAsync(import);
+            Navigation.NavigateTo(DocumentUrl(document.DocumentId));
+        });
+    }
+
     private async Task SwitchViewAsync(bool trash)
     {
         if (_showTrash == trash) return;
@@ -361,6 +381,7 @@
             {
                 LocalDocumentReadException read => $"{read.Issue.FileName}: {read.Issue.Message}",
                 UnauthorizedAccessException => "Prosa cannot access its local documents. Check device storage permissions and try again.",
+                InvalidDataException => error.Message,
                 IOException => "Local storage is unavailable. Your existing documents were kept; try again after checking storage access.",
                 _ => error.Message
             };

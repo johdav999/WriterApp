@@ -80,6 +80,12 @@
         return result.Html;
     }
 
+    public async Task SetContentAsync(string html)
+    {
+        if (_editor is null || _disposed) throw new InvalidOperationException("The editor is not ready.");
+        await _editor.InvokeVoidAsync("setContent", html);
+    }
+
     public async ValueTask DisposeAsync()
     {
         _disposed = true;
