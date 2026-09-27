@@ -1,6 +1,7 @@
 {
   "name": "writerapp-client",
   "private": true,
+  "type": "module",
   "version": "0.0.0",
   "scripts": {
     "build": "vite build",
@@ -29,6 +30,6 @@
   },
   "devDependencies": {
     "typescript": "5.4.5",
-    "vite": "5.4.14"
+    "vite": "8.3.1"
   }
 }
