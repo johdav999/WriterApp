@@ -1,0 +1,60 @@
+.device-hero {
+    max-width: 52rem;
+    padding: clamp(1rem, 5vw, 4rem) 0;
+}
+
+.device-eyebrow {
+    color: #766126;
+    font-size: .78rem;
+    font-weight: 800;
+    letter-spacing: .12em;
+    margin: 0 0 .75rem;
+    text-transform: uppercase;
+}
+
+.device-hero h1 {
+    font-family: Georgia, serif;
+    font-size: clamp(2.25rem, 7vw, 4.7rem);
+    font-weight: 500;
+    letter-spacing: -.045em;
+    line-height: .98;
+    margin: 0;
+}
+
+.device-lede {
+    color: #5b564d;
+    font-size: clamp(1.05rem, 2vw, 1.3rem);
+    line-height: 1.65;
+    margin: 1.5rem 0 0;
+    max-width: 46rem;
+}
+
+.device-grid {
+    display: grid;
+    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+}
+
+.device-card {
+    background: #fff;
+    border: 1px solid #ded8ca;
+    border-radius: 1rem;
+    box-shadow: 0 .6rem 2rem rgb(40 33 22 / 6%);
+    padding: 1.25rem;
+}
+
+.device-card h2 {
+    font-family: Georgia, serif;
+    font-size: 1.25rem;
+    margin: 0 0 .6rem;
+}
+
+.device-card p {
+    color: #625c52;
+    line-height: 1.55;
+    margin: 0;
+}
+
+.device-card code {
+    overflow-wrap: anywhere;
+}

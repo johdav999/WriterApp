@@ -1,0 +1,29 @@
+@page "/"
+@inject DeviceHostOptions HostOptions
+@inject ILocalDocumentStore LocalDocuments
+
+<PageTitle>Prosa</PageTitle>
+
+<section class="device-hero">
+    <p class="device-eyebrow">@HostOptions.HostName</p>
+    <h1>Your writing stays available on this device.</h1>
+    <p class="device-lede">
+        The native host is ready for the shared editor. Ordinary document work will use local storage;
+        account sync and AI requests will use the existing Prosa backend.
+    </p>
+</section>
+
+<section class="device-grid" aria-label="Device host readiness">
+    <article class="device-card">
+        <h2>Local documents</h2>
+        <p>Draft storage is registered at <code>@LocalDocuments.RootPath</code>.</p>
+    </article>
+    <article class="device-card">
+        <h2>Backend</h2>
+        <p>The API client points to <code>@HostOptions.ApiBaseAddress</code>.</p>
+    </article>
+    <article class="device-card">
+        <h2>Next integration</h2>
+        <p>Move reusable editor components from <code>WriterApp.Client</code> into this shared device UI.</p>
+    </article>
+</section>

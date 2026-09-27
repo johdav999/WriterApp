@@ -16,5 +16,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\\..\\BlazorApp.csproj" />
+    <ProjectReference Include="..\\..\\WriterApp.Device.Shared\\WriterApp.Device.Shared.csproj" />
   </ItemGroup>
 </Project>

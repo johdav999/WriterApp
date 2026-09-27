@@ -5,7 +5,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <BaseOutputPath>artifacts\bin\</BaseOutputPath>
-    <DefaultItemExcludes>$(DefaultItemExcludes);publish/**;publish\**;.azure-publish/**;.azure-publish\**;artifacts/**;artifacts\**</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);publish/**;publish\**;.azure-publish/**;.azure-publish\**;artifacts/**;artifacts\**;WriterApp.Device.Shared/**;WriterApp.Device.Shared\**;WriterApp.Desktop/**;WriterApp.Desktop\**;WriterApp.iOS/**;WriterApp.iOS\**</DefaultItemExcludes>
 
     <!-- Let the host decide -->
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>

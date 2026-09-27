@@ -1,0 +1,20 @@
+@inherits LayoutComponentBase
+
+<div class="device-shell">
+    <header class="device-header">
+        <a class="device-brand" href="/" aria-label="Prosa home">
+            <span class="device-brand-mark">P</span>
+            <span>Prosa</span>
+        </a>
+        <span class="device-host-label">@HostOptions.HostName</span>
+    </header>
+
+    <main class="device-content">
+        @Body
+    </main>
+</div>
+
+@code {
+    [Inject]
+    private DeviceHostOptions HostOptions { get; set; } = default!;
+}

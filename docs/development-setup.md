@@ -35,6 +35,10 @@ All existing projects target .NET 10 LTS. Keep new shared, Windows, and iOS proj
    dotnet run --project BlazorApp.csproj
    ```
 
+## Device applications
+
+The Windows and iOS MAUI Blazor Hybrid scaffolds share their UI, backend client setup, and local document persistence through `WriterApp.Device.Shared`. See [device application development](device-development.md) for the project layout, platform build commands, and the remaining editor, authentication, synchronization, and signing work.
+
 ## Local data
 
 SQLite databases, `App_Data`, logs, deployment archives, publish output, and JavaScript build output are local artifacts and are ignored by Git. Do not place credentials in tracked configuration files.
@@ -48,7 +52,7 @@ The test step is blocking: any test failure fails the workflow.
 ## Verified baseline
 
 - The solution builds without compiler or analyzer warnings.
-- The test suite passes all 382 tests.
+- The test suite passes all 383 tests.
 - `WriterApp.Client` uses TipTap 3.31.3 and has no production npm advisories.
 - `docs-site` uses Docusaurus 3.10.2, including the matching `@docusaurus/faster` package required by its v4 compatibility mode. The site type-checks and builds successfully. Its dependency tree still reports 22 upstream advisories (21 moderate and 1 high); Docusaurus 3.10.2 is the latest published release and does not yet provide compatible patched transitive versions.
 - Git history was rewritten on 2026-09-27 to remove the accidentally committed nested repository, publish output, build output, logs, local databases, and deployment archives. Existing clones must fetch the rewritten branches and rebase or clone again before pushing.

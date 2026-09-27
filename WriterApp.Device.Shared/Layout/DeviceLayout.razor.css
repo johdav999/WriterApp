@@ -1,0 +1,49 @@
+.device-shell {
+    min-height: 100vh;
+    background: #f5f2eb;
+    color: #221f1a;
+}
+
+.device-header {
+    align-items: center;
+    background: #17133b;
+    color: #fff;
+    display: flex;
+    justify-content: space-between;
+    min-height: 4rem;
+    padding: .75rem clamp(1rem, 4vw, 2.5rem);
+}
+
+.device-brand {
+    align-items: center;
+    color: inherit;
+    display: inline-flex;
+    font-size: 1.15rem;
+    font-weight: 700;
+    gap: .65rem;
+    text-decoration: none;
+}
+
+.device-brand-mark {
+    align-items: center;
+    background: #d8b56d;
+    border-radius: .55rem;
+    color: #17133b;
+    display: inline-flex;
+    font-family: Georgia, serif;
+    font-size: 1.25rem;
+    height: 2.2rem;
+    justify-content: center;
+    width: 2.2rem;
+}
+
+.device-host-label {
+    color: #d8d3ef;
+    font-size: .85rem;
+}
+
+.device-content {
+    margin: 0 auto;
+    max-width: 70rem;
+    padding: clamp(1.25rem, 4vw, 3rem);
+}
