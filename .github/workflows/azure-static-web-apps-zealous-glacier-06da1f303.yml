@@ -4,10 +4,14 @@ on:
   push:
     branches:
       - main
+    paths:
+      - "Prosa.Landing/**"
   pull_request:
     types: [opened, synchronize, reopened, closed]
     branches:
       - main
+    paths:
+      - "Prosa.Landing/**"
 
 jobs:
   build_and_deploy_job:
