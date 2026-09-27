@@ -13,6 +13,20 @@ Prosa's Windows and iOS applications use .NET MAUI Blazor Hybrid. Each applicati
 
 ## Build and run
 
+### Required Visual Studio workload
+
+The .NET 10 device hosts require Visual Studio 2026 with the **.NET Multi-platform App UI development** workload. The repository's `WriterApp.vsconfig` records the installer component ID `Microsoft.VisualStudio.Workload.NetCrossPlat`.
+
+From an elevated PowerShell session, add the required workload to Visual Studio 2026 Professional with:
+
+```powershell
+& "C:\Program Files (x86)\Microsoft Visual Studio\Installer\setup.exe" modify `
+  --installPath "C:\Program Files\Microsoft Visual Studio\18\Professional" `
+  --config "$PWD\WriterApp.vsconfig"
+```
+
+The validated toolchain target is .NET SDK 10.0.400 with latest-patch roll-forward, .NET runtime 10.0.11, Visual Studio 2026 18.9.2, and MAUI 10.0.20. On 2026-09-27 this machine's Visual Studio 2026 instance did not yet contain the MAUI workload; its older Visual Studio 2022 instance contained MAUI 9 components only. Windows and iOS host restore therefore remain blocked until the Visual Studio 2026 workload installation is approved and completed.
+
 Restore and verify the cross-platform layer on any supported development system:
 
 ```powershell
@@ -30,6 +44,8 @@ dotnet run --project WriterApp.Desktop/WriterApp.Desktop.csproj --framework net1
 ```
 
 Restore the iOS project on Windows or macOS. Compiling, running, signing, and publishing it requires a Mac with a compatible Xcode installation; Visual Studio on Windows can use a paired Mac:
+
+Windows can restore and evaluate the iOS project after `maui-ios` is installed. The first platform-specific build step invokes Apple's toolchain and requires the paired Mac/Xcode environment; signing and publishing additionally require the Apple developer certificate and provisioning profile.
 
 ```powershell
 dotnet restore WriterApp.iOS/WriterApp.iOS.csproj
