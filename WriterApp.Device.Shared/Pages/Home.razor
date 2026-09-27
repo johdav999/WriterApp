@@ -1,57 +1,369 @@
 @page "/"
-@inject DeviceHostOptions HostOptions
-@inject LocalDocumentRepository LocalDocuments
+@using System.Text.Json
+@inject LocalDocumentLibrary Library
+@inject NavigationManager Navigation
 
-<PageTitle>Prosa</PageTitle>
+<PageTitle>My documents · Prosa</PageTitle>
 
-<section class="device-hero">
-    <p class="device-eyebrow">@HostOptions.HostName</p>
-    <h1>Your writing stays available on this device.</h1>
-    <p class="device-lede">
-        The native host is ready for the shared editor. Ordinary document work will use local storage;
-        account sync and AI requests will use the existing Prosa backend.
-    </p>
-</section>
+<div class="library-page">
+    <header class="library-intro">
+        <div>
+            <p class="eyebrow">Your writing space</p>
+            <h1 tabindex="-1" @ref="_heading">My documents</h1>
+            <p>Write on this device, even when you are offline.</p>
+        </div>
+        <span class="connection-status" title="Local documents remain available without an account or connection.">
+            <span aria-hidden="true" class="connection-dot"></span> Offline ready
+        </span>
+    </header>
 
-<section class="device-grid" aria-label="Device host readiness">
-    <article class="device-card">
-        <h2>Local documents</h2>
-        <p>@_documentCount local documents available.</p>
-        @if (_storageError is not null)
+    <form class="create-panel" @onsubmit="CreateAsync" @onsubmit:preventDefault>
+        <div>
+            <label for="new-document-title">New document</label>
+            <p>Start a manuscript and keep it on this device.</p>
+        </div>
+        <div class="create-controls">
+            <input id="new-document-title" @ref="_newTitleInput" @bind="_newTitle" @bind:event="oninput"
+                   maxlength="200" required placeholder="Give your document a title" disabled="@_busy" />
+            <button class="button button-primary" type="submit" disabled="@_busy">Create document</button>
+        </div>
+    </form>
+
+    @if (_message is not null)
+    {
+        <p class="feedback success" role="status">@_message</p>
+    }
+    @if (_error is not null)
+    {
+        <p class="feedback error" role="alert">@_error</p>
+    }
+    @if (Library.Issues.Count > 0)
+    {
+        <section class="storage-issues" aria-labelledby="storage-issues-title">
+            <h2 id="storage-issues-title">Documents needing attention</h2>
+            <p>The affected files remain on this device. Your other documents are available.</p>
+            <ul>
+                @foreach (LocalDocumentIssue issue in Library.Issues)
+                {
+                    <li><strong>@issue.FileName</strong>: @issue.Message</li>
+                }
+            </ul>
+        </section>
+    }
+
+    <section aria-labelledby="library-title">
+        <div class="library-section-heading">
+            <div>
+                <p class="eyebrow">Library</p>
+                <h2 id="library-title">@(_showTrash ? "Trash" : "Recent documents")</h2>
+            </div>
+            <div class="view-tabs" role="group" aria-label="Document view">
+                <button type="button" class="@TabClass(false)" aria-pressed="@(!_showTrash)"
+                        disabled="@_busy" @onclick="() => SwitchViewAsync(false)">Documents</button>
+                <button type="button" class="@TabClass(true)" aria-pressed="@_showTrash"
+                        disabled="@_busy" @onclick="() => SwitchViewAsync(true)">Trash</button>
+            </div>
+        </div>
+
+        @if (!_loaded)
         {
-            <p role="alert">@_storageError</p>
+            <p class="empty-state" role="status">Loading your documents…</p>
         }
-        @foreach (var issue in _issues)
+        else if (Library.Documents.Count == 0)
         {
-            <p role="alert">@issue.FileName: @issue.Message</p>
+            <div class="empty-state">
+                <h3>@(_showTrash ? "Trash is empty" : "A fresh page is ready")</h3>
+                <p>@(_showTrash ? "Documents you move to trash will appear here until you restore or delete them." : "Create a document above to begin. It will stay available when you restart Prosa or lose your connection.")</p>
+            </div>
         }
-    </article>
-    <article class="device-card">
-        <h2>Backend</h2>
-        <p>The API client points to <code>@HostOptions.ApiBaseAddress</code>.</p>
-    </article>
-    <article class="device-card">
-        <h2>Next integration</h2>
-        <p>Move reusable editor components from <code>WriterApp.Client</code> into this shared device UI.</p>
-    </article>
-</section>
+        else
+        {
+            <ul class="document-list">
+                @foreach (LocalDocument document in Library.Documents)
+                {
+                    DeviceDocumentStatus status = DeviceDocumentStatus.For(document);
+                    <li class="document-card" @key="document.DocumentId">
+                        <div class="document-main">
+                            <div class="document-details">
+                                <h3>
+                                    @if (_showTrash)
+                                    {
+                                        @document.Title
+                                    }
+                                    else
+                                    {
+                                        <a href="@DocumentUrl(document.DocumentId)">@document.Title</a>
+                                    }
+                                </h3>
+                                <p class="document-meta">@(_showTrash ? "Moved to trash" : "Edited") @FormatDate(_showTrash ? document.DeletedAtUtc ?? document.UpdatedAtUtc : document.UpdatedAtUtc)
+                                    <span aria-hidden="true">·</span> @document.Sections.Count @(document.Sections.Count == 1 ? "section" : "sections")</p>
+                            </div>
+                            <span class="@($"document-status status-{status.Tone}")" title="@status.Detail">@status.Label</span>
+                        </div>
+
+                        @if (_renamingId == document.DocumentId && !_showTrash)
+                        {
+                            <form class="rename-form" @onsubmit="() => RenameAsync(document)" @onsubmit:preventDefault>
+                                <label for="rename-title">Rename document</label>
+                                <div class="inline-controls">
+                                    <input id="rename-title" @ref="_renameInput" @bind="_renameTitle" @bind:event="oninput"
+                                           @onkeydown="HandleRenameKey" maxlength="200" required disabled="@_busy" />
+                                    <button class="button button-primary" type="submit" disabled="@_busy">Save name</button>
+                                    <button class="button button-quiet" type="button" disabled="@_busy" @onclick="CancelRenameAsync">Cancel</button>
+                                </div>
+                            </form>
+                        }
+                        else
+                        {
+                            <div class="document-actions">
+                                @if (_showTrash)
+                                {
+                                    <button class="button button-quiet" type="button" disabled="@_busy"
+                                            @onclick="() => RestoreAsync(document)">Restore</button>
+                                    <button class="button button-danger" type="button"
+                                            disabled="@(_busy || document.ServerDocumentId is not null)"
+                                            title="@(document.ServerDocumentId is not null ? "Cloud documents must wait for synchronized deletion." : "Delete this local document permanently")"
+                                            @onclick="() => RequestConfirmation(document, PendingAction.Delete)">Delete permanently</button>
+                                }
+                                else
+                                {
+                                    <a class="button button-primary" href="@DocumentUrl(document.DocumentId)">Open</a>
+                                    <button class="button button-quiet" type="button" disabled="@_busy"
+                                            @onclick="() => StartRename(document)">Rename</button>
+                                    <button class="button button-quiet" type="button" disabled="@_busy"
+                                            @onclick="() => DuplicateAsync(document)">Duplicate</button>
+                                    <button class="button button-quiet" type="button" disabled="@_busy"
+                                            @onclick="() => RequestConfirmation(document, PendingAction.Trash)">Move to trash</button>
+                                }
+                            </div>
+                        }
+                    </li>
+                }
+            </ul>
+        }
+    </section>
+
+    @if (_pendingDocument is not null)
+    {
+        <section class="confirm-panel" role="group" aria-labelledby="confirm-title" aria-describedby="confirm-description">
+            <h2 id="confirm-title">@(_pendingAction == PendingAction.Delete ? "Permanently delete this document?" : "Move this document to trash?")</h2>
+            <p id="confirm-description"><strong>@_pendingDocument.Title</strong>
+                @(_pendingAction == PendingAction.Delete
+                    ? " and its local backup will be removed from this device. This cannot be undone."
+                    : " will leave your library. You can restore it from Trash.")</p>
+            @if (_pendingAction == PendingAction.Delete)
+            {
+                <label for="delete-confirmation">Type DELETE to confirm</label>
+                <input id="delete-confirmation" @ref="_deleteInput" @bind="_deleteConfirmation"
+                       @bind:event="oninput" autocomplete="off" disabled="@_busy" />
+            }
+            <div class="confirm-actions">
+                <button class="button button-quiet" type="button" @ref="_cancelButton" disabled="@_busy"
+                        @onclick="CancelConfirmationAsync">Keep document</button>
+                <button class="button button-danger" type="button"
+                        disabled="@(_busy || (_pendingAction == PendingAction.Delete && _deleteConfirmation != "DELETE"))"
+                        @onclick="ConfirmAsync">@(_pendingAction == PendingAction.Delete ? "Delete permanently" : "Move to trash")</button>
+            </div>
+        </section>
+    }
+</div>
 
 @code {
-    private int _documentCount;
-    private IReadOnlyList<LocalDocumentIssue> _issues = [];
-    private string? _storageError;
+    private enum PendingAction { None, Trash, Delete }
+    private enum FocusTarget { None, Heading, NewTitle, RenameTitle, CancelConfirmation, DeleteConfirmation }
+
+    private bool _loaded;
+    private bool _busy;
+    private bool _showTrash;
+    private string _newTitle = "";
+    private string _renameTitle = "";
+    private string _deleteConfirmation = "";
+    private string? _message;
+    private string? _error;
+    private Guid? _renamingId;
+    private LocalDocument? _pendingDocument;
+    private PendingAction _pendingAction;
+    private FocusTarget _focusTarget;
+    private ElementReference _heading;
+    private ElementReference _newTitleInput;
+    private ElementReference _renameInput;
+    private ElementReference _cancelButton;
+    private ElementReference _deleteInput;
 
     protected override async Task OnInitializedAsync()
     {
-        try
+        await ExecuteAsync(() => Library.RefreshAsync(LocalDocumentScope.Active));
+        _loaded = true;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        FocusTarget target = _focusTarget;
+        _focusTarget = FocusTarget.None;
+        switch (target)
         {
-            LocalDocumentList result = await LocalDocuments.ListAsync();
-            _documentCount = result.Documents.Count;
-            _issues = result.Issues;
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-        {
-            _storageError = "Local storage is unavailable or in use by another app instance. Close the other instance or check storage access, then reopen Prosa.";
+            case FocusTarget.Heading: await _heading.FocusAsync(); break;
+            case FocusTarget.NewTitle: await _newTitleInput.FocusAsync(); break;
+            case FocusTarget.RenameTitle: await _renameInput.FocusAsync(); break;
+            case FocusTarget.CancelConfirmation: await _cancelButton.FocusAsync(); break;
+            case FocusTarget.DeleteConfirmation: await _deleteInput.FocusAsync(); break;
         }
     }
+
+    private async Task CreateAsync()
+    {
+        await ExecuteAsync(async () =>
+        {
+            LocalDocument document = await Library.CreateAsync(_newTitle);
+            _newTitle = "";
+            Navigation.NavigateTo(DocumentUrl(document.DocumentId));
+        });
+    }
+
+    private async Task SwitchViewAsync(bool trash)
+    {
+        if (_showTrash == trash) return;
+        ClearInlineActions();
+        await ExecuteAsync(async () =>
+        {
+            await Library.RefreshAsync(trash ? LocalDocumentScope.Trash : LocalDocumentScope.Active);
+            _showTrash = trash;
+            _focusTarget = FocusTarget.Heading;
+        });
+    }
+
+    private void StartRename(LocalDocument document)
+    {
+        _pendingDocument = null;
+        _renamingId = document.DocumentId;
+        _renameTitle = document.Title;
+        _focusTarget = FocusTarget.RenameTitle;
+    }
+
+    private async Task RenameAsync(LocalDocument document)
+    {
+        await ExecuteAsync(async () =>
+        {
+            await Library.RenameAsync(document, _renameTitle);
+            _message = "Document renamed and saved on this device.";
+            _renamingId = null;
+            _focusTarget = FocusTarget.Heading;
+        });
+    }
+
+    private Task CancelRenameAsync()
+    {
+        _renamingId = null;
+        _focusTarget = FocusTarget.Heading;
+        return Task.CompletedTask;
+    }
+
+    private async Task HandleRenameKey(KeyboardEventArgs args)
+    {
+        if (args.Key == "Escape") await CancelRenameAsync();
+    }
+
+    private async Task DuplicateAsync(LocalDocument document)
+    {
+        await ExecuteAsync(async () =>
+        {
+            LocalDocument copy = await Library.DuplicateAsync(document);
+            _message = $"Created {copy.Title} on this device.";
+            _focusTarget = FocusTarget.Heading;
+        });
+    }
+
+    private async Task RestoreAsync(LocalDocument document)
+    {
+        await ExecuteAsync(async () =>
+        {
+            await Library.RestoreAsync(document);
+            _message = $"Restored {document.Title}. Find it in Documents.";
+            _focusTarget = FocusTarget.Heading;
+        });
+    }
+
+    private void RequestConfirmation(LocalDocument document, PendingAction action)
+    {
+        _renamingId = null;
+        _pendingDocument = document;
+        _pendingAction = action;
+        _deleteConfirmation = "";
+        _focusTarget = action == PendingAction.Delete ? FocusTarget.DeleteConfirmation : FocusTarget.CancelConfirmation;
+    }
+
+    private async Task ConfirmAsync()
+    {
+        if (_pendingDocument is null || _pendingAction == PendingAction.None) return;
+        if (_pendingAction == PendingAction.Delete && _deleteConfirmation != "DELETE") return;
+        LocalDocument document = _pendingDocument;
+        PendingAction action = _pendingAction;
+        await ExecuteAsync(async () =>
+        {
+            if (action == PendingAction.Delete)
+            {
+                await Library.PermanentlyDeleteAsync(document);
+                _message = "Document permanently deleted from this device.";
+            }
+            else
+            {
+                await Library.MoveToTrashAsync(document);
+                _message = $"Moved {document.Title} to Trash.";
+            }
+            ClearInlineActions();
+            _focusTarget = FocusTarget.Heading;
+        });
+    }
+
+    private Task CancelConfirmationAsync()
+    {
+        ClearInlineActions();
+        _focusTarget = FocusTarget.Heading;
+        return Task.CompletedTask;
+    }
+
+    private void ClearInlineActions()
+    {
+        _renamingId = null;
+        _pendingDocument = null;
+        _pendingAction = PendingAction.None;
+        _deleteConfirmation = "";
+    }
+
+    private async Task ExecuteAsync(Func<Task> action)
+    {
+        _busy = true;
+        _error = null;
+        _message = null;
+        try { await action(); }
+        catch (LocalDocumentConflictException)
+        {
+            _error = "This document changed in another window. The library has been refreshed; review it and try again.";
+            ClearInlineActions();
+            await RefreshAfterErrorAsync();
+            _focusTarget = FocusTarget.Heading;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException or JsonException)
+        {
+            _error = error switch
+            {
+                LocalDocumentReadException read => $"{read.Issue.FileName}: {read.Issue.Message}",
+                UnauthorizedAccessException => "Prosa cannot access its local documents. Check device storage permissions and try again.",
+                IOException => "Local storage is unavailable. Your existing documents were kept; try again after checking storage access.",
+                _ => error.Message
+            };
+            await RefreshAfterErrorAsync();
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task RefreshAfterErrorAsync()
+    {
+        try { await Library.RefreshAsync(Library.Scope); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+    }
+
+    private string TabClass(bool trash) => _showTrash == trash ? "view-tab active" : "view-tab";
+    private static string DocumentUrl(Guid id) => $"/documents/{id:D}";
+    private static string FormatDate(DateTimeOffset value) => value.ToLocalTime().ToString("d MMM yyyy, HH:mm");
 }

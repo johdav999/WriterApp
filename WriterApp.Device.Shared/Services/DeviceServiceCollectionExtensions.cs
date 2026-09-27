@@ -23,6 +23,7 @@ public static class DeviceServiceCollectionExtensions
         services.AddScoped(_ => new HttpClient { BaseAddress = options.ApiBaseAddress });
         services.AddSingleton<ILocalDocumentStore>(_ => new FileLocalDocumentStore(localDocumentPath));
         services.AddSingleton<LocalDocumentRepository>();
+        services.AddScoped<LocalDocumentLibrary>();
         return services;
     }
 }

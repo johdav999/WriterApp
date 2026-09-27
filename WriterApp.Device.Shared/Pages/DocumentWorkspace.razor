@@ -1,0 +1,98 @@
+@page "/documents/{DocumentId:guid}"
+@inject LocalDocumentRepository Documents
+
+<PageTitle>@(_document?.Title ?? "Document") · Prosa</PageTitle>
+
+<div class="workspace-page">
+    <nav aria-label="Document navigation"><a href="/">← My documents</a></nav>
+
+    @if (_error is not null)
+    {
+        <div class="workspace-notice" role="alert">
+            <h1 tabindex="-1">Document unavailable</h1>
+            <p>@_error</p>
+        </div>
+    }
+    else if (_document is null)
+    {
+        <p role="status">Opening document…</p>
+    }
+    else
+    {
+        DeviceDocumentStatus status = DeviceDocumentStatus.For(_document);
+        <header class="workspace-heading">
+            <div>
+                <p class="workspace-eyebrow">Local document</p>
+                <h1 tabindex="-1">@_document.Title</h1>
+                <p>Last edited @_document.UpdatedAtUtc.ToLocalTime().ToString("d MMM yyyy, HH:mm")</p>
+            </div>
+            <span class="workspace-status" title="@status.Detail">@status.Label</span>
+        </header>
+
+        @if (_document.DeletedAtUtc is not null)
+        {
+            <div class="workspace-notice" role="status">
+                <h2>This document is in Trash</h2>
+                <p>Restore it from the library to continue working with it.</p>
+            </div>
+        }
+        else
+        {
+            <div class="workspace-notice" role="status">
+                <h2>Writing workspace</h2>
+                <p>Your document is stored on this device. Rich text editing will be available here after the editor is connected.</p>
+            </div>
+        }
+
+        <section aria-labelledby="sections-title">
+            <h2 id="sections-title">Sections</h2>
+            @if (_document.Sections.Count == 0)
+            {
+                <p>No sections yet.</p>
+            }
+            else
+            {
+                <ol class="workspace-sections">
+                    @foreach (LocalSection section in _document.Sections)
+                    {
+                        <li @key="section.SectionId">
+                            <h3>@section.Title</h3>
+                            <p>@section.Pages.Count @(section.Pages.Count == 1 ? "page" : "pages")</p>
+                            @foreach (LocalPage item in section.Pages)
+                            {
+                                <details>
+                                    <summary>@item.Title · @item.ContentFormat content</summary>
+                                    <p class="preview-label">Stored source preview</p>
+                                    <pre class="content-preview">@(string.IsNullOrEmpty(item.Content) ? "This page is empty." : item.Content)</pre>
+                                </details>
+                            }
+                        </li>
+                    }
+                </ol>
+            }
+        </section>
+    }
+</div>
+
+@code {
+    [Parameter] public Guid DocumentId { get; set; }
+
+    private LocalDocument? _document;
+    private string? _error;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _document = null;
+        _error = null;
+        try
+        {
+            _document = await Documents.LoadAsync(DocumentId);
+            if (_document is null) _error = "This document was not found on this device. Return to the library to choose another document.";
+        }
+        catch (LocalDocumentReadException error) { _error = error.Issue.Message; }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            _error = "This device cannot read the document right now. Check storage access and try again.";
+        }
+    }
+}
