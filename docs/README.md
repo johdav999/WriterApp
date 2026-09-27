@@ -1,5 +1,10 @@
 # Auth And Public Link Flows
 
+## Development setup
+
+- Local prerequisites, configuration, build, test, and CI instructions:
+  - [development-setup.md](development-setup.md)
+
 ## Feedback email
 - Mailgun feedback delivery setup:
   - [feedback-mailgun.md](/c:/Users/Johan/source/repos/WriterApp/docs/feedback-mailgun.md)
