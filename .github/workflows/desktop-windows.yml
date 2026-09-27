@@ -54,6 +54,7 @@ jobs:
           name: Prosa-Windows-test-signed
           path: |
             artifacts/windows-msix/**/*.msix
+            artifacts/windows-msix/**/*.appx
             artifacts/windows-msix/signing/*.cer
           if-no-files-found: error
           retention-days: 7

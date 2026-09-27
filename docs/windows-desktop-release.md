@@ -12,7 +12,11 @@ dotnet build WriterApp.Desktop/WriterApp.Desktop.csproj --configuration Release 
 ./scripts/windows/Build-ProsaTestMsix.ps1
 ```
 
-The script creates a temporary `CN=Prosa Development` test certificate and a signed x64 MSIX under `artifacts/windows-msix`. The PFX is private, is ignored by Git, and must never be shared. The public `.cer` can be installed into **Trusted People** on a test machine; then install the MSIX by double-clicking it or using `Add-AppxPackage <path-to-msix>`. These temporary certificates are for local review only. The [Windows CI workflow](../.github/workflows/desktop-windows.yml) generates a new certificate per run, uploads only its MSIX and public `.cer`, and does not publish an installer to customers.
+The script creates a temporary `CN=Prosa Development` test certificate and a signed x64 MSIX under `artifacts/windows-msix`. It temporarily imports the generated signing key into `Cert:\CurrentUser\My`, signs by thumbprint, then removes that store entry in a `finally` block. It does not establish trust or install the package. The PFX is private, is ignored by Git, and must never be shared. The current SDK uses `WindowsPackageType=MSIX`; `Package` is rejected by its targets. Publishing treats warnings as errors and discovers the installed VS x64 `mspdbcmf.exe` through `vswhere` for package symbol generation.
+
+Installation needs an approved trusted signing identity. On this test machine, importing the public `.cer` into CurrentUser/TrustedPeople was insufficient (`0x800B0109`) and that entry was removed. Importing a test certificate into **LocalMachine/TrustedPeople** changes persistent machine-wide trust and must be explicitly approved by the machine owner, with the exact certificate verified and a cleanup plan. Once trust is configured, install the app MSIX and its matching architecture dependencies from the generated `Dependencies` folder, using Windows App Installer or `Add-AppxPackage -Path <app.msix> -DependencyPath <dependency.msix>`. Do not assume dependency packages already exist on a clean test machine.
+
+These temporary certificates are for local review only. The [Windows CI workflow](../.github/workflows/desktop-windows.yml) generates a new certificate per run, uploads the MSIX/appx packages (including framework dependencies) and public `.cer`, and does not publish an installer to customers. The [Prompt 12 report](release-1-uat.md) records the successfully built package and its hash, the blocked installation, and the remaining release gates.
 
 The package name is `Prosa.WriterApp.Desktop`; the beta publisher placeholder is `CN=Prosa Development`. The app's display version is `0.1.0` and the MSIX identity version is `0.1.0.1`. Before distributing a long-lived beta or production build, choose the final publisher subject and a trusted signing certificate, keep the signing key outside Git, and build with that stable identity. A different package name or publisher creates a different package family and **will not upgrade this test package or reuse its local data**. Re-signing the same package family with an unrelated temporary certificate is also unsuitable for an upgrade test. Keep the approved signing identity for the whole release channel and increase the MSIX version for each update. Update `ApplicationDisplayVersion`, `ApplicationVersion`, and `Package.appxmanifest` together; the manifest's four-part version must increase. The MAUI icons live in `WriterApp.Desktop/Resources/AppIcon/` and are already included in the package.
 
@@ -20,7 +24,7 @@ For staging, pass the backend URL at build time and keep the update feed unset u
 
 ```powershell
 dotnet publish WriterApp.Desktop/WriterApp.Desktop.csproj --configuration Release --framework net10.0-windows10.0.19041.0 `
-  -p:RuntimeIdentifierOverride=win-x64 -p:WindowsPackageType=Package `
+  -p:RuntimeIdentifierOverride=win-x64 -p:WindowsPackageType=MSIX `
   -p:ProsaEnvironment=Staging -p:ProsaApiBaseUrl=https://your-staging-host.example/
 ```
 
@@ -51,4 +55,4 @@ The panel exports JSON-lines logs via a native Save dialog. They are stored unde
 5. Export diagnostics after a save/sync error and inspect them for secrets and writing content.
 6. Export/back up writing, uninstall, and confirm the documented local-data behavior on the target Windows version.
 
-These installation, upgrade, and uninstall checks require a real signed package and a Windows test machine. They remain release gates until recorded in Prompt 12 UAT. Microsoft documents the [MAUI MSIX CLI process](https://learn.microsoft.com/en-us/dotnet/maui/windows/deployment/publish-cli?view=net-maui-10.0), [package identity and update constraints](https://learn.microsoft.com/en-us/windows/msix/app-package-updates), and [MSIX local data behavior](https://learn.microsoft.com/en-us/windows/msix/msix-containerization-overview).
+These installation, upgrade, and uninstall checks require a real signed package and a Windows test machine. They remain open in the [Prompt 12 UAT checklist](release-1-uat.md); a successful package build is not an installation pass. Microsoft documents the [MAUI MSIX CLI process](https://learn.microsoft.com/en-us/dotnet/maui/windows/deployment/publish-cli?view=net-maui-10.0), [package identity and update constraints](https://learn.microsoft.com/en-us/windows/msix/app-package-updates), and [MSIX local data behavior](https://learn.microsoft.com/en-us/windows/msix/msix-containerization-overview).

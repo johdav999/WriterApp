@@ -60,8 +60,12 @@
                 <button type="button" disabled="@(_busy || _transferBusy)" @onclick="SaveButtonAsync">Save on this device</button>
             </div>
             <p class="workspace-help">Autosaves on this device after typing pauses. Ctrl+S to retry/save · Ctrl+B bold · Ctrl+I italic · Ctrl+K link · Ctrl+Z undo · Ctrl+Y redo.</p>
-            <section class="workspace-ai" aria-label="AI writing actions">
-                <h2>AI writing help</h2>
+            LocalPage selected = document.Sections.SelectMany(section => section.Pages).Single(item => item.PageId == _selectedPage);
+            <DeviceTextEditor @key="selected.PageId" @ref="_editor"
+                              Content="@_session.ContentFor(selected)" Format="@_session.FormatFor(selected)"
+                              ContentChanged="html => OnEdited(selected.PageId, html)" SaveRequested="SaveButtonAsync" />
+            <details class="workspace-ai" aria-label="AI writing actions">
+                <summary>AI writing help</summary>
                 <p>AI uses the synced cloud copy. Select text for Rewrite, Expand, or Shorten. Summarize reads the current section.</p>
                 @if (document.ServerDocumentId is null)
                 { <p>Enable cloud sync for this document before using AI.</p> }
@@ -104,11 +108,11 @@
                 }
                 @if (_aiRecoveredCopy is { } recovered)
                 { <a href="@($"/documents/{recovered}")">Open recovered copy</a> }
-            </section>
+            </details>
             @if (Transfer.IsAvailable)
             {
-                <section class="workspace-transfer" aria-label="Local import and export">
-                    <h2>Import and export</h2>
+                <details class="workspace-transfer" aria-label="Local import and export">
+                    <summary>Import and export</summary>
                     <p>Import UTF-8 .txt, .html, or .htm (up to 5 MB) into this page of the current section. Unsupported formatting, scripts, images, and active content are removed. Choose how the imported writing changes this page.</p>
                     <label for="import-mode">Import into @document.Sections.Single(s => s.Pages.Any(p => p.PageId == _selectedPage)).Title / @document.Sections.SelectMany(s => s.Pages).Single(p => p.PageId == _selectedPage).Title</label>
                     <select id="import-mode" @bind="_importModeChoice" disabled="@(_busy || _aiBusy || _transferBusy)">
@@ -126,12 +130,8 @@
                     <button type="button" disabled="@(_busy || _aiBusy || _transferBusy)" @onclick="ExportDocumentAsync">Choose save location</button>
                     @if (_transferMessage is not null) { <p role="status">@_transferMessage</p> }
                     @if (_transferError is not null) { <p role="alert">@_transferError</p> }
-                </section>
+                </details>
             }
-            LocalPage selected = document.Sections.SelectMany(section => section.Pages).Single(item => item.PageId == _selectedPage);
-            <DeviceTextEditor @key="selected.PageId" @ref="_editor"
-                              Content="@_session.ContentFor(selected)" Format="@_session.FormatFor(selected)"
-                              ContentChanged="html => OnEdited(selected.PageId, html)" SaveRequested="SaveButtonAsync" />
         }
         else
         {
@@ -402,7 +402,9 @@
         {
             if (_editor is not null)
             {
-                await _editor.SetEditableAsync(false);
+                // Autosave must not blur contenteditable or interrupt typing. The session
+                // preserves edits arriving during SaveAsync; freeze only for leaving/replacing a page.
+                if (!releaseEditor) await _editor.SetEditableAsync(false);
                 await _editor.FlushAsync();
             }
             StateHasChanged();
@@ -425,7 +427,7 @@
             _busy = false;
             try
             {
-                if (_editor is not null && (releaseEditor || !saved))
+                if (_editor is not null && !releaseEditor && !saved)
                 {
                     try { await _editor.SetEditableAsync(true); }
                     catch (JSException) { }

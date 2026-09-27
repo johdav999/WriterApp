@@ -178,6 +178,38 @@ public sealed class LocalAutosaveTests : IDisposable
     }
 
     [Fact]
+    public async Task TypingDuringFailedAutosaveKeepsNewestWritingForRecoveryAndRetry()
+    {
+        var document = await Repository.CreateAsync("Typing while disk fails");
+        bool fail = true;
+        var failing = new FileLocalDocumentStore(_root, TimeProvider.System, new AtomicDocumentWriter(_ =>
+        { if (fail) throw new IOException("Injected disk failure"); }));
+        var delayed = new LocalEditorSessionTests.DelayedStore(failing);
+        var session = new LocalEditorSession(new(delayed), document);
+        using var coordinator = new LocalAutosaveCoordinator(session, Recovery, () => Task.CompletedTask, new ManualTime());
+        Guid page = document.Sections[0].Pages[0].PageId;
+        await coordinator.EditAsync(page, "<p>Snapshot before save</p>");
+        Task saving = coordinator.SaveAsync();
+        await delayed.Started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        const string latest = "<p>Still typing: Räksmörgås 日本語</p>";
+        Task editing = coordinator.EditAsync(page, latest);
+        delayed.Release.TrySetResult();
+
+        await Assert.ThrowsAsync<IOException>(() => saving);
+        await editing.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(session.IsDirty);
+        Assert.Equal(latest, session.ContentFor(document.Sections[0].Pages[0]));
+        Assert.Equal(latest, Assert.Single((await Recovery.ListAsync()).Records).Document.Sections[0].Pages[0].Content);
+        Assert.Equal("", (await Repository.LoadAsync(document.DocumentId))!.Sections[0].Pages[0].Content);
+
+        fail = false;
+        await coordinator.SaveAsync();
+        Assert.False(session.IsDirty);
+        Assert.Equal(latest, (await Repository.LoadAsync(document.DocumentId))!.Sections[0].Pages[0].Content);
+        Assert.Empty((await Recovery.ListAsync()).Records);
+    }
+
+    [Fact]
     public async Task InterruptedJournalReplacementPreservesPreviousRecord()
     {
         var document = await Repository.CreateAsync("Atomic journal");

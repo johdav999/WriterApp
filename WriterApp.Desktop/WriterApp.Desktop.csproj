@@ -22,8 +22,8 @@
     <ProsaUpdateManifestUrl Condition="'$(ProsaUpdateManifestUrl)' == '' and '$(ProsaEnvironment)' == 'Production'">https://app.prosa-app.com/desktop/updates/stable.json</ProsaUpdateManifestUrl>
 
     <WindowsPackageType Condition="'$(WindowsPackageType)' == ''">None</WindowsPackageType>
-    <AppxBundle Condition="'$(WindowsPackageType)' == 'Package'">Never</AppxBundle>
-    <GenerateAppxPackageOnBuild Condition="'$(WindowsPackageType)' == 'Package'">true</GenerateAppxPackageOnBuild>
+    <AppxBundle Condition="'$(WindowsPackageType)' == 'MSIX'">Never</AppxBundle>
+    <GenerateAppxPackageOnBuild Condition="'$(WindowsPackageType)' == 'MSIX'">true</GenerateAppxPackageOnBuild>
 
     <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
