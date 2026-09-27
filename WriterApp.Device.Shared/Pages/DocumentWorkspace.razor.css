@@ -1,4 +1,10 @@
 .workspace-page { display: grid; gap: 1.5rem; }
+.workspace-controls { display:flex; align-items:center; flex-wrap:wrap; gap:.7rem; }
+.workspace-controls select { flex:1; min-width:10rem; }
+.workspace-controls select, .workspace-controls button { font:inherit; padding:.6rem; border:1px solid #bcb4a7; border-radius:.4rem; }
+.workspace-controls button { background:#272047; color:white; cursor:pointer; }
+.workspace-controls :disabled { opacity:.6; }
+.workspace-help { font-size:.85rem; color:#625c52; margin:0; }
 .workspace-page nav a { color: #352b5c; font-weight: 700; text-decoration: none; }
 .workspace-page nav a:hover { text-decoration: underline; }
 .workspace-heading { align-items: start; display: flex; flex-wrap: wrap; gap: 1rem; justify-content: space-between; }

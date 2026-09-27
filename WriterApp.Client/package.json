@@ -4,8 +4,10 @@
   "type": "module",
   "version": "0.0.0",
   "scripts": {
-    "build": "vite build",
-    "dev": "vite build --watch"
+    "build": "vite build && vite build --config vite.device.config.ts",
+    "dev": "vite build --watch",
+    "dev:device": "vite build --config vite.device.config.ts --watch",
+    "test:device": "node tests/serve-device-editor.mjs"
   },
   "dependencies": {
     "@tiptap/core": "3.31.3",

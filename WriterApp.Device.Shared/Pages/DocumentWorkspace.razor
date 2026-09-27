@@ -1,98 +1,145 @@
 @page "/documents/{DocumentId:guid}"
+@using WriterApp.Device.Shared.Components
+@using Microsoft.JSInterop
 @inject LocalDocumentRepository Documents
 
-<PageTitle>@(_document?.Title ?? "Document") · Prosa</PageTitle>
+<PageTitle>@(_session?.Document.Title ?? "Document") · Prosa</PageTitle>
+<NavigationLock OnBeforeInternalNavigation="BeforeNavigationAsync" ConfirmExternalNavigation="@(_session?.IsDirty == true)" />
 
 <div class="workspace-page">
     <nav aria-label="Document navigation"><a href="/">← My documents</a></nav>
-
-    @if (_error is not null)
+    @if (_session is null)
     {
-        <div class="workspace-notice" role="alert">
-            <h1 tabindex="-1">Document unavailable</h1>
-            <p>@_error</p>
-        </div>
-    }
-    else if (_document is null)
-    {
-        <p role="status">Opening document…</p>
+        <h1 tabindex="-1">Document</h1>
+        <p role="alert">@(_error ?? "Opening document…")</p>
     }
     else
     {
-        DeviceDocumentStatus status = DeviceDocumentStatus.For(_document);
+        LocalDocument document = _session.Document;
+        DeviceDocumentStatus status = DeviceDocumentStatus.For(document, _saveFailed ? LocalSaveState.Error : _busy ? LocalSaveState.Saving : _session.SaveState);
         <header class="workspace-heading">
-            <div>
-                <p class="workspace-eyebrow">Local document</p>
-                <h1 tabindex="-1">@_document.Title</h1>
-                <p>Last edited @_document.UpdatedAtUtc.ToLocalTime().ToString("d MMM yyyy, HH:mm")</p>
-            </div>
-            <span class="workspace-status" title="@status.Detail">@status.Label</span>
+            <div><p class="workspace-eyebrow">Local document</p><h1 tabindex="-1">@document.Title</h1></div>
+            <span class="workspace-status" role="status" title="@status.Detail">@status.Label</span>
         </header>
-
-        @if (_document.DeletedAtUtc is not null)
+        @if (_error is not null) { <p class="workspace-notice" role="alert">@_error</p> }
+        @if (document.DeletedAtUtc is not null)
         {
-            <div class="workspace-notice" role="status">
-                <h2>This document is in Trash</h2>
-                <p>Restore it from the library to continue working with it.</p>
+            <p class="workspace-notice">This document is in Trash. Restore it from the library before editing.</p>
+        }
+        else if (_selectedPage is not null)
+        {
+            <div class="workspace-controls">
+                <label for="page-selection">Section / page</label>
+                <select id="page-selection" @bind:get="_selectedPage" @bind:set="SwitchPageAsync" disabled="@_busy">
+                    @foreach (LocalSection section in document.Sections)
+                    {
+                        <optgroup label="@section.Title">
+                            @foreach (LocalPage item in section.Pages)
+                            {
+                                <option value="@item.PageId">@section.Title — @item.Title</option>
+                            }
+                        </optgroup>
+                    }
+                </select>
+                <button type="button" disabled="@_busy" @onclick="SaveButtonAsync">Save on this device</button>
             </div>
+            <p class="workspace-help">Ctrl+S to save · Ctrl+B bold · Ctrl+I italic · Ctrl+K link · Ctrl+Z undo · Ctrl+Y redo. Pages save before you switch or return to the library.</p>
+            LocalPage selected = document.Sections.SelectMany(section => section.Pages).Single(item => item.PageId == _selectedPage);
+            <DeviceTextEditor @key="selected.PageId" @ref="_editor"
+                              Content="@_session.ContentFor(selected)" Format="@_session.FormatFor(selected)"
+                              ContentChanged="html => OnEdited(selected.PageId, html)" SaveRequested="SaveButtonAsync" />
         }
         else
         {
-            <div class="workspace-notice" role="status">
-                <h2>Writing workspace</h2>
-                <p>Your document is stored on this device. Rich text editing will be available here after the editor is connected.</p>
-            </div>
+            <p>This document has no pages to edit.</p>
         }
-
-        <section aria-labelledby="sections-title">
-            <h2 id="sections-title">Sections</h2>
-            @if (_document.Sections.Count == 0)
-            {
-                <p>No sections yet.</p>
-            }
-            else
-            {
-                <ol class="workspace-sections">
-                    @foreach (LocalSection section in _document.Sections)
-                    {
-                        <li @key="section.SectionId">
-                            <h3>@section.Title</h3>
-                            <p>@section.Pages.Count @(section.Pages.Count == 1 ? "page" : "pages")</p>
-                            @foreach (LocalPage item in section.Pages)
-                            {
-                                <details>
-                                    <summary>@item.Title · @item.ContentFormat content</summary>
-                                    <p class="preview-label">Stored source preview</p>
-                                    <pre class="content-preview">@(string.IsNullOrEmpty(item.Content) ? "This page is empty." : item.Content)</pre>
-                                </details>
-                            }
-                        </li>
-                    }
-                </ol>
-            }
-        </section>
     }
 </div>
 
 @code {
     [Parameter] public Guid DocumentId { get; set; }
-
-    private LocalDocument? _document;
+    private LocalEditorSession? _session;
+    private DeviceTextEditor? _editor;
+    private Guid? _selectedPage;
     private string? _error;
+    private bool _busy;
+    private bool _saveFailed;
 
     protected override async Task OnParametersSetAsync()
     {
-        _document = null;
+        if (_session?.Document.DocumentId == DocumentId) return;
+        _session = null;
+        _editor = null;
         _error = null;
+        _saveFailed = false;
+        Guid loadingId = DocumentId;
         try
         {
-            _document = await Documents.LoadAsync(DocumentId);
-            if (_document is null) _error = "This document was not found on this device. Return to the library to choose another document.";
+            LocalDocument? document = await Documents.LoadAsync(loadingId);
+            if (DocumentId != loadingId) return;
+            if (document is null) { _error = "This document was not found on this device."; return; }
+            _session = new LocalEditorSession(Documents, document);
+            _selectedPage = document.Sections.SelectMany(section => section.Pages).FirstOrDefault()?.PageId;
         }
-        catch (LocalDocumentReadException error) { _error = error.Issue.Message; }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        { _error = error is LocalDocumentReadException read ? read.Issue.Message : "Unable to read local storage. Check access and try again."; }
+    }
+
+    private void OnEdited(Guid pageId, string html) => _session?.Edit(pageId, html);
+
+    private async Task SaveButtonAsync() => await SaveCurrentAsync();
+
+    private async Task<bool> SaveCurrentAsync(bool releaseEditor = true)
+    {
+        if (_session is null) return true;
+        if (_busy) return false;
+        _busy = true;
+        _saveFailed = false;
+        _error = null;
+        bool saved = false;
+        try
         {
-            _error = "This device cannot read the document right now. Check storage access and try again.";
+            if (_editor is not null)
+            {
+                await _editor.SetEditableAsync(false);
+                await _editor.FlushAsync();
+            }
+            StateHasChanged();
+            await _session.SaveAsync();
+            saved = true;
+            return true;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or JSException)
+        {
+            _saveFailed = true;
+            _error = error is LocalDocumentConflictException
+                ? "This document changed elsewhere. Your edits remain here; copy your text before reloading to resolve the conflict."
+                : "Saving failed. Your edits remain here. Check local storage and try Save again before leaving.";
+            return false;
+        }
+        finally
+        {
+            _busy = false;
+            if (_editor is not null && (releaseEditor || !saved))
+            {
+                try { await _editor.SetEditableAsync(true); }
+                catch (JSException) { }
+            }
+        }
+    }
+
+    private async Task SwitchPageAsync(Guid? id)
+    {
+        if (id is null || id == _selectedPage) return;
+        if (await SaveCurrentAsync(releaseEditor: false)) { _selectedPage = id; _editor = null; }
+    }
+
+    private async Task BeforeNavigationAsync(LocationChangingContext context)
+    {
+        if (!await SaveCurrentAsync(releaseEditor: false) || _session?.IsDirty == true)
+        {
+            context.PreventNavigation();
+            if (_editor is not null) await _editor.SetEditableAsync(true);
         }
     }
 }

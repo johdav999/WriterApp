@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Device editor verification</title>
+<link rel="stylesheet" href="../../WriterApp.Device.Shared/wwwroot/editor/device-editor.css"></head>
+<body><h1>Device editor verification</h1><ol id="results"></ol><div id="editor" class="device-tiptap"></div>
+<script type="module">
+import { create } from '../../WriterApp.Device.Shared/wwwroot/editor/device-editor.js';
+const results = document.querySelector('#results');
+const host = document.querySelector('#editor');
+const calls = [];
+const receiver = { invokeMethodAsync(name, ...args) { calls.push({name, args}); return Promise.resolve(); } };
+const assert = (value, message) => { if (!value) throw Error(message); };
+const click = label => [...host.querySelectorAll('button')].find(button => button.textContent === label).click();
+const selectText = () => { const node = host.querySelector('.tiptap p'); const range = document.createRange(); range.selectNodeContents(node); const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range); host.querySelector('.tiptap').focus(); };
+const settle = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+let editor;
+async function test(name, action) {
+ const row = document.createElement('li'); results.append(row);
+ try { await action(); row.textContent = 'PASS: ' + name; }
+ catch (error) { row.textContent = 'FAIL: ' + name + ' — ' + error.message; }
+}
+await test('offline initialization and external update without feedback', async () => {
+ editor = create(host, '<p>Original text</p>', 'Html', receiver);
+ await settle(); assert(calls.length === 0, 'Initialization emitted changes');
+ editor.setContent('<p>Writing sample</p>');
+ assert(calls.length === 0, 'External update emitted changes');
+ assert(editor.snapshot().html.includes('Writing sample'), 'External update missing');
+});
+await test('shared formatting commands and HTML callback', async () => {
+ selectText(); await settle(); click('Bold'); assert(editor.snapshot().html.includes('<strong>'), 'Bold missing');
+ click('Italic'); assert(editor.snapshot().html.includes('<em>'), 'Italic missing');
+ click('Heading 2'); assert(editor.snapshot().html.includes('<h2>'), 'Heading missing');
+ click('Paragraph'); assert(editor.snapshot().html.includes('<p>'), 'Paragraph missing');
+ click('Quote'); assert(editor.snapshot().html.includes('<blockquote>'), 'Quote missing'); click('Quote');
+ click('Bullets'); assert(editor.snapshot().html.includes('<ul>'), 'Bullet list missing'); click('Bullets');
+ click('Numbered list'); assert(editor.snapshot().html.includes('<ol>'), 'Numbered list missing'); click('Numbered list');
+ assert(calls.some(call => call.name === 'OnContentChanged' && call.args[1] > 0), 'No versioned HTML callback');
+});
+await test('link apply, unsafe URL rejection, and removal', async () => {
+ editor.setContent('<p>Link text</p>'); selectText(); await settle(); click('Link');
+ const input = host.querySelector('input'); input.value = 'javascript:alert(1)'; click('Apply link');
+ assert(!editor.snapshot().html.includes('javascript:'), 'Unsafe link accepted');
+ input.value = 'https://example.com'; click('Apply link'); assert(editor.snapshot().html.includes('https://example.com'), 'Link missing');
+ click('Link'); click('Remove link'); assert(!editor.snapshot().html.includes('<a '), 'Link remains');
+});
+await test('undo, redo, and Ctrl+S', async () => {
+ editor.setContent('<p>History</p>'); selectText(); await settle(); click('Bold');
+ const bold = editor.snapshot().html; click('Undo'); assert(editor.snapshot().html !== bold, 'Undo did nothing');
+ click('Redo'); assert(editor.snapshot().html === bold, 'Redo mismatch');
+ host.querySelector('.tiptap').dispatchEvent(new KeyboardEvent('keydown', { key:'s', code:'KeyS', ctrlKey:true, bubbles:true, cancelable:true }));
+ assert(calls.some(call => call.name === 'OnSaveRequested'), 'Save shortcut missing');
+});
+await test('HTML reopen and cleanup', async () => {
+ const saved = editor.snapshot().html; editor.destroy(); assert(!host.querySelector('.tiptap'), 'Editor leaked');
+ editor = create(host, saved, 'Html', receiver); assert(editor.snapshot().html === saved, 'Round trip changed HTML'); editor.destroy();
+});
+await test('Windows formatting shortcuts, selection preservation, and save lock', async () => {
+ editor = create(host, '<p>Keyboard writing</p>', 'Html', receiver);
+ selectText(); await settle();
+ const key = (value, code) => host.querySelector('.tiptap').dispatchEvent(new KeyboardEvent('keydown', { key:value, code, ctrlKey:true, bubbles:true, cancelable:true }));
+ key('b', 'KeyB'); assert(editor.snapshot().html.includes('<strong>'), 'Ctrl+B missing');
+ key('i', 'KeyI'); assert(editor.snapshot().html.includes('<em>'), 'Ctrl+I missing');
+ const selected = window.getSelection().toString();
+ editor.setContent(editor.snapshot().html); assert(window.getSelection().toString() === selected, 'Equal content reset selection');
+ editor.setEditable(false); assert(host.querySelector('.tiptap').getAttribute('contenteditable') === 'false', 'Save lock failed');
+ editor.setEditable(true); assert(host.querySelector('.tiptap').getAttribute('contenteditable') === 'true', 'Save unlock failed');
+ editor.destroy();
+});
+await test('unsupported clipboard HTML is inserted as plain text', async () => {
+ editor = create(host, '<p></p>', 'Html', receiver);
+ const transfer = new DataTransfer(); transfer.setData('text/html', '<table><tr><td>Safe text</td></tr></table>'); transfer.setData('text/plain', 'Safe text');
+ host.querySelector('.tiptap').dispatchEvent(new ClipboardEvent('paste', { clipboardData:transfer, bubbles:true, cancelable:true }));
+ assert(editor.snapshot().html.includes('Safe text') && !editor.snapshot().html.includes('<table'), 'Plain text fallback failed');
+ editor.destroy();
+});
+await test('legacy text and JSON conversion', async () => {
+ editor = create(host, '<script>text only<\/script>\nSecond line', 'LegacyText', receiver);
+ assert(editor.snapshot().html.includes('&lt;script&gt;'), 'Text interpreted as HTML'); editor.destroy();
+ editor = create(host, JSON.stringify({type:'doc',content:[{type:'paragraph',content:[{type:'text',text:'Legacy'}]}]}), 'LegacyJson', receiver);
+ assert(editor.snapshot().html === '<p>Legacy</p>', 'JSON conversion failed'); editor.destroy();
+});
+await test('unsupported and active content is refused without editing', async () => {
+ for (const content of ['<table><tr><td>Keep</td></tr></table>', '<p><img src="https://example.com/x"></p>', '<script>alert(1)<\/script>', '<p style="text-align:center">Preserve</p>']) {
+  let rejected = false; try { const unexpected = create(host, content, 'Html', receiver); unexpected.destroy(); } catch { rejected = true; }
+  assert(rejected, 'Unsupported content accepted: ' + content);
+ }
+});
+const failed = [...results.children].filter(item => item.textContent.startsWith('FAIL')).length;
+document.title = failed ? `${failed} device editor tests failed` : 'All device editor tests passed';
+const summary = document.createElement('h2'); summary.textContent = document.title; results.after(summary);
+editor = create(host, '<h1>Offline writing</h1><p>Use this editor to check keyboard formatting and narrow layouts.</p>', 'Html', receiver);
+</script></body></html>
