@@ -3,7 +3,7 @@
 ## Purpose
 - This runbook documents the current and target authentication setup for the active Prosa app in this repo.
 - It is implementation-specific to this codebase.
-- It does not describe app-managed OpenID Connect or JWT bearer middleware, because this app does not use that model.
+- This runbook describes web authentication. The optional native JWT bearer path is documented in [Native authentication setup](../native-authentication.md); it preserves this web flow.
 
 ## Current State
 - Interactive sign-in is handled by Azure App Service Authentication / EasyAuth.

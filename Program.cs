@@ -184,6 +184,10 @@ else
             FakeAuthAuthenticationHandler.SchemeName,
             _ => { });
 }
+builder.Services.AddNativeBearerAuthentication(
+    builder.Configuration.GetSection("NativeAuth").Get<NativeBearerOptions>() ?? new(),
+    builder.Environment.IsDevelopment() ? LocalDevAuthenticationHandler.SchemeName
+        : useExternalIdAuth ? EasyAuthAuthenticationHandler.SchemeName : FakeAuthAuthenticationHandler.SchemeName);
 builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy("AdminOnly", policy =>
@@ -1011,6 +1015,11 @@ app.MapGet("/logout", (HttpContext context) =>
 });
 
 app.MapGet("/__ping", () => Results.Ok("pong"));
+app.MapGet("/api/native/session", (ClaimsPrincipal user) => Results.Ok(new
+{
+    UserId = ExternalIdentityClaims.ResolveStableUserId(user.Claims),
+    Name = ExternalIdentityClaims.ResolveDisplayName(user.Claims, "Prosa user")
+})).RequireAuthorization(NativeBearerAuthentication.Policy);
 app.MapGet("/health", () => Results.Text("OK", "text/plain")).AllowAnonymous();
 app.MapGet("/warmup", async (AppDbContext dbContext, CancellationToken ct) =>
 {

@@ -136,13 +136,23 @@ Prompt 5 validation: **427 tests pass**, including nine new deterministic tests 
 
 Native Windows lifecycle UAT remains manual because the available UI automation cannot inspect the app window: type then immediately switch pages, navigate home, deactivate, and close/reopen; confirm the final text in each case. For recovery, type, allow the recovery write to complete, terminate the process before autosave, then relaunch and restore a copy. Repeat with storage access denied to verify visible failure, a blocked normal close, and successful Save after access is restored. These native checks have not been claimed as passed by the service tests. Next implementation dependency: **Prompt 6, native sign-in and backend authentication**; local editing remains available without it.
 
+### Native sign-in and backend authentication (Release 1, Prompt 6)
+
+Windows now has an account menu with system-browser sign-in, silent session restoration, local sign-out, and an explicit backend connection check. It uses MSAL authorization code + PKCE with a localhost redirect and a cache persisted only through MAUI `SecureStorage`. The shared HTTP handler attaches access tokens only to the configured backend API, refuses redirects, and handles rejected sessions without automatically replaying requests. Local editing, saving, and recovery do not depend on authentication.
+
+The backend adds an optional JWT bearer scheme alongside the existing Easy Auth web flow. Validation covers signature, exact issuer, audience, expiry, tenant, delegated scope, and allowed native client ID. Explicit Authorization headers cannot fall back to web/development identities. Existing admin policy remains in place; native token role claims do not grant legacy web Admin privileges. `/api/native/session` is a protected native probe, followed by existing `/api/auth/me` provisioning/account checks in the desktop connection flow.
+
+**Setup is still required:** native auth is disabled by default, and the desktop shows a configuration notice until its registration settings are supplied. Follow [Native authentication setup](native-authentication.md) for exact Azure registration steps, server and desktop environment variables, the public placeholder script, Easy Auth audience constraints, and existing-account identity checks. No Azure registration changes or deployment were performed. Real browser login, SecureStorage restart/sign-out, web compatibility on the Azure edge, and existing-customer identity continuity remain live verification gates. iOS builds with the unconfigured identity adapter; native iOS auth setup remains future work.
+
+Prompt 6 validation: **456 tests pass**, including 29 new backend/device authentication cases; Release solution, Windows Debug, and iOS managed Debug builds have zero warnings. NuGet vulnerability checks report no known advisories for the backend and desktop dependency trees. Tests use synthetic signed tokens and fixed in-memory discovery, not real tenant credentials. Next implementation dependency: **Prompt 7, paid document synchronization APIs**. End-to-end authenticated sync and AI validation require the Azure setup and live sign-in checks first.
+
 ## Remaining implementation
 
 The app now has native startup, shared document library and navigation, backend configuration, and a versioned local document repository. Product functionality still requires:
 
 1. Manually verifying Windows deactivation, orderly close, and forced-process recovery; add iOS lifecycle integration when implementing that host.
 2. Adding device-safe import and export flows and deciding which additional web formatting features to support.
-3. Implementing an OAuth/OIDC sign-in flow with platform callbacks and secure token storage in MAUI `SecureStorage`.
+3. Configuring Azure/native registrations and verifying Windows sign-in end to end; implement the iOS authentication adapter when building that host.
 4. Defining backend synchronization endpoints and entitlements for paying customers, then implementing an offline queue, server version checks, deletion markers, and a visible conflict-resolution flow.
 5. Adding Windows packaging/signing and Apple bundle identifiers, provisioning profiles, capabilities, privacy declarations, and App Store metadata.
 6. Adding platform CI runners once signing credentials and Apple build infrastructure are available.

@@ -1,0 +1,5 @@
+.device-account { position: relative; max-width: 34rem; font-size: .9rem; }
+.device-account summary { cursor: pointer; padding: .5rem; }
+.device-account button { margin: .25rem; padding: .5rem .75rem; }
+.device-account p { margin: .5rem; }
+.device-account button:focus-visible, .device-account summary:focus-visible { outline: 2px solid #6550be; outline-offset: 2px; }

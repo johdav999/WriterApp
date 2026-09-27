@@ -9,6 +9,8 @@
     background: #17133b;
     color: #fff;
     display: flex;
+    flex-wrap: wrap;
+    gap: .75rem;
     justify-content: space-between;
     min-height: 4rem;
     padding: .75rem clamp(1rem, 4vw, 2.5rem);
