@@ -1,68 +1,52 @@
-# .NET
-bin/
-obj/
+# .NET build and IDE output
+**/bin/
+**/obj/
+artifacts/
+.codex-build/
+publish/
+**/publish/
+.azure-publish/
+**/.azure-publish/
+TestResults/
 *.user
 *.suo
 *.log
+*.dll
+*.PublishSettings
 
+# JavaScript build output and local dependencies
+**/node_modules/
+**/dist/
+**/.next/
+**/out/
+**/.docusaurus/
+**/build/
 
-# build/publish output
-publish/
-**/publish/
-.azure-publish/
-**/.azure-publish/
-
-# dotnet
-bin/
-obj/
-**/bin/
-**/obj/
-
-
-# VS Code
-.vscode/
-
-# Node / frontend
-node_modules/
-dist/
-
-# Environment
+# Local configuration and secrets
 .env
+.env.*
+!.env.example
+!.env.*.example
+appsettings.Development.json
+!appsettings.Development.example.json
 
+# Runtime data and generated deployment packages
+App_Data/
+**/App_Data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.zip
 
-# OS
+# Accidental nested Git metadata or backups
+**/.git.BACKUP/
+
+# Editor and operating-system files
+.vscode/
 .DS_Store
 Thumbs.db
 
-# .NET build output
-bin/
-obj/
-
-# Test output
-TestResults/
-appsettings.Development.json
-
-.dll
-
-
+# Local maintenance files
 .fix-stall.bat.txt
-
-# build / publish outputs (do not commit)
-.azure-publish/
-publish/
-**/bin/
-**/obj/
-
-# dotnet publish output (deployment artifacts)
-publish/
-**/publish/
-**/.azure-publish/
-*.PublishSettings
-
-
-# publish artifacts
-publish.bat
-publish.zip
-publish/
-**/publish/
-**/.azure-publish/
