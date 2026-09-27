@@ -1,6 +1,6 @@
 @page "/"
 @inject DeviceHostOptions HostOptions
-@inject ILocalDocumentStore LocalDocuments
+@inject LocalDocumentRepository LocalDocuments
 
 <PageTitle>Prosa</PageTitle>
 
@@ -16,7 +16,15 @@
 <section class="device-grid" aria-label="Device host readiness">
     <article class="device-card">
         <h2>Local documents</h2>
-        <p>Draft storage is registered at <code>@LocalDocuments.RootPath</code>.</p>
+        <p>@_documentCount local documents available.</p>
+        @if (_storageError is not null)
+        {
+            <p role="alert">@_storageError</p>
+        }
+        @foreach (var issue in _issues)
+        {
+            <p role="alert">@issue.FileName: @issue.Message</p>
+        }
     </article>
     <article class="device-card">
         <h2>Backend</h2>
@@ -27,3 +35,23 @@
         <p>Move reusable editor components from <code>WriterApp.Client</code> into this shared device UI.</p>
     </article>
 </section>
+
+@code {
+    private int _documentCount;
+    private IReadOnlyList<LocalDocumentIssue> _issues = [];
+    private string? _storageError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            LocalDocumentList result = await LocalDocuments.ListAsync();
+            _documentCount = result.Documents.Count;
+            _issues = result.Issues;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            _storageError = "Local storage is unavailable or in use by another app instance. Close the other instance or check storage access, then reopen Prosa.";
+        }
+    }
+}
