@@ -38,6 +38,9 @@ namespace WriterApp.Data
         public DbSet<UserEvent> UserEvents => Set<UserEvent>();
         public DbSet<UsageAggregate> UsageAggregates => Set<UsageAggregate>();
         public DbSet<DocumentRecord> Documents => Set<DocumentRecord>();
+        public DbSet<DocumentSyncRecord> DocumentSyncRecords => Set<DocumentSyncRecord>();
+        public DbSet<DocumentSyncClock> DocumentSyncClocks => Set<DocumentSyncClock>();
+        public DbSet<DocumentSyncOperation> DocumentSyncOperations => Set<DocumentSyncOperation>();
         public DbSet<SectionRecord> Sections => Set<SectionRecord>();
         public DbSet<PageRecord> Pages => Set<PageRecord>();
         public DbSet<PageAnnotationRecord> PageAnnotations => Set<PageAnnotationRecord>();
@@ -105,6 +108,25 @@ namespace WriterApp.Data
 
         protected override void OnModelCreating(ModelBuilder builder)
         {
+            builder.Entity<DocumentSyncClock>(e => { e.HasKey(x => x.Id); e.Property(x => x.Id).ValueGeneratedNever(); e.HasData(new DocumentSyncClock { Id = 1 }); });
+            builder.Entity<DocumentSyncRecord>(e =>
+            {
+                e.HasKey(x => x.DocumentId);
+                e.Property(x => x.OwnerUserId).HasMaxLength(128).IsRequired();
+                e.Property(x => x.Version).HasMaxLength(64).IsRequired();
+                e.HasIndex(x => x.Sequence).IsUnique();
+                e.HasIndex(x => new { x.OwnerUserId, x.Sequence });
+            });
+            builder.Entity<DocumentSyncOperation>(e =>
+            {
+                e.HasKey(x => new { x.OwnerUserId, x.OperationId });
+                e.Property(x => x.OwnerUserId).HasMaxLength(128);
+                e.Property(x => x.RequestHash).HasMaxLength(64).IsRequired();
+                e.Property(x => x.ResultJson).IsRequired();
+            });
+            builder.Entity<DocumentRecord>().ToTable("Documents", t => { t.HasTrigger("Sync_Documents"); t.UseSqlOutputClause(false); t.UseSqlReturningClause(false); });
+            builder.Entity<SectionRecord>().ToTable("Sections", t => { t.HasTrigger("Sync_Sections"); t.UseSqlOutputClause(false); t.UseSqlReturningClause(false); });
+            builder.Entity<PageRecord>().ToTable("Pages", t => { t.HasTrigger("Sync_Pages"); t.UseSqlOutputClause(false); t.UseSqlReturningClause(false); });
             ValueConverter<DateTime?, DateTime?> nullableUtcDateTimeConverter = new(
                 value => NormalizeUtc(value),
                 value => NormalizeUtc(value));

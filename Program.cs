@@ -202,6 +202,8 @@ mvcBuilder.ConfigureApplicationPartManager(manager =>
     manager.ApplicationParts.Add(new AssemblyPart(typeof(Program).Assembly));
 });
 builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<DocumentSyncService>();
+builder.Services.AddScoped<ProjectDeletionService>();
 
 builder.Services.AddScoped(sp =>
 {

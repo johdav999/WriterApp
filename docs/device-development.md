@@ -146,6 +146,14 @@ The backend adds an optional JWT bearer scheme alongside the existing Easy Auth 
 
 Prompt 6 validation: **456 tests pass**, including 29 new backend/device authentication cases; Release solution, Windows Debug, and iOS managed Debug builds have zero warnings. NuGet vulnerability checks report no known advisories for the backend and desktop dependency trees. Tests use synthetic signed tokens and fixed in-memory discovery, not real tenant credentials. Next implementation dependency: **Prompt 7, paid document synchronization APIs**. End-to-end authenticated sync and AI validation require the Azure setup and live sign-in checks first.
 
+### Paid document synchronization API (Release 1, Prompt 7)
+
+The backend now exposes paid initial/incremental discovery, snapshot download, upload, rename, trash, restore, and permanent deletion at `/api/sync/v1/documents`. Each aggregate has an opaque version; stale writes return structured conflicts, and durable operation receipts make retries idempotent. Database triggers track web and sync edits, while permanent tombstones prevent stale devices from recreating deleted IDs. Current subscription and ownership checks apply to every request.
+
+See [Document synchronization API](document-synchronization.md) for contracts, client queue rules, limits, error handling, retention, and migration instructions. Both SQLite and SQL Server migrations are included; no Azure database or deployment was changed. Version 1 protects advanced web metadata by rejecting omitted existing sections/pages and unsupported HTML instead of silently removing them.
+
+Prompt 7 validation: **472 tests pass**, including 16 synchronization cases; provider-selectable tests also pass against local SQL Server Express temporary databases. The Release solution, Windows Debug host, and iOS managed Debug host build with zero warnings. Desktop queue/reconciliation and visible conflict copies remain **Prompt 8**. Native registration and live sign-in verification from Prompt 6 remain prerequisites for end-to-end device sync.
+
 ## Remaining implementation
 
 The app now has native startup, shared document library and navigation, backend configuration, and a versioned local document repository. Product functionality still requires:
@@ -153,7 +161,7 @@ The app now has native startup, shared document library and navigation, backend 
 1. Manually verifying Windows deactivation, orderly close, and forced-process recovery; add iOS lifecycle integration when implementing that host.
 2. Adding device-safe import and export flows and deciding which additional web formatting features to support.
 3. Configuring Azure/native registrations and verifying Windows sign-in end to end; implement the iOS authentication adapter when building that host.
-4. Defining backend synchronization endpoints and entitlements for paying customers, then implementing an offline queue, server version checks, deletion markers, and a visible conflict-resolution flow.
+4. Rehearsing/applying the synchronization migrations in staging, then implementing the device offline queue, server version tracking, deletion reconciliation, and visible conflict-resolution flow (Prompt 8).
 5. Adding Windows packaging/signing and Apple bundle identifiers, provisioning profiles, capabilities, privacy declarations, and App Store metadata.
 6. Adding platform CI runners once signing credentials and Apple build infrastructure are available.
 

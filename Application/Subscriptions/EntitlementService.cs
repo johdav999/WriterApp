@@ -96,6 +96,7 @@ namespace WriterApp.Application.Subscriptions
 
             entitlements["ai.monthly_tokens"] = access.EffectiveAiMonthlyTokenBudget.ToString(CultureInfo.InvariantCulture);
             entitlements["ai.enabled"] = access.IsAiAccessActive && access.EffectiveAiMonthlyTokenBudget > 0 ? "true" : "false";
+            entitlements["documents.sync"] = access.IsPaidAccessActive ? "true" : "false";
             entitlements["ai.tokens_used_this_period"] = userEntitlement.AiTokensUsedThisPeriod.ToString(CultureInfo.InvariantCulture);
 
             UserEntitlements result = new(userId, planKey, planName, entitlements);

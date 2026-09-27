@@ -156,6 +156,30 @@ namespace WriterApp.Application.Documents
             return new ProjectDeletionResult(true, projectId, counts);
         }
 
+        public async Task DeleteOwnedDocumentInExistingTransactionAsync(Guid documentId, string ownerUserId, CancellationToken ct)
+        {
+            if (_dbContext.Database.CurrentTransaction is null) throw new InvalidOperationException("Document deletion requires an existing transaction.");
+            if (!await _dbContext.Documents.AnyAsync(d => d.Id == documentId && d.OwnerUserId == ownerUserId, ct))
+                throw new InvalidOperationException("Owned document not found.");
+            Guid[] documents = [documentId];
+            var sections = await _dbContext.Sections.Where(s => s.DocumentId == documentId).Select(s => s.Id).ToListAsync(ct);
+            var pages = await _dbContext.Pages.Where(p => p.DocumentId == documentId).Select(p => p.Id).ToListAsync(ct);
+            var history = await _dbContext.AiActionHistoryEntries.Where(h => h.OwnerUserId == ownerUserId
+                && (h.DocumentId == documentId || (h.SectionId.HasValue && sections.Contains(h.SectionId.Value))
+                    || (h.PageId.HasValue && pages.Contains(h.PageId.Value)))).Select(h => h.Id).ToListAsync(ct);
+            await DeleteHistoryAsync(ownerUserId, documents, sections, pages, history, ct);
+            string normalized = IdNorm.Norm(documentId);
+            await _dbContext.SearchIndexEntries.Where(s => s.DocumentId == normalized).ExecuteDeleteAsync(ct);
+            // Preserve project structure and other documents; only unlink references into this document.
+            await _dbContext.ProjectNodes.Where(n => n.LinkedSectionId.HasValue && sections.Contains(n.LinkedSectionId.Value))
+                .ExecuteUpdateAsync(setters => setters.SetProperty(n => n.LinkedSectionId, (Guid?)null), ct);
+            await _dbContext.DocumentOutlineNodes.Where(n => n.DocumentId != documentId && n.LinkedSectionId.HasValue && sections.Contains(n.LinkedSectionId.Value))
+                .ExecuteUpdateAsync(setters => setters.SetProperty(n => n.LinkedSectionId, (Guid?)null), ct);
+            await DeleteDocumentOutlineNodeTreeAsync(documents, ct);
+            await DeleteDocumentAndPageChildrenAsync(documents, sections, pages, ct);
+            await DeleteCoreContentAsync(documents, sections, pages, ct);
+        }
+
         private async Task<ProjectDeletionCounts> BuildCountsAsync(
             Guid projectId,
             string ownerUserId,

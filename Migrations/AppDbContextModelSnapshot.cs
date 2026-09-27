@@ -489,7 +489,92 @@ namespace BlazorApp.Migrations
 
                     b.HasIndex("ProjectId", "UpdatedAtUnixSeconds");
 
-                    b.ToTable("Documents");
+                    b.ToTable("Documents", null, t =>
+                        {
+                            t.HasTrigger("Sync_Documents");
+                        });
+
+                    b
+                        .HasAnnotation("Sqlite:UseSqlReturningClause", false)
+                        .HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Documents.DocumentSyncClock", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("Sequence")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("DocumentSyncClocks");
+
+                    b.HasData(
+                        new
+                        {
+                            Id = 1,
+                            Sequence = 0L
+                        });
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Documents.DocumentSyncOperation", b =>
+                {
+                    b.Property<string>("OwnerUserId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("OperationId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RequestHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ResultJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("OwnerUserId", "OperationId");
+
+                    b.ToTable("DocumentSyncOperations");
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Documents.DocumentSyncRecord", b =>
+                {
+                    b.Property<Guid>("DocumentId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsTrashed")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("OwnerUserId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("Sequence")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Version")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("DocumentId");
+
+                    b.HasIndex("Sequence")
+                        .IsUnique();
+
+                    b.HasIndex("OwnerUserId", "Sequence");
+
+                    b.ToTable("DocumentSyncRecords");
                 });
 
             modelBuilder.Entity("WriterApp.Data.Documents.DocumentSynopsisRecord", b =>
@@ -786,7 +871,14 @@ namespace BlazorApp.Migrations
 
                     b.HasIndex("SectionId", "OrderIndex");
 
-                    b.ToTable("Pages");
+                    b.ToTable("Pages", null, t =>
+                        {
+                            t.HasTrigger("Sync_Pages");
+                        });
+
+                    b
+                        .HasAnnotation("Sqlite:UseSqlReturningClause", false)
+                        .HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("WriterApp.Data.Documents.PageVersionRecord", b =>
@@ -1348,7 +1440,14 @@ namespace BlazorApp.Migrations
 
                     b.HasIndex("DocumentId", "OrderIndex");
 
-                    b.ToTable("Sections");
+                    b.ToTable("Sections", null, t =>
+                        {
+                            t.HasTrigger("Sync_Sections");
+                        });
+
+                    b
+                        .HasAnnotation("Sqlite:UseSqlReturningClause", false)
+                        .HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("WriterApp.Data.Documents.SectionSceneCardRecord", b =>

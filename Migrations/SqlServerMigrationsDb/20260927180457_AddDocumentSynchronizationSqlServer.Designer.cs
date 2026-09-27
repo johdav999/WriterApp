@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using WriterApp.Data;
 
@@ -11,9 +12,11 @@ using WriterApp.Data;
 namespace BlazorApp.Migrations.SqlServerMigrationsDb
 {
     [DbContext(typeof(SqlServerMigrationsDbContext))]
-    partial class SqlServerMigrationsDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260927180457_AddDocumentSynchronizationSqlServer")]
+    partial class AddDocumentSynchronizationSqlServer
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
