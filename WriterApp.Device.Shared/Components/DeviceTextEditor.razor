@@ -59,6 +59,27 @@
         await OnContentChanged(snapshot.Html, snapshot.Version);
     }
 
+    public async Task<AiEditorSnapshot> CaptureAiAsync()
+    {
+        if (_editor is null || _disposed) throw new InvalidOperationException("The editor is not ready.");
+        return await _editor.InvokeAsync<AiEditorSnapshot>("captureAi");
+    }
+
+    public async Task<string> ApplyAiAsync(string baseHtml, int from, int to, string original, string proposed, string mode)
+    {
+        if (_editor is null || _disposed) throw new InvalidOperationException("The editor is not ready.");
+        Snapshot result = await _editor.InvokeAsync<Snapshot>("applyAi", baseHtml, from, to, original, proposed, mode);
+        await OnContentChanged(result.Html, result.Version);
+        return result.Html;
+    }
+    public async Task<string> RestoreAiAsync(string expectedHtml, string originalHtml)
+    {
+        if (_editor is null || _disposed) throw new InvalidOperationException("The editor is not ready.");
+        Snapshot result = await _editor.InvokeAsync<Snapshot>("restoreAi", expectedHtml, originalHtml);
+        await OnContentChanged(result.Html, result.Version);
+        return result.Html;
+    }
+
     public async ValueTask DisposeAsync()
     {
         _disposed = true;

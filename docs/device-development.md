@@ -162,6 +162,12 @@ See [Desktop synchronization](desktop-synchronization.md) for queue guarantees, 
 
 Prompt 8 validation: **500 tests pass**, including 28 new deterministic engine/HTTP cases. The Release solution, Windows Debug host, and iOS managed Debug host build with zero warnings. Native Windows live synchronization and staging account setup remain manual verification gates.
 
+### Focused desktop AI actions (Release 1, Prompt 9)
+
+The editor now sends Rewrite, Expand, Shorten, Summarize, and Custom requests through the authenticated backend. It checks current AI availability/quota, previews results before Apply, saves the original page for guarded undo/recovery, and applies accepted text as a normal local edit. See [Desktop AI actions](desktop-ai-actions.md) for scope, error behavior, backup, and live staging checks. Next desktop work: **Prompt 10, import and export**.
+
+Prompt 9 validation: **520 tests pass**, including 20 new AI request, transport, failure, cancellation, and backup cases. All 12 browser editor checks pass. The Release solution, Windows Debug host, and iOS managed Debug host build with zero warnings. Live AI and sync verification still requires native registration and a configured staging backend.
+
 ## Remaining release work
 
 The app now has native startup, shared document library and navigation, backend configuration, and a versioned local document repository. Product functionality still requires:
@@ -169,7 +175,7 @@ The app now has native startup, shared document library and navigation, backend 
 1. Manually verifying Windows deactivation, orderly close, and forced-process recovery; add iOS lifecycle integration when implementing that host.
 2. Adding device-safe import and export flows and deciding which additional web formatting features to support.
 3. Configuring Azure/native registrations and verifying Windows sign-in end to end; implement the iOS authentication adapter when building that host.
-4. Rehearsing/applying the synchronization migrations in staging and verifying authenticated Windows/web sync, conflict resolution, and plan loss end to end; then implement the Prompt 9 AI actions.
+4. Rehearsing/applying the synchronization migrations in staging, then verifying authenticated Windows/web sync and AI actions against a configured staging provider.
 5. Adding Windows packaging/signing and Apple bundle identifiers, provisioning profiles, capabilities, privacy declarations, and App Store metadata.
 6. Adding platform CI runners once signing credentials and Apple build infrastructure are available.
 

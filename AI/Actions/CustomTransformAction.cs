@@ -34,7 +34,8 @@ namespace WriterApp.AI.Actions
                 throw new ArgumentNullException(nameof(input));
             }
 
-            string sectionText = ResolveSectionText(input.Document, input.ActiveSectionId);
+            string sectionText = GetOption(input.Options, "section_text_override", null)
+                ?? ResolveSectionText(input.Document, input.ActiveSectionId);
             bool scopeSelection = string.Equals(GetOption(input.Options, "scope"), "selection", StringComparison.OrdinalIgnoreCase);
             TextRange range = scopeSelection
                 ? NormalizeRange(input.SelectionRange, sectionText.Length)

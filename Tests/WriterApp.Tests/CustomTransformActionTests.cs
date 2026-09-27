@@ -115,6 +115,27 @@ namespace WriterApp.Tests
 
             string instruction = Assert.IsType<string>(request.Inputs["instruction"]);
             Assert.Contains("Context => OVERRIDE CONTEXT", instruction, StringComparison.Ordinal);
+            Assert.Equal("OVERRIDE CONTEXT", request.Context.OriginalText);
+        }
+
+        [Fact]
+        public void BuildRequest_MapsSelectionAgainstClientPageText()
+        {
+            Document document = DocumentFactory.CreateNewDocument();
+            Guid sectionId = document.Chapters[0].Sections[0].SectionId;
+            AiRequest request = new CustomTransformAction().BuildRequest(new AiActionInput(
+                document, sectionId, new TextRange(6, 4), "beta", "Custom transform",
+                new Dictionary<string, object?>
+                {
+                    ["template"] = "Improve clarity",
+                    ["section_text_override"] = "Alpha beta",
+                    ["scope"] = "selection"
+                }));
+
+            Assert.Equal("beta", request.Context.OriginalText);
+            Assert.Equal("beta", request.Context.SelectionText);
+            Assert.Equal(6, request.Context.SelectionStart);
+            Assert.Equal(4, request.Context.SelectionLength);
         }
 
         [Fact]

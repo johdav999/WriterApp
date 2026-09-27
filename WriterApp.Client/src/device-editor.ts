@@ -72,6 +72,7 @@ export function create(host: HTMLElement, content: string, format: string, recei
     host.replaceChildren(toolbar, linkPanel, notice, canvas);
     let version = 0;
     let disposed = false;
+    let lastAiSelection: { from: number; to: number } | null = null;
     let linkSelection = { from: 1, to: 1 };
     const buttons: { button: HTMLButtonElement; active?: () => boolean; enabled?: () => boolean }[] = [];
     const notify = (method: string, ...args: any[]) => {
@@ -117,7 +118,11 @@ export function create(host: HTMLElement, content: string, format: string, recei
             },
             handleDrop: () => true
         },
-        onUpdate: () => { version++; notify("OnContentChanged", editor.getHTML(), version); },
+        onUpdate: () => { lastAiSelection = null; version++; notify("OnContentChanged", editor.getHTML(), version); },
+        onSelectionUpdate: () => {
+            const selection = editor.state.selection;
+            if (!selection.empty) lastAiSelection = { from: selection.from, to: selection.to };
+        },
         onTransaction: () => {
             for (const entry of buttons) {
                 if (entry.active) entry.button.setAttribute("aria-pressed", String(entry.active()));
@@ -171,6 +176,48 @@ export function create(host: HTMLElement, content: string, format: string, recei
             for (const entry of buttons) entry.button.disabled = !value || (entry.enabled ? !entry.enabled() : false);
         },
         snapshot: () => ({ html: editor.getHTML(), version }),
+        captureAi() {
+            const doc = editor.state.doc;
+            const range = !editor.state.selection.empty
+                ? editor.state.selection
+                : lastAiSelection;
+            const from = range?.from ?? editor.state.selection.from;
+            const to = range?.to ?? editor.state.selection.to;
+            const text = (start: number, end: number) => doc.textBetween(start, end, "\n", "\n");
+            const selectedText = text(from, to);
+            const selectionStart = text(0, from).length;
+            return {
+                html: editor.getHTML(), plainText: text(0, doc.content.size),
+                selectedText, selectionStart, selectionEnd: selectionStart + selectedText.length,
+                from, to, version
+            };
+        },
+        applyAi(baseHtml: string, from: number, to: number, original: string, proposed: string, mode: string) {
+            if (!editor.isEditable || editor.getHTML() !== baseHtml)
+                throw new Error("The writing changed after the preview. Run the action again.");
+            if (!proposed.trim()) throw new Error("The proposed text is empty.");
+            const doc = editor.state.doc;
+            if (mode === "replace" && (from < 0 || to > doc.content.size || from >= to
+                || doc.textBetween(from, to, "\n", "\n") !== original))
+                throw new Error("The selection changed after the preview. Run the action again.");
+            if (mode !== "replace" && mode !== "append") throw new Error("Unsupported AI apply mode.");
+            // JSON text nodes keep provider output inert; an HTML-looking answer is inserted as text.
+            const paragraphs = proposed.replace(/\r\n?/g, "\n").split("\n").map(line => ({
+                type: "paragraph", content: line ? [{ type: "text", text: line }] : []
+            }));
+            const position = mode === "replace" ? { from, to } : doc.content.size;
+            if (!editor.commands.insertContentAt(position, paragraphs, { updateSelection: true, errorOnInvalidContent: true }))
+                throw new Error("The proposal could not be applied. Your writing is unchanged.");
+            lastAiSelection = null;
+            return { html: editor.getHTML(), version };
+        },
+        restoreAi(expectedHtml: string, originalHtml: string) {
+            if (!editor.isEditable || editor.getHTML() !== expectedHtml)
+                throw new Error("The writing changed after AI was applied. Restore the original as a separate copy instead.");
+            validateHtml(originalHtml);
+            editor.commands.setContent(originalHtml, { emitUpdate: true, errorOnInvalidContent: true });
+            return { html: editor.getHTML(), version };
+        },
         // Only apply explicit external updates. Ordinary .NET rerenders never reset content or selection.
         setContent(html: string) {
             validateHtml(html);

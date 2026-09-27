@@ -5,6 +5,9 @@
 @inject LocalRecoveryStore RecoveryStore
 @inject LocalRecoveryService Recovery
 @inject DeviceSaveLifetime Lifetime
+@inject DeviceAiService Ai
+@inject DeviceAiUndoStore AiUndo
+@inject DeviceSyncEngine Sync
 @implements IDisposable
 
 <PageTitle>@(_session?.Document.Title ?? "Document") · Prosa</PageTitle>
@@ -41,7 +44,7 @@
         {
             <div class="workspace-controls">
                 <label for="page-selection">Section / page</label>
-                <select id="page-selection" @bind:get="_selectedPage" @bind:set="SwitchPageAsync" disabled="@_busy">
+                <select id="page-selection" @bind:get="_selectedPage" @bind:set="SwitchPageAsync" disabled="@(_busy || _aiBusy || _applyingAi)">
                     @foreach (LocalSection section in document.Sections)
                     {
                         <optgroup label="@section.Title">
@@ -55,6 +58,51 @@
                 <button type="button" disabled="@_busy" @onclick="SaveButtonAsync">Save on this device</button>
             </div>
             <p class="workspace-help">Autosaves on this device after typing pauses. Ctrl+S to retry/save · Ctrl+B bold · Ctrl+I italic · Ctrl+K link · Ctrl+Z undo · Ctrl+Y redo.</p>
+            <section class="workspace-ai" aria-label="AI writing actions">
+                <h2>AI writing help</h2>
+                <p>AI uses the synced cloud copy. Select text for Rewrite, Expand, or Shorten. Summarize reads the current section.</p>
+                @if (document.ServerDocumentId is null)
+                { <p>Enable cloud sync for this document before using AI.</p> }
+                <div class="workspace-ai-actions">
+                    <button type="button" disabled="@(_busy || _aiBusy || document.ServerDocumentId is null)" @onclick="() => RunAiAsync(DeviceAiAction.Rewrite)">Rewrite selection</button>
+                    <button type="button" disabled="@(_busy || _aiBusy || document.ServerDocumentId is null)" @onclick="() => RunAiAsync(DeviceAiAction.Expand)">Expand selection</button>
+                    <button type="button" disabled="@(_busy || _aiBusy || document.ServerDocumentId is null)" @onclick="() => RunAiAsync(DeviceAiAction.Shorten)">Shorten selection</button>
+                    <button type="button" disabled="@(_busy || _aiBusy || document.ServerDocumentId is null)" @onclick="() => RunAiAsync(DeviceAiAction.Summarize)">Summarize section</button>
+                </div>
+                <label for="custom-ai-instruction">Custom instruction</label>
+                <textarea id="custom-ai-instruction" @bind="_customAiInstruction" maxlength="2000" rows="2"
+                          disabled="@(_busy || _aiBusy)" placeholder="Describe the change you want"></textarea>
+                <button type="button" disabled="@(_busy || _aiBusy || document.ServerDocumentId is null)" @onclick="() => RunAiAsync(DeviceAiAction.Custom)">Preview custom action</button>
+                @if (_aiBusy)
+                {
+                    <p role="status">Preparing an AI proposal. Your writing is unchanged.</p>
+                    <button type="button" @onclick="CancelAi">Cancel AI request</button>
+                }
+                @if (_aiError is not null) { <p role="alert">@_aiError</p> }
+                @if (_aiMessage is not null) { <p role="status">@_aiMessage</p> }
+                @if (_aiProposal is { } proposal)
+                {
+                    <div class="workspace-ai-preview" role="group" aria-label="AI proposal preview">
+                        <h3>Review before applying</h3>
+                        @if (!string.IsNullOrWhiteSpace(proposal.Summary)) { <p>@proposal.Summary</p> }
+                        <h4>@(proposal.Prepared.ApplyMode == "append" ? "Source section" : "Original selection")</h4>
+                        <pre>@proposal.SourceText</pre>
+                        <h4>Proposed text</h4><pre>@proposal.ProposedText</pre>
+                        <p>@(proposal.Prepared.ApplyMode == "append" ? "Apply adds this text at the end of the current page." : "Apply replaces only the selected text.")</p>
+                        <button type="button" disabled="@(_busy || _aiBusy || _applyingAi)" @onclick="ApplyAiAsync">Apply</button>
+                        <button type="button" disabled="@(_busy || _aiBusy || _applyingAi)" @onclick="DismissAi">Dismiss</button>
+                    </div>
+                }
+                @if (_aiUndo is { AfterHtml: not null } && _aiUndo.PageId == _selectedPage)
+                { <button type="button" disabled="@(_busy || _aiBusy || _applyingAi)" @onclick="UndoAiAsync">Restore writing before last AI apply</button> }
+                @if (_aiPendingUndo is { } pending && pending.PageId == _selectedPage)
+                {
+                    <details><summary>Writing saved before an interrupted AI apply</summary><pre>@pending.BeforeHtml</pre></details>
+                    <button type="button" disabled="@(_busy || _aiBusy || _applyingAi)" @onclick="RestorePendingCopyAsync">Save this earlier writing as a separate local copy</button>
+                }
+                @if (_aiRecoveredCopy is { } recovered)
+                { <a href="@($"/documents/{recovered}")">Open recovered copy</a> }
+            </section>
             LocalPage selected = document.Sections.SelectMany(section => section.Pages).Single(item => item.PageId == _selectedPage);
             <DeviceTextEditor @key="selected.PageId" @ref="_editor"
                               Content="@_session.ContentFor(selected)" Format="@_session.FormatFor(selected)"
@@ -81,11 +129,23 @@
     private Func<bool, Task<bool>>? _lifetimeFlush;
     private bool _disposed;
     private Guid? _editingId;
+    private string _customAiInstruction = "";
+    private bool _aiBusy;
+    private bool _applyingAi;
+    private string? _aiError;
+    private string? _aiMessage;
+    private DeviceAiProposal? _aiProposal;
+    private DeviceAiUndoRecord? _aiUndo;
+    private DeviceAiUndoRecord? _aiPendingUndo;
+    private Guid? _aiRecoveredCopy;
+    private CancellationTokenSource? _aiRequest;
 
     protected override async Task OnParametersSetAsync()
     {
         if (_session?.Document.DocumentId == DocumentId) return;
         if (_editingId is { } previous) Documents.EndEditing(previous);
+        _aiRequest?.Cancel();
+        _aiProposal = null; _aiUndo = null; _aiPendingUndo = null; _aiRecoveredCopy = null; _aiError = null; _aiMessage = null;
         _editingId = DocumentId;
         Documents.BeginEditing(DocumentId);
         _autosave?.Dispose();
@@ -111,12 +171,110 @@
             _lifetimeFlush = closing => InvokeFlushAsync(closing);
             Lifetime.Flush = _lifetimeFlush;
             _selectedPage = document.Sections.SelectMany(section => section.Pages).FirstOrDefault()?.PageId;
+            try { _aiUndo = await AiUndo.LoadAsync(loadingId); _aiPendingUndo = await AiUndo.LoadPendingAsync(loadingId); }
+            catch (Exception error) when (error is IOException or System.Text.Json.JsonException)
+            { _aiError = "The previous AI undo backup could not be read. Its file was preserved."; }
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         { _error = error is LocalDocumentReadException read ? read.Issue.Message : "Unable to read local storage. Check access and try again."; }
     }
 
     private Task OnEdited(Guid pageId, string html) => _autosave?.EditAsync(pageId, html) ?? Task.CompletedTask;
+
+    private async Task RunAiAsync(DeviceAiAction action)
+    {
+        if (_aiBusy || _busy || _applyingAi || _session is null || _editor is null || _selectedPage is null || _hasRecovery) return;
+        _aiProposal = null; _aiError = null; _aiMessage = null; _aiBusy = true;
+        using var request = new CancellationTokenSource();
+        _aiRequest = request;
+        Guid pageId = _selectedPage.Value;
+        try
+        {
+            var capture = await _editor.CaptureAiAsync();
+            if (action is DeviceAiAction.Rewrite or DeviceAiAction.Expand or DeviceAiAction.Shorten
+                && string.IsNullOrWhiteSpace(capture.SelectedText))
+                throw new DeviceAiException(DeviceAiFailure.Invalid, "Select text in the editor first.");
+            if (_session.ContentFor(_session.Document.Sections.SelectMany(s => s.Pages).Single(p => p.PageId == pageId)) != capture.Html)
+                await OnEdited(pageId, capture.Html);
+            if (!await SaveCurrentAsync()) return;
+            await Sync.SyncAsync(request.Token);
+            request.Token.ThrowIfCancellationRequested();
+            LocalDocument latest = await Documents.LoadAsync(DocumentId, request.Token)
+                ?? throw new IOException("The document is no longer available.");
+            LocalSection section = latest.Sections.Single(s => s.Pages.Any(p => p.PageId == pageId));
+            LocalPage page = section.Pages.Single(p => p.PageId == pageId);
+            if (_selectedPage != pageId || page.Content != capture.Html)
+                throw new DeviceAiException(DeviceAiFailure.Invalid, "The writing changed while syncing. Review it and run AI again.");
+            var prepared = DeviceAiRequests.Build(latest, section, page, capture, action, _customAiInstruction);
+            _aiProposal = await Ai.ProposeAsync(prepared, request.Token);
+            _aiMessage = "Proposal ready. Review both versions before applying.";
+        }
+        catch (OperationCanceledException) { _aiMessage = "AI request canceled. Your writing is unchanged."; }
+        catch (DeviceAiException error) { _aiError = error.Message; }
+        catch (Exception error) when (error is HttpRequestException or IOException or InvalidOperationException or JSException)
+        { _aiError = "AI could not prepare a proposal. Check the connection or editor and try again; your writing is unchanged."; }
+        finally { _aiRequest = null; _aiBusy = false; if (!_disposed) StateHasChanged(); }
+    }
+    private void CancelAi() => _aiRequest?.Cancel();
+    private void DismissAi() { _aiProposal = null; _aiMessage = "Proposal dismissed. Your writing is unchanged."; }
+
+    private async Task ApplyAiAsync()
+    {
+        if (_aiProposal is not { } proposal || _editor is null || _selectedPage != proposal.Prepared.LocalPageId || _busy || _applyingAi) return;
+        _applyingAi = true;
+        _aiError = null;
+        try
+        {
+            var record = new DeviceAiUndoRecord(DocumentId, _selectedPage.Value, proposal.Prepared.BaseHtml, null, DateTimeOffset.UtcNow);
+            await AiUndo.SaveBeforeAsync(record);
+            _aiPendingUndo = record;
+            string after = await _editor.ApplyAiAsync(proposal.Prepared.BaseHtml, proposal.Prepared.From, proposal.Prepared.To,
+                proposal.Prepared.SelectedText, proposal.ProposedText, proposal.Prepared.ApplyMode);
+            _aiProposal = null;
+            bool saved = await SaveCurrentAsync();
+            if (!saved) return;
+            _aiUndo = record with { AfterHtml = after };
+            await AiUndo.ConfirmAsync(_aiUndo);
+            _aiPendingUndo = null;
+            _aiMessage = "Applied and saved locally. Undo in the editor or restore the saved pre-AI writing.";
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or JSException)
+        { _aiError = error is JSException ? "The writing changed after the preview. Run AI again; no proposal was applied." : "AI apply or backup failed. Check local storage and review your writing before retrying."; }
+        finally { _applyingAi = false; }
+    }
+    private async Task UndoAiAsync()
+    {
+        if (_aiUndo is not { AfterHtml: not null } record || _editor is null || _selectedPage != record.PageId || _busy) return;
+        _aiError = null;
+        try
+        {
+            await _editor.RestoreAiAsync(record.AfterHtml, record.BeforeHtml);
+            if (await SaveCurrentAsync()) _aiMessage = "Original writing restored and saved locally.";
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or JSException)
+        { _aiError = "The page changed after AI was applied, so the saved original was not restored automatically. Your current writing is unchanged."; }
+    }
+    private async Task RestorePendingCopyAsync()
+    {
+        if (_aiPendingUndo is not { } record || _busy) return;
+        try
+        {
+            LocalDocument source = await Documents.LoadAsync(DocumentId) ?? throw new IOException("Document missing.");
+            int sectionIndex = Array.FindIndex(source.Sections.ToArray(), s => s.Pages.Any(p => p.PageId == record.PageId));
+            if (sectionIndex < 0) throw new InvalidOperationException("The earlier page no longer exists.");
+            int pageIndex = Array.FindIndex(source.Sections[sectionIndex].Pages.ToArray(), p => p.PageId == record.PageId);
+            LocalDocument copy = await Documents.DuplicateAsync(DocumentId);
+            var sections = copy.Sections.ToArray();
+            var pages = sections[sectionIndex].Pages.ToArray();
+            pages[pageIndex] = pages[pageIndex] with { Content = record.BeforeHtml, ContentFormat = LocalContentFormat.Html };
+            sections[sectionIndex] = sections[sectionIndex] with { Pages = pages };
+            copy = await Documents.SaveAsync(copy with { Sections = sections });
+            _aiRecoveredCopy = copy.DocumentId;
+            _aiMessage = "The earlier writing was saved as a separate local copy.";
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException)
+        { _aiError = "Could not create the recovery copy. The earlier source remains in the AI backup file."; }
+    }
 
     private void OnSaveChanged() { if (!_disposed) _ = InvokeAsync(StateHasChanged); }
     private async Task<bool> InvokeFlushAsync(bool closing)
@@ -183,6 +341,7 @@
 
     private async Task BeforeNavigationAsync(LocationChangingContext context)
     {
+        if (_applyingAi) { context.PreventNavigation(); return; }
         if (!await SaveCurrentAsync(releaseEditor: false) || _session?.IsDirty == true)
         {
             context.PreventNavigation();
@@ -193,6 +352,7 @@
     public void Dispose()
     {
         _disposed = true;
+        _aiRequest?.Cancel();
         if (_editingId is { } id) Documents.EndEditing(id);
         _autosave?.Dispose();
         if (Lifetime.Flush == _lifetimeFlush) Lifetime.Flush = null;

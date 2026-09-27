@@ -33,6 +33,9 @@ public static class DeviceServiceCollectionExtensions
         services.AddSingleton(_ => new DeviceSyncJournal(Path.Combine(localDocumentPath, "sync")));
         services.AddScoped<IDeviceSyncApi, DeviceSyncApi>();
         services.AddScoped<DeviceSyncEngine>();
+        services.AddScoped<IDeviceAiApi, DeviceAiApi>();
+        services.AddScoped<DeviceAiService>();
+        services.AddSingleton(_ => new DeviceAiUndoStore(Path.Combine(localDocumentPath, "ai-undo")));
         services.AddSingleton(_ => new LocalRecoveryStore(Path.Combine(localDocumentPath, "recovery")));
         services.AddSingleton<LocalRecoveryService>();
         services.AddSingleton<DeviceSaveLifetime>();

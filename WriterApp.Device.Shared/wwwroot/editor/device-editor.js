@@ -14024,27 +14024,27 @@ function O_(e, t, n, r) {
 	c.type = "url", c.setAttribute("aria-label", "Link address (https, http or mailto)"), c.placeholder = "https://example.com";
 	let l = document.createElement("p");
 	l.className = "device-editor-notice", l.setAttribute("role", "alert"), e.replaceChildren(a, s, l, o);
-	let u = 0, d = !1, f = {
+	let u = 0, d = !1, f = null, p = {
 		from: 1,
 		to: 1
-	}, p = [], m = (e, ...t) => {
+	}, m = [], h = (e, ...t) => {
 		d || r.invokeMethodAsync(e, ...t).catch(() => {
 			d || (l.textContent = "The editor could not notify the app. Use Save before leaving this page.");
 		});
-	}, h = () => {
-		_.isEditable && (f = {
-			from: _.state.selection.from,
-			to: _.state.selection.to
-		}, c.value = _.getAttributes("link").href || "", s.hidden = !1, c.focus());
-	}, g = W.create({
+	}, g = () => {
+		v.isEditable && (p = {
+			from: v.state.selection.from,
+			to: v.state.selection.to
+		}, c.value = v.getAttributes("link").href || "", s.hidden = !1, c.focus());
+	}, _ = W.create({
 		name: "deviceShortcuts",
 		addKeyboardShortcuts() {
 			return {
-				"Mod-s": () => (m("OnSaveRequested"), !0),
-				"Mod-k": () => (h(), !0)
+				"Mod-s": () => (h("OnSaveRequested"), !0),
+				"Mod-k": () => (g(), !0)
 			};
 		}
-	}), _ = new Hd({
+	}), v = new Hd({
 		element: o,
 		extensions: [d_.configure({
 			link: {
@@ -14053,7 +14053,7 @@ function O_(e, t, n, r) {
 				linkOnPaste: !1
 			},
 			trailingNode: !1
-		}), g],
+		}), _],
 		content: i,
 		enableContentCheck: !0,
 		onContentError: ({ error: e }) => {
@@ -14078,71 +14078,126 @@ function O_(e, t, n, r) {
 			handleDrop: () => !0
 		},
 		onUpdate: () => {
-			u++, m("OnContentChanged", _.getHTML(), u);
+			f = null, u++, h("OnContentChanged", v.getHTML(), u);
+		},
+		onSelectionUpdate: () => {
+			let e = v.state.selection;
+			e.empty || (f = {
+				from: e.from,
+				to: e.to
+			});
 		},
 		onTransaction: () => {
-			for (let e of p) e.active && e.button.setAttribute("aria-pressed", String(e.active())), e.button.disabled = !_.isEditable || (e.enabled ? !e.enabled() : !1);
+			for (let e of m) e.active && e.button.setAttribute("aria-pressed", String(e.active())), e.button.disabled = !v.isEditable || (e.enabled ? !e.enabled() : !1);
 		}
 	});
-	function v(e, t, n, r) {
+	function y(e, t, n, r) {
 		let i = document.createElement("button");
 		i.type = "button", i.textContent = e, i.addEventListener("mousedown", (e) => e.preventDefault()), i.addEventListener("click", () => {
-			_.isEditable && t();
-		}), n && i.setAttribute("aria-pressed", String(n())), r && (i.disabled = !r()), a.append(i), p.push({
+			v.isEditable && t();
+		}), n && i.setAttribute("aria-pressed", String(n())), r && (i.disabled = !r()), a.append(i), m.push({
 			button: i,
 			active: n,
 			enabled: r
 		});
 	}
-	v("Paragraph", () => m_(_), () => _.isActive("paragraph"));
+	y("Paragraph", () => m_(v), () => v.isActive("paragraph"));
 	for (let e of [
 		1,
 		2,
 		3
-	]) v(`Heading ${e}`, () => h_(_, e), () => _.isActive("heading", { level: e }));
-	v("Bold", () => f_(_), () => _.isActive("bold")), v("Italic", () => p_(_), () => _.isActive("italic")), v("Bullets", () => __(_), () => _.isActive("bulletList")), v("Numbered list", () => v_(_), () => _.isActive("orderedList")), v("Quote", () => g_(_), () => _.isActive("blockquote")), v("Link", h, () => _.isActive("link")), v("Undo", () => y_(_), void 0, () => _.can().undo()), v("Redo", () => b_(_), void 0, () => _.can().redo()), s.append(c);
-	let y = (e, t) => {
+	]) y(`Heading ${e}`, () => h_(v, e), () => v.isActive("heading", { level: e }));
+	y("Bold", () => f_(v), () => v.isActive("bold")), y("Italic", () => p_(v), () => v.isActive("italic")), y("Bullets", () => __(v), () => v.isActive("bulletList")), y("Numbered list", () => v_(v), () => v.isActive("orderedList")), y("Quote", () => g_(v), () => v.isActive("blockquote")), y("Link", g, () => v.isActive("link")), y("Undo", () => y_(v), void 0, () => v.can().undo()), y("Redo", () => b_(v), void 0, () => v.can().redo()), s.append(c);
+	let b = (e, t) => {
 		let n = document.createElement("button");
 		n.type = "button", n.textContent = e, n.addEventListener("click", t), s.append(n);
-	}, b = () => {
+	}, x = () => {
 		if (!w_(c.value)) {
 			l.textContent = "Use an http, https or mailto address.";
 			return;
 		}
-		_.chain().focus().setTextSelection(f).extendMarkRange("link").setLink({ href: c.value.trim() }).run(), s.hidden = !0, l.textContent = "";
+		v.chain().focus().setTextSelection(p).extendMarkRange("link").setLink({ href: c.value.trim() }).run(), s.hidden = !0, l.textContent = "";
 	};
-	return y("Apply link", b), y("Remove link", () => {
-		_.chain().focus().setTextSelection(f).extendMarkRange("link").unsetLink().run(), s.hidden = !0;
-	}), y("Cancel", () => {
-		s.hidden = !0, _.commands.focus();
+	return b("Apply link", x), b("Remove link", () => {
+		v.chain().focus().setTextSelection(p).extendMarkRange("link").unsetLink().run(), s.hidden = !0;
+	}), b("Cancel", () => {
+		s.hidden = !0, v.commands.focus();
 	}), c.addEventListener("keydown", (e) => {
-		e.key === "Enter" && (e.preventDefault(), b()), e.key === "Escape" && (s.hidden = !0, _.commands.focus());
+		e.key === "Enter" && (e.preventDefault(), x()), e.key === "Escape" && (s.hidden = !0, v.commands.focus());
 	}), {
 		setEditable(t) {
-			_.setEditable(t, !1), e.querySelectorAll("button,input").forEach((e) => {
+			v.setEditable(t, !1), e.querySelectorAll("button,input").forEach((e) => {
 				e.disabled = !t;
 			});
-			for (let e of p) e.button.disabled = !t || (e.enabled ? !e.enabled() : !1);
+			for (let e of m) e.button.disabled = !t || (e.enabled ? !e.enabled() : !1);
 		},
 		snapshot: () => ({
-			html: _.getHTML(),
+			html: v.getHTML(),
 			version: u
 		}),
+		captureAi() {
+			let e = v.state.doc, t = v.state.selection.empty ? f : v.state.selection, n = t?.from ?? v.state.selection.from, r = t?.to ?? v.state.selection.to, i = (t, n) => e.textBetween(t, n, "\n", "\n"), a = i(n, r), o = i(0, n).length;
+			return {
+				html: v.getHTML(),
+				plainText: i(0, e.content.size),
+				selectedText: a,
+				selectionStart: o,
+				selectionEnd: o + a.length,
+				from: n,
+				to: r,
+				version: u
+			};
+		},
+		applyAi(e, t, n, r, i, a) {
+			if (!v.isEditable || v.getHTML() !== e) throw Error("The writing changed after the preview. Run the action again.");
+			if (!i.trim()) throw Error("The proposed text is empty.");
+			let o = v.state.doc;
+			if (a === "replace" && (t < 0 || n > o.content.size || t >= n || o.textBetween(t, n, "\n", "\n") !== r)) throw Error("The selection changed after the preview. Run the action again.");
+			if (a !== "replace" && a !== "append") throw Error("Unsupported AI apply mode.");
+			let s = i.replace(/\r\n?/g, "\n").split("\n").map((e) => ({
+				type: "paragraph",
+				content: e ? [{
+					type: "text",
+					text: e
+				}] : []
+			})), c = a === "replace" ? {
+				from: t,
+				to: n
+			} : o.content.size;
+			if (!v.commands.insertContentAt(c, s, {
+				updateSelection: !0,
+				errorOnInvalidContent: !0
+			})) throw Error("The proposal could not be applied. Your writing is unchanged.");
+			return f = null, {
+				html: v.getHTML(),
+				version: u
+			};
+		},
+		restoreAi(e, t) {
+			if (!v.isEditable || v.getHTML() !== e) throw Error("The writing changed after AI was applied. Restore the original as a separate copy instead.");
+			return T_(t), v.commands.setContent(t, {
+				emitUpdate: !0,
+				errorOnInvalidContent: !0
+			}), {
+				html: v.getHTML(),
+				version: u
+			};
+		},
 		setContent(e) {
-			if (T_(e), e === _.getHTML()) return;
-			let t = _.state.selection;
-			_.commands.setContent(e, {
+			if (T_(e), e === v.getHTML()) return;
+			let t = v.state.selection;
+			v.commands.setContent(e, {
 				emitUpdate: !1,
 				errorOnInvalidContent: !0
 			});
-			let n = _.state.doc.content.size;
-			_.commands.setTextSelection({
+			let n = v.state.doc.content.size;
+			v.commands.setTextSelection({
 				from: Math.min(t.from, n),
 				to: Math.min(t.to, n)
 			});
 		},
 		destroy() {
-			d = !0, _.destroy(), e.replaceChildren();
+			d = !0, v.destroy(), e.replaceChildren();
 		}
 	};
 }

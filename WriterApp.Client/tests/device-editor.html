@@ -78,6 +78,44 @@ await test('legacy text and JSON conversion', async () => {
  editor = create(host, JSON.stringify({type:'doc',content:[{type:'paragraph',content:[{type:'text',text:'Legacy'}]}]}), 'LegacyJson', receiver);
  assert(editor.snapshot().html === '<p>Legacy</p>', 'JSON conversion failed'); editor.destroy();
 });
+await test('AI selection mapping, explicit apply, and editor undo', async () => {
+ editor = create(host, '<p>Alpha beta</p>', 'Html', receiver);
+ const node = host.querySelector('.tiptap p').firstChild;
+ const range = document.createRange(); range.setStart(node, 6); range.setEnd(node, 10);
+ const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+ host.querySelector('.tiptap').focus(); await settle();
+ const source = editor.captureAi();
+ assert(source.plainText === 'Alpha beta' && source.selectedText === 'beta', 'Selection text mismatch');
+ assert(source.selectionStart === 6 && source.selectionEnd === 10, 'Plain-text offsets mismatch');
+ assert(editor.snapshot().html === source.html, 'Preview changed content');
+ const applied = editor.applyAi(source.html, source.from, source.to, source.selectedText, 'new text', 'replace');
+ assert(applied.html.includes('new text') && !applied.html.includes('beta'), 'Explicit apply failed');
+ click('Undo'); assert(editor.snapshot().html === source.html, 'TipTap undo lost the original');
+ click('Redo'); assert(editor.snapshot().html.includes('new text'), 'Redo failed');
+ editor.destroy();
+});
+await test('AI answers remain inert text and stale proposals cannot overwrite edits', async () => {
+ editor = create(host, '<p>Safe source</p>', 'Html', receiver);
+ const source = editor.captureAi();
+ editor.applyAi(source.html, 0, 0, '', '<img src=x onerror=alert(1)>', 'append');
+ assert(editor.snapshot().html.includes('&lt;img') && !editor.snapshot().html.includes('<img'), 'Answer was treated as HTML');
+ let rejected = false;
+ try { editor.applyAi(source.html, source.from, source.to, source.selectedText, 'Overwritten', 'append'); }
+ catch { rejected = true; }
+ assert(rejected && editor.snapshot().html.includes('&lt;img'), 'Stale proposal overwrote writing');
+ editor.destroy();
+});
+await test('AI restore checks the applied version before replacing it', async () => {
+ editor = create(host, '<p>Original</p>', 'Html', receiver);
+ const before = editor.snapshot().html;
+ const after = editor.applyAi(before, 0, 0, '', 'Summary', 'append').html;
+ assert(after.includes('Summary'), 'Summary was not appended');
+ assert(editor.restoreAi(after, before).html === before, 'Original was not restored');
+ let rejected = false;
+ try { editor.restoreAi(after, '<p>Other</p>'); } catch { rejected = true; }
+ assert(rejected && editor.snapshot().html === before, 'Stale restore modified writing');
+ editor.destroy();
+});
 await test('unsupported and active content is refused without editing', async () => {
  for (const content of ['<table><tr><td>Keep</td></tr></table>', '<p><img src="https://example.com/x"></p>', '<script>alert(1)<\/script>', '<p style="text-align:center">Preserve</p>']) {
   let rejected = false; try { const unexpected = create(host, content, 'Html', receiver); unexpected.destroy(); } catch { rejected = true; }
