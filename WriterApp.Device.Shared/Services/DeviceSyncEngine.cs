@@ -46,6 +46,10 @@ public sealed class DeviceSyncEngine : IDisposable
         return status is not null && IsRunning && !status.Conflict && !status.Deleted && status.Error is null ? status with { Label = "Syncing" } : status;
     }
     public IReadOnlyList<DeviceSyncConflictView> Conflicts => _conflicts;
+    public DeviceSyncDiagnosticSnapshot DiagnosticSnapshot => new(IsRunning, _statuses.Count,
+        _statuses.Values.Count(item => item.Label == "Waiting to sync"),
+        _statuses.Values.Count(item => item.Error is not null), _conflicts.Length,
+        _statuses.Values.Select(item => item.LastSynced).Where(item => item.HasValue).Max());
     private void Publish()
     {
         _statuses = _journal?.Entries.ToDictionary(e => e.LocalId, e => new DeviceSyncStatus(

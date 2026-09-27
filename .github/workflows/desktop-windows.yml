@@ -1,0 +1,59 @@
+name: Windows desktop package
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "WriterApp.Desktop/**"
+      - "WriterApp.Device.Shared/**"
+      - "WriterApp.Shared/**"
+      - "scripts/windows/**"
+      - ".github/workflows/desktop-windows.yml"
+      - "global.json"
+  pull_request:
+    branches: [main]
+    paths:
+      - "WriterApp.Desktop/**"
+      - "WriterApp.Device.Shared/**"
+      - "WriterApp.Shared/**"
+      - "scripts/windows/**"
+      - ".github/workflows/desktop-windows.yml"
+      - "global.json"
+
+permissions:
+  contents: read
+
+jobs:
+  desktop-package:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Install Windows MAUI workload
+        run: dotnet workload install maui-windows
+
+      - name: Restore desktop host
+        run: dotnet restore WriterApp.Desktop/WriterApp.Desktop.csproj -p:Configuration=Release
+
+      - name: Build desktop host
+        run: dotnet build WriterApp.Desktop/WriterApp.Desktop.csproj --configuration Release --framework net10.0-windows10.0.19041.0 --no-restore -warnaserror
+
+      - name: Create test-signed MSIX
+        shell: pwsh
+        run: ./scripts/windows/Build-ProsaTestMsix.ps1
+
+      - name: Publish review package and public test certificate
+        uses: actions/upload-artifact@v4
+        with:
+          name: Prosa-Windows-test-signed
+          path: |
+            artifacts/windows-msix/**/*.msix
+            artifacts/windows-msix/signing/*.cer
+          if-no-files-found: error
+          retention-days: 7

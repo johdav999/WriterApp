@@ -15,10 +15,42 @@
     <ApplicationDisplayVersion>0.1.0</ApplicationDisplayVersion>
     <ApplicationVersion>1</ApplicationVersion>
 
-    <WindowsPackageType>None</WindowsPackageType>
+    <ProsaEnvironment Condition="'$(ProsaEnvironment)' == '' and '$(Configuration)' == 'Debug'">Development</ProsaEnvironment>
+    <ProsaEnvironment Condition="'$(ProsaEnvironment)' == ''">Production</ProsaEnvironment>
+    <ProsaApiBaseUrl Condition="'$(ProsaApiBaseUrl)' == '' and '$(ProsaEnvironment)' == 'Development'">https://localhost:7384/</ProsaApiBaseUrl>
+    <ProsaApiBaseUrl Condition="'$(ProsaApiBaseUrl)' == '' and '$(ProsaEnvironment)' == 'Production'">https://app.prosa-app.com/</ProsaApiBaseUrl>
+    <ProsaUpdateManifestUrl Condition="'$(ProsaUpdateManifestUrl)' == '' and '$(ProsaEnvironment)' == 'Production'">https://app.prosa-app.com/desktop/updates/stable.json</ProsaUpdateManifestUrl>
+
+    <WindowsPackageType Condition="'$(WindowsPackageType)' == ''">None</WindowsPackageType>
+    <AppxBundle Condition="'$(WindowsPackageType)' == 'Package'">Never</AppxBundle>
+    <GenerateAppxPackageOnBuild Condition="'$(WindowsPackageType)' == 'Package'">true</GenerateAppxPackageOnBuild>
+
     <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
   </PropertyGroup>
+
+  <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows' and '$(RuntimeIdentifierOverride)' != ''">
+    <RuntimeIdentifier>$(RuntimeIdentifierOverride)</RuntimeIdentifier>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>ProsaEnvironment</_Parameter1><_Parameter2>$(ProsaEnvironment)</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>ProsaApiBaseUrl</_Parameter1><_Parameter2>$(ProsaApiBaseUrl)</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>ProsaUpdateManifestUrl</_Parameter1><_Parameter2>$(ProsaUpdateManifestUrl)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <Target Name="ValidateProsaDesktopEnvironment" BeforeTargets="CoreCompile">
+    <Error Condition="'$(ProsaEnvironment)' != 'Development' and '$(ProsaEnvironment)' != 'Staging' and '$(ProsaEnvironment)' != 'Production'"
+           Text="ProsaEnvironment must be Development, Staging, or Production." />
+    <Error Condition="'$(ProsaApiBaseUrl)' == ''"
+           Text="ProsaApiBaseUrl is required for this environment. Staging has no tracked backend URL." />
+  </Target>
 
   <ItemGroup>
     <MauiIcon Include="Resources\AppIcon\appicon.svg"

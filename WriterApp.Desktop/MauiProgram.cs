@@ -12,9 +12,16 @@ public static class MauiProgram
         builder.Services.AddSingleton<IDeviceIdentityClient>(_ =>
             new Authentication.MsalDeviceIdentityClient(DeviceAuthOptions.FromEnvironment()));
         builder.Services.AddSingleton<IDeviceFileDialog, WindowsDeviceFileDialog>();
+        DeviceEnvironmentConfiguration configuration = DesktopBuildConfiguration.Read();
+        builder.Services.AddSingleton(configuration);
+        builder.Services.AddSingleton(_ => new DeviceDiagnostics(
+            Path.Combine(FileSystem.AppDataDirectory, "diagnostics"), AppInfo.Current.VersionString, configuration.Environment));
+        builder.Services.AddSingleton<IDeviceExternalLauncher, WindowsExternalLauncher>();
+        builder.Services.AddSingleton<IDeviceUpdateService>(sp => new DeviceUpdateService(
+            new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false }),
+            configuration, AppInfo.Current.VersionString, sp.GetRequiredService<IDeviceExternalLauncher>()));
 
-        Uri apiBaseAddress = DeviceHostOptions.ResolveApiBaseAddress(
-            Environment.GetEnvironmentVariable("WRITERAPP_API_BASE_URL"));
+        Uri apiBaseAddress = configuration.ApiBaseAddress;
         string localDocumentPath = Path.Combine(FileSystem.AppDataDirectory, "documents");
 
         builder.Services.AddWriterAppDeviceCore(

@@ -30,6 +30,9 @@ public static class DeviceServiceCollectionExtensions
         services.AddSingleton<ILocalDocumentStore>(sp => sp.GetRequiredService<FileLocalDocumentStore>());
         services.AddSingleton<LocalDocumentRepository>();
         services.TryAddSingleton<IDeviceFileDialog, UnavailableDeviceFileDialog>();
+        services.TryAddSingleton<IDeviceUpdateService, UnavailableDeviceUpdateService>();
+        services.TryAddSingleton(_ => new DeviceDiagnostics(Path.Combine(localDocumentPath, "diagnostics"),
+            "unconfigured", DeviceEnvironment.Development));
         services.AddScoped<DeviceDocumentTransfer>();
         services.AddSingleton<DeviceConnectivity>();
         services.AddSingleton(_ => new DeviceSyncJournal(Path.Combine(localDocumentPath, "sync")));

@@ -1,0 +1,85 @@
+@implements IDisposable
+@inject IDeviceUpdateService Updates
+@inject DeviceDiagnostics Diagnostics
+@inject IDeviceFileDialog Files
+@inject DeviceSyncEngine Sync
+
+@if (Updates.IsAvailable || Files.IsAvailable)
+{
+<details class="device-maintenance">
+    <summary>Updates and diagnostics</summary>
+    @if (Updates.IsAvailable)
+    {
+        <p>Check for a signed installer update. Prosa will open the verified download page only when you choose it.</p>
+        <button type="button" disabled="@_busy" @onclick="CheckUpdatesAsync">Check for updates</button>
+        @if (_update is not null)
+        {
+            <p role="status">@_update.Message</p>
+            @if (_update.State == DeviceUpdateState.Available)
+            { <button type="button" disabled="@_busy" @onclick="OpenInstallerAsync">Open installer page</button> }
+        }
+    }
+    @if (Files.IsAvailable)
+    {
+        <p>Export local diagnostics as JSON lines. They contain app/runtime version and sync counts, never writing or sign-in tokens.</p>
+        <button type="button" disabled="@_busy" @onclick="ExportDiagnosticsAsync">Export diagnostic logs</button>
+    }
+    @if (_message is not null) { <p role="status">@_message</p> }
+    @if (_error is not null) { <p role="alert">@_error</p> }
+</details>
+}
+
+@code {
+    private bool _busy;
+    private DeviceUpdateResult? _update;
+    private string? _message;
+    private string? _error;
+
+    protected override void OnInitialized()
+    {
+        Sync.Changed += SyncChanged;
+        _ = RecordSafelyAsync(DeviceDiagnosticEvent.AppStarted);
+        SyncChanged();
+    }
+    private void SyncChanged() => _ = RecordSafelyAsync(DeviceDiagnosticEvent.SyncChanged, Sync.DiagnosticSnapshot);
+    private async Task RecordSafelyAsync(DeviceDiagnosticEvent eventType, DeviceSyncDiagnosticSnapshot? snapshot = null)
+    {
+        try { await Diagnostics.RecordAsync(eventType, snapshot); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+    }
+    private async Task CheckUpdatesAsync()
+    {
+        if (_busy) return;
+        _busy = true; _error = null; _message = null;
+        try { _update = await Updates.CheckAsync(); await RecordSafelyAsync(DeviceDiagnosticEvent.UpdateChecked); }
+        catch (Exception error) when (error is IOException or HttpRequestException or InvalidOperationException)
+        { _error = "The update check could not finish. Try again later."; }
+        finally { _busy = false; }
+    }
+    private async Task OpenInstallerAsync()
+    {
+        if (_busy || _update is null) return;
+        _busy = true; _error = null;
+        try { await Updates.OpenInstallerPageAsync(_update); }
+        catch (Exception error) when (error is IOException or InvalidOperationException or ArgumentException)
+        { _error = "Windows could not open the verified installer page."; }
+        finally { _busy = false; }
+    }
+    private async Task ExportDiagnosticsAsync()
+    {
+        if (_busy) return;
+        _busy = true; _error = null; _message = null;
+        try
+        {
+            await Diagnostics.RecordAsync(DeviceDiagnosticEvent.DiagnosticExported);
+            byte[] content = await Diagnostics.ExportAsync();
+            bool saved = await Files.SaveAsync($"Prosa-diagnostics-{DateTimeOffset.Now:yyyyMMdd}.txt", ".txt", content);
+            _message = saved ? "Diagnostic logs exported." : "Diagnostic export canceled.";
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException
+            or System.Runtime.InteropServices.COMException)
+        { _error = "Diagnostic export failed. Your documents are unchanged."; }
+        finally { _busy = false; }
+    }
+    public void Dispose() => Sync.Changed -= SyncChanged;
+}

@@ -13,6 +13,8 @@ TestResults/
 *.log
 *.dll
 *.PublishSettings
+*.pfx
+*.cer
 
 # JavaScript build output and local dependencies
 **/node_modules/

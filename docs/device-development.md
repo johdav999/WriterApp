@@ -27,7 +27,7 @@ From an elevated PowerShell session, add the required workload to Visual Studio 
 
 The toolchain was verified on 2026-09-27 with .NET SDK 10.0.400 and latest-patch roll-forward, .NET runtime 10.0.11, Visual Studio 2026 18.9.2, MAUI 10.0.20, and the iOS workload manifest 26.5.10301. Visual Studio 2026 supplies the `android`, `ios`, `maccatalyst`, and `maui-windows` workloads on this machine. `Microsoft.Maui.Sdk/10.0.20` is installed under the system .NET packs directory.
 
-The verified Windows flow restores and builds the desktop host with zero warnings, includes the shared Razor static assets beneath `_content/WriterApp.Device.Shared`, and launches a responsive `WriterApp.Desktop` process. The main solution also builds in Release with zero warnings and all 383 tests pass.
+The verified Windows flow restores and builds the desktop host with zero warnings, includes the shared Razor static assets beneath `_content/WriterApp.Device.Shared`, and launches a responsive `WriterApp.Desktop` process. The main solution also builds in Release with zero warnings; the current server/shared suite has 543 passing tests.
 
 Restore and verify the cross-platform layer on any supported development system:
 
@@ -54,7 +54,7 @@ dotnet build WriterApp.iOS/WriterApp.iOS.csproj --configuration Debug
 
 ## Backend and local data
 
-Both hosts use `https://app.prosa-app.com/` by default. Set `WRITERAPP_API_BASE_URL` to an absolute URL before launching a host to use another environment. Keep tokens and secrets out of repository configuration.
+The Windows Debug host uses `Development` and `https://localhost:7384/` by default; `WRITERAPP_API_BASE_URL` is a Debug-only override. Windows Release builds use `Production` and `https://app.prosa-app.com/` unless explicitly built as `Staging` or with another approved backend URL. The iOS scaffold still uses its existing backend configuration. Keep tokens and secrets out of repository configuration. See [Windows desktop beta packaging](windows-desktop-release.md) for environment selection, signing, updates, data backup, and diagnostics.
 
 ### Local document schema and repository (Release 1, Prompt 2)
 
@@ -174,6 +174,12 @@ Windows now uses native file pickers for UTF-8 text and restricted HTML import, 
 
 Prompt 10 validation: **535 tests pass**, including 15 new import/export cases. The Release solution, Windows Debug host, and iOS managed Debug host build with zero warnings. Native Windows picker and overwrite behavior still need hands-on verification before release.
 
+### Windows beta package, updates, and diagnostics (Release 1, Prompt 11)
+
+The Windows host now has MSIX identity and version metadata, a test-signing build script, a Windows build/package workflow, build-time Development/Staging/Production backend selection, a manual HTTPS update check, and rotating structured diagnostics with a native export action. See [Windows desktop beta packaging](windows-desktop-release.md) for installation, signing, upgrade, uninstall, backup, update feed, and release validation steps. A stable trusted signing identity and a hosted update feed are required before customer distribution. Native install/upgrade/uninstall validation remains part of Prompt 12 UAT.
+
+Prompt 11 validation: **543 tests pass**, including eight new configuration, update, and diagnostics cases. Windows Debug and iOS managed Debug hosts build with zero warnings. The local MSIX publish and Windows Release build cannot complete in this restricted environment because its offline NuGet cache lacks the .NET 10 `win-x64` runtime packs. The Windows CI job restores Release dependencies online, builds the host, and attempts a test-signed package artifact; its first run and a real install/upgrade/uninstall remain to be verified.
+
 ## Remaining release work
 
 The app now has native startup, shared document library and navigation, backend configuration, and a versioned local document repository. Product functionality still requires:
@@ -182,8 +188,8 @@ The app now has native startup, shared document library and navigation, backend 
 2. Deciding which additional web formatting features to support and adding native iOS file dialogs when that host is implemented.
 3. Configuring Azure/native registrations and verifying Windows sign-in end to end; implement the iOS authentication adapter when building that host.
 4. Rehearsing/applying the synchronization migrations in staging, then verifying authenticated Windows/web sync and AI actions against a configured staging provider.
-5. Adding Windows packaging/signing and Apple bundle identifiers, provisioning profiles, capabilities, privacy declarations, and App Store metadata.
-6. Adding platform CI runners once signing credentials and Apple build infrastructure are available.
+5. Establishing the final Windows publisher/signing identity, hosting the update feed, and validating a real MSIX upgrade; adding Apple bundle identifiers, provisioning profiles, capabilities, privacy declarations, and App Store metadata.
+6. Running the Windows package workflow on GitHub and adding an iOS CI runner once Apple build infrastructure is available.
 
 Changes limited to these device projects do not match the Azure landing-site workflow's `Prosa.Landing/**` path filter and therefore do not trigger that deployment.
 

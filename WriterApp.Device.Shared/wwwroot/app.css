@@ -60,3 +60,7 @@ code {
 .workspace-transfer select { max-width: 100%; min-height: 2.5rem; margin-right: .5rem; padding: .35rem; }
 .workspace-transfer button { min-height: 2.5rem; margin-block: .3rem; padding: .4rem .75rem; border: 1px solid #a99e88; border-radius: .4rem; cursor: pointer; }
 .workspace-transfer button:disabled { cursor: not-allowed; opacity: .55; }
+.device-maintenance { margin-block: .75rem 1rem; padding: .75rem 1rem; border: 1px solid #d7d0c3; border-radius: .7rem; background: #fffdf8; }
+.device-maintenance summary { cursor: pointer; font-weight: 700; }
+.device-maintenance p { margin: .65rem 0; line-height: 1.45; }
+.device-maintenance button { margin: .3rem .6rem .3rem 0; min-height: 2.4rem; padding: .4rem .7rem; border: 1px solid #a99e88; border-radius: .4rem; }

@@ -9,6 +9,7 @@
 @inject DeviceAiUndoStore AiUndo
 @inject DeviceSyncEngine Sync
 @inject DeviceDocumentTransfer Transfer
+@inject DeviceDiagnostics Diagnostics
 @implements IDisposable
 
 <PageTitle>@(_session?.Document.Title ?? "Document") · Prosa</PageTitle>
@@ -411,6 +412,8 @@
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or JSException)
         {
+            try { await Diagnostics.RecordAsync(DeviceDiagnosticEvent.SaveFailed, error: error); }
+            catch (Exception logError) when (logError is IOException or UnauthorizedAccessException) { }
             _saveFailed = true;
             _error = error is LocalDocumentConflictException
                 ? "This document changed elsewhere. Your edits remain here; copy your text before reloading to resolve the conflict."

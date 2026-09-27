@@ -3,10 +3,13 @@ namespace WriterApp.Desktop;
 public partial class App : Microsoft.Maui.Controls.Application
 {
     private readonly WriterApp.Device.Shared.Services.DeviceSaveLifetime _saves;
+    private readonly WriterApp.Device.Shared.Services.DeviceDiagnostics _diagnostics;
 
-    public App(WriterApp.Device.Shared.Services.DeviceSaveLifetime saves)
+    public App(WriterApp.Device.Shared.Services.DeviceSaveLifetime saves,
+        WriterApp.Device.Shared.Services.DeviceDiagnostics diagnostics)
     {
         _saves = saves;
+        _diagnostics = diagnostics;
         InitializeComponent();
     }
 
@@ -16,7 +19,7 @@ public partial class App : Microsoft.Maui.Controls.Application
         window.Deactivated += async (_, _) =>
         {
             try { await _saves.FlushAsync(); }
-            catch (Exception error) { System.Diagnostics.Debug.WriteLine($"Deactivation save failed: {error.GetType().Name}"); }
+            catch (Exception error) { await RecordSaveFailureAsync(error); }
         };
         window.Created += (_, _) =>
         {
@@ -35,10 +38,16 @@ public partial class App : Microsoft.Maui.Controls.Application
                     { allowClose = true; native.Close(); }
                 }
                 catch (Exception error)
-                { System.Diagnostics.Debug.WriteLine($"Close save failed: {error.GetType().Name}"); }
+                { await RecordSaveFailureAsync(error); }
                 finally { closing = false; }
             };
         };
         return window;
+    }
+
+    private async Task RecordSaveFailureAsync(Exception error)
+    {
+        try { await _diagnostics.RecordAsync(WriterApp.Device.Shared.Services.DeviceDiagnosticEvent.SaveFailed, error: error); }
+        catch (Exception logError) when (logError is IOException or UnauthorizedAccessException) { }
     }
 }
