@@ -154,14 +154,22 @@ See [Document synchronization API](document-synchronization.md) for contracts, c
 
 Prompt 7 validation: **472 tests pass**, including 16 synchronization cases; provider-selectable tests also pass against local SQL Server Express temporary databases. The Release solution, Windows Debug host, and iOS managed Debug host build with zero warnings. Desktop queue/reconciliation and visible conflict copies remain **Prompt 8**. Native registration and live sign-in verification from Prompt 6 remain prerequisites for end-to-end device sync.
 
-## Remaining implementation
+### Desktop synchronization and conflict copies (Release 1, Prompt 8)
+
+The shared device engine now persists account/backend-bound sync journals and immutable operation IDs, uploads committed local edits, downloads incremental changes, and retains independent copies for explicit conflict resolution. Windows triggers sync after sign-in, debounced local saves, reconnection, and Sync now. Library/editor controls show cloud state and last-sync time separately from local saving. Local-only documents require explicit enrollment; permanent cloud deletion retains local writing and never reuses the deleted server ID.
+
+See [Desktop synchronization](desktop-synchronization.md) for queue guarantees, retry/error handling, deletion behavior, current limits, and live staging UAT. Prompt 7 migrations and Prompt 6 native registration/identity verification remain rollout prerequisites. No Azure deployment or database changes were made by Prompt 8. Next desktop work: **Prompt 9, AI actions**.
+
+Prompt 8 validation: **500 tests pass**, including 28 new deterministic engine/HTTP cases. The Release solution, Windows Debug host, and iOS managed Debug host build with zero warnings. Native Windows live synchronization and staging account setup remain manual verification gates.
+
+## Remaining release work
 
 The app now has native startup, shared document library and navigation, backend configuration, and a versioned local document repository. Product functionality still requires:
 
 1. Manually verifying Windows deactivation, orderly close, and forced-process recovery; add iOS lifecycle integration when implementing that host.
 2. Adding device-safe import and export flows and deciding which additional web formatting features to support.
 3. Configuring Azure/native registrations and verifying Windows sign-in end to end; implement the iOS authentication adapter when building that host.
-4. Rehearsing/applying the synchronization migrations in staging, then implementing the device offline queue, server version tracking, deletion reconciliation, and visible conflict-resolution flow (Prompt 8).
+4. Rehearsing/applying the synchronization migrations in staging and verifying authenticated Windows/web sync, conflict resolution, and plan loss end to end; then implement the Prompt 9 AI actions.
 5. Adding Windows packaging/signing and Apple bundle identifiers, provisioning profiles, capabilities, privacy declarations, and App Store metadata.
 6. Adding platform CI runners once signing credentials and Apple build infrastructure are available.
 

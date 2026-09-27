@@ -26,6 +26,10 @@ public static class MauiProgram
         builder.Logging.AddDebug();
 #endif
 
-        return builder.Build();
+        var app = builder.Build();
+        var connectivity = app.Services.GetRequiredService<DeviceConnectivity>();
+        connectivity.SetOnline(Connectivity.Current.NetworkAccess == NetworkAccess.Internet);
+        Connectivity.Current.ConnectivityChanged += (_, args) => connectivity.SetOnline(args.NetworkAccess == NetworkAccess.Internet);
+        return app;
     }
 }

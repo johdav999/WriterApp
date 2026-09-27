@@ -26,8 +26,13 @@ public static class DeviceServiceCollectionExtensions
         services.AddScoped(sp => new HttpClient(new DeviceAuthenticatedHandler(sp.GetRequiredService<DeviceAccountService>(), options.ApiBaseAddress)
         { InnerHandler = new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false } })
         { BaseAddress = options.ApiBaseAddress });
-        services.AddSingleton<ILocalDocumentStore>(_ => new FileLocalDocumentStore(localDocumentPath));
+        services.AddSingleton(_ => new FileLocalDocumentStore(localDocumentPath));
+        services.AddSingleton<ILocalDocumentStore>(sp => sp.GetRequiredService<FileLocalDocumentStore>());
         services.AddSingleton<LocalDocumentRepository>();
+        services.AddSingleton<DeviceConnectivity>();
+        services.AddSingleton(_ => new DeviceSyncJournal(Path.Combine(localDocumentPath, "sync")));
+        services.AddScoped<IDeviceSyncApi, DeviceSyncApi>();
+        services.AddScoped<DeviceSyncEngine>();
         services.AddSingleton(_ => new LocalRecoveryStore(Path.Combine(localDocumentPath, "recovery")));
         services.AddSingleton<LocalRecoveryService>();
         services.AddSingleton<DeviceSaveLifetime>();

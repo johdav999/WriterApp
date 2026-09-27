@@ -2,6 +2,8 @@
 @using System.Text.Json
 @inject LocalDocumentLibrary Library
 @inject NavigationManager Navigation
+@inject DeviceSyncEngine Sync
+@implements IDisposable
 
 <PageTitle>My documents · Prosa</PageTitle>
 <WriterApp.Device.Shared.Components.RecoveryNotice />
@@ -121,10 +123,11 @@
                                 {
                                     <button class="button button-quiet" type="button" disabled="@_busy"
                                             @onclick="() => RestoreAsync(document)">Restore</button>
-                                    <button class="button button-danger" type="button"
-                                            disabled="@(_busy || document.ServerDocumentId is not null)"
-                                            title="@(document.ServerDocumentId is not null ? "Cloud documents must wait for synchronized deletion." : "Delete this local document permanently")"
-                                            @onclick="() => RequestConfirmation(document, PendingAction.Delete)">Delete permanently</button>
+                                    @if (document.ServerDocumentId is null)
+                                    {
+                                        <button class="button button-danger" type="button" disabled="@_busy"
+                                                @onclick="() => RequestConfirmation(document, PendingAction.Delete)">Delete permanently</button>
+                                    }
                                 }
                                 else
                                 {
@@ -138,6 +141,7 @@
                                 }
                             </div>
                         }
+                        <WriterApp.Device.Shared.Components.DocumentSyncStatus Document="document" />
                     </li>
                 }
             </ul>
@@ -193,9 +197,16 @@
 
     protected override async Task OnInitializedAsync()
     {
+        Sync.Changed += SyncChanged;
         await ExecuteAsync(() => Library.RefreshAsync(LocalDocumentScope.Active));
         _loaded = true;
     }
+    private void SyncChanged() => _ = InvokeAsync(async () =>
+    {
+        if (!Sync.IsRunning) await ExecuteAsync(() => Library.RefreshAsync(Library.Scope));
+        StateHasChanged();
+    });
+    public void Dispose() => Sync.Changed -= SyncChanged;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {

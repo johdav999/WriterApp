@@ -38,6 +38,15 @@ public sealed class LocalEditorSession(LocalDocumentRepository repository, Local
         try
         {
             if (!IsDirty) return;
+            var latest = await repository.LoadAsync(Document.DocumentId, cancellationToken);
+            if (latest is not null && latest.LocalRevision != Document.LocalRevision)
+            {
+                // Sync acknowledgments can advance only metadata while typing continues.
+                // Never rebase over changed writing or remote deletion/trash.
+                if (DeviceSyncMapping.Fingerprint(latest) != DeviceSyncMapping.Fingerprint(Document))
+                    throw new LocalDocumentConflictException(Document.DocumentId);
+                Document = latest;
+            }
             var snapshot = new Dictionary<Guid, string>(_pending);
             LocalDocument updated = Document with
             {

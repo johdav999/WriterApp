@@ -1,0 +1,39 @@
+@page "/sync/conflicts"
+@implements IDisposable
+@inject DeviceSyncEngine Sync
+@inject LocalDocumentRepository Documents
+
+<PageTitle>Review sync conflicts · Prosa</PageTitle>
+<h1>Review sync conflicts</h1>
+<p>Your local writing has been preserved. Open each version to inspect it before choosing. Both versions remain as independent copies after resolution.</p>
+<a href="/">Back to library</a>
+@if (Sync.Conflicts.Count == 0) { <p>No unresolved conflicts for this signed-in account. Sync now to check for changes.</p> }
+@foreach (var conflict in Sync.Conflicts)
+{
+    <section class="sync-conflict" @key="conflict.LocalId">
+        <h2>@Title(conflict.LocalId)</h2>
+        <a href="@($"/documents/{conflict.LocalId}")">Inspect local version</a>
+        @if (conflict.RemoteCopyId is { } remote)
+        { <a href="@($"/documents/{remote}")">Inspect cloud conflict copy</a> }
+        @if (conflict.Deleted)
+        {
+            <p>This document was permanently deleted in the cloud. A local conflict copy will be retained. It will not be uploaded automatically.</p>
+            <button disabled="@Sync.IsRunning" @onclick="() => Sync.ResolveAsync(conflict.LocalId, true)">Keep local copy and acknowledge deletion</button>
+        }
+        else
+        {
+            <p>Keep local uploads the local version against the reviewed cloud version. Keep cloud replaces the linked local document and retains a separate local conflict copy.</p>
+            <button disabled="@Sync.IsRunning" @onclick="() => Sync.ResolveAsync(conflict.LocalId, true)">Keep local as linked version</button>
+            <button disabled="@Sync.IsRunning" @onclick="() => Sync.ResolveAsync(conflict.LocalId, false)">Keep cloud as linked version</button>
+        }
+    </section>
+}
+
+@code {
+    private Dictionary<Guid, string> _titles = [];
+    private string Title(Guid id) => _titles.GetValueOrDefault(id, "Document conflict");
+    protected override async Task OnInitializedAsync() { Sync.Changed += Updated; await LoadAsync(); }
+    private async Task LoadAsync() { _titles = (await Documents.ListAsync(LocalDocumentScope.All)).Documents.ToDictionary(d => d.DocumentId, d => d.Title); }
+    private void Updated() => _ = InvokeAsync(async () => { await LoadAsync(); StateHasChanged(); });
+    public void Dispose() => Sync.Changed -= Updated;
+}

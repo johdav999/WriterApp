@@ -25,3 +25,24 @@ code {
     font-size: .88em;
     padding: .12rem .28rem;
 }
+/* Shared online controls stay separate from the local editing surface. */
+.sync-panel, .sync-conflict {
+    padding: 1rem;
+    margin-block: 1rem;
+    border: 1px solid #d8d4e5;
+    border-radius: .75rem;
+    background: #f8f7fc;
+    color: #282138;
+}
+.sync-panel p, .document-sync-details p { margin: .25rem 0 .65rem; }
+.sync-panel button, .sync-panel a, .sync-conflict button, .sync-conflict a,
+.document-sync-details button, .document-sync-details a { margin: .25rem .75rem .25rem 0; }
+.document-sync-details { padding: .65rem 0; font-size: .9rem; }
+.sync-conflict button, .sync-panel button, .document-sync-details button {
+    min-height: 2.5rem;
+    padding: .4rem .75rem;
+    border: 1px solid #aaa0c5;
+    border-radius: .4rem;
+    cursor: pointer;
+}
+.sync-conflict button:disabled, .sync-panel button:disabled, .document-sync-details button:disabled { cursor: wait; opacity: .6; }

@@ -101,4 +101,4 @@ The 472-test suite passes, including 16 sync cases covering two-client conflicts
 
 To run the SQL Server variant, set `WRITERAPP_SYNC_SQLSERVER_TEST_SERVER` to a local SQL Server instance and run `DocumentSyncTests`. The fixture uses integrated authentication and creates uniquely named `WriterApp_SyncTests_*` databases, deleting only its own database after each case. Leave the variable unset for normal SQLite CI.
 
-Remaining work: Prompt 8's durable device queue, conflict copies, and status UI; staging upgrade and end-to-end authenticated synchronization with the configured native client. Desktop and iOS do not automatically call this API yet.
+Prompt 8 adds the [desktop sync engine, queue, conflict copies, and status UI](desktop-synchronization.md). Remaining rollout work: staging upgrade and end-to-end authenticated synchronization with the configured native client. Native iOS account/connectivity integration remains future work.

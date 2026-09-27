@@ -118,9 +118,9 @@ public sealed class FileLocalDocumentStore : ILocalDocumentStore
         {
             LocalDocument current = await RequireAsync(documentId, revision, cancellationToken);
             if (current.DeletedAtUtc is null) throw new InvalidOperationException("Move the document to trash before deleting it permanently.");
-            // Until the sync protocol supplies deletion acknowledgements, retain linked tombstones.
+            // Cloud deletion is handled by the sync queue; retain linked local writing for recovery.
             if (current.ServerDocumentId is not null)
-                throw new InvalidOperationException("Cloud-linked documents must retain their trash record until synchronized deletion is implemented.");
+                throw new InvalidOperationException("Use the cloud sync deletion controls. Linked local copies are retained for recovery.");
             cancellationToken.ThrowIfCancellationRequested();
             string path = GetPath(documentId);
             File.Delete(path + ".legacy.bak");
@@ -137,6 +137,18 @@ public sealed class FileLocalDocumentStore : ILocalDocumentStore
             LocalDocument changed = change(current);
             return changed == current ? current : await CommitChangeAsync(changed, current, cancellationToken);
         }, cancellationToken);
+
+    // Synchronization uses compare-and-swap; network work never holds the document-store lock.
+    internal Task<LocalDocument> ApplySyncAsync(LocalDocument document, long? expectedRevision, CancellationToken ct) =>
+        LockedAsync(async () =>
+        {
+            var current = await ReadAsync(document.DocumentId, ct);
+            if (current?.LocalRevision != expectedRevision) throw new LocalDocumentConflictException(document.DocumentId);
+            var updated = document with { LocalRevision = checked((current?.LocalRevision ?? 0) + 1) };
+            LocalDocumentCodec.Validate(updated);
+            await WriteAsync(updated, ct);
+            return updated;
+        }, ct);
 
     private async Task<LocalDocument> CommitChangeAsync(LocalDocument document, LocalDocument current, CancellationToken cancellationToken)
     {

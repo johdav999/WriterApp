@@ -25,6 +25,7 @@
             <div><p class="workspace-eyebrow">Local document</p><h1 tabindex="-1">@document.Title</h1></div>
             <span class="workspace-status" role="status" title="@status.Detail">@status.Label</span>
         </header>
+        <DocumentSyncStatus Document="document" />
         @if (_error is not null) { <p class="workspace-notice" role="alert">@_error</p> }
         @if (_autosave?.Error is not null) { <p role="alert">@_autosave.Error</p> }
         @if (_hasRecovery)
@@ -79,10 +80,14 @@
     private readonly SemaphoreSlim _flushGate = new(1, 1);
     private Func<bool, Task<bool>>? _lifetimeFlush;
     private bool _disposed;
+    private Guid? _editingId;
 
     protected override async Task OnParametersSetAsync()
     {
         if (_session?.Document.DocumentId == DocumentId) return;
+        if (_editingId is { } previous) Documents.EndEditing(previous);
+        _editingId = DocumentId;
+        Documents.BeginEditing(DocumentId);
         _autosave?.Dispose();
         _autosave = null;
         _session = null;
@@ -188,6 +193,7 @@
     public void Dispose()
     {
         _disposed = true;
+        if (_editingId is { } id) Documents.EndEditing(id);
         _autosave?.Dispose();
         if (Lifetime.Flush == _lifetimeFlush) Lifetime.Flush = null;
     }

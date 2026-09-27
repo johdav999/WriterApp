@@ -1,0 +1,15 @@
+@implements IDisposable
+@inject DeviceSyncEngine Sync
+
+<section class="sync-panel" aria-label="Cloud synchronization">
+    <p role="status">@Sync.Message</p>
+    <button disabled="@Sync.IsRunning" @onclick="() => Sync.SyncAsync()">Sync now</button>
+    @if (Sync.IsRunning) { <button @onclick="Sync.Cancel">Pause sync</button> }
+    @if (Sync.Conflicts.Count > 0) { <a href="/sync/conflicts">Review @Sync.Conflicts.Count conflict(s)</a> }
+</section>
+
+@code {
+    protected override void OnInitialized() { Sync.Changed += Updated; Sync.Start(); }
+    private void Updated() => _ = InvokeAsync(StateHasChanged);
+    public void Dispose() => Sync.Changed -= Updated;
+}

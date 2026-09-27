@@ -1,0 +1,36 @@
+@implements IDisposable
+@inject DeviceSyncEngine Sync
+
+@if (Sync.Status(Document.DocumentId) is { } status)
+{
+    <div class="document-sync-details">
+        <p role="status">@status.Label</p>
+        @if (status.LastSynced is { } last) { <small>Last synchronized @last.ToLocalTime().ToString("g")</small> }
+        @if (status.Error is not null) { <p role="alert">@status.Error</p><button disabled="@Sync.IsRunning" @onclick="() => Sync.RetryAsync(Document.DocumentId)">Retry after fixing</button> }
+        @if (status.Conflict) { <a href="/sync/conflicts">Review both versions</a> }
+        @if (Document.DeletedAtUtc is not null && !status.Deleted && !status.Conflict)
+        {
+            @if (!_confirm) { <button disabled="@Sync.IsRunning" @onclick="() => _confirm = true">Delete from cloud…</button> }
+            else
+            {
+                <p>Permanently delete the cloud document on all devices? The local copy is retained.</p>
+                <button disabled="@Sync.IsRunning" @onclick="DeleteAsync">Confirm cloud deletion</button>
+                <button @onclick="() => _confirm = false">Cancel</button>
+            }
+        }
+    </div>
+}
+else if (Document.ServerDocumentId is null)
+{
+    <button disabled="@Sync.IsRunning" @onclick="() => Sync.EnableAsync(Document.DocumentId)">Enable cloud sync for this document</button>
+}
+else { <p>Sign in to the linked account to synchronize this document.</p> }
+
+@code {
+    [Parameter, EditorRequired] public LocalDocument Document { get; set; } = default!;
+    private bool _confirm;
+    protected override void OnInitialized() => Sync.Changed += Updated;
+    private void Updated() => _ = InvokeAsync(StateHasChanged);
+    private async Task DeleteAsync() { await Sync.DeleteAsync(Document.DocumentId); _confirm = false; }
+    public void Dispose() => Sync.Changed -= Updated;
+}
