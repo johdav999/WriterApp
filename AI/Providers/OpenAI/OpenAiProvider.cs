@@ -638,15 +638,8 @@ namespace WriterApp.AI.Providers.OpenAI
                 using var stream = await response.Content.ReadAsStreamAsync(ct);
                 using var reader = new System.IO.StreamReader(stream, Encoding.UTF8);
 
-                while (!reader.EndOfStream)
+                while (await reader.ReadLineAsync(ct) is { } line)
                 {
-                    ct.ThrowIfCancellationRequested();
-                    string? line = await reader.ReadLineAsync();
-                    if (line is null)
-                    {
-                        break;
-                    }
-
                     if (!line.StartsWith("data:", StringComparison.Ordinal))
                     {
                         continue;

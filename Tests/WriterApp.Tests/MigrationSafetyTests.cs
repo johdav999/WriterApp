@@ -50,6 +50,21 @@ namespace WriterApp.Tests
                     connectionString,
                     "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='IX_DeletedUserIdentities_DeletedAtUtc';");
                 Assert.Equal(1, deletedUsersIndexCount);
+
+                int sceneCardMetadataColumnCount = await ExecuteScalarIntAsync(
+                    connectionString,
+                    "SELECT COUNT(*) FROM pragma_table_info('SceneCards') WHERE name IN ('Status', 'SubplotTagsJson', 'Summary');");
+                Assert.Equal(3, sceneCardMetadataColumnCount);
+
+                int sectionSceneCardMetadataColumnCount = await ExecuteScalarIntAsync(
+                    connectionString,
+                    "SELECT COUNT(*) FROM pragma_table_info('SectionSceneCards') WHERE name IN ('Status', 'SubplotTagsJson', 'Summary');");
+                Assert.Equal(3, sectionSceneCardMetadataColumnCount);
+
+                int searchIdentityIndexCount = await ExecuteScalarIntAsync(
+                    connectionString,
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='IX_SearchIndexEntries_EntityType_EntityId_DocumentId';");
+                Assert.Equal(1, searchIdentityIndexCount);
             }
             finally
             {

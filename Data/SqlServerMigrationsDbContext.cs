@@ -69,13 +69,8 @@ namespace WriterApp.Data
     {
         public AppDbContext CreateDbContext(string[] args)
         {
-            IConfigurationRoot configuration = DesignTimeSqlServerFactorySupport.BuildConfiguration();
-            (string sourceName, string connectionString) = DesignTimeSqlServerFactorySupport.ResolveConnectionString(configuration);
-            (string finalConnectionString, bool forcedSqlPassword) = DesignTimeSqlServerFactorySupport.PrepareConnectionString(connectionString);
-            Console.WriteLine($"[EF] Context=AppDbContext ConnectionSource={sourceName} ForcedSqlPassword={forcedSqlPassword}");
-
             DbContextOptions<AppDbContext> options = new DbContextOptionsBuilder<AppDbContext>()
-                .UseSqlServer(finalConnectionString, sql => sql.EnableRetryOnFailure())
+                .UseSqlite("Data Source=writerapp.design.db")
                 .Options;
 
             return new AppDbContext(options);

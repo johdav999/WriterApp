@@ -2,11 +2,12 @@
 
 ## Prerequisites
 
-- .NET SDK 9.0.3xx. `global.json` selects the latest installed 9.0.3xx patch.
+- .NET SDK 10.0.4xx. `global.json` selects the latest installed 10.0.4xx patch.
+- .NET MAUI Windows and iOS workloads when developing the device hosts. Building and signing iOS still requires a paired Mac with a compatible Xcode installation.
 - Node.js 20 or newer.
 - npm.
 
-The current application targets .NET 9. Upgrade the solution to .NET 10 before starting the MAUI Windows and iOS host so all shared projects use a supported LTS release.
+All existing projects target .NET 10 LTS. Keep new shared, Windows, and iOS projects on .NET 10 so application hosts can reference `WriterApp.Shared` without cross-version compatibility work.
 
 ## Initial setup
 
@@ -22,6 +23,7 @@ The current application targets .NET 9. Upgrade the solution to .NET 10 before s
 4. Restore, build, and test the solution:
 
    ```powershell
+   dotnet tool restore
    dotnet restore BlazorApp.sln
    dotnet build BlazorApp.sln --configuration Release --no-restore
    dotnet test Tests/WriterApp.Tests/WriterApp.Tests.csproj --configuration Release --no-build
