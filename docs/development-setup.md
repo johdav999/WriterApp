@@ -48,5 +48,5 @@ The test step is blocking: any test failure fails the workflow.
 - The solution builds without compiler or analyzer warnings.
 - The test suite passes all 382 tests.
 - `WriterApp.Client` uses TipTap 3.31.3 and has no production npm advisories.
-- `docs-site` has 22 npm advisories (21 moderate and 1 high) in the current Docusaurus dependency tree. Docusaurus 3.10.2 is the latest published release and does not yet resolve them.
-- The active Git tree is clean of the accidentally committed nested repository and generated artifacts, but those blobs remain in Git history. A coordinated history rewrite and force-push is required to reduce existing clone size.
+- `docs-site` uses Docusaurus 3.10.2, including the matching `@docusaurus/faster` package required by its v4 compatibility mode. The site type-checks and builds successfully. Its dependency tree still reports 22 upstream advisories (21 moderate and 1 high); Docusaurus 3.10.2 is the latest published release and does not yet provide compatible patched transitive versions.
+- Git history was rewritten on 2026-09-27 to remove the accidentally committed nested repository, publish output, build output, logs, local databases, and deployment archives. Existing clones must fetch the rewritten branches and rebase or clone again before pushing.
