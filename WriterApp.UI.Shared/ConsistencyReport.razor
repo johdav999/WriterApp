@@ -1,0 +1,79 @@
+@using System.Text.Json
+
+<section class="consistency-report" aria-label="Consistency findings">
+    @if (_findings is null)
+    {
+        <p role="alert">The consistency response could not be read. Run the check again.</p>
+    }
+    else if (_findings.Count == 0)
+    {
+        <p role="status">No consistency issues found in the analyzed writing.</p>
+    }
+    else
+    {
+        <h3>@_findings.Count consistency @(_findings.Count == 1 ? "finding" : "findings")</h3>
+        <ul class="consistency-findings">
+            @foreach (var finding in _findings)
+            {
+                <li class="consistency-finding">
+                    <div class="consistency-finding-meta"><span class="consistency-severity">@finding.Severity severity</span><strong>@finding.Type</strong></div>
+                    <p>@finding.Message</p>
+                    @if (!string.IsNullOrWhiteSpace(finding.Quote))
+                    {
+                        <div class="consistency-label">Evidence</div>
+                        <blockquote>@finding.Quote</blockquote>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(finding.SuggestedFix))
+                    {
+                        <div class="consistency-label">Suggested revision</div>
+                        <p class="consistency-revision">@finding.SuggestedFix</p>
+                    }
+                </li>
+            }
+        </ul>
+    }
+</section>
+
+@code {
+    [Parameter] public string? ResponseJson { get; set; }
+    private string? _loadedJson;
+    private IReadOnlyList<Finding>? _findings;
+    private sealed record Finding(string Severity, string Type, string Message, string? Quote, string? SuggestedFix);
+
+    protected override void OnParametersSet()
+    {
+        if (_loadedJson == ResponseJson) return;
+        _loadedJson = ResponseJson;
+        _findings = Parse(ResponseJson);
+    }
+
+    private static IReadOnlyList<Finding>? Parse(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object
+                || Text(root, "schemaVersion") != "1.0"
+                || !root.TryGetProperty("issues", out var issues) || issues.ValueKind != JsonValueKind.Array) return null;
+            var findings = new List<Finding>();
+            foreach (var issue in issues.EnumerateArray())
+            {
+                if (issue.ValueKind != JsonValueKind.Object || string.IsNullOrWhiteSpace(Text(issue, "message"))) return null;
+                string severity = Text(issue, "severity")?.Trim().ToLowerInvariant() ?? "medium";
+                severity = severity switch { "low" => "Low", "high" => "High", "critical" => "Critical", _ => "Medium" };
+                string type = Text(issue, "type")?.Trim().ToLowerInvariant() switch
+                { "character" => "Character", "place" => "Place", "timeline" => "Timeline", _ => "Consistency" };
+                string? quote = issue.TryGetProperty("evidence", out var evidence) && evidence.ValueKind == JsonValueKind.Object
+                    ? Text(evidence, "quote") : null;
+                findings.Add(new(severity, type, Text(issue, "message")!, quote, Text(issue, "suggestedFix")));
+            }
+            return findings;
+        }
+        catch (JsonException) { return null; }
+    }
+
+    private static string? Text(JsonElement element, string name) => element.TryGetProperty(name, out var value)
+        && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+}

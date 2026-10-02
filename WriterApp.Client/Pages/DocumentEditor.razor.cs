@@ -149,6 +149,8 @@ namespace WriterApp.Client.Pages
         private string? _importError;
         private string? _importSummary;
         private Guid _loadedDocumentId;
+        [Inject] public ManuscriptSelectionState HttpManuscriptSelection { get; set; } = default!;
+        private string _documentKind = "manuscript";
         private string _documentTitle = string.Empty;
         private string? _documentLanguageCode;
         private Guid? _documentTranslationGroupId;
@@ -1024,6 +1026,8 @@ namespace WriterApp.Client.Pages
                     return;
                 }
 
+                HttpManuscriptSelection.Select(document.ProjectId, document.Kind == "manuscript" ? document.Id : null);
+                _documentKind = document.Kind;
                 _documentTitle = document.Title;
                 _documentLanguageCode = document.LanguageCode;
                 _documentTranslationGroupId = document.TranslationGroupId;
@@ -3803,6 +3807,8 @@ namespace WriterApp.Client.Pages
 
         private Guid? GetNavigatorProjectId()
         {
+            if (_documentKind != "manuscript") return null;
+            if (HttpManuscriptSelection.ProjectId is { } selectedProject && HttpManuscriptSelection.DocumentId == DocumentId) return selectedProject;
             if (ProjectId != Guid.Empty)
             {
                 return ProjectId;
@@ -4208,57 +4214,16 @@ namespace WriterApp.Client.Pages
             return tabs[0];
         }
 
-        private async Task OnPrimaryTabsKeyDown(KeyboardEventArgs args, PanelCategory current)
-        {
-            List<PanelCategory> categories = GetAvailablePanelCategories().ToList();
-            int currentIndex = categories.IndexOf(current);
-            if (currentIndex < 0)
-            {
-                return;
-            }
+        private IReadOnlyList<WriterApp.UI.Shared.EditorTabDescriptor<PanelCategory>> PanelCategoryDescriptors =>
+            Enum.GetValues<PanelCategory>().Select(category => new WriterApp.UI.Shared.EditorTabDescriptor<PanelCategory>(
+                category, GetPanelCategoryLabel(category), $"context-category-{category}",
+                GetAvailablePanelCategories().Contains(category), GetPanelCategoryTooltip(category))).ToArray();
 
-            PanelCategory? target = args.Key switch
-            {
-                "ArrowRight" => categories[(currentIndex + 1) % categories.Count],
-                "ArrowLeft" => categories[(currentIndex - 1 + categories.Count) % categories.Count],
-                "Home" => categories[0],
-                "End" => categories[^1],
-                "Enter" => current,
-                " " => current,
-                _ => null
-            };
-
-            if (target.HasValue)
-            {
-                await SetPanelCategoryAsync(target.Value);
-            }
-        }
-
-        private async Task OnSecondaryTabsKeyDown(KeyboardEventArgs args, ContextTab current)
-        {
-            List<ContextTab> tabs = GetTabsForActiveCategory().ToList();
-            int currentIndex = tabs.IndexOf(current);
-            if (currentIndex < 0 || tabs.Count == 0)
-            {
-                return;
-            }
-
-            ContextTab? target = args.Key switch
-            {
-                "ArrowRight" => tabs[(currentIndex + 1) % tabs.Count],
-                "ArrowLeft" => tabs[(currentIndex - 1 + tabs.Count) % tabs.Count],
-                "Home" => tabs[0],
-                "End" => tabs[^1],
-                "Enter" => current,
-                " " => current,
-                _ => null
-            };
-
-            if (target.HasValue)
-            {
-                await SetContextTabAsync(target.Value);
-            }
-        }
+        private string GetSharedSubviewId(ContextTab tab) => GetOnboardingContextTabId(tab) ?? $"context-subview-{tab}";
+        private IReadOnlyList<WriterApp.UI.Shared.EditorTabDescriptor<ContextTab>> PanelSubviewDescriptors =>
+            GetTabsForActiveCategory().Select(tab => new WriterApp.UI.Shared.EditorTabDescriptor<ContextTab>(
+                tab, GetContextTabLabel(tab), GetSharedSubviewId(tab), Tooltip: GetContextTabTooltip(tab))).ToArray();
+        private Task SelectSharedSubviewAsync(ContextTab tab) => SetContextTabAsync(tab);
 
         private async Task OnNotesSave()
         {
@@ -9167,6 +9132,19 @@ private const string PreviewBootstrapScript = @"
         private async Task EnsureOnboardingStarterTextAsync()
         {
             if (_onboardingStarterTextEnsured || !_showOnboardingWalkthrough || _activePage is null)
+            {
+                return;
+            }
+
+            // OnParametersSetAsync runs before PageEditor mounts. Its absence is not
+            // evidence that the loaded page is empty. Preserve persisted HTML (including
+            // non-text content) and leave initial seeding to the server bootstrap.
+            if (!string.IsNullOrWhiteSpace(_activePage.Content))
+            {
+                _onboardingStarterTextEnsured = true;
+                return;
+            }
+            if (_pageEditor is null)
             {
                 return;
             }

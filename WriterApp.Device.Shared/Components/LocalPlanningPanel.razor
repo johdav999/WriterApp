@@ -1,0 +1,258 @@
+@using System.Text.Json
+@using WriterApp.Shared.Sync
+
+<div class="local-planning-panel">
+@if (_document is { Kind: "manuscript", Project: { } project })
+{
+    @if (Subview == "synopsis")
+    {
+        <p class="panel-help">Capture the story intent for this manuscript.</p>
+        <SynopsisFields ValueModel="_synopsis" Changed="SynopsisChanged" />
+    }
+    else
+    {
+        @if (Subview == "storyboard")
+        {
+            <p><a href="@($"/projects/{project.ProjectId}/storyboard?documentId={Document.DocumentId}" + (_sceneId is null ? "" : $"&scene={_sceneId}"))">Open full storyboard</a></p>
+            <div class="panel-storyboard" aria-label="Storyboard">
+            @foreach (var chapter in OrderedNodes(project, null).Where(n => n.NodeType == "chapter"))
+            {
+                <section><h3>@chapter.Title</h3>
+                @foreach (var scene in project.Nodes.Where(n => n.ParentId == chapter.NodeId && n.DeletionId is null).OrderBy(n => n.OrderIndex))
+                {
+                    <div class="panel-scene-card" @key="scene.NodeId">
+                        <SceneCard SceneId="scene.NodeId" Title="@(scene.Title)" Summary="@(scene.Card?.Summary)" Status="@(scene.Card?.Status ?? "Draft")"
+                            Pov="@(scene.Card?.PovCharacterId)" NarrativeRole="@(scene.Card?.NarrativeRole)" NarrativeIntent="@(scene.Card?.NarrativeIntent)"
+                            HasNotes="@(!string.IsNullOrWhiteSpace(scene.Notes))" SubplotTags="Tags(scene.Card?.SubplotTagsJson)"
+                            IsSelected="@(_sceneId == scene.NodeId)" OpenScene="OpenSceneAsync" RevealInNavigator="RevealNavigator"
+                            SaveTitleQuickEdit="SaveTitleAsync" SaveStatusQuickEdit="SaveStatusAsync" EnableDragging="false" />
+                        <div class="panel-actions">
+                            <button type="button" @onclick="() => SelectSceneAsync(scene.NodeId)">Edit @scene.Title</button>
+                            <button type="button" disabled="@(_saving || AtEnd(scene, false))" @onclick="() => MoveAsync(scene, false)">Move up</button>
+                            <button type="button" disabled="@(_saving || AtEnd(scene, true))" @onclick="() => MoveAsync(scene, true)">Move down</button>
+                        </div>
+                    </div>
+                }
+                </section>
+            }
+            </div>
+        }
+        @if (Selected is { } selected)
+        {
+            <p class="panel-scene-title">@selected.Title</p>
+            @if (Subview is "scene" or "storyboard")
+            { <ScenePlanningFields Values="_fields" Changed="SceneChanged" Blurred="SaveOnBlurAsync" /> }
+            else if (Subview == "notes")
+            {
+                <label>Notes for this scene
+                    <textarea class="notes-input" rows="8" maxlength="100000" @bind:get='_fields.GetValueOrDefault("Notes", "")'
+                        @bind:set='value => SceneChanged(new("Notes", value ?? ""))' @bind:event="oninput" @onblur="SaveOnBlurAsync"></textarea>
+                </label>
+            }
+            else if (Subview == "annotations")
+            {
+                <p class="panel-help">Select a passage in the writing, then enter a comment or task. The selected passage is linked automatically. Click a linked comment to return to its text.</p>
+                <label>Show <select @bind="_filter"><option value="open">Open</option><option value="resolved">Resolved</option><option value="all">All</option></select></label>
+                @foreach (var annotation in selected.Annotations.Where(a => _filter == "all" || a.Value.Status == _filter))
+                {
+                    bool linked = AnnotationRequested.HasDelegate && LocalAnnotationMarkup.PageFor(_document!, annotation.LocalId) is not null;
+                    <article class="panel-annotation @(SelectedAnnotationId == annotation.LocalId ? "is-selected" : "")" aria-current="@(SelectedAnnotationId == annotation.LocalId ? "true" : null)" @key="annotation.LocalId"><strong>@annotation.Value.Kind · @annotation.Value.Status</strong>
+                    @if (linked)
+                    { <button type="button" class="annotation-text-link" title="Show this annotation in the text" @onmousedown:preventDefault="true" @onclick="() => AnnotationRequested.InvokeAsync(annotation.LocalId)">@annotation.Value.Content</button> }
+                    else { <p>@annotation.Value.Content</p> }
+                    @if (annotation.Value.AnchorText.Length > 0) { <blockquote>@annotation.Value.AnchorText</blockquote><p>@AnchorLabel(annotation)</p> }
+                    else { <p>Scene-level note</p> }
+                    @if (linked)
+                    { <button type="button" @onmousedown:preventDefault="true" @onclick="() => AnnotationRequested.InvokeAsync(annotation.LocalId)">Show in text</button> }
+                    <button type="button" disabled="@_saving" @onclick="() => ResolveAsync(annotation)">@(annotation.Value.Status == "open" ? "Resolve" : "Reopen")</button></article>
+                }
+                <label>Kind <select @bind="_kind"><option value="comment">Comment</option><option value="todo">Task</option></select></label>
+                <label>Comment or task <textarea @bind="_annotationText" @bind:event="oninput" @onfocus="CaptureSelectedTextAsync" maxlength="100000" rows="3"></textarea></label>
+                <label>Exact quote (optional) <textarea @bind="_quote" @bind:event="oninput" maxlength="100000" rows="2"></textarea></label>
+                @if (GetSelectedText is not null)
+                { <button type="button" disabled="@_saving" @onmousedown:preventDefault="true" @onclick="UseSelectedTextAsync">Use selected text</button> }
+                <div class="panel-actions">
+                    <button type="button" disabled="@_saving" @onclick="DiscardAnnotation">Discard draft</button>
+                    <button type="button" disabled="@(_saving || string.IsNullOrWhiteSpace(_annotationText))" @onclick="AddAnnotationAsync">Add @(_kind == "todo" ? "task" : "comment")</button>
+                </div>
+            }
+        }
+        else { <p>No scene is linked to the current section. Select a scene in Navigator to edit its planning.</p> }
+    }
+    <div class="panel-save"><button type="button" disabled="@_saving" @onclick="SaveOnBlurAsync">Save planning</button><span role="status">@(_saving ? "Saving…" : _dirty ? "Unsaved planning" : "Saved locally")</span></div>
+    @if (_error is not null) { <p role="alert">@_error</p> }
+}
+else if (_document?.Project is not null)
+{
+    <p>This supporting document has no storyboard or scene structure. Open a manuscript in its project to plan the story.</p>
+    <a href="@($"/projects/{_document.Project.ProjectId}")">Open project manuscripts</a>
+}
+else
+{
+    <p>Scene cards, storyboard, synopsis, notes and tasks are saved with a project. This document is not part of a project yet.</p>
+    @if (Document.ServerDocumentId is not null || Document.SyncState != LocalSyncState.LocalOnly)
+    {
+        <p>Duplicate this document in Documents, then open Projects and choose From document to create a project from the local copy.</p>
+    }
+    else
+    {
+        <p>Open Projects and choose From document to create a project from this document.</p>
+    }
+    <a href="/projects">Open Projects</a>
+}
+</div>
+
+@code {
+    [Parameter, EditorRequired] public LocalDocument Document { get; set; } = default!;
+    [Parameter] public Guid? SectionId { get; set; }
+    [Parameter] public string Subview { get; set; } = "scene";
+    [Parameter, EditorRequired] public Func<Func<LocalDocument, LocalDocument>, Task<LocalDocument?>> Commit { get; set; } = default!;
+    [Parameter] public EventCallback<Guid> OpenPage { get; set; }
+    [Parameter] public EventCallback RevealNavigator { get; set; }
+    [Parameter] public Guid? SelectedAnnotationId { get; set; }
+    [Parameter] public Guid? AnnotationFocusRequest { get; set; }
+    [Parameter] public EventCallback<Guid> AnnotationRequested { get; set; }
+    [Parameter] public Func<Task<string>>? GetSelectedText { get; set; }
+    private Guid? _lastSelectedAnnotationId, _lastAnnotationFocusRequest;
+    private LocalDocument? _document;
+    private Guid? _sceneId, _sectionId;
+    private LocalProjectNode? Selected => _document?.Project?.Nodes.FirstOrDefault(n => n.NodeId == _sceneId && n.DeletionId is null);
+    private Dictionary<string, string> _fields = [];
+    private SyncSynopsis _synopsis = new();
+    private string _filter = "open", _kind = "comment", _quote = "", _annotationText = "";
+    private string? _error;
+    private bool _dirty, _saving, _sceneDirty, _synopsisDirty;
+    private long _generation;
+    private readonly SemaphoreSlim _saveGate = new(1, 1);
+    public bool HasDraft => _dirty || _annotationText.Length > 0 || _quote.Length > 0;
+    protected override void OnParametersSet()
+    {
+        bool newDocument = _document?.DocumentId != Document.DocumentId;
+        bool newSection = newDocument || _sectionId != SectionId;
+        _document = Document;
+        if (newDocument || !_synopsisDirty) _synopsis = Document.Project?.Synopsis ?? new();
+        if (newSection)
+        {
+            _sectionId = SectionId;
+            _sceneId = Document.Project?.Nodes.FirstOrDefault(n => n.NodeType == "scene" && n.DeletionId is null && n.SectionId == SectionId)?.NodeId;
+        }
+        if (newSection || !_sceneDirty) LoadScene();
+        if (SelectedAnnotationId != _lastSelectedAnnotationId || AnnotationFocusRequest != _lastAnnotationFocusRequest)
+        {
+            _lastSelectedAnnotationId = SelectedAnnotationId;
+            _lastAnnotationFocusRequest = AnnotationFocusRequest;
+            var scene = Document.Project?.Nodes.FirstOrDefault(n => n.DeletionId is null && n.Annotations.Any(a => a.LocalId == SelectedAnnotationId));
+            if (scene is not null && scene.NodeId != _sceneId) { _sceneId = scene.NodeId; LoadScene(); }
+            var annotation = Selected?.Annotations.FirstOrDefault(a => a.LocalId == SelectedAnnotationId);
+            if (annotation is not null && _filter != "all" && _filter != annotation.Value.Status) _filter = annotation.Value.Status;
+        }
+    }
+    private static IEnumerable<LocalProjectNode> OrderedNodes(LocalProject project, Guid? parent)
+    {
+        foreach (var n in project.Nodes.Where(n => n.ParentId == parent && n.DeletionId is null).OrderBy(n => n.OrderIndex))
+        { yield return n; foreach (var child in OrderedNodes(project, n.NodeId)) yield return child; }
+    }
+    private void LoadScene()
+    {
+        var n = Selected; var c = n?.Card ?? LocalPlanning.EmptyCard;
+        _fields = new() { ["Title"] = n?.Title ?? "", ["Summary"] = c.Summary ?? "", ["Notes"] = n?.Notes ?? "",
+            ["Status"] = c.Status ?? "Draft", ["NarrativeRole"] = c.NarrativeRole ?? "", ["NarrativeIntent"] = c.NarrativeIntent ?? "",
+            ["Pov"] = c.PovCharacterId ?? "", ["SubplotTags"] = string.Join(", ", Tags(c.SubplotTagsJson)), ["EmotionalBeat"] = c.EmotionalBeat ?? "",
+            ["KeyEvents"] = c.KeyEvents ?? "", ["OpenQuestions"] = c.OpenQuestions ?? "" };
+    }
+    private void SceneChanged(ScenePlanningChange c) { _fields[c.Field] = c.Value; _dirty = _sceneDirty = true; ++_generation; }
+    private void SynopsisChanged(ScenePlanningChange c) { _synopsis = SynopsisFields.Update(_synopsis, c); _dirty = _synopsisDirty = true; ++_generation; }
+    private async Task SaveOnBlurAsync() => await FlushAsync();
+    public async Task<bool> FlushAsync()
+    {
+        await _saveGate.WaitAsync();
+        try { return await SaveDraftAsync(); }
+        finally { _saveGate.Release(); }
+    }
+    private async Task<bool> SaveDraftAsync()
+    {
+        if (_annotationText.Length > 0 || _quote.Length > 0) { _error = "Add or discard the pending annotation before leaving or saving planning."; return false; }
+        _saving = true; _error = null;
+        try
+        {
+            for (int attempt = 0; _dirty && attempt < 8; attempt++)
+            {
+                long generation = _generation;
+                var fields = new Dictionary<string, string>(_fields); var synopsis = _synopsis;
+                bool sceneDirty = _sceneDirty, synopsisDirty = _synopsisDirty; Guid? sceneId = _sceneId;
+                var saved = await Commit(doc => {
+                    if (sceneDirty && sceneId is { } id)
+                    {
+                        var scene = doc.Project!.Nodes.Single(n => n.NodeId == id && n.DeletionId is null);
+                        var card = scene.Card ?? LocalPlanning.EmptyCard;
+                        card = card with { Summary = fields["Summary"], Status = fields["Status"], NarrativeRole = fields["NarrativeRole"], NarrativeIntent = fields["NarrativeIntent"],
+                            PovCharacterId = fields["Pov"], SubplotTagsJson = fields["SubplotTags"] == string.Join(", ", Tags(card.SubplotTagsJson)) ? card.SubplotTagsJson : JsonSerializer.Serialize(fields["SubplotTags"].Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)),
+                            EmotionalBeat = fields["EmotionalBeat"], KeyEvents = fields["KeyEvents"], OpenQuestions = fields["OpenQuestions"] };
+                        if (scene.Title != fields["Title"]) doc = LocalProjectStructure.Apply(doc, new(LocalProjectAction.Rename, id, Title: fields["Title"]), DateTimeOffset.UtcNow);
+                        doc = LocalPlanning.Scene(doc, id, card, fields["Notes"]);
+                    }
+                    return synopsisDirty ? LocalPlanning.Synopsis(doc, synopsis) : doc;
+                });
+                if (saved is null) { _error = "Planning was not saved. Your draft is still here. Retry Save planning."; return false; }
+                _document = saved;
+                if (generation == _generation) _dirty = _sceneDirty = _synopsisDirty = false;
+            }
+            return !_dirty;
+        }
+        catch (Exception e) when (e is IOException or InvalidOperationException or JsonException or UnauthorizedAccessException)
+        { _error = "Planning was not saved. Your draft is still here. " + e.Message; return false; }
+        finally { _saving = false; await InvokeAsync(StateHasChanged); }
+    }
+    private void DiscardAnnotation() { _annotationText = ""; _quote = ""; _error = null; }
+    private async Task UseSelectedTextAsync()
+    {
+        string text = GetSelectedText is null ? "" : await GetSelectedText();
+        if (string.IsNullOrWhiteSpace(text)) { _error = "Select a passage in the writing first."; return; }
+        if (text.Length > 100_000) { _error = "Select a shorter passage for this annotation."; return; }
+        _quote = text;
+        _error = null;
+    }
+    private async Task CaptureSelectedTextAsync()
+    {
+        // Capture before typing in the panel replaces the browser's visible selection.
+        // Keep an already chosen quote stable throughout this draft.
+        if (_quote.Length > 0 || GetSelectedText is null) return;
+        string text = await GetSelectedText();
+        if (text.Length > 100_000) { _error = "Select a shorter passage for this annotation."; return; }
+        if (!string.IsNullOrWhiteSpace(text)) _quote = text;
+    }
+    private async Task SelectSceneAsync(Guid id) { if (await FlushAsync()) { _sceneId = id; LoadScene(); } }
+    private async Task OpenSceneAsync(Guid id)
+    {
+        if (!await FlushAsync()) return;
+        var section = _document!.Project!.Nodes.Single(n => n.NodeId == id).SectionId;
+        var page = _document.Sections.FirstOrDefault(s => s.SectionId == section)?.Pages.OrderBy(p => p.OrderIndex).FirstOrDefault();
+        if (page is not null) await OpenPage.InvokeAsync(page.PageId);
+    }
+    private async Task<bool> SaveTitleAsync(SceneCardTitleQuickEditRequest r) { await SelectSceneAsync(r.SceneId); if (_sceneId != r.SceneId) return false; SceneChanged(new("Title", r.Title)); return await FlushAsync(); }
+    private async Task<bool> SaveStatusAsync(SceneCardStatusQuickEditRequest r) { await SelectSceneAsync(r.SceneId); if (_sceneId != r.SceneId) return false; SceneChanged(new("Status", r.Status)); return await FlushAsync(); }
+    private bool AtEnd(LocalProjectNode n, bool end) { var siblings = _document!.Project!.Nodes.Where(x => x.ParentId == n.ParentId && x.DeletionId is null).OrderBy(x => x.OrderIndex).ToArray(); return (end ? siblings[^1] : siblings[0]).NodeId == n.NodeId; }
+    private async Task MutateAsync(Func<LocalDocument, LocalDocument> mutation)
+    {
+        if (!await FlushAsync()) return;
+        _saving = true;
+        try { var saved = await Commit(mutation); if (saved is not null) { _document = saved; LoadScene(); } else _error = "The change could not be saved. Retry."; }
+        catch (Exception e) when (e is IOException or InvalidOperationException or JsonException or UnauthorizedAccessException) { _error = e.Message; }
+        finally { _saving = false; }
+    }
+    private Task MoveAsync(LocalProjectNode n, bool down) => MutateAsync(d => LocalProjectStructure.Apply(d, new(down ? LocalProjectAction.Down : LocalProjectAction.Up, n.NodeId), DateTimeOffset.UtcNow));
+    private async Task AddAnnotationAsync()
+    {
+        _error = null;
+        await CaptureSelectedTextAsync();
+        if (_error is not null) return;
+        string text = _annotationText, quote = _quote, kind = _kind;
+        DiscardAnnotation();
+        await MutateAsync(d => LocalPlanning.AddAnnotation(d, _sceneId!.Value, kind, text, quote));
+        if (_error is not null) { _annotationText = text; _quote = quote; }
+    }
+    private Task ResolveAsync(LocalSceneAnnotation a) => MutateAsync(d => LocalPlanning.Resolve(d, _sceneId!.Value, a.LocalId, a.Value.Status == "open"));
+    private string AnchorLabel(LocalSceneAnnotation a) => a.Value.AnchorDetached || !LocalPlanning.UniqueQuote(LocalPlanning.SceneText(_document!, Selected!), a.Value.AnchorText)
+        ? "Detached quote — review against the current writing" : "Exact quote present in this scene";
+    private static IReadOnlyList<string> Tags(string? json) { try { return JsonSerializer.Deserialize<string[]>(json ?? "[]") ?? []; } catch (JsonException) { return []; } }
+}

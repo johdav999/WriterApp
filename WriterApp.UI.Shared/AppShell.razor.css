@@ -1,0 +1,2 @@
+.app-nav { position: relative; }
+.app-shell.is-resizing-panel, .app-shell.is-resizing-panel ::deep * { cursor: col-resize !important; user-select: none !important; }

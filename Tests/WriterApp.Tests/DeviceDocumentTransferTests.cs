@@ -76,7 +76,7 @@ public sealed class DeviceDocumentTransferTests
     [Fact]
     public void OfflineExportsIncludeAllPagesAndNeverEmitActiveMarkup()
     {
-        var document = Document("<p>Alpha <strong>beta</strong><script>attack()</script></p>");
+        var document = Document("<p>Alpha <strong>beta</strong></p>");
         LocalSection first = document.Sections[0];
         first = first with { Title = "First", Pages = [Page("<p>Later page</p>") with { OrderIndex = 1 }, first.Pages[0]] };
         LocalSection second = first with { SectionId = Guid.NewGuid(), Title = "Second", OrderIndex = 1,

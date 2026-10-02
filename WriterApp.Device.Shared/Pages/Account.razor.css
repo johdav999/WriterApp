@@ -1,0 +1,4 @@
+.account-shell { padding:1.5rem; max-width:1000px; margin:auto; display:grid; gap:.75rem; }
+.account-shell p { margin:0; overflow-wrap:anywhere; }
+.account-actions { display:flex; gap:.5rem; flex-wrap:wrap; }
+button { padding:.5rem .75rem; }

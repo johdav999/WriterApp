@@ -9,12 +9,15 @@ public sealed class WindowsDeviceFileDialog : IDeviceFileDialog
     public bool IsAvailable => true;
 
     public async Task<DeviceImportFile?> PickImportAsync(CancellationToken cancellationToken = default)
+        => await PickAsync(false, cancellationToken);
+
+    public Task<DeviceImportFile?> PickCoverAsync(CancellationToken cancellationToken = default) => PickAsync(true, cancellationToken);
+
+    private static async Task<DeviceImportFile?> PickAsync(bool cover, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         FileOpenPicker picker = new();
-        picker.FileTypeFilter.Add(".txt");
-        picker.FileTypeFilter.Add(".html");
-        picker.FileTypeFilter.Add(".htm");
+        foreach (string extension in cover ? new[] { ".png" } : new[] { ".txt", ".html", ".htm", ".docx" }) picker.FileTypeFilter.Add(extension);
         picker.ViewMode = PickerViewMode.List;
         Initialize(picker);
         var file = await picker.PickSingleFileAsync();
@@ -44,15 +47,18 @@ public sealed class WindowsDeviceFileDialog : IDeviceFileDialog
         {
             SuggestedFileName = Path.GetFileNameWithoutExtension(suggestedFileName)
         };
-        picker.FileTypeChoices.Add(extension == ".html" ? "HTML document" : "Plain text document", [extension]);
+        picker.FileTypeChoices.Add("Document (" + extension + ")", [extension]);
         Initialize(picker);
         var file = await picker.PickSaveFileAsync();
         if (file is null) return false;
         cancellationToken.ThrowIfCancellationRequested();
-        await using Stream destination = await file.OpenStreamForWriteAsync();
+        using var transaction = await file.OpenTransactedWriteAsync();
+        using Stream destination = transaction.Stream.AsStreamForWrite();
         destination.SetLength(0);
         await destination.WriteAsync(content, cancellationToken);
         await destination.FlushAsync(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        await transaction.CommitAsync();
         return true;
     }
 

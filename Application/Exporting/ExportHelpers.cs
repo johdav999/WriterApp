@@ -9,7 +9,7 @@ using WriterApp.Domain.Documents;
 
 namespace WriterApp.Application.Exporting
 {
-    internal static class ExportHelpers
+    public static class ExportHelpers
     {
         private static readonly Regex WhitespaceRegex = new(@"\s+", RegexOptions.Compiled);
         private static readonly Regex HeadingRegex = new("<h[1-6][^>]*>(.*?)</h[1-6]>", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);

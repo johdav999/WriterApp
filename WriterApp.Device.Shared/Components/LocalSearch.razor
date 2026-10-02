@@ -1,0 +1,102 @@
+@inject LocalDocumentSearch Search
+@inject LocalDocumentRepository Documents
+@inject DeviceSaveLifetime Lifetime
+@inject NavigationManager Navigation
+@implements IDisposable
+
+<div class="local-search" @onkeydown="OnKeyDown">
+    <form @onsubmit="SearchNowAsync" @onsubmit:preventDefault>
+        <label class="visually-hidden" for="local-search-input">Search local documents and writing</label>
+        <input id="local-search-input" type="search" maxlength="200" placeholder="Search local documents and writing…" value="@_query" @oninput="OnInput" @onfocus="() => _open = true" />
+        <label>Search scope <select @bind="_scope" @bind:after="SearchNowAsync"><option value="Writing">Writing</option><option value="Planning">Planning &amp; notes</option><option value="All">Writing and planning</option></select></label>
+        <button type="submit">Search</button><button type="button" @onclick="Clear">Clear</button>
+    </form>
+    @if (_open && !string.IsNullOrWhiteSpace(_query))
+    {
+        <div class="local-search-results" aria-label="Local search results">
+            <p>Searching @_scope on this device. Document trash and deleted planning items are excluded.</p>
+            @if (_loading) { <p role="status">Searching this device…</p> }
+            @if (_error is not null) { <p role="alert">@_error</p> }
+            @if (!_loading && _results is { } results)
+            {
+                @if (results.Items.Count == 0) { <p role="status">No local results.</p> }
+                @foreach (var group in results.Items.GroupBy(r => r.DocumentId))
+                {
+                    <div class="global-search-group"><strong>@group.First().DocumentTitle</strong><ul>
+                        @foreach (var result in group)
+                        {
+                            <li><SearchResultButton Kind="@(result.ProjectId is not null ? "Planning" : result.TitleMatch ? "Document" : "Page")" Title="@(result.TitleMatch ? result.DocumentTitle : result.PageTitle)"
+                                Scope="@($"{result.SectionTitle} / {result.PageTitle}")" Selected="() => SelectAsync(result)" Disabled="_selecting">
+                                <SearchHighlightText Text="@result.Snippet" Query="@_query" />
+                            </SearchResultButton></li>
+                        }
+                    </ul></div>
+                }
+                @if (results.Limited) { <p role="status">Showing bounded results: up to 50 matches, 256 files, 32 MB of files and 2 million title/writing characters per query. Some content was not searched.</p> }
+                @if (results.UnavailableDocuments != 0) { <p role="status">@results.UnavailableDocuments local files could not be searched. They were preserved; check the library and retry.</p> }
+            }
+        </div>
+    }
+</div>
+@code {
+    private LocalSearchScope _scope = LocalSearchScope.Writing;
+    private string _query = "";
+    private bool _open, _loading, _selecting, _disposed;
+    private int _flushes;
+    private string? _error;
+    private LocalSearchResults? _results;
+    private LocalSearchQuery _runner = default!;
+    private long _request;
+    protected override void OnInitialized() { _runner = new(Search); Documents.Changed += Changed; }
+    private void OnInput(ChangeEventArgs args) { _query = args.Value?.ToString() ?? ""; _open = true; _ = RunAsync(TimeSpan.FromMilliseconds(300)); }
+    private Task SearchNowAsync() => RunAsync(TimeSpan.Zero);
+    private async Task RunAsync(TimeSpan delay)
+    {
+        long request = ++_request; string query = _query;
+        _runner.Cancel(); _loading = !string.IsNullOrWhiteSpace(query); _error = null; _results = null;
+        try
+        {
+            // Ordinary saves do not toggle editing. This also makes the active page searchable before autosave.
+            var results = await _runner.RunAsync(query, delay, async () =>
+            {
+                _flushes++;
+                try
+                {
+                    bool saved = await Lifetime.FlushAsync();
+                    if (!saved && request == _request) _error = "Save failed. Your pending writing remains in the editor. Retry Save before searching.";
+                    return saved;
+                }
+                finally { _flushes--; }
+            }, _scope);
+            if (_disposed || request != _request || query != _query) return;
+            if (results is not null) _results = results;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
+        { if (request == _request) _error = "Local search could not read storage. Your writing is unchanged. Check access and retry."; }
+        finally
+        { if (!_disposed && request == _request) { _loading = false; await InvokeAsync(StateHasChanged); } }
+    }
+    private async Task SelectAsync(LocalSearchResult result)
+    {
+        if (_loading || _selecting || _disposed) return;
+        string query = _query;
+        _selecting = true;
+        try
+        {
+            if (!await Lifetime.FlushAsync()) { _error = "Save failed. Search navigation was canceled; your writing remains in the editor."; return; }
+            var current = await Search.ResolveAsync(result, query);
+            if (current is null) { _error = "This result changed or was deleted. Search again to see the current writing."; _results = null; return; }
+            string url = $"/documents/{current.DocumentId:D}?page={current.PageId:D}&search={Guid.NewGuid():N}";
+            if (current.ProjectId is { } project) url = $"/projects/{project}/planning?view=" + Uri.EscapeDataString(current.PlanningView ?? "Story") + (current.PlanningNodeId is { } node ? $"&scene={node}" : "");
+            else if (!current.TitleMatch) url += "&q=" + Uri.EscapeDataString(query);
+            _open = false; Navigation.NavigateTo(url);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
+        { _error = "This result could not be opened safely. Check storage access and retry."; }
+        finally { _selecting = false; }
+    }
+    private void Changed() { if (!_disposed && _flushes == 0 && _open && !string.IsNullOrWhiteSpace(_query)) _ = InvokeAsync(() => RunAsync(TimeSpan.FromMilliseconds(300))); }
+    private void OnKeyDown(KeyboardEventArgs args) { if (args.Key == "Escape") { _open = false; _runner.Cancel(); } }
+    private void Clear() { _query = ""; _open = false; _results = null; _error = null; ++_request; _runner.Cancel(); _loading = false; }
+    public void Dispose() { _disposed = true; Documents.Changed -= Changed; _runner.Dispose(); }
+}

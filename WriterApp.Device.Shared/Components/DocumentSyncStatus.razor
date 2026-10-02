@@ -1,6 +1,30 @@
 @implements IDisposable
 @inject DeviceSyncEngine Sync
 
+@if (Compact)
+{
+    <div class="document-sync-bar">
+        @if (Document.ServerDocumentId is null && Sync.Status(Document.DocumentId) is null)
+        {
+            <button type="button" class="panel-toggle" disabled="@Sync.IsRunning" @onclick="EnableAsync">Enable cloud sync</button>
+        }
+        <details class="document-sync-menu" open="@_showDetails">
+            <summary title="Cloud sync status and actions" role="status">@(Sync.IsRunning ? "Syncing…" : Sync.LastError is not null ? "Sync failed" : Sync.Status(Document.DocumentId)?.Label ?? "Cloud sync details")</summary>
+            <div class="document-sync-popover">@SyncDetails</div>
+        </details>
+    </div>
+}
+else
+{
+    @SyncDetails
+}
+
+@code {
+    private RenderFragment SyncDetails => @<div class="document-sync-content">
+@if (Document.Project is not null)
+{
+    <p>Project and manuscript save on this device. Cloud synchronization requires a paid account and a project-aware backend.</p>
+}
 @if (Sync.Status(Document.DocumentId) is { } status)
 {
     <div class="document-sync-details">
@@ -20,15 +44,28 @@
         }
     </div>
 }
-else if (Document.ServerDocumentId is null)
+else if (Document.ServerDocumentId is null && !Compact)
 {
-    <button disabled="@Sync.IsRunning" @onclick="() => Sync.EnableAsync(Document.DocumentId)">Enable cloud sync for this document</button>
+    <button disabled="@Sync.IsRunning" @onclick="EnableAsync">Enable cloud sync for this @(Document.Project is null ? "document" : "project")</button>
 }
-else { <p>Sign in to the linked account to synchronize this document.</p> }
+else if (Document.ServerDocumentId is not null) { <p>Sign in to the linked account to synchronize this document.</p> }
+<p role="@(Sync.LastError is null ? "status" : "alert")">@Sync.Message</p>
+@if (Sync.LastError is not null)
+{
+    <button type="button" disabled="@Sync.IsRunning" @onclick="RetryAsync">Retry cloud sync</button>
+}
+    </div>;
 
-@code {
     [Parameter, EditorRequired] public LocalDocument Document { get; set; } = default!;
+    [Parameter] public bool Compact { get; set; }
     private bool _confirm;
+    private bool _showDetails;
+    private async Task EnableAsync() { await Sync.EnableAsync(Document.DocumentId); _showDetails = Sync.LastError is not null; }
+    private async Task RetryAsync()
+    {
+        if (Document.ServerDocumentId is null && Sync.Status(Document.DocumentId) is null) await EnableAsync();
+        else { await Sync.SyncAsync(); _showDetails = Sync.LastError is not null; }
+    }
     protected override void OnInitialized() => Sync.Changed += Updated;
     private void Updated() => _ = InvokeAsync(StateHasChanged);
     private async Task DeleteAsync() { await Sync.DeleteAsync(Document.DocumentId); _confirm = false; }

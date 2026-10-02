@@ -412,7 +412,7 @@ namespace WriterApp.Application.Documents
 
             List<Guid> projectIds = await _dbContext.ProjectNodes
                 .AsNoTracking()
-                .Where(node => node.LinkedSectionId == sectionId.Value)
+                .Where(node => node.LinkedSectionId == sectionId.Value && (node.DocumentId == null || node.DocumentId == node.Project!.PrimaryDocumentId))
                 .Select(node => node.ProjectId)
                 .Distinct()
                 .ToListAsync(ct);
@@ -563,7 +563,7 @@ namespace WriterApp.Application.Documents
         {
             return await _dbContext.ProjectNodes
                 .AsNoTracking()
-                .Where(node => node.ProjectId == projectId && node.ParentId == null)
+                .Where(node => node.ProjectId == projectId && node.ParentId == null && (node.DocumentId == null || node.DocumentId == node.Project!.PrimaryDocumentId))
                 .SumAsync(node => node.WordCountCache, ct);
         }
 

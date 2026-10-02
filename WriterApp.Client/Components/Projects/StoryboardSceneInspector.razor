@@ -44,108 +44,7 @@
 
         <div class="storyboard-inspector-scroll">
             <div class="storyboard-inspector-body">
-                <section class="storyboard-inspector-section">
-                <h4>Basic</h4>
-                <label class="storyboard-inspector-label" for="storyboard-scene-title">Title</label>
-                <input id="storyboard-scene-title"
-                       class="storyboard-inspector-input"
-                       value="@_title"
-                       @oninput="OnTitleInput"
-                       @onblur="SaveNowAsync"
-                       placeholder="Scene title" />
-
-                <label class="storyboard-inspector-label" for="storyboard-scene-summary">Summary</label>
-                <textarea id="storyboard-scene-summary"
-                          class="storyboard-inspector-textarea"
-                          rows="3"
-                          value="@_summary"
-                          @oninput="OnSummaryInput"
-                          placeholder="Briefly summarize the scene..."></textarea>
-
-                <label class="storyboard-inspector-label" for="storyboard-scene-notes">Notes</label>
-                <textarea id="storyboard-scene-notes"
-                          class="storyboard-inspector-textarea"
-                          rows="5"
-                          value="@_notes"
-                          @oninput="OnNotesInput"
-                          placeholder="Add scene notes..."></textarea>
-                </section>
-
-                <section class="storyboard-inspector-section">
-                <h4>Structure</h4>
-                <label class="storyboard-inspector-label" for="storyboard-scene-role">Narrative role</label>
-                <div class="storyboard-inspector-helper">Choose the scene's structural function in the story.</div>
-                <select id="storyboard-scene-role"
-                        class="storyboard-inspector-input"
-                        value="@_narrativeRole"
-                        @onchange="OnNarrativeRoleChanged">
-                    @foreach (string purposeOption in GetNarrativeRoleOptions())
-                    {
-                        <option value="@purposeOption">@(string.IsNullOrEmpty(purposeOption) ? "Select role" : purposeOption)</option>
-                    }
-                </select>
-
-                <label class="storyboard-inspector-label" for="storyboard-scene-intent">Narrative intent</label>
-                <div class="storyboard-inspector-helper">Describe what the scene is trying to accomplish emotionally or dramatically.</div>
-                <textarea id="storyboard-scene-intent"
-                          class="storyboard-inspector-textarea"
-                          rows="3"
-                          value="@_narrativeIntent"
-                          @oninput="OnNarrativeIntentInput"
-                          placeholder="Describe what this scene is trying to accomplish..."></textarea>
-
-                <label class="storyboard-inspector-label" for="storyboard-scene-pov">POV</label>
-                <input id="storyboard-scene-pov"
-                       class="storyboard-inspector-input"
-                       value="@_povCharacterId"
-                       @oninput="OnPovInput"
-                       placeholder="e.g., Klara" />
-
-                <label class="storyboard-inspector-label" for="storyboard-scene-subplots">Subplot tags</label>
-                <input id="storyboard-scene-subplots"
-                       class="storyboard-inspector-input"
-                       value="@_subplotTagsText"
-                       @oninput="OnSubplotTagsInput"
-                       placeholder="betrayal, romance, rivalry" />
-
-                <label class="storyboard-inspector-label" for="storyboard-scene-emotional-beat">Emotional beat</label>
-                <textarea id="storyboard-scene-emotional-beat"
-                          class="storyboard-inspector-textarea"
-                          rows="2"
-                          value="@_emotionalBeat"
-                          @oninput="OnEmotionalBeatInput"
-                          placeholder="How the emotional tone shifts..."></textarea>
-
-                <label class="storyboard-inspector-label" for="storyboard-scene-key-events">Key events</label>
-                <textarea id="storyboard-scene-key-events"
-                          class="storyboard-inspector-textarea"
-                          rows="3"
-                          value="@_keyEvents"
-                          @oninput="OnKeyEventsInput"
-                          placeholder="- Bullet your key events..."></textarea>
-
-                <label class="storyboard-inspector-label" for="storyboard-scene-open-questions">Open questions</label>
-                <textarea id="storyboard-scene-open-questions"
-                          class="storyboard-inspector-textarea"
-                          rows="3"
-                          value="@_openQuestions"
-                          @oninput="OnOpenQuestionsInput"
-                          placeholder="Loose ends or questions to answer later..."></textarea>
-                </section>
-
-                <section class="storyboard-inspector-section">
-                <h4>Status</h4>
-                <label class="storyboard-inspector-label" for="storyboard-scene-status">Status</label>
-                <select id="storyboard-scene-status"
-                        class="storyboard-inspector-input"
-                        value="@_status"
-                        @onchange="OnStatusChanged">
-                    @foreach (string statusOption in SceneCardStatusOptions)
-                    {
-                        <option value="@statusOption">@statusOption</option>
-                    }
-                </select>
-                </section>
+                <ScenePlanningFields Values="PlanningValues" Changed="PlanningChanged" Blurred="SaveNowAsync" />
 
                 <section class="storyboard-inspector-section">
                 <h4>Actions</h4>
@@ -262,6 +161,28 @@
 </aside>
 
 @code {
+    private IReadOnlyDictionary<string,string> PlanningValues => new Dictionary<string,string> {
+        ["Title"] = _title, ["Summary"] = _summary, ["Notes"] = _notes, ["NarrativeRole"] = _narrativeRole,
+        ["NarrativeIntent"] = _narrativeIntent, ["Pov"] = _povCharacterId, ["SubplotTags"] = _subplotTagsText,
+        ["EmotionalBeat"] = _emotionalBeat, ["KeyEvents"] = _keyEvents, ["OpenQuestions"] = _openQuestions, ["Status"] = _status };
+    private void PlanningChanged(ScenePlanningChange change)
+    {
+        var e = new ChangeEventArgs { Value = change.Value };
+        switch(change.Field) {
+            case "Title": OnTitleInput(e); break;
+            case "Summary": OnSummaryInput(e); break;
+            case "Notes": OnNotesInput(e); break;
+            case "NarrativeRole": OnNarrativeRoleChanged(e); break;
+            case "NarrativeIntent": OnNarrativeIntentInput(e); break;
+            case "Pov": OnPovInput(e); break;
+            case "SubplotTags": OnSubplotTagsInput(e); break;
+            case "EmotionalBeat": OnEmotionalBeatInput(e); break;
+            case "KeyEvents": OnKeyEventsInput(e); break;
+            case "OpenQuestions": OnOpenQuestionsInput(e); break;
+            case "Status": OnStatusChanged(e); break;
+        }
+    }
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly TimeSpan AutosaveDebounce = TimeSpan.FromMilliseconds(900);
     private static readonly string[] SceneCardStatusOptions = ["Idea", "Draft", "Revised", "Final"];
@@ -635,6 +556,16 @@
         catch (TaskCanceledException)
         {
         }
+    }
+
+    public async Task<bool> FlushAsync()
+    {
+        if (_aiInFlight || _loading) return false;
+        _saveCts?.Cancel();
+        while (_saveInFlight) await Task.Delay(50);
+        if (SceneNode is null) return true;
+        await SaveNowAsync();
+        return _saveStatus == "Scene saved.";
     }
 
     private async Task SaveNowAsync()

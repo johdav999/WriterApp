@@ -54,6 +54,8 @@ internal sealed class SyncEntry
     public Guid LocalId { get; set; }
     public Guid ServerId { get; set; }
     public string? Version { get; set; }
+    public long? ProjectMetadataRevision { get; set; }
+    public Guid? PrimaryDocumentId { get; set; }
     public bool ServerTrashed { get; set; }
     public bool Deleted { get; set; }
     public bool DeleteRequested { get; set; }

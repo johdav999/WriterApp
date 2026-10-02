@@ -1,0 +1,19 @@
+@if (ActionKey == "continuity.check_section")
+{
+    <ConsistencyReport ResponseJson="@Proposed" />
+    <details><summary>Analyzed writing</summary><div class="ai-preview-text">@Original</div></details>
+}
+else if (ActionKey is "scene.suggest" or "scene.refine" or "scene.find-open-questions")
+{
+    <SceneCardProposalPreview Original="@Original" Proposed="@Proposed" Proposal="@SceneCard" />
+}
+else
+{
+    <AiTextComparison Original="@Original" Proposed="@Proposed" />
+}
+@code {
+    [Parameter] public string? ActionKey { get; set; }
+    [Parameter] public string? Original { get; set; }
+    [Parameter] public string? Proposed { get; set; }
+    [Parameter] public WriterApp.Application.Documents.SectionSceneCardProposalDto? SceneCard { get; set; }
+}

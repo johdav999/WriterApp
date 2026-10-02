@@ -1,0 +1,15 @@
+<div class="projects-workspace">
+    <aside class="projects-tree" aria-label="Navigator" @onmouseup="OnPointerDragCancel" @onmouseleave="OnPointerDragCancel">
+        <div class="panel-header"><h2>Navigator</h2><p>Parts, chapters, and scenes in manuscript order.</p></div>
+        @Navigator
+    </aside>
+    <section class="projects-main" aria-label="Inspector">
+        <div class="panel-header"><h2>Inspector</h2><p>Details for the selected node.</p></div>
+        @Inspector
+    </section>
+</div>
+@code {
+    [Parameter] public RenderFragment? Navigator { get; set; }
+    [Parameter] public RenderFragment? Inspector { get; set; }
+    [Parameter] public EventCallback<MouseEventArgs> OnPointerDragCancel { get; set; }
+}

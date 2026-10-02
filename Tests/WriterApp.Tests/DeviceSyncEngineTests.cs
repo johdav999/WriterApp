@@ -1,4 +1,12 @@
 using System.Threading.Channels;
+using System.Text.RegularExpressions;
+using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components.Web;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.JSInterop;
+using WriterApp.Device.Shared.Components;
+using WriterApp.Device.Shared.Pages;
 using WriterApp.Device.Shared.Services;
 using WriterApp.Device.Shared.Storage;
 using WriterApp.Shared.Sync;
@@ -27,6 +35,106 @@ public sealed class DeviceSyncEngineTests : IDisposable
             { Pages = s.Pages.Select(p => p with { Content = text }).ToArray() }).ToArray() });
     }
     private static string Text(LocalDocument doc) => doc.Sections[0].Pages[0].Content;
+
+    [Fact]
+    public async Task LocalProjectsUploadThroughProjectAwareSync()
+    {
+        var doc = await Store.CreateProjectAsync("Local project");
+        var engine = Engine();
+        await engine.EnableAsync(doc.DocumentId);
+        Assert.Equal("Synchronization complete.", engine.Message);
+        Assert.NotNull(Assert.Single(_api.Requests).Document!.Project);
+        Assert.NotNull((await Store.GetAsync(doc.DocumentId))!.ServerDocumentId);
+        Assert.Equal(doc.Project!.ProjectId, (await Store.GetAsync(doc.DocumentId))!.Project!.ProjectId);
+    }
+
+    [Fact]
+    public async Task StructureSyncAndRestoreSurviveRestartWithStableIdentities()
+    {
+        var repository = new LocalDocumentRepository(Store);
+        var doc = await repository.CreateAsync("Structure sync");
+        var engine = Engine(repo: repository);
+        await engine.EnableAsync(doc.DocumentId);
+        doc = (await Store.GetAsync(doc.DocumentId))!;
+        Guid firstSection = doc.Sections[0].SectionId, page = doc.Sections[0].Pages[0].PageId;
+        doc = await repository.ChangeStructureAsync(doc, new(LocalStructureAction.CreatePage, TargetSectionId: firstSection, Title: "Keep"));
+        doc = await repository.ChangeStructureAsync(doc, new(LocalStructureAction.CreateSection, Title: "Target"));
+        Guid target = doc.Sections[1].SectionId;
+        doc = await repository.ChangeStructureAsync(doc, new(LocalStructureAction.MovePage, page, target));
+        await engine.SyncAsync();
+        Assert.Equal(page, _api.Documents.Values.Single().Document!.Sections[1].Pages[1].Id);
+        doc = (await Store.GetAsync(doc.DocumentId))!;
+        doc = await repository.ChangeStructureAsync(doc, new(LocalStructureAction.DeletePage, page));
+        engine.Dispose();
+        engine = Engine();
+        await engine.SyncAsync();
+        Assert.Contains(page, _api.Requests.Last(r => r.Document is not null).Document!.Structure!.RemovedPageIds);
+        doc = (await Store.GetAsync(doc.DocumentId))!;
+        Assert.Equal(page, Assert.Single(doc.DeletedPages).Page.PageId);
+        doc = await repository.ChangeStructureAsync(doc, new(LocalStructureAction.RestorePage, page, firstSection));
+        await engine.SyncAsync();
+        Assert.Equal(page, _api.Documents.Values.Single().Document!.Sections[0].Pages[1].Id);
+        Assert.Empty((await Store.GetAsync(doc.DocumentId))!.DeletedPages);
+    }
+
+    [Theory]
+    [InlineData(LocalStructureAction.RenamePage)]
+    [InlineData(LocalStructureAction.MovePage)]
+    [InlineData(LocalStructureAction.DeletePage)]
+    public async Task ConcurrentRemoteEditAndLocalStructureProduceDurableConflictCopies(LocalStructureAction action)
+    {
+        var repository = new LocalDocumentRepository(Store);
+        var doc = await repository.CreateAsync("Concurrent structure");
+        Guid source = doc.Sections[0].SectionId, page = doc.Sections[0].Pages[0].PageId;
+        doc = await repository.ChangeStructureAsync(doc, new(LocalStructureAction.CreatePage, TargetSectionId: source, Title: "Keep"));
+        doc = await repository.ChangeStructureAsync(doc, new(LocalStructureAction.CreateSection, Title: "Target"));
+        Guid target = doc.Sections[1].SectionId;
+        var engine = Engine(repo: repository);
+        await engine.EnableAsync(doc.DocumentId);
+        doc = (await Store.GetAsync(doc.DocumentId))!;
+        doc = await repository.ChangeStructureAsync(doc, new(action, page, target, "Local title"));
+        _api.EditRemote("<p>Remote author’s edit</p>");
+        await engine.SyncAsync();
+        Assert.True(engine.Status(doc.DocumentId)!.Conflict);
+        engine.Dispose(); engine = Engine(); await engine.SyncAsync();
+        Assert.True(engine.Status(doc.DocumentId)!.Conflict);
+        var all = (await Store.ListAsync()).Documents;
+        Assert.Contains(all, d => d.Sections.SelectMany(s => s.Pages).Any(p => p.Content == "<p>Remote author’s edit</p>"));
+        var retained = all.Single(d => d.DocumentId == doc.DocumentId);
+        if (action == LocalStructureAction.DeletePage) Assert.Equal(page, Assert.Single(retained.DeletedPages).Page.PageId);
+        if (action == LocalStructureAction.RenamePage) Assert.Equal("Local title", retained.Sections.SelectMany(s => s.Pages).Single(p => p.PageId == page).Title);
+        if (action == LocalStructureAction.MovePage) Assert.Contains(retained.Sections.Single(s => s.SectionId == target).Pages, p => p.PageId == page);
+    }
+
+    [Theory]
+    [MemberData(nameof(DeviceContentCompatibilityTests.Supported), MemberType = typeof(DeviceContentCompatibilityTests))]
+    [MemberData(nameof(DeviceContentCompatibilityTests.Unsupported), MemberType = typeof(DeviceContentCompatibilityTests))]
+    public async Task RemoteContentSurvivesDeviceOpenAndRoundTripWithoutDestructiveUpload(string source)
+    {
+        var engine = Engine();
+        var original = await Store.CreateAsync("Compatibility fixture");
+        await engine.EnableAsync(original.DocumentId);
+        _api.EditRemote(source);
+        await engine.SyncAsync();
+        var downloaded = (await Store.GetAsync(original.DocumentId))!;
+        Assert.Equal(source, Text(downloaded));
+        int uploads = _api.Requests.Count;
+        var session = new LocalEditorSession(new(Store), downloaded);
+        await session.SaveAsync();
+        await engine.SyncAsync();
+        Assert.Equal(uploads, _api.Requests.Count);
+        Assert.Equal(source, _api.Documents.Values.Single().Document!.Sections[0].Pages[0].Content);
+        if (DeviceContentCompatibility.CanEdit(source, LocalContentFormat.Html))
+        {
+            string edited = source + "<p>Device edit — 日本語</p>";
+            session.Edit(downloaded.Sections[0].Pages[0].PageId, edited);
+            await session.SaveAsync();
+            await engine.SyncAsync();
+            Assert.Equal(edited, _api.Documents.Values.Single().Document!.Sections[0].Pages[0].Content);
+        }
+        else
+            Assert.Throws<InvalidDataException>(() => session.Edit(downloaded.Sections[0].Pages[0].PageId, "<p>Lost original</p>"));
+    }
 
     [Fact]
     public async Task SignInLocalSaveAndReconnectionTriggerDebouncedSynchronization()
@@ -226,6 +334,161 @@ public sealed class DeviceSyncEngineTests : IDisposable
         Assert.Equal("<p>Typing</p>", Text((await Store.GetAsync(doc.DocumentId))!));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OpenEditorRefreshesCloudLinkWithoutLosingPendingTyping(bool typing)
+    {
+        var doc = await Store.CreateProjectAsync("Draft");
+        var repo = new LocalDocumentRepository(Store);
+        var session = new LocalEditorSession(repo, doc);
+        var page = doc.Sections[0].Pages[0];
+        if (typing) session.Edit(page.PageId, "<p>Still typing</p>");
+        session.RememberPage(page.PageId);
+        var saveState = session.SaveState;
+        await Engine(repo: repo).EnableAsync(doc.DocumentId);
+
+        Assert.True(await session.RefreshSyncMetadataAsync());
+        Assert.NotNull(session.Document.ServerDocumentId);
+        Assert.Equal(LocalSyncState.Synced, session.Document.SyncState);
+        Assert.Equal(saveState, session.SaveState);
+        Assert.Equal(typing ? "<p>Still typing</p>" : "", session.ContentFor(page));
+        Assert.Equal(page.PageId, session.Snapshot().Project!.LastPageId);
+        Assert.False(await session.RefreshSyncMetadataAsync());
+        await session.SaveAsync();
+        Assert.False(session.IsDirty);
+        Assert.Equal(typing ? "<p>Still typing</p>" : "", Text((await Store.GetAsync(doc.DocumentId))!));
+    }
+
+    [Theory]
+    [InlineData("scene", "Suggest scene details")]
+    [InlineData("consistency", "Check consistency")]
+    [InlineData("quality", "Analyze style &amp; quality")]
+    [InlineData("synopsis", "Improve synopsis field")]
+    public async Task OpenCoachEnablesAfterCloudSyncWithoutChangingPanel(string mode, string label)
+    {
+        var doc = await Store.CreateProjectAsync("Draft");
+        using var services = RenderServices();
+        var engine = services.GetRequiredService<DeviceSyncEngine>();
+        await using var renderer = new HtmlRenderer(services, services.GetRequiredService<ILoggerFactory>());
+        var output = await renderer.Dispatcher.InvokeAsync(() => renderer.RenderComponentAsync<LocalAiPanel>(
+            ParameterView.FromDictionary(new Dictionary<string, object?> { ["DocumentId"] = doc.DocumentId, ["Mode"] = mode })));
+        string before = await renderer.Dispatcher.InvokeAsync(output.ToHtmlString);
+        Assert.Contains("Enable cloud sync explicitly", before);
+        Assert.True(ButtonDisabled(before, label));
+
+        await renderer.Dispatcher.InvokeAsync(() => engine.EnableAsync(doc.DocumentId));
+        Assert.Equal("Synchronization complete.", engine.Message);
+        string after = await WaitForHtmlAsync(renderer, output.ToHtmlString, html => !html.Contains("Enable cloud sync explicitly"));
+        Assert.DoesNotContain("Enable cloud sync explicitly", after);
+        Assert.False(ButtonDisabled(after, label));
+    }
+
+    [Fact]
+    public async Task OpenWritingToolsEnableAfterCloudSyncWithoutReopeningDocument()
+    {
+        var doc = await Store.CreateProjectAsync("Draft");
+        using var services = RenderServices();
+        var engine = services.GetRequiredService<DeviceSyncEngine>();
+        await using var renderer = new HtmlRenderer(services, services.GetRequiredService<ILoggerFactory>());
+        var output = await renderer.Dispatcher.InvokeAsync(() => renderer.RenderComponentAsync<DocumentWorkspace>(
+            ParameterView.FromDictionary(new Dictionary<string, object?> { ["DocumentId"] = doc.DocumentId })));
+        string before = await renderer.Dispatcher.InvokeAsync(output.ToHtmlString);
+        Assert.Contains("AI commands need a synced cloud copy", before);
+        var markup = new AngleSharp.Html.Parser.HtmlParser().ParseDocument(before);
+        var statusBar = markup.QuerySelector(".editor-status-bar");
+        Assert.NotNull(statusBar);
+        Assert.Single(statusBar.QuerySelectorAll("button"), b => b.TextContent == "Enable cloud sync");
+        Assert.DoesNotContain(markup.QuerySelectorAll(".context-drawer button"), b => b.TextContent.Contains("Enable cloud sync"));
+        string[] labels = ["Rewrite selection", "Expand selection", "Shorten selection", "Summarize section", "Preview custom action", "Translate selection"];
+        foreach (string label in labels) Assert.True(ButtonDisabled(before, label));
+
+        await renderer.Dispatcher.InvokeAsync(() => engine.EnableAsync(doc.DocumentId));
+        string after = await WaitForHtmlAsync(renderer, output.ToHtmlString, html => !html.Contains("AI commands need a synced cloud copy"));
+        Assert.DoesNotContain("AI commands need a synced cloud copy", after);
+        Assert.DoesNotContain("Enable cloud sync</button>", after);
+        Assert.Contains("Cloud linked", new AngleSharp.Html.Parser.HtmlParser().ParseDocument(after).QuerySelector(".editor-status-bar")!.TextContent);
+        foreach (string label in labels) Assert.False(ButtonDisabled(after, label));
+    }
+
+    [Fact]
+    public async Task UnreachableLocalBackendReportsCauseAndEnrollmentCanBeRetried()
+    {
+        var document = await Store.CreateAsync("Keep writing");
+        var repository = new LocalDocumentRepository(Store);
+        var engine = Engine(repo: repository, backend: "http://localhost:5387/");
+        _api.OwnerFailure = new HttpRequestException("Internal transport details must not be displayed.");
+
+        await engine.EnableAsync(document.DocumentId);
+        Assert.False(engine.IsRunning);
+        Assert.Contains("Cannot reach the configured backend at http://localhost:5387", engine.LastError);
+        Assert.Contains("Start the local API", engine.Message);
+        Assert.DoesNotContain("Internal transport details", engine.Message);
+        Assert.Null((await Store.GetAsync(document.DocumentId))!.ServerDocumentId);
+        Assert.Empty(_api.Requests);
+
+        _api.OwnerFailure = null;
+        await engine.EnableAsync(document.DocumentId);
+        Assert.Null(engine.LastError);
+        Assert.Equal("Synchronization complete.", engine.Message);
+        Assert.NotNull((await Store.GetAsync(document.DocumentId))!.ServerDocumentId);
+        Assert.Single(_api.Requests);
+    }
+
+    [Fact]
+    public async Task CompactCloudSyncShowsFailureAndRetryInStatusBar()
+    {
+        var doc = await Store.CreateProjectAsync("Draft");
+        using var services = RenderServices();
+        var engine = services.GetRequiredService<DeviceSyncEngine>();
+        await using var renderer = new HtmlRenderer(services, services.GetRequiredService<ILoggerFactory>());
+        var output = await renderer.Dispatcher.InvokeAsync(() => renderer.RenderComponentAsync<DocumentSyncStatus>(
+            ParameterView.FromDictionary(new Dictionary<string, object?> { ["Document"] = doc, ["Compact"] = true })));
+        _api.OwnerFailure = new HttpRequestException("Hidden transport detail");
+        await renderer.Dispatcher.InvokeAsync(() => engine.EnableAsync(doc.DocumentId));
+
+        string html = await WaitForHtmlAsync(renderer, output.ToHtmlString, text => text.Contains("Sync failed"));
+        Assert.Contains("Cannot reach the configured backend", html);
+        Assert.Contains("role=\"alert\"", html);
+        Assert.False(ButtonDisabled(html, "Enable cloud sync"));
+        Assert.False(ButtonDisabled(html, "Retry cloud sync"));
+    }
+
+    private ServiceProvider RenderServices() => new ServiceCollection()
+        .AddLogging()
+        .AddWriterAppDeviceCore(new("Test", new Uri("https://test.invalid/")), _root)
+        .AddSingleton<IDeviceSyncApi>(_api)
+        .AddSingleton<IJSRuntime, NoJs>()
+        .AddSingleton<NavigationManager, TestNavigation>()
+        .BuildServiceProvider();
+
+    private static bool ButtonDisabled(string html, string label)
+    {
+        var match = Regex.Match(html, "<button(?<attributes>[^>]*)>" + Regex.Escape(label) + "</button>");
+        Assert.True(match.Success, "Missing button: " + label);
+        return match.Groups["attributes"].Value.Contains("disabled");
+    }
+    private static async Task<string> WaitForHtmlAsync(HtmlRenderer renderer, Func<string> read, Func<string, bool> ready)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (true)
+        {
+            string html = await renderer.Dispatcher.InvokeAsync(read);
+            if (ready(html)) return html;
+            await Task.Delay(10, timeout.Token);
+        }
+    }
+    private sealed class NoJs : IJSRuntime
+    {
+        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, object?[]? args) => throw new InvalidOperationException("Static render must not invoke JS.");
+        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, CancellationToken ct, object?[]? args) => InvokeAsync<TValue>(identifier, args);
+    }
+    private sealed class TestNavigation : NavigationManager
+    {
+        public TestNavigation() => Initialize("https://test.invalid/", "https://test.invalid/");
+        protected override void NavigateToCore(string uri, bool forceLoad) => throw new InvalidOperationException("Unexpected navigation.");
+    }
+
     [Fact]
     public async Task CancellationRetainsImmutableOperationForRestart()
     {
@@ -281,6 +544,7 @@ public sealed class DeviceSyncEngineTests : IDisposable
     private sealed class FakeApi : IDeviceSyncApi
     {
         public string Owner = "paid";
+        public Exception? OwnerFailure;
         public Dictionary<Guid, SyncSnapshot> Documents = [];
         private readonly Dictionary<Guid, SyncMutationResult> _receipts = [];
         public List<SyncMutation> Requests = [];
@@ -288,7 +552,7 @@ public sealed class DeviceSyncEngineTests : IDisposable
         public bool LoseAcknowledgments;
         public Func<Task>? BeforeResponse;
         private int _version;
-        public Task<string> GetOwnerAsync(CancellationToken ct) => Task.FromResult(Owner);
+        public Task<string> GetOwnerAsync(CancellationToken ct) => OwnerFailure is { } failure ? Task.FromException<string>(failure) : Task.FromResult(Owner);
         public Task<SyncChanges> ChangesAsync(string? cursor, CancellationToken ct) => Task.FromResult(new SyncChanges(Documents.Values.Select(x => x.State).ToArray(), "cursor", false));
         public Task<SyncSnapshot> DownloadAsync(Guid id, CancellationToken ct) => Task.FromResult(Documents[id]);
         public async Task<SyncMutationResult> MutateAsync(Guid id, SyncMutation request, CancellationToken ct)
@@ -303,8 +567,8 @@ public sealed class DeviceSyncEngineTests : IDisposable
                 bool trashed = request.Action == "trash" || current?.State.IsTrashed == true && request.Action != "restore";
                 var state = new SyncChange(id, (++_version).ToString(), request.Action == "delete", trashed);
                 var upload = request.Document;
-                var document = upload is null ? current?.Document : new SyncDocument(id, Guid.NewGuid(), upload.Title, upload.LanguageCode, "manuscript", false,
-                    DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, upload.Sections);
+                var document = upload is null ? current?.Document : new SyncDocument(id, upload.Project?.Id ?? current?.Document?.ProjectId ?? Guid.NewGuid(), upload.Title, upload.LanguageCode, "manuscript", false,
+                    DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, upload.Sections, upload.Project);
                 if (request.Action == "rename") document = document! with { Title = request.Title! };
                 Documents[id] = new(state, state.IsDeleted ? null : document);
                 result = new(request.OperationId, state); _receipts[request.OperationId] = result;

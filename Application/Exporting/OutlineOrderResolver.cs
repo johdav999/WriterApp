@@ -41,7 +41,7 @@ namespace WriterApp.Application.Exporting
 
             List<ProjectNodeOrderRow> nodes = await _dbContext.ProjectNodes
                 .AsNoTracking()
-                .Where(node => node.ProjectId == projectId)
+                .Where(node => node.ProjectId == projectId && (node.DocumentId == manuscriptDocumentId || node.DocumentId == null))
                 .Select(node => new ProjectNodeOrderRow(
                     node.Id,
                     node.ParentId,

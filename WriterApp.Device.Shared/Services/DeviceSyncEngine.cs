@@ -29,6 +29,7 @@ public sealed class DeviceSyncEngine : IDisposable
     private DeviceSyncConflictView[] _conflicts = [];
     public bool IsRunning { get; private set; }
     public string Message { get; private set; } = "Sign in to synchronize. Local writing is always available.";
+    public string? LastError { get; private set; }
     public event Action? Changed;
 
     public DeviceSyncEngine(FileLocalDocumentStore store, DeviceSyncJournal disk, IDeviceSyncApi api,
@@ -128,6 +129,7 @@ public sealed class DeviceSyncEngine : IDisposable
         _run = run;
         long generation = _account.Generation;
         bool signedInAtStart = _account.IsSignedIn;
+        LastError = null;
         try
         {
             if (!_network.IsOnline)
@@ -142,7 +144,7 @@ public sealed class DeviceSyncEngine : IDisposable
                 else Message = before is null ? "Offline. Pending changes are saved on this device." : "Connect and verify the account once before enabling cloud operations.";
                 return;
             }
-            IsRunning = true; Changed?.Invoke();
+            IsRunning = true; Message = "Checking cloud synchronization…"; Changed?.Invoke();
             string owner = await RetryNetworkAsync(() => _api.GetOwnerAsync(run.Token), run.Token);
             run.Token.ThrowIfCancellationRequested();
             using var lease = _disk.Acquire();
@@ -185,17 +187,28 @@ public sealed class DeviceSyncEngine : IDisposable
                 ? "Sync finished. Some documents need review; local writing is preserved." : "Synchronization complete.";
         }
         catch (OperationCanceledException) { Message = "Synchronization paused. Pending operations are preserved."; }
-        catch (DeviceSignInRequiredException) { Message = "Sign in again to synchronize. Local writing is preserved."; }
-        catch (DeviceIdentityUnavailableException) { Message = "Sign-in is unavailable. Retry when connected."; }
-        catch (DeviceSyncApiException error) { Message = error.Status switch { 401 => "Sign in again to synchronize.", 403 => "Cloud synchronization is unavailable for this account or plan. Local writing is preserved.", _ => "Synchronization stopped: " + error.Message }; }
-        catch (Exception error) when (error is HttpRequestException or IOException or UnauthorizedAccessException or JsonException or InvalidOperationException)
-        { Message = "Synchronization stopped safely. " + (error is InvalidOperationException ? error.Message : "Check connectivity and local storage, then retry. Files and queued operations are preserved."); }
+        catch (DeviceSignInRequiredException) { Failed("Sign in again to synchronize. Local writing is preserved."); }
+        catch (DeviceIdentityUnavailableException) { Failed("Sign-in is unavailable. Retry when connected."); }
+        catch (DeviceSyncApiException error) { Failed(error.Status switch { 401 => "Sign in again to synchronize.", 403 => "Cloud synchronization is unavailable for this account or plan. Local writing is preserved.", _ => "Synchronization stopped: " + error.Message }); }
+        catch (HttpRequestException)
+        {
+            var backend = new Uri(_backend);
+            Failed($"Cannot reach the configured backend at {backend.GetLeftPart(UriPartial.Authority)}. "
+                + (backend.IsLoopback ? "Start the local API, then retry cloud sync." : "Check your connection, then retry cloud sync.")
+                + " Local writing and queued operations are preserved.");
+        }
+        catch (IOException) { Failed("Cloud sync could not access local storage. Close other app instances and check storage access, then retry. Local writing and queued operations are preserved."); }
+        catch (UnauthorizedAccessException) { Failed("Cloud sync cannot write to local storage. Check folder permissions, then retry. Local writing and queued operations are preserved."); }
+        catch (JsonException) { Failed("Cloud sync data could not be read. Existing files and queued operations are preserved. Check the backend and local sync data before retrying."); }
+        catch (InvalidOperationException error) { Failed("Synchronization stopped safely. " + error.Message); }
         finally
         {
             if (_account.Generation != generation || (signedInAtStart && !_account.IsSignedIn)) { _journal = null; _key = null; Publish(); }
             IsRunning = false; _run = null; _gate.Release(); Changed?.Invoke();
         }
     }
+
+    private void Failed(string message) { LastError = message; Message = message; }
 
     private async Task UploadAsync(SyncEntry entry, CancellationToken ct)
     {
@@ -225,6 +238,8 @@ public sealed class DeviceSyncEngine : IDisposable
                 var result = await RetryNetworkAsync(() => _api.MutateAsync(entry.ServerId, pending.Request, ct), ct);
                 if (result.OperationId != pending.Request.OperationId || result.State.DocumentId != entry.ServerId) throw new JsonException("Mismatched sync acknowledgment.");
                 entry.Version = result.State.Version; entry.ServerTrashed = result.State.IsTrashed; entry.Deleted = result.State.IsDeleted;
+                entry.ProjectMetadataRevision = result.ProjectMetadataRevision;
+                entry.PrimaryDocumentId = result.PrimaryDocumentId;
                 // Trash/restore do not upload writing. Keep the old content base so newer content is sent afterward.
                 if (pending.Request.Action is "upload" or "rename")
                 { entry.BaseFingerprint = pending.Fingerprint; entry.BaseContentFingerprint = pending.ContentFingerprint; }
@@ -233,9 +248,33 @@ public sealed class DeviceSyncEngine : IDisposable
                 await UpdateMetadataAsync(entry, ct);
                 if (entry.Deleted) return;
             }
-            catch (DeviceSyncApiException error) when (error.Status == 409 && error.Code is "version_conflict" or "document_deleted" or "document_trashed")
+            catch (DeviceSyncApiException error) when (error.Status == 409 && error.Code is "version_conflict" or "project_metadata_conflict" or "document_deleted" or "document_trashed")
             {
                 var remote = await RetryNetworkAsync(() => _api.DownloadAsync(entry.ServerId, ct), ct);
+                // A sibling's shared metadata update can advance this document's version while
+                // leaving exactly the writing and metadata we already intended to upload.
+                if (error.Code == "version_conflict" && remote.Document is not null && !remote.State.IsTrashed && !remote.State.IsDeleted)
+                {
+                    var latest = await _store.GetAsync(entry.LocalId, ct);
+                    if (latest is not null)
+                    {
+                        var cloud = DeviceSyncMapping.Download(remote, entry.LocalId, latest, _time.GetUtcNow());
+                        if (DeviceSyncMapping.WritingFingerprint(cloud) == DeviceSyncMapping.WritingFingerprint(latest))
+                        {
+                            try
+                            {
+                                await _store.ApplySyncAsync(cloud, latest.LocalRevision, ct, projects: true);
+                                entry.Version = remote.State.Version; entry.Pending = null; entry.LastSynced = _time.GetUtcNow();
+                                entry.ProjectMetadataRevision = cloud.Project?.ServerMetadataRevision;
+                                entry.PrimaryDocumentId = cloud.Project?.ServerPrimaryDocumentId;
+                                entry.BaseFingerprint = DeviceSyncMapping.WritingFingerprint(cloud);
+                                entry.BaseContentFingerprint = DeviceSyncMapping.ContentFingerprint(cloud);
+                                await PersistAsync(ct); continue;
+                            }
+                            catch (LocalDocumentConflictException) { /* Preserve typing that changed during the comparison. */ }
+                        }
+                    }
+                }
                 await ConflictAsync(entry, remote, ct); return;
             }
             catch (DeviceSyncApiException error) when (!error.IsTransient && error.Status is not (401 or 403))
@@ -256,7 +295,9 @@ public sealed class DeviceSyncEngine : IDisposable
     private async Task ReceiveAsync(SyncEntry entry, SyncSnapshot remote, CancellationToken ct)
     {
         var local = await _store.GetAsync(entry.LocalId, ct);
-        if (local is not null && (DeviceSyncMapping.WritingFingerprint(local) != entry.BaseFingerprint
+        var downloaded = remote.Document is null ? null : DeviceSyncMapping.Download(remote, entry.LocalId, local, _time.GetUtcNow());
+        bool alreadyMatches = local is not null && downloaded is not null && DeviceSyncMapping.WritingFingerprint(local) == DeviceSyncMapping.WritingFingerprint(downloaded);
+        if (local is not null && (DeviceSyncMapping.RemovesProjectNodes(local, remote) || (!alreadyMatches && DeviceSyncMapping.WritingFingerprint(local) != entry.BaseFingerprint)
             || (local.DeletedAtUtc is not null) != entry.ServerTrashed || _repository.IsEditing(entry.LocalId)))
         { await ConflictAsync(entry, remote, ct); return; }
         if (remote.State.IsDeleted)
@@ -264,10 +305,12 @@ public sealed class DeviceSyncEngine : IDisposable
             entry.Version = remote.State.Version; entry.Deleted = true; entry.LastSynced = _time.GetUtcNow();
             await PersistAsync(ct); await UpdateMetadataAsync(entry, ct); return;
         }
-        var downloaded = DeviceSyncMapping.Download(remote, entry.LocalId, local, _time.GetUtcNow());
-        try { await _store.ApplySyncAsync(downloaded, local?.LocalRevision, ct); }
+        try { await _store.ApplySyncAsync(downloaded!, local?.LocalRevision, ct, projects: true); }
         catch (LocalDocumentConflictException) { await ConflictAsync(entry, remote, ct); return; }
+        downloaded = (await _store.GetAsync(entry.LocalId, ct))!;
         entry.Version = remote.State.Version; entry.ServerTrashed = remote.State.IsTrashed;
+        entry.ProjectMetadataRevision = downloaded.Project?.ServerMetadataRevision;
+        entry.PrimaryDocumentId = downloaded.Project?.ServerPrimaryDocumentId;
         entry.BaseFingerprint = DeviceSyncMapping.WritingFingerprint(downloaded);
         entry.BaseContentFingerprint = DeviceSyncMapping.ContentFingerprint(downloaded); entry.LastSynced = _time.GetUtcNow();
         await PersistAsync(ct);
@@ -284,7 +327,7 @@ public sealed class DeviceSyncEngine : IDisposable
         var conflict = entry.Conflict!;
         if (conflict.Remote.Document is null || await _store.GetAsync(conflict.RemoteCopyId, ct) is not null) return;
         var cloud = DeviceSyncMapping.Download(conflict.Remote, conflict.RemoteCopyId, null, _time.GetUtcNow());
-        await _store.ApplySyncAsync(DeviceSyncMapping.Copy(cloud, conflict.RemoteCopyId, " (cloud conflict copy)"), null, ct);
+        await _store.ApplySyncAsync(DeviceSyncMapping.Copy(cloud, conflict.RemoteCopyId, " (cloud conflict copy)"), null, ct, projects: true);
     }
     public Task ResolveAsync(Guid id, bool keepLocal, CancellationToken ct = default) => ExecuteAsync(async token =>
     {
@@ -297,15 +340,27 @@ public sealed class DeviceSyncEngine : IDisposable
         conflict = conflict with { LocalCopyId = Guid.NewGuid() };
         entry.Conflict = conflict;
         await PersistAsync(token);
-        await _store.ApplySyncAsync(DeviceSyncMapping.Copy(local, conflict.LocalCopyId, " (local conflict copy)"), null, token);
+        await _store.ApplySyncAsync(DeviceSyncMapping.Copy(local, conflict.LocalCopyId, " (local conflict copy)"), null, token, projects: true);
         if (!keepLocal && conflict.Remote.Document is not null)
         {
             var downloaded = DeviceSyncMapping.Download(conflict.Remote, id, local, _time.GetUtcNow());
-            await _store.ApplySyncAsync(downloaded, local.LocalRevision, token);
+            await _store.ApplySyncAsync(downloaded, local.LocalRevision, token, projects: true, overwriteProjectMetadata: true);
+            downloaded = (await _store.GetAsync(id, token))!;
+            entry.ProjectMetadataRevision = downloaded.Project?.ServerMetadataRevision;
+            entry.PrimaryDocumentId = downloaded.Project?.ServerPrimaryDocumentId;
             entry.BaseFingerprint = DeviceSyncMapping.WritingFingerprint(downloaded);
             entry.BaseContentFingerprint = DeviceSyncMapping.ContentFingerprint(downloaded);
         }
-        else entry.BaseFingerprint = null;
+        else
+        {
+            entry.BaseFingerprint = null;
+            if (keepLocal && conflict.Remote.Document?.Project is { Version: >= 3 } project)
+            {
+                await _store.RebaseProjectSyncRevisionAsync(local, project.MetadataRevision, token);
+                entry.ProjectMetadataRevision = project.MetadataRevision;
+                entry.PrimaryDocumentId = local.Project?.ServerPrimaryDocumentId;
+            }
+        }
         entry.Version = conflict.Remote.State.Version; entry.ServerTrashed = conflict.Remote.State.IsTrashed;
         entry.Deleted = conflict.Remote.State.IsDeleted; entry.DeleteRequested = false; entry.Conflict = null;
         await PersistAsync(token); await UpdateMetadataAsync(entry, token);
@@ -315,10 +370,16 @@ public sealed class DeviceSyncEngine : IDisposable
     {
         var local = await _store.GetAsync(entry.LocalId, ct);
         if (local is null) return;
-        var updated = local with { ServerDocumentId = entry.ServerId, ServerVersion = entry.Version, LastSyncedAtUtc = entry.LastSynced,
+        var updated = local with { ServerDocumentId = entry.ServerId,
+            ServerProjectId = local.Project is { } localProject ? localProject.ServerProjectId ?? localProject.ProjectId : local.ServerProjectId,
+            Project = local.Project is { } p ? p with { ServerProjectId = p.ServerProjectId ?? p.ProjectId,
+                ServerMetadataRevision = entry.ProjectMetadataRevision ?? p.ServerMetadataRevision,
+                ServerPrimaryDocumentId = entry.PrimaryDocumentId ?? p.ServerPrimaryDocumentId,
+                Nodes = p.Nodes.Select(n => n with { ServerNodeId = n.ServerNodeId ?? n.NodeId, Annotations = n.Annotations.Select(a => a with { ServerId = a.ServerId ?? a.LocalId }).ToArray() }).ToArray() } : null,
+            ServerVersion = entry.Version, LastSyncedAtUtc = entry.LastSynced,
             SyncState = entry.Conflict is not null ? LocalSyncState.Conflict : DeviceSyncMapping.WritingFingerprint(local) == entry.BaseFingerprint
                 && (local.DeletedAtUtc is not null) == entry.ServerTrashed ? LocalSyncState.Synced : LocalSyncState.PendingUpload };
-        try { await _store.ApplySyncAsync(updated, local.LocalRevision, ct); }
+        try { await _store.ApplySyncAsync(updated, local.LocalRevision, ct, projects: true); }
         catch (LocalDocumentConflictException) { /* A newer local save wins; next scan sees it. */ }
     }
     private async Task PersistAsync(CancellationToken ct)

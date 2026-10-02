@@ -6,19 +6,43 @@ on:
     paths:
       - "WriterApp.Desktop/**"
       - "WriterApp.Device.Shared/**"
+      - "WriterApp.UI.Shared/**"
+      - "WriterApp.Client/src/**"
+      - "WriterApp.Client/tests/**"
+      - "WriterApp.Client/vite*.ts"
+      - "WriterApp.Client/package*.json"
       - "WriterApp.Shared/**"
+      - "WriterApp.Publishing/**"
+      - "Application/Exporting/**"
+      - "Application/Importing/**"
+      - "Application/State/**"
+      - "Domain/Documents/**"
+      - "Data/Exporting/ExportTemplate.cs"
       - "scripts/windows/**"
       - ".github/workflows/desktop-windows.yml"
       - "global.json"
+      - "Directory.Build.props"
   pull_request:
     branches: [main]
     paths:
       - "WriterApp.Desktop/**"
       - "WriterApp.Device.Shared/**"
+      - "WriterApp.UI.Shared/**"
+      - "WriterApp.Client/src/**"
+      - "WriterApp.Client/tests/**"
+      - "WriterApp.Client/vite*.ts"
+      - "WriterApp.Client/package*.json"
       - "WriterApp.Shared/**"
+      - "WriterApp.Publishing/**"
+      - "Application/Exporting/**"
+      - "Application/Importing/**"
+      - "Application/State/**"
+      - "Domain/Documents/**"
+      - "Data/Exporting/ExportTemplate.cs"
       - "scripts/windows/**"
       - ".github/workflows/desktop-windows.yml"
       - "global.json"
+      - "Directory.Build.props"
 
 permissions:
   contents: read
@@ -37,6 +61,18 @@ jobs:
 
       - name: Install Windows MAUI workload
         run: dotnet workload install maui-windows
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: WriterApp.Client/package-lock.json
+
+      - name: Build bundled editor assets
+        working-directory: WriterApp.Client
+        run: |
+          npm ci
+          npm run build
 
       - name: Restore desktop host
         run: dotnet restore WriterApp.Desktop/WriterApp.Desktop.csproj -p:Configuration=Release

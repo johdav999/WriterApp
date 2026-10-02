@@ -8,6 +8,48 @@ namespace WriterApp.Tests;
 public sealed class DeviceAuthenticationTests
 {
     [Fact]
+    public void BundledSettingsWorkWithoutEnvironmentVariablesAndCanBeOverridden()
+    {
+        var defaults = new DeviceAuthOptions
+        {
+            TenantId = "a000a187-b940-41c1-bebe-f30c4a351099",
+            ClientId = "323361e9-8562-43aa-a558-6b4d3cbbb6a2",
+            Authority = "https://prosaapp.ciamlogin.com/",
+            Scopes = ["api://c0ecc793-e620-416c-a072-4e9eca30f048/access_as_user"]
+        };
+        var configured = DeviceAuthOptions.FromSettings(defaults, _ => null);
+        Assert.True(configured.IsConfigured);
+        Assert.Equal(defaults.ClientId, configured.ClientId);
+        Assert.Equal(defaults.Scopes, configured.Scopes);
+        Assert.NotSame(defaults.Scopes, configured.Scopes);
+        var overridden = DeviceAuthOptions.FromSettings(defaults, name => name switch
+        {
+            "WRITERAPP_AUTH_CLIENT_ID" => "11111111-1111-1111-1111-111111111111",
+            "WRITERAPP_AUTH_SCOPES" => " api://other-api/access_as_user  ",
+            _ => null
+        });
+        Assert.True(overridden.IsConfigured);
+        Assert.NotEqual(defaults.ClientId, overridden.ClientId);
+        Assert.Equal(["api://other-api/access_as_user"], overridden.Scopes);
+        Assert.False(DeviceAuthOptions.FromSettings(defaults, name => name == "WRITERAPP_AUTH_CLIENT_ID" ? "" : null).IsConfigured);
+        Assert.False(DeviceAuthOptions.FromSettings(defaults, name => name == "WRITERAPP_AUTH_REDIRECT_URI" ? "https://attacker.example" : null).IsConfigured);
+    }
+
+    [Fact]
+    public async Task RejectedSessionClearsDisplayNameAndInteractiveSignInRestoresIt()
+    {
+        var account = new DeviceAccountService(new FakeIdentity());
+        await account.SignInAsync();
+        Assert.NotNull(account.DisplayName);
+        account.RejectSession(account.Generation);
+        Assert.False(account.IsSignedIn);
+        Assert.Null(account.DisplayName);
+        await account.SignInAsync();
+        Assert.True(account.IsSignedIn);
+        Assert.Equal("Writer", account.DisplayName);
+    }
+
+    [Fact]
     public async Task RestoreIsSilentAndSignOutClearsCredentialsWithoutDeletingDocuments()
     {
         string root = Path.Combine(Path.GetTempPath(), "WriterApp.AuthTests", Guid.NewGuid().ToString("N"));

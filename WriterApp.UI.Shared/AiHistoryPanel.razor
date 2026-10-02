@@ -1,0 +1,75 @@
+@namespace WriterApp.UI.Shared
+<section class="ai-history" aria-label="AI operation history" aria-busy="@Busy.ToString().ToLowerInvariant()">
+    <header class="history-header">
+        <div><h3>AI history <span class="history-count">@Entries.Count</span></h3><p>Review results and manage changes to your writing and planning.</p></div>
+        @if (Refresh.HasDelegate) { <button type="button" class="history-button" disabled="@Busy" @onclick="() => Refresh.InvokeAsync()"><Icon Name="refresh" />Refresh</button> }
+    </header>
+    @if (UndoLatest.HasDelegate || RedoLatest.HasDelegate)
+    {
+        <div class="history-actions">
+            <button type="button" class="history-button" disabled="@(Busy || !CanUndoLatest)" @onclick="() => UndoLatest.InvokeAsync()"><Icon Name="undo" />Undo AI change</button>
+            <button type="button" class="history-button" disabled="@(Busy || !CanRedoLatest)" @onclick="() => RedoLatest.InvokeAsync()"><Icon Name="redo" />Redo AI change</button>
+        </div>
+    }
+    @if (Entries.Count == 0)
+    {
+        <div class="history-empty"><Icon Name="history" /><strong>No AI activity yet</strong><p>Your reviewed results and applied changes will appear here.</p></div>
+    }
+    else
+    {
+        <div class="history-list">
+        @foreach (var item in Entries)
+        {
+            <article class="history-card" @key="item.Id">
+                <details>
+                    <summary>
+                        <span class="history-item-heading"><strong>@ActionLabel(item.Action)</strong><span class="history-target">@TargetLabel(item.Target)</span></span>
+                        <span class="history-item-meta"><span class="history-status @StatusClass(item.Status)">@StatusLabel(item.Status)</span><time datetime="@item.CreatedAt.ToString("O")" title="@item.CreatedAt.ToLocalTime().ToString("f")">@item.CreatedAt.ToLocalTime().ToString("d MMM · HH:mm")</time></span>
+                        <span class="history-chevron" aria-hidden="true">⌄</span>
+                    </summary>
+                    <div class="history-detail">
+                        <AiResultPreview ActionKey="@item.Action" Original="@item.Original" Proposed="@item.Proposed" />
+                        @if (!string.IsNullOrWhiteSpace(item.UnavailableReason)) { <p class="history-note">@item.UnavailableReason</p> }
+                        @if (Recover.HasDelegate)
+                        {
+                            <div class="history-recovery"><span>Create a separate copy of the original writing and planning.</span><button type="button" class="history-button" disabled="@Busy" @onclick="() => Recover.InvokeAsync(item.Id)">Recover a copy</button></div>
+                        }
+                    </div>
+                </details>
+                @if (Undo.HasDelegate || Redo.HasDelegate)
+                {
+                    <div class="history-item-actions">
+                        @if (item.Status is "Applied" or "Undoing") { <button type="button" class="history-button" disabled="@(Busy || !item.CanUndo)" title="@item.UnavailableReason" @onclick="() => Undo.InvokeAsync(item.Id)"><Icon Name="undo" />Undo change</button> }
+                        else if (item.Status is "Undone" or "Redoing") { <button type="button" class="history-button" disabled="@(Busy || !item.CanRedo)" title="@item.UnavailableReason" @onclick="() => Redo.InvokeAsync(item.Id)"><Icon Name="redo" />Redo change</button> }
+                        <span class="history-note">@(item.Status == "Reviewed" ? "Reviewed only · no changes applied" : item.Status == "Applying" ? "Apply interrupted · review recovery details" : item.CanUndo ? "Restore the affected writing or fields" : item.CanRedo ? "Reapply this saved change" : item.UnavailableReason)</span>
+                    </div>
+                }
+            </article>
+        }
+        </div>
+    }
+    <p class="history-footer">AI history is saved separately from editor undo. Recovery copies keep your current document intact.</p>
+</section>
+@code {
+    [Parameter] public IReadOnlyList<AiHistoryItem> Entries { get; set; } = [];
+    [Parameter] public EventCallback<Guid> Recover { get; set; }
+    [Parameter] public EventCallback<Guid> Undo { get; set; }
+    [Parameter] public EventCallback<Guid> Redo { get; set; }
+    [Parameter] public EventCallback Refresh { get; set; }
+    [Parameter] public EventCallback UndoLatest { get; set; }
+    [Parameter] public EventCallback RedoLatest { get; set; }
+    [Parameter] public bool CanUndoLatest { get; set; }
+    [Parameter] public bool CanRedoLatest { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    private static string ActionLabel(string action) => action switch {
+        "scene.suggest" => "Suggest scene details", "scene.refine" => "Refine scene details",
+        "synopsis.story_coach" => "Improve synopsis", "storyboard.check-subplot-continuity" => "Check subplot continuity",
+        "continuity.check_section" => "Check scene consistency", "translate.selection" => "Translate selection",
+        "custom_transform" => "Custom writing prompt", "rewrite.selection" => "Rewrite selection",
+        "expand.selection" => "Expand selection", "shorten.selection" or "tighten.selection" => "Shorten selection",
+        "summarize.section" => "Summarize scene", "style.quality" => "Improve style & quality",
+        _ => System.Globalization.CultureInfo.CurrentCulture.TextInfo.ToTitleCase(action.Replace('.', ' ').Replace('_', ' ').Replace('-', ' ')) };
+    private static string TargetLabel(string target) => target.Replace("SynopsisField:", "Synopsis · ").Replace("SceneCard:", "Scene details ").Replace("Analysis:", "Analysis ").Replace('_', ' ').Trim();
+    private static string StatusLabel(string status) => status switch { "Reviewed" => "Reviewed", "Undone" => "Undone", "Undoing" => "Finish undo", "Redoing" => "Finish redo", "Applying" => "Needs review", _ => status };
+    private static string StatusClass(string status) => status switch { "Applied" => "is-applied", "Undone" => "is-undone", "Applying" or "Undoing" or "Redoing" => "is-pending", _ => "" };
+}

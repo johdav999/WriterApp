@@ -1,9 +1,15 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Device editor verification</title>
-<link rel="stylesheet" href="../../WriterApp.Device.Shared/wwwroot/editor/device-editor.css"></head>
-<body><h1>Device editor verification</h1><ol id="results"></ol><div id="editor" class="device-tiptap"></div>
+<link rel="stylesheet" href="../../WriterApp.UI.Shared/wwwroot/design-tokens.css">
+<link rel="stylesheet" href="../../WriterApp.Device.Shared/wwwroot/editor/device-editor.css">
+<link rel="stylesheet" href="../../WriterApp.Device.Shared/wwwroot/app.css">
+<link rel="stylesheet" href="../../WriterApp.UI.Shared/wwwroot/editor.css">
+<!-- The shared ui.css entry point applies this box model in both hosts. -->
+<style>* { box-sizing: border-box; }</style></head>
+<body><h1>Device editor verification</h1><ol id="results"></ol><div class="prosa-editor"><div id="editor" class="device-tiptap"></div></div>
 <script type="module">
 import { create } from '../../WriterApp.Device.Shared/wwwroot/editor/device-editor.js';
+import '../wwwroot/js/tiptap-editor.bundle.js';
 const results = document.querySelector('#results');
 const host = document.querySelector('#editor');
 const calls = [];
@@ -67,7 +73,7 @@ await test('Windows formatting shortcuts, selection preservation, and save lock'
 });
 await test('unsupported clipboard HTML is inserted as plain text', async () => {
  editor = create(host, '<p></p>', 'Html', receiver);
- const transfer = new DataTransfer(); transfer.setData('text/html', '<table><tr><td>Safe text</td></tr></table>'); transfer.setData('text/plain', 'Safe text');
+ const transfer = new DataTransfer(); transfer.setData('text/html', '<p style="color:red">Safe text</p>'); transfer.setData('text/plain', 'Safe text');
  host.querySelector('.tiptap').dispatchEvent(new ClipboardEvent('paste', { clipboardData:transfer, bubbles:true, cancelable:true }));
  assert(editor.snapshot().html.includes('Safe text') && !editor.snapshot().html.includes('<table'), 'Plain text fallback failed');
  editor.destroy();
@@ -94,6 +100,35 @@ await test('AI selection mapping, explicit apply, and editor undo', async () => 
  click('Redo'); assert(editor.snapshot().html.includes('new text'), 'Redo failed');
  editor.destroy();
 });
+await test('style revision uses the current selection instead of an earlier collapsed selection', async () => {
+ editor = create(host, '<p>Alpha beta</p>', 'Html', receiver);
+ const node = host.querySelector('.tiptap p').firstChild;
+ const range = document.createRange(); range.setStart(node, 6); range.setEnd(node, 10);
+ const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+ host.querySelector('.tiptap').focus(); await settle();
+ assert(editor.captureAi(false, true).selectedText === 'beta', 'Current style selection was lost');
+ selection.collapseToEnd(); await settle();
+ assert(editor.captureAi(false, true).selectedText === '', 'Style reused an earlier collapsed selection');
+ const page = editor.captureAi(true);
+ assert(page.selectedText === 'Alpha beta' && page.selectionStart === 0, 'Style page fallback omitted writing');
+ editor.destroy();
+});
+await test('style revision captures the whole page and applies with undo and stale checks', async () => {
+ editor = create(host, '<p>Alpha beta</p><p>Second paragraph</p>', 'Html', receiver);
+ const source = editor.captureAi(true);
+ assert(source.selectedText === source.plainText && source.plainText === 'Alpha beta\nSecond paragraph', 'Full page capture omitted writing');
+ assert(source.selectionStart === 0 && source.selectionEnd === source.plainText.length && source.from === 0, 'Whole page offsets mismatch');
+ assert(editor.snapshot().html === source.html, 'Preparing style revision changed writing');
+ const applied = editor.applyAi(source.html, source.from, source.to, source.selectedText, 'Clearer first paragraph.\nBetter second paragraph.', 'replace');
+ assert(applied.html === '<p>Clearer first paragraph.</p><p>Better second paragraph.</p>', 'Style revision was not applied to the whole page');
+ let rejected = false;
+ try { editor.applyAi(source.html, source.from, source.to, source.selectedText, 'Stale revision', 'replace'); } catch { rejected = true; }
+ assert(rejected && editor.snapshot().html === applied.html, 'Stale style revision overwrote writing');
+ click('Undo'); assert(editor.snapshot().html === source.html, 'Undo did not restore original page');
+ click('Redo'); assert(editor.snapshot().html === applied.html, 'Redo did not restore style revision');
+ assert(editor.restoreAi(applied.html, source.html).html === source.html, 'Saved original could not be restored');
+ editor.destroy();
+});
 await test('AI answers remain inert text and stale proposals cannot overwrite edits', async () => {
  editor = create(host, '<p>Safe source</p>', 'Html', receiver);
  const source = editor.captureAi();
@@ -117,13 +152,309 @@ await test('AI restore checks the applied version before replacing it', async ()
  editor.destroy();
 });
 await test('unsupported and active content is refused without editing', async () => {
- for (const content of ['<table><tr><td>Keep</td></tr></table>', '<p><img src="https://example.com/x"></p>', '<script>alert(1)<\/script>', '<p style="text-align:center">Preserve</p>']) {
+ for (const content of ['<table onclick="bad()"><tr><td>Keep</td></tr></table>', '<p><img src="javascript:bad()"></p>', '<script>alert(1)<\/script>', '<p style="text-align:center;color:red">Preserve</p>']) {
   let rejected = false; try { const unexpected = create(host, content, 'Html', receiver); unexpected.destroy(); } catch { rejected = true; }
   assert(rejected, 'Unsupported content accepted: ' + content);
  }
+});
+await test('shared Razor toolbar adapter reports state and preserves editor commands and save locks', async () => {
+ calls.length = 0;
+ editor = create(host, '<p>Räksmörgås 日本語</p>', 'Html', receiver, true);
+ await settle();
+ assert(host.querySelector('.device-editor-toolbar').hidden, 'Legacy toolbar is still visible');
+ assert(calls.some(c => c.name === 'OnFormattingChanged' && c.args[0].canBold), 'No initial formatting state');
+ assert(!calls.some(c => c.name === 'OnContentChanged'), 'Initialization changed writing');
+ selectText(); await settle(); editor.command('bold');
+ assert(editor.snapshot().html.includes('<strong>'), 'Shared toolbar command did not format selection');
+ assert(calls.some(c => c.name === 'OnFormattingChanged' && c.args[0].isBold), 'Active format not reported');
+ editor.command('heading', 2); assert(editor.snapshot().html.includes('<h2>'), 'Heading command missing');
+ editor.command('undo'); assert(!editor.snapshot().html.includes('<h2>'), 'Undo command missing');
+ const beforeLock = editor.snapshot().html;
+ editor.setEditable(false); editor.command('italic');
+ assert(editor.snapshot().html === beforeLock, 'Locked editor accepted formatting');
+ const lastState = calls.filter(c => c.name === 'OnFormattingChanged').at(-1);
+ assert(!lastState.args[0].canBold && !lastState.args[1], 'Locked state was not reflected in toolbar');
+ editor.setEditable(true); editor.command('italic');
+ assert(editor.snapshot().html.includes('<em>'), 'Editor did not resume after unlock');
+ editor.destroy();
+});
+await test('compatibility: headings 1–6, nested lists, marks and attributes round-trip', async () => {
+ const html = '<h1>One</h1><h2>Two</h2><h3>Three</h3><h4>Four</h4><h5>Five</h5><h6>六</h6><p>Räksmörgås 日本語 😀 <strong>Bold</strong><em>Italic</em><u>Underline</u><s>Strike</s><code>Code</code></p><ol start="7"><li><p>Seven</p><ul><li><p>Nested</p></li></ul></li></ol><pre><code class="language-csharp">a &lt; b</code></pre><p><a href="https://example.com" target="_blank" rel="noopener noreferrer nofollow" class="reference">Link</a></p>';
+ calls.length = 0;
+ editor = create(host, html, 'Html', receiver, true); await settle();
+ assert(!calls.some(c => c.name === 'OnContentChanged'), 'No-op open emitted writing');
+ const saved = editor.snapshot().html;
+ for (const token of ['<h6>六</h6>', '<u>Underline</u>', '<s>Strike</s>', 'start="7"', 'language-csharp', 'class="reference"', 'Räksmörgås 日本語 😀']) assert(saved.includes(token), 'Lost ' + token);
+ editor.destroy(); editor = create(host, saved, 'Html', receiver, true);
+ assert(editor.snapshot().html === saved, 'Reopen changed supported HTML');
+ editor.destroy(); editor = create(host, '<p>Heading controls</p>', 'Html', receiver, true);
+ for (const level of [1,2,3,4,5,6]) { editor.command('heading', level); assert(editor.snapshot().html.includes(`<h${level}>`), 'Heading command failed'); }
+ editor.destroy();
+});
+await test('compatibility: rich source and invalid legacy data are refused before mutations', async () => {
+ const fixtures = [
+ ['<table onclick="bad()"><tbody><tr><td><p>Cell</p></td></tr></tbody></table>', 'Html'],
+ ['<p><img src="javascript:bad()"></p>', 'Html'],
+ ['<p style="text-align:center;color:red">Aligned</p>', 'Html'],
+ ['<p data-future="preserve">Unknown</p>', 'Html'],
+ ['<p><a href="javascript:bad()">Unsafe</a></p>', 'Html'],
+ ['<ol start="bad"><li><p>List</p></li></ol>', 'Html'],
+ ['<pre><strong>Lost mark</strong></pre>', 'Html'],
+ ['{"type":"doc","content":[{"type":"heading","attrs":{"level":7}}]}', 'LegacyJson'],
+ ['{"type":"doc","content":[{"type":"text","text":"invalid nesting"}]}', 'LegacyJson'],
+ ['{"type":"doc","content":[{"type":"paragraph","attrs":{"textAlign":"invalid"}}]}', 'LegacyJson']
+ ];
+ for (const [source, format] of fixtures) {
+   calls.length = 0; let refused = false;
+   try { const candidate = create(host, source, format, receiver); candidate.destroy(); } catch { refused = true; }
+   assert(refused, 'Accepted unsupported source: ' + source);
+   assert(!calls.some(c => c.name === 'OnContentChanged'), 'Unsupported source emitted replacement');
+ }
+});
+await test('web → device → web common formatting and rich web content stay intact', async () => {
+ const webHost = document.createElement('div'); webHost.id = 'web-compatibility'; document.body.append(webHost);
+ const source = '<h4>Four</h4><h5>Five</h5><h6>六</h6><p>Räksmörgås 日本語 <strong>Bold</strong><u>Underline</u></p><ol start="7"><li><p>Seven</p></li></ol>';
+ let web = window.tiptapEditor.create(webHost.id, source, receiver); await settle();
+ const fromWeb = window.tiptapEditor.getContent(web);
+ window.tiptapEditor.destroy(web);
+ calls.length = 0; editor = create(host, fromWeb, 'Html', receiver); await settle();
+ assert(!calls.some(c => c.name === 'OnContentChanged'), 'Opening web content created a device edit');
+ const fromDevice = editor.snapshot().html; editor.destroy();
+ web = window.tiptapEditor.create(webHost.id, fromDevice, receiver); await settle();
+ const backToWeb = window.tiptapEditor.getContent(web);
+ for (const token of ['<h4>Four</h4>', '<h5>Five</h5>', '<h6>六</h6>', 'Räksmörgås 日本語', '<strong>Bold</strong>', '<u>Underline</u>', 'start="7"'])
+   assert(backToWeb.includes(token), 'Round trip lost ' + token);
+ window.tiptapEditor.destroy(web);
+ web = window.tiptapEditor.create(webHost.id, '<p style="text-align:center">Aligned</p><table><tbody><tr><td><p>Cell</p></td></tr></tbody></table><img src="/compatibility-image.png" alt="Fixture">', receiver);
+ const rich = window.tiptapEditor.getContent(web);
+ assert(rich.includes('<table') && rich.includes('<img') && rich.includes('text-align: center'), 'Web advanced schema regressed');
+ editor = create(host, rich, 'Html', receiver);
+ const deviceRich = editor.snapshot().html;
+ for (const token of ['<table', '<img', 'text-align: center', 'alt="Fixture"']) assert(deviceRich.includes(token), 'Rich device round trip lost ' + token);
+ editor.destroy();
+ assert(window.tiptapEditor.getContent(web) === rich, 'Device check mutated web source');
+ window.tiptapEditor.destroy(web); webHost.remove();
+});
+await test('local search navigation selects across marks without editing or saving', async () => {
+ calls.length = 0;
+ editor = create(host, '<p>First page</p><p>Find <strong>ca</strong>fé 日本語 and 😀 here</p>', 'Html', receiver, true);
+ await settle(); calls.length = 0;
+ const before = editor.snapshot();
+ assert(editor.navigateToText('café 日本語'), 'Cross-mark Unicode match was not found');
+ const capture = editor.captureAi();
+ assert(capture.selectedText === 'café 日本語', 'Wrong match was selected');
+ assert(editor.snapshot().html === before.html && editor.snapshot().version === before.version, 'Navigation changed stored content/version');
+ assert(!calls.some(c => c.name === 'OnContentChanged'), 'Navigation requested a save');
+ assert(!editor.navigateToText('obsolete result'), 'Missing match accepted');
+ assert(editor.captureAi().selectedText === capture.selectedText, 'Failed lookup changed selection');
+ editor.destroy();
+});
+await test('annotation markup spans marks and Unicode, opens comments, and stays out of saved HTML', async () => {
+ editor = create(host, '<p>Before <strong>café</strong> 日本語 😀 after</p>', 'Html', receiver, true);
+ await settle(); calls.length = 0;
+ const before = editor.snapshot();
+ editor.setAnnotations([{ id:'comment-id', quote:'café 日本語 😀', kind:'comment', status:'open', content:'Review this passage' }]);
+ const spans = [...host.querySelectorAll('[data-annotation-id="comment-id"]')];
+ assert(spans.length && spans.map(span => span.textContent).join('') === 'café 日本語 😀', 'Incorrect quoted markup across marks');
+ assert(spans.every(span => span.classList.contains('wa-annotation-comment')), 'Client comment style missing');
+ assert(getComputedStyle(spans[0]).backgroundColor !== 'rgba(0, 0, 0, 0)', 'Comment highlight is invisible');
+ spans[0].click();
+ assert(calls.some(call => call.name === 'OnAnnotationClicked' && call.args[0] === 'comment-id'), 'Highlight did not open its comment');
+ assert(editor.navigateToAnnotation('comment-id'), 'Annotation navigation failed');
+ assert(editor.selectedText() === 'café 日本語 😀', 'Annotation selected the wrong passage');
+ assert(JSON.stringify(editor.snapshot()) === JSON.stringify(before), 'Markup altered saved writing or version');
+ assert(!calls.some(call => call.name === 'OnContentChanged'), 'Markup requested a save');
+ editor.setAnnotations([{ id:'comment-id', quote:'café 日本語 😀', kind:'todo', status:'resolved', content:'Done' }]);
+ assert(host.querySelector('.wa-annotation-todo.wa-annotation-resolved'), 'Resolved task style did not update');
+ editor.setAnnotations([]); assert(!host.querySelector('.wa-annotation'), 'Old markup remained');
+ editor.destroy();
+});
+await test('annotation selection remains available while typing in an external comment box', async () => {
+ editor = create(host, '<p>Before <strong>selected passage</strong> after</p>', 'Html', receiver, true);
+ const before = editor.snapshot();
+ assert(editor.navigateToText('selected passage'), 'Could not select writing');
+ await settle();
+ const comment = document.createElement('textarea'); document.body.append(comment);
+ try {
+   comment.focus(); comment.value = 'Review this passage'; await settle();
+   assert(editor.selectedText() === 'selected passage', 'Panel focus lost the selected quote');
+   editor.setAnnotations([{ id:'new-comment', quote:editor.selectedText(), kind:'comment', status:'open', content:comment.value }]);
+   assert(host.querySelector('.wa-annotation')?.textContent === 'selected passage', 'New comment did not mark the selection');
+   assert(editor.navigateToAnnotation('new-comment'), 'Comment link did not navigate');
+   await settle();
+   assert(document.activeElement === host.querySelector('.tiptap'), 'Navigation did not focus the editor');
+   assert(window.getSelection().toString() === 'selected passage', 'Navigation did not select the annotated passage');
+   assert(JSON.stringify(editor.snapshot()) === JSON.stringify(before), 'Annotation flow changed writing');
+ } finally { comment.remove(); editor.destroy(); }
+});
+await test('annotation markup revalidates quotes after typing and undo without entering history', async () => {
+ editor = create(host, '<p>Before unique quote after</p>', 'Html', receiver, true);
+ editor.setAnnotations([{ id:'edit-id', quote:'unique quote', kind:'comment', status:'open', content:'Check' }]);
+ assert(editor.navigateToText('Before'), 'Prefix not found');
+ const paste = text => {
+   const transfer = new DataTransfer(); transfer.setData('text/plain', text);
+   host.querySelector('.tiptap').dispatchEvent(new ClipboardEvent('paste', { clipboardData:transfer, bubbles:true, cancelable:true }));
+ };
+ paste('A longer prefix');
+ assert(host.querySelector('.wa-annotation')?.textContent === 'unique quote', 'Typing before quote moved the highlight incorrectly');
+ assert(editor.navigateToAnnotation('edit-id'), 'Moved quote could not be selected');
+ paste('changed passage');
+ assert(!host.querySelector('.wa-annotation'), 'Changed quote stayed marked');
+ assert(!editor.navigateToAnnotation('edit-id'), 'Missing quote navigation succeeded');
+ editor.command('undo');
+ assert(host.querySelector('.wa-annotation')?.textContent === 'unique quote', 'Undo did not restore quoted markup');
+ assert(!editor.snapshot().html.includes('data-annotation'), 'Highlight leaked into HTML');
+ editor.destroy();
+});
+await test('annotations never guess between duplicate quotes or missing text', async () => {
+ editor = create(host, '<p>Repeat Repeat</p><p>Unique</p>', 'Html', receiver, true);
+ editor.setAnnotations([
+  { id:'duplicate', quote:'Repeat', kind:'comment', status:'open', content:'Ambiguous' },
+  { id:'missing', quote:'Gone', kind:'todo', status:'open', content:'Missing' },
+  { id:'scene', quote:'', kind:'comment', status:'open', content:'Scene note' },
+  { id:'valid', quote:'Unique', kind:'highlight', status:'open', content:'Valid' }
+ ]);
+ assert(host.querySelectorAll('.wa-annotation').length === 1 && host.querySelector('.wa-annotation-highlight'), 'Invalid annotations were marked');
+ assert(!editor.navigateToAnnotation('duplicate') && !editor.navigateToAnnotation('missing') && !editor.navigateToAnnotation('scene'), 'Unsafe quote navigation succeeded');
+ editor.setContent('<p>Unique Unique</p>'); assert(!host.querySelector('.wa-annotation'), 'External content update retained ambiguous markup');
+ editor.destroy();
+});
+await test('annotation quote positions preserve paragraph and hard-break boundaries', async () => {
+ editor = create(host, '<p>First line<br>Second line</p><p>Third line</p>', 'Html', receiver, true);
+ editor.setAnnotations([{ id:'multiline', quote:'First line\nSecond line\nThird line', kind:'todo', status:'open', content:'Three lines' }]);
+ assert(editor.navigateToAnnotation('multiline'), 'Multiline quote was not found');
+ assert(editor.selectedText() === 'First line\nSecond line\nThird line', 'Wrong multiline range');
+ editor.destroy();
+});
+await test('desktop More commands, table operations, and capability locks', async () => {
+ editor = create(host, '<p>More formatting</p>', 'Html', receiver, true);
+ selectText(); await settle(); editor.command('strike'); editor.command('code');
+ assert(editor.snapshot().html.includes('<code>'), 'Inline code missing'); editor.command('code');
+ editor.command('strike'); assert(editor.snapshot().html.includes('<s>'), 'Strikethrough missing');
+ editor.command('align:center'); editor.command('increaseIndent');
+ assert(editor.snapshot().html.includes('text-align: center') && editor.snapshot().html.includes('margin-left: 2em'), 'Alignment or indent missing');
+ editor.command('decreaseIndent'); assert(!editor.snapshot().html.includes('data-indent-level'), 'Indent did not decrease');
+ editor.command('horizontalRule'); assert(editor.snapshot().html.includes('<hr>'), 'Horizontal rule missing');
+ editor.setContent('<p>Table</p>'); editor.command('table');
+ assert(host.querySelectorAll('.tiptap tr').length === 3 && host.querySelectorAll('.tiptap th').length === 3, '3x3 table missing');
+ editor.command('addRowBefore'); editor.command('addRowAfter'); assert(host.querySelectorAll('.tiptap tr').length === 5, 'Row insertion failed');
+ editor.command('deleteRow'); assert(host.querySelectorAll('.tiptap tr').length === 4, 'Row deletion failed');
+ editor.command('addColumnBefore'); editor.command('addColumnAfter'); assert(host.querySelector('.tiptap tr').children.length === 5, 'Column insertion failed');
+ editor.command('deleteColumn'); assert(host.querySelector('.tiptap tr').children.length === 4, 'Column deletion failed');
+ editor.command('toggleHeaderRow'); editor.command('toggleHeaderColumn');
+ const html = editor.snapshot().html; editor.destroy(); editor = create(host, html, 'Html', receiver, true);
+ assert(editor.snapshot().html === html, 'Table could not reopen losslessly');
+ editor.setEditable(false); const locked = calls.filter(c => c.name === 'OnFormattingChanged').at(-1).args[0];
+ assert(!locked.canInsertTable && !locked.canInsertImage && !locked.canStrike && !locked.canAlign, 'Rich commands remain enabled when locked');
+ editor.command('deleteTable'); assert(editor.snapshot().html === html, 'Locked table changed');
+ editor.setEditable(true); editor.navigateToText('Table'); editor.command('table'); editor.command('deleteTable');
+ editor.destroy();
+});
+await test('image URL panel preserves selection and rejects active URLs', async () => {
+ editor = create(host, '<p>Image here</p>', 'Html', receiver, true);
+ editor.command('imageUrl');
+ const form = host.querySelector('form[aria-label="Insert image from URL"]');
+ const input = form.querySelector('input[aria-label="Image URL"]'); input.value = 'javascript:alert(1)'; form.requestSubmit();
+ assert(!editor.snapshot().html.includes('<img'), 'Unsafe image was inserted');
+ input.value = 'data:image/png;base64,iVBORw0KGgo='; form.querySelector('input[aria-label="Image description"]').value = 'Fixture'; form.requestSubmit();
+ assert(editor.snapshot().html.includes('alt="Fixture"') && form.hidden, 'Image form did not insert/close');
+ const saved = editor.snapshot().html; editor.destroy(); editor = create(host, saved, 'Html', receiver, true);
+ assert(editor.snapshot().html === saved, 'Embedded image changed on reopen');
+ editor.setEditable(false); assert(!editor.insertImage('https://example.com/a.png'), 'Locked image inserted');
+ editor.setEditable(true); assert(!editor.insertImage('data:image/svg+xml;base64,PHN2Zz4='), 'SVG image accepted');
+ editor.destroy();
+});
+await test('annotation selection uses stored quote separators across list items', async () => {
+ editor = create(host, '<ul><li><p>List first</p></li><li><p>List second</p></li></ul>', 'Html', receiver, true);
+ const quote = 'List first\n\nList second';
+ editor.setAnnotations([{ id:'list', quote, kind:'comment', status:'open', content:'List passage' }]);
+ assert(editor.navigateToAnnotation('list'), 'List quote not located');
+ assert(editor.selectedText() === quote, 'Selected list text cannot be used as a stored quote');
+ editor.destroy();
+});
+await test('local images embed bytes and remain editable after reopening', async () => {
+ editor = create(host, '<p>Offline image</p>', 'Html', receiver, true);
+ editor.command('image');
+ const png = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j1ioAAAAASUVORK5CYII='), char => char.charCodeAt(0));
+ const transfer = new DataTransfer(); transfer.items.add(new File([png], 'pixel.png', { type:'image/png' }));
+ const file = host.querySelector('input[type="file"]'); file.files = transfer.files; file.dispatchEvent(new Event('change'));
+ await settle();
+ const saved = editor.snapshot().html;
+ assert(saved.includes('data:image/png;base64,') && saved.includes('alt="pixel.png"'), 'Local image was not embedded');
+ assert(!saved.includes('blob:') && !saved.includes('file:'), 'Image depends on a temporary path');
+ editor.destroy(); editor = create(host, saved, 'Html', receiver, true);
+ assert(editor.snapshot().html === saved, 'Local image did not reopen');
+ editor.command('image'); const bad = new DataTransfer(); bad.items.add(new File(['<svg></svg>'], 'disguised.png', { type:'image/png' }));
+ const replacementFile = host.querySelector('input[type="file"]'); replacementFile.files = bad.files; replacementFile.dispatchEvent(new Event('change')); await settle();
+ assert(editor.snapshot().html === saved, 'Disguised unsupported image changed writing');
+ editor.destroy();
+});
+await test('merged table cells split and a selected table can be deleted and undone', async () => {
+ editor = create(host, '<table><tbody><tr><td colspan="2"><p>Merged</p></td></tr></tbody></table>', 'Html', receiver, true);
+ editor.navigateToText('Merged'); editor.command('splitCell');
+ assert(host.querySelectorAll('.tiptap td').length === 2, 'Split cell failed');
+ const split = editor.snapshot().html; editor.destroy(); editor = create(host, split, 'Html', receiver, true);
+ editor.navigateToText('Merged'); editor.command('deleteTable'); assert(!editor.snapshot().html.includes('<table'), 'Delete table failed');
+ editor.command('undo'); assert(editor.snapshot().html === split, 'Undo failed to restore table');
+ editor.destroy();
+});
+await test('writing background grows with content and fills the scroll viewport', async () => {
+ const fixture = document.createElement('div');
+ fixture.className = 'prosa-editor';
+ fixture.innerHTML = '<div class="editor-shell" style="height:900px;--editor-max-width:900px"><div class="editor-workspace is-panels-collapsed"><section class="editor-main"><div class="editor-surface"><div class="editor-viewport"><div class="editor-content"><div class="device-tiptap"></div></div></div></div></section></div></div>';
+ document.body.append(fixture);
+ const viewport = fixture.querySelector('.editor-viewport');
+ const paper = fixture.querySelector('.editor-content');
+ const writingHost = fixture.querySelector('.device-tiptap');
+ const writing = create(writingHost, '<p>Short draft</p>', 'Html', receiver, true);
+ const long = Array.from({length:40}, (_, i) => `<p>Paragraph ${i + 1}: the writing surface must cover this text.</p>`).join('');
+ const checkCoverage = label => {
+  const paperBounds = paper.getBoundingClientRect();
+  const textBounds = writingHost.querySelector('.ProseMirror').getBoundingClientRect();
+  assert(paperBounds.bottom >= textBounds.bottom - 1, label + ': writing overflows its white background');
+  assert(paperBounds.height >= viewport.clientHeight - 1, label + ': white background does not fill viewport');
+  assert(getComputedStyle(paper).backgroundColor === 'rgb(255, 255, 255)', label + ': paper is not white');
+ };
+ try {
+  for (const width of [1100, 420]) {
+   fixture.style.width = width + 'px';
+   writing.setContent(long); await settle(); checkCoverage('Long draft at ' + width);
+   const viewportTop = viewport.getBoundingClientRect().top;
+   viewport.scrollTop = viewport.scrollHeight; await settle();
+   const last = writingHost.querySelector('.ProseMirror > :last-child').getBoundingClientRect();
+   const visible = viewport.getBoundingClientRect();
+   assert(viewport.scrollTop > 0 && last.bottom <= visible.bottom + 1 && last.top >= visible.top, 'Cannot scroll to final paragraph');
+   assert(viewport.getBoundingClientRect().top === viewportTop, 'Scrolling moves the editor viewport');
+   writingHost.style.setProperty('--editor-font-scale', '1.5'); await settle(); checkCoverage('Zoomed draft');
+   writingHost.style.removeProperty('--editor-font-scale');
+   fixture.querySelector('.editor-surface').classList.add('device-print-layout'); await settle(); checkCoverage('Print layout');
+   fixture.querySelector('.editor-surface').classList.remove('device-print-layout');
+   writing.setContent('<p>Short draft</p>'); await settle(); checkCoverage('Short draft');
+   assert(paper.getBoundingClientRect().height < 1000, 'Paper did not shrink after deleting text');
+   writing.setContent(long); await settle(); checkCoverage('Growing draft');
+  }
+ } finally { writing.destroy(); fixture.remove(); }
+});
+await test('web writing background contains the continuous section canvas', async () => {
+ const fixture = document.createElement('div'); fixture.className = 'prosa-editor';
+ fixture.innerHTML = '<div class="editor-shell" style="height:900px;--editor-max-width:900px"><div class="editor-workspace is-panels-collapsed"><section class="editor-main"><div class="editor-surface"><div class="editor-viewport"><div class="editor-content"><div class="editor-canvas"><div class="page-lane"><div class="pagebreak-overlay" aria-hidden="true"></div><div id="web-surface-layout"></div></div></div></div></div></div></section></div></div>';
+ document.body.append(fixture);
+ const web = window.tiptapEditor.create('web-surface-layout', Array.from({length:40}, (_, i) => `<p>Web paragraph ${i + 1}</p>`).join(''), receiver);
+ try {
+  await settle();
+  const paper = fixture.querySelector('.editor-content');
+  const text = fixture.querySelector('.ProseMirror');
+  assert(paper.getBoundingClientRect().bottom >= text.getBoundingClientRect().bottom - 1, 'Web text overflows its white background');
+  const viewport = fixture.querySelector('.editor-viewport'); viewport.scrollTop = viewport.scrollHeight; await settle();
+  assert(viewport.scrollTop > 0 && text.lastElementChild.getBoundingClientRect().bottom <= viewport.getBoundingClientRect().bottom + 1, 'Cannot reach final web paragraph');
+ } finally { window.tiptapEditor.destroy(web); fixture.remove(); }
 });
 const failed = [...results.children].filter(item => item.textContent.startsWith('FAIL')).length;
 document.title = failed ? `${failed} device editor tests failed` : 'All device editor tests passed';
 const summary = document.createElement('h2'); summary.textContent = document.title; results.after(summary);
 editor = create(host, '<h1>Offline writing</h1><p>Use this editor to check keyboard formatting and narrow layouts.</p>', 'Html', receiver);
+editor.setAnnotations([
+ { id:'demo-comment', quote:'keyboard formatting', kind:'comment', status:'open', content:'Comment on this passage' },
+ { id:'demo-task', quote:'narrow layouts', kind:'todo', status:'open', content:'Task on this passage' }
+]);
 </script></body></html>

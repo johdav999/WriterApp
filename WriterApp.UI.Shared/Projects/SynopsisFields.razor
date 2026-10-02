@@ -1,0 +1,39 @@
+@using WriterApp.Shared.Sync
+<section aria-label="Synopsis fields" class="synopsis-fields">
+@foreach (var field in Fields)
+{
+    <div class="synopsis-field @(field.Key is "Logline" or "Premise" or "Notes" ? "synopsis-field-wide" : "")" @key="field.Key">
+        <label for="@($"{_id}-{field.Key}")">@field.Label</label>
+        <p id="@($"{_id}-{field.Key}-help")" class="synopsis-helper">@Help(field.Key)</p>
+        <textarea id="@($"{_id}-{field.Key}")" aria-describedby="@($"{_id}-{field.Key}-help")"
+                  rows="3" maxlength="100000" @bind:get="Value(field.Key)"
+                  @bind:set="value => Change(field.Key, value)" @bind:event="oninput"></textarea>
+    </div>
+}
+</section>
+@code {
+    private readonly string _id = $"synopsis-{Guid.NewGuid():N}";
+    private static string Help(string key) => key switch {
+        "Logline" => "The heart of your story in one or two sentences.",
+        "Premise" => "Introduce the situation, the protagonist, and what sets the story in motion.",
+        "Theme" => "What ideas or questions does your story explore?",
+        "ProtagonistArc" => "How does your protagonist change from beginning to end?",
+        "CentralConflict" => "What stands between your protagonist and their goal?",
+        "Stakes" => "What could be lost if the protagonist fails?",
+        "Setting" => "Where and when does the story unfold?",
+        "EndingIntent" => "Describe the resolution or feeling you want to leave with the reader.",
+        "OpenQuestions" => "Keep track of mysteries and story decisions still to resolve.",
+        "Notes" => "Collect additional ideas, constraints, and reminders.", _ => "" };
+    [Parameter] public SyncSynopsis ValueModel { get; set; } = new();
+    [Parameter] public EventCallback<ScenePlanningChange> Changed { get; set; }
+    public static readonly (string Key, string Label)[] Fields = [("Logline","Logline"),("Premise","Premise"),("Theme","Theme"),
+        ("ProtagonistArc","Protagonist arc"),("CentralConflict","Central conflict"),("Stakes","Stakes"),("Setting","Setting"),
+        ("EndingIntent","Ending intent"),("OpenQuestions","Open questions"),("Notes","Notes")];
+    private Task Change(string key, string value) => Changed.InvokeAsync(new(key, value));
+    private string Value(string key) => key switch { "Logline" => ValueModel.Logline, "Premise" => ValueModel.Premise, "Theme" => ValueModel.Theme, "ProtagonistArc" => ValueModel.ProtagonistArc, "CentralConflict" => ValueModel.CentralConflict, "Stakes" => ValueModel.Stakes, "Setting" => ValueModel.Setting, "EndingIntent" => ValueModel.EndingIntent, "OpenQuestions" => ValueModel.OpenQuestions, "Notes" => ValueModel.Notes, _ => "" };
+    public static SyncSynopsis Update(SyncSynopsis s, ScenePlanningChange c) => c.Field switch {
+        "Logline" => s with { Logline = c.Value }, "Premise" => s with { Premise = c.Value }, "Theme" => s with { Theme = c.Value },
+        "ProtagonistArc" => s with { ProtagonistArc = c.Value }, "CentralConflict" => s with { CentralConflict = c.Value },
+        "Stakes" => s with { Stakes = c.Value }, "Setting" => s with { Setting = c.Value }, "EndingIntent" => s with { EndingIntent = c.Value },
+        "OpenQuestions" => s with { OpenQuestions = c.Value }, "Notes" => s with { Notes = c.Value }, _ => s };
+}

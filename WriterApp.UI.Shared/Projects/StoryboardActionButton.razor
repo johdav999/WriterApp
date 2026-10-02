@@ -1,0 +1,22 @@
+@if (Template is not null)
+{
+    @Template(this)
+}
+else
+{
+    <button type="button" class="@Class" title="@AllowedTitle" aria-label="@AriaLabel"
+            disabled="@(IsBusy || IsActionDisabled)" @onclick="OnClick">@ChildContent</button>
+}
+@code {
+    [CascadingParameter(Name = "StoryboardButtons")] public RenderFragment<StoryboardActionButton>? Template { get; set; }
+    [Parameter] public string? Feature { get; set; }
+    [Parameter] public string? Class { get; set; }
+    [Parameter] public string? AllowedTitle { get; set; }
+    [Parameter] public string? LockedTitle { get; set; }
+    [Parameter] public string? AriaLabel { get; set; }
+    [Parameter] public bool ShowLockIndicator { get; set; }
+    [Parameter] public bool IsBusy { get; set; }
+    [Parameter] public bool IsActionDisabled { get; set; }
+    [Parameter] public EventCallback OnClick { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

@@ -2,43 +2,14 @@
 @using WriterApp.Client.Services
 @inject FeatureAccessService FeatureAccessService
 
-<section class="coach-card" aria-label="@Recommendation.ContextTitle">
-    <div class="coach-card-header">
-        <div class="coach-card-kicker">@Recommendation.ContextTitle</div>
-        <h3>What I&apos;m seeing</h3>
-    </div>
-
-    @if (Recommendation.Observations.Count == 0)
-    {
-        <div class="coach-card-empty">Start by taking one concrete step in this workspace.</div>
-    }
-    else
-    {
-        <ul class="coach-card-observations">
-            @foreach (string item in Recommendation.Observations)
-            {
-                <li>@item</li>
-            }
-        </ul>
-    }
-
-    <div class="coach-card-next">
-        <div class="coach-card-next-label">Suggested next step</div>
-        <PlanGatedButton ButtonType="button"
-                         Class="primary coach-card-next-action"
-                         Feature="@GetRequiredFeatureName()"
-                         LockedTitle="@GetLockedTitle()"
-                         AriaLabel="@Recommendation.PrimaryActionLabel"
-                         OnClick="OnPrimaryAction">
+<WorkspaceCoachCard ContextTitle="@Recommendation.ContextTitle" Observations="Recommendation.Observations" Why="@Recommendation.Why">
+    <PrimaryAction>
+        <PlanGatedButton ButtonType="button" Class="primary coach-card-next-action" Feature="@GetRequiredFeatureName()"
+                         LockedTitle="@GetLockedTitle()" AriaLabel="@Recommendation.PrimaryActionLabel" OnClick="OnPrimaryAction">
             @Recommendation.PrimaryActionLabel
         </PlanGatedButton>
-    </div>
-
-    <div class="coach-card-why">
-        <strong>Why:</strong> @Recommendation.Why
-    </div>
-</section>
-
+    </PrimaryAction>
+</WorkspaceCoachCard>
 @code {
     [Parameter]
     public CoachCardRecommendation Recommendation { get; set; } = new(

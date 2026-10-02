@@ -1,0 +1,23 @@
+@typeparam TCategory
+@typeparam TSubview
+<div class="context-drawer-tabs">
+    <EditorTabList TKey="TCategory" Tabs="Categories" Selected="Category" Changed="CategoryChanged" Label="Right panel categories"
+        Class="context-category-tabs tabs-primary" TabClass="context-tab-category context-tab-primary" PanelId="PanelId" />
+    <div class="context-subtabs-shell">
+        <div class="context-subtabs-label">@Heading</div>
+        <EditorTabList TKey="TSubview" Tabs="Subviews" Selected="Subview" Changed="SubviewChanged" Label="Right panel subviews"
+            Class="context-subtabs tabs-secondary" TabClass="context-tab-subview context-tab-secondary" PanelId="PanelId" />
+        @if (!string.IsNullOrWhiteSpace(Helper)) { <div class="context-subtabs-helper">@Helper</div> }
+    </div>
+</div>
+@code {
+    [Parameter] public IReadOnlyList<EditorTabDescriptor<TCategory>> Categories { get; set; } = [];
+    [Parameter] public IReadOnlyList<EditorTabDescriptor<TSubview>> Subviews { get; set; } = [];
+    [Parameter] public TCategory Category { get; set; } = default!;
+    [Parameter] public TSubview Subview { get; set; } = default!;
+    [Parameter] public EventCallback<TCategory> CategoryChanged { get; set; }
+    [Parameter] public EventCallback<TSubview> SubviewChanged { get; set; }
+    [Parameter] public string? Heading { get; set; }
+    [Parameter] public string? Helper { get; set; }
+    [Parameter] public string PanelId { get; set; } = "editor-context-content";
+}

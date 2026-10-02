@@ -89,3 +89,7 @@ Automatic approval review rejected importing a previous build's certificate into
 - [ ] Release owner signs off after reviewing all remaining evidence; no unresolved integrity/security defects.
 
 Installation/configuration/backup and troubleshooting: [device development](device-development.md), [Windows package guide](windows-desktop-release.md). Repeat this report against the actual release candidate; Debug and browser evidence alone cannot authorize distribution.
+
+## Shared client UI refactor — 2026-09-28
+
+The web and desktop now consume `WriterApp.UI.Shared` presentation components and locally bundled visual assets. Shared host-independent UI replaces the separate desktop shell and toolbar. Existing device persistence, recovery, synchronization, authentication, AI and transfer services remain in place. See [the shared UI verification report](shared-ui-uat.md) for build/test evidence, native and browser observations, screenshot paths, feature differences and outstanding acceptance gates. This pass does not close credential, packaging, exact-viewport or iOS release gates, and does not overwrite the historical results above.

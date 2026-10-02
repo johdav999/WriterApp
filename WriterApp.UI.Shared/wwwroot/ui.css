@@ -1,0 +1,17 @@
+@import url("bootstrap.min.css");
+@import url("design-tokens.css");
+@import url("shell.css");
+@import url("library.css");
+@import url("editor.css");
+@import url("navigator.css");
+
+@import url("icons.css");
+html, body, #app { margin: 0; height: 100%; }
+* { box-sizing: border-box; }
+.wa-icon { display:inline-flex; align-items:center; justify-content:center; line-height:1; font-size:18px; width:1em; height:1em; color:currentColor; vertical-align:middle; }
+.prosa-library, .prosa-editor { display: contents; }
+h1:focus { outline: none; }
+.app-breadcrumb-link, .prosa-library .landing-title a { color: var(--color-primary); text-decoration: none; }
+.prosa-library a.primary { color: white; text-decoration: none; }
+
+

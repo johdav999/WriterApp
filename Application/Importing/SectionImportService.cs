@@ -105,7 +105,7 @@ namespace WriterApp.Application.Importing
         private static SectionImportResult ConvertDocx(byte[] bytes, SectionImportOptions options)
         {
             using MemoryStream stream = new(bytes, writable: false);
-            using WordprocessingDocument doc = WordprocessingDocument.Open(stream, false);
+            using WordprocessingDocument doc = WordprocessingDocument.Open(stream, false, new OpenSettings { MaxCharactersInPart = 10 * 1024 * 1024 });
             if (doc.MainDocumentPart?.Document?.Body is null)
             {
                 throw new InvalidOperationException("DOCX document body is missing.");
@@ -154,7 +154,7 @@ namespace WriterApp.Application.Importing
                     }
 
                     html.Append("<li>")
-                        .Append(ConvertParagraphInlineHtml(paragraph, warnings, options.NormalizeWhitespace))
+                        .Append(ConvertParagraphInlineHtml(paragraph, warnings, options.NormalizeWhitespace, doc.MainDocumentPart))
                         .Append("</li>");
                     continue;
                 }
@@ -165,7 +165,7 @@ namespace WriterApp.Application.Importing
                     listOpen = false;
                 }
 
-                string content = ConvertParagraphInlineHtml(paragraph, warnings, options.NormalizeWhitespace);
+                string content = ConvertParagraphInlineHtml(paragraph, warnings, options.NormalizeWhitespace, doc.MainDocumentPart);
                 string tag = meta.HeadingTag ?? "p";
                 if (string.IsNullOrWhiteSpace(content))
                 {
@@ -188,7 +188,7 @@ namespace WriterApp.Application.Importing
             return BuildResult("docx", sanitized, warnings.Distinct(StringComparer.Ordinal).ToList());
         }
 
-        private static string ConvertParagraphInlineHtml(Paragraph paragraph, List<string> warnings, bool normalizeWhitespace)
+        private static string ConvertParagraphInlineHtml(Paragraph paragraph, List<string> warnings, bool normalizeWhitespace, MainDocumentPart mainPart)
         {
             StringBuilder builder = new();
             foreach (var child in paragraph.ChildElements)
@@ -199,10 +199,14 @@ namespace WriterApp.Application.Importing
                 }
                 else if (child is Hyperlink hyperlink)
                 {
+                    string? href = mainPart.HyperlinkRelationships.FirstOrDefault(r => r.Id == hyperlink.Id?.Value)?.Uri.ToString();
+                    bool safe = Uri.TryCreate(href, UriKind.Absolute, out var uri) && uri.Scheme is "https" or "http" or "mailto";
+                    if (safe) builder.Append("<a href=\"").Append(WebUtility.HtmlEncode(href)).Append("\">");
                     foreach (Run runChild in hyperlink.Elements<Run>())
                     {
                         builder.Append(ConvertRun(runChild, warnings, normalizeWhitespace));
                     }
+                    if (safe) builder.Append("</a>");
                 }
             }
 
@@ -334,6 +338,8 @@ namespace WriterApp.Application.Importing
                 return "h3";
             }
 
+            if (styleId.Length == 8 && styleId.StartsWith("Heading", StringComparison.OrdinalIgnoreCase) && styleId[7] is >= '4' and <= '6')
+                return "h" + styleId[7];
             return null;
         }
 
@@ -468,7 +474,10 @@ namespace WriterApp.Application.Importing
                 return;
             }
 
-            builder.Append('<').Append(tag).Append('>');
+            builder.Append('<').Append(tag);
+            if (tag == "a" && Uri.TryCreate(element.GetAttribute("href"), UriKind.Absolute, out var link) && link.Scheme is "http" or "https" or "mailto")
+                builder.Append(" href=\"").Append(WebUtility.HtmlEncode(link.ToString())).Append("\"");
+            builder.Append('>');
             foreach (INode child in element.ChildNodes)
             {
                 AppendSanitizedNode(child, builder);
@@ -479,7 +488,7 @@ namespace WriterApp.Application.Importing
 
         private static bool IsAllowedTag(string tag)
         {
-            return tag is "p" or "h1" or "h2" or "h3" or "strong" or "b" or "em" or "i" or "u" or "ul" or "ol" or "li" or "br";
+            return tag is "p" or "h1" or "h2" or "h3" or "h4" or "h5" or "h6" or "a" or "strong" or "b" or "em" or "i" or "u" or "ul" or "ol" or "li" or "br";
         }
 
         private static SectionImportResult BuildResult(string format, string html, IReadOnlyList<string> warnings)

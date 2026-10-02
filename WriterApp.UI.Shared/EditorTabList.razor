@@ -1,0 +1,63 @@
+@typeparam TKey
+@using Microsoft.JSInterop
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<div @ref="_list" class="@Class" role="tablist" aria-label="@Label">
+    @for (int i = 0; i < _tabs.Count; i++)
+    {
+        int index = i;
+        var tab = _tabs[i];
+        bool selected = EqualityComparer<TKey>.Default.Equals(Selected, tab.Key);
+        <button @key="tab.Id" @ref="_buttons[index]" type="button" id="@tab.Id" role="tab"
+                class="context-tab @TabClass @(selected ? "is-active" : "")"
+                tabindex="@(selected ? 0 : -1)" aria-selected="@(selected ? "true" : "false")" aria-controls="@PanelId" title="@tab.Tooltip"
+                @onkeydown="args => KeyDownAsync(args, index)" @onclick="() => Changed.InvokeAsync(tab.Key)">@tab.Label</button>
+    }
+</div>
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<EditorTabDescriptor<TKey>> Tabs { get; set; } = [];
+    [Parameter] public TKey Selected { get; set; } = default!;
+    [Parameter] public EventCallback<TKey> Changed { get; set; }
+    [Parameter] public string Label { get; set; } = "Editor panels";
+    [Parameter] public string? Class { get; set; }
+    [Parameter] public string? TabClass { get; set; }
+    [Parameter] public string PanelId { get; set; } = "editor-context-content";
+    private IReadOnlyList<EditorTabDescriptor<TKey>> _tabs = [];
+    private ElementReference[] _buttons = [];
+    private ElementReference _list;
+    private string? _focusId;
+    private IJSObjectReference? _module;
+    protected override void OnParametersSet()
+    {
+        _tabs = EditorTabNavigation.Available(Tabs);
+        if (_buttons.Length != _tabs.Count) _buttons = new ElementReference[_tabs.Count];
+    }
+    private async Task KeyDownAsync(KeyboardEventArgs args, int index)
+    {
+        int target = EditorTabNavigation.TargetIndex(args.Key, index, _tabs.Count);
+        if (target < 0) return;
+        _focusId = _tabs[target].Id;
+        await Changed.InvokeAsync(_tabs[target].Key);
+    }
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "/_content/WriterApp.UI.Shared/editor-tabs.js");
+            await _module.InvokeVoidAsync("attach", _list);
+        }
+        if (_focusId is { } id)
+        {
+            _focusId = null;
+            int index = _tabs.ToList().FindIndex(tab => tab.Id == id);
+            if (index >= 0) await _buttons[index].FocusAsync(preventScroll: true);
+        }
+    }
+    public async ValueTask DisposeAsync()
+    {
+        if (_module is null) return;
+        try { await _module.InvokeVoidAsync("detach", _list); await _module.DisposeAsync(); }
+        catch (JSDisconnectedException) { }
+    }
+}

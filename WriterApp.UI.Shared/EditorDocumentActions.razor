@@ -1,0 +1,19 @@
+<div class="document-menu" @onkeydown="OnKeyDown">
+    <button @ref="_trigger" type="button" class="icon-only" title="Document-level actions." aria-label="Document actions"
+            aria-expanded="@(IsOpen ? "true" : "false")" aria-controls="editor-document-actions" @onclick="Toggle"><Icon Name="description" /></button>
+    @if (IsOpen)
+    {
+        <div id="editor-document-actions" class="document-menu-panel @PanelClass" role="group" aria-label="Document actions">@ChildContent</div>
+    }
+</div>
+@code {
+    [Parameter] public bool IsOpen { get; set; }
+    [Parameter] public EventCallback Toggle { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    [Parameter] public string? PanelClass { get; set; }
+    private ElementReference _trigger;
+    private async Task OnKeyDown(KeyboardEventArgs args)
+    {
+        if (IsOpen && args.Key == "Escape") { await Toggle.InvokeAsync(); await _trigger.FocusAsync(); }
+    }
+}

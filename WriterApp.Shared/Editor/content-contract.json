@@ -1,0 +1,27 @@
+{
+  "version": 2,
+  "tags": ["p", "h1", "h2", "h3", "h4", "h5", "h6", "strong", "b", "em", "i", "s", "strike", "del", "u", "code", "pre", "blockquote", "ul", "ol", "li", "br", "hr", "a", "img", "table", "tbody", "thead", "tfoot", "tr", "td", "th", "colgroup", "col"],
+  "nodes": ["doc", "paragraph", "heading", "text", "blockquote", "bulletList", "orderedList", "listItem", "hardBreak", "horizontalRule", "codeBlock", "image", "table", "tableRow", "tableCell", "tableHeader"],
+  "marks": ["bold", "italic", "strike", "underline", "code", "link"],
+  "attributes": {
+    "a": ["href", "target", "rel", "class"], "ol": ["start"], "code": ["class"],
+    "p": ["style", "data-indent-level"],
+    "h1": ["style", "data-indent-level"], "h2": ["style", "data-indent-level"], "h3": ["style", "data-indent-level"],
+    "h4": ["style", "data-indent-level"], "h5": ["style", "data-indent-level"], "h6": ["style", "data-indent-level"],
+    "img": ["src", "alt", "title", "width", "data-asset-url", "data-asset-id"],
+    "table": ["style"], "col": ["style"],
+    "td": ["colspan", "rowspan", "colwidth", "align", "style"],
+    "th": ["colspan", "rowspan", "colwidth", "align", "style"]
+  },
+  "nodeAttributes": {
+    "paragraph": ["textAlign", "indentLevel"], "heading": ["level", "textAlign", "indentLevel"],
+    "orderedList": ["start"], "codeBlock": ["language"],
+    "image": ["src", "alt", "title", "width", "assetUrl", "assetId"],
+    "tableCell": ["colspan", "rowspan", "colwidth", "align"], "tableHeader": ["colspan", "rowspan", "colwidth", "align"]
+  },
+  "linkSchemes": ["http", "https", "mailto"],
+  "headingLevels": [1, 2, 3, 4, 5, 6],
+  "inlineTags": ["strong", "b", "em", "i", "s", "strike", "del", "u", "code", "br", "a", "img"],
+  "blockNodes": ["paragraph", "heading", "blockquote", "bulletList", "orderedList", "horizontalRule", "codeBlock", "image", "table"],
+  "inlineNodes": ["text", "hardBreak"]
+}

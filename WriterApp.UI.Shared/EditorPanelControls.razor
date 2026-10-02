@@ -1,0 +1,8 @@
+<button type="button" class="panel-toggle" title="Hide panels and focus on writing." @onclick="ToggleFocus">@(FocusMode ? "Exit focus" : "Focus mode")</button>
+<button type="button" class="panel-toggle" title="Toggle the right-hand panel." @onclick="ToggleContext">@(ContextCollapsed ? "Show panel" : "Hide panel")</button>
+@code {
+    [Parameter] public bool FocusMode { get; set; }
+    [Parameter] public bool ContextCollapsed { get; set; }
+    [Parameter] public EventCallback ToggleFocus { get; set; }
+    [Parameter] public EventCallback ToggleContext { get; set; }
+}

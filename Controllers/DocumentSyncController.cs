@@ -11,8 +11,15 @@ namespace WriterApp.Controllers;
 [ApiController]
 [Authorize]
 [Route("api/sync/v1/documents")]
+[Route("api/sync/v2/documents")]
+[Route("api/sync/v3/documents")]
+[Route("api/sync/v4/documents")]
 public sealed class DocumentSyncController(DocumentSyncService sync, IUserIdResolver users) : ControllerBase
 {
+    private bool SupportsMultipleDocuments => Request.Path.StartsWithSegments("/api/sync/v4");
+    private bool SupportsPlanning => SupportsMultipleDocuments || Request.Path.StartsWithSegments("/api/sync/v3");
+    private bool SupportsProjects => SupportsPlanning || Request.Path.StartsWithSegments("/api/sync/v2");
+
     [HttpGet("changes")]
     public Task<IActionResult> Changes([FromQuery] string? cursor = null, [FromQuery] int limit = 50, CancellationToken ct = default) =>
         RunAsync(() => sync.ChangesAsync(users.ResolveUserId(User), cursor, limit, ct));
@@ -20,7 +27,7 @@ public sealed class DocumentSyncController(DocumentSyncService sync, IUserIdReso
     [HttpGet("{id:guid}")]
     public Task<IActionResult> Download(Guid id, CancellationToken ct) => RunAsync(async () =>
     {
-        var result = await sync.DownloadAsync(users.ResolveUserId(User), id, ct);
+        var result = await sync.DownloadAsync(users.ResolveUserId(User), id, ct, SupportsProjects, SupportsPlanning, SupportsMultipleDocuments);
         Response.Headers.ETag = $"\"{result.State.Version}\"";
         return result;
     });
@@ -29,7 +36,7 @@ public sealed class DocumentSyncController(DocumentSyncService sync, IUserIdReso
     [RequestSizeLimit(DocumentSyncService.MaxRequestBytes)]
     public Task<IActionResult> Mutate(Guid id, [FromBody] SyncMutation request, CancellationToken ct) => RunAsync(async () =>
     {
-        var result = await sync.MutateAsync(users.ResolveUserId(User), id, request, ct);
+        var result = await sync.MutateAsync(users.ResolveUserId(User), id, request, ct, SupportsProjects, SupportsPlanning, SupportsMultipleDocuments);
         Response.Headers.ETag = $"\"{result.State.Version}\"";
         return result;
     });

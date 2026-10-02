@@ -1,0 +1,14 @@
+namespace WriterApp.UI.Shared.Projects
+{
+    public sealed record StoryboardNextSceneSuggestion(
+        string Title,
+        string? Summary,
+        string Status,
+        string? PovCharacterId,
+        IReadOnlyList<string> SubplotTags,
+        string? NarrativePurpose,
+        string? Rationale,
+        string? PreferredChapterTitle = null,
+        string? NarrativeRole = null,
+        string? NarrativeIntent = null);
+}

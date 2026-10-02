@@ -6,6 +6,7 @@ public sealed record DeviceImportFile(string FileName, byte[] Content);
 public interface IDeviceFileDialog
 {
     bool IsAvailable { get; }
+    Task<DeviceImportFile?> PickCoverAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException("Cover selection is unavailable.");
     Task<DeviceImportFile?> PickImportAsync(CancellationToken cancellationToken = default);
     Task<bool> SaveAsync(string suggestedFileName, string extension, byte[] content,
         CancellationToken cancellationToken = default);

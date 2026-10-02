@@ -181,6 +181,13 @@ namespace WriterApp.Controllers
 
         private async Task<bool> IsOwnedSceneAsync(Guid sceneNodeId, string userId, CancellationToken ct)
         {
+            Guid? manuscript = null;
+            string? requested = HttpContext?.Request.Query["documentId"].ToString();
+            if (!string.IsNullOrEmpty(requested))
+            {
+                if (!Guid.TryParse(requested, out var id)) return false;
+                manuscript = id;
+            }
             return await _dbContext.ProjectNodes
                 .Join(
                     _dbContext.Projects,
@@ -190,6 +197,7 @@ namespace WriterApp.Controllers
                 .AnyAsync(pair =>
                     pair.project.OwnerUserId == userId
                     && pair.node.Id == sceneNodeId
+                    && (manuscript == null || pair.node.DocumentId == manuscript)
                     && pair.node.NodeType == ProjectNodeType.Scene,
                     ct);
         }

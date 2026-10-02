@@ -1,0 +1,16 @@
+<div class="projects-toolbar">
+    <label for="project-switcher">Project</label>
+    <select id="project-switcher" value="@SelectedId" @onchange="ChangeAsync" disabled="@Disabled">
+        <option value="">Select a project</option>
+        @foreach (var project in Projects) { <option value="@project.Id">@project.Title</option> }
+    </select>
+    @ChildContent
+</div>
+@code {
+    [Parameter] public IReadOnlyList<ProjectSelection> Projects { get; set; } = [];
+    [Parameter] public Guid? SelectedId { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public EventCallback<Guid?> SelectedIdChanged { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    private Task ChangeAsync(ChangeEventArgs e) => SelectedIdChanged.InvokeAsync(Guid.TryParse(e.Value?.ToString(), out var id) ? id : null);
+}

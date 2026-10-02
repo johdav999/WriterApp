@@ -75,7 +75,7 @@ public sealed class FileLocalDocumentStoreTests : IDisposable
         Assert.Equal("sv", loaded.LanguageCode);
         Assert.Equal(document.UpdatedAtUtc, loaded.Sections[0].Pages[0].UpdatedAtUtc);
         using JsonDocument json = JsonDocument.Parse(await File.ReadAllTextAsync(DocumentPath(document.DocumentId)));
-        Assert.Equal(1, json.RootElement.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(4, json.RootElement.GetProperty("schemaVersion").GetInt32());
         Assert.Equal("Html", json.RootElement.GetProperty("document").GetProperty("sections")[0]
             .GetProperty("pages")[0].GetProperty("contentFormat").GetString());
     }

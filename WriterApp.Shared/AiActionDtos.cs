@@ -35,7 +35,8 @@ namespace WriterApp.Application.AI
         string? OriginalText,
         string? SurroundingText,
         string? OutlineText,
-        Dictionary<string, object?>? Parameters);
+        Dictionary<string, object?>? Parameters,
+        string? ExpectedDocumentVersion = null);
 
     public sealed record AiActionExecuteResponseDto(
         Guid ProposalId,
@@ -49,7 +50,8 @@ namespace WriterApp.Application.AI
         bool? WasTruncated = null,
         SectionSceneCardProposalDto? ProposedSceneCard = null,
         string? ProposalExplanation = null,
-        IReadOnlyList<AiTextOperationDto>? Operations = null);
+        IReadOnlyList<AiTextOperationDto>? Operations = null,
+        string? SourceDocumentVersion = null);
 
     public sealed record AiActionHistoryEntryDto(
         Guid ProposalId,

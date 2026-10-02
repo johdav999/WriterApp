@@ -17,7 +17,7 @@
 
     <ProsaEnvironment Condition="'$(ProsaEnvironment)' == '' and '$(Configuration)' == 'Debug'">Development</ProsaEnvironment>
     <ProsaEnvironment Condition="'$(ProsaEnvironment)' == ''">Production</ProsaEnvironment>
-    <ProsaApiBaseUrl Condition="'$(ProsaApiBaseUrl)' == '' and '$(ProsaEnvironment)' == 'Development'">https://localhost:7384/</ProsaApiBaseUrl>
+    <ProsaApiBaseUrl Condition="'$(ProsaApiBaseUrl)' == '' and '$(ProsaEnvironment)' == 'Development'">http://localhost:5387/</ProsaApiBaseUrl>
     <ProsaApiBaseUrl Condition="'$(ProsaApiBaseUrl)' == '' and '$(ProsaEnvironment)' == 'Production'">https://app.prosa-app.com/</ProsaApiBaseUrl>
     <ProsaUpdateManifestUrl Condition="'$(ProsaUpdateManifestUrl)' == '' and '$(ProsaEnvironment)' == 'Production'">https://app.prosa-app.com/desktop/updates/stable.json</ProsaUpdateManifestUrl>
 
@@ -35,6 +35,9 @@
 
   <ItemGroup>
     <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>ProsaValidationDataDirectory</_Parameter1><_Parameter2>$(ProsaValidationDataDirectory)</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
       <_Parameter1>ProsaEnvironment</_Parameter1><_Parameter2>$(ProsaEnvironment)</_Parameter2>
     </AssemblyAttribute>
     <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
@@ -46,6 +49,8 @@
   </ItemGroup>
 
   <Target Name="ValidateProsaDesktopEnvironment" BeforeTargets="CoreCompile">
+    <Error Condition="'$(ProsaValidationDataDirectory)' != '' and '$(ProsaEnvironment)' != 'Development'"
+           Text="ProsaValidationDataDirectory is allowed only in Development builds for isolated acceptance testing." />
     <Error Condition="'$(ProsaEnvironment)' != 'Development' and '$(ProsaEnvironment)' != 'Staging' and '$(ProsaEnvironment)' != 'Production'"
            Text="ProsaEnvironment must be Development, Staging, or Production." />
     <Error Condition="'$(ProsaApiBaseUrl)' == ''"
@@ -69,6 +74,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="native-auth.json" LogicalName="Prosa.NativeAuthentication" />
     <ProjectReference Include="..\WriterApp.Device.Shared\WriterApp.Device.Shared.csproj" />
   </ItemGroup>
 

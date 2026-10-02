@@ -85,6 +85,24 @@ public sealed class LocalEditorSessionTests : IDisposable
         Assert.Equal("Updated elsewhere", (await repository.LoadAsync(document.DocumentId))!.Title);
     }
 
+    [Fact]
+    public async Task SyncRefreshRejectsChangedWritingAndRetainsUnsavedEdits()
+    {
+        var repository = new LocalDocumentRepository(new FileLocalDocumentStore(_root));
+        var document = await repository.CreateAsync("Draft");
+        var session = new LocalEditorSession(repository, document);
+        var page = document.Sections[0].Pages[0];
+        session.Edit(page.PageId, "<p>Unsaved writing</p>");
+        await repository.RenameAsync(document, "Changed elsewhere");
+
+        Assert.False(await session.RefreshSyncMetadataAsync());
+        Assert.Equal(document.LocalRevision, session.Document.LocalRevision);
+        Assert.Equal("Draft", session.Document.Title);
+        Assert.True(session.IsDirty);
+        Assert.Equal("<p>Unsaved writing</p>", session.ContentFor(page));
+        await Assert.ThrowsAsync<LocalDocumentConflictException>(() => session.SaveAsync());
+    }
+
     internal sealed class DelayedStore(ILocalDocumentStore inner) : ILocalDocumentStore
     {
         public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

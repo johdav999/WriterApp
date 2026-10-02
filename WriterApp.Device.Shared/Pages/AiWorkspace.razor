@@ -1,0 +1,7 @@
+@page "/documents/{DocumentId:guid}/ai"
+@inject NavigationManager Navigation
+<p role="status">Opening the editor's Advanced panel…</p>
+@code {
+    [Parameter] public Guid DocumentId { get; set; }
+    protected override void OnAfterRender(bool firstRender) { if (firstRender) Navigation.NavigateTo($"/documents/{DocumentId}?panel=Advanced", replace: true); }
+}

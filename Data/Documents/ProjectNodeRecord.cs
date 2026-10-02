@@ -6,8 +6,11 @@ namespace WriterApp.Data.Documents
     public sealed class ProjectNodeRecord
     {
         public Guid Id { get; set; }
+        public Guid? SyncDeletionId { get; set; }
 
         public Guid ProjectId { get; set; }
+        // Null is reserved for legacy structure awaiting ownership migration.
+        public Guid? DocumentId { get; set; }
 
         public ProjectRecord? Project { get; set; }
 

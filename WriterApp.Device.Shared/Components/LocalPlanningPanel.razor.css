@@ -1,0 +1,18 @@
+.local-planning-panel { min-width: 0; }
+.local-planning-panel label { display: grid; gap: var(--space-2); margin-block: var(--space-3); }
+.local-planning-panel input, .local-planning-panel textarea, .local-planning-panel select { box-sizing: border-box; width: 100%; min-width: 0; padding: var(--space-2); font: inherit; color: var(--color-text); background: var(--color-surface-1); border: 1px solid var(--color-border); border-radius: var(--radius-sm); }
+.panel-help, .panel-save { font-size: var(--font-size-helper); color: var(--color-text-muted); }
+.panel-scene-title { font-weight: 600; }
+.panel-actions, .panel-save { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-block: var(--space-3); }
+.panel-annotation { padding: var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md); margin-block: var(--space-3); overflow-wrap: anywhere; }
+.panel-annotation blockquote { margin-inline: 0; padding-inline: var(--space-2); border-left: 2px solid var(--color-border); }
+.panel-annotation.is-selected { border-color: var(--color-primary); box-shadow: 0 0 0 1px var(--color-primary); }
+.panel-annotation .annotation-text-link { display: block; width: 100%; margin-block: var(--space-2); padding: 0; border: 0; background: transparent; color: var(--color-primary); text-align: start; white-space: pre-wrap; overflow-wrap: anywhere; text-decoration: underline; text-underline-offset: .15em; }
+.panel-scene-card { margin-block: var(--space-3); }
+.panel-storyboard h3 { font-size: var(--font-size-section-title); }
+.local-planning-panel ::deep .scene-planning-fields, .local-planning-panel ::deep .synopsis-fields { min-width: 0; }
+.local-planning-panel ::deep .synopsis-fields { grid-template-columns: minmax(0, 1fr); gap: var(--space-4); }
+
+button { min-height: 34px; padding: 6px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface-1); color: var(--color-text); font: inherit; cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--color-primary); }
+button:disabled { opacity: .55; cursor: not-allowed; }

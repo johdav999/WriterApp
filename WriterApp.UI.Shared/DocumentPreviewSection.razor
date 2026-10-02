@@ -1,0 +1,10 @@
+<article class="preview-section" id="@Id" tabindex="-1">
+    <header class="preview-section-header"><div class="preview-section-kind">@Kind</div><h2 class="preview-section-title">@Title</h2></header>
+    @ChildContent
+</article>
+@code {
+    [Parameter] public string? Id { get; set; }
+    [Parameter] public string Kind { get; set; } = "Section";
+    [Parameter] public string Title { get; set; } = "";
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

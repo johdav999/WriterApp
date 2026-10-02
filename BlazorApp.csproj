@@ -5,7 +5,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <BaseOutputPath>artifacts\bin\</BaseOutputPath>
-    <DefaultItemExcludes>$(DefaultItemExcludes);publish/**;publish\**;.azure-publish/**;.azure-publish\**;artifacts/**;artifacts\**;WriterApp.Device.Shared/**;WriterApp.Device.Shared\**;WriterApp.Desktop/**;WriterApp.Desktop\**;WriterApp.iOS/**;WriterApp.iOS\**</DefaultItemExcludes>
+    <DefaultItemExcludes>WriterApp.Publishing/**;WriterApp.UI.Shared/**;WriterApp.UI.Shared\**;$(DefaultItemExcludes);publish/**;publish\**;.azure-publish/**;.azure-publish\**;artifacts/**;artifacts\**;WriterApp.Device.Shared/**;WriterApp.Device.Shared\**;WriterApp.Desktop/**;WriterApp.Desktop\**;WriterApp.iOS/**;WriterApp.iOS\**</DefaultItemExcludes>
 
     <!-- Let the host decide -->
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
@@ -66,4 +66,25 @@
     <ProjectReference Include="WriterApp.Shared\WriterApp.Shared.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="WriterApp.Publishing/WriterApp.Publishing.csproj" />
+    <Compile Remove="Domain/Documents/**/*.cs" />
+    <Compile Remove="Data/Exporting/ExportTemplate.cs" />
+    <Compile Remove="Application/State/SectionNumberingService.cs" />
+    <Compile Remove="Application/State/PlainTextMapper.cs" />
+    <Compile Remove="Application/Exporting/IExportRenderer.cs" />
+    <Compile Remove="Application/Exporting/ExportResult.cs" />
+    <Compile Remove="Application/Exporting/ExportOptions.cs" />
+    <Compile Remove="Application/Exporting/ExportFormat.cs" />
+    <Compile Remove="Application/Exporting/ExportKind.cs" />
+    <Compile Remove="Application/Exporting/ExportHelpers.cs" />
+    <Compile Remove="Application/Exporting/MarkdownExportRenderer.cs" />
+    <Compile Remove="Application/Exporting/DocxExportRenderer.cs" />
+    <Compile Remove="Application/Exporting/EpubExportRenderer.cs" />
+    <Compile Remove="Application/Exporting/TemplatedHtmlExportRenderer.cs" />
+    <Compile Remove="Application/Exporting/ExportTemplateDefaults.cs" />
+    <Compile Remove="Application/Importing/SectionImportService.cs" />
+    <Compile Remove="Application/Importing/SectionImportModels.cs" />
+    <Compile Remove="Application/Importing/ISectionImportService.cs" />
+  </ItemGroup>
 </Project>

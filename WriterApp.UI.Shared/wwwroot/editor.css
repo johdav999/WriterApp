@@ -1,0 +1,4298 @@
+.prosa-editor .editor-shell {
+    --section-panel-width: 260px;
+    --context-panel-width: 360px;
+    --panel-bg: var(--color-surface-2);
+    --panel-border: var(--color-border);
+    --panel-shadow: var(--shadow-md);
+    --text-strong: var(--color-text);
+    --text-muted: var(--color-text-muted);
+    --accent: var(--color-primary);
+    --accent-soft: var(--color-primary-soft);
+    --surface: var(--color-surface-1);
+    --surface-muted: var(--color-surface-2);
+    padding: var(--space-6);
+    height: calc(100dvh - var(--topbar-height, 0px));
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    flex: 1;
+    overflow: hidden;
+}
+
+.prosa-editor .editor-shell.is-full-width {
+    --editor-max-width: none;
+}
+
+.prosa-editor .editor-workspace {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--context-panel-width);
+    grid-template-rows: minmax(0, 1fr);
+    gap: 32px;
+    align-items: stretch;
+    flex: 1;
+    min-height: 0;
+    height: 100%;
+    overflow: hidden;
+}
+
+.prosa-editor .section-panel {
+    border: 1px solid var(--panel-border);
+    border-radius: var(--radius-lg);
+    background: var(--panel-bg);
+    box-shadow: var(--panel-shadow);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    height: 100%;
+}
+
+.prosa-editor .section-panel-header {
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--panel-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex: 0 0 auto;
+}
+
+.prosa-editor .section-panel-header h2 {
+    margin: 0;
+    font-size: var(--font-size-helper);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.prosa-editor .section-panel-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.prosa-editor .section-panel.is-collapsed {
+    display: none;
+}
+
+.prosa-editor .section-nav-list {
+    list-style: none;
+    margin: 0;
+    padding: 12px 10px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    justify-content: flex-start;
+    align-content: flex-start;
+    overflow: auto;
+    flex: 1;
+    min-height: 0;
+}
+
+.prosa-editor .section-nav-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.prosa-editor .section-drag-handle {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-1);
+    padding: 6px 8px;
+    cursor: grab;
+    color: #6b7280;
+    user-select: none;
+}
+
+.prosa-editor .section-drag-handle:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.prosa-editor .section-order-status {
+    font-size: var(--font-size-caption);
+    color: var(--color-text-subtle);
+}
+
+.prosa-editor .section-order-debug {
+    font-size: 0.75rem;
+    color: #9a3412;
+}
+
+.prosa-editor .section-nav-item {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    text-align: left;
+    padding: 8px 10px;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: var(--surface);
+    color: var(--text-strong);
+    cursor: pointer;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.prosa-editor .section-nav-item.is-active {
+    border-color: #cfd9f5;
+    background: var(--accent-soft);
+    box-shadow: var(--shadow-sm);
+}
+
+.prosa-editor .section-nav-item:hover {
+    border-color: var(--color-border-strong);
+    transform: translateY(-1px);
+}
+
+.prosa-editor .section-title {
+    font-size: 0.95rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.prosa-editor .section-title-editable {
+    cursor: text;
+}
+
+.prosa-editor .section-rename {
+    flex: 1;
+    display: grid;
+    gap: 4px;
+}
+
+.prosa-editor .section-rename-input {
+    width: 100%;
+    padding: 6px 10px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: #fff;
+    font-size: 0.9rem;
+}
+
+.prosa-editor .section-rename-error {
+    font-size: 0.75rem;
+    color: #b91c1c;
+}
+
+.prosa-editor .section-rename-button {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-1);
+    padding: 4px 6px;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #6b7280;
+}
+
+.prosa-editor .section-rename-button:hover {
+    border-color: #c9d7f6;
+    color: #1f2937;
+}
+
+.prosa-editor .section-menu {
+    position: relative;
+}
+
+.prosa-editor .section-menu-toggle {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-1);
+    padding: 4px 6px;
+    font-size: 0.8rem;
+    color: #6b7280;
+    min-width: 28px;
+}
+
+.prosa-editor .section-menu-panel {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    min-width: 140px;
+    display: grid;
+    gap: 4px;
+    padding: 6px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-border);
+    background: var(--surface);
+    box-shadow: var(--shadow-lg);
+    z-index: 20;
+}
+
+.prosa-editor .translation-switcher {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px 12px;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    background: #ffffff;
+    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+}
+
+.prosa-editor .translation-switcher-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: #6b7280;
+}
+
+.prosa-editor .translation-switcher-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.prosa-editor .translation-switcher-link {
+    border: 1px solid #d1d5db;
+    border-radius: 999px;
+    padding: 4px 10px;
+    background: #fff;
+    font-size: 0.8rem;
+}
+
+.prosa-editor .translation-switcher-link.is-active {
+    border-color: #2f6feb;
+    background: #e7efff;
+    color: #1f2937;
+}
+
+.prosa-editor .translation-apply {
+    margin-top: auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding-top: 12px;
+    border-top: 1px solid #e5e7eb;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), #ffffff 24px);
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+}
+
+.prosa-editor .translation-apply-mode {
+    display: grid;
+    gap: 6px;
+    font-size: 0.85rem;
+    color: #374151;
+}
+
+.prosa-editor .translation-apply-mode select {
+    border: 1px solid #d1d5db;
+    border-radius: 10px;
+    padding: 6px 10px;
+    background: #fff;
+}
+
+.prosa-editor .translation-apply-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.prosa-editor .translate-dialog .translate-form {
+    display: grid;
+    gap: 10px;
+}
+
+.prosa-editor .translate-dialog label {
+    font-size: 0.85rem;
+    color: #4b5563;
+}
+
+.prosa-editor .translate-dialog select {
+    border: 1px solid #d1d5db;
+    border-radius: 10px;
+    padding: 6px 10px;
+    background: #fff;
+}
+
+.prosa-editor .ai-preview .translation-proposal {
+    background: #ffffff;
+}
+
+.prosa-editor .section-menu-panel button {
+    border: none;
+    background: transparent;
+    text-align: left;
+    padding: 6px 8px;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.prosa-editor .section-menu-panel button:hover {
+    background: rgba(47, 111, 235, 0.08);
+}
+
+.prosa-editor .section-menu-panel .danger {
+    color: #b91c1c;
+}
+
+.prosa-editor .modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-modal, 10000);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    pointer-events: auto;
+    isolation: isolate;
+}
+
+.prosa-editor .modal-overlay-dimmed {
+    background: rgba(15, 23, 42, 0.4);
+}
+
+.prosa-editor .modal-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.4);
+}
+
+.prosa-editor .modal {
+    position: relative;
+    top: auto;
+    left: auto;
+    transform: none;
+    width: min(420px, calc(100vw - 48px));
+    max-height: min(80vh, 560px);
+    overflow: auto;
+    padding: var(--space-4);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-1, #ffffff);
+    box-shadow: var(--shadow-lg);
+    z-index: 90;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.prosa-editor .modal-overlay .modal-backdrop {
+    z-index: 0;
+    pointer-events: auto;
+}
+
+.prosa-editor .modal-overlay .modal {
+    z-index: 1;
+    pointer-events: auto;
+}
+
+.prosa-editor .modal-panel {
+    position: relative;
+    top: auto;
+    left: auto;
+    transform: none;
+    background: var(--surface, var(--color-surface-1, #ffffff));
+    color: var(--text-strong);
+    width: min(720px, 100%);
+    max-height: min(80vh, 900px);
+    border-radius: 16px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+@media (max-width: 980px) {
+    .prosa-editor .modal {
+        width: min(420px, calc(100vw - 48px));
+    }
+}
+
+.prosa-editor .modal-title {
+    font-weight: 600;
+    color: var(--text-strong);
+}
+
+.prosa-editor .modal-header {
+    padding: 14px 20px;
+    border-bottom: 1px solid #e5e7eb;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.prosa-editor .modal-body {
+    padding: 0;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    overflow: auto;
+}
+
+.prosa-editor .modal-error {
+    color: #b91c1c;
+    font-size: 0.85rem;
+}
+
+.prosa-editor .modal-actions {
+    margin-top: 8px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.prosa-editor .modal-actions button {
+    padding: 6px 12px;
+    border-radius: 10px;
+    border: 1px solid #d1d5db;
+    background: #fff;
+}
+
+.prosa-editor .modal-actions .danger {
+    border-color: #fca5a5;
+    color: #b91c1c;
+}
+
+.prosa-editor .modal-actions .primary {
+    border-color: #2563eb;
+    background: #2563eb;
+    color: #ffffff;
+}
+
+.prosa-editor .modal-footer {
+    padding: 14px 20px;
+    border-top: 1px solid #e5e7eb;
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.prosa-editor .export-dialog {
+    width: min(560px, 92vw);
+    background: #ffffff;
+}
+
+.prosa-editor .export-panel-row {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.prosa-editor .export-panel-label {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.prosa-editor .export-panel-select,
+.prosa-editor .export-panel-input {
+    width: 100%;
+    padding: 6px 8px;
+    border-radius: 8px;
+    border: 1px solid #d1d5db;
+    background: #fff;
+    font-size: 0.85rem;
+}
+
+.prosa-editor .export-panel-actions {
+    justify-content: space-between;
+    align-items: center;
+}
+
+.prosa-editor .export-panel-action-group {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.prosa-editor .export-panel-checkbox {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.prosa-editor .export-panel-checkbox-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    align-items: flex-start;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.prosa-editor .export-panel-sections,
+.prosa-editor .export-panel-selection {
+    align-items: start;
+}
+
+.prosa-editor .export-panel-section-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.prosa-editor .export-panel-section-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.prosa-editor .export-panel-section-items {
+    max-height: 220px;
+    overflow: auto;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 8px;
+    background: #fff;
+}
+
+.prosa-editor .export-panel-section-item {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    font-size: 0.85rem;
+    color: var(--text-primary);
+    padding: 4px 0;
+}
+
+.prosa-editor .export-panel-selection-body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.prosa-editor .export-panel-note {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.prosa-editor .export-panel-hint {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.prosa-editor .link-button {
+    background: none;
+    border: none;
+    color: #2563eb;
+    padding: 0;
+    cursor: pointer;
+    font-size: 0.85rem;
+}
+
+.prosa-editor .template-manager {
+    max-height: 80vh;
+    overflow: auto;
+}
+
+.prosa-editor .template-manager-row {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.prosa-editor .template-manager-create {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.prosa-editor .template-manager-list {
+    display: grid;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.prosa-editor .template-card {
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 10px 12px;
+    background: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.prosa-editor .template-card-main {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.prosa-editor .template-name {
+    font-weight: 600;
+}
+
+.prosa-editor .template-tag {
+    font-size: 0.75rem;
+    color: #6b7280;
+    border: 1px solid #e5e7eb;
+    border-radius: 999px;
+    padding: 2px 8px;
+}
+
+.prosa-editor .template-card-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.prosa-editor .template-editor {
+    border-top: 1px solid #e5e7eb;
+    padding-top: 12px;
+    margin-top: 10px;
+}
+
+.prosa-editor .template-grid {
+    display: grid;
+    grid-template-columns: 160px 1fr;
+    gap: 10px 12px;
+    margin-bottom: 10px;
+}
+
+.prosa-editor .template-inline-inputs {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.prosa-editor .template-section {
+    display: grid;
+    gap: 6px;
+}
+
+.prosa-editor .export-preview {
+    width: min(1200px, 96vw);
+    max-height: 92vh;
+    overflow: hidden;
+    background: #ffffff;
+}
+
+.prosa-editor .preview-layout {
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
+    gap: 16px;
+    min-height: 60vh;
+}
+
+.prosa-editor .preview-sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    border-right: 1px solid #e5e7eb;
+    padding-right: 12px;
+}
+
+.prosa-editor .preview-sidebar.is-collapsed {
+    width: auto;
+    grid-column: span 1;
+}
+
+.prosa-editor .preview-sidebar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-weight: 600;
+}
+
+.prosa-editor .preview-sidebar-search {
+    display: grid;
+    gap: 6px;
+}
+
+.prosa-editor .preview-sidebar-search input {
+    width: 100%;
+    padding: 6px 8px;
+    border-radius: 8px;
+    border: 1px solid #d1d5db;
+}
+
+.prosa-editor .preview-sidebar-toggle {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.prosa-editor .preview-page-list {
+    display: grid;
+    gap: 6px;
+    overflow: auto;
+    max-height: 55vh;
+    padding-right: 4px;
+}
+
+.prosa-editor .preview-page-item {
+    text-align: left;
+    padding: 6px 8px;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    background: transparent;
+}
+
+.prosa-editor .preview-page-item.is-active {
+    border-color: #93c5fd;
+    background: #eff6ff;
+    font-weight: 600;
+}
+
+.prosa-editor .preview-main {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.prosa-editor .preview-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+}
+
+.prosa-editor .preview-toolbar-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.prosa-editor .preview-helper-note {
+    margin-top: 4px;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.prosa-editor .preview-zoom {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.prosa-editor .preview-zoom button {
+    padding: 4px 8px;
+    border-radius: 8px;
+    border: 1px solid #d1d5db;
+    background: #fff;
+}
+
+.prosa-editor .preview-zoom-value {
+    min-width: 48px;
+    text-align: center;
+    color: #111827;
+    font-weight: 600;
+}
+
+.prosa-editor .preview-frame-wrap {
+    flex: 1;
+    overflow: auto;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 16px;
+    background: #f9fafb;
+}
+
+.prosa-editor .export-preview-frame {
+    width: 100%;
+    min-height: 70vh;
+    border: none;
+    background: #fff;
+    zoom: var(--preview-zoom);
+    display: block;
+}
+
+.prosa-editor .export-preview-frame::-webkit-scrollbar {
+    width: 10px;
+}
+
+@media (max-width: 980px) {
+    .prosa-editor .export-panel-row,
+    .prosa-editor .template-manager-row,
+    .prosa-editor .template-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .prosa-editor .preview-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .prosa-editor .preview-sidebar {
+        border-right: none;
+        padding-right: 0;
+        border-bottom: 1px solid #e5e7eb;
+        padding-bottom: 12px;
+    }
+}
+
+.prosa-editor .page-nav-row {
+    margin: 4px 0 10px 12px;
+}
+
+.prosa-editor .page-list-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.prosa-editor .page-toggle {
+    background: transparent;
+    border: none;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #6b7280;
+}
+
+.prosa-editor .page-add {
+    padding: 4px 8px;
+    border-radius: 6px;
+    border: 1px solid #d1d5db;
+    background: #fff;
+    font-size: 0.8rem;
+}
+
+.prosa-editor .page-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 6px;
+}
+
+.prosa-editor .page-list-item {
+    display: grid;
+    gap: 6px;
+}
+
+.prosa-editor .page-nav-item {
+    width: 100%;
+    text-align: left;
+    padding: 6px 8px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    background: #fff;
+}
+
+.prosa-editor .page-nav-item.is-active {
+    border-color: #9bb6f0;
+    background: #eef4ff;
+}
+
+.prosa-editor .page-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.prosa-editor .page-action {
+    padding: 2px 6px;
+    border-radius: 6px;
+    border: 1px solid #d1d5db;
+    background: #fff;
+    font-size: 0.75rem;
+}
+
+.prosa-editor .page-action.danger {
+    border-color: #fca5a5;
+    color: #b91c1c;
+}
+
+.prosa-editor .page-list-empty,
+.prosa-editor .page-list-collapsed {
+    font-size: 0.8rem;
+    color: #6b7280;
+}
+
+.prosa-editor .editor-workspace.is-context-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.prosa-editor .editor-workspace.is-sections-collapsed {
+    grid-template-columns: minmax(0, 1fr) var(--context-panel-width);
+}
+
+.prosa-editor .editor-workspace.is-panels-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.prosa-editor .editor-main {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    position: relative;
+    flex: 1 1 auto;
+    height: 100%;
+}
+
+.prosa-editor .editor-main-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding-bottom: var(--space-2);
+}
+
+.prosa-editor .editor-main-header-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.prosa-editor .editor-section-info {
+    display: grid;
+    gap: 4px;
+}
+
+.prosa-editor .editor-section-label {
+    font-size: 0.7rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.prosa-editor .editor-section-title {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--text-strong);
+}
+
+.prosa-editor .panel-toggle {
+    padding: 0 var(--space-3);
+    border-radius: 999px;
+    border: 1px solid var(--color-border);
+    background: var(--panel-bg);
+    color: var(--text-strong);
+    cursor: pointer;
+    transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.prosa-editor .panel-toggle:hover {
+    box-shadow: 0 6px 16px rgba(15, 23, 42, 0.1);
+    transform: translateY(-1px);
+}
+
+.prosa-editor .panel-toggle.is-active {
+    border-color: rgba(47, 111, 235, 0.35);
+    background: rgba(47, 111, 235, 0.1);
+    color: #1d4ed8;
+}
+
+.prosa-editor .preview-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.prosa-editor .editor-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--panel-border);
+    background: var(--panel-bg);
+    margin-top: var(--space-3);
+    position: sticky;
+    top: 0;
+    z-index: 5;
+}
+
+.prosa-editor .editor-toolbar-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    padding-right: var(--space-3);
+    border-right: 1px solid var(--color-border);
+}
+
+.prosa-editor .editor-toolbar-group:last-child {
+    padding-right: 0;
+    border-right: none;
+}
+
+.prosa-editor .editor-image-upload-input {
+    display: none;
+}
+
+.prosa-editor #editor-image-upload {
+    display: none;
+}
+
+.prosa-editor .editor-toolbar-upload-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: var(--control-height);
+    padding: 0 var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-1);
+    color: var(--text-strong);
+    font-size: 0.82rem;
+    cursor: pointer;
+}
+
+.prosa-editor .editor-toolbar-upload-button:hover {
+    background: var(--color-surface-2);
+}
+
+.prosa-editor .editor-image-error {
+    margin-top: 8px;
+    color: #b91c1c;
+    font-size: 0.82rem;
+}
+
+.prosa-editor .editor-toolbar-overflow {
+    position: relative;
+}
+
+.prosa-editor .editor-toolbar button.editor-overflow-dismiss,
+.prosa-editor .editor-toolbar button.editor-overflow-dismiss:hover:not(:disabled) {
+    position: fixed; inset: 0; z-index: 19; width: auto; height: auto; min-width: 0; padding: 0;
+    border: 0; border-radius: 0; background: transparent; box-shadow: none; cursor: default;
+}
+
+.prosa-editor .editor-toolbar-overflow-panel {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    min-width: 180px;
+    max-width: min(280px, calc(100vw - 16px));
+    max-height: 70vh;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    border: 1px solid var(--color-border);
+    box-shadow: var(--shadow-lg);
+    z-index: 20;
+}
+
+.prosa-editor .editor-toolbar-overflow-panel.is-align-left {
+    right: auto;
+    left: 0;
+}
+
+.prosa-editor .editor-toolbar-overflow-panel.is-open-upward {
+    top: auto;
+    bottom: calc(100% + 6px);
+}
+
+.prosa-editor .editor-toolbar-divider {
+    height: 1px;
+    background: #e5e7eb;
+    margin: 4px 0;
+}
+
+.prosa-editor .editor-toolbar-subtitle {
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    padding: 2px 4px;
+}
+
+.prosa-editor .editor-toolbar-select {
+    min-height: var(--control-height);
+    padding: 0 var(--space-2);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    cursor: pointer;
+}
+
+.prosa-editor .editor-toolbar button {
+    min-height: var(--control-height);
+    padding: 0 var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    cursor: pointer;
+    color: var(--text-strong);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.prosa-editor .editor-toolbar button.icon-only {
+    min-width: var(--control-height);
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.prosa-editor .onboarding-spotlight-target {
+    position: relative;
+    z-index: 9005;
+    outline: 3px solid rgba(37, 99, 235, 0.9);
+    outline-offset: 3px;
+    border-radius: 10px;
+    box-shadow: 0 0 0 6px rgba(37, 99, 235, 0.16);
+}
+
+.prosa-editor .editor-toolbar button.is-active {
+    background: var(--accent-soft);
+    border-color: #cfd9f5;
+    box-shadow: var(--shadow-sm);
+}
+
+.prosa-editor .editor-toolbar button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.prosa-editor .editor-zoom-label {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    padding: 0 6px;
+}
+
+.prosa-editor .editor-shell.is-focus-mode .editor-toolbar-group {
+    display: none;
+}
+
+.prosa-editor .editor-shell.is-focus-mode .editor-toolbar-group[data-compact="true"] {
+    display: flex;
+}
+
+.prosa-editor .editor-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-top: var(--space-3);
+    align-items: center;
+}
+
+.prosa-editor .editor-actions button {
+    min-height: var(--control-height);
+    padding: 0 var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    cursor: pointer;
+}
+
+.prosa-editor .editor-action-link {
+    min-height: var(--control-height);
+    padding: 0 var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: inherit;
+    text-decoration: none;
+}
+
+.prosa-editor .editor-actions button.icon-only {
+    min-width: var(--control-height);
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.prosa-editor .editor-toolbar button.icon-only .wa-icon,
+.prosa-editor .editor-actions button.icon-only .wa-icon,
+.prosa-editor .editor-toolbar-overflow-panel button.icon-only .wa-icon {
+    font-size: 20px;
+}
+
+.prosa-editor .toolbar-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    font-size: 1.32rem;
+    font-weight: 600;
+}
+
+.prosa-editor .editor-actions button:hover:not(:disabled) {
+    border-color: #c9d7f6;
+    box-shadow: 0 6px 14px rgba(47, 111, 235, 0.12);
+}
+
+.prosa-editor .editor-action-link:hover {
+    border-color: #c9d7f6;
+    box-shadow: 0 6px 14px rgba(47, 111, 235, 0.12);
+}
+
+.prosa-editor .document-menu {
+    position: relative;
+}
+
+.prosa-editor .document-menu > button {
+    border-radius: 999px;
+    border: 1px solid var(--panel-border);
+    background: var(--panel-bg);
+}
+
+.prosa-editor .document-menu-panel {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    min-width: 200px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+    border-radius: 12px;
+    background: var(--surface);
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 14px 28px rgba(15, 23, 42, 0.16);
+    z-index: 20;
+    max-width: min(440px, calc(100vw - 32px));
+    max-height: calc(100vh - 180px);
+    overflow-y: auto;
+}
+
+.prosa-editor .document-menu-panel button {
+    width: 100%;
+    text-align: left;
+}
+
+.prosa-editor .document-menu-panel.is-file-transfer { width: 440px; }
+.prosa-editor .document-menu-panel.is-file-transfer select { width: 100%; }
+
+.prosa-editor .editor-surface {
+    width: 100%;
+    padding: 0;
+    margin-top: 10px;
+    border-radius: 0;
+    border: none;
+    background: transparent;
+    min-height: 0;
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.prosa-editor .editor-surface[hidden] {
+    display: none;
+}
+
+.prosa-editor .editor-viewport {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    position: relative;
+    overflow: auto;
+    min-height: 0;
+    flex: 1 1 auto;
+}
+
+.prosa-editor .editor-canvas {
+    position: relative;
+    width: 100%;
+    z-index: 0;
+}
+
+.prosa-editor .page-lane {
+    position: relative;
+    width: 100%;
+    z-index: 0;
+}
+
+.prosa-editor .editor-content {
+    width: 100%;
+    max-width: var(--editor-max-width);
+    /* A stretched flex item stays viewport-high while its text overflows.
+       Let the paper grow with the document and still fill an empty viewport. */
+    align-self: flex-start;
+    min-height: 100%;
+    margin-left: auto;
+    margin-right: auto;
+    background: var(--surface);
+    position: relative;
+    overflow: visible;
+}
+
+.prosa-editor .editor-preview-shell {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    padding: var(--space-4) 0 var(--space-6);
+}
+
+.prosa-editor .editor-preview-banner {
+    width: min(100%, 880px);
+    margin: 0 auto var(--space-4);
+    padding: 18px 20px;
+    border: 1px solid var(--color-border);
+    border-radius: 20px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(244, 247, 255, 0.98));
+    box-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.prosa-editor .editor-preview-eyebrow {
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.prosa-editor .editor-preview-copy {
+    margin-top: 6px;
+    color: var(--text-strong);
+    font-size: 0.98rem;
+}
+
+.prosa-editor .editor-preview-document {
+    width: min(100%, 800px);
+    margin: 0 auto;
+    padding: clamp(24px, 4vw, 40px);
+    border: 1px solid rgba(209, 213, 219, 0.85);
+    border-radius: 28px;
+    background: linear-gradient(180deg, #fffefc 0%, #ffffff 100%);
+    box-shadow: 0 24px 60px rgba(15, 23, 42, 0.1);
+}
+
+.prosa-editor .preview-section + .preview-section {
+    margin-top: 40px;
+    padding-top: 40px;
+    border-top: 1px solid rgba(203, 213, 225, 0.8);
+}
+
+.prosa-editor .preview-section-header {
+    margin-bottom: 18px;
+}
+
+.prosa-editor .preview-section-kind {
+    font-size: 0.76rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+}
+
+.prosa-editor .preview-section-title {
+    margin: 0;
+    font-size: clamp(1.5rem, 2.8vw, 2rem);
+    line-height: 1.15;
+    color: var(--text-strong);
+}
+
+.prosa-editor .preview-section-body {
+    font-size: 1.125rem;
+    line-height: 1.75;
+    color: #1f2937;
+}
+
+.prosa-editor .preview-section-body > :first-child {
+    margin-top: 0;
+}
+
+.prosa-editor .preview-section-body > :last-child {
+    margin-bottom: 0;
+}
+
+.prosa-editor .preview-section-body p,
+.prosa-editor .preview-section-body ul,
+.prosa-editor .preview-section-body ol,
+.prosa-editor .preview-section-body blockquote,
+.prosa-editor .preview-section-body table,
+.prosa-editor .preview-section-body pre {
+    margin: 0 0 1.1em;
+}
+
+.prosa-editor .preview-section-body h1,
+.prosa-editor .preview-section-body h2,
+.prosa-editor .preview-section-body h3,
+.prosa-editor .preview-section-body h4,
+.prosa-editor .preview-section-body h5,
+.prosa-editor .preview-section-body h6 {
+    margin: 1.4em 0 0.55em;
+    line-height: 1.2;
+    color: var(--text-strong);
+}
+
+.prosa-editor .preview-section-body blockquote {
+    padding-left: 16px;
+    border-left: 3px solid rgba(148, 163, 184, 0.75);
+    color: #475569;
+}
+
+.prosa-editor .preview-section-body img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 16px;
+}
+
+.prosa-editor .preview-section-empty {
+    font-size: 0.95rem;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+@media (max-width: 900px) {
+    .prosa-editor .editor-preview-banner,
+    .prosa-editor .editor-preview-document {
+        width: 100%;
+    }
+
+    .prosa-editor .editor-preview-document {
+        padding: 24px 20px;
+        border-radius: 22px;
+    }
+
+    .prosa-editor .preview-section-body {
+        font-size: 1.03rem;
+    }
+}
+
+.prosa-editor .editor-status-bar {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.85rem;
+    color: var(--color-text-subtle);
+    padding: var(--space-3);
+    border-top: 1px solid var(--color-border);
+    gap: 12px;
+    background: var(--surface);
+    flex: 0 0 auto;
+    width: 100%;
+    align-self: stretch;
+    margin-left: 0;
+    margin-right: 0;
+    box-shadow: 0 -4px 10px rgba(17, 24, 39, 0.08);
+}
+
+.prosa-editor .saving-indicator {
+    color: #d97706;
+}
+
+.prosa-editor .dirty-indicator {
+    color: #b91c1c;
+}
+
+.prosa-editor .clean-indicator {
+    color: #059669;
+}
+
+.prosa-editor .version-status {
+    color: #0f766e;
+    font-weight: 600;
+}
+
+.prosa-editor .ai-command-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: #1d4ed8;
+    font-weight: 600;
+}
+
+.prosa-editor .ai-command-status.is-complete {
+    color: #0f766e;
+}
+
+.prosa-editor .ai-command-spinner {
+    width: 0.8rem;
+    height: 0.8rem;
+    border-radius: 999px;
+    border: 2px solid rgba(29, 78, 216, 0.2);
+    border-top-color: currentColor;
+    animation: ai-command-spin 0.8s linear infinite;
+    flex: 0 0 auto;
+}
+
+@keyframes ai-command-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.prosa-editor .editor-shell.is-print-layout .editor-viewport {
+    background: var(--canvas-bg);
+}
+
+.prosa-editor .editor-shell.is-print-layout .editor-canvas {
+    background: transparent;
+    padding: 0;
+}
+
+.prosa-editor .editor-shell.is-print-layout .page-lane {
+    width: calc(var(--page-width-px) * var(--editor-font-scale, 1));
+    margin-left: auto;
+    margin-right: auto;
+    background: #ffffff;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
+    border-radius: 4px;
+}
+
+.prosa-editor .editor-shell.is-print-layout .page-lane > div:not(.pagebreak-overlay) {
+    position: relative;
+    z-index: 1;
+}
+
+.prosa-editor .editor-shell.is-print-layout .editor-content {
+    background: #ffffff;
+    max-width: calc(var(--page-width-px) * var(--editor-font-scale, 1));
+    position: relative;
+    z-index: 1;
+}
+
+.prosa-editor .editor-shell.is-print-layout .tiptap-content {
+    width: 100%;
+    box-sizing: border-box;
+    padding: calc(var(--page-padding-y) * var(--editor-font-scale, 1))
+        calc(var(--page-padding-x) * var(--editor-font-scale, 1));
+}
+
+.prosa-editor .editor-shell.is-print-layout .pagebreak-overlay {
+    display: none !important;
+}
+
+.prosa-editor .editor-shell.is-print-layout .pagebreak-line,
+.prosa-editor .editor-shell.is-print-layout .pagebreak-marker,
+.prosa-editor .editor-shell.is-print-layout .pagebreak-sheet,
+.prosa-editor .editor-shell.is-print-layout .wa-page-gap {
+    display: none !important;
+    width: 100%;
+    height: 0 !important;
+    background: transparent;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    line-height: 0;
+    pointer-events: none;
+    user-select: none;
+    color: transparent;
+    caret-color: transparent;
+}
+
+.prosa-editor .editor-shell.is-print-layout .wa-page-gap::selection {
+    background: transparent !important;
+}
+
+.prosa-editor .editor-shell .wa-heading-number {
+    user-select: none;
+    opacity: 0.6;
+    margin-right: 0.5rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.prosa-editor .editor-shell .wa-search-highlight {
+    background: #ffe27a;
+    color: inherit;
+    border-radius: 2px;
+    box-shadow: 0 0 0 1px rgba(186, 131, 0, 0.3);
+}
+
+.prosa-editor .editor-shell .continuity-issue {
+    border-radius: 3px;
+    box-decoration-break: clone;
+    transition: box-shadow 0.12s ease, background-color 0.12s ease;
+}
+
+.prosa-editor .editor-shell .continuity-character {
+    background: rgba(34, 197, 94, 0.2);
+    box-shadow: inset 0 0 0 1px rgba(21, 128, 61, 0.35);
+}
+
+.prosa-editor .editor-shell .continuity-place {
+    background: rgba(59, 130, 246, 0.2);
+    box-shadow: inset 0 0 0 1px rgba(29, 78, 216, 0.35);
+}
+
+.prosa-editor .editor-shell .continuity-timeline {
+    background: rgba(249, 115, 22, 0.2);
+    box-shadow: inset 0 0 0 1px rgba(194, 65, 12, 0.35);
+}
+
+.prosa-editor .editor-shell .continuity-issue.is-active {
+    box-shadow: inset 0 0 0 2px rgba(15, 23, 42, 0.45);
+}
+
+.prosa-editor .editor-shell.is-print-layout .wa-pagination-debug {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+}
+
+.prosa-editor .editor-shell.is-print-layout .wa-debug-page,
+.prosa-editor .editor-shell.is-print-layout .wa-debug-gap,
+.prosa-editor .editor-shell.is-print-layout .wa-debug-break {
+    position: absolute;
+    left: 0;
+    right: 0;
+}
+
+.prosa-editor .editor-shell.is-print-layout .wa-debug-page {
+    outline: 1px dashed rgba(15, 23, 42, 0.35);
+    background: rgba(16, 185, 129, 0.04);
+}
+
+.prosa-editor .editor-shell.is-print-layout .wa-debug-gap {
+    background: rgba(239, 68, 68, 0.08);
+}
+
+.prosa-editor .editor-shell.is-print-layout .wa-debug-break {
+    height: 0;
+    border-top: 2px solid rgba(37, 99, 235, 0.7);
+}
+
+.prosa-editor .editor-shell.is-print-layout .wa-debug-tall-break {
+    border-top-color: rgba(249, 115, 22, 0.75);
+}
+
+.prosa-editor .editor-shell.is-print-layout .wa-debug-line {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 0;
+    border-top: 1px dashed rgba(15, 23, 42, 0.4);
+}
+
+.prosa-editor .editor-shell.is-print-layout .wa-debug-line::after {
+    content: attr(data-label);
+    position: absolute;
+    left: 6px;
+    top: -10px;
+    font-size: 10px;
+    color: rgba(15, 23, 42, 0.65);
+    background: rgba(255, 255, 255, 0.8);
+    padding: 1px 4px;
+    border-radius: 4px;
+}
+
+.prosa-editor .editor-shell.is-print-layout .wa-debug-break::after {
+    content: attr(data-label);
+    position: absolute;
+    left: 6px;
+    top: -12px;
+    font-size: 10px;
+    color: rgba(37, 99, 235, 0.8);
+    background: rgba(255, 255, 255, 0.8);
+    padding: 1px 4px;
+    border-radius: 4px;
+}
+
+.prosa-editor .editor-shell.is-print-layout .wa-debug-label {
+    position: sticky;
+    top: 6px;
+    left: 6px;
+    margin-left: 6px;
+    margin-top: 6px;
+    background: rgba(15, 23, 42, 0.7);
+    color: #f8fafc;
+    font-size: 12px;
+    line-height: 1.4;
+    padding: 4px 8px;
+    border-radius: 4px;
+    max-width: calc(100% - 12px);
+}
+
+.prosa-editor .pagebreak-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    pointer-events: none;
+    z-index: 0;
+}
+
+.prosa-editor .pagebreak-sheet {
+    position: absolute;
+    z-index: 0;
+    pointer-events: none;
+}
+
+.prosa-editor .pagebreak-line {
+    position: absolute;
+    border-top: 1px solid rgba(15, 23, 42, 0.2);
+    opacity: 0.8;
+    z-index: 5;
+}
+
+.prosa-editor .pagebreak-marker {
+    position: absolute;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #8b8f96;
+    z-index: 6;
+}
+
+.prosa-editor .page-lane > div:not(.pagebreak-overlay) {
+    position: relative;
+    z-index: 1;
+}
+
+.prosa-editor [id^="section-editor-"] {
+    position: relative;
+    z-index: 2;
+}
+
+.prosa-editor .pagebreak-marker::before {
+    content: "";
+    width: 2px;
+    height: 14px;
+    background: #d1d5db;
+    display: inline-block;
+    border-radius: 2px;
+}
+
+.prosa-editor .editor-surface .ProseMirror {
+    min-height: 320px;
+    padding: 16px 20px 24px;
+    border: none;
+    background: transparent;
+    font-size: calc(1rem * var(--editor-font-scale, 1));
+    line-height: 1.6;
+    color: var(--text-strong);
+    width: 100%;
+    position: relative;
+    z-index: 2;
+}
+
+.prosa-editor .editor-shell.is-print-layout .editor-surface .ProseMirror {
+    position: relative;
+    z-index: 2 !important;
+    padding: 0;
+}
+
+.prosa-editor .editor-shell.is-print-layout .editor-surface .ProseMirror > :first-child {
+    margin-top: 0;
+}
+
+.prosa-editor .editor-surface .tiptap-content img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 0.8rem auto;
+    border-radius: 6px;
+}
+
+.prosa-editor .editor-surface .tiptap-content img.ProseMirror-selectednode {
+    outline: 2px solid rgba(37, 99, 235, 0.65);
+    outline-offset: 2px;
+}
+
+.prosa-editor .editor-surface .tiptap-content blockquote {
+    margin: 1rem 0;
+    padding: 0.85rem 1rem 0.85rem 1.1rem;
+    border-left: 4px solid rgba(30, 64, 175, 0.7);
+    background: rgba(219, 234, 254, 0.42);
+    color: #1e3a5f;
+    border-radius: 0 14px 14px 0;
+}
+
+.prosa-editor .editor-surface .tiptap-content blockquote > :first-child {
+    margin-top: 0;
+}
+
+.prosa-editor .editor-surface .tiptap-content blockquote > :last-child {
+    margin-bottom: 0;
+}
+
+.prosa-editor .editor-surface .tableWrapper {
+    width: 100%;
+    overflow-x: auto;
+    margin: 0.75rem 0;
+}
+
+.prosa-editor .editor-surface .tiptap-content table {
+    border-collapse: collapse;
+    table-layout: fixed;
+    min-width: 420px;
+    width: 100%;
+    background: #fff;
+}
+
+.prosa-editor .editor-surface .tiptap-content th,
+.prosa-editor .editor-surface .tiptap-content td {
+    border: 1px solid #d1d5db;
+    padding: 0.5rem 0.625rem;
+    vertical-align: top;
+}
+
+.prosa-editor .editor-surface .tiptap-content th {
+    background: #f8fafc;
+    font-weight: 600;
+}
+
+.prosa-editor .editor-surface .tiptap-content td p,
+.prosa-editor .editor-surface .tiptap-content th p {
+    margin: 0.35rem 0;
+}
+
+.prosa-editor .editor-surface .tiptap-content td p:first-child,
+.prosa-editor .editor-surface .tiptap-content th p:first-child {
+    margin-top: 0;
+}
+
+.prosa-editor .editor-surface .tiptap-content td p:last-child,
+.prosa-editor .editor-surface .tiptap-content th p:last-child {
+    margin-bottom: 0;
+}
+
+.prosa-editor .editor-surface .tiptap-content .selectedCell:after {
+    background: rgba(59, 130, 246, 0.12);
+}
+
+.prosa-editor .context-drawer {
+    border: 1px solid var(--panel-border);
+    border-radius: var(--radius-lg);
+    background: var(--panel-bg);
+    box-shadow: var(--panel-shadow);
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    max-height: none;
+    overflow: hidden;
+}
+
+.prosa-editor .rp-shell {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.prosa-editor .rp-sticky-header {
+    flex: 0 0 auto;
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: var(--panel-bg);
+}
+
+.prosa-editor .rp-tabs {
+    padding: var(--space-3);
+    border-bottom: 1px solid var(--panel-border);
+    background: var(--color-surface-3);
+}
+
+.prosa-editor .rp-header {
+    padding: var(--space-3);
+    border-bottom: 1px solid var(--panel-border);
+    display: grid;
+    gap: 8px;
+    background: var(--panel-bg);
+}
+
+.prosa-editor .rp-title {
+    font-weight: 600;
+    font-size: var(--font-size-section-title);
+}
+
+.prosa-editor .rp-subtitle {
+    font-size: var(--font-size-helper);
+    color: var(--text-muted);
+}
+
+.prosa-editor .rp-options {
+    font-size: var(--font-size-helper);
+    color: var(--text-muted);
+    display: grid;
+    gap: 6px;
+}
+
+.prosa-editor .rp-options summary {
+    cursor: pointer;
+    color: var(--text-strong);
+}
+
+.prosa-editor .rp-options label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.prosa-editor .rp-scroll {
+    flex: 1 1 auto;
+    height: 100%;
+    min-height: 0;
+    overflow-y: scroll;
+    overflow-x: hidden;
+    scrollbar-gutter: stable;
+    scrollbar-width: auto;
+    padding-right: 2px;
+    display: flex;
+    flex-direction: column;
+    overscroll-behavior: contain;
+}
+
+.prosa-editor .rp-content {
+    flex: 0 0 auto;
+    padding: var(--space-3);
+    display: grid;
+    gap: 12px;
+    min-height: 0;
+}
+
+.prosa-editor .rp-scroll::-webkit-scrollbar {
+    width: 10px;
+}
+
+.prosa-editor .rp-scroll::-webkit-scrollbar-thumb {
+    background: rgba(107, 114, 128, 0.55);
+    border-radius: 999px;
+}
+
+.prosa-editor .rp-scroll::-webkit-scrollbar-track {
+    background: rgba(229, 231, 235, 0.45);
+}
+
+.prosa-editor .rp-footer {
+    flex: 0 0 auto;
+    padding: var(--space-3);
+    border-top: 1px solid var(--panel-border);
+    background: var(--panel-bg);
+}
+
+.prosa-editor .rp-footer-actions {
+    display: grid;
+    gap: 10px;
+}
+
+.prosa-editor .rp-footer-actions > button {
+    justify-self: start;
+}
+
+.prosa-editor .rp-status {
+    font-size: var(--font-size-helper);
+    color: var(--text-muted);
+}
+
+.prosa-editor .rp-footer .annotations-create {
+    margin: 0;
+}
+
+.prosa-editor .rp-footer .annotations-input,
+.prosa-editor .rp-footer .notes-input {
+    width: 100%;
+}
+
+.prosa-editor .outline-footer {
+    display: grid;
+    gap: 10px;
+}
+
+.prosa-editor .context-drawer.is-collapsed {
+    display: none;
+}
+
+.prosa-editor .context-tab {
+    border: 1px solid transparent;
+    border-radius: 999px;
+    min-height: 32px;
+    padding: 0 var(--space-2);
+    background: var(--color-surface-3);
+    cursor: pointer;
+    color: var(--text-strong);
+    transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.prosa-editor .drawer-panel {
+    display: grid;
+    gap: 8px;
+}
+
+.prosa-editor .drawer-panel-title {
+    font-size: var(--font-size-helper);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+}
+
+.prosa-editor .drawer-actions {
+    display: grid;
+    gap: 6px;
+}
+
+.prosa-editor .drawer-actions button {
+    min-height: var(--control-height);
+    padding: 0 var(--space-2);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    text-align: left;
+    cursor: pointer;
+}
+
+.prosa-editor .drawer-empty {
+    color: var(--text-muted);
+    font-size: var(--font-size-helper);
+}
+
+.prosa-editor .context-drawer-header {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--panel-border);
+}
+
+.prosa-editor .context-drawer-title {
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+
+.prosa-editor .context-drawer-tabs {
+    display: grid;
+    gap: 8px;
+}
+
+.prosa-editor .context-category-tabs {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+    gap: 6px;
+    padding: 4px;
+    border-radius: 12px;
+    background: var(--color-surface-2);
+    border: 1px solid var(--color-border);
+}
+
+.prosa-editor .context-subtabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    overflow-x: hidden;
+    scrollbar-width: none;
+}
+
+.prosa-editor .context-tab-primary.is-active {
+    background: var(--surface);
+    border-color: #cdd7f7;
+    box-shadow: 0 4px 12px rgba(47, 111, 235, 0.15);
+}
+
+.prosa-editor .context-tab-category,
+.prosa-editor .context-tab-subview {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.prosa-editor .context-tab:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+}
+
+.prosa-editor .context-subtabs-shell {
+    display: grid;
+    gap: 6px;
+    padding: 8px;
+    border-radius: 10px;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-2);
+}
+
+.prosa-editor .context-subtabs-label {
+    font-size: var(--font-size-caption);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    font-weight: 700;
+}
+
+.prosa-editor .context-tab-secondary {
+    flex: 1 1 132px;
+    min-width: 0;
+    min-height: 28px;
+    border-radius: 8px;
+    background: var(--color-surface-1);
+    border-color: var(--color-border);
+    font-size: 0.78rem;
+    padding: 6px 10px;
+    line-height: 1.2;
+    text-align: center;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+.prosa-editor .context-tab-secondary.is-active {
+    border-color: #cdd7f7;
+    box-shadow: inset 0 -2px 0 var(--color-primary);
+    color: var(--color-primary);
+}
+
+.prosa-editor .context-subtabs-helper {
+    font-size: var(--font-size-caption);
+    color: var(--text-muted);
+    border-top: 1px solid var(--color-border);
+    padding-top: 6px;
+}
+
+.prosa-editor .rp-context-label {
+    font-size: var(--font-size-helper);
+    color: var(--text-muted);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.prosa-editor .context-drawer-body {
+    padding: 12px;
+    display: grid;
+    gap: 12px;
+    overflow: auto;
+    flex: 1;
+    min-height: 0;
+}
+
+.prosa-editor .notes-input {
+    width: 100%;
+    min-height: 160px;
+    padding: 8px;
+    border-radius: 12px;
+    border: 1px solid #d0d0d0;
+    background: var(--surface);
+    font-family: inherit;
+    font-size: 0.95rem;
+}
+
+.prosa-editor .scene-card-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.prosa-editor .scene-card-label {
+    font-size: 0.8rem;
+    color: var(--muted);
+    margin-top: 4px;
+}
+
+.prosa-editor .scene-card-help {
+    font-size: 0.78rem;
+    color: var(--muted);
+    margin-top: -2px;
+}
+
+.prosa-editor .scene-card-input {
+    min-height: 96px;
+}
+
+.prosa-editor .scene-card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.prosa-editor .scene-card-field-tools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: 8px;
+}
+
+.prosa-editor .scene-card-field-tools-label {
+    font-size: 0.78rem;
+    color: var(--muted);
+    min-width: 150px;
+}
+
+.prosa-editor .scene-card-field-select {
+    min-height: auto;
+    width: min(240px, 100%);
+}
+
+.prosa-editor .scene-card-preview {
+    padding: 12px;
+    border-radius: 12px;
+    border: 1px solid #e0e0e0;
+    background: var(--surface);
+}
+
+.prosa-editor .scene-card-preview-header {
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+.prosa-editor .scene-card-preview-explanation {
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-bottom: 10px;
+}
+
+.prosa-editor .scene-card-preview-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+}
+
+.prosa-editor .scene-card-preview-label {
+    font-size: 0.75rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 6px;
+}
+
+.prosa-editor .scene-card-preview-field {
+    font-size: 0.85rem;
+    color: #222;
+    margin-bottom: 8px;
+}
+
+.prosa-editor .scene-card-preview-field strong {
+    display: block;
+    font-size: 0.8rem;
+    margin-bottom: 2px;
+}
+
+.prosa-editor .scene-card-preview-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.prosa-editor .outline-list,
+.prosa-editor .outline-pages {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 6px;
+}
+
+.prosa-editor .outline-section {
+    padding: 6px 8px;
+    border-radius: 10px;
+    border: 1px solid #e5e7eb;
+    background: var(--surface);
+}
+
+.prosa-editor .outline-section-title {
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+.prosa-editor .outline-page {
+    padding-left: 12px;
+    color: #4b5563;
+    font-size: 0.9rem;
+}
+
+.prosa-editor .outline-tree {
+    display: grid;
+    gap: 10px;
+}
+
+.prosa-editor .outline-tree-list,
+.prosa-editor .outline-tree-children {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 8px;
+}
+
+.prosa-editor .outline-tree-node {
+    display: grid;
+    gap: 6px;
+}
+
+.prosa-editor .outline-node-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border: 1px solid #e2e0da;
+    border-radius: 12px;
+    background: var(--surface);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+    position: relative;
+    flex-wrap: wrap;
+}
+
+.prosa-editor .outline-node-row:hover {
+    border-color: #c9d7f6;
+    box-shadow: 0 4px 12px rgba(47, 111, 235, 0.12);
+}
+
+.prosa-editor .outline-node-indent {
+    width: calc(var(--outline-depth, 0) * 12px);
+    flex: 0 0 auto;
+    position: relative;
+    align-self: stretch;
+}
+
+.prosa-editor .outline-node-indent::after {
+    content: "";
+    position: absolute;
+    top: -10px;
+    bottom: -10px;
+    right: 4px;
+    width: 1px;
+    background: #e5e7eb;
+    opacity: 0.7;
+}
+
+.prosa-editor .outline-node__row[style*="--outline-depth: 0"] .outline-node-indent::after {
+    display: none;
+}
+
+.prosa-editor .outline-node-toggle,
+.prosa-editor .outline-drag-handle {
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    background: #fff;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    font-size: 0.75rem;
+    color: #6b7280;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.prosa-editor .outline-node-spacer {
+    width: 24px;
+    height: 24px;
+}
+
+.prosa-editor .outline-node-main {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+}
+
+.prosa-editor .outline-node-title {
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: var(--surface);
+    text-align: left;
+    font-size: 0.95rem;
+    color: var(--text-strong);
+    cursor: pointer;
+    padding: 6px 10px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.prosa-editor .outline-node-title:hover {
+    border-color: #c9d7f6;
+    transform: translateY(-1px);
+}
+
+.prosa-editor .outline-node-title.is-link {
+    color: #2563eb;
+    cursor: pointer;
+}
+
+.prosa-editor .outline-node--active .outline-node-title {
+    border-color: #9fbaf5;
+    background: var(--accent-soft);
+    box-shadow: 0 6px 14px rgba(47, 111, 235, 0.12);
+}
+
+.prosa-editor .outline-node--active .outline-node-row {
+    border-color: #9fbaf5;
+    background: #f8fbff;
+    box-shadow: 0 6px 16px rgba(47, 111, 235, 0.12);
+}
+
+.prosa-editor .outline-badge {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 2px 6px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    color: #6b7280;
+    background: #f3f4f6;
+    flex: 0 0 auto;
+}
+
+.prosa-editor .outline-badge--linked {
+    color: #1d4ed8;
+    border-color: #c7d2fe;
+    background: #eef2ff;
+}
+
+.prosa-editor .outline-badge--unlinked,
+.prosa-editor .outline-badge--outlineonly {
+    color: #6b7280;
+    border-color: #e5e7eb;
+    background: #f8fafc;
+}
+
+.prosa-editor .outline-badge-button {
+    border: none;
+    background: transparent;
+    padding: 0;
+    cursor: pointer;
+}
+
+.prosa-editor .outline-link-popover {
+    margin-top: 6px;
+    padding: 8px;
+    border-radius: 10px;
+    border: 1px solid #e2e8f0;
+    background: var(--surface);
+    display: grid;
+    gap: 8px;
+}
+
+.prosa-editor .outline-link-error {
+    font-size: 0.78rem;
+    color: #b91c1c;
+}
+
+.prosa-editor .outline-node-actions {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    margin-left: auto;
+}
+
+.prosa-editor .outline-node__row:focus-within {
+    border-color: #9fbaf5;
+    box-shadow: 0 0 0 2px rgba(47, 111, 235, 0.15);
+}
+
+.prosa-editor .outline-node__title:focus-visible,
+.prosa-editor .outline-link-select:focus-visible,
+.prosa-editor .outline-node-toggle:focus-visible,
+.prosa-editor .outline-drag-handle:focus-visible,
+.prosa-editor .btn-icon:focus-visible {
+    outline: 2px solid #9fbaf5;
+    outline-offset: 2px;
+}
+
+.prosa-editor .btn-icon {
+    border: 1px solid #d1d5db;
+    border-radius: 10px;
+    background: var(--surface);
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    font-size: 0.75rem;
+    color: #6b7280;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.prosa-editor .btn-icon svg {
+    width: 14px;
+    height: 14px;
+    stroke: currentColor;
+    stroke-width: 2;
+    fill: none;
+}
+
+.prosa-editor .outline-node__handle svg {
+    fill: currentColor;
+    stroke: none;
+}
+.prosa-editor .btn-icon:hover {
+    border-color: #c9d7f6;
+    color: #1f2937;
+}
+
+.prosa-editor .btn-icon:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.prosa-editor .outline-node__linkselect {
+    background: #fff;
+}
+
+.prosa-editor .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    border: 0;
+}
+
+.prosa-editor .outline-icon-button {
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    background: #fff;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    font-size: 0.75rem;
+    color: #4b5563;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+}
+
+.prosa-editor .outline-icon-button:hover {
+    border-color: #c9d7f6;
+    color: #1f2937;
+}
+
+.prosa-editor .outline-icon-button.danger {
+    border-color: #fca5a5;
+    color: #b91c1c;
+}
+
+.prosa-editor .outline-link-select {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    min-height: var(--control-height);
+    padding: 0 var(--space-2);
+    font-size: 0.8rem;
+    background: var(--color-surface-1);
+    min-width: 120px;
+}
+
+.prosa-editor .outline-rename-input {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    min-height: var(--control-height);
+    padding: 0 var(--space-2);
+    font-size: 0.9rem;
+    min-width: 160px;
+}
+
+.prosa-editor .outline-rename-error {
+    font-size: 0.75rem;
+    color: #b91c1c;
+}
+
+.prosa-editor .outline-actions {
+    display: flex;
+    justify-content: flex-start;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.prosa-editor .outline-templates-dialog {
+    width: min(680px, calc(100vw - 32px));
+}
+
+.prosa-editor .outline-template-options {
+    display: grid;
+    gap: 8px;
+}
+
+.prosa-editor .outline-action-bar {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    box-shadow: var(--shadow-sm);
+}
+
+.prosa-editor .outline-action-bar__hint {
+    font-size: var(--font-size-helper);
+    color: var(--text-muted);
+}
+
+.prosa-editor .outline-action-bar__buttons {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.prosa-editor .outline-controls {
+    display: grid;
+    gap: 10px;
+}
+
+.prosa-editor .outline-proposal {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    padding: var(--space-3);
+    background: var(--color-surface-2);
+    display: grid;
+    gap: 8px;
+}
+
+.prosa-editor .outline-proposal-title {
+    font-size: var(--font-size-caption);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+}
+
+.prosa-editor .outline-proposal-preview {
+    margin: 0;
+    white-space: pre-wrap;
+    font-size: var(--font-size-helper);
+    color: var(--text-strong);
+}
+
+.prosa-editor .outline-proposal-note {
+    font-size: 0.8rem;
+    color: #9a3412;
+}
+
+.prosa-editor .outline-proposal-actions {
+    display: flex;
+    gap: 6px;
+    justify-content: flex-end;
+}
+
+.prosa-editor .outline-apply-options {
+    display: grid;
+    gap: 6px;
+    font-size: 0.85rem;
+    color: var(--text-strong);
+}
+
+.prosa-editor .outline-apply-options label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.prosa-editor .outline-panel {
+    display: grid;
+    gap: 12px;
+}
+
+.prosa-editor .outline-panel-header {
+    display: grid;
+    gap: 8px;
+}
+
+.prosa-editor .outline-panel-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.prosa-editor .outline-panel-subtitle {
+    font-size: var(--font-size-helper);
+    color: var(--text-muted);
+}
+
+.prosa-editor .outline-panel-note {
+    margin-top: 4px;
+    font-size: var(--font-size-caption);
+    color: var(--text-muted);
+}
+
+.prosa-editor .outline-panel-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.prosa-editor .outline-btn {
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--color-border);
+    min-height: var(--control-height);
+    padding: 0 var(--space-3);
+    font-size: 0.85rem;
+    background: var(--surface);
+    color: var(--text-strong);
+    cursor: pointer;
+}
+
+.prosa-editor .outline-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.prosa-editor .outline-btn--primary {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    color: #fff;
+}
+
+.prosa-editor .outline-btn--secondary {
+    background: var(--color-primary-soft);
+    border-color: #cfd9f5;
+    color: var(--color-primary);
+}
+
+.prosa-editor .outline-btn--ghost {
+    background: transparent;
+    border-color: var(--color-border);
+    color: var(--text-strong);
+}
+
+.prosa-editor .outline-btn--danger {
+    border-color: #f2b9be;
+    color: var(--color-danger);
+    background: var(--color-danger-soft);
+}
+
+.prosa-editor .outline-status {
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-2);
+    color: var(--text-muted);
+    font-size: var(--font-size-helper);
+    border: 1px solid var(--color-border);
+}
+
+.prosa-editor .outline-status--error {
+    background: var(--color-danger-soft);
+    border-color: #f2b9be;
+    color: var(--color-danger);
+}
+
+.prosa-editor .ai-actions-list {
+    display: grid;
+    gap: 6px;
+}
+
+.prosa-editor .ai-action-group {
+    display: grid;
+    gap: 6px;
+}
+
+.prosa-editor .ai-action-group-title {
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.prosa-editor .ai-action-item {
+    display: grid;
+    gap: 4px;
+}
+
+.prosa-editor .ai-selection-hint {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    padding-left: 4px;
+}
+
+.prosa-editor .ai-actions-list button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 10px;
+    border: 1px solid #d0d0d0;
+    background: var(--surface);
+    text-align: left;
+    cursor: pointer;
+    width: 100%;
+}
+
+.prosa-editor .ai-action-label {
+    min-width: 0;
+}
+
+.prosa-editor .ai-recommended-badge {
+    font-size: 0.68rem;
+    line-height: 1;
+    padding: 3px 6px;
+    border-radius: 999px;
+    border: 1px solid #bfdbfe;
+    background: #eff6ff;
+    color: #1d4ed8;
+    white-space: nowrap;
+}
+
+.prosa-editor .ai-actions-list button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.prosa-editor .ai-history-count-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: #eef2ff;
+    font-size: 0.75rem;
+    color: #4b5563;
+}
+
+.prosa-editor .ai-history-toolbar {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.prosa-editor .ai-history-button {
+    padding: 6px 10px;
+    border-radius: 10px;
+    border: 1px solid #d1d5db;
+    background: var(--surface);
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.prosa-editor .ai-history-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.prosa-editor .ai-history-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 8px;
+}
+
+.prosa-editor .continuity-panel {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.prosa-editor .continuity-results {
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: 4px;
+}
+
+.prosa-editor .ai-history-item {
+    padding: 8px;
+    border-radius: 12px;
+    border: 1px solid #e5e7eb;
+    background: var(--surface);
+}
+
+.prosa-editor .ai-history-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.9rem;
+}
+
+.prosa-editor .ai-history-badge {
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: #0f172a;
+    color: #fff;
+    font-size: 0.7rem;
+}
+
+.prosa-editor .ai-history-summary {
+    font-weight: 600;
+    color: #1f2937;
+}
+
+.prosa-editor .ai-history-sub {
+    display: flex;
+    gap: 8px;
+    font-size: 0.8rem;
+    color: #6b7280;
+    margin-top: 4px;
+}
+
+.prosa-editor .ai-history-status {
+    color: #15803d;
+    font-weight: 600;
+}
+
+.prosa-editor .ai-history-status.is-pending {
+    color: #6b7280;
+    font-weight: 500;
+}
+
+.prosa-editor .ai-history-status-count {
+    font-weight: 600;
+    color: #1f2937;
+}
+
+.prosa-editor .ai-history-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 6px;
+}
+
+.prosa-editor .ai-details-toggle {
+    background: transparent;
+    border: 1px solid #d1d5db;
+    border-radius: 10px;
+    padding: 4px 8px;
+    font-size: 0.8rem;
+}
+
+.prosa-editor .ai-history-details {
+    margin-top: 8px;
+    padding: 10px;
+    border-radius: 12px;
+    border: 1px solid #e5e7eb;
+    background: #f8fafc;
+    display: grid;
+    gap: 10px;
+    max-height: 60vh;
+    min-height: 0;
+    overflow: auto;
+}
+
+.prosa-editor .ai-history-details-header {
+    display: grid;
+    gap: 4px;
+}
+
+.prosa-editor .ai-history-details-summary {
+    font-weight: 600;
+    color: #1f2937;
+}
+
+.prosa-editor .ai-history-details-sub {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 0.75rem;
+    color: #6b7280;
+}
+
+.prosa-editor .ai-history-provider {
+    font-weight: 600;
+}
+
+.prosa-editor .ai-history-details-intent {
+    display: grid;
+    gap: 4px;
+}
+
+.prosa-editor .ai-history-details-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #6b7280;
+}
+
+.prosa-editor .ai-history-details-text {
+    font-size: 0.85rem;
+    color: #1f2937;
+}
+
+.prosa-editor .ai-history-details-compare {
+    display: grid;
+    gap: 8px;
+    min-height: 0;
+    max-height: 44vh;
+    overflow: auto;
+}
+
+.prosa-editor .ai-history-details-block {
+    min-height: 0;
+}
+
+.prosa-editor .ai-history-details-block pre {
+    margin: 6px 0 0;
+    padding: 8px;
+    border-radius: 10px;
+    border: 1px solid #e5e7eb;
+    background: var(--surface);
+    font-size: 0.85rem;
+    white-space: pre-wrap;
+    max-height: 30vh;
+    overflow: auto;
+}
+
+.prosa-editor .ai-preview {
+    margin-top: 12px;
+    padding: 12px;
+    border-radius: 14px;
+    border: 1px solid #e5e7eb;
+    background: var(--surface, var(--color-surface-1, #ffffff));
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 78vh;
+    min-height: 30rem;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.prosa-editor .ai-preview-header {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    font-size: 0.9rem;
+}
+
+.prosa-editor .ai-preview-status {
+    margin-left: auto;
+    font-size: 0.8rem;
+    color: #6b7280;
+}
+
+.prosa-editor .ai-preview-status.error {
+    color: #b91c1c;
+}
+
+.prosa-editor .ai-preview-columns {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    min-height: 0;
+}
+
+.prosa-editor .ai-preview-pane {
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 8px;
+    background: #f8fafc;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    max-height: min(60vh, 520px);
+}
+
+.prosa-editor .ai-preview-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #6b7280;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: #f8fafc;
+    padding-bottom: 4px;
+}
+
+.prosa-editor .ai-preview-text {
+    margin-top: 6px;
+    font-size: 0.9rem;
+    color: #1f2937;
+    white-space: pre-wrap;
+    overflow: auto;
+    min-height: 0;
+    flex: 1;
+    padding-right: 4px;
+}
+
+.prosa-editor .ai-preview-image img {
+    max-width: 100%;
+    border-radius: 12px;
+}
+
+.prosa-editor .ai-preview-actions {
+    display: flex;
+    gap: 8px;
+}
+
+@media (max-width: 1100px) {
+    .prosa-editor .ai-preview-columns {
+        grid-template-columns: 1fr;
+    }
+
+    .prosa-editor .ai-preview {
+        min-height: 18rem;
+    }
+}
+
+.prosa-editor .feedback-dialog {
+    width: min(700px, 94vw);
+    z-index: 2;
+}
+
+.prosa-editor .feedback-form {
+    display: grid;
+    gap: 10px;
+}
+
+.prosa-editor .focus-sentinel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.prosa-editor .ai-quota-message {
+    color: #9a3412;
+    font-size: 0.85rem;
+}
+
+.prosa-editor .ai-quota-details {
+    display: grid;
+    gap: 0.35rem;
+    margin-top: 0.65rem;
+}
+
+.prosa-editor .selection-bubble {
+    position: fixed;
+    z-index: 45;
+    transform: translate(-50%, -100%);
+    display: flex;
+    gap: 6px;
+    padding: 6px;
+    border-radius: 999px;
+    background: var(--surface);
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 16px 32px rgba(15, 23, 42, 0.2);
+}
+
+.prosa-editor .selection-bubble button {
+    border: none;
+    background: transparent;
+    padding: 4px 6px;
+    border-radius: 999px;
+    cursor: pointer;
+}
+
+.prosa-editor .selection-bubble button.is-active {
+    background: var(--accent-soft);
+    color: #1f2a44;
+}
+
+.prosa-editor .selection-bubble button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.prosa-editor .editor-context-menu-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+}
+
+.prosa-editor .editor-context-menu {
+    position: fixed;
+    z-index: 10000;
+    min-width: 200px;
+    padding: 6px;
+    border: 1px solid rgba(0, 0, 0, 0.12);
+    border-radius: 10px;
+    background-color: var(--surface, #ffffff);
+    opacity: 1;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    backdrop-filter: none;
+    isolation: isolate;
+}
+
+.prosa-editor .editor-context-menu:focus {
+    outline: none;
+}
+
+.prosa-editor .editor-context-menu-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 4px 2px;
+}
+
+.prosa-editor .editor-context-menu-label {
+    font-size: 0.75rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #6b6b6b;
+    padding: 4px 8px;
+}
+
+.prosa-editor .editor-context-menu button {
+    width: 100%;
+    border: none;
+    background: transparent;
+    text-align: left;
+    padding: 6px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.prosa-editor .editor-context-menu button:hover:not(:disabled) {
+    background: rgba(0, 0, 0, 0.06);
+}
+
+.prosa-editor .editor-context-menu button.is-active {
+    background: rgba(0, 0, 0, 0.1);
+    color: inherit;
+}
+
+@media (max-width: 1200px) {
+    .prosa-editor .editor-shell {
+        --section-panel-width: 220px;
+        --context-panel-width: 300px;
+        padding: 18px;
+    }
+
+    .prosa-editor .editor-workspace {
+        gap: 24px;
+    }
+}
+
+@media (max-width: 980px) {
+    .prosa-editor .editor-workspace {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .prosa-editor .section-panel,
+    .prosa-editor .context-drawer {
+        display: none;
+    }
+}
+
+@media (max-width: 880px) {
+    .prosa-editor .editor-shell {
+        height: auto;
+    }
+
+    .prosa-editor .editor-workspace {
+        height: auto;
+    }
+
+    .prosa-editor .context-drawer,
+    .prosa-editor .rp-shell {
+        height: auto;
+        min-height: 0;
+    }
+
+    .prosa-editor .rp-scroll {
+        overflow: visible;
+        padding-right: 0;
+    }
+
+    .prosa-editor .rp-sticky-header {
+        position: static;
+    }
+}
+
+.prosa-editor .editor-context-menu button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.prosa-editor .version-history-panel {
+    display: grid;
+    gap: 10px;
+}
+
+.prosa-editor .history-filter-bar {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    padding: 4px;
+    border-radius: 12px;
+    border: 1px solid #d1d5db;
+    background: #f3f4f6;
+}
+
+.prosa-editor .history-filter-button {
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: transparent;
+    padding: 6px 10px;
+    font-size: 0.8rem;
+    color: #4b5563;
+    cursor: pointer;
+}
+
+.prosa-editor .history-filter-button.is-active {
+    background: #ffffff;
+    border-color: #cbd5e1;
+    color: #111827;
+    font-weight: 600;
+}
+
+.prosa-editor .version-history-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 10px;
+}
+
+.prosa-editor .version-history-item {
+    padding: 10px;
+    border-radius: 12px;
+    border: 1px solid #e5e7eb;
+    background: var(--surface);
+    display: grid;
+    gap: 6px;
+}
+
+.prosa-editor .history-item-card--snapshot {
+    border-color: #c7d2fe;
+    background: #f8faff;
+}
+
+.prosa-editor .history-item-card--command {
+    border-color: #d1fae5;
+    background: #f6fffb;
+}
+
+.prosa-editor .version-history-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.prosa-editor .version-history-badge {
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: #111827;
+    color: #fff;
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.prosa-editor .history-type-badge--snapshot {
+    background: #1e3a8a;
+}
+
+.prosa-editor .history-type-badge--command {
+    background: #065f46;
+}
+
+.prosa-editor .version-history-time {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.prosa-editor .version-history-sub {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+}
+
+.prosa-editor .history-item-helper {
+    font-size: 0.75rem;
+    color: #6b7280;
+}
+
+.prosa-editor .history-command-summary {
+    font-size: 0.92rem;
+    font-weight: 600;
+    color: #111827;
+}
+
+.prosa-editor .history-command-status {
+    font-weight: 600;
+}
+
+.prosa-editor .history-command-status.is-applied {
+    color: #166534;
+}
+
+.prosa-editor .history-command-status.is-succeeded {
+    color: #166534;
+}
+
+.prosa-editor .history-command-status.is-pending {
+    color: #92400e;
+}
+
+.prosa-editor .history-command-status.is-failed {
+    color: #b91c1c;
+}
+
+.prosa-editor .version-history-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.prosa-editor .version-history-actions button {
+    padding: 4px 8px;
+    border-radius: 8px;
+    border: 1px solid #d1d5db;
+    background: var(--surface);
+    font-size: 0.8rem;
+}
+
+.prosa-editor .version-history-actions .danger {
+    border-color: #fca5a5;
+    color: #b91c1c;
+}
+
+.prosa-editor .version-diff {
+    margin-top: 6px;
+    padding: 8px;
+    border-radius: 10px;
+    border: 1px solid #e5e7eb;
+    background: #f8fafc;
+    display: grid;
+    gap: 6px;
+}
+
+.prosa-editor .version-diff-note {
+    font-size: 0.8rem;
+    color: #9a3412;
+}
+
+.prosa-editor .version-diff-lines {
+    display: grid;
+    gap: 2px;
+    font-family: ui-monospace, SFMono-Regular, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 0.78rem;
+}
+
+.prosa-editor .version-diff-line {
+    display: grid;
+    grid-template-columns: 18px 1fr;
+    gap: 6px;
+    padding: 2px 4px;
+    border-radius: 6px;
+    align-items: start;
+}
+
+.prosa-editor .version-diff-line.is-added {
+    background: #ecfdf3;
+    color: #166534;
+}
+
+.prosa-editor .version-diff-line.is-removed {
+    background: #fef2f2;
+    color: #9f1239;
+}
+
+.prosa-editor .version-diff-line.is-unchanged {
+    color: #374151;
+}
+
+.prosa-editor .version-diff-prefix {
+    font-weight: 600;
+    opacity: 0.7;
+}
+
+.prosa-editor .diff-header-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+    padding: 10px 14px;
+    margin-bottom: 12px;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    background: #f8fafc;
+}
+
+.prosa-editor .diff-header-group {
+    display: grid;
+    gap: 4px;
+    min-width: 160px;
+}
+
+.prosa-editor .diff-header-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+}
+
+.prosa-editor .diff-header-button {
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid #d1d5db;
+    background: var(--surface);
+    font-size: 0.8rem;
+}
+
+.prosa-editor .diff-header-button.primary {
+    background: #111827;
+    color: #fff;
+    border-color: #111827;
+}
+
+.prosa-editor .diff-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.prosa-editor .diff-canvas {
+    padding: 18px 24px;
+    display: grid;
+    gap: 12px;
+    background: #ffffff;
+}
+
+.prosa-editor .diff-empty {
+    padding: 20px;
+    border-radius: 12px;
+    border: 1px dashed #d1d5db;
+    color: var(--text-muted);
+    text-align: center;
+}
+
+.prosa-editor .diff-legend {
+    display: flex;
+    gap: 12px;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.prosa-editor .diff-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.prosa-editor .diff-legend-item::before {
+    content: "";
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+    display: inline-block;
+}
+
+.prosa-editor .diff-legend-item.added::before {
+    background: #bbf7d0;
+}
+
+.prosa-editor .diff-legend-item.removed::before {
+    background: #fecaca;
+}
+
+.prosa-editor .diff-legend-item.changed::before {
+    background: #bfdbfe;
+}
+
+.prosa-editor .diff-note {
+    font-size: 0.8rem;
+    color: #9a3412;
+}
+
+.prosa-editor .diff-inline {
+    display: grid;
+    gap: 8px;
+    font-size: 1rem;
+    line-height: 1.6;
+    background: #ffffff;
+}
+
+.prosa-editor .diff-line {
+    padding: 6px 10px;
+    border-radius: 8px;
+    background: transparent;
+    white-space: pre-wrap;
+}
+
+.prosa-editor .diff-line.is-added {
+    background: #ecfdf3;
+    color: #166534;
+}
+
+.prosa-editor .diff-line.is-removed {
+    background: #fef2f2;
+    color: #9f1239;
+    text-decoration: line-through;
+}
+
+.prosa-editor .diff-line.is-changed {
+    background: #eff6ff;
+    color: #1e3a8a;
+}
+
+.prosa-editor .diff-line.is-unchanged {
+    color: #1f2937;
+}
+
+.prosa-editor .diff-line.is-empty {
+    color: #9ca3af;
+}
+
+.prosa-editor .diff-line .version-diff-span.is-added {
+    background: rgba(34, 197, 94, 0.18);
+}
+
+.prosa-editor .diff-line .version-diff-span.is-removed {
+    background: rgba(248, 113, 113, 0.2);
+    text-decoration: line-through;
+}
+
+.prosa-editor .diff-side-by-side {
+    display: grid;
+    gap: 16px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.prosa-editor .diff-pane {
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    background: #fff;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    min-height: 480px;
+}
+
+.prosa-editor .diff-pane-header {
+    padding: 10px 12px;
+    border-bottom: 1px solid #e5e7eb;
+    background: #f9fafb;
+}
+
+.prosa-editor .diff-pane-title {
+    font-weight: 600;
+}
+
+.prosa-editor .diff-pane-sub {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.prosa-editor .diff-pane-body {
+    padding: 12px;
+    overflow-y: auto;
+    max-height: 70vh;
+    display: grid;
+    gap: 8px;
+    font-size: 0.95rem;
+    line-height: 1.6;
+    background: #ffffff;
+}
+
+.prosa-editor .diff-panel {
+    gap: 12px;
+}
+
+.prosa-editor .diff-summary {
+    display: flex;
+    gap: 16px;
+    font-size: 0.85rem;
+}
+
+.prosa-editor .diff-nav {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.prosa-editor .diff-nav button {
+    padding: 4px 10px;
+    border-radius: 8px;
+    border: 1px solid #d1d5db;
+    background: var(--surface);
+    font-size: 0.8rem;
+}
+
+.prosa-editor .diff-change-list {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.prosa-editor .diff-change-item {
+    padding: 8px 10px;
+    border-radius: 10px;
+    border: 1px solid transparent;
+    background: #f9fafb;
+    display: grid;
+    gap: 4px;
+    cursor: pointer;
+}
+
+.prosa-editor .diff-change-item.is-added {
+    background: #ecfdf3;
+}
+
+.prosa-editor .diff-change-item.is-removed {
+    background: #fef2f2;
+}
+
+.prosa-editor .diff-change-item.is-changed {
+    background: #eff6ff;
+}
+
+.prosa-editor .diff-change-item.is-active {
+    border-color: #111827;
+    background: #eef2ff;
+}
+
+.prosa-editor .diff-change-kind {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+}
+
+.prosa-editor .diff-change-preview {
+    font-size: 0.85rem;
+    color: #111827;
+}
+
+.prosa-editor .version-restore-meta {
+    margin-top: 8px;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.prosa-editor .wa-annotation {
+    border-radius: 4px;
+    padding: 0 2px;
+    box-decoration-break: clone;
+}
+
+.prosa-editor .wa-annotation-comment {
+    background: rgba(99, 102, 241, 0.2);
+}
+
+.prosa-editor .wa-annotation-todo {
+    background: rgba(251, 191, 36, 0.25);
+}
+
+.prosa-editor .wa-annotation-highlight {
+    background: rgba(34, 197, 94, 0.2);
+}
+
+.prosa-editor .wa-annotation-resolved {
+    opacity: 0.55;
+}
+
+.prosa-editor .annotations-panel {
+    gap: 12px;
+}
+
+.prosa-editor .annotations-toolbar {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+    gap: 8px;
+    align-items: end;
+}
+
+.prosa-editor .annotations-filter {
+    display: grid;
+    gap: 4px;
+}
+
+.prosa-editor .annotations-filter-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+}
+
+.prosa-editor .annotations-filter-select {
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    padding: 6px 8px;
+    background: #fff;
+    font-size: 0.85rem;
+}
+
+.prosa-editor .annotations-refresh {
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    padding: 6px 10px;
+    background: #fff;
+    font-size: 0.8rem;
+}
+
+.prosa-editor .annotations-create {
+    display: grid;
+    gap: 8px;
+    padding: 10px;
+    border-radius: 12px;
+    border: 1px solid #e5e7eb;
+    background: #fff;
+}
+
+.prosa-editor .annotations-selection {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.prosa-editor .annotations-input {
+    min-height: 72px;
+    resize: vertical;
+    padding: 8px 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 10px;
+    font-size: 0.9rem;
+}
+
+.prosa-editor .annotations-create-actions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 8px;
+}
+
+.prosa-editor .annotations-action {
+    border: 1px solid #cbd5f5;
+    border-radius: 10px;
+    padding: 6px 10px;
+    background: #eef2ff;
+    color: #1e3a8a;
+    font-size: 0.85rem;
+}
+
+.prosa-editor .annotations-action:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.prosa-editor .annotations-error {
+    font-size: 0.8rem;
+    color: #b91c1c;
+}
+
+.prosa-editor .annotations-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 10px;
+}
+
+.prosa-editor .annotation-item {
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 10px;
+    background: #fff;
+    display: grid;
+    gap: 6px;
+    cursor: pointer;
+    transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.prosa-editor .annotation-item:hover {
+    border-color: #c9d7f6;
+    box-shadow: 0 0 0 1px rgba(90, 120, 255, 0.14);
+}
+
+.prosa-editor .annotation-item--comment {
+    border-left: 4px solid rgba(99, 102, 241, 0.55);
+}
+
+.prosa-editor .annotation-item--todo {
+    border-left: 4px solid rgba(251, 191, 36, 0.55);
+}
+
+.prosa-editor .annotation-item--highlight {
+    border-left: 4px solid rgba(34, 197, 94, 0.5);
+}
+
+.prosa-editor .annotation-item--resolved {
+    opacity: 0.7;
+}
+
+.prosa-editor .annotation-item--focused {
+    border-color: #7aa2ff;
+    box-shadow: 0 0 0 2px rgba(90, 120, 255, 0.25);
+}
+
+.prosa-editor .annotation-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.prosa-editor .annotation-kind {
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.prosa-editor .annotation-status {
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: #e2e8f0;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+}
+
+.prosa-editor .annotation-content {
+    white-space: pre-wrap;
+    font-size: 0.9rem;
+    color: var(--text-strong);
+}
+
+.prosa-editor .annotation-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.prosa-editor .annotation-actions button {
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    padding: 4px 8px;
+    background: #fff;
+    font-size: 0.8rem;
+}
+
+.prosa-editor .annotation-actions .danger {
+    border-color: #fca5a5;
+    color: #b91c1c;
+}
+
+.prosa-editor .notes-panel {
+    display: grid;
+    gap: 6px;
+}
+
+.prosa-editor .notes-error {
+    font-size: 0.78rem;
+    color: #b91c1c;
+}
+
+.prosa-editor .wa-annotation-flash {
+    animation: wa-annotation-flash 0.9s ease-out;
+}
+
+@keyframes wa-annotation-flash {
+    0% {
+        box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.45);
+    }
+
+    100% {
+        box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+    }
+}
+
+.prosa-editor .quality-panel {
+    gap: 12px;
+}
+
+.prosa-editor .quality-toolbar {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr auto;
+    gap: 8px;
+    align-items: end;
+}
+
+.prosa-editor .quality-filter {
+    display: grid;
+    gap: 4px;
+}
+
+.prosa-editor .quality-filter-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+}
+
+.prosa-editor .quality-filter-select {
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    padding: 6px 8px;
+    background: #fff;
+    font-size: 0.85rem;
+}
+
+.prosa-editor .quality-refresh {
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    padding: 6px 10px;
+    background: #fff;
+    font-size: 0.8rem;
+}
+
+.prosa-editor .quality-refresh.primary {
+    border-color: #1d4ed8;
+    background: #1d4ed8;
+    color: #ffffff;
+    font-weight: 600;
+}
+
+.prosa-editor .quality-refresh:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+}
+
+.prosa-editor .quality-precheck-hint {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.prosa-editor .quality-cache-note {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.prosa-editor .quality-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 10px;
+}
+
+.prosa-editor .quality-item {
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 10px;
+    background: #fff;
+    display: grid;
+    gap: 6px;
+    cursor: pointer;
+}
+
+.prosa-editor .quality-item--warning {
+    border-left: 4px solid rgba(248, 113, 113, 0.7);
+}
+
+.prosa-editor .quality-item--info {
+    border-left: 4px solid rgba(59, 130, 246, 0.5);
+}
+
+.prosa-editor .quality-item--selected {
+    border-color: #93c5fd;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18);
+}
+
+.prosa-editor .quality-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.prosa-editor .quality-message {
+    font-size: 0.9rem;
+    color: var(--text-primary);
+}
+
+.prosa-editor .quality-suggestion {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.prosa-editor .quality-anchor {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.prosa-editor .quality-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.prosa-editor .quality-actions button {
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    padding: 4px 8px;
+    background: #fff;
+    font-size: 0.8rem;
+}
+
+.prosa-editor .quality-actions .primary {
+    border-color: #2563eb;
+    background: #2563eb;
+    color: #ffffff;
+}
+
+.prosa-editor .quality-applied {
+    font-size: 0.8rem;
+    color: #166534;
+    font-weight: 600;
+}
+
+.prosa-editor .quality-error {
+    font-size: 0.8rem;
+    color: #b91c1c;
+}
+
+.prosa-editor .quality-proposal-dialog {
+    width: min(620px, calc(100vw - 48px));
+}
+
+.prosa-editor .quality-proposal-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.prosa-editor .quality-proposal-message {
+    margin-top: 8px;
+    font-size: 0.9rem;
+    color: var(--text-primary);
+}
+
+.prosa-editor .quality-proposal-suggestion {
+    margin-top: 6px;
+    font-size: 0.82rem;
+    color: var(--text-muted);
+}
+
+.prosa-editor .quality-proposal-preview {
+    margin-top: 10px;
+    display: grid;
+    gap: 6px;
+}
+
+.prosa-editor .quality-proposal-label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+}
+
+.prosa-editor .quality-proposal-preview pre {
+    margin: 0;
+    padding: 8px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    background: #f8fafc;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 0.82rem;
+    color: var(--text-primary);
+}
+
+.prosa-editor .quality-proposal-context {
+    margin-top: 10px;
+    display: grid;
+    gap: 6px;
+}
+
+.prosa-editor .quality-proposal-context-line {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 6px 8px;
+    background: #ffffff;
+    font-size: 0.8rem;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.prosa-editor .quality-proposal-token {
+    padding: 0 2px;
+    border-radius: 4px;
+}
+
+.prosa-editor .quality-proposal-token--before {
+    background: #fef2f2;
+    color: #991b1b;
+}
+
+.prosa-editor .quality-proposal-token--after {
+    background: #ecfdf3;
+    color: #166534;
+}
+
+.prosa-editor .import-dialog {
+    width: min(520px, calc(100vw - 48px));
+    background: var(--color-surface-1, #ffffff);
+}
+
+.prosa-editor .import-form {
+    display: grid;
+    gap: 10px;
+}
+
+.prosa-editor .import-form label {
+    font-size: 0.85rem;
+    color: var(--text-strong);
+}
+
+.prosa-editor .import-form select {
+    border: 1px solid #d1d5db;
+    border-radius: 10px;
+    padding: 6px 8px;
+    background: #fff;
+}
+
+.prosa-editor .import-file-name {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.prosa-editor .editor-navigator-host {
+    min-height: 0;
+}
+
+.prosa-editor .editor-navigator-host .projects-tree {
+    height: 100%;
+    max-height: none;
+    box-shadow: none;
+}
+
+.prosa-editor .editor-navigator-host .tree-list {
+    max-height: none;
+}
+
+/* Embedded navigator has less horizontal space than /projects.
+   Collapse badge/fixed columns so title text keeps visible width. */
+.prosa-editor .editor-navigator-host .tree-row {
+    grid-template-columns: calc(var(--depth) * 10px) 24px 24px minmax(0, 1fr) 28px;
+    column-gap: var(--space-1);
+}
+
+.prosa-editor .editor-navigator-host .tree-node-badge {
+    display: none;
+}
+
+.prosa-editor .editor-navigator-host .tree-select {
+    grid-column: 4;
+    min-width: 0;
+    color: var(--color-text);
+}
+
+.prosa-editor .editor-navigator-host .tree-rename {
+    grid-column: 4;
+    min-width: 0;
+    width: 100%;
+}
+
+.prosa-editor .editor-navigator-host .tree-rename-input {
+    width: 100%;
+    min-width: 0;
+    color: var(--color-text);
+    background: var(--color-surface-1);
+    caret-color: var(--color-text);
+    -webkit-text-fill-color: var(--color-text);
+    opacity: 1;
+    font: inherit;
+}
+
+.prosa-editor .editor-navigator-host .tree-rename-input::selection {
+    color: var(--color-text);
+    background: rgba(55, 114, 255, 0.22);
+}
+
+.prosa-editor .editor-navigator-host .tree-select-title {
+    min-width: 0;
+    max-width: 100%;
+    color: var(--color-text);
+    opacity: 1;
+    visibility: visible;
+}
+
+.prosa-editor .editor-navigator-host .tree-row-actions {
+    grid-column: 5;
+}

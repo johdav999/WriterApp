@@ -22,7 +22,7 @@ public interface IDeviceSyncApi
 
 public sealed class DeviceSyncApi(HttpClient client) : IDeviceSyncApi
 {
-    private const string Root = "api/sync/v1/documents";
+    private const string Root = "api/sync/v4/documents";
     public async Task<string> GetOwnerAsync(CancellationToken ct)
     {
         var profile = await ReadAsync<AuthMeDto>(await client.GetAsync("api/auth/me", ct), ct);
@@ -45,6 +45,8 @@ public sealed class DeviceSyncApi(HttpClient client) : IDeviceSyncApi
                 SyncError? error = null;
                 try { error = await response.Content.ReadFromJsonAsync<SyncError>(cancellationToken: ct); }
                 catch (JsonException) { }
+                if ((int)response.StatusCode == 404 && error is null)
+                    throw new DeviceSyncApiException(426, "project_sync_backend_required", "This backend does not support multi-document sync v4. Local changes and queued operations are preserved until the backend is upgraded.");
                 throw new DeviceSyncApiException((int)response.StatusCode, error?.Code ?? "http_error", error?.Message ?? "The sync request was rejected.");
             }
             return await response.Content.ReadFromJsonAsync<T>(cancellationToken: ct) ?? throw new JsonException("Empty synchronization response.");

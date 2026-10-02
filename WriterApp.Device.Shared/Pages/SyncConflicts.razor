@@ -12,9 +12,22 @@
 {
     <section class="sync-conflict" @key="conflict.LocalId">
         <h2>@Title(conflict.LocalId)</h2>
+        @if (_documents.GetValueOrDefault(conflict.LocalId)?.Project is { } project)
+        {
+            <p>Project conflict: @project.Title. This choice applies to the entire hierarchy, scene metadata and manuscript writing together. Moves, renames and deletions are not automatically merged.</p>
+            <p>Local scenes: @string.Join(", ", project.Nodes.Where(n => n.NodeType == "scene").Select(n => n.Title + (n.DeletionId is null ? "" : " (deleted tree item)")))</p>
+            <a href="@($"/projects/{project.ProjectId}")">Inspect local project tree</a>
+        }
         <a href="@($"/documents/{conflict.LocalId}")">Inspect local version</a>
         @if (conflict.RemoteCopyId is { } remote)
-        { <a href="@($"/documents/{remote}")">Inspect cloud conflict copy</a> }
+        {
+            <a href="@($"/documents/{remote}")">Inspect cloud conflict copy</a>
+            @if (_documents.GetValueOrDefault(remote)?.Project is { } cloud)
+            {
+                <p>Cloud scenes: @string.Join(", ", cloud.Nodes.Where(n => n.NodeType == "scene").Select(n => n.Title + (n.DeletionId is null ? "" : " (deleted tree item)")))</p>
+                <a href="@($"/projects/{cloud.ProjectId}")">Inspect cloud project tree</a>
+            }
+        }
         @if (conflict.Deleted)
         {
             <p>This document was permanently deleted in the cloud. A local conflict copy will be retained. It will not be uploaded automatically.</p>
@@ -22,7 +35,7 @@
         }
         else
         {
-            <p>Keep local uploads the local version against the reviewed cloud version. Keep cloud replaces the linked local document and retains a separate local conflict copy.</p>
+            <p>Keep local uploads the complete local version against the reviewed cloud version, restoring a trashed cloud manuscript if necessary. Keep cloud adopts its complete writing, structure and trash state. Both choices first preserve an independent local copy, including project and scene metadata. New cloud edits cause another conflict.</p>
             <button disabled="@Sync.IsRunning" @onclick="() => Sync.ResolveAsync(conflict.LocalId, true)">Keep local as linked version</button>
             <button disabled="@Sync.IsRunning" @onclick="() => Sync.ResolveAsync(conflict.LocalId, false)">Keep cloud as linked version</button>
         }
@@ -31,9 +44,10 @@
 
 @code {
     private Dictionary<Guid, string> _titles = [];
+    private Dictionary<Guid, LocalDocument> _documents = [];
     private string Title(Guid id) => _titles.GetValueOrDefault(id, "Document conflict");
     protected override async Task OnInitializedAsync() { Sync.Changed += Updated; await LoadAsync(); }
-    private async Task LoadAsync() { _titles = (await Documents.ListAsync(LocalDocumentScope.All)).Documents.ToDictionary(d => d.DocumentId, d => d.Title); }
+    private async Task LoadAsync() { _documents = (await Documents.ListAsync(LocalDocumentScope.All)).Documents.ToDictionary(d => d.DocumentId); _titles = _documents.Values.ToDictionary(d => d.DocumentId, d => d.Project?.Title ?? d.Title); }
     private void Updated() => _ = InvokeAsync(async () => { await LoadAsync(); StateHasChanged(); });
     public void Dispose() => Sync.Changed -= Updated;
 }

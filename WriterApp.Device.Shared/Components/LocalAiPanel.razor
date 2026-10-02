@@ -1,0 +1,188 @@
+@implements IDisposable
+@inject LocalDocumentRepository Documents
+@inject DeviceSyncEngine Sync
+@inject DeviceAiService Ai
+@inject LocalAiStore Store
+@inject LocalAiHistoryActions HistoryActions
+@inject DevicePromptLibrary CloudPrompts
+@inject DeviceAccountService Account
+@using WriterApp.Controllers
+<div class="ai-workspace @(FixedRequest ? "ai-workspace-fixed" : null)" role="@(FixedRequest ? "region" : null)" aria-label="@(FixedRequest ? Heading : null)" tabindex="@(FixedRequest ? "0" : null)">
+<div class="ai-request">
+@if (Mode != "history") { <h3>@Heading</h3><p>Running AI sends saved scene context to your configured backend. Review every proposal before Apply.</p> }
+@if(_document is not null && Mode != "history") {
+<fieldset disabled="@_busy"><legend>Analyze saved writing and planning</legend>
+<p>Scene: @_document.Sections.FirstOrDefault(s => s.SectionId == _section)?.Title</p>
+@if(_action==AdvancedAiAction.Consistency) { <p>Checks the saved section only. Character, place and timeline bibles are not included in this desktop analysis.</p> }
+@if(_action==AdvancedAiAction.Synopsis) { <label>Synopsis target<select @bind="_field">@foreach(var f in AdvancedAiRequests.SynopsisFields) { <option value="@f.Key">@f.Field</option> }</select></label> }
+@if (Mode == "prompts") {
+<label>Saved local prompt<select @onchange="ChoosePrompt"><option value="">Choose prompt</option>@foreach(var p in _prompts) { <option value="@p.Id">@p.Name</option> }</select></label>
+}
+@if (Mode is "prompts" or "scene" or "synopsis" or "storyboard") {
+<label>Instruction / coaching notes<textarea @bind="_instruction" @bind:event="oninput" maxlength="2000" rows="4"></textarea></label>
+<p>This text is used for reusable prompts and scene, storyboard or synopsis coaching. Consistency and style checks use their predefined instructions.</p>
+}
+@if (Mode == "prompts") {
+<label>New local prompt name<input @bind="_name" @bind:event="oninput" maxlength="100" /></label><button @onclick="SavePrompt">Save a new local prompt</button>
+<p>Saving creates a new local copy. Cloud transfers require sign-in and create separate copies; there is no automatic merge or overwrite.</p>
+<button @onclick="LoadCloud">Refresh cloud prompts</button>
+@foreach (var local in _prompts) { <button @onclick="() => UploadPrompt(local)">Copy @local.Name to cloud</button> }
+@if (Account.Generation == _cloudGeneration) { @foreach (var cloud in _cloudPrompts) { <button @onclick="() => ImportPrompt(cloud.Id)">Copy @cloud.Name to this device</button> } }
+<p>Only account-wide custom prompts without extra parameters are supported. If an upload is interrupted, refresh the cloud list before retrying; the server may already have saved the copy.</p>
+}
+<button disabled="@(_document.ServerDocumentId is null || _document.DeletedAtUtc is not null || _section == Guid.Empty)" @onclick="RunAi">@RunLabel</button>
+@if(_document.ServerDocumentId is null) { <p>Enable cloud sync explicitly in the document before running AI. Local prompts and history remain available.</p> }
+</fieldset>
+}
+</div>
+@if (_busy || _proposal is not null || _error is not null || _message is not null || Mode == "history") {
+<div class="ai-response" role="region" aria-label="AI results and status" tabindex="@(FixedRequest ? "0" : null)">
+@if(_busy) { <p role="status">@(Mode == "history" ? "Updating AI history…" : "Working…")</p><button @onclick="Cancel">Cancel request</button> }
+@if(_proposal is not null && _prepared is not null) {
+<section aria-label="Review AI result"><h2>Review AI result</h2><p>Target: @_prepared.Target · source revision @_prepared.Source.LocalRevision · cloud version @_prepared.Source.ServerVersion</p>
+<AiResultPreview ActionKey="@_prepared.Request.Key" Original="@Original(_prepared)" Proposed="@_proposal.ProposedText" SceneCard="@AdvancedAiRequests.SceneProposal(_proposal)" />
+@if(_prepared.Target == LocalAiTarget.SceneCard) { <p>Apply updates summary, purpose, role, intent, emotional beat, key events and open questions only. Entity links, tags and status stay as authored.</p> }
+@if(_prepared.Target is LocalAiTarget.SceneCard or LocalAiTarget.SynopsisField) { <button disabled="@(_busy || (_prepared.Target == LocalAiTarget.SceneCard && AdvancedAiRequests.SceneProposal(_proposal) is null))" @onclick="Apply">Apply to @_prepared.Target only</button> }
+else { <p>Analysis only. No manuscript changes will be applied.</p> }
+<button disabled="@_busy" @onclick="() => _proposal=null">Dismiss</button></section>
+}
+@if(_error is not null) { <p role="alert">@_error</p> }
+@if(_message is not null) { <p role="status">@_message</p> }
+@if (Mode == "history") { <AiHistoryPanel Entries="HistoryItems" Busy="_busy" Recover="Recover" Refresh="RefreshHistory" Undo="UndoHistory" Redo="RedoHistory" /> }
+</div>
+}
+</div>
+@code {
+    [Parameter] public Guid DocumentId {get;set;}
+    [Parameter] public Guid? SectionId {get;set;}
+    [Parameter] public string Mode {get;set;} = "prompts";
+    [Parameter] public bool FixedRequest {get;set;}
+    [Parameter] public Func<Task<bool>>? BeforeWork {get;set;}
+    [Parameter] public Func<Task>? AfterWork {get;set;}
+    public bool IsBusy => _busy;
+    private bool _refineScene;
+    public Task SuggestSceneAsync(string instruction, bool refine = false)
+    {
+        if (Mode != "scene" || _busy) return Task.CompletedTask;
+        _instruction = instruction; _refineScene = refine; _action = AdvancedAiAction.SceneCard;
+        return RunAi();
+    }
+    private (Guid, Guid?, string)? _loaded;
+    private string Heading => Mode switch { "history" => "History", "consistency" => "Consistency Coach", "quality" => "Style & quality Coach", "scene" => "Scene card Coach", "synopsis" => "Synopsis coaching", "storyboard" => "Storyboard coaching", _ => "Prompt Library" };
+    private string RunLabel => Mode switch { "consistency" => "Check consistency", "quality" => "Analyze style & quality", "scene" => "Suggest scene details", "synopsis" => "Improve synopsis field", "storyboard" => "Check subplot continuity", _ => "Preview prompt result" };
+    private LocalDocument? _document; private Guid _section; private AdvancedAiAction _action;
+    private string _field="logline",_instruction="",_name=""; private string? _error,_message;
+    private bool _busy; private CancellationTokenSource? _cancel;
+    private long _cloudGeneration = -1; private IReadOnlyList<PromptPresetDto> _cloudPrompts=[];
+    private IReadOnlyList<LocalAiPrompt> _prompts=[]; private IReadOnlyList<LocalAiHistory> _history=[];
+    private AdvancedAiPrepared? _prepared; private DeviceAiProposal? _proposal; private LocalAiHistory? _record;
+    private bool _disposed;
+    protected override void OnInitialized()
+    {
+        Sync.Changed += OnDocumentChanged;
+        Documents.Changed += OnDocumentChanged;
+    }
+    private void OnDocumentChanged()
+    {
+        if (_disposed || _busy) return;
+        _ = InvokeAsync(async () => { await RefreshDocumentAsync(); if (!_disposed) StateHasChanged(); });
+    }
+    private async Task RefreshDocumentAsync(bool afterWork = false)
+    {
+        Guid id = DocumentId;
+        try
+        {
+            var latest = await Documents.LoadAsync(id);
+            if (!_disposed && (!_busy || afterWork) && DocumentId == id && latest is not null
+                && (_document is null || _document.DocumentId != id || latest.LocalRevision >= _document.LocalRevision)) _document = latest;
+        }
+        catch (Exception e) when (e is IOException or InvalidOperationException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        { if (!_disposed && (!_busy || afterWork) && DocumentId == id) _error = e.Message; }
+    }
+    private IReadOnlyList<AiHistoryItem> HistoryItems => _history.Select(h => {
+        bool redo = h.Status is "Undone" or "Redoing";
+        string? reason = _document is null ? "Document unavailable." : LocalAiHistoryActions.UnavailableReason(_document, h, redo);
+        string target = h.Target;
+        if (h.PageId is { } page) target = "Writing · " + (h.Before.Sections.SelectMany(s => s.Pages).FirstOrDefault(p => p.PageId == page)?.Title ?? "Page");
+        else if (h.NodeId is { } node) target = "Scene details · " + h.Before.Project?.Nodes.FirstOrDefault(n => n.NodeId == node)?.Title;
+        return new AiHistoryItem(h.Id, h.Action, target, h.Status, h.CreatedAt,
+            h.OriginalText ?? (h.PageId is { } id ? h.Before.Sections.SelectMany(s=>s.Pages).FirstOrDefault(p=>p.PageId==id)?.Content ?? "" : "Original manuscript retained for recovery."),
+            h.Proposed, !redo && reason is null, redo && reason is null, reason);
+    }).ToArray();
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loaded == (DocumentId, SectionId, Mode) || _busy) return;
+        _loaded = (DocumentId, SectionId, Mode); _proposal = null; _error = null; _message = null;
+        _action = Mode switch { "consistency" => AdvancedAiAction.Consistency, "quality" => AdvancedAiAction.StyleQuality,
+            "scene" => AdvancedAiAction.SceneCard, "synopsis" => AdvancedAiAction.Synopsis, "storyboard" => AdvancedAiAction.Storyboard, _ => AdvancedAiAction.Custom };
+        try { _document = await Latest(); _section = SectionId ?? AdvancedAiRequests.ActiveSections(_document).FirstOrDefault()?.SectionId ?? Guid.Empty;
+            _prompts = await Store.PromptsAsync(); _history = await Store.HistoryAsync(DocumentId); }
+        catch (Exception e) when (e is IOException or InvalidOperationException or UnauthorizedAccessException or System.Text.Json.JsonException) { _error = e.Message; }
+    }
+    private Task RefreshHistory() => Work(async ct => { _document = await Latest(ct); _history = await Store.HistoryAsync(DocumentId, ct); });
+    private Task UndoHistory(Guid id) => ChangeHistory(id, false);
+    private Task RedoHistory(Guid id) => ChangeHistory(id, true);
+    private Task ChangeHistory(Guid id, bool redo) => Work(async ct => {
+        await HistoryActions.ChangeAsync(DocumentId, id, redo, ct);
+        _document = await Latest(ct); _history = await Store.HistoryAsync(DocumentId, ct); _proposal = null;
+        _message = redo ? "AI change reapplied and saved." : "AI change undone and saved.";
+    });
+    private async Task<LocalDocument> Latest(CancellationToken ct=default) => await Documents.LoadAsync(DocumentId,ct) ?? throw new IOException("Document unavailable.");
+    private void ChoosePrompt(ChangeEventArgs e) { if(Guid.TryParse(e.Value?.ToString(),out var id)) { _instruction=_prompts.Single(p=>p.Id==id).Instruction;_action=AdvancedAiAction.Custom; } }
+    private Task LoadCloud() => Work(async ct => { _cloudPrompts=[]; var generation=Account.Generation; var prompts=await CloudPrompts.ListAsync(ct); if (Account.Generation==generation) { _cloudPrompts=prompts; _cloudGeneration=generation; } });
+    private Task UploadPrompt(LocalAiPrompt prompt) => Work(async ct => { await CloudPrompts.UploadCopyAsync(prompt,ct);_message="Cloud copy created. Refresh the cloud list before making another copy."; });
+    private Task ImportPrompt(Guid id) => Work(async ct => { if (_cloudGeneration != Account.Generation) throw new InvalidOperationException("Account changed. Refresh cloud prompts."); await CloudPrompts.ImportCopyAsync(id,ct);_prompts=await Store.PromptsAsync(ct);_message="Prompt copied to the local library."; });
+    private void GuardNavigation(Microsoft.AspNetCore.Components.Routing.LocationChangingContext context) { if(_busy) context.PreventNavigation(); }
+    private Task SavePrompt() => Work(async ct=> { await Store.SavePromptAsync(_name,_instruction,ct);_prompts=await Store.PromptsAsync(ct);_message="Prompt saved locally."; });
+    private Task RunAi() => Work(async ct=> {
+        _proposal=null; await Sync.SyncAsync(ct);ct.ThrowIfCancellationRequested();
+        _document=await Latest(ct);_prepared=AdvancedAiRequests.Build(_document,_section,_action,_field,_instruction);
+        if (_action == AdvancedAiAction.SceneCard && _refineScene)
+            _prepared = _prepared with { Request = _prepared.Request with { Key = "scene.refine" } };
+        var result=await Ai.ProposeAsync(_prepared.Request,ct);ct.ThrowIfCancellationRequested();
+        AdvancedAiRequests.RequireFresh(await Latest(ct),_prepared);
+        _record=new(1,Guid.NewGuid(),DocumentId,_prepared.Request.Key,_prepared.Target+":"+_prepared.Field,
+            _document.LocalRevision,_document.ServerVersion,DateTimeOffset.UtcNow,"Reviewed",_document,result.ProposedText, OriginalText: Original(_prepared), NodeId: _prepared.NodeId);
+        await Store.SaveHistoryAsync(_record,ct);_history=await Store.HistoryAsync(DocumentId,ct);_proposal=result;
+    });
+    private Task Apply() => Work(async ct=> {
+        if(_proposal is null || _prepared is null || _record is null) return;
+        Ai.RequireCurrentAccount(_proposal);
+        var next=AdvancedAiRequests.Apply(await Latest(ct),_prepared,_proposal);
+        await Store.SaveHistoryAsync(_record with { Status="Applying" },ct);
+        Ai.RequireCurrentAccount(_proposal); ct.ThrowIfCancellationRequested();
+        _document=await Documents.SaveAsync(next,ct);_proposal=null;
+        await Store.SaveHistoryAsync(_record with { Status="Applied", After = _document },CancellationToken.None);
+        _history=await Store.HistoryAsync(DocumentId);_message="Planning proposal applied and saved locally. Manuscript prose was not changed.";
+    });
+    private Task Recover(Guid id) => Work(async ct=> {
+        var h=(await Store.HistoryAsync(DocumentId,ct)).Single(x=>x.Id==id);
+        var restored=await Documents.RecoverSnapshotAsync(h.Before,ct);
+        _message=$"Original writing and planning recovered as {restored.Title} in the local library. Current writing is unchanged.";
+    });
+    private static string Original(AdvancedAiPrepared p) => p.Target==LocalAiTarget.SynopsisField
+        ? AdvancedAiRequests.SynopsisValue(p.Source.Project!.Synopsis ?? new(),p.Field)
+        : p.Target==LocalAiTarget.SceneCard ? System.Text.Json.JsonSerializer.Serialize(p.Source.Project!.Nodes.Single(n=>n.NodeId==p.NodeId).Card)
+        : p.Request.Request.SurroundingText ?? "";
+    private async Task Work(Func<CancellationToken,Task> action) {
+        if(_busy) return;_busy=true;_error=null;_message=null; using var source=new CancellationTokenSource();_cancel=source;
+        bool began = false;
+        try { if (BeforeWork is not null && !await BeforeWork()) { _error = "Save the current writing and planning before continuing."; return; } began = true; await action(source.Token); }
+        catch(OperationCanceledException) { _message="Canceled. Any saved changes remain in history."; }
+        catch(Exception e) when(e is DeviceSignInRequiredException or DeviceIdentityUnavailableException or DeviceAiException or IOException or InvalidDataException or InvalidOperationException or UnauthorizedAccessException or System.Text.Json.JsonException or HttpRequestException) { _error=e.Message; }
+        finally { try { if (began && AfterWork is not null) await AfterWork(); } finally {
+            await RefreshDocumentAsync(afterWork: true);
+            try { _history = await Store.HistoryAsync(DocumentId); }
+            catch (Exception e) when(e is IOException or InvalidOperationException or UnauthorizedAccessException or System.Text.Json.JsonException) { _error=e.Message; }
+            _busy=false;_cancel=null;
+        } }
+    }
+    private void Cancel()=>_cancel?.Cancel();
+    public void Dispose()
+    {
+        _disposed = true;
+        Sync.Changed -= OnDocumentChanged;
+        Documents.Changed -= OnDocumentChanged;
+        Cancel();
+    }
+}

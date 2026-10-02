@@ -1,0 +1,406 @@
+.prosa-library .landing {
+    display: grid;
+    gap: var(--space-6);
+    max-width: 920px;
+    margin: 0 auto;
+    padding: var(--space-6) var(--space-3) var(--space-10);
+}
+
+.prosa-library .landing-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-4);
+}
+
+.prosa-library .landing-header h1 {
+    margin: 0;
+    font-size: var(--font-size-page-title);
+    line-height: 1.1;
+}
+
+.prosa-library .landing-subtitle {
+    margin: var(--space-2) 0 0;
+    color: var(--color-text-muted);
+    font-size: 0.98rem;
+}
+
+.prosa-library .landing-loading {
+    padding: var(--space-5);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-2);
+    color: var(--color-text-muted);
+}
+
+.prosa-library .landing-error {
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius-md);
+    background: var(--color-danger-soft);
+    border: 1px solid #f2b9be;
+    color: var(--color-danger);
+    font-size: var(--font-size-helper);
+}
+
+.prosa-library .landing-empty {
+    display: grid;
+    gap: var(--space-3);
+    padding: var(--space-8);
+    border-radius: var(--radius-md);
+    border: 1px dashed var(--color-border-strong);
+    background: var(--color-surface-2);
+}
+
+.prosa-library .landing-status {
+    font-size: var(--font-size-helper);
+    color: var(--color-text-muted);
+}
+
+.prosa-library .landing-list {
+    display: grid;
+    gap: var(--space-3);
+}
+
+.prosa-library .continue-strip {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-4);
+    padding: var(--space-4) var(--space-5);
+    border-radius: var(--radius-md);
+    border: 1px solid #cfd9f5;
+    background: var(--color-primary-soft);
+    box-shadow: var(--shadow-sm);
+}
+
+.prosa-library .continue-meta {
+    display: grid;
+    gap: var(--space-1);
+}
+
+.prosa-library .continue-label {
+    font-size: var(--font-size-caption);
+    color: var(--color-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+}
+
+.prosa-library .continue-title {
+    font-size: var(--font-size-section-title);
+    font-weight: 700;
+    color: var(--color-text);
+}
+
+.prosa-library .continue-actions {
+    display: flex;
+    gap: var(--space-2);
+}
+
+.prosa-library .landing-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-4);
+    padding: var(--space-4) var(--space-5);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-1);
+    box-shadow: var(--shadow-sm);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.prosa-library .project-cover-shell {
+    width: 72px;
+    height: 96px;
+    flex: 0 0 72px;
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-2);
+    box-shadow: var(--shadow-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.prosa-library .project-cover-thumb {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: cover;
+}
+
+.prosa-library .project-cover-placeholder {
+    padding: var(--space-2);
+    color: var(--color-text-muted);
+    font-size: var(--font-size-caption);
+    text-align: center;
+    line-height: 1.3;
+}
+
+.prosa-library .landing-card:hover {
+    border-color: var(--color-border-strong);
+    box-shadow: var(--shadow-md);
+}
+
+.prosa-library .project-card {
+    cursor: default;
+}
+
+.prosa-library .project-card:focus {
+    outline: none;
+    box-shadow: var(--shadow-md), var(--focus-ring);
+}
+
+.prosa-library .landing-meta {
+    display: grid;
+    gap: var(--space-1);
+    flex: 1;
+    min-width: 0;
+}
+
+.prosa-library .landing-title {
+    font-weight: 700;
+    font-size: var(--font-size-card-title);
+    color: var(--color-text);
+}
+
+.prosa-library .landing-title-edit {
+    display: grid;
+    gap: var(--space-2);
+}
+
+.prosa-library .landing-title-input {
+    min-height: var(--control-height);
+    padding: 0 var(--space-3);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-1);
+    color: var(--color-text);
+    font: inherit;
+}
+
+.prosa-library .landing-title-actions {
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+}
+
+.prosa-library .landing-time {
+    color: var(--color-text-muted);
+    font-size: 0.9rem;
+}
+
+.prosa-library .landing-words,
+.prosa-library .project-progress-snippet {
+    color: var(--color-text-subtle);
+    font-size: var(--font-size-helper);
+}
+
+.prosa-library .project-progress-snippet {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+    align-items: center;
+}
+
+.prosa-library .metric-item {
+    font-variant-numeric: tabular-nums;
+}
+
+.prosa-library .metric-separator {
+    color: var(--color-text-muted);
+}
+
+.prosa-library .project-metrics {
+    color: var(--color-text-muted);
+    font-size: 0.92rem;
+    font-weight: 600;
+}
+
+.prosa-library .project-action-help {
+    color: var(--color-text-muted);
+    font-size: var(--font-size-caption);
+}
+
+.prosa-library .landing-actions {
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.prosa-library .project-overflow {
+    position: relative;
+}
+
+.prosa-library .project-overflow-toggle {
+    min-width: 2.4rem;
+    padding: 0;
+    font-size: 1.15rem;
+    line-height: 1;
+}
+
+.prosa-library .project-overflow-backdrop {
+    position: fixed;
+    inset: 0;
+    border: 0;
+    background: transparent;
+    cursor: default;
+    z-index: 20;
+}
+
+.prosa-library .project-overflow-menu {
+    position: absolute;
+    top: calc(100% + var(--space-1));
+    right: 0;
+    min-width: 12rem;
+    display: grid;
+    gap: 0;
+    padding: var(--space-1);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-1);
+    box-shadow: var(--shadow-md);
+    z-index: 21;
+}
+
+.prosa-library .project-overflow-menu button {
+    display: flex;
+    align-items: center;
+    min-height: var(--control-height);
+    padding: 0 var(--space-3);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--color-text);
+    font: inherit;
+    text-align: left;
+}
+
+.prosa-library .project-overflow-menu button:hover,
+.prosa-library .project-overflow-menu button:focus-visible {
+    background: var(--color-surface-2);
+    outline: none;
+}
+
+.prosa-library .project-overflow-menu button.danger {
+    color: var(--color-danger);
+}
+
+.prosa-library .landing-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}
+
+.prosa-library .landing-view-hint {
+    font-size: var(--font-size-helper);
+    color: var(--color-text-muted);
+}
+
+.prosa-library .landing-tab {
+    min-height: var(--control-height);
+    padding: 0 var(--space-3);
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-1);
+    border-radius: var(--radius-sm);
+    font-weight: 600;
+    color: var(--color-text);
+}
+
+.prosa-library .landing-tab.is-active {
+    border-color: #cfd9f5;
+    background: var(--color-primary-soft);
+    color: var(--color-primary);
+}
+
+.prosa-library .landing-debug {
+    display: grid;
+    gap: var(--space-3);
+    padding: var(--space-4);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-2);
+}
+
+.prosa-library .landing-debug-panel {
+    display: grid;
+    gap: var(--space-2);
+    max-height: 320px;
+    overflow: auto;
+    padding: var(--space-2);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-1);
+    border: 1px solid var(--color-border);
+    font-size: var(--font-size-helper);
+}
+
+.prosa-library .landing-debug-row {
+    display: grid;
+    grid-template-columns: auto auto auto 1fr;
+    gap: var(--space-2);
+    align-items: center;
+}
+
+.prosa-library .landing-debug-time {
+    color: var(--color-text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.prosa-library .landing-debug-level {
+    font-weight: 700;
+    color: var(--color-text);
+}
+
+.prosa-library .landing-debug-category,
+.prosa-library .landing-debug-message {
+    color: var(--color-text-muted);
+}
+
+.prosa-library .landing-debug-ex {
+    margin: 0;
+    padding: var(--space-2);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-2);
+    border: 1px solid var(--color-border);
+    white-space: pre-wrap;
+}
+
+@media (max-width: 640px) {
+    .prosa-library .continue-strip {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .prosa-library .continue-actions,
+    .prosa-library .landing-actions {
+        width: 100%;
+    }
+
+    .prosa-library .continue-actions button,
+    .prosa-library .landing-actions button {
+        width: 100%;
+    }
+
+    .prosa-library .project-overflow {
+        width: 100%;
+    }
+
+    .prosa-library .project-overflow-toggle {
+        width: 100%;
+    }
+
+    .prosa-library .project-overflow-menu {
+        left: 0;
+        right: auto;
+        min-width: 100%;
+    }
+
+    .prosa-library .landing-card {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}

@@ -1,0 +1,43 @@
+@using WriterApp.Application.Documents
+
+<div class="project-documents" aria-label="Project documents">
+    <label>Document
+        <select value="@SelectedDocumentId" @onchange="SelectAsync" disabled="@Disabled">
+            @foreach (var document in Documents.Where(d => d.DeletedAt is null && !d.IsArchived))
+            {
+                <option value="@document.Id">@document.Title@(document.Id == PrimaryDocumentId ? " ★" : "") · @document.Kind</option>
+            }
+        </select>
+    </label>
+    @if (CanManage)
+    {
+        @if (Documents.Any(d => d.Id == SelectedDocumentId && d.Kind == "manuscript") && SelectedDocumentId != PrimaryDocumentId)
+        {
+            <button type="button" class="secondary" disabled="@Disabled" @onclick="() => MakePrimaryRequested.InvokeAsync(SelectedDocumentId!.Value)">Make primary</button>
+        }
+        <details><summary>Add document</summary>
+            <label>Title <input @bind="_title" maxlength="200" disabled="@Disabled" /></label>
+            <label>Type <select @bind="_kind" disabled="@Disabled"><option value="manuscript">Manuscript</option><option value="notes">Research notes</option><option value="synopsis">Synopsis document</option><option value="outline">Outline document</option><option value="other">Other document</option></select></label>
+            <button type="button" class="primary" disabled="@(Disabled || string.IsNullOrWhiteSpace(_title))" @onclick="CreateAsync">Add document</button>
+        </details>
+    }
+</div>
+
+@code {
+    [Parameter] public IReadOnlyList<ProjectDocumentDto> Documents { get; set; } = [];
+    [Parameter] public Guid? SelectedDocumentId { get; set; }
+    [Parameter] public Guid? PrimaryDocumentId { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public bool CanManage { get; set; } = true;
+    [Parameter] public EventCallback<Guid> SelectedIdChanged { get; set; }
+    [Parameter] public EventCallback<ProjectDocumentCreateRequest> CreateRequested { get; set; }
+    [Parameter] public EventCallback<Guid> MakePrimaryRequested { get; set; }
+    private string _title = "";
+    private string _kind = "manuscript";
+    private Task SelectAsync(ChangeEventArgs e) => Guid.TryParse(e.Value?.ToString(), out var id) ? SelectedIdChanged.InvokeAsync(id) : Task.CompletedTask;
+    private async Task CreateAsync()
+    {
+        await CreateRequested.InvokeAsync(new(null, _title.Trim(), _kind));
+        _title = "";
+    }
+}

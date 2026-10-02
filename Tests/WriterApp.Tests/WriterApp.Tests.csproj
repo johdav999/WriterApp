@@ -16,6 +16,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="../../WriterApp.Desktop/native-auth.json" LogicalName="Prosa.DesktopAuthTestSettings" />
+    <EmbeddedResource Include="../../appsettings.json" LogicalName="Prosa.ServerAuthTestSettings" />
     <ProjectReference Include="..\\..\\BlazorApp.csproj" />
     <ProjectReference Include="..\\..\\WriterApp.Device.Shared\\WriterApp.Device.Shared.csproj" />
   </ItemGroup>

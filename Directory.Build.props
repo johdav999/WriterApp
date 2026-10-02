@@ -1,0 +1,7 @@
+<Project>
+  <PropertyGroup>
+    <!-- Validation output may be redirected beneath a project's artifacts folder.
+         Never rediscover previous build output as project content on the next build. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);**/artifacts/**;**/bin/**;**/obj/**</DefaultItemExcludes>
+  </PropertyGroup>
+</Project>

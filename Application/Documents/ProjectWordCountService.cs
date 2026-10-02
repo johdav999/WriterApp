@@ -103,7 +103,7 @@ namespace WriterApp.Application.Documents
 
             List<ProjectNodeRecord> nodes = await _dbContext.ProjectNodes
                 .AsNoTracking()
-                .Where(node => node.ProjectId == projectId)
+                .Where(node => node.ProjectId == projectId && (node.DocumentId == (_dbContext.ManuscriptScopeId ?? project.PrimaryDocumentId) || node.DocumentId == null))
                 .OrderBy(node => node.ParentId)
                 .ThenBy(node => node.OrderIndex)
                 .ToListAsync(ct);

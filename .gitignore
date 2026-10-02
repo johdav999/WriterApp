@@ -2,6 +2,7 @@
 **/bin/
 **/obj/
 artifacts/
+**/artifacts/
 .codex-build/
 publish/
 **/publish/

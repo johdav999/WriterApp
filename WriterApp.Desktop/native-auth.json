@@ -1,0 +1,7 @@
+{
+  "TenantId": "a000a187-b940-41c1-bebe-f30c4a351099",
+  "Authority": "https://prosaapp.ciamlogin.com/",
+  "ClientId": "323361e9-8562-43aa-a558-6b4d3cbbb6a2",
+  "RedirectUri": "http://localhost",
+  "Scopes": ["api://c0ecc793-e620-416c-a072-4e9eca30f048/access_as_user"]
+}

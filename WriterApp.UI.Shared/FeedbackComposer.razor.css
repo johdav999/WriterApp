@@ -1,0 +1,4 @@
+fieldset { display:grid; gap:.75rem; border:0; padding:0; max-width:640px; }
+label { display:grid; gap:.25rem; }
+input,select,textarea { padding:.5rem; font:inherit; max-width:100%; }
+pre { white-space:pre-wrap; overflow-wrap:anywhere; }

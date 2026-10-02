@@ -88,7 +88,7 @@ namespace WriterApp.Application.Documents
                     .Select(item => item.Id)
                     .ToListAsync(ct);
 
-            List<Guid> projectNodeIds = await _dbContext.ProjectNodes
+            List<Guid> projectNodeIds = await _dbContext.ProjectNodes.IgnoreQueryFilters()
                 .AsNoTracking()
                 .Where(item => item.ProjectId == projectId)
                 .Select(item => item.Id)
@@ -170,8 +170,21 @@ namespace WriterApp.Application.Documents
             await DeleteHistoryAsync(ownerUserId, documents, sections, pages, history, ct);
             string normalized = IdNorm.Norm(documentId);
             await _dbContext.SearchIndexEntries.Where(s => s.DocumentId == normalized).ExecuteDeleteAsync(ct);
-            // Preserve project structure and other documents; only unlink references into this document.
-            await _dbContext.ProjectNodes.Where(n => n.LinkedSectionId.HasValue && sections.Contains(n.LinkedSectionId.Value))
+            // Remove only this document's owned tree and its dependents; siblings retain their identities.
+            var ownedNodeIds = await _dbContext.ProjectNodes.IgnoreQueryFilters().Where(n => n.DocumentId == documentId).Select(n => n.Id).ToListAsync(ct);
+            await DeleteSceneChildrenAsync(ownedNodeIds, ct);
+            await _dbContext.ProjectMilestones.Where(m => m.TargetNodeId != null && ownedNodeIds.Contains(m.TargetNodeId.Value))
+                .ExecuteUpdateAsync(s => s.SetProperty(m => m.TargetNodeId, (Guid?)null), ct);
+            while (await _dbContext.ProjectNodes.IgnoreQueryFilters().AnyAsync(n => n.DocumentId == documentId, ct))
+            {
+                var leaves = await _dbContext.ProjectNodes.IgnoreQueryFilters().Where(n => n.DocumentId == documentId
+                    && !_dbContext.ProjectNodes.IgnoreQueryFilters().Any(c => c.ParentId == n.Id)).Select(n => n.Id).ToListAsync(ct);
+                if (leaves.Count == 0) throw new InvalidOperationException("Document tree contains a cycle; originals preserved.");
+                await _dbContext.ProjectNodes.IgnoreQueryFilters().Where(n => leaves.Contains(n.Id)).ExecuteDeleteAsync(ct);
+            }
+            await _dbContext.Projects.Where(p => p.PrimaryDocumentId == documentId).ExecuteUpdateAsync(s => s.SetProperty(p => p.PrimaryDocumentId, (Guid?)null), ct);
+            // Legacy references in other documents are unlinked before deleting writing.
+            await _dbContext.ProjectNodes.IgnoreQueryFilters().Where(n => n.LinkedSectionId.HasValue && sections.Contains(n.LinkedSectionId.Value))
                 .ExecuteUpdateAsync(setters => setters.SetProperty(n => n.LinkedSectionId, (Guid?)null), ct);
             await _dbContext.DocumentOutlineNodes.Where(n => n.DocumentId != documentId && n.LinkedSectionId.HasValue && sections.Contains(n.LinkedSectionId.Value))
                 .ExecuteUpdateAsync(setters => setters.SetProperty(n => n.LinkedSectionId, (Guid?)null), ct);
@@ -327,9 +340,9 @@ namespace WriterApp.Application.Documents
         private async Task DeleteProjectNodeTreeAsync(Guid projectId, CancellationToken ct)
         {
             int deleted = await DeleteLeafFirstAsync(
-                _dbContext.ProjectNodes.Where(item => item.ProjectId == projectId),
+                _dbContext.ProjectNodes.IgnoreQueryFilters().Where(item => item.ProjectId == projectId),
                 item => item.Id,
-                ids => _dbContext.ProjectNodes
+                ids => _dbContext.ProjectNodes.IgnoreQueryFilters()
                     .Where(child => child.ParentId.HasValue && ids.Contains(child.ParentId.Value))
                     .Select(child => child.ParentId!.Value),
                 "ProjectNodes",

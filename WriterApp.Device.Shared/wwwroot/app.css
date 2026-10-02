@@ -1,66 +1,47 @@
-:root {
-    color-scheme: light;
-    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-}
+/* Device-only integrations composed into the shared client shell. */
+.sync-panel,.sync-conflict { padding:12px; border:1px solid var(--color-border); border-radius:8px; margin:8px 0; }
+.sync-panel p,.document-sync-details p { margin:6px 0; }
+.document-sync-details { font-size:.85rem; margin:12px 0; }
+.workspace-ai,.workspace-transfer { margin:16px 0; border-top:1px solid var(--color-border); padding-top:12px; }
+.workspace-ai h2 { font-size:1rem; }
+.workspace-ai-actions { display:flex; flex-wrap:wrap; gap:6px; margin:10px 0; }
+.workspace-ai textarea { width:100%; }
+.workspace-ai button,.workspace-transfer button { margin:4px 4px 4px 0; }
+.workspace-ai-preview pre { white-space:pre-wrap; overflow-wrap:anywhere; }
+.workspace-transfer label { display:block; margin-top:12px; }
+.workspace-transfer select { width:100%; }
+.device-maintenance summary { cursor:pointer; }
+.device-maintenance button { margin:4px; }
+.local-section-title { margin:12px 0 6px; font-size:.85rem; font-weight:600; color:var(--color-text-muted); }
+.local-navigator .tree-row { grid-template-columns:0 max-content minmax(0,1fr); gap:8px; }
+.local-navigator .tree-node-badge { grid-column:2; }
+.local-navigator .tree-select { grid-column:3; }
 
-* {
-    box-sizing: border-box;
-}
-
-html,
-body,
-#app {
-    margin: 0;
-    min-height: 100%;
-}
-
-body {
-    background: #f5f2eb;
-}
-
-code {
-    background: #eee9dd;
-    border-radius: .3rem;
-    color: #3c3425;
-    font-size: .88em;
-    padding: .12rem .28rem;
-}
-/* Shared online controls stay separate from the local editing surface. */
-.sync-panel, .sync-conflict {
-    padding: 1rem;
-    margin-block: 1rem;
-    border: 1px solid #d8d4e5;
-    border-radius: .75rem;
-    background: #f8f7fc;
-    color: #282138;
-}
-.sync-panel p, .document-sync-details p { margin: .25rem 0 .65rem; }
-.sync-panel button, .sync-panel a, .sync-conflict button, .sync-conflict a,
-.document-sync-details button, .document-sync-details a { margin: .25rem .75rem .25rem 0; }
-.document-sync-details { padding: .65rem 0; font-size: .9rem; }
-.sync-conflict button, .sync-panel button, .document-sync-details button {
-    min-height: 2.5rem;
-    padding: .4rem .75rem;
-    border: 1px solid #aaa0c5;
-    border-radius: .4rem;
-    cursor: pointer;
-}
-.sync-conflict button:disabled, .sync-panel button:disabled, .document-sync-details button:disabled { cursor: wait; opacity: .6; }
-.workspace-ai { margin-block: 1.25rem; padding: 1rem; border: 1px solid #d8d4e5; border-radius: .75rem; background: #f8f7fc; }
-.workspace-ai h2 { margin-top: 0; }
-.workspace-ai-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-block: .75rem; }
-.workspace-ai textarea { display: block; width: min(100%, 44rem); margin-block: .4rem .75rem; padding: .6rem; }
-.workspace-ai button { margin: .25rem .5rem .25rem 0; min-height: 2.5rem; padding: .4rem .75rem; border: 1px solid #aaa0c5; border-radius: .4rem; }
-.workspace-ai-preview { margin-top: 1rem; border-top: 1px solid #d8d4e5; padding-top: 1rem; }
-.workspace-ai-preview pre { max-height: 16rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: white; padding: .75rem; border-radius: .4rem; }
-.workspace-transfer { margin-block: 1.25rem; padding: 1rem; border: 1px solid #d5cdbb; border-radius: .75rem; background: #fffdf8; }
-.workspace-transfer h2 { margin-top: 0; }
-.workspace-transfer p { max-width: 52rem; line-height: 1.5; }
-.workspace-transfer label { display: block; font-weight: 700; margin: .65rem 0 .3rem; }
-.workspace-transfer select { max-width: 100%; min-height: 2.5rem; margin-right: .5rem; padding: .35rem; }
-.workspace-transfer button { min-height: 2.5rem; margin-block: .3rem; padding: .4rem .75rem; border: 1px solid #a99e88; border-radius: .4rem; cursor: pointer; }
-.workspace-transfer button:disabled { cursor: not-allowed; opacity: .55; }
-.device-maintenance { margin-block: .75rem 1rem; padding: .75rem 1rem; border: 1px solid #d7d0c3; border-radius: .7rem; background: #fffdf8; }
-.device-maintenance summary { cursor: pointer; font-weight: 700; }
-.device-maintenance p { margin: .65rem 0; line-height: 1.45; }
-.device-maintenance button { margin: .3rem .6rem .3rem 0; min-height: 2.4rem; padding: .4rem .7rem; border: 1px solid #a99e88; border-radius: .4rem; }
+/* Keep the local editor's writing tools as compact as the shared client drawer. */
+.prosa-editor .desktop-coach-action { width:100%; min-height:34px; border:0; border-radius:6px; background:var(--color-primary); color:#fff; font-weight:600; cursor:pointer; }
+.prosa-editor .desktop-coach-action:hover { filter:brightness(1.08); }
+.prosa-editor .desktop-writing-tools { margin:0; padding:0; border:0; display:grid; gap:10px; min-width:0; }
+.prosa-editor .desktop-writing-tools p { margin:0; }
+.prosa-editor .desktop-writing-hint { color:var(--color-text-muted); font-size:var(--font-size-helper); line-height:1.45; }
+.prosa-editor .desktop-writing-tools .workspace-ai-actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; margin:0; }
+.prosa-editor .desktop-writing-tools button,
+.prosa-editor .desktop-writing-history button { margin:0; min-height:34px; padding:6px 10px; border:1px solid var(--color-border); border-radius:6px; background:var(--color-surface-1); color:var(--color-text); font:inherit; cursor:pointer; }
+.prosa-editor .desktop-writing-tools button:hover:not(:disabled) { border-color:var(--color-primary); }
+.prosa-editor .desktop-writing-tools button:disabled { opacity:.55; cursor:not-allowed; }
+.prosa-editor .desktop-writing-tools > label { font-size:var(--font-size-helper); font-weight:600; }
+.prosa-editor .desktop-writing-tools textarea,
+.prosa-editor .desktop-writing-tools input { width:100%; min-width:0; border:1px solid var(--color-border); border-radius:7px; background:var(--color-surface-1); padding:9px; font:inherit; }
+.prosa-editor .desktop-writing-tools textarea { resize:vertical; min-height:72px; }
+.prosa-editor .desktop-writing-more { border-top:1px solid var(--color-border); padding-top:9px; font-size:var(--font-size-helper); }
+.prosa-editor .desktop-writing-more summary { cursor:pointer; font-weight:600; }
+.prosa-editor .desktop-writing-more[open] { display:grid; gap:8px; }
+.prosa-editor .desktop-writing-more label { display:grid; gap:5px; }
+.prosa-editor .desktop-writing-history { display:flex; align-items:center; gap:8px; border-top:1px solid var(--color-border); padding-top:9px; }
+.prosa-editor .desktop-writing-history span { min-width:23px; min-height:23px; display:grid; place-items:center; border-radius:999px; background:var(--color-surface-3); font-size:var(--font-size-caption); }
+.prosa-editor .desktop-writing-summary { display:grid; gap:10px; padding:12px; border:1px solid var(--color-border); border-radius:10px; background:var(--color-surface-2); font-size:var(--font-size-helper); }
+.prosa-editor .desktop-writing-summary p { margin:0; }
+.prosa-editor .desktop-writing-metric { display:flex; align-items:baseline; gap:8px; }
+.prosa-editor .desktop-writing-metric strong { color:var(--color-primary); font-size:1.75rem; line-height:1; }
+.prosa-editor .device-editor-zoom { align-items:center; }
+.prosa-editor .device-editor-zoom span { min-width:42px; text-align:center; font-size:var(--font-size-helper); color:var(--color-text-muted); }
+.prosa-editor .editor-surface .device-tiptap .ProseMirror { min-height:max(560px, calc(100dvh - 380px)); }

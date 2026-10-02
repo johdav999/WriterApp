@@ -111,6 +111,7 @@ namespace WriterApp.Application.Exporting
 
             StringBuilder builder = new();
             Stack<string> listStack = new();
+            Stack<string?> links = new();
             bool inPre = false;
             bool atLineStart = true;
 
@@ -167,6 +168,18 @@ namespace WriterApp.Application.Exporting
 
                 switch (name)
                 {
+                    case "a":
+                        if (!isClosing)
+                        {
+                            var anchor = new AngleSharp.Html.Parser.HtmlParser().ParseDocument(tag + "</a>").QuerySelector("a");
+                            string? href = anchor?.GetAttribute("href");
+                            bool safe = Uri.TryCreate(href, UriKind.Absolute, out var uri) && uri.Scheme is "https" or "http" or "mailto";
+                            links.Push(safe ? href : null);
+                            if (safe) { builder.Append('['); atLineStart = false; }
+                        }
+                        else if (links.Count > 0 && links.Pop() is { } destination)
+                            builder.Append("](<").Append(destination.Replace("<", "%3C").Replace(">", "%3E").Replace("\\n", "").Replace("\\r", "")).Append(">)");
+                        break;
                     case "br":
                         AppendLine();
                         break;
@@ -231,7 +244,7 @@ namespace WriterApp.Application.Exporting
                         {
                             AppendLine();
                             string prefix = listStack.Count > 0 && listStack.Peek() == "ol" ? "1. " : "- ";
-                            builder.Append(prefix);
+                            builder.Append(new string(' ', Math.Max(0, listStack.Count - 1) * 4)).Append(prefix);
                             atLineStart = false;
                         }
                         break;

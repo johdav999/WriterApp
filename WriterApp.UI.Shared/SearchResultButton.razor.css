@@ -1,0 +1,7 @@
+.global-search-result { display: flex; flex-direction: column; gap: 4px; padding: 8px; width: 100%; text-align: left; background: transparent; border: 1px solid transparent; border-radius: 8px; cursor: pointer; color: inherit; }
+.global-search-result:hover, .global-search-result:focus-visible { border-color: #0002; background: #00000005; }
+.global-search-title { font-weight: 600; }
+.global-search-type { font-size: .7rem; text-transform: uppercase; letter-spacing: .05em; color: #0009; }
+.global-search-scope { font-size: .8rem; color: var(--bs-secondary-color, #52606d); }
+.global-search-snippet { font-size: .85rem; color: #000b; overflow-wrap: anywhere; }
+.global-search-snippet ::deep mark { background: #ffe27a; padding: 0 2px; border-radius: 2px; }

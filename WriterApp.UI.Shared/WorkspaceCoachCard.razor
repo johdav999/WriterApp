@@ -1,0 +1,19 @@
+<section class="coach-card" aria-label="@ContextTitle">
+    <div class="coach-card-header"><div class="coach-card-kicker">@ContextTitle</div><h3>What I&apos;m seeing</h3></div>
+    @if (Observations.Count == 0)
+    {
+        <div class="coach-card-empty">Start by taking one concrete step in this workspace.</div>
+    }
+    else
+    {
+        <ul class="coach-card-observations">@foreach (var item in Observations) { <li>@item</li> }</ul>
+    }
+    <div class="coach-card-next"><div class="coach-card-next-label">Suggested next step</div>@PrimaryAction</div>
+    <div class="coach-card-why"><strong>Why:</strong> @Why</div>
+</section>
+@code {
+    [Parameter] public string ContextTitle { get; set; } = "Coach";
+    [Parameter] public IReadOnlyList<string> Observations { get; set; } = [];
+    [Parameter] public string Why { get; set; } = "The next small step keeps momentum.";
+    [Parameter] public RenderFragment? PrimaryAction { get; set; }
+}

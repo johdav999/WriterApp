@@ -1,0 +1,30 @@
+/* Desktop-specific capability and storage controls. Workspace geometry is shared. */
+.device-projects { width: 100%; }
+.device-project-conversion { padding: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface-1); }
+.device-project-conversion h2 { margin: 0 0 var(--space-2); font-size: var(--font-size-section-title); }
+.device-project-conversion p { font-size: var(--font-size-helper); color: var(--color-text-muted); }
+.device-projects select { min-height: var(--control-height); border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 0 var(--space-3); background: var(--color-surface-1); color: var(--color-text); max-width: 100%; }
+.device-project-details { margin-top: var(--space-3); font-size: var(--font-size-helper); }
+.device-project-details summary { cursor: pointer; color: var(--color-text-muted); padding: var(--space-2) 0; }
+.device-project-details .inspector-grid { margin-top: var(--space-2); }
+.device-project-storage { margin-top: 0; border-top: 1px solid var(--color-border); }
+.device-project-inspector { margin-top: var(--space-3); }
+.device-project-restore { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) 0; }
+.device-projects ::deep .tree-row { grid-template-columns: calc(var(--depth) * 12px) 24px 0 max-content minmax(0, 1fr) 0; }
+.device-projects ::deep .tree-select-title { font-weight: 600; }
+.outline-drag-row { position: relative; border-radius: var(--radius-sm); }
+.outline-drag-row[draggable="true"] ::deep .tree-select { cursor: grab; }
+.outline-is-dragging { opacity: .45; }
+.outline-drop-before::before, .outline-drop-after::after { content: ""; position: absolute; left: 0; right: 0; height: 3px; background: var(--color-primary, #6654c0); pointer-events: none; z-index: 1; }
+.outline-drop-before::before { top: 0; }
+.outline-drop-after::after { bottom: 0; }
+.outline-drop-inside { outline: 2px solid var(--color-primary, #6654c0); outline-offset: -2px; background: var(--color-surface-2); }
+.outline-root-drop { display: none; margin-top: var(--space-2); padding: var(--space-3); border: 1px dashed var(--color-border); border-radius: var(--radius-sm); color: var(--color-text-muted); font-size: var(--font-size-helper); }
+.outline-drag-active .outline-root-drop { display: block; }
+@media (max-width: 480px) { .device-projects ::deep .node-title-input, .device-projects .project-name-input { min-width: 0; width: 100%; } }
+
+.projects-page.device-projects.is-embedded-navigator { padding: 0; }
+.device-projects.is-embedded-navigator ::deep .projects-workspace { grid-template-columns: minmax(0, 1fr); gap: var(--space-3); }
+.device-projects.is-embedded-navigator ::deep .projects-tree, .device-projects.is-embedded-navigator ::deep .projects-main { min-width: 0; padding: var(--space-3); }
+.device-projects.is-embedded-navigator .inspector-name-row { flex-wrap: wrap; }
+.device-projects.is-embedded-navigator .node-title-input { min-width: 0; width: 100%; }

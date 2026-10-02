@@ -13,7 +13,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\WriterApp.UI.Shared\WriterApp.UI.Shared.csproj" />
     <ProjectReference Include="..\WriterApp.Shared\WriterApp.Shared.csproj" />
   </ItemGroup>
 
+  <ItemGroup><ProjectReference Include="../WriterApp.Publishing/WriterApp.Publishing.csproj" /></ItemGroup>
 </Project>

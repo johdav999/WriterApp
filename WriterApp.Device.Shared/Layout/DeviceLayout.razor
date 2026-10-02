@@ -1,23 +1,63 @@
 @inherits LayoutComponentBase
-
-<div class="device-shell">
-    <header class="device-header">
-        <a class="device-brand" href="/" aria-label="Prosa home">
-            <span class="device-brand-mark">P</span>
-            <span>Prosa</span>
-        </a>
-        <span class="device-host-label">@HostOptions.HostName</span>
+@implements IDisposable
+@inject NavigationManager Navigation
+@using WriterApp.Device.Shared.Components
+<AppShell SidebarLayout="@IsLibraryRoute" Class="@(View.FocusMode ? "is-focus-mode is-editor-route" : "")">
+    <Breadcrumb><a class="app-breadcrumb-link" href="@(IsProjectRoute ? "/projects" : "/")">@(IsProjectRoute ? "Projects" : "Projects & documents")</a></Breadcrumb>
+    <Search><WriterApp.Device.Shared.Components.LocalSearch /></Search>
+    <Account>
         <WriterApp.Device.Shared.Components.DeviceAccountMenu />
-    </header>
-
-    <main class="device-content">
-        <WriterApp.Device.Shared.Components.DeviceSyncPanel />
-        <WriterApp.Device.Shared.Components.DeviceMaintenancePanel />
-        @Body
-    </main>
-</div>
-
+        <details class="device-settings"><summary>Settings</summary><div class="device-settings-panel">
+            <WriterApp.Device.Shared.Components.DeviceSyncPanel />
+            <WriterApp.Device.Shared.Components.DeviceMaintenancePanel />
+        </div></details>
+    </Account>
+    <Navigation>
+        <NavLink class="app-nav-link" href="/" Match="NavLinkMatch.All">@if (IsLibraryRoute) { <LibraryIcon Name="document" /> }<span>Projects &amp; documents</span></NavLink>
+        <NavLink class="app-nav-link" href="@SynopsisHref" title="Open the story synopsis.">@if (IsLibraryRoute) { <LibraryIcon Name="synopsis" /> }<span>Synopsis</span></NavLink>
+        <NavLink class="app-nav-link" href="/projects">@if (IsLibraryRoute) { <LibraryIcon Name="folder" /> }<span>Projects</span></NavLink>
+        @if (!IsLibraryRoute) { <NavLink class="app-nav-link" href="/account">Account &amp; Help</NavLink> }
+    </Navigation>
+    <SidebarFooter>
+        <NavLink class="app-nav-link" href="/account"><LibraryIcon Name="help" /><span>Account &amp; Help</span></NavLink>
+        <details class="device-settings sidebar-settings">
+            <summary class="app-nav-link"><LibraryIcon Name="settings" /><span>Settings</span></summary>
+            <div class="device-settings-panel">
+                <DeviceSyncPanel />
+                <DeviceMaintenancePanel />
+            </div>
+        </details>
+        <DeviceAccountMenu Compact="true" />
+    </SidebarFooter>
+    <ChildContent><CascadingValue Value="View">@Body</CascadingValue></ChildContent>
+</AppShell>
 @code {
-    [Inject]
-    private DeviceHostOptions HostOptions { get; set; } = default!;
+    private DeviceWorkspaceView View { get; } = new();
+    private bool IsLibraryRoute => new Uri(Navigation.Uri).AbsolutePath == "/";
+    private string SynopsisHref
+    {
+        get
+        {
+            string[] segments = new Uri(Navigation.Uri).AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            if (segments.Length >= 2 && Guid.TryParse(segments[1], out Guid id))
+            {
+                if (segments[0].Equals("documents", StringComparison.OrdinalIgnoreCase)) return $"/synopsis/{id:D}";
+                if (segments[0].Equals("projects", StringComparison.OrdinalIgnoreCase)) return $"/projects/{id:D}/planning?view=Synopsis";
+            }
+            return "/synopsis";
+        }
+    }
+    private bool IsProjectRoute => new Uri(Navigation.Uri).AbsolutePath is { } path &&
+        (path.Equals("/projects", StringComparison.OrdinalIgnoreCase) || path.StartsWith("/projects/", StringComparison.OrdinalIgnoreCase));
+    protected override void OnInitialized()
+    {
+        View.Changed = () => InvokeAsync(StateHasChanged);
+        Navigation.LocationChanged += OnLocationChanged;
+    }
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs args) => _ = InvokeAsync(StateHasChanged);
+    public void Dispose()
+    {
+        View.Changed = null;
+        Navigation.LocationChanged -= OnLocationChanged;
+    }
 }

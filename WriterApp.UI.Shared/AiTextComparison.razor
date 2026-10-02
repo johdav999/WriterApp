@@ -1,0 +1,9 @@
+<div class="ai-preview-columns">
+    <div class="ai-preview-pane"><div class="ai-preview-label">@OriginalLabel</div><div class="ai-preview-text">@Original</div></div>
+    <div class="ai-preview-pane"><div class="ai-preview-label">Proposed</div><div class="ai-preview-text">@Proposed</div></div>
+</div>
+@code {
+    [Parameter] public string OriginalLabel { get; set; } = "Original";
+    [Parameter] public string? Original { get; set; }
+    [Parameter] public string? Proposed { get; set; }
+}

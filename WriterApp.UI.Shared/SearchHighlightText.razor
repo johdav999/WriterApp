@@ -1,0 +1,20 @@
+@foreach (var part in Parts())
+{
+    @if (part.Match) { <mark>@part.Text</mark> } else { @part.Text }
+}
+@code {
+    [Parameter] public string Text { get; set; } = "";
+    [Parameter] public string Query { get; set; } = "";
+    private IEnumerable<(string Text, bool Match)> Parts()
+    {
+        int position = 0;
+        foreach (var match in TextSearch.Find(Text, Query))
+        {
+            if (match.Start < position) continue;
+            yield return (Text[position..match.Start], false);
+            yield return (Text.Substring(match.Start, match.Length), true);
+            position = match.Start + match.Length;
+        }
+        yield return (Text[position..], false);
+    }
+}

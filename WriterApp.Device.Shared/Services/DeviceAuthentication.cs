@@ -16,14 +16,19 @@ public sealed class DeviceAuthOptions
         && Scopes.All(s => Uri.TryCreate(s, UriKind.Absolute, out _) && !s.EndsWith("/.default", StringComparison.Ordinal)
             && !s.Any(char.IsWhiteSpace));
 
-    public static DeviceAuthOptions FromEnvironment() => new()
+    public static DeviceAuthOptions FromEnvironment(DeviceAuthOptions? defaults = null) =>
+        FromSettings(defaults ?? new(), Environment.GetEnvironmentVariable);
+
+    /// <summary>Public build settings work for normal launches; environment settings can override them for development.</summary>
+    public static DeviceAuthOptions FromSettings(DeviceAuthOptions defaults, Func<string, string?> readSetting) => new()
     {
-        TenantId = Environment.GetEnvironmentVariable("WRITERAPP_AUTH_TENANT_ID") ?? "",
-        Authority = Environment.GetEnvironmentVariable("WRITERAPP_AUTH_AUTHORITY") ?? "",
-        ClientId = Environment.GetEnvironmentVariable("WRITERAPP_AUTH_CLIENT_ID") ?? "",
-        RedirectUri = Environment.GetEnvironmentVariable("WRITERAPP_AUTH_REDIRECT_URI") ?? "http://localhost",
-        Scopes = (Environment.GetEnvironmentVariable("WRITERAPP_AUTH_SCOPES") ?? "")
-            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        TenantId = readSetting("WRITERAPP_AUTH_TENANT_ID") ?? defaults.TenantId,
+        Authority = readSetting("WRITERAPP_AUTH_AUTHORITY") ?? defaults.Authority,
+        ClientId = readSetting("WRITERAPP_AUTH_CLIENT_ID") ?? defaults.ClientId,
+        RedirectUri = readSetting("WRITERAPP_AUTH_REDIRECT_URI") ?? defaults.RedirectUri,
+        Scopes = readSetting("WRITERAPP_AUTH_SCOPES") is { } scopes
+            ? scopes.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            : defaults.Scopes.ToArray()
     };
 }
 
@@ -46,6 +51,7 @@ public interface IDeviceIdentityClient
 
 public sealed class DeviceSignInRequiredException() : Exception("Sign in to use online features.");
 public sealed class DeviceIdentityUnavailableException() : Exception("Sign-in is temporarily unavailable. Check your connection and secure storage, then retry.");
+public sealed class DeviceIdentityConfigurationException() : Exception("The sign-in provider rejected this app's configuration. Check its desktop registration, callback and API permission.");
 
 public sealed class UnconfiguredDeviceIdentityClient : IDeviceIdentityClient
 {
@@ -98,6 +104,7 @@ public sealed class DeviceAccountService(IDeviceIdentityClient identity, TimePro
         catch (DeviceSignInRequiredException)
         {
             IsSignedIn = false;
+            DisplayName = null;
             Message = identity.IsConfigured ? "Sign in to use online features. Local editing remains available." : "Native sign-in is not configured for this host.";
             throw;
         }
@@ -114,6 +121,7 @@ public sealed class DeviceAccountService(IDeviceIdentityClient identity, TimePro
         if (Generation != generation) return;
         _requiresInteraction = true;
         IsSignedIn = false;
+        DisplayName = null;
         Message = "The server rejected this session. Sign in again. Local documents are unchanged.";
         Changed?.Invoke();
     }

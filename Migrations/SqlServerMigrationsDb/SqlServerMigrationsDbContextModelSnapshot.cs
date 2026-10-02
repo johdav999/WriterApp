@@ -490,9 +490,7 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
 
                     b.HasIndex("OwnerUserId", "UpdatedAtUnixSeconds");
 
-                    b.HasIndex("ProjectId", "DocumentKind")
-                        .IsUnique()
-                        .HasFilter("\"DocumentKind\" = 0");
+                    b.HasIndex("ProjectId", "DocumentKind");
 
                     b.HasIndex("ProjectId", "UpdatedAtUnixSeconds");
 
@@ -636,7 +634,14 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
 
                     b.HasIndex("UpdatedAt");
 
-                    b.ToTable("DocumentSynopses");
+                    b.ToTable("DocumentSynopses", null, t =>
+                        {
+                            t.HasTrigger("Sync_DocumentSynopses");
+                        });
+
+                    b
+                        .HasAnnotation("Sqlite:UseSqlReturningClause", false)
+                        .HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("WriterApp.Data.Documents.OutlineTemplateRecord", b =>
@@ -998,6 +1003,9 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<Guid?>("DocumentId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<Guid?>("LinkedSectionId")
                         .HasColumnType("uniqueidentifier");
 
@@ -1016,6 +1024,9 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
                     b.Property<Guid>("ProjectId")
                         .HasColumnType("uniqueidentifier");
 
+                    b.Property<Guid?>("SyncDeletionId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<string>("Title")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
@@ -1032,9 +1043,18 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
 
                     b.HasIndex("ParentId");
 
+                    b.HasIndex("DocumentId", "ParentId", "OrderIndex");
+
                     b.HasIndex("ProjectId", "ParentId", "OrderIndex");
 
-                    b.ToTable("ProjectNodes");
+                    b.ToTable("ProjectNodes", null, t =>
+                        {
+                            t.HasTrigger("Sync_ProjectNodes");
+                        });
+
+                    b
+                        .HasAnnotation("Sqlite:UseSqlReturningClause", false)
+                        .HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("WriterApp.Data.Documents.ProjectProgressDailyRecord", b =>
@@ -1115,13 +1135,25 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
                     b.Property<string>("Language")
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<long>("MetadataRevision")
+                        .HasColumnType("bigint");
+
                     b.Property<string>("OwnerUserId")
                         .IsRequired()
                         .HasMaxLength(128)
                         .HasColumnType("nvarchar(128)");
 
+                    b.Property<bool>("PlanningSyncEnabled")
+                        .HasColumnType("bit");
+
+                    b.Property<Guid?>("PrimaryDocumentId")
+                        .HasColumnType("uniqueidentifier");
+
                     b.Property<string>("Subtitle")
                         .HasColumnType("nvarchar(max)");
+
+                    b.Property<bool>("SyncEnabled")
+                        .HasColumnType("bit");
 
                     b.Property<string>("Title")
                         .IsRequired()
@@ -1136,7 +1168,14 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
 
                     b.HasIndex("UpdatedUtc");
 
-                    b.ToTable("Projects");
+                    b.ToTable("Projects", null, t =>
+                        {
+                            t.HasTrigger("Sync_Projects");
+                        });
+
+                    b
+                        .HasAnnotation("Sqlite:UseSqlReturningClause", false)
+                        .HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("WriterApp.Data.Documents.SceneAnnotationRecord", b =>
@@ -1144,6 +1183,9 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("AnchorDetached")
+                        .HasColumnType("bit");
 
                     b.Property<int>("AnchorFrom")
                         .HasColumnType("int");
@@ -1190,7 +1232,14 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
 
                     b.HasIndex("Status");
 
-                    b.ToTable("SceneAnnotations");
+                    b.ToTable("SceneAnnotations", null, t =>
+                        {
+                            t.HasTrigger("Sync_SceneAnnotations");
+                        });
+
+                    b
+                        .HasAnnotation("Sqlite:UseSqlReturningClause", false)
+                        .HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("WriterApp.Data.Documents.SceneCardRecord", b =>
@@ -1250,7 +1299,14 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
 
                     b.HasKey("SceneNodeId");
 
-                    b.ToTable("SceneCards");
+                    b.ToTable("SceneCards", null, t =>
+                        {
+                            t.HasTrigger("Sync_SceneCards");
+                        });
+
+                    b
+                        .HasAnnotation("Sqlite:UseSqlReturningClause", false)
+                        .HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("WriterApp.Data.Documents.SceneContentRecord", b =>
@@ -1287,7 +1343,14 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
 
                     b.HasKey("SceneNodeId");
 
-                    b.ToTable("SceneNotes");
+                    b.ToTable("SceneNotes", null, t =>
+                        {
+                            t.HasTrigger("Sync_SceneNotes");
+                        });
+
+                    b
+                        .HasAnnotation("Sqlite:UseSqlReturningClause", false)
+                        .HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("WriterApp.Data.Documents.SceneQualityIssueRecord", b =>
@@ -2544,6 +2607,11 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
 
             modelBuilder.Entity("WriterApp.Data.Documents.ProjectNodeRecord", b =>
                 {
+                    b.HasOne("WriterApp.Data.Documents.DocumentRecord", null)
+                        .WithMany()
+                        .HasForeignKey("DocumentId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("WriterApp.Data.Documents.SectionRecord", "LinkedSection")
                         .WithMany()
                         .HasForeignKey("LinkedSectionId")

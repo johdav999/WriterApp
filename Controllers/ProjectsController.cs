@@ -28,6 +28,7 @@ namespace WriterApp.Controllers
     [ApiController]
     [Route("api/projects")]
     [Authorize]
+    [ServiceFilter(typeof(ManuscriptScopeFilter))]
     public sealed class ProjectsController : ControllerBase
     {
         private static readonly ConcurrentDictionary<string, bool> SqliteTableExistsCache = new(StringComparer.Ordinal);
@@ -89,7 +90,7 @@ namespace WriterApp.Controllers
             HashSet<Guid> projectIds = projects.Select(project => project.Id).ToHashSet();
             Dictionary<Guid, int> totals = await _dbContext.ProjectNodes
                 .AsNoTracking()
-                .Where(node => projectIds.Contains(node.ProjectId) && node.ParentId == null)
+                .Where(node => projectIds.Contains(node.ProjectId) && node.ParentId == null && (node.DocumentId == null || node.DocumentId == node.Project!.PrimaryDocumentId))
                 .GroupBy(node => node.ProjectId)
                 .Select(group => new { group.Key, Total = group.Sum(node => node.WordCountCache) })
                 .ToDictionaryAsync(item => item.Key, item => item.Total, ct);
@@ -144,7 +145,7 @@ namespace WriterApp.Controllers
 
             Dictionary<Guid, int> totals = await _dbContext.ProjectNodes
                 .AsNoTracking()
-                .Where(node => projectIds.Contains(node.ProjectId) && node.ParentId == null)
+                .Where(node => projectIds.Contains(node.ProjectId) && node.ParentId == null && (node.DocumentId == null || node.DocumentId == node.Project!.PrimaryDocumentId))
                 .GroupBy(node => node.ProjectId)
                 .Select(group => new { group.Key, Total = group.Sum(node => node.WordCountCache) })
                 .ToDictionaryAsync(item => item.Key, item => item.Total, ct);
@@ -180,7 +181,7 @@ namespace WriterApp.Controllers
                 docsByProject.TryGetValue(project.Id, out List<DocumentRecord>? projectDocs);
                 projectDocs ??= new List<DocumentRecord>();
 
-                DocumentRecord? primary = projectDocs
+                DocumentRecord? primary = projectDocs.FirstOrDefault(d => d.Id == project.PrimaryDocumentId && d.DeletedAtUtc == null) ?? projectDocs
                     .Where(item => item.DeletedAtUtc is null && item.DocumentKind == DocumentKind.Manuscript)
                     .OrderByDescending(item => item.UpdatedAtUnixSeconds)
                     .FirstOrDefault()
@@ -288,10 +289,11 @@ namespace WriterApp.Controllers
                 UpdatedUtc = now
             };
 
+            project.PrimaryDocumentId = Guid.NewGuid();
             _dbContext.Projects.Add(project);
             _dbContext.Documents.Add(new DocumentRecord
             {
-                Id = Guid.NewGuid(),
+                Id = project.PrimaryDocumentId.Value,
                 ProjectId = project.Id,
                 OwnerUserId = userId,
                 Title = string.IsNullOrWhiteSpace(request.Title) ? "Manuscript" : request.Title.Trim(),
@@ -347,7 +349,7 @@ namespace WriterApp.Controllers
 
             int total = await _dbContext.ProjectNodes
                 .AsNoTracking()
-                .Where(node => node.ProjectId == projectId && node.ParentId == null)
+                .Where(node => node.ProjectId == projectId && node.ParentId == null && (node.DocumentId == null || node.DocumentId == node.Project!.PrimaryDocumentId))
                 .SumAsync(node => (int?)node.WordCountCache, ct) ?? 0;
 
             return Ok(ToDto(project, total));
@@ -383,7 +385,7 @@ namespace WriterApp.Controllers
 
             int total = await _dbContext.ProjectNodes
                 .AsNoTracking()
-                .Where(node => node.ProjectId == projectId && node.ParentId == null)
+                .Where(node => node.ProjectId == projectId && node.ParentId == null && (node.DocumentId == null || node.DocumentId == node.Project!.PrimaryDocumentId))
                 .SumAsync(node => (int?)node.WordCountCache, ct) ?? 0;
 
             return Ok(ToDto(project, total));
@@ -449,7 +451,7 @@ namespace WriterApp.Controllers
 
             Dictionary<Guid, int> totals = await _dbContext.ProjectNodes
                 .AsNoTracking()
-                .Where(node => projectIds.Contains(node.ProjectId) && node.ParentId == null)
+                .Where(node => projectIds.Contains(node.ProjectId) && node.ParentId == null && (node.DocumentId == null || node.DocumentId == node.Project!.PrimaryDocumentId))
                 .GroupBy(node => node.ProjectId)
                 .Select(group => new { group.Key, Total = group.Sum(node => node.WordCountCache) })
                 .ToDictionaryAsync(item => item.Key, item => item.Total, ct);
@@ -463,6 +465,20 @@ namespace WriterApp.Controllers
                 .ToList();
 
             return Ok(result);
+        }
+
+        [HttpPut("{projectId:guid}/primary-document/{documentId:guid}")]
+        public async Task<IActionResult> SetPrimaryDocument(Guid projectId, Guid documentId, CancellationToken ct)
+        {
+            if (!IsEnabled()) return NotFound();
+            string owner = _userIdResolver.ResolveUserId(User);
+            var project = await _dbContext.Projects.SingleOrDefaultAsync(p => p.Id == projectId && p.OwnerUserId == owner, ct);
+            if (project is null || !await _dbContext.Documents.AnyAsync(d => d.Id == documentId && d.ProjectId == projectId
+                && d.OwnerUserId == owner && d.DocumentKind == DocumentKind.Manuscript && d.DeletedAtUtc == null, ct)) return NotFound();
+            project.PrimaryDocumentId = documentId;
+            project.UpdatedUtc = DateTimeOffset.UtcNow;
+            await _dbContext.SaveChangesAsync(ct);
+            return NoContent();
         }
 
         [HttpGet("{projectId:guid}/documents")]
@@ -512,15 +528,6 @@ namespace WriterApp.Controllers
             }
 
             DocumentKind kind = ParseDocumentKind(request.Kind);
-            if (kind == DocumentKind.Manuscript)
-            {
-                bool hasManuscript = await _dbContext.Documents
-                    .AnyAsync(item => item.ProjectId == projectId && item.DocumentKind == DocumentKind.Manuscript, ct);
-                if (hasManuscript)
-                {
-                    return Conflict(new { message = "Project already has a manuscript document." });
-                }
-            }
 
             DateTimeOffset now = DateTimeOffset.UtcNow;
             DocumentRecord document = new()
@@ -542,6 +549,7 @@ namespace WriterApp.Controllers
             };
 
             _dbContext.Documents.Add(document);
+            if (kind == DocumentKind.Manuscript) project.PrimaryDocumentId ??= document.Id;
 
             Guid? defaultSectionId = null;
             Guid? defaultPageId = null;
@@ -573,6 +581,16 @@ namespace WriterApp.Controllers
                 };
                 _dbContext.Pages.Add(page);
                 defaultPageId = page.Id;
+                if (kind == DocumentKind.Manuscript)
+                {
+                    var chapterId = Guid.NewGuid();
+                    _dbContext.ProjectNodes.AddRange(
+                        new ProjectNodeRecord { Id = chapterId, ProjectId = projectId, DocumentId = document.Id,
+                            NodeType = ProjectNodeType.Chapter, Title = "Chapter 1", UpdatedUtc = now },
+                        new ProjectNodeRecord { Id = Guid.NewGuid(), ProjectId = projectId, DocumentId = document.Id,
+                            ParentId = chapterId, NodeType = ProjectNodeType.Scene, Title = section.Title,
+                            LinkedSectionId = section.Id, UpdatedUtc = now });
+                }
             }
 
             project.UpdatedUtc = now;
@@ -627,12 +645,12 @@ namespace WriterApp.Controllers
                 {
                     List<ProjectNodeRecord> existingNodes = await _dbContext.ProjectNodes
                         .AsNoTracking()
-                        .Where(node => node.ProjectId == existingProject.Id)
+                        .Where(node => node.ProjectId == existingProject.Id && node.DocumentId == documentId)
                         .OrderBy(node => node.ParentId)
                         .ThenBy(node => node.OrderIndex)
                         .ToListAsync(ct);
                     int existingTotal = existingNodes.Where(node => node.ParentId == null).Sum(node => node.WordCountCache);
-                    return Ok(new ProjectTreeDto(ToDto(existingProject, existingTotal), existingNodes.Select(ToDto).ToList()));
+                    return Ok(new ProjectTreeDto(ToDto(existingProject, existingTotal) with { DocumentId = documentId }, existingNodes.Select(ToDto).ToList(), documentId));
                 }
             }
 
@@ -658,6 +676,9 @@ namespace WriterApp.Controllers
             };
             _dbContext.Projects.Add(project);
 
+            project.PrimaryDocumentId = documentId;
+            var ownedDocument = await _dbContext.Documents.SingleAsync(d => d.Id == documentId && d.OwnerUserId == userId, ct);
+            ownedDocument.ProjectId = project.Id;
             List<ProjectNodeRecord> nodes = new();
             for (int i = 0; i < sections.Count; i++)
             {
@@ -670,6 +691,7 @@ namespace WriterApp.Controllers
                 {
                     Id = Guid.NewGuid(),
                     ProjectId = project.Id,
+                    DocumentId = documentId,
                     ParentId = null,
                     NodeType = ProjectNodeType.Chapter,
                     Title = section.Title,
@@ -688,6 +710,7 @@ namespace WriterApp.Controllers
                 {
                     Id = Guid.NewGuid(),
                     ProjectId = project.Id,
+                    DocumentId = documentId,
                     ParentId = chapter.Id,
                     NodeType = ProjectNodeType.Scene,
                     Title = section.Title,
@@ -752,7 +775,7 @@ namespace WriterApp.Controllers
                 .ToListAsync(ct);
 
             int total = nodes.Where(node => node.ParentId == null).Sum(node => node.WordCountCache);
-            return Ok(new ProjectTreeDto(ToDto(project, total), nodes.Select(ToDto).ToList()));
+            return Ok(new ProjectTreeDto(ToDto(project, total), nodes.Select(ToDto).ToList(), _dbContext.ManuscriptScopeId));
         }
 
         [HttpGet("{projectId:guid}/integrity")]
@@ -1448,6 +1471,19 @@ namespace WriterApp.Controllers
                     sourceRoot.ParentId);
                 return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Duplicate scene failed." });
             }
+        }
+
+        [HttpPost("{projectId:guid}/nodes/{nodeId:guid}/move")]
+        public async Task<IActionResult> MoveScene(Guid projectId, Guid nodeId, [FromBody] ProjectSceneMoveRequest request, CancellationToken ct)
+        {
+            if (request.Patch.ParentId is not { } parent) return BadRequest(new { message = "Choose a destination chapter." });
+            await using var transaction = await _dbContext.Database.BeginTransactionAsync(ct);
+            var patched = await PatchNode(projectId, nodeId, request.Patch, ct);
+            if (patched.Result is not OkObjectResult) return patched.Result ?? BadRequest();
+            var reordered = await ReorderChildren(projectId, parent, request.Order, ct);
+            if (reordered.Result is not OkObjectResult) return reordered.Result ?? BadRequest();
+            await transaction.CommitAsync(ct);
+            return reordered.Result;
         }
 
         [HttpPost("{projectId:guid}/nodes/{nodeId:guid}/reorder")]
@@ -2599,7 +2635,8 @@ namespace WriterApp.Controllers
                     (section, document) => new { section, document })
                 .AnyAsync(row => row.document.OwnerUserId == userId
                     && row.document.ProjectId == projectId
-                    && row.document.DocumentKind == DocumentKind.Manuscript, ct);
+                    && row.document.DocumentKind == DocumentKind.Manuscript
+                    && (_dbContext.ManuscriptScopeId == null || row.document.Id == _dbContext.ManuscriptScopeId), ct);
         }
 
         private static bool TryParseNodeType(string? value, out ProjectNodeType nodeType)
@@ -2674,7 +2711,7 @@ namespace WriterApp.Controllers
             return candidate;
         }
 
-        private static ProjectDto ToDto(ProjectRecord project, int totalWords)
+        private ProjectDto ToDto(ProjectRecord project, int totalWords)
         {
             return new ProjectDto(
                 project.Id,
@@ -2686,7 +2723,7 @@ namespace WriterApp.Controllers
                 project.CoverImageUrl,
                 project.CreatedUtc,
                 project.UpdatedUtc,
-                totalWords);
+                totalWords, project.PrimaryDocumentId, _dbContext.ManuscriptScopeId);
         }
 
         private static ProjectNodeDto ToDto(ProjectNodeRecord node)

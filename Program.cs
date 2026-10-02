@@ -59,6 +59,12 @@ using WriterApp.Shared;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.AddEnvironmentVariables();
+if (OperatingSystem.IsWindows() && builder.Environment.IsDevelopment())
+{
+    // Local API startup must not require access to the Windows Event Log.
+    // Console/debug logging remains available; hosted logging is unchanged.
+    builder.Logging.AddFilter<Microsoft.Extensions.Logging.EventLog.EventLogLoggerProvider>(_ => false);
+}
 builder.Logging.AddFilter("Microsoft.AspNetCore.Components.Server.Circuits", LogLevel.Information);
 builder.Logging.AddFilter(
     "Microsoft.AspNetCore.SignalR",
@@ -203,6 +209,7 @@ mvcBuilder.ConfigureApplicationPartManager(manager =>
 });
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddScoped<DocumentSyncService>();
+builder.Services.AddScoped<WriterApp.Controllers.ManuscriptScopeFilter>();
 builder.Services.AddScoped<ProjectDeletionService>();
 
 builder.Services.AddScoped(sp =>
@@ -715,6 +722,8 @@ List<string> wasmFrameworkRoots = new();
 if (wasmEnabled)
 {
     app.UseBlazorFrameworkFiles("/app");
+    // Prefer this build's manifest over stale local debug/release fallback assets.
+    app.UseStaticFiles();
 
     string[] pathAnchors =
     {
@@ -741,8 +750,8 @@ if (wasmEnabled)
     // Serve client static files from multiple local locations so /app assets resolve in debug.
     List<string> appAssetRoots = new()
     {
-        ResolveFromAnchors(pathAnchors, "WriterApp.Client", "bin", "Debug", "net9.0", "wwwroot"),
-        ResolveFromAnchors(pathAnchors, "WriterApp.Client", "bin", "Release", "net9.0", "wwwroot"),
+        ResolveFromAnchors(pathAnchors, "WriterApp.Client", "bin", "Debug", "net10.0", "wwwroot"),
+        ResolveFromAnchors(pathAnchors, "WriterApp.Client", "bin", "Release", "net10.0", "wwwroot"),
         ResolveFromAnchors(pathAnchors, "WriterApp.Client", "wwwroot")
     };
 
@@ -760,7 +769,7 @@ if (wasmEnabled)
         "WriterApp.Client",
         "obj",
         app.Environment.IsDevelopment() ? "Debug" : "Release",
-        "net9.0",
+        "net10.0",
         "scopedcss",
         "bundle");
 
@@ -775,8 +784,8 @@ if (wasmEnabled)
 
     wasmFrameworkRoots = new[]
     {
-        ResolveFromAnchors(pathAnchors, "WriterApp.Client", "bin", "Debug", "net9.0", "wwwroot", "_framework"),
-        ResolveFromAnchors(pathAnchors, "WriterApp.Client", "bin", "Release", "net9.0", "wwwroot", "_framework")
+        ResolveFromAnchors(pathAnchors, "WriterApp.Client", "bin", "Debug", "net10.0", "wwwroot", "_framework"),
+        ResolveFromAnchors(pathAnchors, "WriterApp.Client", "bin", "Release", "net10.0", "wwwroot", "_framework")
     }
     .Where(path => !string.IsNullOrWhiteSpace(path))
     .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -1096,7 +1105,8 @@ app.MapGet("/api/ai/status", async (
             AiEnabled = aiOptions.Enabled && status.AiEnabled,
             UiEnabled = aiOptions.Enabled && aiOptions.UI.ShowAiMenu,
             QuotaTotal = status.QuotaTotal,
-            QuotaRemaining = status.QuotaRemaining
+            QuotaRemaining = status.QuotaRemaining,
+            SupportsDocumentVersionChecks = true
         });
     }
     catch (SecurityException)

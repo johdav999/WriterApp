@@ -1,0 +1,22 @@
+@namespace WriterApp.UI.Shared
+@using WriterApp.Application.Security
+@using WriterApp.Shared.Billing
+<section class="account-card" aria-label="Plan and usage">
+    <div><strong>Plan:</strong> @(Profile.EffectivePlanKey ?? Profile.PlanKey ?? "Unavailable")</div>
+    <div><strong>Subscription status:</strong> @(string.Equals(Profile.PlanKey,"Free",StringComparison.OrdinalIgnoreCase) && string.IsNullOrEmpty(Profile.StripeCustomerId) ? "Not subscribed" : BillingSubscriptionPolicy.GetStatusDisplayLabel(Profile.SubscriptionStatus ?? ""))</div>
+    <p>@BillingSubscriptionPolicy.BuildLifecycleMessage(Profile.PlanKey ?? "Free", Profile.EffectivePlanKey ?? Profile.PlanKey ?? "Free", Profile.SubscriptionStatus ?? "", Profile.CurrentPeriodEndUtc, Profile.CancelAtPeriodEnd)</p>
+    <div><strong>Paid access:</strong> @(Profile.IsPaidAccessActive ? "Active at last check" : "Inactive at last check")</div>
+    @if(Profile.AiMonthlyTokenBudget > 0) {
+        <div><strong>AI usage:</strong> @Profile.AiTokensUsedThisPeriod / @Profile.AiMonthlyTokenBudget tokens</div>
+        @if(Profile.AiTokensUsedThisPeriod >= Profile.AiMonthlyTokenBudget) { <p>AI allowance reached. Local writing remains available.</p> }
+    } else { <p>AI token budget is not included in this account response.</p> }
+    <div><strong>Period start:</strong> @(Profile.PeriodStartUtc == default ? "Unavailable" : Profile.PeriodStartUtc.ToLocalTime().ToString("g"))</div>
+    <p>@Freshness</p>
+    <p>Displayed plan information does not authorize online operations. The backend checks access for each request.</p>
+    @ChildContent
+</section>
+@code {
+    [Parameter, EditorRequired] public AuthMeDto Profile {get;set;} = new();
+    [Parameter] public string Freshness {get;set;} = "Last account response; refresh to check current access.";
+    [Parameter] public RenderFragment? ChildContent {get;set;}
+}

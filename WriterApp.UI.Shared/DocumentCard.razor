@@ -1,0 +1,8 @@
+<div class="landing-card">
+    <div class="landing-meta">@Details</div>
+    <div class="landing-actions">@Actions</div>
+</div>
+@code {
+    [Parameter] public RenderFragment? Details { get; set; }
+    [Parameter] public RenderFragment? Actions { get; set; }
+}

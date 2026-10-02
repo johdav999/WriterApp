@@ -101,7 +101,17 @@ namespace WriterApp.Application.Documents
                 return null;
             }
 
-            (DocumentRecord manuscript, bool manuscriptCreated) = await GetOrCreateManuscriptDocumentWithStateAsync(project, ownerUserId, ct);
+            Guid? manuscriptId = sceneNode.DocumentId ?? _dbContext.ManuscriptScopeId;
+            DocumentRecord manuscript;
+            bool manuscriptCreated = false;
+            if (manuscriptId is { } requested)
+            {
+                manuscript = await _dbContext.Documents.SingleOrDefaultAsync(d => d.Id == requested && d.ProjectId == project.Id
+                    && d.OwnerUserId == ownerUserId && d.DocumentKind == DocumentKind.Manuscript && d.DeletedAtUtc == null, ct)
+                    ?? throw new InvalidOperationException("Scene manuscript unavailable.");
+            }
+            else (manuscript, manuscriptCreated) = await GetOrCreateManuscriptDocumentWithStateAsync(project, ownerUserId, ct);
+            sceneNode.DocumentId = manuscript.Id;
             SectionRecord? linkedSection = null;
             bool sectionCreated = false;
             bool pageCreated = false;
@@ -160,7 +170,7 @@ namespace WriterApp.Application.Documents
             }
 
             List<ProjectNodeRecord> nodes = await _dbContext.ProjectNodes
-                .Where(item => item.ProjectId == projectId)
+                .Where(item => item.ProjectId == projectId && (item.DocumentId == (_dbContext.ManuscriptScopeId ?? project.PrimaryDocumentId) || item.DocumentId == null))
                 .OrderBy(item => item.OrderIndex)
                 .ThenBy(item => item.Id)
                 .ToListAsync(ct);
@@ -309,17 +319,20 @@ namespace WriterApp.Application.Documents
 
         private async Task<(DocumentRecord Document, bool Created)> GetOrCreateManuscriptDocumentWithStateAsync(ProjectRecord project, string ownerUserId, CancellationToken ct)
         {
+            Guid? selected = _dbContext.ManuscriptScopeId ?? project.PrimaryDocumentId;
             DocumentRecord? manuscript = _dbContext.Documents.Local
                 .FirstOrDefault(item =>
                     item.ProjectId == project.Id
                     && item.OwnerUserId == ownerUserId
-                    && item.DocumentKind == DocumentKind.Manuscript)
+                    && item.DocumentKind == DocumentKind.Manuscript && (selected == null || item.Id == selected))
                 ?? await _dbContext.Documents
-                    .Where(item => item.ProjectId == project.Id && item.OwnerUserId == ownerUserId && item.DocumentKind == DocumentKind.Manuscript)
+                    .Where(item => item.ProjectId == project.Id && item.OwnerUserId == ownerUserId && item.DocumentKind == DocumentKind.Manuscript
+                        && item.DeletedAtUtc == null && (selected == null || item.Id == selected))
                     .OrderByDescending(item => item.UpdatedAtUnixSeconds)
                     .FirstOrDefaultAsync(ct);
             if (manuscript is not null)
             {
+                project.PrimaryDocumentId ??= manuscript.Id;
                 return (manuscript, false);
             }
 
@@ -342,6 +355,7 @@ namespace WriterApp.Application.Documents
                 DeletedAtUtc = null
             };
             _dbContext.Documents.Add(manuscript);
+            project.PrimaryDocumentId ??= manuscript.Id;
             project.UpdatedUtc = now;
             return (manuscript, true);
         }

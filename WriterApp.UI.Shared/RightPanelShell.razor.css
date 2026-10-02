@@ -1,0 +1,125 @@
+.rp-shell {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.rp-sticky-header {
+    flex: 0 0 auto;
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: var(--panel-bg, var(--color-surface-2));
+}
+
+.rp-tabs {
+    padding: var(--space-3);
+    border-bottom: 1px solid var(--panel-border, var(--color-border));
+    background: var(--color-surface-3, var(--color-surface-2));
+}
+
+.rp-header {
+    padding: var(--space-3);
+    border-bottom: 1px solid var(--panel-border, var(--color-border));
+    display: grid;
+    gap: 8px;
+    background: var(--panel-bg, var(--color-surface-2));
+}
+
+.rp-scroll {
+    flex: 1 1 auto;
+    height: 100%;
+    min-height: 0;
+    overflow-y: scroll;
+    overflow-x: hidden;
+    scrollbar-gutter: stable;
+    scrollbar-width: auto;
+    padding-right: 2px;
+    display: flex;
+    flex-direction: column;
+    overscroll-behavior: contain;
+}
+
+.rp-panel {
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 auto;
+    min-height: 0;
+}
+
+.rp-content {
+    flex: 0 0 auto;
+    padding: var(--space-3);
+    display: grid;
+    gap: 12px;
+    min-height: 0;
+}
+
+.rp-trailing-body {
+    flex: 0 0 auto;
+    padding: var(--space-3);
+}
+
+.rp-trailing-body[hidden] { display: none; }
+
+/* The pinned body is a sibling of the scrolling content, preserving its
+   component instance and input state when switching panel categories. */
+.rp-shell.has-pinned-body .rp-scroll { overflow-y: hidden; }
+.rp-shell.has-pinned-body .rp-panel {
+    flex: 1 1 auto;
+    overflow: hidden;
+}
+.rp-shell.has-pinned-body .rp-content {
+    flex: 1 1 0;
+    min-height: 80px;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+    overscroll-behavior: contain;
+}
+.rp-shell.has-pinned-body .rp-trailing-body:not([hidden]) {
+    display: flex;
+    flex-direction: column;
+    flex: 0 1 auto;
+    min-height: 0;
+    overflow: hidden;
+    border-top: 1px solid var(--panel-border, var(--color-border));
+}
+
+.rp-footer {
+    flex: 0 0 auto;
+    padding: var(--space-3);
+    border-top: 1px solid var(--panel-border, var(--color-border));
+    background: var(--panel-bg, var(--color-surface-2));
+}
+
+.rp-scroll::-webkit-scrollbar {
+    width: 10px;
+}
+
+.rp-scroll::-webkit-scrollbar-thumb {
+    background: rgba(107, 114, 128, 0.55);
+    border-radius: 999px;
+}
+
+.rp-scroll::-webkit-scrollbar-track {
+    background: rgba(229, 231, 235, 0.45);
+}
+
+@media (max-width: 880px) {
+    .rp-shell {
+        height: auto;
+        min-height: 0;
+    }
+
+    .rp-scroll {
+        overflow: visible;
+        padding-right: 0;
+    }
+
+    .rp-sticky-header {
+        position: static;
+    }
+}

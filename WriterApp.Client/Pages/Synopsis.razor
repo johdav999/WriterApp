@@ -5,6 +5,7 @@
 @using System.Text.Json
 @using System.Net.Http.Json
 @using WriterApp.Application.Synopsis
+@using WriterApp.Application.Documents
 @using WriterApp.Application.Subscriptions
 @using WriterApp.Client.Services
 @using WriterApp.Client.State
@@ -25,6 +26,10 @@
         </div>
         <button type="button" class="secondary" @onclick="NavigateToDocuments">Documents</button>
     </header>
+    @if (_manuscripts.Count > 1)
+    {
+        <ProjectDocuments Documents="_manuscripts" SelectedDocumentId="DocumentId" CanManage="false" Disabled="@(_loading || _saving || _aiInFlight)" SelectedIdChanged="SelectManuscriptAsync" />
+    }
 
     @if (DocumentId is null)
     {
@@ -45,18 +50,12 @@
     {
         <div class="synopsis-layout">
             <section class="synopsis-form">
-                @foreach (SynopsisFieldDefinition field in Fields)
-                {
-                    <div class="synopsis-field">
-                        <label class="synopsis-label">@field.Label</label>
-                        <div class="synopsis-helper">@field.Helper</div>
-                        <textarea class="synopsis-input"
-                                  value="@GetFieldValue(field.Key)"
-                                  @oninput="args => OnFieldInput(field.Key, args)"
-                                  placeholder="@field.Placeholder"></textarea>
-                    </div>
-                }
-                <div class="synopsis-status">
+                <div class="synopsis-form-heading">
+                    <h2>Your story at a glance</h2>
+                    <p>Shape your ideas at your own pace. Changes save automatically.</p>
+                </div>
+                <SynopsisFields ValueModel="SharedSynopsis" Changed="SharedSynopsisChanged" />
+                <div class="synopsis-status" role="status" aria-live="polite">
                     @if (_saving)
                     {
                         <span>Saving...</span>
@@ -89,15 +88,15 @@
                     </div>
 
                     <div class="ai-suggest">
-                        <label class="synopsis-label">Suggest alternatives for</label>
-                        <select class="ai-select" value="@_aiSelectedFieldKey" @onchange="OnAiFieldChanged">
+                        <label class="synopsis-label" for="synopsis-ai-field">Suggest alternatives for</label>
+                        <select id="synopsis-ai-field" class="ai-select" value="@_aiSelectedFieldKey" @onchange="OnAiFieldChanged">
                             @foreach (SynopsisFieldDefinition field in Fields)
                             {
                                 <option value="@field.Key">@field.Label</option>
                             }
                         </select>
-                        <label class="synopsis-label">Notes for the coach (optional)</label>
-                        <textarea class="ai-notes"
+                        <label class="synopsis-label" for="synopsis-ai-notes">Notes for the coach (optional)</label>
+                        <textarea id="synopsis-ai-notes" class="ai-notes"
                                   value="@_aiUserNotes"
                                   @oninput="OnAiNotesInput"
                                   placeholder="Add constraints or intent for this suggestion..."></textarea>
@@ -142,10 +141,25 @@
 </div>
 
 @code {
+    private WriterApp.Shared.Sync.SyncSynopsis SharedSynopsis => _synopsis is { } s ? new(s.Logline,s.Premise,s.Theme,s.ProtagonistArc,s.CentralConflict,s.Stakes,s.Setting,s.EndingIntent,s.OpenQuestions,s.Notes) : new();
+    private void SharedSynopsisChanged(ScenePlanningChange c) {
+        string key = c.Field switch { "ProtagonistArc" => "protagonist_arc", "CentralConflict" => "central_conflict", "EndingIntent" => "ending_intent", "OpenQuestions" => "open_questions", _ => c.Field.ToLowerInvariant() };
+        OnFieldInput(key, new ChangeEventArgs { Value = c.Value });
+    }
+
     [Parameter]
     public Guid? DocumentId { get; set; }
 
     private Guid? _loadedDocumentId;
+    private IReadOnlyList<ProjectDocumentDto> _manuscripts = [];
+    private async Task SelectManuscriptAsync(Guid id)
+    {
+        if (_saving || _aiInFlight) return;
+        _autosaveCts?.Cancel();
+        await SaveSynopsisAsync();
+        if (_statusMessage != "Saved.") return;
+        Navigation.NavigateTo($"/synopsis/{id:D}");
+    }
     private bool _loading;
     private bool _saving;
     private bool _saveQueued;
@@ -211,6 +225,11 @@
 
         try
         {
+            var document = await Http.GetFromJsonAsync<DocumentDetailDto>($"api/documents/{documentId}");
+            if (document?.Kind != "manuscript") { _error = "Choose a manuscript to open its synopsis."; return; }
+            _manuscripts = document.ProjectId == Guid.Empty ? [] :
+                (await Http.GetFromJsonAsync<List<ProjectDocumentDto>>($"api/projects/{document.ProjectId}/documents") ?? [])
+                .Where(d => d.Kind == "manuscript" && d.DeletedAt is null && !d.IsArchived).ToArray();
             DocumentSynopsisDto? result =
                 await Http.GetFromJsonAsync<DocumentSynopsisDto>($"api/documents/{documentId}/synopsis");
             _synopsis = result ?? CreateEmptySynopsis(documentId);

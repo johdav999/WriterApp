@@ -12,6 +12,7 @@
 @using WriterApp.Client.Services
 @using WriterApp.Client.Utilities
 @inject HttpClient Http
+@inject WriterApp.Client.State.ManuscriptSelectionState ManuscriptSelection
 @inject NavigationManager Navigation
 @inject IConfiguration Configuration
 @inject IJSRuntime JS
@@ -27,6 +28,8 @@
 @implements IAsyncDisposable
 
 <PageTitle>Projects</PageTitle>
+
+<ProjectWorkspaceShell>
 
 @if (EmbedNavigator)
 {
@@ -89,12 +92,12 @@
 else
 {
     <div class="projects-page">
-        <header class="projects-header">
-            <div>
-                <h1>Projects</h1>
-                <p class="projects-subtitle">Manuscript-level structure with Parts, Chapters, and Scenes.</p>
-            </div>
-            <div class="projects-actions">
+        @if (_activeProject is not null)
+        {
+            <ProjectDocuments Documents="_projectDocuments" SelectedDocumentId="_activeDocumentId" PrimaryDocumentId="_activeProject.PrimaryDocumentId"
+                SelectedIdChanged="SelectDocumentAsync" CreateRequested="AddDocumentAsync" MakePrimaryRequested="MakePrimaryAsync" Disabled="_loading" />
+        }
+        <ProjectHubHeader><Actions>
                 <button type="button" class="primary" title="Create a new project." @onclick="CreateProjectAsync" disabled="@_creatingProject">
                     @(_creatingProject ? "Creating..." : "New project")
                 </button>
@@ -105,8 +108,7 @@ else
                         disabled="@(_creatingFromDocument || !CurrentDocumentStateService.DocumentId.HasValue)">
                     @(_creatingFromDocument ? "Creating..." : "From current document")
                 </button>
-            </div>
-        </header>
+        </Actions></ProjectHubHeader>
 
         @if (!string.IsNullOrWhiteSpace(_error))
         {
@@ -120,20 +122,10 @@ else
             </div>
         }
 
-        <div class="projects-toolbar">
-            <label for="project-switcher">Project</label>
-            <select id="project-switcher" @onchange="OnProjectSelectionChanged" value="@(_selectedProjectId?.ToString() ?? string.Empty)">
-                <option value="">Select a project</option>
-                @foreach (ProjectDto project in _projects)
-                {
-                    <option value="@project.Id">@project.Title</option>
-                }
-            </select>
-            @if (_activeProject is not null)
-            {
-                <span class="projects-total">@_activeProject.TotalWordCount words</span>
-            }
-        </div>
+        <ProjectSwitcher Projects="@(_projects.Select(p => new ProjectSelection(p.Id, p.Title)).ToArray())"
+                         SelectedId="_selectedProjectId" SelectedIdChanged="@(id => OnProjectSelectionChanged(new ChangeEventArgs { Value = id?.ToString() ?? string.Empty }))">
+            @if (_activeProject is not null) { <span class="projects-total">@_activeProject.TotalWordCount words</span> }
+        </ProjectSwitcher>
         @if (_activeProject is not null)
         {
             <div class="project-name-inline">
@@ -403,15 +395,8 @@ else
             }
             else
             {
-                <div class="projects-workspace">
-                    <aside class="projects-tree"
-                           aria-label="Navigator"
-                           @onmouseup="OnPointerDragCancel"
-                           @onmouseleave="OnPointerDragCancel">
-                        <div class="panel-header">
-                            <h2>Navigator</h2>
-                            <p>Parts, chapters, and scenes in manuscript order.</p>
-                        </div>
+                <ProjectWorkspacePanels OnPointerDragCancel="OnPointerDragCancel">
+                    <Navigator>
                         <div class="tree-actions">
                             <label for="add-node-type">Add...</label>
                             <select id="add-node-type" @bind="_addNodeType">
@@ -443,13 +428,8 @@ else
                                 @RenderNode(root, 0)
                             }
                         </ul>
-                    </aside>
-
-                    <section class="projects-main" aria-label="Inspector">
-                        <div class="panel-header">
-                            <h2>Inspector</h2>
-                            <p>Details for the selected node.</p>
-                        </div>
+                    </Navigator>
+                    <Inspector>
                         <CoachCard Recommendation="BuildProjectCoachRecommendation()" OnPrimaryAction="OnProjectCoachPrimaryActionAsync" />
                         @if (_selectedNode is null)
                         {
@@ -527,8 +507,8 @@ else
                                 <div class="projects-empty">This scene will create and link a section the first time you open it.</div>
                             }
                         }
-                    </section>
-                </div>
+                    </Inspector>
+                </ProjectWorkspacePanels>
             }
         }
     </div>
@@ -708,6 +688,8 @@ else
     </div>
 }
 
+</ProjectWorkspaceShell>
+
 @code {
     // Temporary toggle: set to true to show navigator row word counts again.
     private bool _showNavigatorTreeWordCount = false;
@@ -781,6 +763,43 @@ else
 
     [Parameter]
     public Guid? ProjectId { get; set; }
+    [SupplyParameterFromQuery(Name = "documentId")] public Guid? RequestedDocumentId { get; set; }
+    [Parameter] public Guid? HostDocumentId { get; set; }
+    private IReadOnlyList<ProjectDocumentDto> _projectDocuments = [];
+    private Guid? _activeDocumentId;
+
+    private async Task SelectDocumentAsync(Guid id)
+    {
+        if (_isProjectNameEditing)
+        {
+            await SaveProjectNameAsync();
+            if (_isProjectNameEditing) return;
+        }
+        var selected = _projectDocuments.Single(d => d.Id == id);
+        if (selected.Kind != "manuscript") { Navigation.NavigateTo($"/documents/{id:D}"); return; }
+        if (!EmbedNavigator) { Navigation.NavigateTo($"/projects/{selected.ProjectId:D}?documentId={id:D}"); return; }
+        _activeDocumentId = id;
+        ManuscriptSelection.Select(selected.ProjectId, id);
+        _selectedNodeId = null;
+        await LoadTreeAsync(selected.ProjectId, forceRefresh: true);
+    }
+    private async Task AddDocumentAsync(ProjectDocumentCreateRequest request)
+    {
+        if (_activeProject is null) return;
+        using var response = await Http.PostAsJsonAsync($"api/projects/{_activeProject.Id}/documents", request);
+        if (!response.IsSuccessStatusCode) { _error = await ReadApiErrorMessageAsync(response, "Could not add document."); return; }
+        var created = await response.Content.ReadFromJsonAsync<DocumentCreateResponse>();
+        if (created is null) return;
+        _projectDocuments = await Http.GetFromJsonAsync<List<ProjectDocumentDto>>($"api/projects/{_activeProject.Id}/documents") ?? [];
+        await SelectDocumentAsync(created.Document.Id);
+    }
+    private async Task MakePrimaryAsync(Guid id)
+    {
+        if (_activeProject is null) return;
+        using var response = await Http.PutAsync($"api/projects/{_activeProject.Id}/primary-document/{id}", null);
+        if (!response.IsSuccessStatusCode) { _error = await ReadApiErrorMessageAsync(response, "Could not change primary manuscript."); return; }
+        await LoadTreeAsync(_activeProject.Id, forceRefresh: true);
+    }
 
     [SupplyParameterFromQuery(Name = "tab")]
     public string? Tab { get; set; }
@@ -825,6 +844,11 @@ else
 
     protected override async Task OnParametersSetAsync()
     {
+        if (_activeProject is not null && (EmbedNavigator ? HostDocumentId : RequestedDocumentId) is { } requestedDocument && requestedDocument != _activeDocumentId)
+        {
+            ManuscriptSelection.Select(_activeProject.Id, requestedDocument);
+            await LoadTreeAsync(_activeProject.Id, forceRefresh: true);
+        }
         string requestedTab = NormalizeTab(Tab);
         if (string.Equals(requestedTab, "storyboard", StringComparison.Ordinal)
             && !CanAccessStoryboard)
@@ -934,6 +958,13 @@ else
     private async Task LoadTreeAsync(Guid projectId, bool includeProgress = true, bool forceRefresh = false)
     {
         _error = null;
+        _projectDocuments = await Http.GetFromJsonAsync<List<ProjectDocumentDto>>($"api/projects/{projectId}/documents") ?? [];
+        var eligible = _projectDocuments.Where(d => d.Kind == "manuscript" && d.DeletedAt is null && !d.IsArchived).ToArray();
+        Guid? requested = EmbedNavigator ? HostDocumentId : RequestedDocumentId ?? ManuscriptSelection.ForProject(projectId);
+        if (requested is { } chosen && !eligible.Any(d => d.Id == chosen))
+        { _error = "Manuscript unavailable in this project."; return; }
+        _activeDocumentId = requested;
+        ManuscriptSelection.Select(projectId, requested);
         ProjectTreeDto tree;
         if (!forceRefresh && ProjectStructureCacheService.TryGetProjectTree(projectId, out ProjectTreeDto cachedTree))
         {
@@ -983,6 +1014,8 @@ else
         }
 
         _activeProject = tree.Project;
+        _activeDocumentId = tree.DocumentId ?? tree.Project.DocumentId;
+        ManuscriptSelection.Select(tree.Project.Id, _activeDocumentId);
         CurrentProjectStateService.SetCurrent(_activeProject.Id, _activeProject.Title);
         _projectNameDraft = _activeProject.Title;
         _projectNameOriginal = _activeProject.Title;
@@ -1053,9 +1086,9 @@ else
     private string GetStoryboardRoute()
     {
         return _activeProject is not null
-            ? $"/projects/{_activeProject.Id:D}/storyboard"
+            ? $"/projects/{_activeProject.Id:D}/storyboard?documentId={_activeDocumentId}"
             : ProjectId.HasValue
-                ? $"/projects/{ProjectId.Value:D}/storyboard"
+                ? $"/projects/{ProjectId.Value:D}/storyboard?documentId={_activeDocumentId}"
                 : "/projects";
     }
 
@@ -1419,121 +1452,118 @@ else
         builder.AddEventPreventDefaultAttribute(seq++, "ondragover", true);
         builder.AddAttribute(seq++, "ondrop", EventCallback.Factory.Create<DragEventArgs>(this, (args) => OnNodeDropAsync(node.Id, args)));
 
-        builder.OpenElement(seq++, "div");
-        builder.AddAttribute(seq++, "class", isSelected ? "tree-row is-selected" : "tree-row");
-        builder.AddAttribute(seq++, "style", $"--depth:{depth}");
-        builder.AddAttribute(seq++, "title", displayTitle);
-        builder.AddAttribute(seq++, "tabindex", isRenaming ? "-1" : "0");
-        builder.AddAttribute(seq++, "role", "treeitem");
-        builder.AddAttribute(seq++, "aria-selected", isSelected ? "true" : "false");
-        if (!isRenaming)
-        {
-            builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => OnNodeSelected(node.Id)));
-            builder.AddAttribute(seq++, "onkeydown", EventCallback.Factory.Create<KeyboardEventArgs>(this, (args) => OnNodeRowKeyDown(args, node.Id)));
-        }
+        builder.OpenComponent<NavigatorRow>(seq++);
+        builder.AddAttribute(seq++, "Title", displayTitle);
+        builder.AddAttribute(seq++, "Depth", depth);
+        builder.AddAttribute(seq++, "Selected", isSelected);
+        builder.AddAttribute(seq++, "Disabled", isRenaming);
+        builder.AddAttribute(seq++, "OnSelect", EventCallback.Factory.Create(this, () => OnNodeSelected(node.Id)));
+        builder.AddAttribute(seq++, "OnKeyDown", EventCallback.Factory.Create<KeyboardEventArgs>(this, args => OnNodeRowKeyDown(args, node.Id)));
+        builder.AddAttribute(seq++, "ChildContent", (RenderFragment)(rowBuilder => {
+        int rowSeq = 0;
+        rowBuilder.OpenElement(rowSeq++, "span");
+        rowBuilder.AddAttribute(rowSeq++, "class", "tree-indent");
+        rowBuilder.AddAttribute(rowSeq++, "aria-hidden", "true");
+        rowBuilder.CloseElement();
 
-        builder.OpenElement(seq++, "span");
-        builder.AddAttribute(seq++, "class", "tree-indent");
-        builder.AddAttribute(seq++, "aria-hidden", "true");
-        builder.CloseElement();
-
-        builder.OpenElement(seq++, "button");
-        builder.AddAttribute(seq++, "type", "button");
-        builder.AddAttribute(seq++, "class", hasChildren
+        rowBuilder.OpenElement(rowSeq++, "button");
+        rowBuilder.AddAttribute(rowSeq++, "type", "button");
+        rowBuilder.AddAttribute(rowSeq++, "class", hasChildren
             ? (isCollapsed ? "tree-disclosure" : "tree-disclosure is-expanded")
             : "tree-disclosure is-empty");
-        builder.AddAttribute(seq++, "disabled", !hasChildren);
-        builder.AddAttribute(seq++, "aria-label", hasChildren ? "Toggle branch" : "No children");
-        builder.AddEventStopPropagationAttribute(seq++, "onclick", true);
+        rowBuilder.AddAttribute(rowSeq++, "disabled", !hasChildren);
+        rowBuilder.AddAttribute(rowSeq++, "aria-label", hasChildren ? "Toggle branch" : "No children");
+        rowBuilder.AddEventStopPropagationAttribute(rowSeq++, "onclick", true);
         if (hasChildren)
         {
-            builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create(this, () => ToggleCollapsed(node.Id)));
+            rowBuilder.AddAttribute(rowSeq++, "onclick", EventCallback.Factory.Create(this, () => ToggleCollapsed(node.Id)));
         }
 
-        builder.AddContent(seq++, "▸");
-        builder.CloseElement();
+        rowBuilder.AddContent(rowSeq++, "▸");
+        rowBuilder.CloseElement();
 
-        builder.OpenElement(seq++, "span");
-        builder.AddAttribute(seq++, "class", CanEditProjectStructure ? "tree-drag" : "tree-drag is-disabled");
-        builder.AddAttribute(seq++, "draggable", CanEditProjectStructure);
-        builder.AddAttribute(seq++, "role", "button");
-        builder.AddAttribute(seq++, "tabindex", "0");
-        builder.AddAttribute(seq++, "aria-label", "Drag to reorder");
-        builder.AddAttribute(seq++, "title", CanEditProjectStructure ? "Drag to reorder" : ProjectStructureLockedMessage);
+        rowBuilder.OpenElement(rowSeq++, "span");
+        rowBuilder.AddAttribute(rowSeq++, "class", CanEditProjectStructure ? "tree-drag" : "tree-drag is-disabled");
+        rowBuilder.AddAttribute(rowSeq++, "draggable", CanEditProjectStructure);
+        rowBuilder.AddAttribute(rowSeq++, "role", "button");
+        rowBuilder.AddAttribute(rowSeq++, "tabindex", "0");
+        rowBuilder.AddAttribute(rowSeq++, "aria-label", "Drag to reorder");
+        rowBuilder.AddAttribute(rowSeq++, "title", CanEditProjectStructure ? "Drag to reorder" : ProjectStructureLockedMessage);
         if (CanEditProjectStructure)
         {
-            builder.AddEventStopPropagationAttribute(seq++, "onmousedown", true);
-            builder.AddAttribute(seq++, "onmousedown", EventCallback.Factory.Create<MouseEventArgs>(this, () => OnNodeDragHandleMouseDown(node.Id)));
-            builder.AddAttribute(seq++, "ondragstart", EventCallback.Factory.Create<DragEventArgs>(this, (args) => OnNodeDragStart(node.Id, args)));
-            builder.AddAttribute(seq++, "ondragend", EventCallback.Factory.Create<DragEventArgs>(this, (args) => OnNodeDragEnd(node.Id, args)));
+            rowBuilder.AddEventStopPropagationAttribute(rowSeq++, "onmousedown", true);
+            rowBuilder.AddAttribute(rowSeq++, "onmousedown", EventCallback.Factory.Create<MouseEventArgs>(this, () => OnNodeDragHandleMouseDown(node.Id)));
+            rowBuilder.AddAttribute(rowSeq++, "ondragstart", EventCallback.Factory.Create<DragEventArgs>(this, (args) => OnNodeDragStart(node.Id, args)));
+            rowBuilder.AddAttribute(rowSeq++, "ondragend", EventCallback.Factory.Create<DragEventArgs>(this, (args) => OnNodeDragEnd(node.Id, args)));
         }
-        builder.AddContent(seq++, "::");
-        builder.CloseElement();
+        rowBuilder.AddContent(rowSeq++, "::");
+        rowBuilder.CloseElement();
 
-        builder.OpenElement(seq++, "span");
-        builder.AddAttribute(seq++, "class", $"tree-node-badge {GetNodeBadgeClass(node.NodeType)}");
-        builder.AddAttribute(seq++, "title", displayTitle);
-        builder.AddContent(seq++, GetNodeTypeLabel(node.NodeType));
-        builder.CloseElement();
+        rowBuilder.OpenElement(rowSeq++, "span");
+        rowBuilder.AddAttribute(rowSeq++, "class", $"tree-node-badge {GetNodeBadgeClass(node.NodeType)}");
+        rowBuilder.AddAttribute(rowSeq++, "title", displayTitle);
+        rowBuilder.AddContent(rowSeq++, GetNodeTypeLabel(node.NodeType));
+        rowBuilder.CloseElement();
 
         if (isRenaming)
         {
-            builder.OpenElement(seq++, "div");
-            builder.AddAttribute(seq++, "class", "tree-rename");
-            builder.OpenElement(seq++, "input");
-            builder.SetKey($"rename:{node.Id:D}");
-            builder.AddAttribute(seq++, "class", "tree-rename-input");
-            builder.AddAttribute(seq++, "value", _inlineRenameDraft);
-            builder.AddAttribute(seq++, "autofocus", "autofocus");
-            builder.AddAttribute(seq++, "oninput", EventCallback.Factory.Create<ChangeEventArgs>(this, OnInlineRenameInput));
-            builder.AddAttribute(seq++, "onkeydown", EventCallback.Factory.Create<KeyboardEventArgs>(this, (args) => OnTreeRenameKeyDown(args, node.Id)));
-            builder.AddAttribute(seq++, "onblur", EventCallback.Factory.Create<FocusEventArgs>(this, async (_) => await SaveInlineRenameForNodeAsync(node.Id)));
-            builder.AddEventStopPropagationAttribute(seq++, "onkeydown", true);
-            builder.AddEventStopPropagationAttribute(seq++, "onclick", true);
-            builder.AddEventStopPropagationAttribute(seq++, "onmousedown", true);
-            builder.AddEventStopPropagationAttribute(seq++, "onmouseup", true);
-            builder.CloseElement();
-            builder.CloseElement();
+            rowBuilder.OpenElement(rowSeq++, "div");
+            rowBuilder.AddAttribute(rowSeq++, "class", "tree-rename");
+            rowBuilder.OpenElement(rowSeq++, "input");
+            rowBuilder.SetKey($"rename:{node.Id:D}");
+            rowBuilder.AddAttribute(rowSeq++, "class", "tree-rename-input");
+            rowBuilder.AddAttribute(rowSeq++, "value", _inlineRenameDraft);
+            rowBuilder.AddAttribute(rowSeq++, "autofocus", "autofocus");
+            rowBuilder.AddAttribute(rowSeq++, "oninput", EventCallback.Factory.Create<ChangeEventArgs>(this, OnInlineRenameInput));
+            rowBuilder.AddAttribute(rowSeq++, "onkeydown", EventCallback.Factory.Create<KeyboardEventArgs>(this, (args) => OnTreeRenameKeyDown(args, node.Id)));
+            rowBuilder.AddAttribute(rowSeq++, "onblur", EventCallback.Factory.Create<FocusEventArgs>(this, async (_) => await SaveInlineRenameForNodeAsync(node.Id)));
+            rowBuilder.AddEventStopPropagationAttribute(rowSeq++, "onkeydown", true);
+            rowBuilder.AddEventStopPropagationAttribute(rowSeq++, "onclick", true);
+            rowBuilder.AddEventStopPropagationAttribute(rowSeq++, "onmousedown", true);
+            rowBuilder.AddEventStopPropagationAttribute(rowSeq++, "onmouseup", true);
+            rowBuilder.CloseElement();
+            rowBuilder.CloseElement();
         }
         else
         {
-            builder.OpenElement(seq++, "div");
-            builder.AddAttribute(seq++, "class", "tree-select");
-            builder.AddAttribute(seq++, "title", displayTitle);
-            builder.OpenElement(seq++, "span");
-            builder.AddAttribute(seq++, "class", "tree-select-title");
-            builder.AddAttribute(seq++, "title", displayTitle);
-            builder.AddAttribute(seq++, "tabindex", "0");
-            builder.AddContent(seq++, displayTitle);
-            builder.CloseElement();
-            builder.CloseElement();
+            rowBuilder.OpenElement(rowSeq++, "div");
+            rowBuilder.AddAttribute(rowSeq++, "class", "tree-select");
+            rowBuilder.AddAttribute(rowSeq++, "title", displayTitle);
+            rowBuilder.OpenElement(rowSeq++, "span");
+            rowBuilder.AddAttribute(rowSeq++, "class", "tree-select-title");
+            rowBuilder.AddAttribute(rowSeq++, "title", displayTitle);
+            rowBuilder.AddAttribute(rowSeq++, "tabindex", "0");
+            rowBuilder.AddContent(rowSeq++, displayTitle);
+            rowBuilder.CloseElement();
+            rowBuilder.CloseElement();
         }
 
         if (_showNavigatorTreeWordCount)
         {
-            builder.OpenElement(seq++, "span");
-            builder.AddAttribute(seq++, "class", "tree-meta");
-            builder.AddContent(seq++, $"{FormatWordCount(node.WordCountCache)} words");
-            builder.CloseElement();
+            rowBuilder.OpenElement(rowSeq++, "span");
+            rowBuilder.AddAttribute(rowSeq++, "class", "tree-meta");
+            rowBuilder.AddContent(rowSeq++, $"{FormatWordCount(node.WordCountCache)} words");
+            rowBuilder.CloseElement();
         }
 
-        builder.OpenElement(seq++, "div");
-        builder.AddAttribute(seq++, "class", "tree-row-actions");
+        rowBuilder.OpenElement(rowSeq++, "div");
+        rowBuilder.AddAttribute(rowSeq++, "class", "tree-row-actions");
 
-        builder.OpenElement(seq++, "button");
-        builder.AddAttribute(seq++, "type", "button");
-        builder.AddAttribute(seq++, "class", "tree-row-menu-toggle");
-        builder.AddAttribute(seq++, "aria-label", "Node actions");
-        builder.AddAttribute(seq++, "aria-haspopup", "menu");
-        builder.AddAttribute(seq++, "aria-expanded", isMenuOpen ? "true" : "false");
-        builder.AddEventStopPropagationAttribute(seq++, "onclick", true);
-        builder.AddAttribute(seq++, "onclick", EventCallback.Factory.Create<MouseEventArgs>(this, async args => await ToggleNodeMenuAsync(node.Id, args)));
-        builder.AddElementReferenceCapture(seq++, elementReference => _nodeMenuButtons[node.Id] = elementReference);
-        builder.AddContent(seq++, "⋯");
-        builder.CloseElement();
+        rowBuilder.OpenElement(rowSeq++, "button");
+        rowBuilder.AddAttribute(rowSeq++, "type", "button");
+        rowBuilder.AddAttribute(rowSeq++, "class", "tree-row-menu-toggle");
+        rowBuilder.AddAttribute(rowSeq++, "aria-label", "Node actions");
+        rowBuilder.AddAttribute(rowSeq++, "aria-haspopup", "menu");
+        rowBuilder.AddAttribute(rowSeq++, "aria-expanded", isMenuOpen ? "true" : "false");
+        rowBuilder.AddEventStopPropagationAttribute(rowSeq++, "onclick", true);
+        rowBuilder.AddAttribute(rowSeq++, "onclick", EventCallback.Factory.Create<MouseEventArgs>(this, async args => await ToggleNodeMenuAsync(node.Id, args)));
+        rowBuilder.AddElementReferenceCapture(rowSeq++, elementReference => _nodeMenuButtons[node.Id] = elementReference);
+        rowBuilder.AddContent(rowSeq++, "⋯");
+        rowBuilder.CloseElement();
 
-        builder.CloseElement();
-        builder.CloseElement();
+        rowBuilder.CloseElement();
+        }));
+        builder.CloseComponent();
 
         if (hasChildren && !isCollapsed)
         {
@@ -2957,7 +2987,7 @@ else
         }
 
         List<ProjectDocumentDto>? docs = await docsResponse.Content.ReadFromJsonAsync<List<ProjectDocumentDto>>();
-        ProjectDocumentDto? manuscript = docs?
+        ProjectDocumentDto? manuscript = docs?.FirstOrDefault(d => d.Id == ManuscriptSelection.ForProject(projectId) && d.Kind == "manuscript" && d.DeletedAt is null) ?? docs?
             .Where(item => item.DeletedAt is null && string.Equals(item.Kind, "manuscript", StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(item => item.UpdatedAt)
             .FirstOrDefault();
@@ -3421,7 +3451,7 @@ else
 
     private async Task OpenManuscriptAsync(Guid projectId)
     {
-        string target = $"projects/{projectId}/manuscript";
+        string target = $"projects/{projectId}/manuscript?documentId={_activeDocumentId}";
         await SaveResumeTargetAsync(projectId, target);
         Navigation.NavigateTo(target);
     }

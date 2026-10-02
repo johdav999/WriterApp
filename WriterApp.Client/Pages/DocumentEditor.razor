@@ -11,6 +11,7 @@
 @using WriterApp.Client.Utilities
 @using WriterApp.Shared.Localization
 
+<div class="prosa-editor">
 <PageTitle>@GetPageTitle()</PageTitle>
 
 @if (_isLoading)
@@ -27,17 +28,9 @@ else if (_activeSection is null || _activePage is null)
 }
 else
 {
-    <div class="editor-shell @GetLayoutStateClass()" style="@GetLayoutStyle()">
-        <div class="editor-workspace @GetWorkspaceClass()">
-
-            <section class="editor-main" id="onboarding-editor-scene">
-                <div class="editor-main-header">
-                    <div class="editor-section-info" id="onboarding-project-structure">
-                        <div class="editor-section-label">@(_isPreviewMode ? "Manuscript" : "Section")</div>
-                        <div class="editor-section-title">@(_isPreviewMode ? GetPreviewDocumentTitle() : GetActiveEditorTitle())</div>
-                    </div>
-                    <div class="editor-main-header-actions">
-                        @if (ShowTranslationSwitcher)
+    <EditorWorkspace Class="@GetLayoutStateClass()" Style="@GetLayoutStyle()" WorkspaceClass="@GetWorkspaceClass()">
+        <Main>
+                <EditorHeading Label='@(_isPreviewMode ? "Manuscript" : "Section")' Title='@(_isPreviewMode ? GetPreviewDocumentTitle() : GetActiveEditorTitle())'><Actions>                        @if (ShowTranslationSwitcher)
                         {
                             <div class="translation-switcher">
                                 <div class="translation-switcher-label">Translation</div>
@@ -63,33 +56,13 @@ else
                         </button>
                         @if (!_isPreviewMode)
                         {
-                            <button type="button" class="panel-toggle" title='@GetTooltip("Hide panels and focus on writing.")' @onclick="ToggleFocusMode">
-                                @(LayoutStateService.State.FocusMode ? "Exit focus" : "Focus mode")
-                            </button>
-                            <button type="button" class="panel-toggle" title='@GetTooltip("Toggle the right-hand panel.")' @onclick="ToggleContextPanel">
-                                @(IsContextPanelCollapsed() ? "Show panel" : "Hide panel")
-                            </button>
+                            <EditorPanelControls FocusMode="@LayoutStateService.State.FocusMode" ContextCollapsed="@IsContextPanelCollapsed()" ToggleFocus="ToggleFocusMode" ToggleContext="ToggleContextPanel" />
                         }
-                    </div>
-                </div>
+</Actions></EditorHeading>
 
                 @if (!_isPreviewMode)
                 {
-                <div class="editor-toolbar" role="toolbar" aria-label="Editor formatting">
-                    <div class="editor-toolbar-group" aria-label="Essentials" data-compact="true">
-                        <button type="button" class='@($"{GetActiveClass(_formattingState.IsBold)} icon-only")' disabled="@(!_formattingState.CanBold)" title='@GetTooltip("Make selected text bold.")' aria-label="Bold" @onclick="OnBoldRequested"><Icon Name="format_bold" /></button>
-                        <button type="button" class='@($"{GetActiveClass(_formattingState.IsItalic)} icon-only")' disabled="@(!_formattingState.CanItalic)" title='@GetTooltip("Italicize selected text.")' aria-label="Italic" @onclick="OnItalicRequested"><Icon Name="format_italic" /></button>
-                        <select class="editor-toolbar-select" value="@GetBlockTypeValue()" title='@GetTooltip("Change text style.")' @onchange="OnBlockTypeChanged" disabled="@(!_formattingState.CanApplyHeading)">
-                            <option value="paragraph">Paragraph</option>
-                            <option value="heading:1">Heading 1</option>
-                            <option value="heading:2">Heading 2</option>
-                            <option value="heading:3">Heading 3</option>
-                        </select>
-                        <button type="button" class="icon-only" disabled="@(!_formattingState.CanToggleList)" title='@GetTooltip("Create a bulleted list.")' aria-label="Bulleted list" @onclick="OnBulletListRequested"><Icon Name="format_list_bulleted" /></button>
-                        <button type="button" class="icon-only" disabled="@(!_formattingState.CanToggleList)" title='@GetTooltip("Create a numbered list.")' aria-label="Numbered list" @onclick="OnOrderedListRequested"><Icon Name="format_list_numbered" /></button>
-                        <button type="button" class="icon-only" disabled="@(!_formattingState.CanBlockquote)" title='@GetTooltip("Format text as a quotation.")' aria-label="Blockquote" @onclick="OnBlockquoteRequested"><Icon Name="format_quote" /></button>
-                        <button type="button" class='@($"{GetActiveClass(_formattingState.IsLink)} icon-only")' title='@GetTooltip("Insert or edit a link.")' aria-label="Link" @onclick="OnLinkRequested"><Icon Name="link" /></button>
-                    </div>
+                <EditorToolbar State="_formattingState" Tooltip="GetTooltip" OnBold="OnBoldRequested" OnItalic="OnItalicRequested" OnBulletList="OnBulletListRequested" OnOrderedList="OnOrderedListRequested" OnBlockquote="OnBlockquoteRequested" OnLink="OnLinkRequested" OnBlockType="@(value => OnBlockTypeChanged(new ChangeEventArgs { Value = value }))"><AdditionalControls>
                     <div class="editor-toolbar-group" aria-label="Table">
                         <button type="button" class="icon-only" disabled="@(!_formattingState.CanInsertTable)" title='@GetTooltip("Insert a 3x3 table.")' aria-label="Insert table" @onclick="OnInsertTableRequested"><Icon Name="table_chart" /></button>
                     </div>
@@ -155,7 +128,7 @@ else
                             </div>
                         }
                     </div>
-                </div>
+                </AdditionalControls></EditorToolbar>
                 @if (!string.IsNullOrWhiteSpace(_imageUploadError))
                 {
                     <div class="editor-image-error">@_imageUploadError</div>
@@ -189,19 +162,13 @@ else
                             }
                         </div>
                     }
-                    <div class="document-menu">
-                        <button type="button" class="icon-only" title='@GetTooltip("Document-level actions.")' aria-label="Document actions" @onclick="ToggleDocumentMenu"><Icon Name="description" /></button>
-                        @if (_isDocumentMenuOpen)
-                        {
-                            <div class="document-menu-panel">
-                                <button type="button" @onclick="OnToggleEditorWidthMode">@GetEditorWidthLabel()</button>
-                                <button type="button" @onclick="OnTogglePrintLayout">@GetPrintLayoutLabel()</button>
-                                <button type="button" @onclick="OnSaveNow">Save now</button>
-                                <button type="button" @onclick="PromptImportCurrentSection">Import...</button>
-                                <button type="button" @onclick="OnExportDialogOpenAsync">Export...</button>
-                            </div>
-                        }
-                    </div>
+                    <EditorDocumentActions IsOpen="_isDocumentMenuOpen" Toggle="ToggleDocumentMenu">
+                        <button type="button" @onclick="OnToggleEditorWidthMode">@GetEditorWidthLabel()</button>
+                        <button type="button" @onclick="OnTogglePrintLayout">@GetPrintLayoutLabel()</button>
+                        <button type="button" @onclick="OnSaveNow">Save now</button>
+                        <button type="button" @onclick="PromptImportCurrentSection">Import...</button>
+                        <button type="button" @onclick="OnExportDialogOpenAsync">Export...</button>
+                    </EditorDocumentActions>
                     @if (_aiUsageStatus?.ShouldShowAiLimitMessage == true)
                     {
                         <span class="ai-quota-message">You've reached your monthly AI limit.</span>
@@ -215,22 +182,10 @@ else
 
                 @if (_isPreviewMode)
                 {
-                    <div class="editor-preview-shell">
-                        <div class="editor-preview-banner">
-                            <div>
-                                <div class="editor-preview-eyebrow">Full document preview</div>
-                                <div class="editor-preview-copy">Read the manuscript as a clean document without editing controls.</div>
-                            </div>
-                            <button type="button" class="panel-toggle" @onclick="TogglePreviewModeAsync">Back to editing</button>
-                        </div>
-                        <div class="editor-preview-document" aria-label="Full document preview">
+                    <DocumentPreviewShell BackToEditing="TogglePreviewModeAsync">
                             @foreach (DocumentPreviewSectionItem section in GetPreviewSections())
                             {
-                                <article class="preview-section">
-                                    <header class="preview-section-header">
-                                        <div class="preview-section-kind">@(section.KindLabel)</div>
-                                        <h2 class="preview-section-title">@(section.Title)</h2>
-                                    </header>
+                                <DocumentPreviewSection Kind="@section.KindLabel" Title="@section.Title">
                                     @if (string.IsNullOrWhiteSpace(section.ContentHtml))
                                     {
                                         <div class="preview-section-empty">This section is empty.</div>
@@ -239,10 +194,9 @@ else
                                     {
                                         <div class="preview-section-body">@((MarkupString)(section.ContentHtml))</div>
                                     }
-                                </article>
+                                </DocumentPreviewSection>
                             }
-                        </div>
-                    </div>
+                    </DocumentPreviewShell>
                 }
                 else if (_isDiffMode)
                 {
@@ -358,16 +312,7 @@ else
                         }
                         else if (!string.IsNullOrWhiteSpace(_pendingAiProposal.OriginalText))
                         {
-                            <div class="ai-preview-columns">
-                                <div class="ai-preview-pane">
-                                    <div class="ai-preview-label">Original</div>
-                                    <div class="ai-preview-text">@_pendingAiProposal.OriginalText</div>
-                                </div>
-                                <div class="ai-preview-pane">
-                                    <div class="ai-preview-label">Proposed</div>
-                                    <div class="ai-preview-text">@_pendingAiProposal.ProposedText</div>
-                                </div>
-                            </div>
+                            <AiTextComparison Original="@_pendingAiProposal.OriginalText" Proposed="@_pendingAiProposal.ProposedText" />
                             @if (ShouldShowTightenMetrics())
                             {
                                 <div class="ai-history-details-sub">
@@ -425,7 +370,7 @@ else
                     </div>
                 }
 
-                <div class="editor-surface">
+                <div class="editor-surface" hidden="@_isPreviewMode">
                     <div class="editor-viewport">
                         <div class="editor-content">
                             @if (_isDiffMode)
@@ -566,10 +511,10 @@ else
                     </div>
                     @if (!_isDiffMode)
                     {
-                        <div class="editor-status-bar">
-                            <span title="Total words in this section.">@_editorStatus.WordCount words</span>
+                        <EditorStatus WordCount="_editorStatus.WordCount" WordCountScope="Total words in this section."
+                            SaveLabel="@_editorStatus.SaveStatusLabel" SaveClass="@_editorStatus.SaveStatusClass" SaveDetail="Your work is saved automatically to the backend."
+                            StorageLabel="Cloud document" StorageDetail="This web document is stored in your backend account.">
                             <span title="Estimated page count.">Page @_editorStatus.CurrentPageIndex / @_editorStatus.PageCount</span>
-                            <span class="@_editorStatus.SaveStatusClass" title="Your work is saved automatically.">@_editorStatus.SaveStatusLabel</span>
                             <span title="Current subscription plan.">@PlanStatusLabel</span>
                             <span id="onboarding-token-budget" title="Current monthly AI token usage.">@AiUsageStatusLabel</span>
                             @if (ShowPlanUpgrade)
@@ -594,57 +539,23 @@ else
                                     @_aiCommandStatus.Message
                                 </span>
                             }
-                        </div>
+                        </EditorStatus>
                     }
                 </div>
-            </section>
+        </Main>
+        <Context>
             @if (!_isPreviewMode)
             {
             <aside class="context-drawer @(GetContextPanelClass())">
-                <RightPanelShell>
+                <RightPanelShell PanelId="@(_isDiffMode ? null : "editor-context-content")" LabelledBy="@(_isDiffMode ? null : GetSharedSubviewId(_activeContextTab))">
                     <Tabs>
                         @if (!_isDiffMode)
                         {
-                            <div class="context-drawer-tabs">
-                                <div class="context-category-tabs tabs-primary" role="tablist" aria-label="Right panel categories">
-                                    @foreach (var category in GetAvailablePanelCategories())
-                                    {
-                                        <button type="button"
-                                                class="context-tab context-tab-category context-tab-primary @GetPanelCategoryClass(category)"
-                                                role="tab"
-                                                tabindex="@(_activePanelCategory == category ? 0 : -1)"
-                                                aria-selected="@(_activePanelCategory == category)"
-                                                title='@GetPanelCategoryTooltip(category)'
-                                                @onkeydown="(args) => OnPrimaryTabsKeyDown(args, category)"
-                                                @onclick="() => SetPanelCategoryAsync(category)">
-                                            @GetPanelCategoryLabel(category)
-                                        </button>
-                                    }
-                                </div>
-                                <div class="context-subtabs-shell">
-                                    <div class="context-subtabs-label">@GetSecondaryTabsHeading(_activePanelCategory)</div>
-                                    <div class="context-subtabs tabs-secondary" role="tablist" aria-label="Right panel subviews">
-                                        @foreach (var tab in GetTabsForActiveCategory())
-                                        {
-                                            <button type="button"
-                                                    class="context-tab context-tab-subview context-tab-secondary @GetContextTabClass(tab)"
-                                                    id="@GetOnboardingContextTabId(tab)"
-                                                    role="tab"
-                                                    tabindex="@(_activeContextTab == tab ? 0 : -1)"
-                                                    aria-selected="@(_activeContextTab == tab)"
-                                                    title='@GetContextTabTooltip(tab)'
-                                                    @onkeydown="(args) => OnSecondaryTabsKeyDown(args, tab)"
-                                                    @onclick="() => SetContextTabAsync(tab)">
-                                                @GetContextTabLabel(tab)
-                                            </button>
-                                        }
-                                    </div>
-                                    @if (!string.IsNullOrWhiteSpace(GetSecondaryTabHelperText(_activeContextTab)))
-                                    {
-                                        <div class="context-subtabs-helper">@GetSecondaryTabHelperText(_activeContextTab)</div>
-                                    }
-                                </div>
-                            </div>
+                            <EditorContextNavigation TCategory="PanelCategory" TSubview="ContextTab"
+                                Categories="PanelCategoryDescriptors" Subviews="PanelSubviewDescriptors"
+                                Category="_activePanelCategory" Subview="_activeContextTab"
+                                CategoryChanged="SetPanelCategoryAsync" SubviewChanged="SelectSharedSubviewAsync"
+                                Heading="@GetSecondaryTabsHeading(_activePanelCategory)" Helper="@GetSecondaryTabHelperText(_activeContextTab)" />
                         }
                     </Tabs>
                     <Header>
@@ -1113,14 +1024,14 @@ else
                         {
                             <div class="editor-navigator-host">
                                 <Projects ProjectId="@GetNavigatorProjectId()"
-                                          EmbedNavigator="true"
+                                          EmbedNavigator="true" HostDocumentId="DocumentId"
                                           @ref="_navigatorPanel"
                                           SceneOpenRequested="OpenSceneFromNavigatorAsync" />
                             </div>
                         }
                         else if (_activeContextTab == ContextTab.Ai)
                         {
-                            <div class="drawer-panel ai-panel continuity-panel">
+                            <WritingPanel Class="drawer-panel ai-panel continuity-panel" ShowTitle="false">
                                 @if (!IsAiAvailable)
                                 {
                                     <div class="drawer-empty">@GetAiBlockedMessage()</div>
@@ -1205,85 +1116,10 @@ else
                                     </div>
                                 }
 
-                                <div class="ai-history-toolbar">
-                                    <button type="button"
-                                            class="ai-history-button"
-                                            title='@GetTooltip("History: Reload AI command history for this document.")'
-                                            @onclick="LoadAiHistoryAsync">
-                                        Refresh history
-                                    </button>
-                                    <span class="ai-history-count-pill">@_aiHistoryEntries.Count</span>
-                                </div>
-                                @if (_aiHistoryEntries.Count == 0)
-                                {
-                                    <div class="drawer-empty">No AI history yet.</div>
-                                }
-                                else
-                                {
-                                    <ul class="ai-history-list">
-                                    @foreach (AiHistoryEntry entry in _aiHistoryEntries)
-                                    {
-                                        bool showDetails = _expandedAiHistoryId == entry.Id;
-                                        <li class="ai-history-item">
-                                            <div class="ai-history-meta">
-                                                <span class="ai-history-badge">AI</span>
-                                                <span class="ai-history-summary">@entry.Label</span>
-                                            </div>
-                                            <div class="ai-history-sub">
-                                                <span>@entry.Timestamp.ToLocalTime().ToString("g")</span>
-                                                @if (entry.IsApplied)
-                                                {
-                                                    <span class="ai-history-status is-applied">Applied</span>
-                                                    @if (entry.AppliedCount > 1)
-                                                    {
-                                                        <span class="ai-history-status-count">x@entry.AppliedCount</span>
-                                                    }
-                                                }
-                                                else
-                                                {
-                                                    <span class="ai-history-status is-pending">Pending</span>
-                                                }
-                                            </div>
-                                            <div class="ai-history-actions">
-                                                <button type="button"
-                                                        class="ai-details-toggle"
-                                                        aria-expanded="@showDetails"
-                                                        aria-controls="@GetAiHistoryDetailsId(entry)"
-                                                        @onclick="() => OnToggleAiHistoryDetails(entry)">
-                                                    @(showDetails ? "Hide details" : "Details")
-                                                </button>
-                                            </div>
-                                            @if (showDetails)
-                                            {
-                                                <div id="@GetAiHistoryDetailsId(entry)" class="ai-history-details">
-                                                    <div class="ai-history-details-header">
-                                                        <div class="ai-history-details-summary">@(entry.Summary ?? entry.Label)</div>
-                                                        <div class="ai-history-details-sub">
-                                                            <span>@(entry.IsApplied ? "Applied" : "Pending")</span>
-                                                            @if (entry.LastAppliedAt.HasValue)
-                                                            {
-                                                                <span>@entry.LastAppliedAt.Value.ToLocalTime().ToString("g")</span>
-                                                            }
-                                                            <span>@entry.Timestamp.ToLocalTime().ToString("g")</span>
-                                                        </div>
-                                                    </div>
-                                                    <div class="ai-history-details-compare">
-                                                        <div class="ai-history-details-block">
-                                                            <div class="ai-history-details-label">Before</div>
-                                                            <pre>@FormatHistoryText(entry.BeforeText)</pre>
-                                                        </div>
-                                                        <div class="ai-history-details-block">
-                                                            <div class="ai-history-details-label">After</div>
-                                                            <pre>@FormatHistoryText(entry.AfterText)</pre>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            }
-                                        </li>
-                                    }
-                                </ul>
-                                }
-                            </div>
+                                <AiHistoryPanel Entries="@(_aiHistoryEntries.Select(entry => new AiHistoryItem(entry.Id, entry.ActionKey, entry.Summary ?? entry.Label, entry.IsApplied ? "Applied" : "Reviewed", entry.Timestamp, FormatHistoryText(entry.BeforeText), FormatHistoryText(entry.AfterText))).ToArray())"
+                                    Refresh="LoadAiHistoryAsync" Busy="_aiUndoRedoInFlight" UndoLatest="OnAiUndoRequested" RedoLatest="OnAiRedoRequested"
+                                    CanUndoLatest="_hasAiUndoHistory" CanRedoLatest="_hasAiRedoHistory" />
+                            </WritingPanel>
                         }
                         else if (_activeContextTab == ContextTab.Continuity)
                         {
@@ -1848,8 +1684,8 @@ else
             </aside>
             }
 
-        </div>
-    </div>
+        </Context>
+    </EditorWorkspace>
 
 }
 
@@ -2306,16 +2142,8 @@ else
             </div>
             @if (string.Equals(_exportContentSelection, "document", StringComparison.OrdinalIgnoreCase))
             {
-            <div class="export-panel-row">
-                <label class="export-panel-label" for="preview-scope">Scope</label>
-                <select id="preview-scope" class="export-panel-select" @bind="_exportScopeType" @bind:after="MarkPresetAsCustom">
-                    <option value="document">Whole manuscript</option>
-                    <option value="section">Current section</option>
-                    <option value="page">Current page</option>
-                    <option value="sections">Selected sections</option>
-                    <option value="selection">Selection</option>
-                </select>
-            </div>
+            <ExportScopeFields Id="preview-scope" Value="@_exportScopeType" Extended="true"
+                ValueChanged="value => { _exportScopeType = value; MarkPresetAsCustom(); }" />
             @if (string.Equals(_exportScopeType, "sections", StringComparison.OrdinalIgnoreCase))
             {
                 <div class="export-panel-row export-panel-sections">
@@ -2688,11 +2516,8 @@ else
                         else
                         {
                             <div class="preview-frame-wrap">
-                                <iframe id="export-preview-frame"
-                                        class="export-preview-frame"
-                                        srcdoc="@_previewHtml"
-                                        @onload="OnPreviewFrameLoadedAsync"
-                                        sandbox="allow-same-origin allow-scripts allow-modals"></iframe>
+                                <ExportPreviewFrame Id="export-preview-frame" Html="@_previewHtml"
+                                    Loaded="OnPreviewFrameLoadedAsync" Sandbox="allow-same-origin allow-scripts allow-modals" />
                             </div>
                         }
                     </section>
@@ -2908,3 +2733,5 @@ else
         </div>
     </div>
 }
+
+</div>

@@ -1,0 +1,53 @@
+@namespace WriterApp.UI.Shared
+
+<div class="rp-shell @(PinTrailingBody ? "has-pinned-body" : null) @Class">
+    <div class="rp-scroll">
+        @if (Tabs is not null || Header is not null)
+        {
+            <div class="rp-sticky-header">
+                @if (Tabs is not null)
+                {
+                    <div class="rp-tabs">
+                        @Tabs
+                    </div>
+                }
+                @if (Header is not null)
+                {
+                    <div class="rp-header">
+                        @Header
+                    </div>
+                }
+            </div>
+        }
+        <div class="rp-panel" id="@PanelId" role="@(PanelId is null ? null : "tabpanel")" aria-labelledby="@LabelledBy" tabindex="@(PanelId is null ? null : "0")">
+            <div class="rp-content">
+                @Body
+            </div>
+            @if (TrailingBody is not null)
+            {
+                <div class="rp-trailing-body" hidden="@(!TrailingBodyVisible)">
+                    @TrailingBody
+                </div>
+            }
+        </div>
+    </div>
+    @if (Footer is not null)
+    {
+        <div class="rp-footer">
+            @Footer
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public string? PanelId { get; set; }
+    [Parameter] public string? LabelledBy { get; set; }
+    [Parameter] public RenderFragment? Tabs { get; set; }
+    [Parameter] public RenderFragment? Header { get; set; }
+    [Parameter] public RenderFragment Body { get; set; } = default!;
+    [Parameter] public RenderFragment? TrailingBody { get; set; }
+    [Parameter] public bool TrailingBodyVisible { get; set; } = true;
+    [Parameter] public bool PinTrailingBody { get; set; }
+    [Parameter] public RenderFragment? Footer { get; set; }
+    [Parameter] public string? Class { get; set; }
+}

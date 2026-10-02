@@ -15,10 +15,14 @@ builder.RootComponents.Add<HeadOutlet>("head::after");
 Uri serverBase = new(builder.HostEnvironment.BaseAddress, UriKind.Absolute);
 string origin = serverBase.GetLeftPart(UriPartial.Authority);
 builder.Services.AddScoped<ApiUnauthorizedRedirectHandler>();
+builder.Services.AddScoped<WriterApp.Client.State.ManuscriptSelectionState>();
+builder.Services.AddScoped<ManuscriptRequestHandler>();
 builder.Services.AddScoped(sp =>
 {
     ApiUnauthorizedRedirectHandler unauthorizedHandler = sp.GetRequiredService<ApiUnauthorizedRedirectHandler>();
-    unauthorizedHandler.InnerHandler = new HttpClientHandler();
+    var manuscriptHandler = sp.GetRequiredService<ManuscriptRequestHandler>();
+    manuscriptHandler.InnerHandler = new HttpClientHandler();
+    unauthorizedHandler.InnerHandler = manuscriptHandler;
 
     return new HttpClient(unauthorizedHandler)
     {
@@ -53,5 +57,6 @@ builder.Services.AddTransient<EditorSaveCoordinator>();
 builder.Services.AddSingleton<WriterApp.Client.State.LastOpenedDocumentStateService>();
 builder.Services.AddScoped<WriterApp.Client.Services.CoachRecommendationService>();
 builder.Services.AddScoped<AiCommandStatusService>();
+builder.Services.AddScoped<WriterApp.UI.Shared.Projects.IStoryboardData, HttpStoryboardData>();
 
 await builder.Build().RunAsync();

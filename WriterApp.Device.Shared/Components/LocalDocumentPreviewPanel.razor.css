@@ -1,0 +1,8 @@
+.local-preview-tools { width: min(100%, 880px); margin: 0 auto 1rem; padding: 1rem; border: 1px solid #d4d8de; border-radius: 12px; background: #fff; }
+.local-preview-tools form { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.local-preview-tools input { min-width: 0; max-width: 100%; }
+.local-preview-tools nav { margin-top: .75rem; max-height: 180px; overflow: auto; }
+.local-preview-tools ul { margin: .25rem 0; }
+.local-preview-page { margin: 1.5rem 0; scroll-margin-top: 1rem; }
+.local-preview-page:focus-visible { outline: 2px solid var(--color-accent, #6556a8); }
+.preview-section-body ::deep pre { white-space: pre-wrap; overflow-wrap: anywhere; }

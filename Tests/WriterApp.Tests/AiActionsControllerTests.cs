@@ -26,6 +26,27 @@ namespace WriterApp.Tests
 {
     public sealed class AiActionsControllerTests
     {
+        [Theory]
+        [InlineData("old", false, false)]
+        [InlineData("v1", true, false)]
+        [InlineData("v1", false, true)]
+        public async Task ExecuteAction_RevisionContractRejectsStaleOrChangedSource(string version, bool changeDuringAi, bool succeeds)
+        {
+            await using AppDbContext db = BuildDbContext();
+            SeedDocumentGraph(db, out Guid documentId, out Guid sectionId, out Guid pageId);
+            SeedSectionSceneCard(db, sectionId);
+            var record = new DocumentSyncRecord { DocumentId=documentId, OwnerUserId="user-1", Version="v1", Sequence=1 };
+            db.DocumentSyncRecords.Add(record); await db.SaveChangesAsync();
+            var orchestrator = new StubAiOrchestrator(true,false);
+            if(changeDuringAi) orchestrator.BeforeExecute = () => { record.Version="v2"; db.SaveChanges(); };
+            var controller = BuildController(db,orchestrator);
+            var request = new AiActionExecuteRequestDto(documentId,sectionId,pageId,null,null,"{}","Scene",null,new(),version);
+            var result = await controller.ExecuteAction(SceneSuggestAction.ActionIdValue,request,CancellationToken.None);
+            if(succeeds) Assert.Equal("v1",Assert.IsType<AiActionExecuteResponseDto>(Assert.IsType<OkObjectResult>(result.Result).Value).SourceDocumentVersion);
+            else Assert.IsType<ConflictObjectResult>(result.Result);
+            Assert.Equal(version=="old" ? 0 : 1,orchestrator.Calls);
+        }
+
         [Fact]
         public async Task ExecuteAction_SceneSuggest_ReturnsOk_WhenRequestIsValid()
         {
@@ -628,6 +649,8 @@ namespace WriterApp.Tests
         {
             private readonly IReadOnlyList<IAiAction> _actions =
                 new IAiAction[] { new SceneSuggestAction(), new TightenSectionAction(), new ExpandSectionAction() };
+            public Action? BeforeExecute;
+            public int Calls;
             private readonly bool _success;
             private readonly bool _providerFailure;
 
@@ -649,6 +672,7 @@ namespace WriterApp.Tests
 
             public Task<AiExecutionResult> ExecuteActionAsync(string actionId, AiActionInput input, CancellationToken ct)
             {
+                Calls++; BeforeExecute?.Invoke();
                 if (_providerFailure)
                 {
                     throw new AiProviderException("openai", "API key is not configured.");

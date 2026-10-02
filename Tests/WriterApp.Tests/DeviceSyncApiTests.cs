@@ -23,6 +23,19 @@ public sealed class DeviceSyncApiTests
         Assert.Equal(status, error.Status); Assert.Equal("reason", error.Code); Assert.Equal(retry, error.IsTransient);
     }
     [Fact]
+    public async Task MissingV4RouteExplainsBackendUpgradeWithoutFallback()
+    {
+        var api = Api(request =>
+        {
+            Assert.StartsWith("/api/sync/v4/documents", request.RequestUri!.AbsolutePath);
+            return new(HttpStatusCode.NotFound) { Content = new StringContent("") };
+        });
+        var error = await Assert.ThrowsAsync<DeviceSyncApiException>(() => api.ChangesAsync(null, default));
+        Assert.Equal(426, error.Status);
+        Assert.Equal("project_sync_backend_required", error.Code);
+        Assert.False(error.IsTransient);
+    }
+    [Fact]
     public async Task HostingSizeRejectionWithoutJsonIsStillPermanent()
     {
         var api = Api(_ => new(HttpStatusCode.RequestEntityTooLarge) { Content = new StringContent("<html>Too large</html>") });

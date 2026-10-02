@@ -1,5 +1,8 @@
-.device-account { position: relative; max-width: 34rem; font-size: .9rem; }
-.device-account summary { cursor: pointer; padding: .5rem; }
-.device-account button { margin: .25rem; padding: .5rem .75rem; }
-.device-account p { margin: .5rem; }
-.device-account button:focus-visible, .device-account summary:focus-visible { outline: 2px solid #6550be; outline-offset: 2px; }
+.sidebar-account { position:relative; margin-top:14px; border-top:1px solid var(--color-border); padding-top:16px; }
+.sidebar-account summary { display:flex; align-items:center; gap:14px; padding:0 12px; min-height:44px; cursor:pointer; list-style:none; }
+.sidebar-account summary::-webkit-details-marker { display:none; }
+.account-avatar { width:34px; height:34px; flex-shrink:0; border-radius:50%; display:grid; place-items:center; background:#426382; color:white; font-size:13px; }
+.account-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px; }
+.sidebar-account summary ::deep svg { width:16px; height:16px; color:var(--color-text-muted); }
+.sidebar-account .device-account-panel { position:absolute; left:0; bottom:calc(100% + 8px); width:min(360px,80vw); padding:20px; background:var(--color-surface-1); border:1px solid var(--color-border); border-radius:12px; box-shadow:var(--shadow-lg); z-index:60; font-size:14px; line-height:1.5; }
+.sidebar-account .device-account-panel button { margin:4px 4px 4px 0; }

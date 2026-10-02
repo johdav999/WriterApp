@@ -13,7 +13,9 @@ namespace WriterApp.Application.Documents
         string? CoverImageUrl,
         DateTimeOffset CreatedUtc,
         DateTimeOffset UpdatedUtc,
-        int TotalWordCount);
+        int TotalWordCount,
+        Guid? PrimaryDocumentId = null,
+        Guid? DocumentId = null);
 
     public sealed record ProjectCreateRequest(
         string? Title,
@@ -49,7 +51,8 @@ namespace WriterApp.Application.Documents
 
     public sealed record ProjectTreeDto(
         ProjectDto Project,
-        IReadOnlyList<ProjectNodeDto> Nodes);
+        IReadOnlyList<ProjectNodeDto> Nodes,
+        Guid? DocumentId = null);
 
     public sealed record ProjectDocumentDto(
         Guid Id,
@@ -101,6 +104,7 @@ namespace WriterApp.Application.Documents
 
     public sealed record ProjectNodeReorderRequest(
         IReadOnlyList<Guid> OrderedChildIds);
+    public sealed record ProjectSceneMoveRequest(ProjectNodePatchRequest Patch, ProjectNodeReorderRequest Order);
 
     public sealed record ProjectNodeDuplicateRequest(
         bool? Deep = null);

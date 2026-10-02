@@ -1,0 +1,66 @@
+@page "/account"
+@implements IDisposable
+@using WriterApp.Application.Feedback
+@inject DeviceAccountService Identity
+@inject DeviceAccountOverview Overview
+@inject DeviceAccountLinks Links
+@inject DeviceConnectivity Network
+@inject DeviceHostOptions Host
+<PageTitle>Account and help · Prosa</PageTitle>
+<div class="account-shell">
+<h1>Account</h1>
+<p>Local writing, organization and saving work without sign-in or a paid plan.</p>
+<p><strong>Identity:</strong> @(Identity.IsSignedIn ? Identity.DisplayName ?? "Signed in" : "Signed out")</p>
+<p><strong>Backend:</strong> @Host.ApiBaseAddress.GetComponents(UriComponents.SchemeAndServer, UriFormat.Unescaped)</p>
+<p><strong>Connection:</strong> @(Network.IsOnline ? "Network available; use Refresh to verify the backend." : "Offline")</p>
+@if(!Identity.IsConfigured) { <p>Native sign-in is not configured for this host. Documentation and local writing remain available.</p> }
+<div class="account-actions">
+<button disabled="@(_busy || !Identity.IsConfigured)" @onclick="SignIn">@(Identity.IsSignedIn ? "Switch account" : "Sign in with browser")</button>
+<button disabled="@(_busy || !Identity.IsConfigured)" @onclick="SignOut">Sign out on this device</button>
+<button disabled="@(_busy || !Identity.IsSignedIn)" @onclick="Refresh">Refresh account</button>
+@if(_busy) { <button @onclick="() => _cancel?.Cancel()">Cancel</button> }
+</div>
+@if(_busy) { <p role="status">Working… Local writing remains available.</p> }
+<p role="status">@Overview.Message</p>
+@if(Identity.Message is not null) { <p>@Identity.Message</p> }
+@if(Overview.Profile is { } profile) {
+    <p>@profile.Name @profile.Email</p>
+    <AccountSummary Profile="profile" Freshness="@($"{(Overview.IsStale ? "Cached — not current" : "Last verified backend response")} · {Overview.CheckedAt?.ToLocalTime():g}")" />
+} else { <p>Plan and usage are unavailable until this account is verified. No paid status is assumed.</p> }
+<h2>Billing and plans</h2>
+<p>These controls open your configured Prosa website in the system browser. The website may require a separate sign-in. After changing your plan, return here and refresh. Your local writing stays on this device.</p>
+@foreach(var destination in new[] { AccountDestination.Billing,AccountDestination.UpgradeStandard,AccountDestination.UpgradePro }) {
+    <button disabled="@(_busy || !Links.IsAvailable)" @onclick="() => PreviewLink(destination)">@LinkLabel(destination)</button>
+}
+@if(_destination is { } selected && _address is not null) {
+    <p>Open in your system browser: @_address</p>
+    <button disabled="@(_busy || !Links.IsAvailable)" @onclick="() => OpenLink(selected)">Open website</button>
+}
+@if(!Links.IsAvailable) { <p>System-browser handoff is unavailable in this host.</p> }
+<h2>Help</h2>
+<HelpLinks Documentation="() => PreviewLink(AccountDestination.Documentation)" />
+<p>Updates and diagnostic export remain in Settings → Updates and diagnostics. Export contains app/runtime version and sync counts, not writing or tokens. Review exported files before sharing them.</p>
+<section id="feedback"><FeedbackComposer CanSend="@(Identity.IsSignedIn && Network.IsOnline)" Busy="_busy" Send="SendFeedback" Destination="@Host.ApiBaseAddress.GetComponents(UriComponents.SchemeAndServer, UriFormat.Unescaped)" ReviewContext="@Identity.Generation.ToString()" /></section>
+@if(_message is not null) { <p role="status">@_message</p> }
+</div>
+@code {
+    private bool _busy,_disposed; private long _generation; private string? _message;
+    private CancellationTokenSource? _cancel; private AccountDestination? _destination; private Uri? _address;
+    protected override async Task OnInitializedAsync() { _generation=Identity.Generation;Identity.Changed+=Changed;Network.Changed+=Changed;await Run(async ct=> { await Identity.RestoreAsync(ct);await Overview.RefreshAsync(ct); }); }
+    private void Changed() { if(_disposed) return; if(_generation!=Identity.Generation || !Identity.IsSignedIn) { Overview.Clear();_generation=Identity.Generation; } _=InvokeAsync(StateHasChanged); }
+    private Task SignIn()=>Run(async ct=> { await Identity.SignInAsync(ct);await Overview.RefreshAsync(ct); });
+    private Task SignOut()=>Run(async _=> { await Identity.SignOutAsync();Overview.Clear(); });
+    private Task Refresh()=>Run(ct=>Overview.RefreshAsync(ct));
+    private static string LinkLabel(AccountDestination d)=>d switch { AccountDestination.Billing=>"Billing settings",AccountDestination.UpgradeStandard=>"Upgrade to Standard",_=>"View Professional plan" };
+    private void PreviewLink(AccountDestination d) { _message=null;_destination=null;_address=null;try { _address=Links.Address(d);_destination=d; } catch(InvalidOperationException e) { _message=e.Message; } }
+    private Task OpenLink(AccountDestination d)=>Run(async _=> { await Links.OpenAsync(d);_message="Website opened in your system browser. Return to Prosa and refresh after changing your plan."; });
+    private Task SendFeedback(FeedbackDraft draft)=>Run(async ct=> { await Overview.SendFeedbackAsync(draft,ct);_message="Feedback sent. No writing or diagnostics were attached."; });
+    private async Task Run(Func<CancellationToken,Task> action) {
+        if(_busy) return;_busy=true;_message=null;using var ct=new CancellationTokenSource(TimeSpan.FromMinutes(5));_cancel=ct;
+        try { await action(ct.Token); }
+        catch(OperationCanceledException) { _message="Canceled or timed out. If sending feedback, delivery may already have occurred; do not retry automatically."; }
+        catch(Exception e) when(e is DeviceSignInRequiredException or DeviceIdentityUnavailableException or DeviceIdentityConfigurationException or HttpRequestException or InvalidOperationException or IOException) { _message=e is HttpRequestException ? "Connection failed. If sending feedback, delivery is uncertain; do not retry automatically." : e.Message; }
+        finally { _busy=false;_cancel=null; }
+    }
+    public void Dispose() { _disposed=true;Identity.Changed-=Changed;Network.Changed-=Changed;_cancel?.Cancel(); }
+}

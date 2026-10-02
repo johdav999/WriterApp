@@ -1,0 +1,20 @@
+.document-sync-bar { display: inline-flex; align-items: center; gap: var(--space-2); }
+.document-sync-menu { position: relative; }
+.document-sync-menu summary { cursor: pointer; white-space: nowrap; }
+.document-sync-popover {
+    position: absolute;
+    bottom: calc(100% + var(--space-3));
+    right: 0;
+    width: min(22rem, 80vw);
+    max-height: 60vh;
+    overflow-y: auto;
+    padding: var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--color-text);
+    box-shadow: 0 8px 24px #0002;
+    z-index: 100;
+}
+.document-sync-content p { margin: 0 0 var(--space-2); }
+.document-sync-content p:last-child { margin-bottom: 0; }

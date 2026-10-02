@@ -60,6 +60,8 @@ public sealed class MsalDeviceIdentityClient(DeviceAuthOptions options) : IDevic
         }
         catch (MsalUiRequiredException) { throw new DeviceSignInRequiredException(); }
         catch (MsalClientException error) when (error.ErrorCode == "authentication_canceled") { throw new OperationCanceledException(cancellationToken); }
+        catch (MsalServiceException error) when (interactive && error.ErrorCode is ("invalid_client" or "unauthorized_client" or "invalid_scope" or "invalid_resource"))
+        { throw new DeviceIdentityConfigurationException(); }
         catch (OperationCanceledException) { throw; }
         catch (DeviceSignInRequiredException) { throw; }
         catch (Exception) { _app = null; throw new DeviceIdentityUnavailableException(); }

@@ -1,0 +1,7 @@
+@namespace WriterApp.UI.Shared
+<nav aria-label="Help and feedback">
+    <button type="button" disabled="@(!Documentation.HasDelegate)" @onclick="() => Documentation.InvokeAsync()">Open documentation</button>
+    <a href="@FeedbackHref">Prepare feedback</a>
+</nav>
+@code { [Parameter] public string FeedbackHref {get;set;} = "/account#feedback-draft";
+[Parameter] public EventCallback Documentation {get;set;} }

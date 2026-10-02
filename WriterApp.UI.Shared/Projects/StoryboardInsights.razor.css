@@ -1,0 +1,368 @@
+.storyboard-insights {
+    /* The outer card stays stable; the inner scroll area owns vertical scrolling. */
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: var(--space-3);
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+    padding: var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--color-surface-1) 92%, #f4f6fa 8%);
+    box-shadow: none;
+    overflow: hidden;
+}
+
+.storyboard-insights--collapsed {
+    grid-template-rows: auto;
+    align-content: start;
+    justify-items: stretch;
+    padding: 10px 8px;
+}
+
+.storyboard-insights-scroll {
+    display: grid;
+    gap: var(--space-3);
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    padding-right: 4px;
+}
+
+.storyboard-insights-header {
+    display: grid;
+    gap: 6px;
+}
+
+.storyboard-insights-header-main {
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+    gap: var(--space-2);
+}
+
+.storyboard-insights-header-copy {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+}
+
+.storyboard-insights-header h2,
+.storyboard-insights-section h3 {
+    margin: 0;
+}
+
+.storyboard-insights-header h2 {
+    font-size: 1rem;
+    font-weight: 650;
+    color: var(--color-text);
+}
+
+.storyboard-insights-section h3 {
+    font-size: 0.92rem;
+    font-weight: 650;
+    color: var(--color-text);
+}
+
+.storyboard-insights-header p {
+    margin: 0;
+    color: var(--color-text-muted);
+    font-size: 0.82rem;
+    line-height: 1.45;
+}
+
+.storyboard-insights-toggle {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border: 1px solid color-mix(in srgb, var(--color-border) 84%, transparent);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--color-surface-2) 78%, transparent);
+    color: var(--color-text-muted);
+    font: inherit;
+    font-size: 0.78rem;
+    line-height: 1;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.storyboard-insights-toggle:hover,
+.storyboard-insights-toggle:focus-visible {
+    background: var(--color-surface-2);
+    color: var(--color-text);
+}
+
+.storyboard-insights-toggle__icon {
+    font-size: 0.9rem;
+    line-height: 1;
+}
+
+.storyboard-insights-toggle__label {
+    font-weight: 600;
+}
+
+.storyboard-insights--collapsed .storyboard-insights-header {
+    gap: 0;
+}
+
+.storyboard-insights--collapsed .storyboard-insights-header-main {
+    flex-direction: column;
+    align-items: stretch;
+}
+
+.storyboard-insights--collapsed .storyboard-insights-header-copy {
+    display: none;
+}
+
+.storyboard-insights--collapsed .storyboard-insights-toggle {
+    width: 100%;
+    min-height: 88px;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 6px;
+}
+
+.storyboard-insights--collapsed .storyboard-insights-toggle__icon {
+    font-size: 1rem;
+}
+
+.storyboard-insights--collapsed .storyboard-insights-toggle__label {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    letter-spacing: 0.04em;
+}
+
+.storyboard-insights-stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-2);
+}
+
+.storyboard-insights-stats div {
+    display: grid;
+    gap: 4px;
+    padding: 10px 12px;
+    border: 1px solid color-mix(in srgb, var(--color-border) 86%, transparent);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--color-surface-2) 78%, transparent);
+}
+
+.storyboard-insights-stats strong {
+    font-size: 1.02rem;
+    color: color-mix(in srgb, var(--color-text) 88%, var(--color-text-muted) 12%);
+}
+
+.storyboard-insights-stats span,
+.storyboard-insights-empty {
+    color: var(--color-text-muted);
+    font-size: 0.8rem;
+}
+
+.storyboard-insights-section {
+    display: grid;
+    gap: var(--space-2);
+    padding-top: var(--space-2);
+    border-top: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
+}
+
+.storyboard-insights-section:first-of-type {
+    padding-top: 0;
+    border-top: 0;
+}
+
+.storyboard-insights-list {
+    margin: 0;
+    padding-left: 1.1rem;
+    display: grid;
+    gap: 6px;
+    color: var(--color-text);
+    font-size: 0.84rem;
+    line-height: 1.45;
+}
+
+.storyboard-insights-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.storyboard-insights ::deep .storyboard-insights-action {
+    appearance: none;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--color-surface-2) 80%, transparent);
+    color: var(--color-text);
+    font: inherit;
+    font-size: 0.82rem;
+    line-height: 1.2;
+    padding: 7px 11px;
+    cursor: pointer;
+}
+
+.storyboard-insights ::deep .storyboard-insights-action:hover {
+    background: var(--color-surface-3);
+}
+
+.storyboard-insights-error {
+    color: #b42318;
+    font-size: var(--font-size-helper);
+}
+
+.storyboard-insights-suggestion {
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border: 1px solid color-mix(in srgb, #bfd2f7 72%, var(--color-border) 28%);
+    border-radius: var(--radius-sm);
+    background:
+        linear-gradient(180deg, rgba(207, 217, 245, 0.1), rgba(255, 255, 255, 0)),
+        var(--color-surface-1);
+}
+
+.storyboard-insights-suggestion__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: start;
+    gap: 8px;
+}
+
+.storyboard-insights-suggestion__status {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 9px;
+    border-radius: 999px;
+    background: #e8f0ff;
+    color: #2457a6;
+    border: 1px solid #bfd2f7;
+    font-size: 0.68rem;
+    font-weight: 700;
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.storyboard-insights-suggestion__summary,
+.storyboard-insights-suggestion__rationale {
+    color: var(--color-text-muted);
+    font-size: 0.82rem;
+    line-height: 1.45;
+}
+
+.storyboard-insights-suggestion__chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.storyboard-insights-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 8px;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--color-surface-2) 70%, transparent);
+    color: var(--color-text-muted);
+    font-size: 0.68rem;
+    line-height: 1;
+}
+
+.storyboard-insights-suggestion__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.storyboard-insights-suggestion-list {
+    display: grid;
+    gap: var(--space-2);
+}
+
+.storyboard-insights-suggestion--missing {
+    border-color: #d6dce8;
+}
+
+.storyboard-insights-grouped-findings {
+    display: grid;
+    gap: var(--space-2);
+    margin-top: var(--space-3);
+}
+
+.storyboard-insights-pov-summary {
+    display: grid;
+    gap: var(--space-2);
+    margin-top: var(--space-3);
+}
+
+.storyboard-insights-pov-summary h4 {
+    margin: 0;
+    color: var(--color-text);
+    font-size: 0.82rem;
+    font-weight: 650;
+}
+
+.storyboard-insights-pov-summary__chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.storyboard-insights-subplot-group {
+    display: grid;
+    gap: var(--space-2);
+    padding: 10px 12px;
+    border: 1px solid color-mix(in srgb, var(--color-border) 80%, transparent);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--color-surface-2) 72%, transparent);
+}
+
+.storyboard-insights-pov-group {
+    border-color: #d6dce8;
+}
+
+.storyboard-insights-subplot-group h4 {
+    margin: 0;
+    color: var(--color-text);
+    font-size: 0.84rem;
+    font-weight: 650;
+}
+
+.storyboard-insights-subplot-items {
+    display: grid;
+    gap: var(--space-2);
+}
+
+.storyboard-insights-subplot-item {
+    display: grid;
+    gap: 6px;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-1);
+    border: 1px solid color-mix(in srgb, #d6dce8 80%, transparent);
+}
+
+.storyboard-insights-subplot-item__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.storyboard-insights-subplot-item__body,
+.storyboard-insights-subplot-item__affected,
+.storyboard-insights-subplot-item__recommendation {
+    color: var(--color-text-muted);
+    font-size: 0.82rem;
+    line-height: 1.45;
+}
+
+@media (max-width: 900px) {
+    .storyboard-insights--collapsed .storyboard-insights-toggle {
+        min-height: 72px;
+    }
+
+    .storyboard-insights-scroll {
+        padding-right: 0;
+    }
+}

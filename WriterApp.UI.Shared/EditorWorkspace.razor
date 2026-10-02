@@ -1,0 +1,19 @@
+<div class="editor-shell @Class" style="@Style">
+    <div class="editor-workspace @WorkspaceClass">
+        <section class="editor-main" id="onboarding-editor-scene">@Main</section>
+        @if (Context is not null)
+        {
+            <div class="editor-context-host">
+                <PanelResizeHandle Side="right" Label="Resize right context panel" />
+                @Context
+            </div>
+        }
+    </div>
+</div>
+@code {
+    [Parameter] public string? Class { get; set; }
+    [Parameter] public string? Style { get; set; }
+    [Parameter] public string? WorkspaceClass { get; set; }
+    [Parameter] public RenderFragment? Main { get; set; }
+    [Parameter] public RenderFragment? Context { get; set; }
+}

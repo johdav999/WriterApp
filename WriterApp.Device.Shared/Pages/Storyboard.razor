@@ -1,0 +1,216 @@
+@page "/projects/{ProjectId:guid}/storyboard"
+@using WriterApp.Application.Documents
+@using WriterApp.Device.Shared.Components
+@inject LocalStoryboardData Data
+@inject LocalDocumentRepository Documents
+@inject NavigationManager Navigation
+@inject DeviceSaveLifetime Lifetime
+@inject DeviceSyncEngine Sync
+@implements IDisposable
+
+<PageTitle>Storyboard · Prosa</PageTitle>
+<NavigationLock OnBeforeInternalNavigation="BeforeNavigationAsync" ConfirmExternalNavigation="@(_planning?.HasDraft == true || _coach?.IsBusy == true)" />
+<section class="storyboard-page @(_error is not null ? "has-error" : "")">
+    <ProjectDocuments Documents="_manuscripts" SelectedDocumentId="Data.Document?.DocumentId" PrimaryDocumentId="Data.Document?.Project?.PrimaryDocumentId"
+        CanManage="false" SelectedIdChanged="SelectManuscriptAsync" />
+    <header class="storyboard-page__header">
+        <div><h1>Storyboard</h1><p class="storyboard-page__subtitle">@(Data.Document?.Title ?? "Visual scene board") · Manage chapter and scene flow.</p></div>
+        <div class="storyboard-page__actions">
+            <button type="button" class="secondary" @onclick="RefreshAsync">Refresh storyboard</button>
+            <button type="button" class="secondary" @onclick="() => RevealNode(null)">Open structure</button>
+            @if (Data.Document is { } d) { <a class="secondary" href="@($"/documents/{d.DocumentId}")">Open manuscript</a> }
+        </div>
+    </header>
+    @if (_error is not null) { <div class="storyboard-page__error" role="alert">@_error</div> }
+    @if (_tree is null) { <div class="storyboard-page__state" role="status">@(_error is null ? "Loading storyboard…" : "Project unavailable.")</div> }
+    else
+    {
+        <div @key="Data.Document?.DocumentId" class="storyboard-page__layout @(_insightsCollapsed ? "storyboard-page__layout--insights-collapsed" : "")">
+            <div class="storyboard-page__panel storyboard-page__panel--board">
+                <h2 class="storyboard-page__panel-title">Storyboard</h2>
+                <div class="storyboard-page__panel-body">
+                    <StoryboardBoard @ref="_board" Project="_tree.Project" Nodes="_tree.Nodes" SelectedSceneId="Selected?.NodeId" SelectedSceneIds="_selection"
+                        OnSelectionChanged="SelectAsync" OnStructureChanged="RebuildAsync" OnSceneUpdated="SceneUpdatedAsync"
+                        OpenSceneRequested="OpenSceneAsync" RevealNodeRequested="RevealNode" />
+                </div>
+            </div>
+            @if (!_insightsCollapsed)
+            {
+                <div class="storyboard-page__panel storyboard-page__panel--insights"><div class="storyboard-page__panel-body">
+                    <StoryboardInsights Project="_tree.Project" ProjectId="ProjectId" Nodes="_tree.Nodes" SelectedSceneId="Selected?.NodeId" SelectedSceneIds="_selection"
+                        IsCollapsedChanged="CollapsedChanged" CreateSuggestedScene="CreateSuggestedAsync" />
+                </div></div>
+            }
+            <div class="storyboard-page__panel storyboard-page__panel--detail">
+                <aside class="storyboard-inspector" aria-label="Scene inspector">
+                    <div class="storyboard-inspector-header"><div><h2>Scene Detail</h2><p>Edit the selected storyboard card without leaving the board.</p></div></div>
+                    <div class="storyboard-inspector-scroll">
+                        @if (Selected is { } scene && Data.Document is { } document)
+                        {
+                            <LocalPlanningPanel @ref="_planning" Document="document" SectionId="scene.SectionId" Subview="scene" Commit="CommitPlanningAsync" />
+                            <section class="storyboard-inspector-section"><h4>Actions</h4><div class="storyboard-inspector-actions">
+                                <button type="button" class="storyboard-inspector-secondary" @onclick="() => OpenSceneAsync(scene.NodeId)">Open scene</button>
+                                <button type="button" class="storyboard-inspector-secondary" @onclick="() => RevealNode(scene.NodeId)">Reveal in navigator</button>
+                                <button type="button" class="storyboard-inspector-secondary" @onclick="() => DuplicateAsync(scene.NodeId)">Duplicate scene</button>
+                                <button type="button" class="storyboard-inspector-secondary storyboard-inspector-secondary--danger" @onclick="() => DeleteAsync(scene.NodeId)">Delete scene</button>
+                            </div>
+                            <div class="storyboard-inspector-actions">
+                                <button type="button" disabled="@AtEnd(scene, false)" @onclick="() => MoveAsync(scene, false)">Move up</button>
+                                <button type="button" disabled="@AtEnd(scene, true)" @onclick="() => MoveAsync(scene, true)">Move down</button>
+                                <label>Chapter <select value="@scene.ParentId" @onchange="e => MoveChapterAsync(scene, e)">
+                                    @foreach (var chapter in _tree.Nodes.Where(n => n.NodeType == "chapter")) { <option value="@chapter.Id">@chapter.Title</option> }
+                                </select></label>
+                            </div></section>
+                            <section class="storyboard-inspector-section"><h4>Storyboard coach</h4>
+                                <div class="storyboard-inspector-ai-actions">
+                                    <button type="button" class="storyboard-inspector-ai-button" disabled="@(_coach?.IsBusy == true)" @onclick="() => CoachAsync(0)">Generate summary</button>
+                                    <button type="button" class="storyboard-inspector-ai-button" disabled="@(_coach?.IsBusy == true)" @onclick="() => CoachAsync(1)">Suggest scene role/intent</button>
+                                    <button type="button" class="storyboard-inspector-ai-button" disabled="@(_coach?.IsBusy == true)" @onclick="() => CoachAsync(2)">Improve structure</button>
+                                </div>
+                                <LocalAiPanel @ref="_coach" DocumentId="document.DocumentId" SectionId="scene.SectionId" Mode="scene" BeforeWork="BeforeCoachAsync" AfterWork="ReloadAfterCoachAsync" />
+                            </section>
+                        }
+                        else
+                        {
+                            <div class="storyboard-inspector-empty"><strong>@(_selection.Count > 1 ? "Multiple scenes selected." : "Select a scene to edit.")</strong>
+                                <span>@(_selection.Count > 1 ? "Use the bulk action bar to update shared fields." : "Summary, status, POV, narrative role, intent, subplot tags, notes, and AI actions will appear here.")</span></div>
+                        }
+                    </div>
+                </aside>
+            </div>
+            @if (_insightsCollapsed) { <button type="button" class="storyboard-page__insights-rail" aria-label="Expand storyboard insights" aria-expanded="false" @onclick="() => CollapsedChanged(false)">Insights</button> }
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+    [SupplyParameterFromQuery(Name = "scene")] public Guid? RequestedScene { get; set; }
+    private ProjectTreeDto? _tree;
+    private HashSet<Guid> _selection = [];
+    private StoryboardBoard? _board;
+    private LocalPlanningPanel? _planning;
+    private LocalAiPanel? _coach;
+    private bool _insightsCollapsed;
+    private string? _error;
+    private Guid? _editingDocument, _loadedProject, _loadedDocument;
+    [SupplyParameterFromQuery(Name = "documentId")] public Guid? RequestedDocumentId { get; set; }
+    private IReadOnlyList<ProjectDocumentDto> _manuscripts = [];
+    private async Task SelectManuscriptAsync(Guid id)
+    {
+        if (!await FlushAsync()) return;
+        Navigation.NavigateTo($"/projects/{ProjectId}/storyboard?documentId={id}");
+    }
+    private Func<bool, Task<bool>>? _lifetimeFlush;
+    private LocalProjectNode? Selected => _selection.Count == 1 ? Data.Document?.Project?.Nodes.FirstOrDefault(n => n.NodeId == _selection.First() && n.NodeType == "scene" && n.DeletionId is null) : null;
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedProject == ProjectId && _loadedDocument == RequestedDocumentId) return;
+        if (_loadedProject is not null && !await FlushAsync()) return;
+        if (_editingDocument is { } previous) Documents.EndEditing(previous);
+        _editingDocument = null; _loadedProject = null;
+        _tree = null; _selection.Clear(); _planning = null; _coach = null;
+        try
+        {
+            _manuscripts = (await Documents.ListAsync()).Documents.Where(d => d.Project?.ProjectId == ProjectId && d.Kind == "manuscript")
+                .Select(d => new ProjectDocumentDto(d.DocumentId, ProjectId, d.Title, d.Kind, d.CreatedAtUtc, d.UpdatedAtUtc, false, null, d.DeletedAtUtc)).ToArray();
+            await Data.LoadAsync(ProjectId, RequestedDocumentId); _loadedProject = ProjectId; _loadedDocument = RequestedDocumentId;
+            _editingDocument = Data.Document!.DocumentId; Documents.BeginEditing(_editingDocument.Value);
+            Data.BeforeMutation = FlushAsync;
+            Data.AfterMutation = RebuildAsync;
+            Data.BeforeAi = PrepareInsightsAsync;
+            _lifetimeFlush = async _ => { bool saved = false; await InvokeAsync(async () => saved = await FlushAsync()); return saved; }; Lifetime.Flush = _lifetimeFlush;
+            if (RequestedScene is { } id) _selection.Add(id);
+            await RebuildAsync();
+        }
+        catch (Exception e) when (e is IOException or InvalidOperationException or UnauthorizedAccessException or System.Text.Json.JsonException) { _error = e.Message; }
+    }
+    private async Task<bool> FlushAsync()
+    {
+        if (_coach?.IsBusy == true) { _error = "Wait for the scene coach to finish before changing scenes."; return false; }
+        return await FlushPlanningAsync();
+    }
+    private Task<bool> FlushPlanningAsync() => _planning?.FlushAsync() ?? Task.FromResult(true);
+    private async Task BeforeNavigationAsync(LocationChangingContext context) { if (!await FlushAsync()) context.PreventNavigation(); }
+    private Task RebuildAsync()
+    {
+        _tree = Data.Tree(ProjectId);
+        _selection.RemoveWhere(id => !_tree.Nodes.Any(n => n.Id == id && n.NodeType == "scene"));
+        if (Selected is null) { _planning = null; _coach = null; }
+        StateHasChanged(); return Task.CompletedTask;
+    }
+    private Task SceneUpdatedAsync(StoryboardSceneInspectorUpdate update)
+    {
+        if (_tree is not null)
+        {
+            var nodes = _tree.Nodes.Where(n => n.Id != update.SceneNode.Id).Append(update.SceneNode).ToArray();
+            _tree = _tree with { Nodes = nodes };
+        }
+        return Task.CompletedTask;
+    }
+    private async Task SelectAsync(StoryboardSelectionChange selection)
+    {
+        if (!await FlushAsync()) return;
+        _selection = selection.SelectedSceneIds.ToHashSet(); _planning = null; _coach = null;
+        await RebuildAsync();
+    }
+    private async Task<LocalDocument?> CommitPlanningAsync(Func<LocalDocument, LocalDocument> mutation)
+    { var saved = await Data.CommitAsync(mutation); await RebuildAsync(); return saved; }
+    private async Task RefreshAsync() { if (await FlushAsync()) await RunAsync(async () => { await Data.LoadAsync(ProjectId, _editingDocument ?? RequestedDocumentId); await RebuildAsync(); }); }
+    private async Task<bool> BeforeCoachAsync()
+    {
+        if (!await FlushPlanningAsync()) return false;
+        if (_editingDocument is { } id) Documents.EndEditing(id);
+        return true;
+    }
+    private Task CoachAsync(int kind) => _coach?.SuggestSceneAsync(kind switch
+    {
+        0 => "Generate a concise 1-2 sentence summary for this scene card based on the section text. Prefer updating the summary field and preserve existing scene metadata unless the text strongly suggests a correction.",
+        1 => "Suggest the strongest narrative role and narrative intent for this scene based on the section text. Treat narrative role as the structural classification and narrative intent as the emotional or dramatic aim of the scene. Prioritize updating those two fields and only adjust other metadata if needed for consistency.",
+        _ => "Improve the scene structure of this scene card using goal, conflict, and outcome framing. Strengthen summary, narrative role, narrative intent, key events, and open questions so the card clearly reflects the scene's structural place, what the character wants, what opposes them, and what changes by the end."
+    }, refine: kind == 2) ?? Task.CompletedTask;
+    private async Task ReloadAfterCoachAsync()
+    {
+        try { await Data.LoadAsync(ProjectId, _editingDocument ?? RequestedDocumentId); await RebuildAsync(); }
+        finally { if (_editingDocument is { } id) Documents.BeginEditing(id); }
+    }
+    private async Task<bool> PrepareInsightsAsync()
+    {
+        if (!await FlushAsync()) return false;
+        if (_editingDocument is { } id) Documents.EndEditing(id);
+        try { await Sync.SyncAsync(); await Data.LoadAsync(ProjectId, _editingDocument ?? RequestedDocumentId); await RebuildAsync(); return true; }
+        finally { if (_editingDocument is { } current) Documents.BeginEditing(current); }
+    }
+    private Task CollapsedChanged(bool value) { _insightsCollapsed = value; return Task.CompletedTask; }
+    private async Task<bool> CreateSuggestedAsync(StoryboardNextSceneSuggestion suggestion) => _board is not null && await _board.CreateSuggestedSceneAsync(suggestion);
+    private async Task OpenSceneAsync(Guid id)
+    {
+        if (!await FlushAsync()) return;
+        var d = Data.Document!; var scene = d.Project!.Nodes.Single(n => n.NodeId == id && n.DeletionId is null);
+        var page = d.Sections.Single(s => s.SectionId == scene.SectionId).Pages.OrderBy(p => p.OrderIndex).FirstOrDefault();
+        Navigation.NavigateTo($"/documents/{d.DocumentId}" + (page is null ? "" : $"?page={page.PageId}&search={Guid.NewGuid():N}"));
+    }
+    private void RevealNode(Guid? id) => Navigation.NavigateTo($"/projects/{ProjectId}?documentId={Data.Document?.DocumentId}" + (id is null ? "" : $"&node={id}"));
+    private async Task DuplicateAsync(Guid id) { if (await FlushAsync() && _board is not null) await _board.DuplicateSceneFromInspectorAsync(id); }
+    private async Task DeleteAsync(Guid id) { if (await FlushAsync() && _board is not null) await _board.PromptDeleteSceneFromInspectorAsync(id); }
+    private bool AtEnd(LocalProjectNode scene, bool last)
+    { var siblings = Data.Document!.Project!.Nodes.Where(n => n.ParentId == scene.ParentId && n.DeletionId is null).OrderBy(n => n.OrderIndex).ToArray(); return (last ? siblings[^1] : siblings[0]).NodeId == scene.NodeId; }
+    private async Task MoveAsync(LocalProjectNode scene, bool down)
+    { if (await FlushAsync()) await RunAsync(async () => { await Data.CommitAsync(d => LocalProjectStructure.Apply(d, new(down ? LocalProjectAction.Down : LocalProjectAction.Up, scene.NodeId), DateTimeOffset.UtcNow)); await RebuildAsync(); }); }
+    private async Task MoveChapterAsync(LocalProjectNode scene, ChangeEventArgs e)
+    { if (Guid.TryParse(e.Value?.ToString(), out var id) && id != scene.ParentId && await FlushAsync()) await RunAsync(async () => { await Data.CommitAsync(d => LocalProjectStructure.Apply(d, new(LocalProjectAction.Move, scene.NodeId, id), DateTimeOffset.UtcNow)); await RebuildAsync(); }); }
+    private async Task RunAsync(Func<Task> work)
+    {
+        _error = null;
+        try { await work(); }
+        catch (Exception e) when (e is IOException or InvalidOperationException or UnauthorizedAccessException or System.Text.Json.JsonException) { _error = e.Message; }
+    }
+    public void Dispose()
+    {
+        if (_editingDocument is { } id) Documents.EndEditing(id);
+        if (Lifetime.Flush == _lifetimeFlush) Lifetime.Flush = null;
+        Data.BeforeMutation = null;
+        Data.AfterMutation = null;
+        Data.BeforeAi = null;
+    }
+}

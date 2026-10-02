@@ -1,0 +1,61 @@
+@inject NavigationManager Navigation
+<DocumentPreviewShell BackToEditing="BackToEditing" Description="Read-only saved snapshot on this device. Preview never saves or uploads writing.">
+    <Tools>
+        <div class="local-preview-tools">
+            <form @onsubmit="Find" @onsubmit:preventDefault><label for="preview-find">Find in preview</label>
+                <input id="preview-find" type="search" maxlength="200" @bind="_query" />
+                <button type="submit">Find</button><button type="button" @onclick="Clear">Clear</button>
+            </form>
+            @if (_searched) { <p role="status">@_matches matches on @_foundPages.Count pages (up to 200 per page). Use a matching page link below.</p> }
+            <nav aria-label="Preview outline"><ul>
+                @foreach (var section in Snapshot.Sections)
+                {
+                    <li><a href="@OutlineLink($"preview-section-{section.SectionId:N}")">@section.Title</a><ul>
+                        @foreach (var item in section.Pages)
+                        { <li><a href="@OutlineLink($"preview-page-{item.PageId:N}")">@item.Title @(_searched && _foundPages.Contains(item.PageId) ? "· match" : "")</a></li> }
+                    </ul></li>
+                }
+            </ul></nav>
+        </div>
+    </Tools>
+    <ChildContent>
+        @if (Snapshot.Sections.Count == 0) { <p>This document has no sections.</p> }
+        @foreach (var section in Snapshot.Sections)
+        {
+            <DocumentPreviewSection Id="@($"preview-section-{section.SectionId:N}")" Title="@section.Title">
+                @foreach (var item in section.Pages)
+                {
+                    <section id="@($"preview-page-{item.PageId:N}")" tabindex="-1" class="local-preview-page">
+                        <h3>@item.Title</h3>
+                        @if (item.Warning is not null) { <p role="status">@item.Warning</p> }
+                        @if (string.IsNullOrWhiteSpace(item.Html)) { <div class="preview-section-empty">This page is empty.</div> }
+                        else { <div class="preview-section-body">@((MarkupString)_html.GetValueOrDefault(item.PageId, item.Html))</div> }
+                    </section>
+                }
+            </DocumentPreviewSection>
+        }
+    </ChildContent>
+</DocumentPreviewShell>
+@code {
+    [Parameter, EditorRequired] public LocalPreviewSnapshot Snapshot { get; set; } = default!;
+    [Parameter] public EventCallback BackToEditing { get; set; }
+    private string _query = "";
+    private string OutlineLink(string id) => Navigation.Uri.Split('#')[0] + "#" + id;
+    private bool _searched;
+    private int _matches;
+    private readonly Dictionary<Guid, string> _html = [];
+    private readonly HashSet<Guid> _foundPages = [];
+    private void Find()
+    {
+        ClearHighlights(); _searched = !string.IsNullOrWhiteSpace(_query);
+        if (!_searched) return;
+        foreach (var page in Snapshot.Sections.SelectMany(s => s.Pages))
+        {
+            var highlighted = LocalDocumentPreview.Highlight(page.Html, _query);
+            _html[page.PageId] = highlighted.Html; _matches += highlighted.Matches;
+            if (highlighted.Matches > 0) _foundPages.Add(page.PageId);
+        }
+    }
+    private void ClearHighlights() { _html.Clear(); _foundPages.Clear(); _matches = 0; _searched = false; }
+    private void Clear() { _query = ""; ClearHighlights(); }
+}

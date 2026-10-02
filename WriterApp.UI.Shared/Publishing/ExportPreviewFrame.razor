@@ -1,0 +1,7 @@
+<iframe id="@Id" title="Export preview" class="export-preview-frame" srcdoc="@Html" sandbox="@Sandbox" @onload="Loaded"></iframe>
+@code {
+    [Parameter] public string Id { get; set; } = "publishing-preview";
+    [Parameter] public string Html { get; set; } = "";
+    [Parameter] public string Sandbox { get; set; } = "";
+    [Parameter] public EventCallback Loaded { get; set; }
+}

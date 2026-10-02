@@ -10,15 +10,11 @@
 @inject IJSRuntime JS
 @inject WriterApp.Client.State.CurrentDocumentStateService CurrentDocumentStateService
 
+<div class="prosa-library">
 <PageTitle>Projects</PageTitle>
 
 <div class="landing">
-    <header class="landing-header">
-        <div>
-            <h1>@(_view == "projects" ? "Projects" : "Documents")</h1>
-            <p class="landing-subtitle">Start with a project, then open its manuscript or workspace.</p>
-        </div>
-        @if (_view == "projects")
+    <LibraryHeader Title='@(_view == "projects" ? "Projects" : "Documents")' Subtitle="Start with a project, then open its manuscript or workspace."><Actions>        @if (_view == "projects")
         {
             <button type="button" class="primary" @onclick="CreateProjectAsync" disabled="@_creatingProject">
                 @(_creatingProject ? "Creating..." : "New project")
@@ -30,7 +26,7 @@
                 @(_creating ? "Creating..." : "Create new document")
             </button>
         }
-    </header>
+</Actions></LibraryHeader>
 
     @if (_projectsEnabled)
     {
@@ -257,8 +253,8 @@
             <div class="landing-list">
                 @foreach (DocumentListItemDto entry in _documents)
                 {
-                    <div class="landing-card">
-                        <div class="landing-meta">
+                    <DocumentCard>
+                        <Details>
                             @if (_editingDocumentId == entry.Id)
                             {
                                 <div class="landing-title-edit">
@@ -296,8 +292,8 @@
                             {
                                 <div class="landing-words">@entry.WordCount words</div>
                             }
-                        </div>
-                        <div class="landing-actions">
+                        </Details>
+                        <Actions>
                             @if (_activeDocumentView != "trash")
                             {
                                 <button type="button"
@@ -324,8 +320,8 @@
                                 <button type="button" class="secondary" @onclick="() => RestoreDocumentAsync(entry.Id)">Restore</button>
                                 <button type="button" class="secondary danger" @onclick="() => PromptPermanentDelete(entry)">Delete permanently</button>
                             }
-                        </div>
-                    </div>
+                        </Actions>
+                    </DocumentCard>
                 }
             </div>
         }
@@ -364,6 +360,8 @@
     </div>
 }
 
+
+</div>
 @code {
     private bool _loading;
     private bool _projectsLoading;

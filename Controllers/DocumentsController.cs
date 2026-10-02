@@ -504,16 +504,6 @@ namespace WriterApp.Controllers
                 projectId = project.Id;
             }
 
-            if (documentKind == DocumentKind.Manuscript)
-            {
-                bool hasManuscript = await _dbContext.Documents
-                    .AnyAsync(item => item.ProjectId == projectId && item.DocumentKind == DocumentKind.Manuscript, ct);
-                if (hasManuscript)
-                {
-                    return Conflict(new { message = "Project already has a manuscript document." });
-                }
-            }
-
             DocumentRecord document = new()
             {
                 Id = documentId,
@@ -533,6 +523,7 @@ namespace WriterApp.Controllers
             if (project is not null)
             {
                 project.UpdatedUtc = updatedAt;
+                if (documentKind == DocumentKind.Manuscript) project.PrimaryDocumentId ??= documentId;
             }
 
             await _documents.CreateAsync(document, ct);

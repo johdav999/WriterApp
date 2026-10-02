@@ -12,6 +12,7 @@ using WriterApp.Application.Subscriptions;
 using WriterApp.Data;
 using WriterApp.Data.Documents;
 using WriterApp.Shared.Sync;
+using WriterApp.Shared.Editor;
 
 namespace WriterApp.Application.Documents;
 
@@ -21,7 +22,7 @@ public sealed class DocumentSyncException(int status, string code, string messag
     public SyncError Error { get; } = new(code, message, current);
 }
 
-public sealed class DocumentSyncService(AppDbContext db, IUserEntitlementStore entitlements,
+public sealed partial class DocumentSyncService(AppDbContext db, IUserEntitlementStore entitlements,
     IDataProtectionProvider protection, ProjectDeletionService deletion, ISearchIndexBackfillQueue search)
 {
     public const string Entitlement = "documents.sync";
@@ -60,7 +61,7 @@ public sealed class DocumentSyncService(AppDbContext db, IUserEntitlementStore e
         return new(page.Select(State).ToArray(), protector.Protect((page.LastOrDefault()?.Sequence ?? sequence).ToString(CultureInfo.InvariantCulture)), more);
     }
 
-    public async Task<SyncSnapshot> DownloadAsync(string owner, Guid id, CancellationToken ct = default)
+    public async Task<SyncSnapshot> DownloadAsync(string owner, Guid id, CancellationToken ct = default, bool projects = false, bool planning = false, bool multipleDocuments = false)
     {
         await AuthorizeAsync(owner, ct);
         return await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
@@ -69,7 +70,10 @@ public sealed class DocumentSyncService(AppDbContext db, IUserEntitlementStore e
             var state = await OwnedStateAsync(owner, id, ct);
             var document = state.IsDeleted ? null : await db.Documents.AsNoTracking().Include(x => x.Sections).ThenInclude(x => x.Pages)
                 .SingleAsync(x => x.Id == id && x.OwnerUserId == owner, ct);
-            var result = new SyncSnapshot(State(state), document is null ? null : ToDto(document));
+            var dto = document is null ? null : ToDto(document);
+            if (projects && document is not null) dto = dto! with { Project = await ReadProjectAsync(document, ct, planning, multipleDocuments) };
+            if (projects && document is not null) state = await OwnedStateAsync(owner, id, ct);
+            var result = new SyncSnapshot(State(state), dto);
             await transaction.CommitAsync(ct);
             return result;
         });
@@ -79,10 +83,13 @@ public sealed class DocumentSyncService(AppDbContext db, IUserEntitlementStore e
         await db.DocumentSyncRecords.AsNoTracking().SingleOrDefaultAsync(x => x.DocumentId == id && x.OwnerUserId == owner, ct)
         ?? throw new DocumentSyncException(404, "document_not_found", "Document not found.");
 
-    public async Task<SyncMutationResult> MutateAsync(string owner, Guid id, SyncMutation request, CancellationToken ct = default)
+    public async Task<SyncMutationResult> MutateAsync(string owner, Guid id, SyncMutation request, CancellationToken ct = default, bool projects = false, bool planning = false, bool multipleDocuments = false)
     {
         await AuthorizeAsync(owner, ct);
         Validate(id, request);
+        if (request.Document?.Project is { Version: >= 3 } && !multipleDocuments) throw MultipleDocumentCapability();
+        if (request.Document?.Project is not null && !projects) throw ProjectCapability();
+        if (request.Document?.Project is { } proposed) { if (proposed.Version >= 2 && !planning) throw PlanningCapability(); ValidateProject(proposed, request.Document.Sections); }
         string hash = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new { id, request }, Json)));
         var result = await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
         {
@@ -111,18 +118,42 @@ public sealed class DocumentSyncService(AppDbContext db, IUserEntitlementStore e
             {
                 // A separate project mirrors existing standalone-document creation and avoids manuscript uniqueness collisions.
                 var now = DateTimeOffset.UtcNow;
-                var project = new ProjectRecord { Id = Guid.NewGuid(), OwnerUserId = owner, Title = request.Document!.Title, CreatedUtc = now, UpdatedUtc = now };
-                db.Projects.Add(project);
-                document = new DocumentRecord { Id = id, ProjectId = project.Id, OwnerUserId = owner, CreatedAt = now, UpdatedAt = now };
+                var project = new ProjectRecord { Id = request.Document!.Project?.Id ?? Guid.NewGuid(), OwnerUserId = owner, Title = request.Document!.Project?.Title ?? request.Document!.Title, CreatedUtc = now, UpdatedUtc = now };
+                var existingProject = await db.Projects.SingleOrDefaultAsync(p => p.Id == project.Id, ct);
+                if (existingProject is not null)
+                {
+                    if (!multipleDocuments || request.Document.Project?.Version < 3 || existingProject.OwnerUserId != owner)
+                        throw Invalid("Project identity is already in use.");
+                    project = existingProject;
+                }
+                else db.Projects.Add(project);
+                document = new DocumentRecord { Id = id, ProjectId = project.Id, OwnerUserId = owner, CreatedAt = now, UpdatedAt = now, DocumentKind = Enum.Parse<DocumentKind>(request.Document.Kind, true) };
                 db.Documents.Add(document);
             }
             else document = await db.Documents.Include(x => x.Sections).ThenInclude(x => x.Pages).SingleAsync(x => x.Id == id && x.OwnerUserId == owner, ct);
 
+            var projectRecord = db.Projects.Local.FirstOrDefault(p => p.Id == document.ProjectId)
+                ?? await db.Projects.SingleAsync(p => p.Id == document.ProjectId && p.OwnerUserId == owner, ct);
+            if (!multipleDocuments && await db.Documents.AnyAsync(d => d.ProjectId == document.ProjectId && d.Id != id, ct))
+                throw MultipleDocumentCapability();
+            if (!planning && (projectRecord.PlanningSyncEnabled || await db.DocumentSynopses.AnyAsync(s => s.DocumentId == id, ct) || await db.SceneAnnotations.AnyAsync(a => a.SceneNode!.ProjectId == document.ProjectId, ct))) throw PlanningCapability();
+            bool structured = projectRecord.SyncEnabled || await db.ProjectNodes.IgnoreQueryFilters().AnyAsync(n => n.ProjectId == document.ProjectId, ct);
+            if (structured && (!projects || (request.Action == "upload" && request.Document?.Project is null))) throw ProjectCapability();
+            if (request.Document?.Project is { } incomingProject && incomingProject.Id != document.ProjectId)
+                projectRecord = await MoveStandaloneToProjectAsync(document, projectRecord, incomingProject, owner, multipleDocuments, ct);
             if (document.DeletedAtUtc is not null && request.Action is "upload" or "rename")
                 throw new DocumentSyncException(409, "document_trashed", "Restore the current server version before editing.", State(current!));
             switch (request.Action)
             {
-                case "upload": await ApplyUploadAsync(document, request.Document!, ct); break;
+                case "upload":
+                    ValidateUploadContent(document, request.Document!);
+                    await ApplyUploadAsync(document, request.Document!, ct);
+                    if (request.Document!.Project is { } incoming)
+                    {
+                        await db.SaveChangesAsync(ct); // Materialize canonical section/page dependencies inside this transaction.
+                        await ApplyProjectAsync(document, projectRecord, incoming, ct);
+                    }
+                    break;
                 case "rename": document.Title = request.Title!; break;
                 case "trash": document.DeletedAtUtc ??= DateTime.UtcNow; break;
                 case "restore": document.DeletedAtUtc = null; document.IsArchived = false; document.ArchivedAt = null; break;
@@ -134,7 +165,8 @@ public sealed class DocumentSyncService(AppDbContext db, IUserEntitlementStore e
             }
             if (request.Action != "delete") { document.UpdatedAt = DateTimeOffset.UtcNow; await db.SaveChangesAsync(ct); }
             var updated = await OwnedStateAsync(owner, id, ct);
-            var committed = new SyncMutationResult(request.OperationId, State(updated));
+            var committed = new SyncMutationResult(request.OperationId, State(updated),
+                multipleDocuments ? projectRecord.MetadataRevision : null, multipleDocuments ? projectRecord.PrimaryDocumentId : null);
             db.DocumentSyncOperations.Add(new() { OwnerUserId = owner, OperationId = request.OperationId, RequestHash = hash, ResultJson = JsonSerializer.Serialize(committed, Json) });
             await db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
@@ -150,13 +182,37 @@ public sealed class DocumentSyncService(AppDbContext db, IUserEntitlementStore e
         var existingPages = document.Sections.SelectMany(x => x.Pages).ToDictionary(x => x.Id);
         var sections = upload.Sections.Select(x => x.Id).ToHashSet();
         var pages = upload.Sections.SelectMany(x => x.Pages).Select(x => x.Id).ToHashSet();
-        // Preserve annotations/outline links and unsupported web features. Structural removal is explicit web work for v1.
-        if (existingSections.Keys.Any(x => !sections.Contains(x)) || existingPages.Keys.Any(x => !pages.Contains(x)))
+        var removedSections = existingSections.Keys.Where(x => !sections.Contains(x)).ToArray();
+        var removedPages = existingPages.Keys.Where(x => !pages.Contains(x)).ToArray();
+        if ((removedSections.Length != 0 || removedPages.Length != 0) && (upload.Structure is null
+            || removedSections.Any(x => !upload.Structure.RemovedSectionIds.Contains(x))
+            || removedPages.Any(x => !upload.Structure.RemovedPageIds.Contains(x))))
             throw new DocumentSyncException(422, "structure_removal_not_supported", "The full server section/page set must be retained in a v1 upload.");
         if (await db.Sections.AnyAsync(x => sections.Contains(x.Id) && x.DocumentId != document.Id, ct)
             || await db.Pages.AnyAsync(x => pages.Contains(x.Id) && x.DocumentId != document.Id, ct))
             throw Invalid("Section/page identities are already in use.");
+        // A device cannot delete metadata that is absent from the sync snapshot. Fail before mutating anything.
+        if ((removedSections.Length != 0 || removedPages.Length != 0) && (removedSections.Any(id => existingSections[id].TranslationGroupId is not null)
+            || await db.SectionNotes.AnyAsync(x => removedSections.Contains(x.SectionId), ct)
+            || await db.SectionSceneCards.AnyAsync(x => removedSections.Contains(x.SectionId), ct)
+            || await db.ProjectNodes.AnyAsync(x => x.LinkedSectionId != null && removedSections.Contains(x.LinkedSectionId.Value), ct)
+            || await db.DocumentOutlineNodes.AnyAsync(x => x.LinkedSectionId != null && removedSections.Contains(x.LinkedSectionId.Value), ct)
+            || await db.PageNotes.AnyAsync(x => removedPages.Contains(x.PageId), ct)
+            || await db.PageAnnotations.AnyAsync(x => removedPages.Contains(x.PageId), ct)
+            || await db.PageVersions.AnyAsync(x => removedPages.Contains(x.PageId), ct)
+            || await db.PageQualityIssues.AnyAsync(x => removedPages.Contains(x.PageId), ct)
+            || await db.PageQualityIssueDismissals.AnyAsync(x => removedPages.Contains(x.PageId), ct)))
+            throw new DocumentSyncException(422, "structure_has_web_metadata", "Cloud content was retained because removed items have web-only notes, history, annotations, or project links. Restore the local items or manage them in the web app.");
+        foreach (var id in removedPages)
+        {
+            if (ToDto(document).Sections.SelectMany(s => s.Pages).Single(p => p.Id == id).ContentFormat != "html")
+                throw new DocumentSyncException(422, "structure_has_protected_content", "Cloud legacy content was retained. Restore it locally or manage it in the web app.");
+            try { ValidateHtml(existingPages[id].Content); }
+            catch (DocumentSyncException)
+            { throw new DocumentSyncException(422, "structure_has_protected_content", "Cloud content was retained because this original cannot be restored through device sync. Restore it locally or manage it in the web app."); }
+        }
         document.Title = upload.Title;
+        document.DocumentKind = Enum.Parse<DocumentKind>(upload.Kind, true);
         document.LanguageCode = upload.LanguageCode;
         foreach (var section in upload.Sections)
         {
@@ -176,9 +232,27 @@ public sealed class DocumentSyncService(AppDbContext db, IUserEntitlementStore e
                     target.Pages.Add(item);
                     db.Pages.Add(item);
                 }
-                else if (item.SectionId != target.Id) throw Invalid("Moving existing pages between sections is not supported by sync v1.");
+                else if (item.SectionId != target.Id)
+                {
+                    if (upload.Structure?.AllowPageMoves != true) throw Invalid("Moving existing pages requires an explicit structure change.");
+                    existingSections[item.SectionId].Pages.Remove(item);
+                    item.SectionId = target.Id;
+                    item.Section = target;
+                    target.Pages.Add(item);
+                }
                 item.Title = page.Title; item.Content = page.Content; item.OrderIndex = page.OrderIndex; item.UpdatedAt = DateTimeOffset.UtcNow;
             }
+        }
+        foreach (var id in removedPages)
+        {
+            var page = existingPages[id];
+            existingSections[page.SectionId].Pages.Remove(page);
+            db.Pages.Remove(page);
+        }
+        foreach (var id in removedSections)
+        {
+            document.Sections.Remove(existingSections[id]);
+            db.Sections.Remove(existingSections[id]);
         }
     }
 
@@ -197,6 +271,8 @@ public sealed class DocumentSyncService(AppDbContext db, IUserEntitlementStore e
         if (request.Action != "upload")
         { if (request.Document is not null) throw Invalid("Only upload accepts document content."); return; }
         var doc = request.Document;
+        if (doc is not null && doc.Kind is not ("manuscript" or "notes" or "synopsis" or "outline" or "other")) throw Invalid("Unknown document kind.");
+        if (doc?.Kind != "manuscript" && doc?.Project?.Nodes.Count > 0) throw Invalid("Supporting documents cannot contain manuscript structure.");
         if (doc is null || string.IsNullOrWhiteSpace(doc.Title) || doc.Title.Length > 200 || doc.LanguageCode?.Length > 35
             || doc.Sections is null || doc.Sections.Count is < 1 or > 100) throw Invalid("Invalid document metadata or section count.");
         var ids = new HashSet<Guid>(); var orders = new HashSet<int>(); int count = 0;
@@ -209,10 +285,31 @@ public sealed class DocumentSyncService(AppDbContext db, IUserEntitlementStore e
             foreach (var page in section.Pages)
             {
                 if (page is null || ++count > 1000 || page.Id == Guid.Empty || !ids.Add(page.Id) || page.OrderIndex < 0 || !pageOrders.Add(page.OrderIndex)
-                    || page.Title is null || page.Title.Length > 200 || page.Content is null || page.Content.Length > 500_000 || page.ContentFormat != "html")
+                    || page.Title is null || page.Title.Length > 200 || page.Content is null || page.Content.Length > 500_000 || page.ContentFormat is not ("html" or "legacyText" or "legacyJson"))
                     throw Invalid("Invalid page metadata, content format, ordering, or identities.");
-                ValidateHtml(page.Content);
             }
+        }
+        if (doc.Structure is { } structure)
+        {
+            if (structure.RemovedSectionIds is null || structure.RemovedPageIds is null
+                || structure.RemovedSectionIds.Concat(structure.RemovedPageIds).Any(id => id == Guid.Empty || ids.Contains(id))
+                || structure.RemovedSectionIds.Distinct().Count() != structure.RemovedSectionIds.Count
+                || structure.RemovedPageIds.Distinct().Count() != structure.RemovedPageIds.Count)
+                throw Invalid("Invalid structure removal identities.");
+        }
+    }
+
+    private static void ValidateUploadContent(DocumentRecord existing, SyncUpload upload)
+    {
+        var originals = ToDto(existing).Sections.SelectMany(s => s.Pages).ToDictionary(p => p.Id);
+        foreach (var page in upload.Sections.SelectMany(s => s.Pages))
+        {
+            // Ownership and expected version have already been checked in this transaction.
+            // An unchanged original is carried verbatim, never sanitized or reparsed by a device.
+            if (originals.TryGetValue(page.Id, out var original) && original.Content == page.Content && original.ContentFormat == page.ContentFormat)
+                continue;
+            if (page.ContentFormat != "html") throw Invalid("Convert edited legacy content to supported HTML before uploading.");
+            ValidateHtml(page.Content);
         }
     }
 
@@ -221,7 +318,7 @@ public sealed class DocumentSyncService(AppDbContext db, IUserEntitlementStore e
         var parser = new HtmlParser();
         var document = parser.ParseDocument("");
         var fragment = parser.ParseFragment(html, document.Body!);
-        var allowed = new HashSet<string>(["p", "h1", "h2", "h3", "strong", "b", "em", "i", "s", "strike", "ul", "ol", "li", "blockquote", "a", "br", "hr", "code", "pre"], StringComparer.Ordinal);
+        var allowed = EditorContentContract.Tags;
         var pending = new Stack<(INode Node, int Depth)>(fragment.Select(n => (n, 0)));
         int nodes = 0;
         while (pending.TryPop(out var entry))
@@ -233,12 +330,7 @@ public sealed class DocumentSyncService(AppDbContext db, IUserEntitlementStore e
                 if (!allowed.Contains(element.LocalName)) throw Invalid("Unsupported HTML; sync does not silently strip content.");
                 foreach (var attr in element.Attributes)
                 {
-                    bool safe = element.LocalName == "ol" && attr.Name == "start" && int.TryParse(attr.Value, out _);
-                    if (element.LocalName == "a") safe |= attr.Name switch
-                    {
-                        "href" => Uri.TryCreate(attr.Value, UriKind.Absolute, out var uri) && uri.Scheme is "https" or "http" or "mailto",
-                        "target" => attr.Value is "_blank" or "_self", "rel" => true, _ => false
-                    };
+                    bool safe = EditorContentContract.AllowedAttribute(element.LocalName, attr.Name, attr.Value);
                     if (!safe) throw Invalid("Unsupported HTML attribute or unsafe link.");
                 }
             }

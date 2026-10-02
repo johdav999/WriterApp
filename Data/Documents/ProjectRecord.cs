@@ -10,6 +10,10 @@ namespace WriterApp.Data.Documents
         public string OwnerUserId { get; set; } = string.Empty;
 
         public string Title { get; set; } = string.Empty;
+        public Guid? PrimaryDocumentId { get; set; }
+        public long MetadataRevision { get; set; }
+        public bool SyncEnabled { get; set; }
+        public bool PlanningSyncEnabled { get; set; }
 
         public string? Subtitle { get; set; }
 

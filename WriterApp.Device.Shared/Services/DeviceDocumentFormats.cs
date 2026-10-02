@@ -7,9 +7,9 @@ using WriterApp.Device.Shared.Storage;
 
 namespace WriterApp.Device.Shared.Services;
 
-public enum DeviceExportFormat { Html, Text }
+public enum DeviceExportFormat { Html, Text, SourceBackup, Markdown, Docx, Epub, Pdf }
 public enum DeviceImportMode { Append, Replace }
-public sealed record DevicePreparedImport(string Title, string Html);
+public sealed record DevicePreparedImport(string Title, string Html, IReadOnlyList<string>? Warnings = null);
 public sealed record DevicePreparedExport(string SuggestedFileName, string Extension, byte[] Content);
 
 /// <summary>Restricted local formats that both the device editor and an offline export can represent.</summary>
@@ -18,9 +18,7 @@ public static class DeviceDocumentFormats
     public const int MaxImportBytes = 5 * 1024 * 1024;
     private static readonly UTF8Encoding Utf8 = new(false, true);
     private static readonly Regex RepeatedNewlines = new(@"\n{3,}", RegexOptions.Compiled);
-    private static readonly HashSet<string> AllowedTags = new(StringComparer.OrdinalIgnoreCase)
-    { "p", "h1", "h2", "h3", "strong", "b", "em", "i", "s", "del", "code", "pre",
-      "blockquote", "ul", "ol", "li", "br", "hr", "a" };
+    private static readonly IReadOnlySet<string> AllowedTags = DeviceContentCompatibility.Tags;
     private static readonly HashSet<string> DropTags = new(StringComparer.OrdinalIgnoreCase)
     { "script", "style", "iframe", "object", "embed", "svg", "math", "img", "picture", "video",
       "audio", "canvas", "form", "input", "button", "link", "meta", "base", "template", "noscript" };
@@ -32,6 +30,7 @@ public static class DeviceDocumentFormats
     {
         ArgumentNullException.ThrowIfNull(file);
         string extension = Path.GetExtension(file.FileName).ToLowerInvariant();
+        if (extension == ".docx") return DevicePublishing.ImportDocx(file);
         if (extension is not (".txt" or ".html" or ".htm"))
             throw new InvalidDataException("Choose a .txt, .html, or .htm file.");
         if (file.Content.Length == 0 || file.Content.Length > MaxImportBytes)
@@ -43,6 +42,7 @@ public static class DeviceDocumentFormats
         string html = extension == ".txt" ? TextToHtml(source) : SanitizeHtml(source);
         if (string.IsNullOrWhiteSpace(HtmlToText(html)))
             throw new InvalidDataException("The import file has no readable writing.");
+        DeviceContentCompatibility.RequireEditable(html, LocalContentFormat.Html);
         string title = SafeBaseName(Path.GetFileNameWithoutExtension(file.FileName), "Imported document");
         return new(title, html);
     }
@@ -50,6 +50,8 @@ public static class DeviceDocumentFormats
     public static string MergePage(LocalPage page, string importedHtml, DeviceImportMode mode)
     {
         if (!Enum.IsDefined(mode)) throw new ArgumentOutOfRangeException(nameof(mode));
+        DeviceContentCompatibility.RequireEditable(page.Content, page.ContentFormat);
+        DeviceContentCompatibility.RequireEditable(importedHtml, LocalContentFormat.Html);
         if (mode == DeviceImportMode.Replace) return importedHtml;
         string existing = page.ContentFormat switch
         {
@@ -64,9 +66,13 @@ public static class DeviceDocumentFormats
     public static DevicePreparedExport Export(LocalDocument document, DeviceExportFormat format)
     {
         ArgumentNullException.ThrowIfNull(document);
-        if (!Enum.IsDefined(format)) throw new ArgumentOutOfRangeException(nameof(format));
+        if (format is not (DeviceExportFormat.Html or DeviceExportFormat.Text or DeviceExportFormat.SourceBackup)) throw new ArgumentOutOfRangeException(nameof(format), "Use publishing for this format.");
         var sections = document.Sections.OrderBy(s => s.OrderIndex).ToArray();
         string baseName = SafeBaseName(document.Title, "document");
+        if (format == DeviceExportFormat.SourceBackup)
+            return new(baseName + ".source.json", ".json", LocalDocumentCodec.Encode(document));
+        foreach (var page in sections.SelectMany(s => s.Pages))
+            DeviceContentCompatibility.RequireEditable(page.Content, page.ContentFormat);
         if (format == DeviceExportFormat.Text)
         {
             StringBuilder text = new();
@@ -81,10 +87,10 @@ public static class DeviceDocumentFormats
         }
         StringBuilder html = new();
         html.Append("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">")
-            .Append("<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'\">")
+            .Append("<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src data: http: https:; style-src 'unsafe-inline'\">")
             .Append("<title>").Append(WebUtility.HtmlEncode(document.Title)).Append("</title>")
             .Append("<style>body{max-width:48rem;margin:3rem auto;padding:0 1rem;font:1.1rem/1.65 Georgia,serif;color:#211c30}")
-            .Append("h1,h2,h3{line-height:1.2}section{margin-top:2.5rem}article{margin-top:1.5rem}pre{white-space:pre-wrap}</style>")
+            .Append("h1,h2,h3{line-height:1.2}section{margin-top:2.5rem}article{margin-top:1.5rem}pre{white-space:pre-wrap}img{max-width:100%;height:auto}table{border-collapse:collapse}td,th{border:1px solid #bbb;padding:.5rem}</style>")
             .Append("</head><body><h1>").Append(WebUtility.HtmlEncode(document.Title)).Append("</h1>");
         foreach (LocalSection section in sections)
         {
@@ -118,7 +124,7 @@ public static class DeviceDocumentFormats
 
     private static string PageHtml(LocalPage page) => page.ContentFormat switch
     {
-        LocalContentFormat.Html => SanitizeHtml(page.Content),
+        LocalContentFormat.Html => SanitizeHtml(page.Content, preserveImages: true),
         LocalContentFormat.LegacyText => TextToHtml(page.Content),
         _ => throw new InvalidDataException("Open and save legacy JSON pages before exporting this document.")
     };
@@ -129,51 +135,41 @@ public static class DeviceDocumentFormats
         _ => throw new InvalidDataException("Open and save legacy JSON pages before exporting this document.")
     };
 
-    public static string SanitizeHtml(string source)
+    public static string SanitizeHtml(string source, bool preserveImages = false)
     {
         var document = new HtmlParser().ParseDocument(source);
         if (document.Body is null) return "";
         StringBuilder builder = new();
-        foreach (INode node in document.Body.ChildNodes) AppendSafe(node, builder);
+        foreach (INode node in document.Body.ChildNodes) AppendSafe(node, builder, preserveImages);
         return builder.ToString();
     }
-    private static void AppendSafe(INode node, StringBuilder builder)
+    private static void AppendSafe(INode node, StringBuilder builder, bool preserveImages)
     {
         if (node is IText text) { builder.Append(WebUtility.HtmlEncode(text.Data)); return; }
         if (node is not IElement element) return;
         string tag = element.LocalName.ToLowerInvariant();
-        if (DropTags.Contains(tag)) return;
+        if (tag == "img" && (!preserveImages || !WriterApp.Shared.Editor.EditorContentContract.SafeImage(element.GetAttribute("src") ?? ""))) return;
+        if (tag != "img" && DropTags.Contains(tag)) return;
         if (tag == "a" && SafeLink(element.GetAttribute("href") ?? "") is null)
-        { foreach (INode child in element.ChildNodes) AppendSafe(child, builder); return; }
+        { foreach (INode child in element.ChildNodes) AppendSafe(child, builder, preserveImages); return; }
         if (!AllowedTags.Contains(tag))
-        { foreach (INode child in element.ChildNodes) AppendSafe(child, builder); return; }
+        { foreach (INode child in element.ChildNodes) AppendSafe(child, builder, preserveImages); return; }
         builder.Append('<').Append(tag);
         if (tag == "a" && SafeLink(element.GetAttribute("href") ?? "") is { } href)
             builder.Append(" href=\"").Append(WebUtility.HtmlEncode(href)).Append('"');
+        foreach (var attribute in element.Attributes.Where(a => a.Name != "href" && (tag != "code" || element.ParentElement?.LocalName == "pre") && DeviceContentCompatibility.AllowedAttribute(tag, a.Name, a.Value)))
+            builder.Append(' ').Append(attribute.Name).Append("=\"").Append(WebUtility.HtmlEncode(attribute.Value)).Append('"');
         builder.Append('>');
-        if (tag is "br" or "hr") return;
-        foreach (INode child in element.ChildNodes) AppendSafe(child, builder);
+        if (tag is "br" or "hr" or "img" or "col") return;
+        foreach (INode child in element.ChildNodes) AppendSafe(child, builder, preserveImages);
         builder.Append("</").Append(tag).Append('>');
     }
-    private static string? SafeLink(string href) => Uri.TryCreate(href.Trim(), UriKind.Absolute, out Uri? uri)
-        && uri.Scheme is "http" or "https" or "mailto" ? href.Trim() : null;
+    private static string? SafeLink(string href) => DeviceContentCompatibility.SafeLink(href) ? href.Trim() : null;
 
     private static void EnsureSafeExistingHtml(string html)
     {
-        var document = new HtmlParser().ParseDocument(html);
-        if (document.Body is null) throw new InvalidDataException("The existing page cannot be imported into safely.");
-        foreach (IElement element in document.Body.QuerySelectorAll("*"))
-        {
-            string tag = element.LocalName.ToLowerInvariant();
-            if (!AllowedTags.Contains(tag) || element.Attributes.Any(a => !AllowedExistingAttribute(tag, a.Name, a.Value))
-                || tag == "a" && element.HasAttribute("href") && SafeLink(element.GetAttribute("href") ?? "") is null)
-                throw new InvalidDataException("The existing page has unsupported formatting. Open and save it before appending.");
-        }
+        DeviceContentCompatibility.RequireEditable(html, LocalContentFormat.Html);
     }
-    private static bool AllowedExistingAttribute(string tag, string name, string value) =>
-        tag == "a" && name is ("href" or "target" or "rel" or "class")
-        || tag == "ol" && name == "start" && int.TryParse(value, out _)
-        || tag == "code" && name == "class" && Regex.IsMatch(value, @"^language-[\w-]+$");
     private static string HtmlToText(string html)
     {
         var document = new HtmlParser().ParseDocument(html);
@@ -191,6 +187,6 @@ public static class DeviceDocumentFormats
         if (tag == "br") { builder.Append('\n'); return; }
         if (tag == "li") builder.Append("- ");
         foreach (INode child in element.ChildNodes) AppendText(child, builder);
-        if (tag is "p" or "h1" or "h2" or "h3" or "li" or "blockquote" or "pre") builder.Append("\n\n");
+        if (tag is "p" or "h1" or "h2" or "h3" or "h4" or "h5" or "h6" or "li" or "blockquote" or "pre") builder.Append("\n\n");
     }
 }

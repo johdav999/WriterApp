@@ -6,6 +6,7 @@
 @using WriterApp.Client.Services
 @using WriterApp.Client.State
 @inject HttpClient Http
+@inject ManuscriptSelectionState ManuscriptSelection
 @inject NavigationManager Navigation
 @inject ILogger<Storyboard> Logger
 @inject CurrentProjectStateService CurrentProjectStateService
@@ -14,8 +15,10 @@
 @inject FeatureAccessService FeatureAccessService
 
 <PageTitle>Storyboard</PageTitle>
+<NavigationLock OnBeforeInternalNavigation="BeforeNavigationAsync" />
 
 <section class="storyboard-page">
+    <ProjectDocuments Documents="_manuscripts" SelectedDocumentId="_activeDocumentId" PrimaryDocumentId="_project?.PrimaryDocumentId" CanManage="false" Disabled="_loading" SelectedIdChanged="SelectManuscriptAsync" />
     <header class="storyboard-page__header">
         <div>
             <h1>Storyboard</h1>
@@ -61,7 +64,7 @@
     }
     else
     {
-        <div class="@GetLayoutClass()">
+        <div class="@GetLayoutClass()" @key="_activeDocumentId">
             <div class="storyboard-page__panel storyboard-page__panel--board">
                 <h2 class="storyboard-page__panel-title">Storyboard</h2>
                 <div class="storyboard-page__panel-body">
@@ -94,7 +97,7 @@
 
             <div class="storyboard-page__panel storyboard-page__panel--detail">
                 <div class="storyboard-page__panel-body">
-                    <StoryboardSceneInspector ProjectId="ProjectId"
+                    <StoryboardSceneInspector @ref="_inspector" ProjectId="ProjectId"
                                               SceneNode="SelectedSceneNode"
                                               SelectionCount="_selectedSceneIds.Count"
                                               OpenScene="OpenSelectedSceneAsync"
@@ -124,6 +127,20 @@
 @code {
     [Parameter]
     public Guid ProjectId { get; set; }
+    [SupplyParameterFromQuery(Name = "documentId")] public Guid? RequestedDocumentId { get; set; }
+    private IReadOnlyList<ProjectDocumentDto> _manuscripts = [];
+    private Guid? _activeDocumentId;
+    private long _loadGeneration;
+    private Task SelectManuscriptAsync(Guid id) { Navigation.NavigateTo($"/projects/{ProjectId}/storyboard?documentId={id}"); return Task.CompletedTask; }
+    private StoryboardSceneInspector? _inspector;
+    private async Task BeforeNavigationAsync(Microsoft.AspNetCore.Components.Routing.LocationChangingContext context)
+    {
+        if (_inspector is not null && !await _inspector.FlushAsync())
+        {
+            context.PreventNavigation();
+            _error = "Finish the scene action and save its changes before switching documents.";
+        }
+    }
 
     private ProjectDto? _project;
     private readonly List<ProjectNodeDto> _nodes = new();
@@ -180,11 +197,18 @@
 
     private async Task LoadStoryboardAsync(bool forceRefresh = false)
     {
+        long generation = ++_loadGeneration;
+        Guid? requested = RequestedDocumentId;
+        _selectedSceneIds.Clear();
+        ManuscriptSelection.Select(ProjectId, requested);
         _loading = true;
         _error = null;
 
         try
         {
+            _manuscripts = (await Http.GetFromJsonAsync<List<ProjectDocumentDto>>($"api/projects/{ProjectId}/documents") ?? [])
+                .Where(d => d.Kind == "manuscript" && d.DeletedAt is null && !d.IsArchived).ToArray();
+            if (generation != _loadGeneration) return;
             ProjectTreeDto? tree = null;
             if (!forceRefresh && ProjectStructureCacheService.TryGetProjectTree(ProjectId, out ProjectTreeDto cachedTree))
             {
@@ -230,7 +254,10 @@
                 return;
             }
 
+            if (generation != _loadGeneration) return;
             _project = tree.Project;
+            _activeDocumentId = tree.DocumentId ?? tree.Project.DocumentId;
+            ManuscriptSelection.Select(ProjectId, _activeDocumentId);
             CurrentProjectStateService.SetCurrent(_project.Id, _project.Title);
             _nodes.Clear();
             _nodes.AddRange(tree.Nodes.OrderBy(node => node.ParentId).ThenBy(node => node.OrderIndex));
@@ -245,7 +272,7 @@
         }
         finally
         {
-            _loading = false;
+            if (generation == _loadGeneration) _loading = false;
         }
     }
 
@@ -441,11 +468,11 @@
 
     private void OpenStructure()
     {
-        Navigation.NavigateTo($"projects/{ProjectId:D}");
+        Navigation.NavigateTo($"projects/{ProjectId:D}?documentId={_activeDocumentId}");
     }
 
     private void OpenProject()
     {
-        Navigation.NavigateTo($"projects/{ProjectId:D}");
+        Navigation.NavigateTo($"projects/{ProjectId:D}?documentId={_activeDocumentId}");
     }
 }

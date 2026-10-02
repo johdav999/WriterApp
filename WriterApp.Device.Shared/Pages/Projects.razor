@@ -1,0 +1,367 @@
+@page "/projects"
+@page "/projects/{ProjectId:guid}"
+@using WriterApp.Application.Documents
+@using Microsoft.JSInterop
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+@inject LocalDocumentRepository Documents
+@inject NavigationManager Navigation
+@inject DeviceSaveLifetime Lifetime
+
+@if (!EmbedNavigator) { <PageTitle>Projects · Prosa</PageTitle> }
+<ProjectWorkspaceShell>
+<div class="projects-page device-projects @(EmbedNavigator ? "is-embedded-navigator" : "")">
+    @if (!EmbedNavigator) {
+    <ProjectHubHeader><Actions>
+        <button type="button" class="primary" disabled="@(_busy || _loading)" @onclick="CreateAsync">New project</button>
+        <button type="button" class="secondary" title="Create a project from a standalone local document. Duplicate cloud-linked documents in Documents first." disabled="@(_busy || _loading || !StandaloneDocuments.Any())" aria-expanded="@_showConversion" @onclick="() => _showConversion = !_showConversion">From document</button>
+    </Actions></ProjectHubHeader>
+    }
+    @if (_error is not null) { <div class="projects-error" role="alert">@_error</div> }
+    @if (_loading) { <div class="projects-loading" role="status">Loading projects…</div> }
+    else
+    {
+        @if (!EmbedNavigator) {
+        <ProjectSwitcher Projects="@(_documents.Where(d => d.Project is not null).DistinctBy(d => d.Project!.ProjectId).Select(d => new ProjectSelection(d.Project!.ProjectId, d.Project.Title)).ToArray())"
+            SelectedId="Current?.Project?.ProjectId" SelectedIdChanged="SelectAsync" Disabled="_busy">
+            @if (Current is { } manuscript) { <span class="projects-total">@WordCount(manuscript.Sections.SelectMany(s => s.Pages)) words</span> }
+        </ProjectSwitcher>
+        }
+        @if (_showConversion)
+        {
+            <section class="device-project-conversion" aria-label="Create project from document">
+                <h2>Create project from a standalone document</h2>
+                <p>Your writing and page identities are preserved. Each section becomes a scene in Chapter 1. Duplicate cloud-linked documents in Documents first.</p>
+                <div class="inspector-grid">
+                    <div class="inspector-field"><label for="project-conversion-title">Project title</label><input id="project-conversion-title" class="node-title-input" @bind="_title" @bind:event="oninput" maxlength="200" disabled="@_busy" /></div>
+                    <div class="inspector-field"><label for="project-conversion-document">Standalone document</label><select id="project-conversion-document" @bind="_attachId" disabled="@_busy"><option value="">Choose document</option>
+                        @foreach (var doc in StandaloneDocuments) { <option value="@doc.DocumentId">@doc.Title</option> }
+                    </select></div>
+                    <div class="node-actions"><button type="button" class="primary" disabled="@(_busy || _attachId is null || !ValidTitle(_title))" @onclick="AttachAsync">Create project with this document</button><button type="button" class="secondary" disabled="@_busy" @onclick="() => _showConversion = false">Cancel</button></div>
+                </div>
+            </section>
+        }
+        @if (Current is { Project: { } project } document)
+        {
+            @if (!EmbedNavigator) {
+            <ProjectDocuments Documents="DocumentChoices" SelectedDocumentId="document.DocumentId" PrimaryDocumentId="project.PrimaryDocumentId"
+                SelectedIdChanged="SelectDocumentAsync" CreateRequested="AddDocumentAsync" MakePrimaryRequested="MakePrimaryAsync" Disabled="_busy" />
+            <div class="project-name-inline">
+                <span class="project-name-label">Project name</span>
+                @if (_editingName)
+                {
+                    <input class="project-name-input" aria-label="Project name" @ref="_projectNameInput" @bind="_projectName" @bind:event="oninput" maxlength="200" disabled="@_busy" @onkeydown="ProjectNameKeyAsync" />
+                    <button type="button" class="secondary" disabled="@(_busy || !ValidTitle(_projectName))" @onclick="RenameProjectAsync">Save</button>
+                    <button type="button" class="secondary" disabled="@_busy" @onclick="CancelRename">Cancel</button>
+                }
+                else
+                {
+                    <span class="project-name-value">@project.Title</span>
+                    <button type="button" class="secondary" disabled="@_busy" @onclick="BeginRename">Edit name</button>
+                }
+            </div>
+            <div class="project-entry-points">
+                <button type="button" class="primary" disabled="@_busy" @onclick="() => OpenAsync(document, null)">Resume</button>
+                <button type="button" class="secondary" disabled="@_busy" @onclick="() => OpenAsync(document, null, false)">Open manuscript</button>
+                <button type="button" class="secondary" disabled title="You are currently in the project workspace.">Open project</button>
+                <span class="entry-help">Resume = last writing context. Open manuscript = manuscript editor. Open project = workspace.</span>
+            </div>
+            <nav class="projects-tabs" aria-label="Project workspace">
+                <button type="button" class="tab-button is-active" aria-current="page">Structure</button>
+                <button type="button" class="tab-button" disabled title="Cover studio is available in the web client.">Cover</button>
+                <button type="button" class="tab-button" disabled="@_busy" @onclick="() => OpenPlanningAsync(project.ProjectId)">Storyboard</button>
+                <button type="button" class="tab-button" disabled title="Progress dashboard is available in the web client.">Progress</button>
+            </nav>
+            }
+            <ProjectWorkspacePanels>
+                <Navigator>
+                    <div class="tree-actions">
+                        <label for="add-node-type">Add...</label>
+                        <select id="add-node-type" @bind="_type" @bind:after="ResolveAddParent" disabled="@_busy"><option value="part">Part</option><option value="chapter">Chapter</option><option value="scene">Scene</option></select>
+                        <button type="button" class="secondary" disabled="@(_busy || (_nodeTitle.Length > 0 && !ValidTitle(_nodeTitle)) || !ValidParent(project, _type, _parent))" @onclick="AddNodeAsync">Add @_type @(_parent is null ? "at root" : "to parent")</button>
+                        <span class="tree-actions-hint">@AddHint(project)</span>
+                    </div>
+                    <p class="inspector-help">Drag items between rows to reorder, or onto a chapter or part to move inside it.</p>
+                    <div @ref="_outline" class="tree-list" role="tree" aria-label="Project manuscript" data-outline-disabled="@_busy.ToString().ToLowerInvariant()">
+                        @foreach (var row in Rows(project, null, 0))
+                        {
+                            var hasChildren = project.Nodes.Any(n => n.DeletionId is null && n.ParentId == row.Node.NodeId);
+                            @* draggable is an HTML enumerated attribute: a Boolean renders a bare attribute and cannot start native dragging. *@
+                            <div @key="row.Node.NodeId" class="outline-drag-row" draggable="@(_busy ? "false" : "true")" data-outline-id="@row.Node.NodeId" data-outline-type="@row.Node.NodeType" data-outline-parent="@row.Node.ParentId">
+                            <NavigatorRow Depth="row.Depth" Title="@row.Node.Title" Selected="@(_nodeId == row.Node.NodeId)" Disabled="_busy" Expanded="@(hasChildren ? !_collapsed.Contains(row.Node.NodeId) : (bool?)null)"
+                                OnSelect="() => SelectNode(row.Node)" OnKeyDown="e => SelectKey(e, row.Node)">
+                                <span class="tree-indent" aria-hidden="true"></span>
+                                @if (hasChildren)
+                                {
+                                    <button type="button" class="tree-disclosure @(!_collapsed.Contains(row.Node.NodeId) ? "is-expanded" : "")" aria-label="@($"{(_collapsed.Contains(row.Node.NodeId) ? "Expand" : "Collapse")} {row.Node.Title}")" disabled="@_busy" @onclick="() => ToggleNode(row.Node.NodeId)" @onclick:stopPropagation="true" @onkeydown:stopPropagation="true">▸</button>
+                                }
+                                <span class="tree-node-badge is-@row.Node.NodeType">@NodeLabel(row.Node.NodeType)</span>
+                                <span class="tree-select"><span class="tree-select-title">@row.Node.Title</span></span>
+                            </NavigatorRow>
+                            </div>
+                        }
+                        <div class="outline-root-drop" data-outline-root>Move to project root</div>
+                    </div>
+                    @if (!project.Nodes.Any(n => n.DeletionId is null)) { <p class="inspector-help">The tree is empty. Your writing remains in the manuscript.</p> }
+                    <details class="device-project-details">
+                        <summary>Add options</summary>
+                        <div class="inspector-grid">
+                            <div class="inspector-field"><label for="add-node-title">Title (optional)</label><input id="add-node-title" class="node-title-input" placeholder="@DefaultNodeTitle(_type)" @bind="_nodeTitle" @bind:event="oninput" maxlength="200" disabled="@_busy" /></div>
+                            <div class="inspector-field"><label for="add-node-parent">Parent</label><select id="add-node-parent" @bind="_parent" disabled="@_busy"><option value="">Project root</option>
+                                @foreach (var node in project.Nodes.Where(n => n.DeletionId is null && ProjectNodeHierarchyRules.IsPlacementAllowed(_type, n.NodeType))) { <option value="@node.NodeId">@node.Title</option> }
+                            </select></div>
+                        </div>
+                    </details>
+                    @if (project.Nodes.Any(n => n.DeletionId is not null))
+                    {
+                        <details class="device-project-details"><summary>Deleted tree items</summary>
+                            <p class="inspector-help">Writing is retained. Restore parent items before separately deleted children.</p>
+                            @foreach (var deleted in project.Nodes.Where(n => n.DeletionId is not null && !project.Nodes.Any(p => p.NodeId == n.ParentId && p.DeletionId == n.DeletionId)))
+                            { <div class="device-project-restore"><span>@deleted.Title</span><button type="button" class="secondary" disabled="@_busy" @onclick="() => ChangeAsync(new(LocalProjectAction.Restore, deleted.NodeId))">Restore</button></div> }
+                        </details>
+                    }
+                </Navigator>
+                <Inspector>
+                    @if (!EmbedNavigator) {
+                    <WorkspaceCoachCard ContextTitle="Project coach" Observations="@CoachObservations(project)" Why="@(HasScenes(project) ? "Opening a scene keeps your next writing step close to the outline." : "A first scene turns outline planning into draft momentum.")">
+                        <PrimaryAction><button type="button" class="primary" disabled="@_busy" @onclick="CoachActionAsync">@(HasScenes(project) ? "Continue writing" : "Create first scene")</button></PrimaryAction>
+                    </WorkspaceCoachCard>
+                    }
+                    @if (project.Nodes.FirstOrDefault(n => n.NodeId == _nodeId && n.DeletionId is null) is { } selected)
+                    {
+                        <div class="inspector-grid device-project-inspector">
+                            <div class="inspector-field"><label for="selected-node-name">Name</label><div class="inspector-name-row"><input id="selected-node-name" class="node-title-input" @bind="_rename" @bind:event="oninput" maxlength="200" disabled="@_busy" /><button type="button" class="secondary" disabled="@(_busy || !ValidTitle(_rename) || _rename.Trim() == selected.Title)" @onclick="() => ChangeAsync(new(LocalProjectAction.Rename, selected.NodeId, Title: _rename))">Rename</button></div></div>
+                            <div class="inspector-field"><span class="node-kind">Type</span><div class="inspector-readonly">@NodeLabel(selected.NodeType)</div></div>
+                            @if (selected.SectionId is { } sectionId)
+                            {
+                                <span class="node-words">@WordCount(document.Sections.Where(s => s.SectionId == sectionId).SelectMany(s => s.Pages)) words</span>
+                                <div class="node-actions"><button type="button" class="primary" disabled="@_busy" @onclick="() => OpenAsync(document, sectionId)">Open scene in editor</button></div>
+                            }
+                            <div class="node-actions">
+                                <button type="button" class="secondary" disabled="@(_busy || AtEnd(project, selected, false))" @onclick="() => ChangeAsync(new(LocalProjectAction.Up, selected.NodeId))">Move up</button>
+                                <button type="button" class="secondary" disabled="@(_busy || AtEnd(project, selected, true))" @onclick="() => ChangeAsync(new(LocalProjectAction.Down, selected.NodeId))">Move down</button>
+                            </div>
+                            <div class="inspector-field"><label for="move-node-parent">Move under</label><select id="move-node-parent" @bind="_moveParent" disabled="@_busy"><option value="">Project root</option>
+                                @foreach (var node in project.Nodes.Where(n => n.DeletionId is null && n.NodeId != selected.NodeId && ProjectNodeHierarchyRules.IsPlacementAllowed(selected.NodeType, n.NodeType))) { <option value="@node.NodeId">@node.Title</option> }
+                            </select></div>
+                            <div class="node-actions"><button type="button" class="secondary" disabled="@(_busy || !ValidParent(project, selected.NodeType, _moveParent) || _moveParent == selected.ParentId)" @onclick="() => ChangeAsync(new(LocalProjectAction.Move, selected.NodeId, ParentId: _moveParent))">Move node</button><button type="button" class="danger" disabled="@_busy" @onclick="() => ChangeAsync(new(LocalProjectAction.Delete, selected.NodeId))">Delete tree item</button></div>
+                            <span class="inspector-help">Deleting a tree item keeps its writing in the manuscript.</span>
+                        </div>
+                    }
+                    else { <div class="projects-empty">Select a node to edit details.</div> }
+                </Inspector>
+            </ProjectWorkspacePanels>
+            @if (!EmbedNavigator) {
+            <details class="device-project-details device-project-storage" @key="project.ProjectId">
+                <summary>Storage &amp; synchronization · Saved on this device</summary>
+                <WriterApp.Device.Shared.Components.DocumentSyncStatus Document="document" />
+            </details>
+            }
+        }
+        else if (ProjectId is not null) { <div class="projects-empty" role="status">Project unavailable. If its manuscript is in document Trash, restore it there.</div> }
+        else { <div class="projects-empty">Create a project to begin structuring your manuscript. <button type="button" class="primary" disabled="@_busy" @onclick="CreateAsync">Create your first project</button></div> }
+    }
+</div>
+</ProjectWorkspaceShell>
+@code {
+    [Parameter] public Guid? ProjectId { get; set; }
+    [SupplyParameterFromQuery(Name = "documentId")] public Guid? RequestedDocumentId { get; set; }
+    [Parameter] public Guid? HostDocumentId { get; set; }
+    private Guid? _selectedDocumentId;
+    private IEnumerable<LocalDocument> ProjectDocuments => _documents.Where(d => d.Project?.ProjectId == (ProjectId ?? _documents.FirstOrDefault(d => d.Project is not null)?.Project?.ProjectId));
+    private IReadOnlyList<ProjectDocumentDto> DocumentChoices => ProjectDocuments.Select(d => new ProjectDocumentDto(d.DocumentId, d.Project!.ProjectId,
+        d.Title, d.Kind, d.CreatedAtUtc, d.UpdatedAtUtc, false, null, d.DeletedAtUtc)).ToArray();
+    private Task SelectDocumentAsync(Guid id) => RunAsync(() => {
+        var document = ProjectDocuments.Single(d => d.DocumentId == id);
+        if (document.Kind != "manuscript") Navigation.NavigateTo($"/documents/{id}");
+        else { _selectedDocumentId = id; _nodeId = _parent = null; _collapsed.Clear(); }
+        return Task.CompletedTask;
+    });
+    private Task AddDocumentAsync(ProjectDocumentCreateRequest request) => RunAsync(async () => {
+        if (Current?.Project is not { } project) return;
+        var added = await Documents.CreateProjectDocumentAsync(project.ProjectId, request.Title ?? "Untitled", request.Kind ?? "manuscript");
+        _selectedDocumentId = added.DocumentId;
+        await LoadAsync();
+        if (added.Kind != "manuscript") Navigation.NavigateTo($"/documents/{added.DocumentId}");
+    });
+    private Task MakePrimaryAsync(Guid id) => RunAsync(async () => { await Documents.MakePrimaryAsync(ProjectDocuments.Single(d => d.DocumentId == id)); await LoadAsync(); });
+    [SupplyParameterFromQuery(Name = "node")] public Guid? RequestedNode { get; set; }
+    private Guid? _lastRequestedNode;
+    [Parameter] public bool EmbedNavigator { get; set; }
+    [Parameter] public long HostRevision { get; set; }
+    [Parameter] public Func<Task<bool>>? BeforeWork { get; set; }
+    [Parameter] public Func<Task>? AfterWork { get; set; }
+    [Parameter] public EventCallback<Guid> SceneOpenRequested { get; set; }
+    private (Guid?, long, Guid?)? _loaded;
+    private IReadOnlyList<LocalDocument> _documents = [];
+    private LocalDocument? Current => (EmbedNavigator ? HostDocumentId : _selectedDocumentId ?? RequestedDocumentId) is { } selected
+        ? ProjectDocuments.FirstOrDefault(d => d.DocumentId == selected && d.Kind == "manuscript")
+        : ProjectDocuments.FirstOrDefault(d => d.Kind == "manuscript" && d.DocumentId == d.Project!.PrimaryDocumentId)
+            ?? ProjectDocuments.FirstOrDefault(d => d.Kind == "manuscript");
+    private IEnumerable<LocalDocument> StandaloneDocuments => _documents.Where(d => d.Project is null && d.ServerDocumentId is null && d.SyncState == LocalSyncState.LocalOnly);
+    private bool _busy, _loading = true, _editingName, _showConversion;
+    private string? _error;
+    private string _title = "Untitled project", _projectName = "", _nodeTitle = "", _type = "part", _rename = "";
+    private Guid? _attachId, _nodeId, _parent, _moveParent;
+    private readonly HashSet<Guid> _collapsed = [];
+    private ElementReference _projectNameInput;
+    private bool _focusProjectName;
+    private ElementReference _outline;
+    private IJSObjectReference? _outlineModule;
+    private DotNetObjectReference<Projects>? _outlineReference;
+    private bool _disposed;
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_focusProjectName && _editingName) { _focusProjectName = false; await _projectNameInput.FocusAsync(); }
+        if (Current?.Project is not null && !_loading && !_disposed)
+        {
+            _outlineModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "./_content/WriterApp.Device.Shared/outline-drag.js");
+            _outlineReference ??= DotNetObjectReference.Create(this);
+            await _outlineModule.InvokeVoidAsync("attach", _outline, _outlineReference);
+        }
+    }
+    [JSInvokable]
+    public Task DropOutlineAsync(Guid id, Guid? targetId, string placement) => InvokeAsync(async () =>
+    {
+        var work = RunAsync(async () =>
+        {
+            if (Current is not { Project: { } project } document) return;
+            if (LocalProjectDrop.Resolve(project, id, targetId, placement) is not { } change) return;
+            await Documents.ChangeProjectAsync(document, change);
+            await LoadAsync();
+            if (change.ParentId is { } parent) _collapsed.Remove(parent);
+            SelectNode(Current!.Project!.Nodes.Single(n => n.NodeId == id));
+        });
+        StateHasChanged();
+        await work;
+        StateHasChanged();
+    });
+    public async ValueTask DisposeAsync()
+    {
+        _disposed = true;
+        try
+        {
+            if (_outlineModule is not null) { await _outlineModule.InvokeVoidAsync("detach", _outline); await _outlineModule.DisposeAsync(); }
+        }
+        catch (JSDisconnectedException) { }
+        finally { _outlineReference?.Dispose(); }
+    }
+    protected override async Task OnParametersSetAsync() {
+        if (_loaded == (ProjectId, HostRevision, EmbedNavigator ? HostDocumentId : RequestedDocumentId) && _lastRequestedNode == RequestedNode) return;
+        if (_loaded?.Item1 != ProjectId || _loaded?.Item3 != (EmbedNavigator ? HostDocumentId : RequestedDocumentId)) { _selectedDocumentId = null; _nodeId = null; _parent = null; _editingName = false; _collapsed.Clear(); }
+        _loaded = (ProjectId, HostRevision, EmbedNavigator ? HostDocumentId : RequestedDocumentId); _lastRequestedNode = RequestedNode; await LoadAsync();
+        if (Current?.Project is { } project && project.Nodes.FirstOrDefault(n => n.NodeId == RequestedNode && n.DeletionId is null) is { } requested)
+        {
+            SelectNode(requested);
+            for (var parent = requested.ParentId; parent is { } id; parent = project.Nodes.First(n => n.NodeId == id).ParentId) _collapsed.Remove(id);
+        }
+    }
+    private async Task LoadAsync()
+    {
+        try
+        {
+            var list = await Documents.ListAsync(); _documents = list.Documents;
+            if (!_editingName) _projectName = Current?.Project?.Title ?? "";
+            if (Current?.Project?.Nodes.FirstOrDefault(n => n.NodeId == _nodeId && n.DeletionId is null) is { } selected) { _rename = selected.Title; _moveParent = selected.ParentId; }
+            else _nodeId = null;
+            if (list.Issues.Count > 0) _error = "Some local files could not be read. Originals are preserved; inspect Documents for recovery details.";
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { _error = e.Message; }
+        finally { _loading = false; }
+    }
+    private async Task RunAsync(Func<Task> action)
+    {
+        if (_busy) return; _busy = true; _error = null;
+        bool began = false;
+        try {
+            if (EmbedNavigator) {
+                if (BeforeWork is not null && !await BeforeWork()) throw new IOException("Save the current writing and planning before changing structure.");
+                await LoadAsync();
+            } else if (Lifetime.Flush is { } flush && !await flush(false)) throw new IOException("Save the current writing before changing projects.");
+            began = true; await action();
+        }
+        catch (Exception e) when (e is IOException or InvalidOperationException or System.Text.Json.JsonException or UnauthorizedAccessException) { _error = e.Message; }
+        finally { try { if (began && EmbedNavigator && AfterWork is not null) await AfterWork(); } finally { _busy = false; } }
+    }
+    private Task CreateAsync() => RunAsync(async () => { var d = await Documents.CreateProjectAsync("Untitled project"); Navigation.NavigateTo($"/projects/{d.Project!.ProjectId}"); });
+    private Task AttachAsync() => RunAsync(async () => { var d = StandaloneDocuments.Single(d => d.DocumentId == _attachId); var saved = await Documents.AttachProjectAsync(d, _title); _showConversion = false; Navigation.NavigateTo($"/projects/{saved.Project!.ProjectId}"); });
+    private Task SelectAsync(Guid? id) => RunAsync(() => { Navigation.NavigateTo(id is null ? "/projects" : $"/projects/{id}"); return Task.CompletedTask; });
+    private Task ChangeAsync(LocalProjectChange change) => RunAsync(async () => { if (Current is { } d) { await Documents.ChangeProjectAsync(d, change); await LoadAsync(); } });
+    private Task RenameProjectAsync() => RunAsync(async () => { if (Current is { } d) { await Documents.ChangeProjectAsync(d, new(LocalProjectAction.RenameProject, Title: _projectName)); _editingName = false; await LoadAsync(); } });
+    private void BeginRename() { _projectName = Current?.Project?.Title ?? ""; _editingName = true; _focusProjectName = true; }
+    private void CancelRename() { _editingName = false; _projectName = Current?.Project?.Title ?? ""; }
+    private Task ProjectNameKeyAsync(KeyboardEventArgs e) { if (e.Key == "Escape") CancelRename(); return e.Key == "Enter" && ValidTitle(_projectName) ? RenameProjectAsync() : Task.CompletedTask; }
+    private Task OpenPlanningAsync(Guid id, string? view = null) => RunAsync(() => { Navigation.NavigateTo(view is null ? $"/projects/{id}/storyboard?documentId={Current?.DocumentId}" : $"/projects/{id}/planning?documentId={Current?.DocumentId}&view={Uri.EscapeDataString(view)}"); return Task.CompletedTask; });
+    private Task OpenAsync(LocalDocument document, Guid? section, bool resume = true) => RunAsync(async () => {
+        var latest = await Documents.LoadAsync(document.DocumentId) ?? throw new IOException("Manuscript unavailable.");
+        if (latest.DeletedAtUtc is not null) throw new IOException("Restore the manuscript from document Trash.");
+        var page = section is { } id ? latest.Sections.FirstOrDefault(s => s.SectionId == id)?.Pages.OrderBy(p => p.OrderIndex).FirstOrDefault()?.PageId : resume ? latest.Project?.LastPageId : null;
+        if (page is not null && !latest.Sections.SelectMany(s => s.Pages).Any(p => p.PageId == page)) page = null;
+        if (EmbedNavigator && page is { } selectedPage) {
+            if (AfterWork is not null) await AfterWork();
+            await SceneOpenRequested.InvokeAsync(selectedPage); return;
+        }
+        Navigation.NavigateTo($"/documents/{document.DocumentId}" + (page is null ? "" : $"?page={page}&search={Guid.NewGuid():N}"));
+    });
+    private Task AddNodeAsync() => RunAsync(async () => {
+        if (Current is not { } d) return;
+        var before = d.Project!.Nodes.Select(n => n.NodeId).ToHashSet();
+        var saved = await Documents.ChangeProjectAsync(d, new(LocalProjectAction.Create, ParentId: _parent, NodeType: _type, Title: ValidTitle(_nodeTitle) ? _nodeTitle.Trim() : DefaultNodeTitle(_type)));
+        await LoadAsync(); var added = saved.Project!.Nodes.Single(n => !before.Contains(n.NodeId));
+        if (added.ParentId is { } parent) _collapsed.Remove(parent);
+        _nodeTitle = "";
+        SelectNode(added);
+    });
+    private Task CoachActionAsync()
+    {
+        if (Current is not { Project: { } project } d) return Task.CompletedTask;
+        if (HasScenes(project)) return OpenAsync(d, project.Nodes.FirstOrDefault(n => n.NodeId == _nodeId && n.DeletionId is null && n.NodeType == "scene")?.SectionId);
+        return RunAsync(async () => {
+            var chapter = project.Nodes.FirstOrDefault(n => n.DeletionId is null && n.NodeType == "chapter");
+            var next = d;
+            if (chapter is null) { next = LocalProjectStructure.Apply(d, new(LocalProjectAction.Create, NodeType: "chapter", Title: "Chapter 1"), DateTimeOffset.UtcNow); chapter = next.Project!.Nodes.Single(n => !project.Nodes.Any(p => p.NodeId == n.NodeId)); }
+            next = LocalProjectStructure.Apply(next, new(LocalProjectAction.Create, ParentId: chapter.NodeId, NodeType: "scene", Title: "First scene"), DateTimeOffset.UtcNow);
+            var saved = await Documents.SaveAsync(next); await LoadAsync(); _collapsed.Remove(chapter.NodeId); SelectNode(saved.Project!.Nodes.Single(n => n.NodeType == "scene" && n.DeletionId is null));
+        });
+    }
+    private void SelectNode(LocalProjectNode node) { _nodeId = node.NodeId; _rename = node.Title; _moveParent = node.ParentId; ResolveAddParent(); }
+    private void ToggleNode(Guid id) { if (!_collapsed.Add(id)) _collapsed.Remove(id); }
+    private void SelectKey(KeyboardEventArgs e, LocalProjectNode node)
+    {
+        if (e.Key is "Enter" or " ") SelectNode(node);
+        else if (e.Key == "ArrowRight") _collapsed.Remove(node.NodeId);
+        else if (e.Key == "ArrowLeft") _collapsed.Add(node.NodeId);
+    }
+    private void ResolveAddParent()
+    {
+        if (Current?.Project is not { } p) { _parent = null; return; }
+        var selected = p.Nodes.FirstOrDefault(n => n.NodeId == _nodeId && n.DeletionId is null);
+        _parent = selected is not null && ProjectNodeHierarchyRules.IsPlacementAllowed(_type, selected.NodeType) ? selected.NodeId : selected?.ParentId;
+        if (!ValidParent(p, _type, _parent)) _parent = _type == "scene" ? p.Nodes.FirstOrDefault(n => n.NodeType == "chapter" && n.DeletionId is null)?.NodeId : null;
+    }
+    private string AddHint(LocalProject project) => !ValidParent(project, _type, _parent) ? "Select a chapter for the new scene." : _parent is { } id ? $"{NodeLabel(_type)} will be added to {project.Nodes.First(n => n.NodeId == id).Title}." : $"{NodeLabel(_type)} will be added at the project root.";
+    private static string NodeLabel(string type) => type switch { "part" => "Part", "chapter" => "Chapter", "scene" => "Scene", _ => type };
+    private static string DefaultNodeTitle(string type) => $"New {NodeLabel(type)}";
+    private static bool ValidTitle(string value) => value.Trim().Length is > 0 and <= 200;
+    private static bool HasScenes(LocalProject project) => project.Nodes.Any(n => n.DeletionId is null && n.NodeType == "scene");
+    private static IReadOnlyList<string> CoachObservations(LocalProject project)
+    {
+        int scenes = project.Nodes.Count(n => n.DeletionId is null && n.NodeType == "scene");
+        return [scenes == 0 ? "Your manuscript has no scenes yet." : $"Your manuscript has {scenes} {(scenes == 1 ? "scene" : "scenes")}." ];
+    }
+    private static string WordCount(IEnumerable<LocalPage> pages) => DeviceWordMetrics.CountPages(pages)?.ToString("N0") ?? "—";
+    private static bool ValidParent(LocalProject project, string type, Guid? parent) => parent is null
+        ? ProjectNodeHierarchyRules.IsPlacementAllowed(type, null)
+        : project.Nodes.Any(n => n.NodeId == parent && n.DeletionId is null && ProjectNodeHierarchyRules.IsPlacementAllowed(type, n.NodeType));
+    private static bool AtEnd(LocalProject project, LocalProjectNode node, bool last) {
+        var siblings = project.Nodes.Where(n => n.ParentId == node.ParentId && n.DeletionId is null).OrderBy(n => n.OrderIndex).ToArray();
+        return (last ? siblings[^1] : siblings[0]).NodeId == node.NodeId;
+    }
+    private IEnumerable<(LocalProjectNode Node, int Depth)> Rows(LocalProject project, Guid? parent, int depth)
+    {
+        foreach (var node in project.Nodes.Where(n => n.ParentId == parent && n.DeletionId is null).OrderBy(n => n.OrderIndex))
+        { yield return (node, depth); if (!_collapsed.Contains(node.NodeId)) foreach (var child in Rows(project, node.NodeId, depth + 1)) yield return child; }
+    }
+}
+
+

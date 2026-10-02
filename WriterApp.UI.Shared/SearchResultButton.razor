@@ -1,0 +1,14 @@
+<button type="button" class="global-search-result" disabled="@Disabled" @onclick="Selected">
+    <span class="global-search-type">@Kind</span>
+    <span class="global-search-title">@Title</span>
+    @if (!string.IsNullOrWhiteSpace(Scope)) { <span class="global-search-scope">@Scope</span> }
+    @if (ChildContent is not null) { <span class="global-search-snippet">@ChildContent</span> }
+</button>
+@code {
+    [Parameter] public string Kind { get; set; } = "";
+    [Parameter] public string Title { get; set; } = "";
+    [Parameter] public string? Scope { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public EventCallback Selected { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

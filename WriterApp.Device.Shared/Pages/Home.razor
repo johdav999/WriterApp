@@ -1,53 +1,72 @@
 @page "/"
 @using System.Text.Json
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.JSInterop
+@using WriterApp.Device.Shared.Components
 @inject LocalDocumentLibrary Library
 @inject NavigationManager Navigation
 @inject DeviceSyncEngine Sync
 @inject DeviceDocumentTransfer Transfer
+@inject IJSRuntime JS
 @implements IDisposable
+@implements IAsyncDisposable
 
-<PageTitle>My documents · Prosa</PageTitle>
-<WriterApp.Device.Shared.Components.RecoveryNotice />
+<PageTitle>Projects &amp; documents · Prosa</PageTitle>
+<RecoveryNotice />
 
-<div class="library-page">
-    <header class="library-intro">
+<div class="document-library" @onkeydown="HandleLibraryKey">
+    <header class="library-heading">
         <div>
-            <p class="eyebrow">Your writing space</p>
-            <h1 tabindex="-1" @ref="_heading">My documents</h1>
-            <p>Write on this device, even when you are offline.</p>
+            <h1>Projects &amp; documents</h1>
+            <p class="library-subtitle">Your writing, always within reach.</p>
         </div>
-        <span class="connection-status" title="Local documents remain available without an account or connection.">
-            <span aria-hidden="true" class="connection-dot"></span> Offline ready
-        </span>
+        <div class="library-heading-actions">
+            @if (Transfer.IsAvailable)
+            {
+                <button class="secondary import-button" type="button" disabled="@_busy" @onclick="ImportNewAsync"><LibraryIcon Name="upload" />Import</button>
+            }
+            <button class="secondary new-project-button" type="button" disabled="@_busy" @onclick="CreateProjectAsync"><LibraryIcon Name="folder-plus" />New project</button>
+            <button class="primary new-document-button" type="button" disabled="@_busy" title="@CreationContext" @onclick="CreateAsync"><LibraryIcon Name="plus" />New document</button>
+        </div>
     </header>
+    <p class="library-offline"><LibraryIcon Name="device" /><span>Saved on this device. Available offline.</span></p>
+    <h2 class="visually-hidden" tabindex="-1" @ref="_heading">@(_showTrash ? "Trash" : "Projects and documents")</h2>
 
-    <form class="create-panel" @onsubmit="CreateAsync" @onsubmit:preventDefault>
-        <div>
-            <label for="new-document-title">New document</label>
-            <p>Start a manuscript and keep it on this device.</p>
+    <div class="library-toolbar">
+        <div class="library-tabs" role="group" aria-label="Library view">
+            @foreach (LocalLibraryFilter filter in new[] { LocalLibraryFilter.All, LocalLibraryFilter.Projects, LocalLibraryFilter.Documents })
+            {
+                <button type="button" class="@TabClass(filter)" aria-pressed="@(_filter == filter ? "true" : "false")" disabled="@_busy" @onclick="() => SwitchViewAsync(filter)">
+                    @filter @if (_loaded) { <span class="library-count">@FilterCount(filter)</span> }
+                </button>
+            }
+            <button type="button" class="@TabClass(LocalLibraryFilter.Trash)" aria-pressed="@(_showTrash ? "true" : "false")" disabled="@_busy" @onclick="() => SwitchViewAsync(LocalLibraryFilter.Trash)"><LibraryIcon Name="trash" />Trash</button>
         </div>
-        <div class="create-controls">
-            <input id="new-document-title" @ref="_newTitleInput" @bind="_newTitle" @bind:event="oninput"
-                   maxlength="200" required placeholder="Give your document a title" disabled="@_busy" />
-            <button class="button button-primary" type="submit" disabled="@_busy">Create document</button>
+        <div class="library-filters">
+            <label class="library-search">
+                <LibraryIcon Name="search" />
+                <span class="visually-hidden">Search projects and documents</span>
+                <input type="search" placeholder="Search projects and documents" @bind="Search" @bind:event="oninput" />
+            </label>
+            <label class="library-sort">
+                <span class="visually-hidden">Sort projects and documents</span>
+                <select @bind="_sort">
+                    <option value="recent">Recently edited</option>
+                    <option value="title">Title A–Z</option>
+                    <option value="oldest">Oldest edited</option>
+                </select>
+            </label>
         </div>
-    </form>
+    </div>
 
-    @if (Transfer.IsAvailable)
+    @if (_message is not null) { <p class="feedback success" role="status">@_message</p> }
+    @if (_error is not null) { <p class="feedback error" role="alert">@_error</p> }
+    @if (Sync.LastError is not null && Library.Documents.Any(d => d.ServerDocumentId is not null || Sync.Status(d.DocumentId) is not null))
     {
-        <section class="create-panel" aria-label="Import a new document">
-            <div><h2>Import a document</h2><p>Choose a UTF-8 .txt, .html, or .htm file (up to 5 MB). Supported text formatting is kept; scripts, images, styles, and other active content are removed. The original file is never changed.</p></div>
-            <div class="create-controls"><button class="button button-quiet" type="button" disabled="@_busy" @onclick="ImportNewAsync">Choose file and create local document</button></div>
-        </section>
-    }
-
-    @if (_message is not null)
-    {
-        <p class="feedback success" role="status">@_message</p>
-    }
-    @if (_error is not null)
-    {
-        <p class="feedback error" role="alert">@_error</p>
+        <details class="feedback sync-attention">
+            <summary role="alert">Cloud sync needs attention. Your documents are saved on this device.</summary>
+            <p>@Sync.LastError</p>
+        </details>
     }
     @if (Library.Issues.Count > 0)
     {
@@ -55,116 +74,133 @@
             <h2 id="storage-issues-title">Documents needing attention</h2>
             <p>The affected files remain on this device. Your other documents are available.</p>
             <ul>
-                @foreach (LocalDocumentIssue issue in Library.Issues)
-                {
-                    <li><strong>@issue.FileName</strong>: @issue.Message</li>
-                }
+                @foreach (LocalDocumentIssue issue in Library.Issues) { <li><strong>@issue.FileName</strong>: @issue.Message</li> }
             </ul>
         </section>
     }
 
-    <section aria-labelledby="library-title">
-        <div class="library-section-heading">
-            <div>
-                <p class="eyebrow">Library</p>
-                <h2 id="library-title">@(_showTrash ? "Trash" : "Recent documents")</h2>
-            </div>
-            <div class="view-tabs" role="group" aria-label="Document view">
-                <button type="button" class="@TabClass(false)" aria-pressed="@(!_showTrash)"
-                        disabled="@_busy" @onclick="() => SwitchViewAsync(false)">Documents</button>
-                <button type="button" class="@TabClass(true)" aria-pressed="@_showTrash"
-                        disabled="@_busy" @onclick="() => SwitchViewAsync(true)">Trash</button>
-            </div>
-        </div>
-
+    <section class="library-collection" @ref="_collection" data-library-disabled="@(_busy || _showTrash ? "true" : "false")" aria-label="@(_showTrash ? "Trashed projects and documents" : "Projects and documents")">
         @if (!_loaded)
         {
-            <p class="empty-state" role="status">Loading your documents…</p>
+            <div class="library-empty" role="status">Loading your projects and documents…</div>
         }
-        else if (Library.Documents.Count == 0)
+        else if (VisibleRows.Count == 0)
         {
-            <div class="empty-state">
-                <h3>@(_showTrash ? "Trash is empty" : "A fresh page is ready")</h3>
-                <p>@(_showTrash ? "Documents you move to trash will appear here until you restore or delete them." : "Create a document above to begin. It will stay available when you restart Prosa or lose your connection.")</p>
+            <div class="library-empty">
+                <LibraryIcon Name="@(_showTrash ? "trash" : "document")" />
+                <h2>@(!string.IsNullOrWhiteSpace(_search) ? "No matching projects or documents" : _showTrash ? "Trash is empty" : _filter == LocalLibraryFilter.Projects ? "Your next project starts here" : "Your next story starts here")</h2>
+                <p>@(!string.IsNullOrWhiteSpace(_search) ? "Try another title or clear your search." : _showTrash ? "Projects and documents you move to trash will appear here." : "Create a project, start a document, or bring your existing writing into Prosa.")</p>
+                @if (!_showTrash && string.IsNullOrWhiteSpace(_search))
+                {
+                    <div class="empty-actions">
+                        <button class="secondary" type="button" disabled="@_busy" @onclick="CreateProjectAsync"><LibraryIcon Name="folder-plus" />New project</button>
+                        <button class="primary" type="button" disabled="@_busy" @onclick="CreateAsync"><LibraryIcon Name="plus" />New document</button>
+                    </div>
+                }
             </div>
         }
         else
         {
-            <ul class="document-list">
-                @foreach (LocalDocument document in Library.Documents)
+            <div class="library-column-headings" aria-hidden="true">
+                <span>Name</span><span>Type</span><span>@(_showTrash ? "Moved to trash" : "Last edited")</span><span>Storage</span><span></span>
+            </div>
+            <div class="library-list">
+                @foreach (LocalLibraryRow row in VisibleRows)
                 {
-                    DeviceDocumentStatus status = DeviceDocumentStatus.For(document);
-                    <li class="document-card" @key="document.DocumentId">
-                        <div class="document-main">
-                            <div class="document-details">
-                                <h3>
-                                    @if (_showTrash)
-                                    {
-                                        @document.Title
-                                    }
-                                    else
-                                    {
-                                        <a href="@DocumentUrl(document.DocumentId)">@document.Title</a>
-                                    }
-                                </h3>
-                                <p class="document-meta">@(_showTrash ? "Moved to trash" : "Edited") @FormatDate(_showTrash ? document.DeletedAtUtc ?? document.UpdatedAtUtc : document.UpdatedAtUtc)
-                                    <span aria-hidden="true">·</span> @document.Sections.Count @(document.Sections.Count == 1 ? "section" : "sections")</p>
+                    LocalDocument document = row.Document;
+                    DeviceDocumentStatus status = LibraryStatus(document);
+                    <article class="library-row @(row.IsProject ? "is-project" : "") @(row.IsChild ? "is-child" : "") @(_showTrash ? "is-trashed" : "") @(_menuId == row.Id ? "has-open-menu" : "") @(_selectedRowKey == row.Key ? "is-selected" : "")" @key="row.Key" aria-label="@row.Title"
+                             data-library-project-id="@(row.IsProject && !_showTrash ? row.Id.ToString("D") : null)"
+                             data-standalone-document-id="@(!row.IsProject && document.Project is null && !_showTrash ? document.DocumentId.ToString("D") : null)"
+                             draggable="@(!_busy && !_showTrash && !row.IsProject && document.Project is null ? "true" : "false")" @onclick="() => SelectRow(row)">
+                        <div class="library-document">
+                            @if (row.IsProject && _filter == LocalLibraryFilter.All)
+                            {
+                                <button class="project-expand" type="button" disabled="@_busy" aria-label="@($"{(IsExpanded(row) ? "Collapse" : "Expand")} {row.Title}")" aria-expanded="@(IsExpanded(row) ? "true" : "false")" @onclick="() => ToggleProject(row.Id)"><LibraryIcon Name="chevron" /></button>
+                            }
+                            else { <span class="project-expand-spacer" aria-hidden="true"></span> }
+                            <span class="library-item-icon" aria-hidden="true"><LibraryIcon Name="@(row.IsProject ? "folder" : "document")" /></span>
+                            <div class="library-document-copy">
+                                @if (_showTrash) { <h3>@row.Title</h3> }
+                                else { <h3><button class="library-select" type="button" disabled="@_busy" aria-pressed="@(_selectedRowKey == row.Key ? "true" : "false")" @onclick="() => SelectRow(row)" @onclick:stopPropagation>@row.Title</button></h3> }
+                                <p>@row.Context</p>
                             </div>
-                            <span class="@($"document-status status-{status.Tone}")" title="@status.Detail">@status.Label</span>
                         </div>
-
-                        @if (_renamingId == document.DocumentId && !_showTrash)
+                        <span class="library-type @(row.IsProject ? "type-project" : "")">@(row.IsProject ? "Project" : "Document")</span>
+                        <time class="library-date" datetime="@DocumentDate(document).ToString("O")">@FormatLibraryDate(DocumentDate(document))</time>
+                        <span class="library-storage status-@status.Tone" title="@status.Detail" role="status">
+                            <LibraryIcon Name="@(status.Tone == "danger" || status.Tone == "warning" ? "warning" : document.ServerDocumentId is null ? "device" : "cloud")" />
+                            <span>@(status.Tone == "local" ? "On this device" : status.Label)</span>
+                        </span>
+                        <div class="library-row-actions">
+                            @if (!_showTrash) { <a class="library-open" href="@row.OpenUrl">@(row.IsProject ? "Open project" : "Open")<LibraryIcon Name="arrow" /></a> }
+                            else { <button class="library-restore" type="button" disabled="@_busy" @onclick="() => RestoreAsync(document, row.IsProject)">Restore</button> }
+                            <div class="library-menu">
+                                <button class="library-more" type="button" aria-label="@($"Actions for {(row.IsProject ? "project" : "document")} {row.Title}")" aria-expanded="@(_menuId == row.Id ? "true" : "false")" aria-controls="@($"actions-{row.Key}")" disabled="@_busy" @onclick="() => ToggleMenu(row.Id)"><LibraryIcon Name="more" /></button>
+                                @if (_menuId == row.Id)
+                                {
+                                    <button class="menu-dismiss" type="button" tabindex="-1" aria-label="Close item actions" @onclick="CloseMenu"></button>
+                                    <div class="library-menu-panel" id="@($"actions-{row.Key}")">
+                                        @if (!_showTrash)
+                                        {
+                                            @if (row.ProjectDetailsUrl is { } detailsUrl) { <a href="@detailsUrl">Project details</a> }
+                                            @if (!row.IsChild)
+                                            {
+                                                <button type="button" disabled="@_busy" @onclick="() => StartRename(row)">@(row.IsProject ? "Rename project" : "Rename document")</button>
+                                                <button type="button" disabled="@_busy" @onclick="() => DuplicateAsync(document)">@(document.Project is null ? "Duplicate" : "Duplicate as standalone document")</button>
+                                                <button type="button" class="menu-danger" disabled="@_busy" @onclick="() => RequestConfirmation(document, PendingAction.Trash, row.IsProject)">@(row.IsProject ? "Move project to trash" : "Move document to trash")</button>
+                                            }
+                                        }
+                                        else if (document.ServerDocumentId is null)
+                                        {
+                                            <button type="button" class="menu-danger" disabled="@_busy" @onclick="() => RequestConfirmation(document, PendingAction.Delete)">Delete permanently</button>
+                                        }
+                                        <details class="library-sync-details">
+                                            <summary>Cloud sync details</summary>
+                                            <DocumentSyncStatus Document="document" />
+                                        </details>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                        @if (_renamingId == document.DocumentId && _renamingProject == row.IsProject && !row.IsChild && !_showTrash)
                         {
                             <form class="rename-form" @onsubmit="() => RenameAsync(document)" @onsubmit:preventDefault>
-                                <label for="rename-title">Rename document</label>
+                                <label for="rename-title">@(_renamingProject ? "Rename project" : "Rename document")</label>
                                 <div class="inline-controls">
-                                    <input id="rename-title" @ref="_renameInput" @bind="_renameTitle" @bind:event="oninput"
-                                           @onkeydown="HandleRenameKey" maxlength="200" required disabled="@_busy" />
-                                    <button class="button button-primary" type="submit" disabled="@_busy">Save name</button>
-                                    <button class="button button-quiet" type="button" disabled="@_busy" @onclick="CancelRenameAsync">Cancel</button>
+                                    <input id="rename-title" @ref="_renameInput" @bind="_renameTitle" @bind:event="oninput" @onkeydown="HandleRenameKey" maxlength="200" required disabled="@_busy" />
+                                    <button class="primary" type="submit" disabled="@_busy">Save name</button>
+                                    <button class="secondary" type="button" disabled="@_busy" @onclick="CancelRenameAsync">Cancel</button>
                                 </div>
                             </form>
                         }
-                        else
-                        {
-                            <div class="document-actions">
-                                @if (_showTrash)
-                                {
-                                    <button class="button button-quiet" type="button" disabled="@_busy"
-                                            @onclick="() => RestoreAsync(document)">Restore</button>
-                                    @if (document.ServerDocumentId is null)
-                                    {
-                                        <button class="button button-danger" type="button" disabled="@_busy"
-                                                @onclick="() => RequestConfirmation(document, PendingAction.Delete)">Delete permanently</button>
-                                    }
-                                }
-                                else
-                                {
-                                    <a class="button button-primary" href="@DocumentUrl(document.DocumentId)">Open</a>
-                                    <button class="button button-quiet" type="button" disabled="@_busy"
-                                            @onclick="() => StartRename(document)">Rename</button>
-                                    <button class="button button-quiet" type="button" disabled="@_busy"
-                                            @onclick="() => DuplicateAsync(document)">Duplicate</button>
-                                    <button class="button button-quiet" type="button" disabled="@_busy"
-                                            @onclick="() => RequestConfirmation(document, PendingAction.Trash)">Move to trash</button>
-                                }
-                            </div>
-                        }
-                        <WriterApp.Device.Shared.Components.DocumentSyncStatus Document="document" />
-                    </li>
+                    </article>
                 }
-            </ul>
+            </div>
         }
     </section>
 
+    @if (Transfer.IsAvailable)
+    {
+        <section class="library-import" @ref="_dropZone" aria-labelledby="import-title">
+            <LibraryIcon Name="upload" />
+            <div class="library-import-copy">
+                <h2 id="import-title">Bring your words into Prosa</h2>
+                <p id="import-formats">Drop a DOCX, TXT or HTML file here</p>
+            </div>
+            <button class="library-choose-file" type="button" disabled="@_busy" aria-describedby="import-formats" @onclick="ImportNewAsync">Choose file</button>
+            <div class="visually-hidden" aria-hidden="true"><InputFile OnChange="ImportDroppedAsync" accept=".docx,.txt,.html,.htm" tabindex="-1" /></div>
+        </section>
+    }
+    <p class="library-total">@LibraryTotal</p>
     @if (_pendingDocument is not null)
     {
         <section class="confirm-panel" role="group" aria-labelledby="confirm-title" aria-describedby="confirm-description">
-            <h2 id="confirm-title">@(_pendingAction == PendingAction.Delete ? "Permanently delete this document?" : "Move this document to trash?")</h2>
-            <p id="confirm-description"><strong>@_pendingDocument.Title</strong>
+            <h2 id="confirm-title">@(_pendingAction == PendingAction.Delete ? $"Permanently delete this {PendingItemType}?" : $"Move this {PendingItemType} to trash?")</h2>
+            <p id="confirm-description"><strong>@(_pendingDocument.Project?.Title ?? _pendingDocument.Title)</strong>
                 @(_pendingAction == PendingAction.Delete
                     ? " and its local backup will be removed from this device. This cannot be undone."
-                    : " will leave your library. You can restore it from Trash.")</p>
+                    : !_pendingIsProject ? " will leave your library. You can restore it from Trash." : " and all its documents will leave your library. You can restore them from Trash.")</p>
             @if (_pendingAction == PendingAction.Delete)
             {
                 <label for="delete-confirmation">Type DELETE to confirm</label>
@@ -172,34 +208,109 @@
                        @bind:event="oninput" autocomplete="off" disabled="@_busy" />
             }
             <div class="confirm-actions">
-                <button class="button button-quiet" type="button" @ref="_cancelButton" disabled="@_busy"
-                        @onclick="CancelConfirmationAsync">Keep document</button>
-                <button class="button button-danger" type="button"
+                <button class="secondary" type="button" @ref="_cancelButton" disabled="@_busy"
+                        @onclick="CancelConfirmationAsync">Keep @PendingItemType</button>
+                <button class="secondary danger" type="button"
                         disabled="@(_busy || (_pendingAction == PendingAction.Delete && _deleteConfirmation != "DELETE"))"
                         @onclick="ConfirmAsync">@(_pendingAction == PendingAction.Delete ? "Delete permanently" : "Move to trash")</button>
             </div>
         </section>
     }
 </div>
-
 @code {
     private enum PendingAction { None, Trash, Delete }
-    private enum FocusTarget { None, Heading, NewTitle, RenameTitle, CancelConfirmation, DeleteConfirmation }
+    private enum FocusTarget { None, Heading, RenameTitle, CancelConfirmation, DeleteConfirmation }
 
     private bool _loaded;
     private bool _busy;
-    private bool _showTrash;
-    private string _newTitle = "";
+    private LocalLibraryFilter _filter = LocalLibraryFilter.All;
+    private bool _showTrash => _filter == LocalLibraryFilter.Trash;
+    private string _search = "";
+    private string Search
+    {
+        get => _search;
+        set { _search = value; _collapsedSearchProjects.Clear(); ClearInlineActions(); }
+    }
+    private readonly HashSet<Guid> _expandedProjects = [];
+    private readonly HashSet<Guid> _collapsedSearchProjects = [];
+    private string _sort = "recent";
+    private Guid? _menuId;
+    private string? _selectedRowKey;
+    private LocalLibraryRow? SelectedProject => !_showTrash
+        ? VisibleRows.FirstOrDefault(row => row.Key == _selectedRowKey && row.IsProject) : null;
+    private string CreationContext => SelectedProject is { } project ? $"Create a document in {project.Title}" : "Create a standalone document";
+    private void SelectRow(LocalLibraryRow row)
+    {
+        if (_busy || _showTrash) return;
+        _selectedRowKey = row.Key;
+    }
+    private ElementReference _collection;
+    private ElementReference _dropZone;
+    private IJSObjectReference? _dropModule;
+    private DotNetObjectReference<Home>? _dropReceiver;
+
+    private IReadOnlyList<LocalLibraryRow> VisibleRows => LocalLibraryView.Rows(Library.Documents,
+        _filter, _search, _sort, _expandedProjects, _collapsedSearchProjects);
+    private int FilterCount(LocalLibraryFilter filter) => filter == LocalLibraryFilter.Projects
+        ? Library.ActiveDocuments.Where(d => d.Project is not null).Select(d => d.Project!.ProjectId).Distinct().Count()
+        : Library.ActiveDocuments.Count + (filter == LocalLibraryFilter.All ? Library.ActiveDocuments.Where(d => d.Project is not null).Select(d => d.Project!.ProjectId).Distinct().Count() : 0);
+    private string LibraryTotal
+    {
+        get
+        {
+            var roots = VisibleRows.Where(row => !row.IsChild).ToArray();
+            int projects = roots.Count(row => row.IsProject);
+            int documents = roots.Sum(row => row.DocumentCount);
+            string projectTotal = $"{projects} {(projects == 1 ? "project" : "projects")}";
+            string documentTotal = $"{documents} {(documents == 1 ? "document" : "documents")}";
+            return _filter switch
+            {
+                LocalLibraryFilter.Projects => projectTotal,
+                LocalLibraryFilter.Documents => documentTotal,
+                LocalLibraryFilter.Trash => $"{roots.Length} {(roots.Length == 1 ? "item" : "items")} in Trash",
+                _ => $"{projectTotal} · {documentTotal}"
+            };
+        }
+    }
+    private bool IsExpanded(LocalLibraryRow row) => string.IsNullOrWhiteSpace(_search)
+        ? _expandedProjects.Contains(row.Id) : !_collapsedSearchProjects.Contains(row.Id);
+    private void ToggleProject(Guid id)
+    {
+        ClearInlineActions();
+        _selectedRowKey = $"project-{id:D}";
+        HashSet<Guid> set = string.IsNullOrWhiteSpace(_search) ? _expandedProjects : _collapsedSearchProjects;
+        if (!set.Remove(id)) set.Add(id);
+    }
+    private DateTimeOffset DocumentDate(LocalDocument document) => _showTrash ? document.DeletedAtUtc ?? document.UpdatedAtUtc : document.UpdatedAtUtc;
+    private static string FormatLibraryDate(DateTimeOffset value)
+    {
+        DateTimeOffset local = value.ToLocalTime();
+        return local.Date == DateTime.Now.Date ? $"Today, {local:HH:mm}" : local.ToString("d MMM yyyy", System.Globalization.CultureInfo.InvariantCulture);
+    }
+    private DeviceDocumentStatus LibraryStatus(LocalDocument document)
+    {
+        DeviceSyncStatus? sync = Sync.Status(document.DocumentId);
+        if (sync?.Conflict == true) return new("Conflict", "Your local writing is saved. Review both versions in cloud sync details.", "danger");
+        if (sync?.Error is not null) return new("Sync error", sync.Error, "danger");
+        if (sync?.Deleted == true) return new("Cloud copy deleted", "Your writing is retained on this device.", "warning");
+        if (sync?.Label == "Waiting to sync") return new("Waiting to sync", "Your writing is saved on this device. Cloud changes are pending.", "warning");
+        return DeviceDocumentStatus.For(document, isSyncing: Sync.IsRunning && (document.ServerDocumentId is not null || sync is not null));
+    }
+    private void ToggleMenu(Guid id) => _menuId = _menuId == id ? null : id;
+    private void CloseMenu() => _menuId = null;
+    private void HandleLibraryKey(KeyboardEventArgs args) { if (args.Key == "Escape") CloseMenu(); }
     private string _renameTitle = "";
     private string _deleteConfirmation = "";
     private string? _message;
     private string? _error;
     private Guid? _renamingId;
+    private bool _renamingProject;
     private LocalDocument? _pendingDocument;
+    private bool _pendingIsProject;
     private PendingAction _pendingAction;
+    private string PendingItemType => _pendingIsProject ? "project" : "document";
     private FocusTarget _focusTarget;
     private ElementReference _heading;
-    private ElementReference _newTitleInput;
     private ElementReference _renameInput;
     private ElementReference _cancelButton;
     private ElementReference _deleteInput;
@@ -219,12 +330,21 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        if (firstRender)
+        {
+            _dropModule = await JS.InvokeAsync<IJSObjectReference>("import", "./_content/WriterApp.Device.Shared/library-drop.js");
+            _dropReceiver = DotNetObjectReference.Create(this);
+            if (_dropModule is not null)
+            {
+                await _dropModule.InvokeVoidAsync("attachProjects", _collection, _dropReceiver);
+                if (Transfer.IsAvailable) await _dropModule.InvokeVoidAsync("attach", _dropZone, _dropReceiver);
+            }
+        }
         FocusTarget target = _focusTarget;
         _focusTarget = FocusTarget.None;
         switch (target)
         {
             case FocusTarget.Heading: await _heading.FocusAsync(); break;
-            case FocusTarget.NewTitle: await _newTitleInput.FocusAsync(); break;
             case FocusTarget.RenameTitle: await _renameInput.FocusAsync(); break;
             case FocusTarget.CancelConfirmation: await _cancelButton.FocusAsync(); break;
             case FocusTarget.DeleteConfirmation: await _deleteInput.FocusAsync(); break;
@@ -233,13 +353,21 @@
 
     private async Task CreateAsync()
     {
+        if (_busy) return;
         await ExecuteAsync(async () =>
         {
-            LocalDocument document = await Library.CreateAsync(_newTitle);
-            _newTitle = "";
+            LocalDocument document = SelectedProject is { } project
+                ? await Library.CreateProjectDocumentAsync(project.Id, "Untitled")
+                : await Library.CreateAsync("Untitled");
             Navigation.NavigateTo(DocumentUrl(document.DocumentId));
         });
     }
+
+    private Task CreateProjectAsync() => ExecuteAsync(async () =>
+    {
+        LocalDocument document = await Library.CreateProjectAsync("Untitled project");
+        Navigation.NavigateTo($"/projects/{document.Project!.ProjectId:D}");
+    });
 
     private async Task ImportNewAsync()
     {
@@ -252,23 +380,74 @@
         });
     }
 
-    private async Task SwitchViewAsync(bool trash)
+    private Task ImportDroppedAsync(InputFileChangeEventArgs args) => ExecuteAsync(async () =>
     {
-        if (_showTrash == trash) return;
-        ClearInlineActions();
+        if (args.FileCount != 1) throw new InvalidDataException("Drop one document at a time.");
+        IBrowserFile file = args.File;
+        await using Stream source = file.OpenReadStream(DeviceDocumentFormats.MaxImportBytes);
+        using MemoryStream buffer = new();
+        await source.CopyToAsync(buffer);
+        DevicePreparedImport import = DeviceDocumentFormats.ParseImport(new DeviceImportFile(file.Name, buffer.ToArray()));
+        LocalDocument document = await Library.CreateImportedAsync(import);
+        Navigation.NavigateTo(DocumentUrl(document.DocumentId));
+    });
+
+    [JSInvokable]
+    public Task ReportDropError(string message) { _error = message; return InvokeAsync(StateHasChanged); }
+
+    [JSInvokable]
+    public Task MoveDocumentToProject(string documentId, string projectId) => InvokeAsync(async () =>
+    {
+        if (_busy || _showTrash) return;
         await ExecuteAsync(async () =>
         {
-            await Library.RefreshAsync(trash ? LocalDocumentScope.Trash : LocalDocumentScope.Active);
-            _showTrash = trash;
+            if (!Guid.TryParse(documentId, out var id) || !Guid.TryParse(projectId, out var target))
+                throw new InvalidOperationException("Choose a document and an active project.");
+            var document = await Library.MoveStandaloneToProjectAsync(id, target);
+            _expandedProjects.Add(target);
+            _collapsedSearchProjects.Remove(target);
+            _selectedRowKey = $"document-{document.DocumentId:D}";
+            _message = $"Moved {document.Title} into {document.Project!.Title}. Saved on this device.";
+        });
+        StateHasChanged();
+    });
+
+    public async ValueTask DisposeAsync()
+    {
+        Dispose();
+        if (_dropModule is not null)
+        {
+            try
+            {
+                await _dropModule.InvokeVoidAsync("detachProjects", _collection);
+                if (Transfer.IsAvailable) await _dropModule.InvokeVoidAsync("detach", _dropZone);
+                await _dropModule.DisposeAsync();
+            }
+            catch (JSDisconnectedException) { }
+        }
+        _dropReceiver?.Dispose();
+    }
+
+    private async Task SwitchViewAsync(LocalLibraryFilter filter)
+    {
+        if (_filter == filter) return;
+        ClearInlineActions();
+        _selectedRowKey = null;
+        await ExecuteAsync(async () =>
+        {
+            await Library.RefreshAsync(filter == LocalLibraryFilter.Trash ? LocalDocumentScope.Trash : LocalDocumentScope.Active);
+            _filter = filter;
             _focusTarget = FocusTarget.Heading;
         });
     }
 
-    private void StartRename(LocalDocument document)
+    private void StartRename(LocalLibraryRow row)
     {
+        CloseMenu();
         _pendingDocument = null;
-        _renamingId = document.DocumentId;
-        _renameTitle = document.Title;
+        _renamingId = row.Document.DocumentId;
+        _renamingProject = row.IsProject;
+        _renameTitle = row.Title;
         _focusTarget = FocusTarget.RenameTitle;
     }
 
@@ -276,8 +455,9 @@
     {
         await ExecuteAsync(async () =>
         {
-            await Library.RenameAsync(document, _renameTitle);
-            _message = "Document renamed and saved on this device.";
+            if (_renamingProject) await Library.RenameProjectAsync(document, _renameTitle);
+            else await Library.RenameAsync(document, _renameTitle);
+            _message = $"{(_renamingProject ? "Project" : "Document")} renamed and saved on this device.";
             _renamingId = null;
             _focusTarget = FocusTarget.Heading;
         });
@@ -297,6 +477,7 @@
 
     private async Task DuplicateAsync(LocalDocument document)
     {
+        CloseMenu();
         await ExecuteAsync(async () =>
         {
             LocalDocument copy = await Library.DuplicateAsync(document);
@@ -305,20 +486,23 @@
         });
     }
 
-    private async Task RestoreAsync(LocalDocument document)
+    private async Task RestoreAsync(LocalDocument document, bool project = false)
     {
         await ExecuteAsync(async () =>
         {
-            await Library.RestoreAsync(document);
-            _message = $"Restored {document.Title}. Find it in Documents.";
+            if (project && document.Project is { } p) await Library.SetProjectTrashAsync(p.ProjectId, false);
+            else await Library.RestoreAsync(document);
+            _message = $"Restored {document.Project?.Title ?? document.Title}. Find it in All.";
             _focusTarget = FocusTarget.Heading;
         });
     }
 
-    private void RequestConfirmation(LocalDocument document, PendingAction action)
+    private void RequestConfirmation(LocalDocument document, PendingAction action, bool project = false)
     {
+        CloseMenu();
         _renamingId = null;
         _pendingDocument = document;
+        _pendingIsProject = project;
         _pendingAction = action;
         _deleteConfirmation = "";
         _focusTarget = action == PendingAction.Delete ? FocusTarget.DeleteConfirmation : FocusTarget.CancelConfirmation;
@@ -335,12 +519,13 @@
             if (action == PendingAction.Delete)
             {
                 await Library.PermanentlyDeleteAsync(document);
-                _message = "Document permanently deleted from this device.";
+                _message = $"{(document.Project is null ? "Document" : "Project and its manuscript")} permanently deleted from this device.";
             }
             else
             {
-                await Library.MoveToTrashAsync(document);
-                _message = $"Moved {document.Title} to Trash.";
+                if (_pendingIsProject && document.Project is { } project) await Library.SetProjectTrashAsync(project.ProjectId, true);
+                else await Library.MoveToTrashAsync(document);
+                _message = $"Moved {document.Project?.Title ?? document.Title} to Trash.";
             }
             ClearInlineActions();
             _focusTarget = FocusTarget.Heading;
@@ -356,6 +541,7 @@
 
     private void ClearInlineActions()
     {
+        CloseMenu();
         _renamingId = null;
         _pendingDocument = null;
         _pendingAction = PendingAction.None;
@@ -364,6 +550,7 @@
 
     private async Task ExecuteAsync(Func<Task> action)
     {
+        if (_busy) return;
         _busy = true;
         _error = null;
         _message = null;
@@ -396,7 +583,6 @@
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
     }
 
-    private string TabClass(bool trash) => _showTrash == trash ? "view-tab active" : "view-tab";
+    private string TabClass(LocalLibraryFilter filter) => _filter == filter ? "library-tab is-active" : "library-tab";
     private static string DocumentUrl(Guid id) => $"/documents/{id:D}";
-    private static string FormatDate(DateTimeOffset value) => value.ToLocalTime().ToString("d MMM yyyy, HH:mm");
 }

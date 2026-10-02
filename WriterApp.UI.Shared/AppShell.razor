@@ -1,0 +1,61 @@
+<div class="app-shell @(SidebarLayout ? "is-library-shell" : "") @Class">
+    @if (!SidebarLayout)
+    {
+    <header class="app-header">
+        <div class="app-header-left">
+            <NavLink class="app-brand" href="@HomeUrl" Match="NavLinkMatch.All" aria-label="Prosa home">
+                <span class="app-brand-frame">
+                    <img class="app-brand-logo" src="@(AssetBasePath + "/logo.png")" alt="Prosa" loading="eager" decoding="async" />
+                </span>
+            </NavLink>
+        </div>
+        <div class="app-header-content">
+            <div class="app-header-center">
+                @Breadcrumb
+                @Search
+            </div>
+            <div class="app-header-right">
+                @Account
+            </div>
+        </div>
+    </header>
+    }
+
+    <main class="app-main">
+        <div class="app-body">
+            <nav class="app-nav">
+                @if (SidebarLayout)
+                {
+                    <NavLink class="app-brand sidebar-brand" href="@HomeUrl" Match="NavLinkMatch.All" aria-label="Prosa home">
+                        <img class="app-brand-logo" src="@(AssetBasePath + "/logo.png")" alt="Prosa" />
+                    </NavLink>
+                }
+                @Navigation
+                @if (SidebarLayout)
+                {
+                    <div class="app-sidebar-footer">@SidebarFooter</div>
+                }
+                else
+                {
+                    <PanelResizeHandle Side="left" Label="Resize left navigation panel" />
+                }
+            </nav>
+            <article class="content">
+                @ChildContent
+            </article>
+        </div>
+    </main>
+</div>
+
+@code {
+    [Parameter] public string? Class { get; set; }
+    [Parameter] public bool SidebarLayout { get; set; }
+    [Parameter] public RenderFragment? SidebarFooter { get; set; }
+    [Parameter] public string AssetBasePath { get; set; } = "_content/WriterApp.UI.Shared";
+    [Parameter] public string HomeUrl { get; set; } = "/";
+    [Parameter] public RenderFragment? Breadcrumb { get; set; }
+    [Parameter] public RenderFragment? Search { get; set; }
+    [Parameter] public RenderFragment? Account { get; set; }
+    [Parameter] public RenderFragment? Navigation { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

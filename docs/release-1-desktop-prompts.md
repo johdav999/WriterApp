@@ -257,4 +257,6 @@ Release gate:
 
 ## Suggested execution grouping
 
+After these prompts, use the [shared client GUI refactoring prompt](shared-client-ui-refactoring-prompt.md) to replace the separate device presentation with components extracted from the established web client while preserving local-first device behavior.
+
 Prompts 1–5 produce a valuable offline editor. Prompts 6–8 add accounts and paid synchronization. Prompts 9–10 add backend features expected from Prosa. Prompts 11–12 turn the implementation into a distributable Windows release.

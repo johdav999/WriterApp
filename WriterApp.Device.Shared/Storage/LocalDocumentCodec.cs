@@ -5,7 +5,7 @@ namespace WriterApp.Device.Shared.Storage;
 
 internal static class LocalDocumentCodec
 {
-    public const int SchemaVersion = 1;
+    public const int SchemaVersion = 4;
     private static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web)
     {
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
@@ -38,12 +38,13 @@ internal static class LocalDocumentCodec
 
         if (json.RootElement.TryGetProperty("schemaVersion", out JsonElement schema))
         {
-            if (schema.ValueKind != JsonValueKind.Number || !schema.TryGetInt32(out int version) || version != SchemaVersion)
+            if (schema.ValueKind != JsonValueKind.Number || !schema.TryGetInt32(out int version) || version is not (1 or 2 or 3 or SchemaVersion))
                 throw new LocalDocumentReadException(new(fileName, LocalDocumentIssueKind.UnsupportedVersion,
                     "This document uses an unsupported schema. Keep the file and open it with a compatible app version."));
             // Future versions must add explicit, stepwise migrations here before writing a new envelope.
             document = JsonSerializer.Deserialize<Envelope>(bytes, Options)?.Document
                 ?? throw new JsonException("Missing document.");
+            migrated = version < SchemaVersion;
         }
         else
         {
@@ -87,7 +88,7 @@ internal static class LocalDocumentCodec
         if (document.DocumentId == Guid.Empty || document.Title is null || string.IsNullOrWhiteSpace(document.Kind)
             || document.LocalRevision < 1 || !Enum.IsDefined(document.SyncState)
             || document.ServerDocumentId == Guid.Empty || document.ServerProjectId == Guid.Empty
-            || document.Sections is null)
+            || document.Sections is null || document.DeletedSections is null || document.DeletedPages is null)
             throw new JsonException("Invalid document metadata.");
         ValidateTimes(document.CreatedAtUtc, document.UpdatedAtUtc);
         if (document.DeletedAtUtc is { } deleted && (deleted < document.CreatedAtUtc || deleted > document.UpdatedAtUtc))
@@ -95,23 +96,38 @@ internal static class LocalDocumentCodec
         var sectionIds = new HashSet<Guid>();
         var pageIds = new HashSet<Guid>();
         var sectionOrder = new HashSet<int>();
-        foreach (LocalSection section in document.Sections)
+        foreach (LocalSection section in document.Sections) ValidateSection(section, sectionOrder);
+        foreach (var entry in document.DeletedSections)
+        {
+            if (entry is null || entry.DeletedAtUtc == default) throw new JsonException("Invalid section trash.");
+            ValidateSection(entry.Section, new HashSet<int>());
+        }
+        foreach (var entry in document.DeletedPages)
+        {
+            if (entry is null || entry.SectionId == Guid.Empty || entry.DeletedAtUtc == default)
+                throw new JsonException("Invalid page trash.");
+            ValidatePage(entry.Page, new HashSet<int>());
+        }
+        void ValidateSection(LocalSection section, HashSet<int> order)
         {
             if (section is null || section.SectionId == Guid.Empty || !sectionIds.Add(section.SectionId)
                 || section.ServerSectionId == Guid.Empty || section.Title is null || section.OrderIndex < 0
-                || !sectionOrder.Add(section.OrderIndex) || section.Pages is null)
+                || !order.Add(section.OrderIndex) || section.Pages is null)
                 throw new JsonException("Invalid section metadata or ordering.");
             ValidateTimes(section.CreatedAtUtc, section.UpdatedAtUtc);
             var pageOrder = new HashSet<int>();
-            foreach (LocalPage page in section.Pages)
-            {
-                if (page is null || page.PageId == Guid.Empty || !pageIds.Add(page.PageId)
-                    || page.ServerPageId == Guid.Empty || page.Title is null || page.Content is null
-                    || page.OrderIndex < 0 || !pageOrder.Add(page.OrderIndex) || !Enum.IsDefined(page.ContentFormat))
-                    throw new JsonException("Invalid page metadata, content format or ordering.");
-                ValidateTimes(page.CreatedAtUtc, page.UpdatedAtUtc);
-            }
+            foreach (LocalPage page in section.Pages) ValidatePage(page, pageOrder);
         }
+        void ValidatePage(LocalPage page, HashSet<int> pageOrder)
+        {
+            if (page is null || page.PageId == Guid.Empty || !pageIds.Add(page.PageId)
+                || page.ServerPageId == Guid.Empty || page.Title is null || page.Content is null
+                || page.OrderIndex < 0 || !pageOrder.Add(page.OrderIndex) || !Enum.IsDefined(page.ContentFormat))
+                throw new JsonException("Invalid page metadata, content format or ordering.");
+            ValidateTimes(page.CreatedAtUtc, page.UpdatedAtUtc);
+        }
+        if (sectionIds.Overlaps(pageIds)) throw new JsonException("Section/page identities must be distinct.");
+        Services.LocalProjectStructure.Validate(document);
     }
 
     private static void ValidateTimes(DateTimeOffset created, DateTimeOffset updated)

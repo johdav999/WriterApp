@@ -1,0 +1,77 @@
+@page "/synopsis"
+@page "/synopsis/{DocumentId:guid}"
+@inject LocalDocumentRepository Documents
+@inject NavigationManager Navigation
+
+<PageTitle>Synopsis · Prosa</PageTitle>
+
+<section class="synopsis-picker" aria-labelledby="synopsis-heading">
+    <h1 id="synopsis-heading">Synopsis</h1>
+    <p>Choose a manuscript to view or edit its story synopsis.</p>
+    @if (_loading)
+    {
+        <p role="status">Loading projects…</p>
+    }
+    else
+    {
+        @if (_error is not null) { <p role="alert">@_error</p> }
+        @if (_notice is not null) { <p role="status">@_notice</p> }
+        @if (_documents.Count > 0)
+        {
+            <ul>
+                @foreach (LocalDocument document in _documents)
+                {
+                    <li><a href="@($"/documents/{document.DocumentId:D}?panel=Story&view=synopsis")">@document.Project!.Title · @document.Title</a></li>
+                }
+            </ul>
+        }
+        else if (_error is null)
+        {
+            <p>Create a project or turn a standalone document into a project to start its synopsis.</p>
+        }
+        <a href="/projects">Go to Projects</a>
+    }
+</section>
+
+@code {
+    [Parameter] public Guid? DocumentId { get; set; }
+    private IReadOnlyList<LocalDocument> _documents = [];
+    private bool _loading = true;
+    private string? _error;
+    private string? _notice;
+    private Guid? _openDocumentId;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true;
+        _error = _notice = null;
+        _openDocumentId = null;
+        try
+        {
+            LocalDocumentList result = await Documents.ListAsync();
+            _documents = result.Documents.Where(d => d.Project is not null && d.Kind == "manuscript").OrderBy(d => d.Project!.Title).ToArray();
+            if (DocumentId is { } id)
+            {
+                if (_documents.Any(d => d.DocumentId == id)) _openDocumentId = id;
+                else _notice = "This document has no available project synopsis. Choose a project or create one from your document in Projects.";
+            }
+            if (result.Issues.Count > 0) _error = "Some local documents could not be read. Available projects are listed below.";
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            _documents = [];
+            _error = "Unable to read local projects. Check access and try again.";
+        }
+        finally { _loading = false; }
+    }
+
+    protected override Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_openDocumentId is { } id)
+        {
+            _openDocumentId = null;
+            Navigation.NavigateTo($"/documents/{id:D}?panel=Story&view=synopsis", replace: true);
+        }
+        return Task.CompletedTask;
+    }
+}

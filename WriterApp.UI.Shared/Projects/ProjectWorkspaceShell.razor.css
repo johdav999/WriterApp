@@ -1,0 +1,474 @@
+/* Shared client-authoritative project workspace styling. */
+.prosa-projects { display: contents; }
+.prosa-projects ::deep .projects-page {
+    display: grid;
+    width: 100%;
+    gap: var(--space-4);
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: var(--space-5) var(--space-3) var(--space-10);
+}
+
+.prosa-projects ::deep .projects-page  .projects-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+}
+
+.prosa-projects ::deep .projects-page  .projects-header h1 {
+    margin: 0;
+    font-size: var(--font-size-page-title);
+    line-height: 1.1;
+}
+
+.prosa-projects ::deep .projects-page  .projects-subtitle {
+    margin: var(--space-2) 0 0;
+    color: var(--color-text-muted);
+}
+
+.prosa-projects ::deep .projects-page  .projects-actions {
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+}
+
+.prosa-projects ::deep .projects-page  .projects-toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+}
+
+.prosa-projects ::deep .projects-page  .projects-toolbar label {
+    font-size: var(--font-size-helper);
+    color: var(--color-text-muted);
+}
+
+.prosa-projects ::deep .projects-page  .projects-toolbar select {
+    min-height: var(--control-height);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-1);
+    color: var(--color-text);
+    padding: 0 var(--space-3);
+}
+
+.prosa-projects ::deep .projects-total {
+    color: var(--color-text-muted);
+    font-weight: 700;
+    font-size: var(--font-size-helper);
+}
+
+.prosa-projects ::deep .project-name-inline {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+}
+
+.prosa-projects ::deep .project-name-label {
+    font-size: var(--font-size-helper);
+    color: var(--color-text-muted);
+}
+
+.prosa-projects ::deep .project-name-value {
+    font-weight: 700;
+}
+
+.prosa-projects ::deep .project-name-input {
+    min-height: var(--control-height);
+    padding: 0 var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-1);
+    color: var(--color-text);
+    min-width: 240px;
+}
+
+.prosa-projects ::deep .projects-status {
+    font-size: var(--font-size-helper);
+    color: var(--color-danger);
+}
+
+.prosa-projects ::deep .project-entry-points {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.prosa-projects ::deep .entry-help {
+    font-size: var(--font-size-caption);
+    color: var(--color-text-muted);
+}
+
+.prosa-projects ::deep .projects-tabs {
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+}
+
+.prosa-projects ::deep .tab-button {
+    min-height: var(--control-height);
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-1);
+    color: var(--color-text);
+    border-radius: var(--radius-sm);
+    padding: 0 var(--space-3);
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.prosa-projects ::deep .tab-button.is-active {
+    background: var(--color-primary-soft);
+    border-color: #cfd9f5;
+    color: var(--color-primary);
+}
+
+.prosa-projects ::deep .projects-error {
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius-md);
+    border: 1px solid #f2b9be;
+    background: var(--color-danger-soft);
+    color: var(--color-danger);
+    font-size: var(--font-size-helper);
+}
+
+.prosa-projects ::deep .projects-loading,
+.prosa-projects ::deep .projects-empty,
+.prosa-projects ::deep .projects-disabled {
+    padding: var(--space-4);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-2);
+    color: var(--color-text-muted);
+}
+
+.prosa-projects ::deep .projects-workspace {
+    display: grid;
+    grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+    gap: var(--space-4);
+    align-items: start;
+}
+
+.prosa-projects ::deep .projects-progress {
+    display: grid;
+    gap: var(--space-3);
+}
+
+.prosa-projects ::deep .progress-card {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface-1);
+    padding: var(--space-4);
+    box-shadow: var(--shadow-sm);
+}
+
+.prosa-projects ::deep .progress-card h3 {
+    margin: 0 0 var(--space-3);
+    font-size: var(--font-size-section-title);
+}
+
+.prosa-projects ::deep .progress-overview {
+    border-color: #cfd9f5;
+    background: var(--color-primary-soft);
+}
+
+.prosa-projects ::deep .progress-targets {
+    display: grid;
+    grid-template-columns: 140px minmax(0, 240px);
+    gap: var(--space-2) var(--space-3);
+    align-items: center;
+    font-size: var(--font-size-helper);
+}
+
+.prosa-projects ::deep .progress-targets input,
+.prosa-projects ::deep .milestone-create input,
+.prosa-projects ::deep .node-title-input {
+    min-height: var(--control-height);
+    padding: 0 var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-1);
+    color: var(--color-text);
+}
+
+.prosa-projects ::deep .progress-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-2) var(--space-3);
+    font-size: 0.95rem;
+}
+
+.prosa-projects ::deep .milestone-create {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-bottom: var(--space-3);
+}
+
+.prosa-projects ::deep .milestone-list,
+.prosa-projects ::deep .session-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: var(--space-2);
+}
+
+.prosa-projects ::deep .milestone-list li,
+.prosa-projects ::deep .session-list li {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-2);
+    padding: var(--space-2) var(--space-3);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-3);
+    align-items: center;
+}
+
+.prosa-projects ::deep .session-live {
+    display: flex;
+    gap: var(--space-4);
+    margin-bottom: var(--space-2);
+}
+
+.prosa-projects ::deep .coach-primary {
+    margin-top: var(--space-3);
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.prosa-projects ::deep .coach-suggestion-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: var(--space-2);
+}
+
+.prosa-projects ::deep .coach-suggestion-list li {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-2);
+    padding: var(--space-2) var(--space-3);
+    display: flex;
+    gap: var(--space-2);
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.prosa-projects ::deep .projects-tree,
+.prosa-projects ::deep .projects-main {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface-1);
+    padding: var(--space-4);
+    box-shadow: var(--shadow-sm);
+    min-width: 0;
+    overflow: hidden;
+}
+
+.prosa-projects ::deep .projects-tree {
+    container-type: inline-size;
+}
+
+.prosa-projects ::deep .panel-header {
+    margin-bottom: var(--space-3);
+}
+
+.prosa-projects ::deep .panel-header h2 {
+    margin: 0;
+    font-size: var(--font-size-section-title);
+}
+
+.prosa-projects ::deep .panel-header p {
+    margin: var(--space-1) 0 0;
+    font-size: var(--font-size-helper);
+    color: var(--color-text-muted);
+}
+
+.prosa-projects ::deep .projects-templates-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(17, 24, 39, 0.35);
+    display: grid;
+    place-items: center;
+    z-index: 1300;
+    padding: var(--space-4);
+}
+
+.prosa-projects ::deep .projects-templates-dialog {
+    width: min(640px, 100%);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface-1);
+    box-shadow: var(--shadow-md);
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    max-height: min(80vh, 720px);
+}
+
+.prosa-projects ::deep .projects-templates-header {
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.prosa-projects ::deep .projects-templates-header h3 {
+    margin: 0;
+    font-size: var(--font-size-section-title);
+}
+
+.prosa-projects ::deep .projects-templates-body {
+    padding: var(--space-4);
+    display: grid;
+    gap: var(--space-3);
+    overflow: auto;
+}
+
+.prosa-projects ::deep .projects-templates-row {
+    display: grid;
+    gap: var(--space-2);
+}
+
+.prosa-projects ::deep .projects-templates-row > label {
+    font-size: var(--font-size-helper);
+    color: var(--color-text-muted);
+}
+
+.prosa-projects ::deep .projects-templates-create {
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+}
+
+.prosa-projects ::deep .projects-templates-create input,
+.prosa-projects ::deep .projects-templates-row select {
+    min-height: var(--control-height);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-1);
+    color: var(--color-text);
+    padding: 0 var(--space-3);
+}
+
+.prosa-projects ::deep .projects-templates-create input {
+    flex: 1;
+    min-width: 220px;
+}
+
+.prosa-projects ::deep .projects-templates-options {
+    display: grid;
+    gap: var(--space-2);
+}
+
+.prosa-projects ::deep .projects-templates-options label {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--font-size-helper);
+}
+
+.prosa-projects ::deep .projects-templates-status {
+    border: 1px solid #cfd9f5;
+    border-radius: var(--radius-sm);
+    background: var(--color-primary-soft);
+    color: var(--color-primary);
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--font-size-helper);
+}
+
+.prosa-projects ::deep .projects-templates-status.is-error {
+    border-color: #f2b9be;
+    background: var(--color-danger-soft);
+    color: var(--color-danger);
+}
+
+.prosa-projects ::deep .projects-templates-footer {
+    border-top: 1px solid var(--color-border);
+    padding: var(--space-3) var(--space-4);
+    display: flex;
+    gap: var(--space-2);
+    justify-content: flex-end;
+    flex-wrap: wrap;
+}
+
+.prosa-projects ::deep .inspector-grid {
+    display: grid;
+    gap: var(--space-3);
+}
+
+.prosa-projects ::deep .inspector-field {
+    display: grid;
+    gap: var(--space-1);
+}
+
+.prosa-projects ::deep .inspector-field label {
+    font-size: var(--font-size-helper);
+    color: var(--color-text-muted);
+}
+
+.prosa-projects ::deep .inspector-name-row {
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.prosa-projects ::deep .node-title-input {
+    flex: 1;
+    min-width: min(240px, 100%);
+}
+
+.prosa-projects ::deep .inspector-help {
+    font-size: var(--font-size-caption);
+    color: var(--color-text-muted);
+}
+
+.prosa-projects ::deep .inspector-readonly {
+    min-height: var(--control-height);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-2);
+    padding: 0 var(--space-3);
+    display: flex;
+    align-items: center;
+}
+
+.prosa-projects ::deep .node-kind,
+.prosa-projects ::deep .node-words {
+    color: var(--color-text-muted);
+    font-size: var(--font-size-helper);
+}
+
+.prosa-projects ::deep .node-actions {
+    margin-top: var(--space-3);
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+}
+
+@media (max-width: 880px) {
+    .prosa-projects ::deep .projects-workspace {
+        grid-template-columns: 1fr;
+    }
+
+    .prosa-projects ::deep .progress-targets {
+        grid-template-columns: 1fr;
+    }
+
+    .prosa-projects ::deep .project-entry-points {
+        align-items: flex-start;
+    }
+
+    .prosa-projects ::deep .project-entry-points .entry-help {
+        width: 100%;
+    }
+}
+

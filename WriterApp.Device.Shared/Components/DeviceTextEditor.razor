@@ -6,14 +6,65 @@
 {
     <p role="alert">This page cannot be edited safely yet. @_error Its stored content has not been changed.</p>
     <details><summary>View saved source</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">@Content</pre></details>
+    <div class="editor-actions">@AdditionalActions</div>
 }
-<div class="device-tiptap" @ref="_host"></div>
+@if (_error is null)
+{
+<EditorToolbar State="_formatting" ExtendedHeadings="true"
+    OnBold='() => CommandAsync("bold")' OnItalic='() => CommandAsync("italic")' OnBulletList='() => CommandAsync("bulletList")' OnOrderedList='() => CommandAsync("orderedList")' OnBlockquote='() => CommandAsync("blockquote")' OnLink='() => CommandAsync("link")' OnBlockType="BlockAsync" OnUndo='() => CommandAsync("undo")' OnRedo='() => CommandAsync("redo")'>
+    <AdditionalControls>
+        <div class="editor-toolbar-group" aria-label="Table">
+            <button type="button" class="icon-only" @onmousedown:preventDefault="true" disabled="@(!_formatting.CanInsertTable)" aria-label="Insert table" title="Insert a 3x3 table" @onclick='() => CommandAsync("table")'><Icon Name="table_chart" /></button>
+        </div>
+        <div class="editor-toolbar-group" aria-label="Image">
+            <button type="button" class="icon-only" @onmousedown:preventDefault="true" disabled="@(!_formatting.CanInsertImage)" aria-label="Image" title="Insert image from your device" @onclick='() => CommandAsync("image")'><Icon Name="image" /></button>
+            <button type="button" class="icon-only" @onmousedown:preventDefault="true" disabled="@(!_formatting.CanInsertImage)" aria-label="Image URL" title="Insert image from URL" @onclick='() => CommandAsync("imageUrl")'><Icon Name="language" /></button>
+        </div>
+        <div class="editor-toolbar-group device-editor-zoom" aria-label="Zoom">
+            <button type="button" class="icon-only" @onmousedown:preventDefault="true" aria-label="Zoom out" title="Decrease writing size" disabled="@(_zoomPercent <= 80)" @onclick="() => ChangeZoom(-10)"><Icon Name="zoom_out" /></button>
+            <span aria-live="polite">@_zoomPercent%</span>
+            <button type="button" class="icon-only" @onmousedown:preventDefault="true" aria-label="Zoom in" title="Increase writing size" disabled="@(_zoomPercent >= 150)" @onclick="() => ChangeZoom(10)"><Icon Name="zoom_in" /></button>
+        </div>
+        <EditorMoreFormatting State="_formatting" OnCommand="MoreCommandAsync" />
+    </AdditionalControls>
+</EditorToolbar>
+<div class="editor-actions">
+    <button type="button" class="icon-only" @onmousedown:preventDefault="true" disabled="@(!_canUndo)" aria-label="Undo" title="Undo last change" @onclick='() => CommandAsync("undo")'><Icon Name="undo" /></button>
+    <button type="button" class="icon-only" @onmousedown:preventDefault="true" disabled="@(!_canRedo)" aria-label="Redo" title="Redo last change" @onclick='() => CommandAsync("redo")'><Icon Name="redo" /></button>
+    @AdditionalActions
+</div>
+<div class="editor-surface @(PrintLayout ? "device-print-layout" : "")"><div class="editor-viewport"><div class="editor-content"><div class="device-tiptap" style="@(FormattableString.Invariant($"--editor-font-scale:{_zoomPercent / 100.0:0.##}"))" @ref="_host"></div></div></div></div>
+}
 
 @code {
     [Parameter, EditorRequired] public string Content { get; set; } = "";
     [Parameter] public LocalContentFormat Format { get; set; }
     [Parameter] public EventCallback<string> ContentChanged { get; set; }
     [Parameter] public EventCallback SaveRequested { get; set; }
+    [Parameter] public RenderFragment? AdditionalActions { get; set; }
+    [Parameter] public bool PrintLayout { get; set; }
+    [Parameter] public string? SearchText { get; set; }
+    [Parameter] public Guid? SearchRequest { get; set; }
+    [Parameter] public EventCallback<bool> SearchLocated { get; set; }
+    [Parameter] public IReadOnlyList<LocalTextAnnotation> Annotations { get; set; } = [];
+    [Parameter] public EventCallback<Guid> AnnotationClicked { get; set; }
+    [Parameter] public Guid? RequestedAnnotationId { get; set; }
+    [Parameter] public Guid? AnnotationRequest { get; set; }
+    [Parameter] public EventCallback<bool> AnnotationLocated { get; set; }
+    private LocalTextAnnotation[]? _lastAnnotations;
+    private Guid? _lastAnnotationRequest;
+    private string? _lastSearchText;
+    private Guid? _lastSearchRequest;
+    private EditorFormattingState _formatting = new();
+    private bool _canUndo, _canRedo;
+    private int _zoomPercent = 100;
+    private void ChangeZoom(int amount) => _zoomPercent = Math.Clamp(_zoomPercent + amount, 80, 150);
+    [JSInvokable] public Task OnFormattingChanged(EditorFormattingState state, bool canUndo, bool canRedo)
+    { _formatting = state; _canUndo = canUndo; _canRedo = canRedo; return InvokeAsync(StateHasChanged); }
+    private async Task CommandAsync(string command, int? level = null)
+    { if (_editor is not null && !_disposed) await _editor.InvokeVoidAsync("command", command, level); }
+    private Task BlockAsync(string value) => value.StartsWith("heading:") && int.TryParse(value[8..], out int level) ? CommandAsync("heading", level) : CommandAsync("paragraph");
+    private Task MoreCommandAsync(string command) => command.StartsWith("heading:") ? BlockAsync(command) : CommandAsync(command);
     private ElementReference _host;
     private IJSObjectReference? _module;
     private IJSObjectReference? _editor;
@@ -24,14 +75,36 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (!firstRender) return;
+        if (!firstRender)
+        {
+            await ApplyAnnotationsAsync();
+            if (_editor is not null && (SearchText != _lastSearchText || SearchRequest != _lastSearchRequest))
+            {
+                _lastSearchText = SearchText;
+                _lastSearchRequest = SearchRequest;
+                if (!string.IsNullOrEmpty(SearchText)) await SearchLocated.InvokeAsync(await _editor.InvokeAsync<bool>("navigateToText", SearchText));
+            }
+            return;
+        }
+        if (!DeviceContentCompatibility.CanEdit(Content, Format))
+        {
+            _error = DeviceContentCompatibility.ReadOnlyReason;
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
         try
         {
             _module = await JS.InvokeAsync<IJSObjectReference>("import", "./_content/WriterApp.Device.Shared/editor/device-editor.js");
             if (_disposed) { await _module.DisposeAsync(); return; }
             _reference = DotNetObjectReference.Create(this);
-            _editor = await _module.InvokeAsync<IJSObjectReference>("create", _host, Content, Format.ToString(), _reference);
+            _editor = await _module.InvokeAsync<IJSObjectReference>("create", _host, Content, Format.ToString(), _reference, true);
             if (_disposed) { await _editor.InvokeVoidAsync("destroy"); await _editor.DisposeAsync(); }
+            else
+            {
+                await ApplyAnnotationsAsync();
+                if (!string.IsNullOrEmpty(SearchText))
+                { _lastSearchText = SearchText; _lastSearchRequest = SearchRequest; await SearchLocated.InvokeAsync(await _editor.InvokeAsync<bool>("navigateToText", SearchText)); }
+            }
         }
         catch (JSException error) { _error = error.Message.Split('\n')[0]; await InvokeAsync(StateHasChanged); }
     }
@@ -39,12 +112,34 @@
     [JSInvokable]
     public async Task OnContentChanged(string html, long version)
     {
-        if (_disposed || version <= _version) return;
-        _version = version;
+        if (_disposed || _error is not null || version <= _version) return;
         await ContentChanged.InvokeAsync(html);
+        // A rejected edit must remain retryable by the close/navigation flush.
+        _version = Math.Max(_version, version);
     }
 
     [JSInvokable] public Task OnSaveRequested() => _disposed ? Task.CompletedTask : SaveRequested.InvokeAsync();
+
+    private async Task ApplyAnnotationsAsync()
+    {
+        if (_editor is null || _disposed) return;
+        if (_lastAnnotations is null || !Annotations.SequenceEqual(_lastAnnotations))
+        {
+            var annotations = Annotations.ToArray();
+            await _editor.InvokeVoidAsync("setAnnotations", annotations);
+            _lastAnnotations = annotations;
+        }
+        if (AnnotationRequest != _lastAnnotationRequest && RequestedAnnotationId is { } id)
+        {
+            _lastAnnotationRequest = AnnotationRequest;
+            await AnnotationLocated.InvokeAsync(await _editor.InvokeAsync<bool>("navigateToAnnotation", id.ToString()));
+        }
+    }
+
+    [JSInvokable] public Task OnAnnotationClicked(string id) => !_disposed && Guid.TryParse(id, out var annotationId)
+        ? AnnotationClicked.InvokeAsync(annotationId) : Task.CompletedTask;
+
+    public async Task<string> SelectedTextAsync() => _editor is null || _disposed ? "" : await _editor.InvokeAsync<string>("selectedText");
 
     public async Task SetEditableAsync(bool editable)
     {
@@ -59,10 +154,10 @@
         await OnContentChanged(snapshot.Html, snapshot.Version);
     }
 
-    public async Task<AiEditorSnapshot> CaptureAiAsync()
+    public async Task<AiEditorSnapshot> CaptureAiAsync(bool wholePage = false, bool currentSelectionOnly = false)
     {
         if (_editor is null || _disposed) throw new InvalidOperationException("The editor is not ready.");
-        return await _editor.InvokeAsync<AiEditorSnapshot>("captureAi");
+        return await _editor.InvokeAsync<AiEditorSnapshot>("captureAi", wholePage, currentSelectionOnly);
     }
 
     public async Task<string> ApplyAiAsync(string baseHtml, int from, int to, string original, string proposed, string mode)

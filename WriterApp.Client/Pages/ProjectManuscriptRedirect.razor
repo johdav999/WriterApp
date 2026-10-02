@@ -4,6 +4,7 @@
 @using WriterApp.Application.Documents
 @using WriterApp.Client.State
 @inject HttpClient Http
+@inject ManuscriptSelectionState ManuscriptSelection
 @inject IJSRuntime JS
 @inject NavigationManager Navigation
 @inject ProjectStructureCacheService ProjectStructureCacheService
@@ -30,6 +31,7 @@ else if (!string.IsNullOrWhiteSpace(_error))
     private bool _loading = true;
     private string? _error;
 
+    [SupplyParameterFromQuery(Name = "documentId")] public Guid? RequestedDocumentId { get; set; }
     private sealed record ManuscriptOpenTarget(Guid DocumentId, Guid? SectionId);
 
     protected override async Task OnParametersSetAsync()
@@ -182,12 +184,21 @@ else if (!string.IsNullOrWhiteSpace(_error))
 
         docsResponse.EnsureSuccessStatusCode();
         List<ProjectDocumentDto>? docs = await docsResponse.Content.ReadFromJsonAsync<List<ProjectDocumentDto>>();
-        ProjectDocumentDto? manuscript = docs?
+        Guid? selected = RequestedDocumentId;
+        if (selected is null)
+        {
+            var tree = await Http.GetFromJsonAsync<ProjectTreeDto>($"api/projects/{projectId}/tree");
+            selected = tree?.Project.PrimaryDocumentId;
+        }
+        ProjectDocumentDto? manuscript = docs?.FirstOrDefault(d => d.Id == selected && d.Kind == "manuscript" && d.DeletedAt is null);
+        if (RequestedDocumentId is not null && manuscript is null) return null;
+        manuscript ??= docs?
             .Where(item => item.DeletedAt is null && string.Equals(item.Kind, "manuscript", StringComparison.OrdinalIgnoreCase))
-            .OrderByDescending(item => item.UpdatedAt)
+            .OrderBy(item => item.CreatedAt)
             .FirstOrDefault();
         if (manuscript is not null)
         {
+            ManuscriptSelection.Select(projectId, manuscript.Id);
             Guid? firstSectionId = await GetFirstSectionIdAsync(manuscript.Id);
             return new ManuscriptOpenTarget(manuscript.Id, firstSectionId);
         }

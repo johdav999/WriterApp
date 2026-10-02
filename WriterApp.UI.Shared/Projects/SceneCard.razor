@@ -1,0 +1,623 @@
+@using WriterApp.Application.Documents
+
+
+<article class="@GetCardClass()"
+         aria-label="@Title"
+         title="@GetCardTooltip()">
+    <div class="scene-card-top">
+        <div class="scene-card-title-row">
+            @if (EnableDragging)
+            {
+            <span class="scene-card-drag-handle drag-handle"
+                  title="Drag scene"
+                  aria-label="Drag scene"
+                  draggable="@(EnableDragging ? "true" : "false")">
+                <span class="scene-card-drag-dots" aria-hidden="true">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </span>
+            </span>
+            }
+            <div class="scene-card-title-group">
+                @if (_isEditingTitle)
+                {
+                    <input class="scene-card-title-input"
+                           value="@_titleDraft"
+                           @ref="_titleInputRef"
+                           @oninput="OnTitleDraftInput"
+                           @onkeydown:stopPropagation="true"
+                           @onkeydown="HandleTitleKeyDownAsync"
+                           @onblur="CommitTitleEditAsync" />
+                }
+                else
+                {
+                    <button type="button"
+                            class="scene-card-title-button"
+                            title="Edit title"
+                            @onclick:stopPropagation="true"
+                            @onclick="StartTitleEditAsync">
+                        <span class="scene-card-title">@_displayTitle</span>
+                        <span class="material-symbols-rounded scene-card-edit-icon" aria-hidden="true">edit</span>
+                    </button>
+                }
+            </div>
+        </div>
+        <div class="scene-card-top-meta">
+            @if (HasWarnings)
+            {
+                <span class="scene-card-warning"
+                      title="@WarningTooltip"
+                      aria-label="@WarningTooltip">
+                    <span aria-hidden="true">⚠</span>
+                </span>
+            }
+            @if (!string.IsNullOrWhiteSpace(Status))
+            {
+                @if (_isEditingStatus)
+                {
+                    <select class="scene-card-status-select"
+                            value="@_statusDraft"
+                            @ref="_statusSelectRef"
+                            @onchange="CommitStatusEditAsync"
+                            @onblur="CloseStatusEdit"
+                            @onclick:stopPropagation="true">
+                        @foreach (string option in StatusOptions)
+                        {
+                            <option value="@option">@option</option>
+                        }
+                    </select>
+                }
+                else
+                {
+                    <button type="button"
+                            class="@($"{GetStatusBadgeClass()} scene-card-status-button")"
+                            title="Change status"
+                            @onclick:stopPropagation="true"
+                            @onclick="StartStatusEditAsync">
+                        @_displayStatus
+                    </button>
+                }
+            }
+            <div class="scene-card-menu" @onclick:stopPropagation="true" @onpointerdown:stopPropagation="true">
+                <button type="button"
+                        class="scene-card-menu-button"
+                        aria-label="Scene actions"
+                        aria-haspopup="menu"
+                        aria-expanded="@_isMenuOpen"
+                        @onclick="ToggleMenu">
+                    <span class="material-symbols-rounded" aria-hidden="true">more_horiz</span>
+                </button>
+                @if (_isMenuOpen)
+                {
+                    <div class="scene-card-menu-popover" role="menu" aria-label="Scene actions">
+                        <button type="button"
+                                class="scene-card-menu-item"
+                                role="menuitem"
+                                @onpointerdown:stopPropagation="true"
+                                @onclick="OpenSceneFromMenuAsync">
+                            Open scene
+                        </button>
+                        <button type="button"
+                                class="scene-card-menu-item"
+                                role="menuitem"
+                                @onpointerdown:stopPropagation="true"
+                                @onclick="RevealInNavigatorFromMenuAsync">
+                            Reveal in navigator
+                        </button>
+                        @if (DuplicateScene.HasDelegate)
+                        {
+                        <button type="button"
+                                class="scene-card-menu-item"
+                                role="menuitem"
+                                @onpointerdown:stopPropagation="true"
+                                @onclick="DuplicateSceneFromMenuAsync">
+                            Duplicate
+                        </button>
+                        }
+                        @if (DeleteScene.HasDelegate)
+                        {
+                        <button type="button"
+                                class="scene-card-menu-item scene-card-menu-item--danger"
+                                role="menuitem"
+                                @onpointerdown:stopPropagation="true"
+                                @onclick="DeleteSceneFromMenuAsync">
+                            Delete
+                        </button>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    @if (HasPrimaryMetadata)
+    {
+        <div class="scene-card-primary-meta">
+            @if (!string.IsNullOrWhiteSpace(Pov))
+            {
+                <span class="scene-card-pov">
+                    <span class="scene-card-chip-dot" aria-hidden="true"></span>
+                    <span class="scene-card-pov-label">POV:</span>
+                    <span class="scene-card-pov-value">@Pov</span>
+                </span>
+            }
+        </div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(Summary))
+    {
+        <div class="scene-card-summary" title="@Summary">@Summary</div>
+    }
+
+    @if (HasSecondaryMetadata)
+    {
+        <div class="scene-card-secondary">
+            @if (HasStructuredMetadata)
+            {
+                <div class="scene-card-metadata">
+                    @foreach (SceneCardChip chip in VisibleChips)
+                    {
+                        <span class="@GetChipClass(chip)">@chip.Label</span>
+                    }
+                    @if (HiddenChipCount > 0)
+                    {
+                        <span class="scene-card-chip scene-card-chip--overflow" title="@GetHiddenChipsTooltip()">+@HiddenChipCount</span>
+                    }
+                </div>
+            }
+
+            @if (IsSelected && (WordCount > 0 || UpdatedUtc.HasValue))
+            {
+                <div class="scene-card-footer">
+                    @if (WordCount > 0)
+                    {
+                        <div class="scene-card-meta">@WordCount words</div>
+                    }
+                    @if (UpdatedUtc.HasValue)
+                    {
+                        <div class="scene-card-meta">Updated @FormatRelativeDate(UpdatedUtc.Value)</div>
+                    }
+                </div>
+            }
+        </div>
+    }
+</article>
+
+@code {
+    [Parameter] public bool EnableDragging { get; set; } = true;
+    [Parameter]
+    public Guid SceneId { get; set; }
+
+    [Parameter]
+    public string Title { get; set; } = string.Empty;
+
+    [Parameter]
+    public string? Summary { get; set; }
+
+    [Parameter]
+    public int? WordCount { get; set; }
+
+    [Parameter]
+    public string? Status { get; set; }
+
+    [Parameter]
+    public string? Pov { get; set; }
+
+    [Parameter]
+    public IReadOnlyList<string> SubplotTags { get; set; } = Array.Empty<string>();
+
+    [Parameter]
+    public string? NarrativePurpose { get; set; }
+
+    [Parameter]
+    public string? NarrativeRole { get; set; }
+
+    [Parameter]
+    public string? NarrativeIntent { get; set; }
+
+    [Parameter]
+    public string? AccentClass { get; set; }
+
+    [Parameter]
+    public bool IsSelected { get; set; }
+
+    [Parameter]
+    public bool HasNotes { get; set; }
+
+    [Parameter]
+    public DateTimeOffset? UpdatedUtc { get; set; }
+
+    [Parameter]
+    public EventCallback<Guid> OpenScene { get; set; }
+
+    [Parameter]
+    public EventCallback<Guid> DuplicateScene { get; set; }
+
+    [Parameter]
+    public EventCallback<Guid> DeleteScene { get; set; }
+
+    [Parameter]
+    public EventCallback<Guid> RevealInNavigator { get; set; }
+
+    [Parameter]
+    public Func<SceneCardTitleQuickEditRequest, Task<bool>>? SaveTitleQuickEdit { get; set; }
+
+    [Parameter]
+    public Func<SceneCardStatusQuickEditRequest, Task<bool>>? SaveStatusQuickEdit { get; set; }
+
+    private static readonly string[] StatusOptions = ["Idea", "Draft", "Revised", "Final"];
+    private ElementReference _titleInputRef;
+    private ElementReference _statusSelectRef;
+    private bool _focusTitleInputPending;
+    private bool _focusStatusSelectPending;
+    private bool _isEditingTitle;
+    private bool _isEditingStatus;
+    private bool _isMenuOpen;
+    private string _titleDraft = string.Empty;
+    private string _displayTitle = string.Empty;
+    private string _statusDraft = "Draft";
+    private string _displayStatus = "Draft";
+
+    private bool HasStructuredMetadata =>
+        SubplotTags.Count > 0
+        || !string.IsNullOrWhiteSpace(EffectiveNarrativeRole)
+        || HasNotes;
+
+    private bool HasPrimaryMetadata => !string.IsNullOrWhiteSpace(Pov);
+
+    private bool HasSecondaryMetadata => HasStructuredMetadata || WordCount > 0 || UpdatedUtc.HasValue;
+
+    private bool HasWarnings => MissingFieldWarnings.Count > 0;
+
+    private IReadOnlyList<SceneCardChip> VisibleChips => BuildAllChips().Take(2).ToArray();
+
+    private int HiddenChipCount => Math.Max(0, BuildAllChips().Count - VisibleChips.Count);
+
+    private IReadOnlyList<string> MissingFieldWarnings
+    {
+        get
+        {
+            List<string> warnings = new();
+            if (string.IsNullOrWhiteSpace(Summary))
+            {
+                warnings.Add("Missing summary");
+            }
+
+            if (string.IsNullOrWhiteSpace(Pov))
+            {
+                warnings.Add("Missing POV");
+            }
+
+            if (string.IsNullOrWhiteSpace(EffectiveNarrativeRole))
+            {
+                warnings.Add("Missing narrative role");
+            }
+
+            return warnings;
+        }
+    }
+
+    private string? EffectiveNarrativeRole => NormalizeOptional(NarrativeRole) ?? NormalizeLegacyRole(NarrativePurpose);
+
+    private string WarningTooltip => string.Join(" | ", MissingFieldWarnings);
+
+    protected override void OnParametersSet()
+    {
+        if (!_isEditingTitle)
+        {
+            _displayTitle = Title;
+            _titleDraft = Title;
+        }
+
+        string normalizedStatus = NormalizeStatus(Status);
+        if (!_isEditingStatus)
+        {
+            _displayStatus = normalizedStatus;
+            _statusDraft = normalizedStatus;
+        }
+    }
+
+    private void ToggleMenu()
+    {
+        _isMenuOpen = !_isMenuOpen;
+    }
+
+    private async Task OpenSceneFromMenuAsync()
+    {
+        _isMenuOpen = false;
+        await OpenScene.InvokeAsync(SceneId);
+    }
+
+    private async Task RevealInNavigatorFromMenuAsync()
+    {
+        _isMenuOpen = false;
+        await RevealInNavigator.InvokeAsync(SceneId);
+    }
+
+    private async Task DuplicateSceneFromMenuAsync()
+    {
+        _isMenuOpen = false;
+        await DuplicateScene.InvokeAsync(SceneId);
+    }
+
+    private async Task DeleteSceneFromMenuAsync()
+    {
+        _isMenuOpen = false;
+        await DeleteScene.InvokeAsync(SceneId);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_focusTitleInputPending)
+        {
+            _focusTitleInputPending = false;
+            await _titleInputRef.FocusAsync();
+        }
+
+        if (_focusStatusSelectPending)
+        {
+            _focusStatusSelectPending = false;
+            await _statusSelectRef.FocusAsync();
+        }
+    }
+
+    private string GetCardClass()
+    {
+        List<string> classes = new() { "scene-card" };
+        if (!string.IsNullOrWhiteSpace(AccentClass))
+        {
+            classes.Add(AccentClass);
+        }
+
+        if (IsSelected)
+        {
+            classes.Add("scene-card--selected");
+        }
+
+        return string.Join(" ", classes);
+    }
+
+    private string GetStatusBadgeClass()
+    {
+        string normalized = _displayStatus.Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "idea" => "scene-card-status scene-card-status--idea",
+            "revised" => "scene-card-status scene-card-status--revised",
+            "final" => "scene-card-status scene-card-status--final",
+            _ => "scene-card-status scene-card-status--draft"
+        };
+    }
+
+    private Task StartTitleEditAsync()
+    {
+        _isEditingStatus = false;
+        _isEditingTitle = true;
+        _titleDraft = _displayTitle;
+        _focusTitleInputPending = true;
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private void OnTitleDraftInput(ChangeEventArgs args)
+    {
+        _titleDraft = args.Value?.ToString() ?? string.Empty;
+    }
+
+    private async Task HandleTitleKeyDownAsync(KeyboardEventArgs args)
+    {
+        if (string.Equals(args.Key, "Enter", StringComparison.Ordinal))
+        {
+            await CommitTitleEditAsync();
+            return;
+        }
+
+        if (string.Equals(args.Key, "Escape", StringComparison.Ordinal))
+        {
+            CancelTitleEdit();
+        }
+    }
+
+    private async Task CommitTitleEditAsync()
+    {
+        if (!_isEditingTitle)
+        {
+            return;
+        }
+
+        string previous = _displayTitle;
+        string next = _titleDraft.Trim();
+        _isEditingTitle = false;
+
+        if (string.IsNullOrWhiteSpace(next) || string.Equals(previous, next, StringComparison.Ordinal))
+        {
+            _titleDraft = previous;
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        _displayTitle = next;
+        await InvokeAsync(StateHasChanged);
+
+        bool success = SaveTitleQuickEdit is not null
+            && await SaveTitleQuickEdit(new SceneCardTitleQuickEditRequest(SceneId, next));
+        if (!success)
+        {
+            _displayTitle = previous;
+        }
+
+        _titleDraft = _displayTitle;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void CancelTitleEdit()
+    {
+        _isEditingTitle = false;
+        _titleDraft = _displayTitle;
+    }
+
+    private Task StartStatusEditAsync()
+    {
+        _isEditingTitle = false;
+        _isEditingStatus = true;
+        _statusDraft = _displayStatus;
+        _focusStatusSelectPending = true;
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private async Task CommitStatusEditAsync(ChangeEventArgs args)
+    {
+        string previous = _displayStatus;
+        string next = NormalizeStatus(args.Value?.ToString());
+        _isEditingStatus = false;
+        _statusDraft = next;
+
+        if (string.Equals(previous, next, StringComparison.Ordinal))
+        {
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        _displayStatus = next;
+        await InvokeAsync(StateHasChanged);
+
+        bool success = SaveStatusQuickEdit is not null
+            && await SaveStatusQuickEdit(new SceneCardStatusQuickEditRequest(SceneId, next));
+        if (!success)
+        {
+            _displayStatus = previous;
+        }
+
+        _statusDraft = _displayStatus;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void CloseStatusEdit()
+    {
+        _isEditingStatus = false;
+        _statusDraft = _displayStatus;
+    }
+
+    private static string NormalizeStatus(string? status)
+    {
+        string normalized = status?.Trim() ?? string.Empty;
+        foreach (string option in StatusOptions)
+        {
+            if (string.Equals(option, normalized, StringComparison.OrdinalIgnoreCase))
+            {
+                return option;
+            }
+        }
+
+        return "Draft";
+    }
+
+    private static string FormatRelativeDate(DateTimeOffset updatedUtc)
+    {
+        TimeSpan age = DateTimeOffset.UtcNow - updatedUtc;
+        if (age < TimeSpan.FromMinutes(1))
+        {
+            return "just now";
+        }
+
+        if (age < TimeSpan.FromHours(1))
+        {
+            int minutes = Math.Max(1, (int)Math.Floor(age.TotalMinutes));
+            return $"{minutes}m ago";
+        }
+
+        if (age < TimeSpan.FromDays(1))
+        {
+            int hours = Math.Max(1, (int)Math.Floor(age.TotalHours));
+            return $"{hours}h ago";
+        }
+
+        if (age < TimeSpan.FromDays(7))
+        {
+            int days = Math.Max(1, (int)Math.Floor(age.TotalDays));
+            return $"{days}d ago";
+        }
+
+        return updatedUtc.ToLocalTime().ToString("yyyy-MM-dd");
+    }
+
+    private string? GetCardTooltip()
+    {
+        List<string> parts = new();
+        if (!string.IsNullOrWhiteSpace(Summary))
+        {
+            parts.Add(Summary.Trim());
+        }
+
+        if (!string.IsNullOrWhiteSpace(NarrativeIntent))
+        {
+            parts.Add($"Intent: {NarrativeIntent.Trim()}");
+        }
+
+        if (WordCount > 0)
+        {
+            parts.Add($"{WordCount} words");
+        }
+
+        if (UpdatedUtc.HasValue)
+        {
+            parts.Add($"Updated {FormatRelativeDate(UpdatedUtc.Value)}");
+        }
+
+        return parts.Count == 0 ? null : string.Join(" | ", parts);
+    }
+
+    private IReadOnlyList<SceneCardChip> BuildAllChips()
+    {
+        List<SceneCardChip> chips = new();
+        if (!string.IsNullOrWhiteSpace(EffectiveNarrativeRole))
+        {
+            chips.Add(new SceneCardChip(EffectiveNarrativeRole.Trim(), "purpose"));
+        }
+
+        if (HasNotes)
+        {
+            chips.Add(new SceneCardChip("Notes", "notes"));
+        }
+
+        foreach (string subplotTag in SubplotTags
+                     .Where(tag => !string.IsNullOrWhiteSpace(tag))
+                     .Select(tag => tag.Trim())
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            chips.Add(new SceneCardChip($"#{subplotTag}", "tag"));
+        }
+
+        return chips;
+    }
+
+    private string GetChipClass(SceneCardChip chip)
+    {
+        return chip.Kind switch
+        {
+            "purpose" => "scene-card-chip scene-card-chip--purpose",
+            _ => "scene-card-chip"
+        };
+    }
+
+    private string? GetHiddenChipsTooltip()
+    {
+        IReadOnlyList<SceneCardChip> hidden = BuildAllChips().Skip(VisibleChips.Count).ToArray();
+        return hidden.Count == 0 ? null : string.Join(" | ", hidden.Select(chip => chip.Label));
+    }
+
+    private static string? NormalizeOptional(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private static string? NormalizeLegacyRole(string? value)
+    {
+        return SceneNarrativeRoleCatalog.TryNormalize(value, out string? normalizedRole)
+            ? normalizedRole
+            : null;
+    }
+
+    private sealed record SceneCardChip(string Label, string Kind);
+}

@@ -6,6 +6,8 @@ namespace WriterApp.Device.Shared.Services;
 public sealed class LocalDocumentRepository(ILocalDocumentStore store)
 {
     public event Action? Changed;
+    public Task<LocalDocument> RecoverSnapshotAsync(LocalDocument source, CancellationToken cancellationToken = default) =>
+        Notify(store.RecoverSnapshotAsync(source, cancellationToken));
     private readonly Dictionary<Guid, int> _editing = [];
     public void BeginEditing(Guid id) { lock (_editing) _editing[id] = _editing.GetValueOrDefault(id) + 1; }
     public void EndEditing(Guid id)
@@ -15,6 +17,14 @@ public sealed class LocalDocumentRepository(ILocalDocumentStore store)
     { var result = await task; Changed?.Invoke(); return result; }
     public Task<LocalDocument> CreateAsync(string title, CancellationToken cancellationToken = default) =>
         Notify(store.CreateAsync(title, cancellationToken));
+    public Task<LocalDocument> CreateProjectAsync(string title, CancellationToken cancellationToken = default) =>
+        Notify(store.CreateProjectAsync(title, cancellationToken));
+    public Task<LocalDocument> CreateProjectDocumentAsync(Guid projectId, string title, string kind, CancellationToken ct = default) =>
+        Notify(store.CreateProjectDocumentAsync(projectId, title, kind, ct));
+    public Task<LocalDocument> MoveStandaloneToProjectAsync(LocalDocument source, Guid targetDocumentId, CancellationToken ct = default) =>
+        Notify(store.MoveStandaloneToProjectAsync(source, targetDocumentId, ct));
+    public Task<LocalDocument> MakePrimaryAsync(LocalDocument document, CancellationToken ct = default) =>
+        Notify(store.UpdateProjectMetadataAsync(document, makePrimary: true, ct: ct));
     public Task<LocalDocument> CreateImportedAsync(string title, string html, CancellationToken cancellationToken = default) =>
         Notify(store.CreateImportedAsync(title, html, cancellationToken));
     public Task<LocalDocument?> LoadAsync(Guid id, CancellationToken cancellationToken = default) =>
@@ -23,6 +33,15 @@ public sealed class LocalDocumentRepository(ILocalDocumentStore store)
         store.ListAsync(scope, cancellationToken);
     public Task<LocalDocument> SaveAsync(LocalDocument document, CancellationToken cancellationToken = default) =>
         Notify(store.SaveAsync(document, cancellationToken));
+    public Task<LocalDocument> AttachProjectAsync(LocalDocument document, string title, CancellationToken cancellationToken = default) =>
+        SaveAsync(LocalProjectStructure.Attach(document, title), cancellationToken);
+    public Task<LocalDocument> ChangeProjectAsync(LocalDocument document, LocalProjectChange change, CancellationToken cancellationToken = default) =>
+        change.Action == LocalProjectAction.RenameProject
+            ? Notify(store.UpdateProjectMetadataAsync(document, title: change.Title, ct: cancellationToken))
+            : SaveAsync(LocalProjectStructure.Apply(document, change, DateTimeOffset.UtcNow), cancellationToken);
+    public Task<LocalDocument> ChangeStructureAsync(LocalDocument document, LocalStructureChange change,
+        CancellationToken cancellationToken = default) =>
+        SaveAsync(LocalDocumentStructure.Apply(document, change, DateTimeOffset.UtcNow), cancellationToken);
     public Task<LocalDocument> RenameAsync(LocalDocument document, string title, CancellationToken cancellationToken = default) =>
         Notify(store.RenameAsync(document.DocumentId, document.LocalRevision, title, cancellationToken));
     public Task<LocalDocument> DuplicateAsync(Guid id, CancellationToken cancellationToken = default) =>

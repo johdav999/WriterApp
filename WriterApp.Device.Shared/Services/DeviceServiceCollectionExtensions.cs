@@ -23,24 +23,35 @@ public static class DeviceServiceCollectionExtensions
         services.AddSingleton(options);
         services.TryAddSingleton<IDeviceIdentityClient, UnconfiguredDeviceIdentityClient>();
         services.AddSingleton<DeviceAccountService>();
+        services.AddScoped<DeviceAccountOverview>();
+        services.TryAddSingleton<IDeviceExternalLauncher, UnavailableExternalLauncher>();
+        services.AddScoped<DeviceAccountLinks>();
         services.AddScoped(sp => new HttpClient(new DeviceAuthenticatedHandler(sp.GetRequiredService<DeviceAccountService>(), options.ApiBaseAddress)
         { InnerHandler = new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false } })
         { BaseAddress = options.ApiBaseAddress });
         services.AddSingleton(_ => new FileLocalDocumentStore(localDocumentPath));
         services.AddSingleton<ILocalDocumentStore>(sp => sp.GetRequiredService<FileLocalDocumentStore>());
         services.AddSingleton<LocalDocumentRepository>();
+        services.AddSingleton<LocalDocumentSearch>();
         services.TryAddSingleton<IDeviceFileDialog, UnavailableDeviceFileDialog>();
         services.TryAddSingleton<IDeviceUpdateService, UnavailableDeviceUpdateService>();
         services.TryAddSingleton(_ => new DeviceDiagnostics(Path.Combine(localDocumentPath, "diagnostics"),
             "unconfigured", DeviceEnvironment.Development));
         services.AddScoped<DeviceDocumentTransfer>();
+        services.TryAddSingleton<IDevicePdfExport, UnavailableDevicePdfExport>();
+        services.AddSingleton(_ => new LocalPublishingStore(Path.Combine(localDocumentPath,"publishing")));
         services.AddSingleton<DeviceConnectivity>();
         services.AddSingleton(_ => new DeviceSyncJournal(Path.Combine(localDocumentPath, "sync")));
         services.AddScoped<IDeviceSyncApi, DeviceSyncApi>();
         services.AddScoped<DeviceSyncEngine>();
         services.AddScoped<IDeviceAiApi, DeviceAiApi>();
         services.AddScoped<DeviceAiService>();
+        services.AddScoped<LocalStoryboardData>();
+        services.AddScoped<WriterApp.UI.Shared.Projects.IStoryboardData>(sp => sp.GetRequiredService<LocalStoryboardData>());
         services.AddSingleton(_ => new DeviceAiUndoStore(Path.Combine(localDocumentPath, "ai-undo")));
+        services.AddSingleton(_ => new LocalAiStore(Path.Combine(localDocumentPath, "ai-library")));
+        services.AddSingleton<LocalAiHistoryActions>();
+        services.AddScoped<DevicePromptLibrary>();
         services.AddSingleton(_ => new LocalRecoveryStore(Path.Combine(localDocumentPath, "recovery")));
         services.AddSingleton<LocalRecoveryService>();
         services.AddSingleton<DeviceSaveLifetime>();

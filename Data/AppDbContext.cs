@@ -19,6 +19,8 @@ namespace WriterApp.Data
 {
     public class AppDbContext : DbContext
     {
+        // Request-local manuscript scope. Project administration and sync leave this unset.
+        public Guid? ManuscriptScopeId { get; set; }
         public AppDbContext(DbContextOptions options)
             : base(options)
         {
@@ -80,6 +82,7 @@ namespace WriterApp.Data
 
         public override int SaveChanges()
         {
+            AssignManuscriptScope();
             NormalizeStringIds();
             SyncDocumentUnixTimestamps();
             return base.SaveChanges();
@@ -87,6 +90,7 @@ namespace WriterApp.Data
 
         public override int SaveChanges(bool acceptAllChangesOnSuccess)
         {
+            AssignManuscriptScope();
             NormalizeStringIds();
             SyncDocumentUnixTimestamps();
             return base.SaveChanges(acceptAllChangesOnSuccess);
@@ -94,6 +98,7 @@ namespace WriterApp.Data
 
         public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
         {
+            AssignManuscriptScope();
             NormalizeStringIds();
             SyncDocumentUnixTimestamps();
             return base.SaveChangesAsync(cancellationToken);
@@ -101,9 +106,25 @@ namespace WriterApp.Data
 
         public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
         {
+            AssignManuscriptScope();
             NormalizeStringIds();
             SyncDocumentUnixTimestamps();
             return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+        }
+
+        private void AssignManuscriptScope()
+        {
+            foreach (var entry in ChangeTracker.Entries<ProjectRecord>().Where(e => e.State == EntityState.Modified))
+            {
+                string[] metadata = [nameof(ProjectRecord.Title), nameof(ProjectRecord.Subtitle), nameof(ProjectRecord.AuthorName),
+                    nameof(ProjectRecord.Language), nameof(ProjectRecord.Genre), nameof(ProjectRecord.DefaultExportSettingsJson),
+                    nameof(ProjectRecord.CoverImageUrl), nameof(ProjectRecord.PrimaryDocumentId)];
+                if (!entry.Property(p => p.MetadataRevision).IsModified && metadata.Any(name => entry.Property(name).IsModified))
+                    entry.Entity.MetadataRevision++;
+            }
+            if (ManuscriptScopeId is not { } id) return;
+            foreach (var entry in ChangeTracker.Entries<ProjectNodeRecord>().Where(e => e.State == EntityState.Added))
+                entry.Entity.DocumentId ??= id;
         }
 
         protected override void OnModelCreating(ModelBuilder builder)
@@ -127,6 +148,14 @@ namespace WriterApp.Data
             builder.Entity<DocumentRecord>().ToTable("Documents", t => { t.HasTrigger("Sync_Documents"); t.UseSqlOutputClause(false); t.UseSqlReturningClause(false); });
             builder.Entity<SectionRecord>().ToTable("Sections", t => { t.HasTrigger("Sync_Sections"); t.UseSqlOutputClause(false); t.UseSqlReturningClause(false); });
             builder.Entity<PageRecord>().ToTable("Pages", t => { t.HasTrigger("Sync_Pages"); t.UseSqlOutputClause(false); t.UseSqlReturningClause(false); });
+            builder.Entity<ProjectRecord>().ToTable("Projects", t => { t.HasTrigger("Sync_Projects"); t.UseSqlOutputClause(false); t.UseSqlReturningClause(false); });
+            builder.Entity<ProjectNodeRecord>().ToTable("ProjectNodes", t => { t.HasTrigger("Sync_ProjectNodes"); t.UseSqlOutputClause(false); t.UseSqlReturningClause(false); });
+            builder.Entity<ProjectNodeRecord>().HasQueryFilter(n => n.SyncDeletionId == null
+                && (ManuscriptScopeId == null || n.DocumentId == ManuscriptScopeId));
+            builder.Entity<SceneNoteRecord>().ToTable("SceneNotes", t => { t.HasTrigger("Sync_SceneNotes"); t.UseSqlOutputClause(false); t.UseSqlReturningClause(false); });
+            builder.Entity<SceneCardRecord>().ToTable("SceneCards", t => { t.HasTrigger("Sync_SceneCards"); t.UseSqlOutputClause(false); t.UseSqlReturningClause(false); });
+            builder.Entity<SceneAnnotationRecord>().ToTable("SceneAnnotations", t => { t.HasTrigger("Sync_SceneAnnotations"); t.UseSqlOutputClause(false); t.UseSqlReturningClause(false); });
+            builder.Entity<DocumentSynopsisRecord>().ToTable("DocumentSynopses", t => { t.HasTrigger("Sync_DocumentSynopses"); t.UseSqlOutputClause(false); t.UseSqlReturningClause(false); });
             ValueConverter<DateTime?, DateTime?> nullableUtcDateTimeConverter = new(
                 value => NormalizeUtc(value),
                 value => NormalizeUtc(value));
@@ -345,9 +374,7 @@ namespace WriterApp.Data
                 entity.HasIndex(document => new { document.ProjectId, document.UpdatedAtUnixSeconds });
                 entity.HasIndex(document => new { document.OwnerUserId, document.UpdatedAtUnixSeconds });
                 entity.HasIndex(document => document.DocumentKind);
-                entity.HasIndex(document => new { document.ProjectId, document.DocumentKind })
-                    .IsUnique()
-                    .HasFilter($"\"DocumentKind\" = {(int)DocumentKind.Manuscript}");
+                entity.HasIndex(document => new { document.ProjectId, document.DocumentKind });
                 entity.HasIndex(document => document.DeletedAtUtc);
                 entity.HasIndex(document => document.IsArchived);
                 entity.HasOne(document => document.Project)
@@ -393,6 +420,9 @@ namespace WriterApp.Data
                 entity.Property(node => node.WordCountCache).IsRequired();
                 entity.Property(node => node.UpdatedUtc).IsRequired();
                 entity.HasIndex(node => new { node.ProjectId, node.ParentId, node.OrderIndex });
+                entity.HasIndex(node => new { node.DocumentId, node.ParentId, node.OrderIndex });
+                entity.HasOne<DocumentRecord>().WithMany().HasForeignKey(node => node.DocumentId)
+                    .OnDelete(DeleteBehavior.NoAction);
                 entity.HasIndex(node => node.LinkedSectionId);
                 entity.HasOne(node => node.Parent)
                     .WithMany(node => node.Children)

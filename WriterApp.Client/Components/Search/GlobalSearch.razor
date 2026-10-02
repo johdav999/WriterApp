@@ -51,14 +51,12 @@
                             @foreach (SearchResultDto item in group)
                             {
                                 <li>
-                                    <button type="button" class="global-search-result" @onclick="() => OnResultClickedAsync(item)">
-                                        <span class="global-search-type">@GetEntityLabel(item.EntityType)</span>
-                                        <span class="global-search-title">@item.Title</span>
+                                    <SearchResultButton Kind="@GetEntityLabel(item.EntityType)" Title="@item.Title" Selected="() => OnResultClickedAsync(item)">
                                         @if (!string.IsNullOrWhiteSpace(item.Snippet))
                                         {
-                                            <span class="global-search-snippet">@((MarkupString)item.Snippet)</span>
+                                            @((MarkupString)item.Snippet)
                                         }
-                                    </button>
+                                    </SearchResultButton>
                                 </li>
                             }
                         </ul>

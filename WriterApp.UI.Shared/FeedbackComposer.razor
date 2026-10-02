@@ -1,0 +1,40 @@
+@namespace WriterApp.UI.Shared
+@using WriterApp.Application.Feedback
+<section id="feedback-draft" aria-label="Feedback draft">
+<h2>Feedback</h2>
+<p>Only the text you enter below is submitted. No manuscript, document identifiers or diagnostic logs are attached. When you send, the backend adds your signed-in account identity for support to reply.</p>
+<fieldset disabled="@Busy">
+<label>Type<select @bind="_type"><option value="bug">Bug</option><option value="enhancement">Enhancement</option></select></label>
+<label>Title<input @bind="_title" maxlength="120" /></label>
+<label>Description<textarea @bind="_description" maxlength="8000" rows="5"></textarea></label>
+<button type="button" @onclick="Preview">Preview feedback</button>
+@if(_preview is not null) {
+    <h3>Review before sending</h3><p>@_preview.Type — @_preview.Subject</p><pre>@_preview.Description</pre>
+    <p>Destination: @Destination. Sending contacts Prosa support using your account.</p>
+    <button type="button" disabled="@(!CanSend || !MatchesPreview || _attempted)" @onclick="SendOnce">Send reviewed feedback</button>
+    @if(_attempted) { <p>Submission attempted. Review the delivery status below before creating another preview or retrying.</p> }
+    @if(!MatchesPreview) { <p>The draft or account changed. Preview again before sending.</p> }
+    @if(!CanSend) { <p>Sign in and connect to send. You can prepare and review feedback offline.</p> }
+}
+@if(_error is not null) { <p role="alert">@_error</p> }
+</fieldset>
+</section>
+@code {
+    [Parameter] public bool Busy {get;set;}
+    [Parameter] public bool CanSend {get;set;}
+    [Parameter] public string Destination {get;set;} = "Configured Prosa backend";
+    [Parameter] public string ReviewContext {get;set;} = "";
+    private string _previewContext="";
+    private bool _attempted;
+    private async Task SendOnce() { if(_preview is null || !MatchesPreview || !CanSend || _attempted) return; _attempted=true;await Send.InvokeAsync(_preview); }
+    [Parameter] public EventCallback<FeedbackDraft> Send {get;set;}
+    private string _type="bug",_title="",_description="";
+    private FeedbackDraft? _preview;
+    private string? _error;
+    private bool MatchesPreview => _previewContext==ReviewContext && _preview == new FeedbackDraft(_type,_title.Trim(),_description.Trim());
+    private void Preview() {
+        _error=null; _preview=null;_attempted=false;
+        try { var draft=new FeedbackDraft(_type,_title.Trim(),_description.Trim()); draft.Validate(); _preview=draft;_previewContext=ReviewContext; }
+        catch(InvalidOperationException e) { _error=e.Message; }
+    }
+}

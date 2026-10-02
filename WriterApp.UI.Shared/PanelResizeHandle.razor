@@ -1,0 +1,24 @@
+@using Microsoft.JSInterop
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<div @ref="_handle" class="panel-resize-handle is-@Side" role="separator" tabindex="0"
+     aria-label="@Label" aria-orientation="vertical" title="Drag to resize. Use arrow keys when focused; double-click to reset."></div>
+
+@code {
+    [Parameter] public string Side { get; set; } = "right";
+    [Parameter] public string Label { get; set; } = "Resize right panel";
+    private ElementReference _handle;
+    private IJSObjectReference? _module;
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        _module ??= await JS.InvokeAsync<IJSObjectReference>("import", "/_content/WriterApp.UI.Shared/panel-resize.js");
+        await _module.InvokeVoidAsync("attach", _handle, Side);
+    }
+    public async ValueTask DisposeAsync()
+    {
+        if (_module is null) return;
+        try { await _module.InvokeVoidAsync("detach", _handle); await _module.DisposeAsync(); }
+        catch (JSDisconnectedException) { }
+    }
+}

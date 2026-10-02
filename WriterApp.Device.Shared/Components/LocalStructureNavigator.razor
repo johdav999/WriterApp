@@ -1,0 +1,108 @@
+<div class="local-structure-navigator">
+    <button type="button" disabled="@Disabled" @onclick='() => Begin(new(LocalStructureAction.CreateSection), "New section", "")'>New section</button>
+    @if (_edit is { } edit)
+    {
+        <form class="navigator-structure-form" @onsubmit="SubmitAsync" @onsubmit:preventDefault>
+            <label for="structure-title">@_label</label>
+            <input id="structure-title" @bind="_title" @bind:event="oninput" maxlength="200" required disabled="@Disabled" />
+            <button type="submit" disabled="@(Disabled || string.IsNullOrWhiteSpace(_title))">Save title</button>
+            <button type="button" disabled="@Disabled" @onclick="Clear">Cancel</button>
+        </form>
+    }
+    @if (_delete is { } deletion)
+    {
+        <div class="navigator-structure-form" role="group" aria-label="Confirm move to local trash">
+            <p>Move @_label to local trash? Its writing stays on this device and can be restored after restarting. Cloud sync may remove the cloud item if it has no web-only metadata.</p>
+            <button type="button" disabled="@Disabled" @onclick="() => ConfirmDeleteAsync(deletion)">Confirm move to trash</button>
+            <button type="button" disabled="@Disabled" @onclick="Clear">Cancel</button>
+        </div>
+    }
+    <div role="tree" aria-label="Sections and pages" class="local-navigator">
+        @foreach (LocalSection section in Document.Sections)
+        {
+            <div @key="section.SectionId" role="treeitem" aria-expanded="true">
+                <div class="local-section-title">@section.Title</div>
+                <NavigatorStructureControls Label="@section.Title" Disabled="Disabled"
+                    CanMoveUp="@(section != Document.Sections.First())" CanMoveDown="@(section != Document.Sections.Last())" CanDelete="@(Document.Sections.Count > 1)"
+                    Rename='() => Begin(new(LocalStructureAction.RenameSection, section.SectionId), $"Rename {section.Title}", section.Title)'
+                    MoveUp="() => ChangeAsync(new(LocalStructureAction.SectionUp, section.SectionId))"
+                    MoveDown="() => ChangeAsync(new(LocalStructureAction.SectionDown, section.SectionId))"
+                    Delete="() => Confirm(new(LocalStructureAction.DeleteSection, section.SectionId), section.Title)">
+                    <button type="button" disabled="@Disabled" @onclick='() => Begin(new(LocalStructureAction.CreatePage, TargetSectionId: section.SectionId), "New page", "")'>New page</button>
+                </NavigatorStructureControls>
+                <div role="group">
+                @foreach (LocalPage item in section.Pages)
+                {
+                    <div @key="item.PageId">
+                        <NavigatorRow Title="@item.Title" Selected="@(item.PageId == SelectedPage)" Disabled="Disabled"
+                            OnSelect="() => SelectPage.InvokeAsync(item.PageId)" OnKeyDown='args => args.Key is "Enter" or " " ? SelectPage.InvokeAsync(item.PageId) : Task.CompletedTask'>
+                            <span class="tree-indent" aria-hidden="true"></span><span class="tree-node-badge">Page</span><span class="tree-select">@item.Title</span>
+                        </NavigatorRow>
+                        <NavigatorStructureControls Label="@item.Title" Disabled="Disabled"
+                            CanMoveUp="@(item != section.Pages.First())" CanMoveDown="@(item != section.Pages.Last())" CanDelete="@(section.Pages.Count > 1)"
+                            Rename='() => Begin(new(LocalStructureAction.RenamePage, item.PageId), $"Rename {item.Title}", item.Title)'
+                            MoveUp="() => ChangeAsync(new(LocalStructureAction.PageUp, item.PageId))"
+                            MoveDown="() => ChangeAsync(new(LocalStructureAction.PageDown, item.PageId))"
+                            Delete="() => Confirm(new(LocalStructureAction.DeletePage, item.PageId), item.Title)">
+                            @if (section.Pages.Count > 1 && Document.Sections.Count > 1)
+                            {
+                                <label>Move to section
+                                    <select aria-label="@($"Move {item.Title} to section")" disabled="@Disabled" value="" @onchange="args => MoveAsync(item.PageId, args)">
+                                        <option value="">Choose section</option>
+                                        @foreach (var target in Document.Sections.Where(s => s.SectionId != section.SectionId))
+                                        { <option value="@target.SectionId">@target.Title</option> }
+                                    </select>
+                                </label>
+                            }
+                        </NavigatorStructureControls>
+                    </div>
+                }
+                </div>
+            </div>
+        }
+    </div>
+    @if (Document.DeletedSections.Count + Document.DeletedPages.Count > 0)
+    {
+        <details class="local-structure-trash">
+            <summary>Local section/page trash (@(Document.DeletedSections.Count + Document.DeletedPages.Count))</summary>
+            <p>Restores retain their identities and append to the chosen section or document.</p>
+            @foreach (var entry in Document.DeletedSections)
+            {
+                <div><span>@entry.Section.Title · @entry.Section.Pages.Count pages</span>
+                    <button type="button" disabled="@Disabled" @onclick="() => ChangeAsync(new(LocalStructureAction.RestoreSection, entry.Section.SectionId))">Restore section</button></div>
+                @if (entry.Section.Pages.Count == 0) { <p>Its pages were moved to other sections by cloud sync. Restoring adds a new blank page.</p> }
+            }
+            @foreach (var entry in Document.DeletedPages)
+            {
+                <label>@entry.Page.Title · Restore to section
+                    <select aria-label="@($"Restore {entry.Page.Title} to section")" disabled="@Disabled" value="" @onchange="args => RestoreAsync(entry.Page.PageId, args)">
+                        <option value="">Choose section</option>
+                        @foreach (var section in Document.Sections) { <option value="@section.SectionId">@section.Title</option> }
+                    </select>
+                </label>
+            }
+        </details>
+    }
+    <p class="local-structure-hint">Keep one section and one page per section. Changes save on this device first. Deleted writing remains in local trash.</p>
+</div>
+@code {
+    [Parameter, EditorRequired] public LocalDocument Document { get; set; } = default!;
+    [Parameter] public Guid? SelectedPage { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public EventCallback<Guid> SelectPage { get; set; }
+    [Parameter] public EventCallback<LocalStructureChange> Change { get; set; }
+    private LocalStructureChange? _edit, _delete;
+    private string _title = "", _label = "";
+    private Guid _documentId;
+    protected override void OnParametersSet() { if (_documentId != Document.DocumentId) { Clear(); _documentId = Document.DocumentId; } }
+    private void Begin(LocalStructureChange change, string label, string title) { if (Disabled) return; Clear(); _edit = change; _label = label; _title = title; }
+    private void Confirm(LocalStructureChange change, string title) { if (Disabled) return; Clear(); _delete = change; _label = title; }
+    private void Clear() { _edit = null; _delete = null; }
+    private async Task SubmitAsync() { if (_edit is { } edit && !Disabled) { await Change.InvokeAsync(edit with { Title = _title }); } }
+    private async Task ConfirmDeleteAsync(LocalStructureChange change) { if (!Disabled) { await Change.InvokeAsync(change); Clear(); } }
+    private Task ChangeAsync(LocalStructureChange change) => Disabled ? Task.CompletedTask : Change.InvokeAsync(change);
+    private Task MoveAsync(Guid page, ChangeEventArgs args) => Guid.TryParse(args.Value?.ToString(), out var target)
+        ? ChangeAsync(new(LocalStructureAction.MovePage, page, target)) : Task.CompletedTask;
+    private Task RestoreAsync(Guid page, ChangeEventArgs args) => Guid.TryParse(args.Value?.ToString(), out var target)
+        ? ChangeAsync(new(LocalStructureAction.RestorePage, page, target)) : Task.CompletedTask;
+}

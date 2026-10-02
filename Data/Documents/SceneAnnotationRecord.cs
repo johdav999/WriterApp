@@ -14,6 +14,8 @@ namespace WriterApp.Data.Documents
 
         public string Status { get; set; } = "open";
 
+        public bool AnchorDetached { get; set; }
+
         public int AnchorFrom { get; set; }
 
         public int AnchorTo { get; set; }

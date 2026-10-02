@@ -1,23 +1,37 @@
-@using System.Net
-@using System.Net.Http.Json
-@using WriterApp.Application.Security
 @implements IDisposable
 @inject DeviceAccountService Account
-@inject HttpClient Api
+@inject DeviceAccountOverview Overview
 
-<details class="device-account">
-    <summary>@(Account.IsSignedIn ? Account.DisplayName ?? "Signed in" : "Account")</summary>
+<details class="device-account @(Compact ? "sidebar-account" : "")">
+    <summary>
+        @if (Compact)
+        {
+            <span class="account-avatar" aria-hidden="true">@Initials</span>
+            <span class="account-name">@DisplayName</span>
+            <LibraryIcon Name="chevron" />
+        }
+        else { @(Account.IsSignedIn ? Account.DisplayName ?? "Signed in" : "Account") }
+    </summary>
+    <div class="device-account-panel">
+    <a href="/account">Account, plan and help</a>
     <p>Sign in for online features. Local writing and saving work without an account.</p>
-    @if (!Account.IsConfigured) { <p>Native sign-in is not configured for this host. See the device setup guide.</p> }
+    @if (!Account.IsConfigured && Account.Message is null) { <p>Sign-in settings are missing from this build. Install a configured Prosa desktop build.</p> }
     @if (Account.Message is not null) { <p role="status">@Account.Message</p> }
     @if (_message is not null) { <p role="status">@_message</p> }
-    <button disabled="@(_busy || !Account.IsConfigured)" @onclick="SignInAsync">Sign in with browser</button>
+    <button disabled="@(_busy || !Account.IsConfigured)" @onclick="SignInAsync">@(Account.IsSignedIn ? "Switch account" : "Sign in with browser")</button>
     <button disabled="@(_busy || !Account.IsConfigured)" @onclick="SignOutAsync">Sign out on this device</button>
     @if (Account.IsSignedIn) { <button disabled="@_busy" @onclick="VerifyAsync">Check backend connection</button> }
     @if (_busy) { <button @onclick="() => _operation?.Cancel()">Cancel</button> }
+    @if (_busy) { <p role="status">Completing sign-in or checking the account…</p> }
+    </div>
 </details>
 
 @code {
+    [Parameter] public bool Compact { get; set; }
+    private string DisplayName => Account.IsSignedIn ? Account.DisplayName ?? "Signed in" : "Local account";
+    private string Initials => Account.IsSignedIn
+        ? string.Concat(DisplayName.Split(new[] { ' ', '.', '@' }, StringSplitOptions.RemoveEmptyEntries).Take(2).Select(part => char.ToUpperInvariant(part[0])))
+        : "P";
     private bool _busy;
     private string? _message;
     private CancellationTokenSource? _operation;
@@ -25,7 +39,11 @@
     protected override async Task OnInitializedAsync()
     {
         Account.Changed += Changed;
-        await RunAsync(ct => Account.RestoreAsync(ct));
+        await RunAsync(async ct =>
+        {
+            await Account.RestoreAsync(ct);
+            if (Account.IsSignedIn) await VerifyBackendAsync(ct);
+        });
     }
     private void Changed() { if (!_disposed) _ = InvokeAsync(StateHasChanged); }
     private Task SignInAsync() => RunAsync(async ct =>
@@ -34,23 +52,9 @@
     private Task VerifyAsync() => RunAsync(VerifyBackendAsync);
     private async Task VerifyBackendAsync(CancellationToken ct)
     {
-        using var probe = await Api.GetAsync("api/native/session", ct);
-        if (!probe.IsSuccessStatusCode) { _message = Failure(probe.StatusCode); return; }
-        // Reuse web provisioning and duplicate/deleted-account boundaries after the protected probe.
-        using var response = await Api.GetAsync("api/auth/me", ct);
-        if (!response.IsSuccessStatusCode) { _message = Failure(response.StatusCode); return; }
-        var profile = await response.Content.ReadFromJsonAsync<AuthMeDto>(cancellationToken: ct);
-        _message = profile?.IsAuthenticated == true
-            ? "Backend connection verified. Your Prosa account is available."
-            : "The backend did not recognize this account. Check native authentication configuration.";
+        await Overview.RefreshAsync(ct);
+        _message = Overview.Message;
     }
-    private static string Failure(HttpStatusCode status) => status switch
-    {
-        HttpStatusCode.Unauthorized => "The backend rejected sign-in. Sign in again or check the API registration.",
-        HttpStatusCode.Forbidden => "This account cannot access the requested backend feature.",
-        HttpStatusCode.Conflict => "An existing account needs identity linking. Contact support; no accounts were merged.",
-        _ => "The backend is unavailable or not configured for native sign-in. Local editing remains available."
-    };
     private async Task RunAsync(Func<CancellationToken, Task> action)
     {
         if (_busy) return;
@@ -61,6 +65,7 @@
         catch (OperationCanceledException) { _message = "Sign-in or connection check canceled."; }
         catch (DeviceSignInRequiredException) { _message = "Sign in to continue online."; }
         catch (DeviceIdentityUnavailableException) { _message = "Sign-in or secure storage is unavailable. Retry when available."; }
+        catch (DeviceIdentityConfigurationException error) { _message = error.Message; }
         catch (Exception error) when (error is HttpRequestException or System.Text.Json.JsonException or InvalidOperationException)
         { _message = "The backend could not be reached or returned an unexpected response. Local editing is unaffected."; }
         finally { _operation = null; _busy = false; }

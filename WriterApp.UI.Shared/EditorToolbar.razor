@@ -1,0 +1,51 @@
+                <div class="editor-toolbar" role="toolbar" aria-label="Editor formatting">
+                    <div class="editor-toolbar-group" aria-label="Essentials" data-compact="true">
+                        <button type="button" @onmousedown:preventDefault="true" class='@($"{GetActiveClass(State.IsBold)} icon-only")' disabled="@(!State.CanBold)" title='@GetTooltip("Make selected text bold.")' aria-label="Bold" @onclick="OnBold"><Icon Name="format_bold" /></button>
+                        <button type="button" @onmousedown:preventDefault="true" class='@($"{GetActiveClass(State.IsItalic)} icon-only")' disabled="@(!State.CanItalic)" title='@GetTooltip("Italicize selected text.")' aria-label="Italic" @onclick="OnItalic"><Icon Name="format_italic" /></button>
+                        <select aria-label="Text style" class="editor-toolbar-select" value="@GetBlockTypeValue()" title='@GetTooltip("Change text style.")' @onchange="BlockChanged" disabled="@(!State.CanApplyHeading)">
+                            <option value="paragraph">Paragraph</option>
+                            <option value="heading:1">Heading 1</option>
+                            <option value="heading:2">Heading 2</option>
+                            <option value="heading:3">Heading 3</option>
+                            @if (ExtendedHeadings)
+                            {
+                                <option value="heading:4">Heading 4</option>
+                                <option value="heading:5">Heading 5</option>
+                                <option value="heading:6">Heading 6</option>
+                            }
+                        </select>
+                        <button type="button" @onmousedown:preventDefault="true" class="icon-only" disabled="@(!State.CanToggleList)" title='@GetTooltip("Create a bulleted list.")' aria-label="Bulleted list" @onclick="OnBulletList"><Icon Name="format_list_bulleted" /></button>
+                        <button type="button" @onmousedown:preventDefault="true" class="icon-only" disabled="@(!State.CanToggleList)" title='@GetTooltip("Create a numbered list.")' aria-label="Numbered list" @onclick="OnOrderedList"><Icon Name="format_list_numbered" /></button>
+                        <button type="button" @onmousedown:preventDefault="true" class="icon-only" disabled="@(!State.CanBlockquote)" title='@GetTooltip("Format text as a quotation.")' aria-label="Blockquote" @onclick="OnBlockquote"><Icon Name="format_quote" /></button>
+                        <button type="button" @onmousedown:preventDefault="true" class='@($"{GetActiveClass(State.IsLink)} icon-only")' title='@GetTooltip("Insert or edit a link.")' aria-label="Link" @onclick="OnLink"><Icon Name="link" /></button>
+                    </div>
+    @AdditionalControls
+    @if (ShowHistory) {
+        <div class="editor-toolbar-group" aria-label="History">
+            <button type="button" @onmousedown:preventDefault="true" disabled="@(!CanUndo)" aria-label="Undo" @onclick="OnUndo"><Icon Name="undo" /></button>
+            <button type="button" @onmousedown:preventDefault="true" disabled="@(!CanRedo)" aria-label="Redo" @onclick="OnRedo"><Icon Name="redo" /></button>
+        </div>
+    }
+</div>
+@code {
+    [Parameter] public EditorFormattingState State { get; set; } = new();
+    [Parameter] public RenderFragment? AdditionalControls { get; set; }
+    [Parameter] public bool ShowHistory { get; set; }
+    [Parameter] public bool ExtendedHeadings { get; set; }
+    [Parameter] public bool CanUndo { get; set; }
+    [Parameter] public bool CanRedo { get; set; }
+    [Parameter] public EventCallback OnUndo { get; set; }
+    [Parameter] public EventCallback OnRedo { get; set; }
+    [Parameter] public EventCallback OnBold { get; set; }
+    [Parameter] public EventCallback OnItalic { get; set; }
+    [Parameter] public EventCallback OnBulletList { get; set; }
+    [Parameter] public EventCallback OnOrderedList { get; set; }
+    [Parameter] public EventCallback OnBlockquote { get; set; }
+    [Parameter] public EventCallback OnLink { get; set; }
+    [Parameter] public EventCallback<string> OnBlockType { get; set; }
+    [Parameter] public Func<string, string> Tooltip { get; set; } = text => text;
+    private string GetTooltip(string text) => Tooltip(text);
+    private string GetActiveClass(bool active) => active ? "is-active" : "";
+    private string GetBlockTypeValue() => State.BlockType ?? "paragraph";
+    private Task BlockChanged(ChangeEventArgs args) => OnBlockType.InvokeAsync(args.Value?.ToString() ?? "paragraph");
+}

@@ -1,0 +1,41 @@
+@using WriterApp.Application.Documents
+@using System.Text.Json
+@if (_proposal is null)
+{
+    <p role="alert">The scene suggestion could not be read. Run the scene coach again before applying.</p>
+}
+else
+{
+    <div class="scene-proposal-preview">
+        @if (_original is null) { <p>No scene details saved yet.</p> }
+        <table aria-label="Scene detail updates">
+            <thead><tr><th scope="col">Field</th><th scope="col">Original</th><th scope="col">Proposed</th></tr></thead>
+            <tbody>
+                @foreach (var field in Fields)
+                {
+                    <tr><th scope="row">@field.Label</th><td>@(Display(field.Read(_original)))</td><td>@(field.Read(_proposal) ?? "Unchanged")</td></tr>
+                }
+            </tbody>
+        </table>
+        @if (!string.IsNullOrWhiteSpace(_explanation)) { <p class="scene-proposal-explanation">@_explanation</p> }
+    </div>
+}
+@code {
+    [Parameter] public string? Original { get; set; }
+    [Parameter] public string? Proposed { get; set; }
+    [Parameter] public SectionSceneCardProposalDto? Proposal { get; set; }
+    private SectionSceneCardProposalDto? _original, _proposal;
+    private string? _explanation;
+    private static readonly (string Label, Func<SectionSceneCardProposalDto?, string?> Read)[] Fields = [
+        ("Summary", c => c?.Summary), ("Narrative purpose", c => c?.NarrativePurpose),
+        ("Narrative role", c => c?.NarrativeRole), ("Narrative intent", c => c?.NarrativeIntent),
+        ("Emotional beat", c => c?.EmotionalBeat), ("Key events", c => c?.KeyEvents),
+        ("Open questions", c => c?.OpenQuestions)];
+    protected override void OnParametersSet()
+    {
+        try { _original = string.IsNullOrWhiteSpace(Original) ? null : JsonSerializer.Deserialize<SectionSceneCardProposalDto>(Original, new JsonSerializerOptions(JsonSerializerDefaults.Web)); }
+        catch (JsonException) { _original = null; }
+        _proposal = SceneCardAiProposalParser.TryParse(Proposed, out var parsed, out _explanation) ? parsed : Proposal;
+    }
+    private static string Display(string? value) => string.IsNullOrWhiteSpace(value) ? "Not set" : value;
+}

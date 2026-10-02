@@ -1,0 +1,7 @@
+.local-structure-navigator { display: grid; gap: .75rem; }
+.navigator-structure-form { padding: .75rem; background: var(--bs-tertiary-bg, #f3f4f6); border: 1px solid #d4d8de; border-radius: 6px; }
+.navigator-structure-form input, .local-structure-trash select { display: block; width: 100%; margin: .5rem 0; }
+.navigator-structure-form button, .local-structure-trash button { margin: .25rem .25rem .25rem 0; }
+.local-structure-hint, .local-structure-trash p { font-size: .85rem; color: var(--bs-secondary-color, #52606d); }
+.local-structure-trash { padding-top: .5rem; border-top: 1px solid #d4d8de; }
+.local-structure-trash label { display: block; margin-top: .75rem; }

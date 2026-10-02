@@ -1,7 +1,7 @@
 @using WriterApp.Client.Services
 @using WriterApp.Client.State
 @implements IDisposable
-@inject EasyAuthMeClient EasyAuthMeClient
+@inject AuthStateService AuthStateService
 @inject AuthMeStateService AuthMeStateService
 @inject ClientLogoutService ClientLogoutService
 
@@ -58,7 +58,10 @@ else
             return;
         }
 
-        _state = await EasyAuthMeClient.GetAsync();
+        AuthState auth = await AuthStateService.GetAsync();
+        auth.Claims.TryGetValue("name", out string? displayName);
+        auth.Claims.TryGetValue("email", out string? email);
+        _state = new EasyAuthMeState(auth.IsAuthenticated, displayName, email);
         _loaded = true;
         await InvokeAsync(StateHasChanged);
     }

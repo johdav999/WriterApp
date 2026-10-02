@@ -1,0 +1,9 @@
+<section class="@Class" aria-label="AI writing actions">
+    @if (ShowTitle) { <h2>Writing tools</h2> }
+    @ChildContent
+</section>
+@code {
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    [Parameter] public string Class { get; set; } = "workspace-ai";
+    [Parameter] public bool ShowTitle { get; set; } = true;
+}

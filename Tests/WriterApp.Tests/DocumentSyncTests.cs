@@ -18,7 +18,7 @@ using Xunit;
 
 namespace WriterApp.Tests;
 
-public sealed class DocumentSyncTests : IAsyncLifetime
+public sealed partial class DocumentSyncTests : IAsyncLifetime
 {
     private readonly SqliteConnection _connection = new("Data Source=:memory:");
     private readonly EphemeralDataProtectionProvider _protection = new();
@@ -43,6 +43,8 @@ public sealed class DocumentSyncTests : IAsyncLifetime
         }
         await _db.Database.EnsureCreatedAsync();
         foreach (string sql in DocumentSyncSchemaV1.Install(_sqlDatabase is not null)) await _db.Database.ExecuteSqlRawAsync(sql);
+        foreach (string sql in ProjectSyncSchemaV2.Install(_sqlDatabase is not null)) await _db.Database.ExecuteSqlRawAsync(sql);
+        foreach (string sql in PlanningSyncSchemaV3.Install(_sqlDatabase is not null)) await _db.Database.ExecuteSqlRawAsync(sql);
         _sync = new(_db, _plans, _protection, new ProjectDeletionService(_db, NullLogger<ProjectDeletionService>.Instance), new SearchIndexBackfillQueue());
     }
     public async Task DisposeAsync()
@@ -53,6 +55,45 @@ public sealed class DocumentSyncTests : IAsyncLifetime
     }
     private static SyncMutation Create(string content = "<p>Local writing</p>") => new(Guid.NewGuid(), null, "upload",
         new("Book", "en", [new(Guid.NewGuid(), "Chapter", 0, null, "en", [new(Guid.NewGuid(), "Page", 0, content)])]));
+
+    [Theory]
+    [MemberData(nameof(DeviceContentCompatibilityTests.Supported), MemberType = typeof(DeviceContentCompatibilityTests))]
+    public async Task SharedCompatibilityContentRoundTripsThroughRealBackend(string html)
+    {
+        Guid id = Guid.NewGuid();
+        await _sync.MutateAsync("paid", id, Create(html));
+        var downloaded = await _sync.DownloadAsync("paid", id);
+        Assert.Equal(html, downloaded.Document!.Sections[0].Pages[0].Content);
+        var local = WriterApp.Device.Shared.Services.DeviceSyncMapping.Download(downloaded, Guid.NewGuid(), null, DateTimeOffset.UtcNow);
+        var upload = WriterApp.Device.Shared.Services.DeviceSyncMapping.Upload(local);
+        await _sync.MutateAsync("paid", id, new(Guid.NewGuid(), downloaded.State.Version, "upload", upload));
+        Assert.Equal(html, (await _sync.DownloadAsync("paid", id)).Document!.Sections[0].Pages[0].Content);
+    }
+
+    [Theory]
+    [InlineData("<table class=\"future\"><tr><td>Original 日本語</td></tr></table>")]
+    [InlineData("<p><img src=\"/original.png\" data-future=\"keep\"></p>")]
+    [InlineData("{\"type\":\"doc\",\"futureMetadata\":true}")]
+    public async Task ExistingRichOrLegacySourcePassesThroughWithoutSanitization(string source)
+    {
+        Guid id = Guid.NewGuid();
+        await _sync.MutateAsync("paid", id, Create());
+        var page = await _db.Set<PageRecord>().SingleAsync();
+        page.Content = source; // Existing web/legacy content, outside device upload restrictions.
+        await _db.SaveChangesAsync();
+        var original = await _sync.DownloadAsync("paid", id);
+        var local = WriterApp.Device.Shared.Services.DeviceSyncMapping.Download(original, Guid.NewGuid(), null, DateTimeOffset.UtcNow);
+        var upload = WriterApp.Device.Shared.Services.DeviceSyncMapping.Upload(local) with { Title = "Metadata edit" };
+        await _sync.MutateAsync("paid", id, new(Guid.NewGuid(), original.State.Version, "upload", upload));
+        var preserved = await _sync.DownloadAsync("paid", id);
+        Assert.Equal(source, preserved.Document!.Sections[0].Pages[0].Content);
+        var changed = upload with { Sections = upload.Sections.Select(s => s with
+            { Pages = s.Pages.Select(p => p with { Content = source + " changed" }).ToArray() }).ToArray() };
+        await Assert.ThrowsAsync<DocumentSyncException>(() => _sync.MutateAsync("paid", id, new(Guid.NewGuid(), preserved.State.Version, "upload", changed)));
+        Assert.Equal(source, (await _sync.DownloadAsync("paid", id)).Document!.Sections[0].Pages[0].Content);
+        // Knowing another document's page ID/source does not permit introducing it in a new upload.
+        await Assert.ThrowsAsync<DocumentSyncException>(() => _sync.MutateAsync("paid", Guid.NewGuid(), new(Guid.NewGuid(), null, "upload", upload)));
+    }
 
     [Fact]
     public async Task InitialIncrementalUploadAndReceiptSurviveLostResponse()
@@ -174,11 +215,21 @@ public sealed class DocumentSyncTests : IAsyncLifetime
     [InlineData("<script>alert(1)</script>")]
     [InlineData("<p onclick='alert(1)'>text</p>")]
     [InlineData("<a href='javascript:alert(1)'>text</a>")]
-    [InlineData("<img src='https://example.com'>")]
+    [InlineData("<img src='javascript:bad()'>")]
     public async Task UnsafeOrUnsupportedUploadsNeverMutateDatabase(string html)
     {
         Assert.Equal(400, (await Assert.ThrowsAsync<DocumentSyncException>(() => _sync.MutateAsync("paid", Guid.NewGuid(), Create(html)))).Status);
         Assert.Empty(await _db.Documents.ToListAsync());
+    }
+
+    [Fact]
+    public async Task DesktopToolbarRichHtmlSyncsWithoutDroppingFormatting()
+    {
+        const string html = "<p style=\"text-align: center; margin-left: 2em;\" data-indent-level=\"1\">Aligned</p><table style=\"min-width: 25px;\"><colgroup><col style=\"min-width: 25px;\"></colgroup><tbody><tr><th colspan=\"1\" rowspan=\"1\"><p>Header</p></th></tr></tbody></table><img src=\"data:image/png;base64,iVBORw0KGgo=\" alt=\"Embedded\">";
+        Guid id = Guid.NewGuid();
+        await _sync.MutateAsync("paid", id, Create(html));
+        var snapshot = await _sync.DownloadAsync("paid", id);
+        Assert.Equal(html, snapshot.Document!.Sections[0].Pages[0].Content);
     }
 
     [Fact]
@@ -231,15 +282,22 @@ public sealed class DocumentSyncTests : IAsyncLifetime
         await connection.OpenAsync();
         await using var db = new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connection).Options);
         var migrator = db.GetService<Microsoft.EntityFrameworkCore.Migrations.IMigrator>();
-        string previous = db.Database.GetMigrations().Reverse().Skip(1).First();
+        string previous = db.Database.GetMigrations().TakeWhile(m => !m.EndsWith("_AddDocumentSynchronization")).Last();
         await migrator.MigrateAsync(previous);
         var now = DateTimeOffset.UtcNow;
         var project = new ProjectRecord { Id = Guid.NewGuid(), OwnerUserId = "paid", Title = "Existing", CreatedUtc = now, UpdatedUtc = now };
         var document = new DocumentRecord { Id = Guid.NewGuid(), ProjectId = project.Id, OwnerUserId = "paid", Title = "Existing", CreatedAt = now, UpdatedAt = now };
-        db.Add(project); db.Add(document); await db.SaveChangesAsync();
+        await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO Projects (Id,OwnerUserId,Title,CreatedUtc,UpdatedUtc) VALUES ({project.Id},{project.OwnerUserId},{project.Title},{now},{now})");
+        await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO Documents (Id,ProjectId,OwnerUserId,Title,DocumentKind,CreatedAt,UpdatedAt,CreatedAtUnixSeconds,UpdatedAtUnixSeconds,IsArchived) VALUES ({document.Id},{project.Id},{document.OwnerUserId},{document.Title},{0},{now},{now},{0},{0},{false})");
+        Guid legacyNodeId = Guid.NewGuid();
+        await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO ProjectNodes (Id,ProjectId,NodeType,Title,OrderIndex,WordCountCache,UpdatedUtc) VALUES ({legacyNodeId},{project.Id},{1},{"Legacy chapter"},{0},{0},{now})");
         await db.Database.MigrateAsync();
         Assert.Equal(document.Id, (await db.DocumentSyncRecords.SingleAsync()).DocumentId);
         Assert.Equal("Existing", (await db.Documents.SingleAsync()).Title);
+        Assert.Equal(document.Id, (await db.Projects.SingleAsync()).PrimaryDocumentId);
+        var retainedNode = await db.ProjectNodes.SingleAsync();
+        Assert.Equal(legacyNodeId, retainedNode.Id);
+        Assert.Equal(document.Id, retainedNode.DocumentId);
         Assert.True((await db.DocumentSyncRecords.SingleAsync()).Sequence > 0);
     }
 
@@ -268,6 +326,85 @@ public sealed class DocumentSyncTests : IAsyncLifetime
         _plans.Paid = false;
         var forbidden = Assert.IsType<ObjectResult>(await controller.Changes());
         Assert.Equal(403, forbidden.StatusCode); Assert.Equal("entitlement_required", Assert.IsType<SyncError>(forbidden.Value).Code);
+    }
+
+    [Fact]
+    public async Task ExplicitMovesRemovalAndRestoreKeepServerIdentitiesAndContent()
+    {
+        Guid id = Guid.NewGuid();
+        var request = Create("<p>Move and recover 日本語</p>");
+        var first = request.Document!.Sections[0];
+        Guid movedId = first.Pages[0].Id;
+        var second = new SyncSection(Guid.NewGuid(), "Second", 10, null, "en", [new(Guid.NewGuid(), "Second page", 5, "<p>Second</p>")]);
+        first = first with { Pages = first.Pages.Append(new SyncPage(Guid.NewGuid(), "Keep first", 10, "<p>Keep</p>")).ToArray() };
+        request = request with { Document = request.Document with { Sections = [first, second] } };
+        var created = await _sync.MutateAsync("paid", id, request);
+        var move = request.Document! with { Sections = [first with { Pages = [first.Pages[1]] }, second with { Pages = second.Pages.Append(first.Pages[0] with { OrderIndex = 20 }).ToArray() }],
+            Structure = new(true, [], []) };
+        var moved = await _sync.MutateAsync("paid", id, new(Guid.NewGuid(), created.State.Version, "upload", move));
+        Assert.Equal(second.Id, (await _db.Pages.SingleAsync(p => p.Id == movedId)).SectionId);
+        _db.ChangeTracker.Clear();
+        Assert.Equal(movedId, (await _sync.DownloadAsync("paid", id)).Document!.Sections[1].Pages[1].Id);
+        var remove = move with { Sections = [move.Sections[0], second], Structure = new(true, [], [movedId]) };
+        var removalRequest = new SyncMutation(Guid.NewGuid(), moved.State.Version, "upload", remove);
+        var removed = await _sync.MutateAsync("paid", id, removalRequest);
+        Assert.False(await _db.Pages.AnyAsync(p => p.Id == movedId));
+        Assert.Equal(removed, await _sync.MutateAsync("paid", id, removalRequest)); // Same receipt on replay.
+        var restored = await _sync.MutateAsync("paid", id, new(Guid.NewGuid(), removed.State.Version, "upload", move));
+        Assert.Equal("<p>Move and recover 日本語</p>", (await _sync.DownloadAsync("paid", id)).Document!.Sections[1].Pages[1].Content);
+        var removeSection = move with { Sections = [move.Sections[1]], Structure = new(true, [first.Id], [first.Pages[1].Id]) };
+        var sectionRemoved = await _sync.MutateAsync("paid", id, new(Guid.NewGuid(), restored.State.Version, "upload", removeSection));
+        Assert.False(await _db.Sections.AnyAsync(s => s.Id == first.Id));
+        Assert.True(await _db.Pages.AnyAsync(p => p.Id == movedId));
+        await _sync.MutateAsync("paid", id, new(Guid.NewGuid(), sectionRemoved.State.Version, "upload", move));
+        _db.ChangeTracker.Clear();
+        Assert.Equal(first.Id, (await _sync.DownloadAsync("paid", id)).Document!.Sections[0].Id);
+    }
+
+    [Theory]
+    [InlineData("page-note", "structure_has_web_metadata")]
+    [InlineData("section-note", "structure_has_web_metadata")]
+    [InlineData("translation", "structure_has_web_metadata")]
+    [InlineData("rich", "structure_has_protected_content")]
+    [InlineData("legacy", "structure_has_protected_content")]
+    public async Task ExplicitRemovalRetainsWebOnlyMetadataAndProtectedSource(string feature, string code)
+    {
+        Guid id = Guid.NewGuid(); var request = Create();
+        var first = request.Document!.Sections[0];
+        var second = new SyncSection(Guid.NewGuid(), "Keep", 1, null, null, [new(Guid.NewGuid(), "Keep", 0, "<p>Keep</p>")]);
+        request = request with { Document = request.Document with { Sections = [first, second] } };
+        await _sync.MutateAsync("paid", id, request);
+        if (feature == "page-note") _db.PageNotes.Add(new() { PageId = first.Pages[0].Id, Notes = "Unknown to devices", UpdatedAt = DateTimeOffset.UtcNow });
+        if (feature == "section-note") _db.SectionNotes.Add(new() { SectionId = first.Id, NotesText = "Unknown to devices", UpdatedAtUtc = DateTimeOffset.UtcNow });
+        if (feature == "translation") (await _db.Sections.SingleAsync(s => s.Id == first.Id)).TranslationGroupId = Guid.NewGuid();
+        if (feature is "rich" or "legacy") (await _db.Pages.SingleAsync(p => p.Id == first.Pages[0].Id)).Content = feature == "rich" ? "<table class=\"future\"><tr><td>Original</td></tr></table>" : "{\"future\":true}";
+        await _db.SaveChangesAsync();
+        var snapshot = await _sync.DownloadAsync("paid", id);
+        var remove = request.Document! with { Sections = [second], Structure = new(true, [first.Id], [first.Pages[0].Id]) };
+        var error = await Assert.ThrowsAsync<DocumentSyncException>(() => _sync.MutateAsync("paid", id, new(Guid.NewGuid(), snapshot.State.Version, "upload", remove)));
+        Assert.Equal(422, error.Status); Assert.Equal(code, error.Error.Code);
+        _db.ChangeTracker.Clear();
+        var retained = await _sync.DownloadAsync("paid", id);
+        Assert.Equal(snapshot.State, retained.State);
+        Assert.Equal(snapshot.Document!.Sections[0].Pages[0].Content, retained.Document!.Sections[0].Pages[0].Content);
+        Assert.Equal(2, retained.Document.Sections.Count);
+    }
+
+    [Fact]
+    public async Task StructureRequestsRequireExplicitMissingIdsAndExpectedVersion()
+    {
+        Guid id = Guid.NewGuid(); var request = Create();
+        var created = await _sync.MutateAsync("paid", id, request);
+        var replacement = Create().Document! with { Structure = new(true, [], []) };
+        Assert.Equal("structure_removal_not_supported", (await Assert.ThrowsAsync<DocumentSyncException>(() => _sync.MutateAsync("paid", id, new(Guid.NewGuid(), created.State.Version, "upload", replacement)))).Error.Code);
+        var invalid = request.Document! with { Structure = new(true, [request.Document.Sections[0].Id], []) };
+        Assert.Equal(400, (await Assert.ThrowsAsync<DocumentSyncException>(() => _sync.MutateAsync("paid", id, new(Guid.NewGuid(), created.State.Version, "upload", invalid)))).Status);
+        var edit = request.Document with { Sections = [request.Document.Sections[0] with { Pages = [request.Document.Sections[0].Pages[0] with { Content = "<p>Remote edit wins its version</p>" }] }] };
+        var edited = await _sync.MutateAsync("paid", id, new(Guid.NewGuid(), created.State.Version, "upload", edit));
+        replacement = replacement with { Structure = new(true, [request.Document.Sections[0].Id], [request.Document.Sections[0].Pages[0].Id]) };
+        Assert.Equal(409, (await Assert.ThrowsAsync<DocumentSyncException>(() => _sync.MutateAsync("paid", id, new(Guid.NewGuid(), created.State.Version, "upload", replacement)))).Status);
+        Assert.Equal(edited.State, (await _sync.DownloadAsync("paid", id)).State);
+        Assert.Equal("<p>Remote edit wins its version</p>", (await _sync.DownloadAsync("paid", id)).Document!.Sections[0].Pages[0].Content);
     }
 
     private sealed class User : IUserIdResolver { public string ResolveUserId(System.Security.Claims.ClaimsPrincipal user) => "paid"; }

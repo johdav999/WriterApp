@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../WriterApp.Shared/WriterApp.Shared.csproj" />
+    <PackageReference Include="AngleSharp" Version="1.8.2" />
+    <PackageReference Include="DocumentFormat.OpenXml" Version="3.5.1" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.6" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="10.0.12" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="../Domain/Documents/**/*.cs" Link="Domain/Documents/**/*.cs" />
+    <Compile Include="../Data/Exporting/ExportTemplate.cs" Link="Data/Exporting/ExportTemplate.cs" />
+    <Compile Include="../Application/State/SectionNumberingService.cs" Link="Application/State/SectionNumberingService.cs" />
+    <Compile Include="../Application/State/PlainTextMapper.cs" Link="Application/State/PlainTextMapper.cs" />
+    <Compile Include="../Application/Exporting/IExportRenderer.cs" Link="Application/Exporting/IExportRenderer.cs" />
+    <Compile Include="../Application/Exporting/ExportResult.cs" Link="Application/Exporting/ExportResult.cs" />
+    <Compile Include="../Application/Exporting/ExportOptions.cs" Link="Application/Exporting/ExportOptions.cs" />
+    <Compile Include="../Application/Exporting/ExportFormat.cs" Link="Application/Exporting/ExportFormat.cs" />
+    <Compile Include="../Application/Exporting/ExportKind.cs" Link="Application/Exporting/ExportKind.cs" />
+    <Compile Include="../Application/Exporting/ExportHelpers.cs" Link="Application/Exporting/ExportHelpers.cs" />
+    <Compile Include="../Application/Exporting/MarkdownExportRenderer.cs" Link="Application/Exporting/MarkdownExportRenderer.cs" />
+    <Compile Include="../Application/Exporting/DocxExportRenderer.cs" Link="Application/Exporting/DocxExportRenderer.cs" />
+    <Compile Include="../Application/Exporting/EpubExportRenderer.cs" Link="Application/Exporting/EpubExportRenderer.cs" />
+    <Compile Include="../Application/Exporting/TemplatedHtmlExportRenderer.cs" Link="Application/Exporting/TemplatedHtmlExportRenderer.cs" />
+    <Compile Include="../Application/Exporting/ExportTemplateDefaults.cs" Link="Application/Exporting/ExportTemplateDefaults.cs" />
+    <Compile Include="../Application/Importing/SectionImportService.cs" Link="Application/Importing/SectionImportService.cs" />
+    <Compile Include="../Application/Importing/SectionImportModels.cs" Link="Application/Importing/SectionImportModels.cs" />
+    <Compile Include="../Application/Importing/ISectionImportService.cs" Link="Application/Importing/ISectionImportService.cs" />
+  </ItemGroup>
+</Project>

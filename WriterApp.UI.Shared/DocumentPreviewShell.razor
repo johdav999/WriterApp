@@ -1,0 +1,14 @@
+<div class="editor-preview-shell">
+    <div class="editor-preview-banner">
+        <div><div class="editor-preview-eyebrow">Full document preview</div><div class="editor-preview-copy">@Description</div></div>
+        <button type="button" class="panel-toggle" @onclick="BackToEditing">Back to editing</button>
+    </div>
+    @Tools
+    <div class="editor-preview-document" aria-label="Full document preview">@ChildContent</div>
+</div>
+@code {
+    [Parameter] public string Description { get; set; } = "Read the manuscript as a clean document without editing controls.";
+    [Parameter] public EventCallback BackToEditing { get; set; }
+    [Parameter] public RenderFragment? Tools { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

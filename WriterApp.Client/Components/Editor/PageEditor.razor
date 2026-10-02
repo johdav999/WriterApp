@@ -845,17 +845,7 @@ else
         };
     }
 
-    private static int CountWords(string html)
-    {
-        if (string.IsNullOrWhiteSpace(html))
-        {
-            return 0;
-        }
-
-        string decoded = PlainTextMapper.ToPlainText(html);
-        MatchCollection matches = Regex.Matches(decoded, @"\b[\p{L}\p{N}']+\b");
-        return matches.Count;
-    }
+    private static int CountWords(string html) => EditorWordMetrics.CountHtml(html);
 
     public void Dispose()
     {

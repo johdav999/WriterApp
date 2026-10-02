@@ -10,11 +10,13 @@ namespace WriterApp.Client.State
     {
         private readonly ILogger<ProjectStructureCacheService> _logger;
         private List<ProjectDto>? _projects;
-        private readonly Dictionary<Guid, ProjectTreeDto> _treesByProjectId = new();
+        private readonly Dictionary<(Guid ProjectId, Guid? DocumentId), ProjectTreeDto> _treesByProjectId = new();
+        private readonly ManuscriptSelectionState _selection;
 
-        public ProjectStructureCacheService(ILogger<ProjectStructureCacheService> logger)
+        public ProjectStructureCacheService(ILogger<ProjectStructureCacheService> logger, ManuscriptSelectionState? selection = null)
         {
             _logger = logger;
+            _selection = selection ?? new();
         }
 
         public bool TryGetProjects(out IReadOnlyList<ProjectDto> projects)
@@ -39,7 +41,7 @@ namespace WriterApp.Client.State
 
         public bool TryGetProject(Guid projectId, out ProjectDto project)
         {
-            if (projectId != Guid.Empty && _treesByProjectId.TryGetValue(projectId, out ProjectTreeDto? cachedTree))
+            if (projectId != Guid.Empty && _treesByProjectId.TryGetValue((projectId, _selection.ForProject(projectId)), out ProjectTreeDto? cachedTree))
             {
                 project = cachedTree.Project;
                 _logger.LogDebug("ProjectStructureCache hit Scope=Project ProjectId={ProjectId} Source=Tree", projectId);
@@ -91,7 +93,7 @@ namespace WriterApp.Client.State
 
         public bool TryGetProjectTree(Guid projectId, out ProjectTreeDto tree)
         {
-            if (_treesByProjectId.TryGetValue(projectId, out ProjectTreeDto? cached))
+            if (_treesByProjectId.TryGetValue((projectId, _selection.ForProject(projectId)), out ProjectTreeDto? cached))
             {
                 _logger.LogDebug("ProjectStructureCache hit Scope=Tree ProjectId={ProjectId} NodeCount={NodeCount}", projectId, cached.Nodes.Count);
                 tree = Clone(cached);
@@ -111,7 +113,7 @@ namespace WriterApp.Client.State
             }
 
             ProjectTreeDto clone = Clone(tree);
-            _treesByProjectId[tree.Project.Id] = clone;
+            _treesByProjectId[(tree.Project.Id, tree.DocumentId ?? tree.Project.DocumentId)] = clone;
             _logger.LogDebug(
                 "ProjectStructureCache stored Scope=Tree ProjectId={ProjectId} NodeCount={NodeCount}",
                 tree.Project.Id,
@@ -140,7 +142,8 @@ namespace WriterApp.Client.State
                 return;
             }
 
-            bool removed = _treesByProjectId.Remove(projectId);
+            bool removed = false;
+            foreach (var key in _treesByProjectId.Keys.Where(k => k.ProjectId == projectId).ToArray()) removed |= _treesByProjectId.Remove(key);
             _logger.LogDebug(
                 "ProjectStructureCache invalidated Scope=Tree ProjectId={ProjectId} Reason={Reason} Removed={Removed}",
                 projectId,
@@ -169,7 +172,7 @@ namespace WriterApp.Client.State
 
         private static ProjectTreeDto Clone(ProjectTreeDto tree)
         {
-            return new ProjectTreeDto(tree.Project, tree.Nodes.ToArray());
+            return new ProjectTreeDto(tree.Project, tree.Nodes.ToArray(), tree.DocumentId);
         }
     }
 }

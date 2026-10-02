@@ -1,0 +1,9 @@
+<header class="landing-header">
+    <div><h1 tabindex="-1">@Title</h1><p class="landing-subtitle">@Subtitle</p></div>
+    @Actions
+</header>
+@code {
+    [Parameter] public string Title { get; set; } = "Documents";
+    [Parameter] public string? Subtitle { get; set; }
+    [Parameter] public RenderFragment? Actions { get; set; }
+}

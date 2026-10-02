@@ -1,0 +1,140 @@
+@page "/documents/{DocumentId:guid}/publishing"
+@using WriterApp.Application.Exporting
+@inject LocalDocumentRepository Documents
+@inject LocalPublishingStore Settings
+@inject IDeviceFileDialog Files
+@inject IDevicePdfExport Pdf
+<PageTitle>Publishing · Prosa</PageTitle>
+<div class="publishing">
+<h1>Publishing</h1>
+@if (_document is not null && _state is not null)
+{
+    <p>@_document.Title · Exports stay on this device. No manuscript is uploaded for conversion.</p>
+    <a href="@($"/documents/{DocumentId}")">Return to writing</a>
+    <div class="publishing-layout">
+    <fieldset disabled="@_busy">
+        <legend>Export settings</legend>
+        <label>Format<select @bind="Format">
+            <option value="Html">HTML</option><option value="Text">Plain text</option><option value="Markdown">Markdown</option>
+            <option value="Docx">DOCX</option><option value="Epub">EPUB</option>
+            @if (Pdf.IsAvailable) { <option value="Pdf">PDF (Windows)</option> }
+        </select></label>
+        <ExportScopeFields Value="@Options.Scope" ValueChanged="ScopeChanged" />
+        @if (Options.Scope == "section")
+        {
+            <label>Section / scene<select @bind="Section">
+                @foreach(var section in DevicePublishing.Select(_document,new()).Sections) { <option value="@section.SectionId">@section.Title</option> }
+            </select></label>
+        }
+        @if (Options.Format is DeviceExportFormat.Html or DeviceExportFormat.Pdf)
+        {
+            <label>Layout template<select @bind="Template">
+                @foreach(var template in ExportTemplatePresets.All) { <option value="@template.Key">@template.Name</option> }
+            </select></label>
+        }
+        else { <p>DOCX and EPUB use their built-in converter layouts. Text and Markdown have no page layout.</p> }
+        @if (Options.Format != DeviceExportFormat.Text)
+        { <label class="check"><input type="checkbox" @bind="TitlePage" /> Include title page</label> }
+        <label class="check"><input type="checkbox" @bind="IncludeCover" /> Include cover</label>
+        <p>PNG cover, at most 2 MB. Stored with this manuscript's local publishing settings.</p>
+        <button @onclick="PickCover" disabled="@(!Files.IsAvailable)">Choose local cover</button>
+        @if (_state.Cover is { } cover) { <img class="cover" src="@cover.DataUri" alt="Local publishing cover" /><p>@cover.FileName</p> }
+        <button @onclick="SaveOptions">Save settings on this device</button>
+        <label>Saved preset<select value="" @onchange="LoadPreset">
+            <option value="">Choose preset</option>
+            @foreach(var preset in _state.Presets) { <option value="@preset.Id">@preset.Name</option> }
+        </select></label>
+        <label>New preset name<input @bind="_presetName" @bind:event="oninput" maxlength="100" /></label>
+        <button @onclick="SavePreset">Save new preset</button>
+        <button @onclick="Preview">Preview saved writing</button>
+        <button @onclick="Export" disabled="@(!Files.IsAvailable || (Options.Format == DeviceExportFormat.Pdf && !Pdf.IsAvailable))">Export to file</button>
+        @if (!Files.IsAvailable) { <p>Native file saving is unavailable in this host. Preview remains available.</p> }
+    </fieldset>
+    <section aria-label="Publishing preview">
+        <h2>Preview</h2>
+        <p>@DevicePublishing.ConversionNotice</p>
+        @if (_snapshot is not null)
+        {
+            <p>Saved writing revision @_snapshot.Revision · @_snapshot.Options.Scope · HTML layout preview</p>
+            <ExportPreviewFrame Html="@_snapshot.PreviewHtml" />
+        }
+        else { <p>Choose Preview to render the current saved writing. Export takes a fresh snapshot.</p> }
+    </section>
+    </div>
+}
+else if (_error is null) { <p>Loading publishing settings…</p> }
+@if (_message is not null) { <p role="status">@_message</p> }
+@if (_error is not null) { <p role="alert">@_error</p> }
+</div>
+@code {
+    [Parameter] public Guid DocumentId { get; set; }
+    private LocalDocument? _document;
+    private LocalPublishingState? _state;
+    private PublishingSnapshot? _snapshot;
+    private string? _error, _message;
+    private string _presetName="";
+    private bool _busy;
+    private Guid _loaded;
+    private LocalPublishingOptions Options { get => _state!.Options; set { _state=_state! with { Options=value }; _snapshot=null; } }
+    private string Format { get => Options.Format.ToString(); set => Options=Options with { Format=Enum.Parse<DeviceExportFormat>(value), IncludeCover=false }; }
+    private string Template { get=>Options.Template; set=>Options=Options with { Template=value }; }
+    private bool TitlePage { get=>Options.TitlePage; set=>Options=Options with { TitlePage=value }; }
+    private bool IncludeCover { get=>Options.IncludeCover; set=>Options=Options with { IncludeCover=value }; }
+    private string Section { get=>Options.SectionId?.ToString() ?? ""; set=>Options=Options with { SectionId=Guid.Parse(value) }; }
+    protected override async Task OnParametersSetAsync()
+    {
+        if(_loaded==DocumentId) return;
+        _loaded=DocumentId; _state=null; _document=null; _snapshot=null;
+        await Run(async () => { _document=await Latest(); _state=await Settings.LoadAsync(_document); });
+    }
+    private async Task<LocalDocument> Latest()
+    {
+        var doc=await Documents.LoadAsync(DocumentId) ?? throw new IOException("Document unavailable.");
+        if(doc.DeletedAtUtc is not null) throw new IOException("Restore the document before publishing.");
+        return doc;
+    }
+    private void ScopeChanged(string scope) => Options=Options with { Scope=scope, SectionId=DevicePublishing.Select(_document!,new()).Sections.First().SectionId };
+    private Task SaveOptions() => Run(async () => { _state=await Settings.SaveAsync(await Latest(),_state!); _message="Publishing settings saved locally."; });
+    private Task PickCover() => Run(async () => {
+        var file=await Files.PickCoverAsync();
+        if(file is null) { _message="Cover selection canceled."; return; }
+        var doc=await Latest();
+        var next=_state! with { Cover=LocalCover.Create(doc,file) };
+        _state=await Settings.SaveAsync(doc,next); _snapshot=null; _message="Cover saved on this device.";
+    });
+    private void LoadPreset(ChangeEventArgs e) { if(Guid.TryParse(e.Value?.ToString(),out var id)) Options=_state!.Presets.Single(p=>p.Id==id).Options; }
+    private Task SavePreset() => Run(async () => {
+        var name=_presetName.Trim(); if(name.Length==0) throw new InvalidDataException("Enter a preset name.");
+        _state=await Settings.SaveAsync(await Latest(),_state! with { Presets=_state.Presets.Append(new(Guid.NewGuid(),name,Options)).ToArray() });
+        _presetName=""; _message="Preset saved on this device.";
+    });
+    private async Task<PublishingSnapshot> Snapshot()
+    {
+        var doc=await Latest();
+        _snapshot=await DevicePublishing.PrepareAsync(doc,Options,_state?.Cover);
+        return _snapshot;
+    }
+    private Task Preview() => Run(async () => { await Snapshot(); });
+    private Task Export() => Run(async () => {
+        var snapshot=await Snapshot();
+        var file=snapshot.File;
+        if(snapshot.Options.Format==DeviceExportFormat.Pdf) {
+            var layout=ExportTemplatePresets.GetByKey(snapshot.Options.Template)!;
+            byte[]? pdf=await Pdf.RenderAsync(snapshot.PreviewHtml,layout.PageWidthMm,layout.PageHeightMm);
+            if(pdf is null) { _message="PDF preview canceled. No file saved."; return; }
+            file=new(Path.ChangeExtension(file.SuggestedFileName,".pdf"),".pdf",pdf);
+        }
+        bool saved=await Files.SaveAsync(file.SuggestedFileName,file.Extension,file.Content);
+        _message=saved ? $"Exported saved writing revision {snapshot.Revision}." : "Export canceled. No file saved.";
+    });
+    private async Task Run(Func<Task> action)
+    {
+        if(_busy) return;
+        _busy=true; _message=null; _error=null;
+        try { await action(); }
+        catch(OperationCanceledException) { _message="Canceled. Writing was not changed."; }
+        catch(Exception e) when(e is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException or ArgumentException or System.Text.Json.JsonException or System.Runtime.InteropServices.COMException)
+        { _error="Publishing did not complete. Writing was not changed. "+e.Message; }
+        finally { _busy=false; }
+    }
+}

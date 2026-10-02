@@ -1,0 +1,31 @@
+@page "/projects/{ProjectId:guid}/planning"
+@inject LocalDocumentRepository Documents
+@inject NavigationManager Navigation
+<p role="status">@(_error ?? "Opening planning in the editor…")</p>
+@code {
+    [Parameter] public Guid ProjectId { get; set; }
+    [SupplyParameterFromQuery(Name = "view")] public string? RequestedView { get; set; }
+    [SupplyParameterFromQuery(Name = "scene")] public Guid? RequestedScene { get; set; }
+    [SupplyParameterFromQuery(Name = "documentId")] public Guid? RequestedDocumentId { get; set; }
+    private string? _error;
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (RequestedView is null or "Storyboard")
+        {
+            Navigation.NavigateTo($"/projects/{ProjectId}/storyboard?documentId={RequestedDocumentId}" + (RequestedScene is null ? "" : $"&scene={RequestedScene}"), replace: true);
+            return;
+        }
+        try {
+            var candidates = (await Documents.ListAsync()).Documents.Where(d => d.Project?.ProjectId == ProjectId && d.Kind == "manuscript").ToArray();
+            var document = RequestedDocumentId is { } id ? candidates.FirstOrDefault(d => d.DocumentId == id)
+                : candidates.FirstOrDefault(d => d.DocumentId == d.Project!.PrimaryDocumentId) ?? candidates.FirstOrDefault();
+            if (document is null) { _error = "Project unavailable. Restore a trashed manuscript first."; StateHasChanged(); return; }
+            var scene = document.Project!.Nodes.FirstOrDefault(n => n.NodeId == RequestedScene && n.DeletionId is null);
+            var page = document.Sections.FirstOrDefault(s => s.SectionId == scene?.SectionId)?.Pages.FirstOrDefault()?.PageId;
+            string panel = RequestedView == "Notes & Tasks" ? "Notes" : "Story";
+            string view = RequestedView == "Synopsis" ? "synopsis" : RequestedView == "Notes & Tasks" ? "annotations" : "storyboard";
+            Navigation.NavigateTo($"/documents/{document.DocumentId}?panel={panel}&view={view}" + (page is null ? "" : $"&page={page}&search={Guid.NewGuid():N}"), replace: true);
+        } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { _error = e.Message; StateHasChanged(); }
+    }
+}

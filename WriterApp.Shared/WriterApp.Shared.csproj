@@ -6,4 +6,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Editor/content-contract.json" LogicalName="WriterApp.ContentContract" />
+  </ItemGroup>
 </Project>

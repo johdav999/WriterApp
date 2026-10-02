@@ -1,0 +1,54 @@
+<div class="editor-toolbar-group editor-toolbar-overflow" aria-label="More" @onkeydown="OnKeyDown">
+    <button type="button" class="icon-only" aria-label="More formatting options" title="More formatting options"
+            aria-expanded="@_open" @ref="_trigger" @onmousedown:preventDefault="true" @onclick="() => _open = !_open"><Icon Name="more_horiz" /></button>
+    @if (_open)
+    {
+        <button type="button" class="editor-overflow-dismiss" tabindex="-1" aria-label="Close formatting options" @onclick="Close" />
+        <div class="editor-toolbar-overflow-panel is-align-left" role="group" aria-label="More formatting options">
+            @foreach (var item in Commands())
+            {
+                @if (item.Command == "table-label")
+                { <div class="editor-toolbar-divider"></div><div class="editor-toolbar-subtitle">Table</div> }
+                else
+                {
+                    <button type="button" class="@(item.Active ? "is-active" : "")" disabled="@(!item.Enabled)" aria-label="@item.Label"
+                            aria-pressed="@item.Active" @onmousedown:preventDefault="true" @onclick="() => Run(item.Command)"><Icon Name="@item.Icon" /> @item.Label</button>
+                }
+            }
+        </div>
+    }
+</div>
+@code {
+    [Parameter] public EditorFormattingState State { get; set; } = new();
+    [Parameter] public EventCallback<string> OnCommand { get; set; }
+    private bool _open;
+    private ElementReference _trigger;
+    private void Close() => _open = false;
+    private async Task Run(string command) { await OnCommand.InvokeAsync(command); Close(); }
+    private async Task OnKeyDown(KeyboardEventArgs args)
+    { if (args.Key == "Escape" && _open) { Close(); await _trigger.FocusAsync(); } }
+    private record Item(string Command, string Label, string Icon, bool Enabled, bool Active = false);
+    private IEnumerable<Item> Commands()
+    {
+        yield return new("strike", "Strikethrough", "format_strikethrough", State.CanStrike, State.IsStrike);
+        yield return new("code", "Inline code", "code", State.CanCode, State.IsCode);
+        for (int level = 3; level <= 6; level++) yield return new($"heading:{level}", $"Heading {level}", $"looks_{level}", State.CanApplyHeading);
+        yield return new("horizontalRule", "Horizontal rule", "horizontal_rule", State.CanHorizontalRule);
+        foreach (string alignment in new[] { "left", "center", "right" })
+            yield return new($"align:{alignment}", $"Align {alignment}", $"format_align_{alignment}", State.CanAlign, State.TextAlign == alignment);
+        yield return new("decreaseIndent", "Decrease indent", "format_indent_decrease", State.CanDecreaseIndent);
+        yield return new("increaseIndent", "Increase indent", "format_indent_increase", State.CanIncreaseIndent);
+        yield return new("table-label", "Table", "", false);
+        yield return new("addRowBefore", "Row above", "table_rows", State.CanAddTableRowBefore);
+        yield return new("addRowAfter", "Row below", "table_rows", State.CanAddTableRowAfter);
+        yield return new("deleteRow", "Delete row", "delete", State.CanDeleteTableRow);
+        yield return new("addColumnBefore", "Column left", "view_column", State.CanAddTableColumnBefore);
+        yield return new("addColumnAfter", "Column right", "view_column", State.CanAddTableColumnAfter);
+        yield return new("deleteColumn", "Delete column", "delete", State.CanDeleteTableColumn);
+        yield return new("toggleHeaderRow", "Header row", "table_rows_narrow", State.CanToggleTableHeaderRow, State.IsHeaderCell);
+        yield return new("toggleHeaderColumn", "Header column", "view_column", State.CanToggleTableHeaderColumn);
+        yield return new("mergeCells", "Merge cells", "join", State.CanMergeTableCells);
+        yield return new("splitCell", "Split cell", "call_split", State.CanSplitTableCell);
+        yield return new("deleteTable", "Delete table", "delete", State.CanDeleteTable);
+    }
+}

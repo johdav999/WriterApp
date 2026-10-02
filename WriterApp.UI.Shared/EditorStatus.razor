@@ -1,0 +1,16 @@
+<div class="editor-status-bar">
+    @if (WordCount is { } count) { <span title="@WordCountScope">@count words</span> }
+    @if (SaveLabel is not null) { <span role="status" class="@SaveClass" title="@SaveDetail">@SaveLabel</span> }
+    @if (StorageLabel is not null) { <span title="@StorageDetail">@StorageLabel</span> }
+    @ChildContent
+</div>
+@code {
+    [Parameter] public int? WordCount { get; set; }
+    [Parameter] public string WordCountScope { get; set; } = "Words in the current writing.";
+    [Parameter] public string? SaveLabel { get; set; }
+    [Parameter] public string? SaveClass { get; set; }
+    [Parameter] public string? SaveDetail { get; set; }
+    [Parameter] public string? StorageLabel { get; set; }
+    [Parameter] public string? StorageDetail { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

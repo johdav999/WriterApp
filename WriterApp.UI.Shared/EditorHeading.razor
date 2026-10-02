@@ -1,0 +1,12 @@
+<div class="editor-main-header">
+    <div class="editor-section-info" id="onboarding-project-structure">
+        <div class="editor-section-label">@Label</div>
+        <div class="editor-section-title">@Title</div>
+    </div>
+    <div class="editor-main-header-actions">@Actions</div>
+</div>
+@code {
+    [Parameter] public string Label { get; set; } = "Section";
+    [Parameter] public string? Title { get; set; }
+    [Parameter] public RenderFragment? Actions { get; set; }
+}

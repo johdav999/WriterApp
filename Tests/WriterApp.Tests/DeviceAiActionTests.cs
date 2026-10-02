@@ -65,6 +65,40 @@ public sealed class DeviceAiActionTests
         Assert.Equal(DeviceAiFailure.Invalid, Assert.Throws<DeviceAiException>(() => DeviceAiRequests.Build(document, section, page, noSelection, DeviceAiAction.Custom, "  ")).Kind);
         Assert.Equal(DeviceAiFailure.Offline, Assert.Throws<DeviceAiException>(() => DeviceAiRequests.Build(document with { SyncState = LocalSyncState.PendingUpload }, section, page, Selected, DeviceAiAction.Summarize)).Kind);
     }
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void StyleRevisionIsAnApplicableRewriteOfTheCapturedSelectionOrPage(bool wholePage)
+    {
+        var (document, section, page) = Source();
+        var capture = wholePage ? Selected with { SelectedText = Selected.PlainText, SelectionStart = 0,
+            SelectionEnd = Selected.PlainText.Length, From = 0, To = 12 } : Selected;
+        var prepared = DeviceAiRequests.Build(document, section, page, capture, DeviceAiAction.StyleQuality);
+        prepared.RequireManuscriptTarget();
+        Assert.Equal("custom_transform", prepared.Key);
+        Assert.Equal("replace", prepared.ApplyMode);
+        Assert.Equal(wholePage ? DeviceAiApplyTarget.ManuscriptPage : DeviceAiApplyTarget.ManuscriptSelection, prepared.Target);
+        Assert.Equal("selection", prepared.Request.Parameters!["scope"]);
+        Assert.Contains("Return only the complete revised writing", prepared.Request.Parameters["template"]!.ToString());
+        Assert.DoesNotContain("Do not rewrite", prepared.Request.Parameters["template"]!.ToString());
+        Assert.Equal(capture.SelectedText, prepared.Request.OriginalText);
+        Assert.Equal(capture.SelectionStart, prepared.Request.SelectionStart);
+        Assert.Equal(capture.SelectionEnd, prepared.Request.SelectionEnd);
+        Assert.Equal("Alpha beta", prepared.Request.SurroundingText);
+        Assert.DoesNotContain("Second page", prepared.Request.SurroundingText);
+        Assert.Equal("v1", prepared.Request.ExpectedDocumentVersion);
+        Assert.Equal(page.PageId, prepared.LocalPageId);
+        Assert.Throws<DeviceAiException>(() => (prepared with { ApplyMode = "append" }).RequireManuscriptTarget());
+        Assert.Throws<DeviceAiException>(() => (prepared with { Key = "scene.suggest" }).RequireManuscriptTarget());
+        Assert.Equal("<p>Alpha beta</p>", page.Content);
+    }
+    [Fact]
+    public void StyleRevisionRequiresAnExplicitNonemptyCapturedRange()
+    {
+        var (document, section, page) = Source();
+        Assert.Throws<DeviceAiException>(() => DeviceAiRequests.Build(document, section, page,
+            Selected with { SelectedText = "", From = 7, To = 7 }, DeviceAiAction.StyleQuality));
+    }
     [Fact]
     public void HtmlContextDecodesMarkupWhileLeavingLiteralTextInert()
     {
@@ -152,6 +186,16 @@ public sealed class DeviceAiActionTests
         Assert.Equal(expected, error.Kind); Assert.Equal(0, api.ExecuteCount);
     }
     [Fact]
+    public async Task OlderBackendIsRejectedBeforeAnyBillableAiCall()
+    {
+        var api = new FakeApi { Usage = new() { AiEnabled=true,UiEnabled=true,QuotaRemaining=100 } };
+        var (doc,section,page) = Source();
+        var request = DeviceAiRequests.Build(doc,section,page,Selected,DeviceAiAction.Translate,"Swedish");
+        var service = new DeviceAiService(api,await SignedInAsync(),new());
+        var error = await Assert.ThrowsAsync<DeviceAiException>(()=>service.ProposeAsync(request,default));
+        Assert.Equal(DeviceAiFailure.Invalid,error.Kind); Assert.Equal(0,api.ExecuteCount);
+    }
+    [Fact]
     public async Task SourceBackupSurvivesRestartAndFailedReplacementAttempt()
     {
         string root = Path.Combine(Path.GetTempPath(), "WriterApp_AiUndoTests_" + Guid.NewGuid().ToString("N"));
@@ -172,9 +216,9 @@ public sealed class DeviceAiActionTests
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
     private static AiUsageStatusDto Usage(bool enabled = true, long remaining = 100) => new()
-    { AiEnabled = enabled, UiEnabled = true, PlanKey = "standard", QuotaRemaining = remaining };
+    { AiEnabled = enabled, UiEnabled = true, SupportsDocumentVersionChecks = true, PlanKey = "standard", QuotaRemaining = remaining };
     private static AiActionExecuteResponseDto Response(string key) => new(Guid.NewGuid(), "beta", "new text", "Preview",
-        DateTimeOffset.UtcNow, key);
+        DateTimeOffset.UtcNow, key, SourceDocumentVersion: "v1");
     private static DeviceAiApi Api(Func<HttpRequestMessage, HttpResponseMessage> respond) =>
         new(new HttpClient(new Handler(respond)) { BaseAddress = new Uri("https://test.invalid/") });
     private sealed class Handler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler

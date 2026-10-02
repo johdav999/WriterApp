@@ -6,10 +6,11 @@ namespace WriterApp.Application.Usage
         public string Plan { get; init; } = string.Empty;
         public bool AiEnabled { get; init; }
         public bool UiEnabled { get; init; }
+        public bool SupportsDocumentVersionChecks { get; init; }
         public long QuotaTotal { get; init; }
         public long QuotaRemaining { get; init; }
         public bool HasReachedAiLimit => QuotaRemaining <= 0;
-        public bool ShouldShowAiLimitMessage => HasPaidPlan() && HasReachedAiLimit;
+        public bool ShouldShowAiLimitMessage => UiEnabled && AiEnabled && HasPaidPlan() && HasReachedAiLimit;
         public bool ShouldShowAiUpgradeHint => IsFreePlan() && HasReachedAiLimit;
 
         private bool HasPaidPlan()
