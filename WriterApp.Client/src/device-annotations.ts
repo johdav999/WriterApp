@@ -88,7 +88,15 @@ export function navigateToAnnotation(editor: any, id: string) {
     const item = annotationsKey.getState(editor.state)?.items.find(item => item.id === id);
     const range = item && uniqueRange(textMap(editor.state.doc), item.quote);
     if (!range) return false;
-    editor.chain().setTextSelection(range).scrollIntoView().focus().run();
+    // Selection scrolling targets the end of long quotes. Focus synchronously
+    // and reveal the first decoration instead, including nested editor viewports.
+    if (!editor.commands.setTextSelection(range)) return false;
+    editor.view.focus();
+    const spans: NodeListOf<HTMLElement> = editor.view.dom.querySelectorAll("[data-annotation-id]");
+    const target = Array.from(spans)
+        .find(element => element.getAttribute("data-annotation-id") === id);
+    if (!target) return false;
+    target.scrollIntoView({ block: "start", inline: "nearest", behavior: "instant" });
     return true;
 }
 

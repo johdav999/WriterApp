@@ -1,0 +1,118 @@
+@implements IDisposable
+@implements IAsyncDisposable
+@using WriterApp.Shared
+@using WriterApp.Controllers
+@inject LocalAiStore Store
+@inject DevicePromptLibrary Cloud
+@inject LocalDocumentRepository Documents
+@inject DeviceAccountService Account
+<section class="local-presets" aria-label="Reusable prompt library">
+    <h3>Reusable prompts</h3><p>Create and manage presets offline. Run previews a revision of the declared passage or section; Apply saves only the reviewed writing.</p>
+    <PromptLibraryContinuity />
+    <button type="button" disabled="@Blocked" @onclick="New">New preset</button>
+    <label>Category <select @bind="_category" disabled="@Blocked"><option value="">All categories</option>@foreach(var c in _local.Select(p=>p.Category??"Uncategorized").Distinct().Order()){<option>@c</option>}</select></label>
+    @if(_local.Any(p=>p.Pinned)) {
+        <div aria-label="Pinned presets">@foreach(var p in _local.Where(p=>p.Pinned).Take(3)){<button type="button" @onmousedown:preventDefault="true" disabled="@(Blocked||Notice(p) is not null)" @onclick="() => Run(p.Id)">Run pinned @p.Name</button>}</div>
+        @if(_local.Count(p=>p.Pinned)>3){<p>Account changes brought additional saved pins into this library. Quick access shows the first 3; unpin extras below. Every saved pin is retained.</p>}
+    }
+    <details><summary>Recommended craft presets</summary><p>These templates use your saved project genre. Choose one to review and save its local settings.</p>
+        @foreach(var tool in PromptStrategyResolver.GetTopWritingToolsForIntent(_intent)) {<button type="button" disabled="@Blocked" @onclick="() => Recommend(tool.DisplayName,tool.Description)">@tool.DisplayName</button>}
+    </details>
+    @if(_draft is { } draft) {<PromptPresetEditor Value="draft" ValueChanged="DraftChanged" Editing="@(_editing is not null)" Disabled="@IsBusy" Save="Save" Cancel="CancelEdit" />}
+    <PromptLibraryList Items="@LocalItems" Disabled="@IsBusy" CanTransfer="@(Cloud.Scope is not null)" Run="Run" Edit="Edit" Pin="Pin" Copy="Copy" Delete="DeleteLocal" />
+    <LocalWritingPanel @ref="_writer" PresetOnly="true" DocumentId="DocumentId" SectionId="SectionId" ExternalBusy="@(_busy||ExternalBusy)" BusyChanged="WriterBusyChanged" Capture="Capture" BeforeWork="BeforeWork" AfterWork="AfterWork" />
+    <details><summary>Cloud copies and transfers</summary><p>Pending means no confirmed receipt. Retry the retained snapshot after reconnecting; refresh cloud presets to see current cloud versions. A confirmed receipt records a completed transfer, not the cloud's current contents.</p>
+        <button type="button" disabled="@(Blocked||Cloud.Scope is null)" @onclick="RefreshCloud">Refresh cloud presets</button>
+        @if(Cloud.Scope is null){<p>Sign in to transfer presets. Local authored presets remain available offline.</p>}
+        @if(_cache is { } cache){<p>Cached cloud library from @cache.RefreshedAt.ToLocalTime().ToString("g"). Refresh before importing or deleting.</p>}
+        <PromptLibraryList Items="@CloudItems" Cloud="true" Disabled="@IsBusy" CanTransfer="@(Cloud.Scope is not null)" Import="Import" Delete="DeleteCloud" />
+        @foreach(var t in _transfers.OrderByDescending(t=>t.CreatedAt)) {
+            <section class="preset-transfer" aria-label="Preset transfer"><p>@(t.Request.Preset?.Name??"Cloud deletion") · @TransferStatus(t)</p>
+                @if(t.Request.Action=="upsert"&&_local.FirstOrDefault(p=>p.Id==t.LocalPromptId) is { } current&&current.Revision!=t.LocalRevision&&t.Status is "Pending" or "Conflict"){<p>Newer local edits are not included in this retained snapshot. Resolve or cancel it before copying those edits.</p>}
+                @if(t.Status=="Pending") {<button type="button" disabled="@Blocked" @onclick="() => Send(t.Id)">Send / retry retained transfer</button><button type="button" disabled="@Blocked" @onclick="() => CancelTransfer(t.Id)">Cancel retained transfer</button>}
+                else if(t.Status=="Conflict") {<PromptTransferReview Local="@t.Request.Preset" Cloud="@(t.Conflict?.Current is { } c ? DevicePromptLibrary.Definition(c):null)" Disabled="@IsBusy" KeepBoth="() => KeepBoth(t.Id)" KeepCloud="() => KeepCloud(t.Id)" Cancel="() => CancelTransfer(t.Id)" />}
+            </section>
+        }
+    </details>
+    @if(_busy){<p role="status">Updating preset library…</p><button type="button" @onclick="() => _cancel?.Cancel()">Cancel library operation</button>}
+    @if(_error is not null){<p role="alert">@_error</p>}
+    @if(_message is not null){<p role="status">@_message</p>}
+</section>
+@code {
+    [Parameter] public bool ExternalBusy {get;set;}
+    private bool Blocked=>IsBusy||ExternalBusy;
+    [Parameter] public Guid DocumentId {get;set;}
+    [Parameter] public Guid? SectionId {get;set;}
+    [Parameter] public Guid? CloudProjectId {get;set;}
+    [Parameter] public Func<Task<bool>>? BeforeWork {get;set;}
+    [Parameter] public Func<Task>? AfterWork {get;set;}
+    [Parameter] public Func<CancellationToken,Task<QualityEditorSource>>? Capture {get;set;}
+    private LocalWritingPanel? _writer;
+    private Task WriterBusyChanged(bool busy)=>InvokeAsync(StateHasChanged);
+    private bool _busy,_disposed; public bool IsBusy=>_busy||_writer?.IsBusy==true;
+    private CancellationTokenSource? _cancel;
+    private IReadOnlyList<LocalAiPrompt> _local=[];private IReadOnlyList<LocalPromptTransfer> _transfers=[];
+    private LocalPromptCloudCache? _cache;private PromptDefinition? _draft;private Guid? _editing;private long? _revision;
+    private Guid _document;private Guid? _project;private string _intent="Other",_category="";private string? _error,_message;
+    private IReadOnlyList<PromptLibraryItem> LocalItems=>_local.Where(p=>_category==""||_category==(p.Category??"Uncategorized")).Select(p=>new PromptLibraryItem(p.Id,LocalAiStore.Definition(p),Notice(p),
+        p.OriginCloudId is null?"Local preset · no recorded cloud origin":"Imported cloud copy · edits stay local",LocalTransferStatus(p))).ToArray();
+    private IReadOnlyList<PromptLibraryItem> CloudItems=>(_cache?.Presets??[]).Select(p=>new PromptLibraryItem(p.Id,DevicePromptLibrary.Definition(p),ReusablePrompts.Unavailable(DevicePromptLibrary.Definition(p)))).ToArray();
+    private string? Notice(LocalAiPrompt p)=>p.ProjectId is { } project&&project!=_project?"This preset belongs to a different cloud project.":ReusablePrompts.Unavailable(LocalAiStore.Definition(p));
+    private static string TransferStatus(LocalPromptTransfer t)=>t.Status switch {
+        "Pending"=>"Pending · no confirmed cloud receipt; send or retry",
+        "Conflict"=>"Conflict · compare versions before continuing",
+        "Completed"=>t.Result?.Deleted==true?"Confirmed cloud deletion · refresh to see current cloud state":"Confirmed cloud transfer · refresh the destination library",
+        _=>"Canceled locally · existing local/cloud versions are retained"
+    };
+    private string LocalTransferStatus(LocalAiPrompt p) {
+        var transfers=_transfers.Where(t=>t.LocalPromptId==p.Id).OrderByDescending(t=>t.CreatedAt).ThenByDescending(t=>t.Status=="Completed");
+        var t=transfers.FirstOrDefault(t=>t.Status is "Pending" or "Conflict")??transfers.FirstOrDefault();
+        return t is null?"No retained transfer for this local preset":TransferStatus(t)
+            +(t.Request.Action=="upsert"&&t.LocalRevision!=p.Revision?" · local preset changed since this snapshot":"");
+    }
+    private long _accountGeneration;private bool _signedIn;
+    protected override void OnInitialized(){_accountGeneration=Account.Generation;_signedIn=Account.IsSignedIn;Account.Changed+=AccountChanged;}
+    protected override async Task OnParametersSetAsync(){_project=CloudProjectId;if(_document==DocumentId)return;_document=DocumentId;_cancel?.Cancel();CancelEdit();await SafeReload();}
+    private readonly HashSet<Task> _accountRefreshes = [];
+    private void AccountChanged(){if(_accountGeneration==Account.Generation&&_signedIn==Account.IsSignedIn)return;_accountGeneration=Account.Generation;_signedIn=Account.IsSignedIn;_cancel?.Cancel();_cache=null;_transfers=[];_local=_local.Where(p=>p.OriginScope is null).ToArray();CancelEdit();_error=null;_message=null;
+        if (_disposed) return;
+        var task = InvokeAsync(async () => { if (_disposed) return; StateHasChanged(); await SafeReload(); if (!_disposed) StateHasChanged(); });
+        lock (_accountRefreshes) _accountRefreshes.Add(task);
+        _ = task.ContinueWith(completed => { lock (_accountRefreshes) _accountRefreshes.Remove(completed); }, TaskScheduler.Default);
+    }
+    private async Task SafeReload(){try{await Reload(default);}catch(Exception e)when(e is IOException or System.Text.Json.JsonException or InvalidOperationException){_error=e.Message;}}
+    private async Task Reload(CancellationToken ct){var generation=Account.Generation;string? scope=Cloud.Scope;var values=await Store.PresetsAsync(scope,ct);
+        var cache=scope is null?null:await Store.CachedPromptsAsync(scope,ct);var transfers=scope is null?[]:await Store.TransfersAsync(scope,ct);
+        var source=await Documents.LoadAsync(DocumentId,ct);if(_disposed||generation!=Account.Generation||scope!=Cloud.Scope)return;
+        _local=values;_cache=cache;_transfers=transfers;_project=source?.ServerProjectId;_intent=PromptStrategyResolver.NormalizeIntent(source?.Project?.Genre);
+    }
+    private void New(){CancelEdit();_draft=new("New preset",null,"custom",null,"Revise {context}",new());}
+    private void Recommend(string name,string description){New();_draft=_draft! with{Name=name,Category="Recommended",Template=(description+"\n\nRevise {context}")};}
+    private Task DraftChanged(PromptDefinition p){_draft=p;return Task.CompletedTask;}
+    private void CancelEdit(){_draft=null;_editing=null;_revision=null;}
+    private void Edit(Guid id){var p=_local.Single(p=>p.Id==id);_draft=ReusablePrompts.Parse(ReusablePrompts.Serialize(LocalAiStore.Definition(p)));_editing=id;_revision=p.Revision;}
+    private Task Save()=>Work(async ct=>{await Store.SavePresetAsync(_draft??throw new InvalidOperationException("Create a preset first."),_editing,_revision,Cloud.Scope,ct);CancelEdit();_message="Preset saved locally.";});
+    private Task Pin(Guid id)=>Work(async ct=>{var p=_local.Single(p=>p.Id==id);await Store.PinPresetAsync(id,p.Revision,Cloud.Scope,ct);});
+    private Task DeleteLocal(Guid id)=>Work(async ct=>{var p=_local.Single(p=>p.Id==id);await Store.DeletePresetAsync(id,p.Revision,Cloud.Scope,ct);if(_editing==id)CancelEdit();_message="Local preset deleted. Cloud copies remain available.";});
+    private async Task Run(Guid id){if(Blocked)return;var p=_local.Single(p=>p.Id==id);if(Notice(p) is { } notice){_error=notice;return;}if(_writer is not null)await _writer.RunPresetAsync(LocalAiStore.Definition(p));}
+    private Task RefreshCloud()=>Work(async ct=>{await Cloud.RefreshPresetsAsync(ct);_message="Cloud library refreshed. Existing local copies are unchanged; import the cloud version separately.";});
+    private Task Import(Guid id)=>Work(async ct=>{await Cloud.ImportPresetAsync(id,ct);_message="Cloud version imported as a separate local copy; existing local edits are retained.";});
+    private Task Copy(Guid id)=>Work(async ct=>{var t=await Cloud.QueueCopyAsync(_local.Single(p=>p.Id==id),false,ct);if(t.Status=="Pending")await Cloud.SendAsync(t.Id,ct);_message="Check the retained transfer status below. Only a confirmed receipt establishes cloud completion; conflicts need your choice.";});
+    private Task DeleteCloud(Guid id)=>Work(async ct=>{var t=await Cloud.QueueDeleteAsync(_cache!.Presets.Single(p=>p.Id==id),ct);if(t.Status=="Pending")await Cloud.SendAsync(t.Id,ct);_message="Cloud deletion retained; refresh to see the current library.";});
+    private Task Send(Guid id)=>Work(async ct=>{await Cloud.SendAsync(id,ct);_message="Send attempt finished. Check its retained status above; refresh cloud presets to see current versions.";});
+    private Task CancelTransfer(Guid id)=>Work(ct=>Cloud.CancelTransferAsync(id,ct));
+    private Task KeepBoth(Guid id)=>Work(async ct=>{await Cloud.KeepBothAsync(id,ct);_message="Separate cloud copy queued. Send the retained transfer to create it.";});
+    private Task KeepCloud(Guid id)=>Work(async ct=>{await Cloud.KeepCloudAsync(id,true,ct);_message="Cloud version imported separately and the conflicting transfer canceled. Existing local edits are retained.";});
+    private async Task Work(Func<CancellationToken,Task> action){if(Blocked)return;_busy=true;_error=null;_message=null;long generation=Account.Generation;using var cancel=new CancellationTokenSource();_cancel=cancel;await InvokeAsync(StateHasChanged);
+        try{await action(cancel.Token);}catch(OperationCanceledException){if(generation==Account.Generation)_message="Operation canceled; authored versions and any pending transfer are retained.";}
+        catch(Exception e)when(e is IOException or InvalidOperationException or System.Text.Json.JsonException or HttpRequestException or DeviceAiException or DeviceSignInRequiredException or UnauthorizedAccessException){if(generation==Account.Generation)_error=e.Message;}
+        finally{_busy=false;_cancel=null;if(generation!=Account.Generation){_message=null;_error=null;}try{await Reload(default);}catch(Exception e)when(e is IOException or System.Text.Json.JsonException){_error=e.Message;}if(!_disposed)await InvokeAsync(StateHasChanged);}
+    }
+    public void Dispose(){_disposed=true;_cancel?.Cancel();Account.Changed-=AccountChanged;}
+    public async ValueTask DisposeAsync() {
+        Dispose();
+        Task[] pending; lock (_accountRefreshes) pending = _accountRefreshes.ToArray();
+        // Finish already-started store reads before the host releases the local repositories.
+        await Task.WhenAll(pending);
+    }
+}

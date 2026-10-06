@@ -17,7 +17,7 @@ namespace WriterApp.Controllers
     [ApiController]
     [Route("api/ai/presets")]
     [Authorize]
-    public sealed class AiPresetsController : ControllerBase
+    public sealed partial class AiPresetsController : ControllerBase
     {
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
         private readonly AppDbContext _dbContext;

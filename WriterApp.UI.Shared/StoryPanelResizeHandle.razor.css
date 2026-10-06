@@ -1,0 +1,4 @@
+.story-panel-resize-handle { flex: 0 0 12px; position: relative; cursor: row-resize; touch-action: none; background: var(--color-surface-2); }
+.story-panel-resize-handle::after { content: ""; position: absolute; height: 3px; width: 48px; left: calc(50% - 24px); top: 4px; border-radius: 3px; background: var(--color-border-strong, #aaa); }
+.story-panel-resize-handle:hover::after, .story-panel-resize-handle:focus-visible::after, .story-panel-resize-handle.is-dragging::after { background: var(--color-primary); }
+.story-panel-resize-handle:focus-visible { outline: 2px solid var(--color-primary); outline-offset: -2px; }

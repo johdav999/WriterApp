@@ -1,5 +1,5 @@
-.project-documents { display:flex; align-items:center; flex-wrap:wrap; gap:12px; margin:12px 0; }
-.project-documents label { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+.project-documents { display:flex; align-items:center; flex-wrap:wrap; gap:12px; margin:12px 0; min-width:0; }
+.project-documents label { display:flex; align-items:center; flex-wrap:wrap; gap:8px; min-width:0; max-width:100%; }
 .project-documents select, .project-documents input { max-width:100%; padding:6px 8px; }
 .project-documents details { padding:6px; }
 .project-documents details[open] { display:flex; flex-wrap:wrap; }

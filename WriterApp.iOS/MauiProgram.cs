@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using WriterApp.Device.Shared.Services;
+using WriterApp.iOS.Authentication;
 
 namespace WriterApp.iOS;
 
@@ -10,8 +11,15 @@ public static class MauiProgram
         MauiAppBuilder builder = MauiApp.CreateBuilder();
         builder.UseMauiApp<App>();
 
-        Uri apiBaseAddress = DeviceHostOptions.ResolveApiBaseAddress(
-            Environment.GetEnvironmentVariable("WRITERAPP_API_BASE_URL"));
+        var identityOptions = IosBuildConfiguration.Read();
+        builder.Services.AddSingleton(identityOptions);
+        builder.Services.AddSingleton(identityOptions.Environment);
+        builder.Services.AddSingleton<IIosMsalSession, IosMsalSession>();
+        builder.Services.AddSingleton<IIosIdentitySelectionStore, IosIdentitySelectionStore>();
+        builder.Services.AddSingleton<IosDeviceIdentityClient>();
+        builder.Services.AddSingleton<IDeviceIdentityClient>(sp => sp.GetRequiredService<IosDeviceIdentityClient>());
+        builder.Services.AddSingleton<IosIdentityLifecycle>();
+        Uri apiBaseAddress = identityOptions.Environment.ApiBaseAddress;
         string localDocumentPath = Path.Combine(FileSystem.AppDataDirectory, "documents");
 
         builder.Services.AddWriterAppDeviceCore(
@@ -24,6 +32,10 @@ public static class MauiProgram
         builder.Logging.AddDebug();
 #endif
 
-        return builder.Build();
+        var app = builder.Build();
+        var connectivity = app.Services.GetRequiredService<DeviceConnectivity>();
+        connectivity.SetOnline(Connectivity.Current.NetworkAccess == NetworkAccess.Internet);
+        Connectivity.Current.ConnectivityChanged += (_, args) => connectivity.SetOnline(args.NetworkAccess == NetworkAccess.Internet);
+        return app;
     }
 }

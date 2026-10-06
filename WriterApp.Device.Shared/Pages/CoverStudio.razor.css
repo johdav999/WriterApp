@@ -1,0 +1,7 @@
+.desktop-cover-studio { max-width:1200px;margin:0 auto;padding:1.5rem; }
+.studio-layout { display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:2rem;margin-top:1rem; }
+.studio-actions { display:flex;flex-wrap:wrap;gap:.7rem;margin:1rem 0; }
+button { font:inherit;padding:.6rem .9rem;border-radius:8px; }
+.saved-cover { width:320px;max-width:100%;max-height:400px;object-fit:contain; }
+[role=alert] { color:var(--error-color,#a12727); }
+@media(max-width:760px) { .studio-layout { grid-template-columns:minmax(0,1fr); } .desktop-cover-studio { padding:1rem; } }

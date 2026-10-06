@@ -1,11 +1,17 @@
 param(
     [string]$OutputDirectory = 'artifacts/windows-msix',
-    [switch]$NoRestore
+    [switch]$NoRestore,
+    [ValidateSet('Development','Staging','Production')][string]$Environment = 'Production',
+    [string]$ApiBaseUrl,
+    [string]$ValidationDataDirectory
 )
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $output = [IO.Path]::GetFullPath((Join-Path $repoRoot $OutputDirectory))
+if ($ValidationDataDirectory -and ($Environment -ne 'Development' -or -not [IO.Path]::IsPathRooted($ValidationDataDirectory))) {
+    throw 'ValidationDataDirectory requires Development and an absolute isolated path.'
+}
 $signing = Join-Path $output 'signing'
 $password = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(24))
 & (Join-Path $PSScriptRoot 'New-ProsaTestCertificate.ps1') -OutputDirectory $signing -Password $password
@@ -19,9 +25,13 @@ try {
         '-p:RuntimeIdentifierOverride=win-x64',
         '-p:WindowsPackageType=MSIX',
         '-p:AppxPackageSigningEnabled=true',
+        "-p:ProsaEnvironment=$Environment",
+        "-p:BaseOutputPath=$(Join-Path $output 'build')\",
         "-p:PackageCertificateThumbprint=$($certificate.Thumbprint)",
         "-p:AppxPackageDir=$output\"
     )
+    if ($ApiBaseUrl) { $arguments += "-p:ProsaApiBaseUrl=$ApiBaseUrl" }
+    if ($ValidationDataDirectory) { $arguments += "-p:ProsaValidationDataDirectory=$ValidationDataDirectory" }
     $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
     if (Test-Path -LiteralPath $vswhere) {
         $symbolTool = & $vswhere -products '*' -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\mspdbcmf.exe' |

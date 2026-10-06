@@ -24,9 +24,9 @@ namespace WriterApp.Application.AI
         string? ResultJson = null,
         bool IsApplied = false,
         DateTimeOffset? LastAppliedAt = null,
-        int AppliedCount = 0);
+        int AppliedCount = 0, bool? CanCloudUndo = null, bool? CanCloudRedo = null, string? ReplayScope = null);
 
-    public sealed record AiActionUndoRedoResult(Guid HistoryEntryId, string Content);
+    public sealed record AiActionUndoRedoResult(Guid HistoryEntryId, string Content, string? ExpectedContent = null);
 
     public interface IAiActionHistoryStore
     {
@@ -137,7 +137,7 @@ namespace WriterApp.Application.AI
             }
 
             target.UndoneAt = DateTimeOffset.UtcNow;
-            return Task.FromResult<AiActionUndoRedoResult?>(new AiActionUndoRedoResult(target.HistoryEntryId, target.BeforeContent));
+            return Task.FromResult<AiActionUndoRedoResult?>(new AiActionUndoRedoResult(target.HistoryEntryId, target.BeforeContent,target.AfterContent));
         }
 
         public Task<AiActionUndoRedoResult?> RedoAsync(
@@ -155,7 +155,7 @@ namespace WriterApp.Application.AI
 
             target.UndoneAt = null;
             target.AppliedAt = DateTimeOffset.UtcNow;
-            return Task.FromResult<AiActionUndoRedoResult?>(new AiActionUndoRedoResult(target.HistoryEntryId, target.AfterContent));
+            return Task.FromResult<AiActionUndoRedoResult?>(new AiActionUndoRedoResult(target.HistoryEntryId, target.AfterContent,target.BeforeContent));
         }
 
         private AiActionHistoryEntry ApplyInMemoryAppliedState(AiActionHistoryEntry entry)

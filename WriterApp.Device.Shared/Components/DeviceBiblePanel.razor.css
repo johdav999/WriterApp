@@ -1,0 +1,10 @@
+section { min-width: 0; }
+h2 { margin: 18px 0 10px; font-size: 1rem; }
+p { font-size: .85rem; line-height: 1.6; overflow-wrap: anywhere; color: var(--color-text-muted); }
+fieldset { min-width: 0; border: 0; padding: 0; margin: 16px 0 0; display: flex; flex-wrap: wrap; gap: 8px; }
+legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+button { min-height: 40px; padding: 8px 12px; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface-1); color: var(--color-text); font: inherit; font-size: .82rem; cursor: pointer; }
+button:disabled { opacity: .55; cursor: not-allowed; }
+:is(button, summary):focus-visible { outline: 2px solid var(--color-primary); outline-offset: 3px; }
+.canon-link-notice { margin: 14px 0; padding: 12px; background: var(--color-surface-2); border-radius: 8px; }
+.canon-link-notice summary { cursor: pointer; font-size: .82rem; line-height: 1.6; }

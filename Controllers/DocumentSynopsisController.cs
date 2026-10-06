@@ -20,6 +20,8 @@ using WriterApp.Application.Subscriptions;
 using WriterApp.Data;
 using WriterApp.Data.Documents;
 using WriterApp.Domain.Documents;
+using WriterApp.Shared;
+using WriterApp.Shared.Sync;
 
 namespace WriterApp.Controllers
 {
@@ -108,31 +110,30 @@ namespace WriterApp.Controllers
                 return Unauthorized();
             }
 
-            DocumentRecord? document = await _documents.GetAsync(documentId, userId, ct);
-            if (document is null)
-            {
-                return NotFound();
-            }
-
-            DocumentSynopsisRecord? synopsis = await _dbContext.DocumentSynopses
-                .FirstOrDefaultAsync(item => item.DocumentId == documentId, ct);
-
-            if (synopsis is null)
-            {
-                synopsis = new DocumentSynopsisRecord
-                {
-                    DocumentId = documentId
-                };
-                _dbContext.DocumentSynopses.Add(synopsis);
-            }
-
-            ApplyDto(request, synopsis);
-            synopsis.UpdatedAt = DateTimeOffset.UtcNow;
-            await _dbContext.SaveChangesAsync(ct);
-
-            return Ok(MapToDto(documentId, synopsis));
+            if(request.ExpectedSynopsis is not null && _dbContext.Database.CurrentTransaction is null)
+                return await _dbContext.Database.CreateExecutionStrategy().ExecuteAsync(async () => {
+                    _dbContext.ChangeTracker.Clear();
+                    await using var transaction=await _dbContext.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable,ct);
+                    await _dbContext.Database.ExecuteSqlRawAsync("UPDATE DocumentSyncClocks SET Sequence=Sequence WHERE Id=1",ct);
+                    var result=await SaveSynopsisCore(documentId,userId,request,ct);
+                    if(result.Result is OkObjectResult)await transaction.CommitAsync(ct);
+                    return result;
+                });
+            return await SaveSynopsisCore(documentId,userId,request,ct);
         }
 
+        private async Task<ActionResult<DocumentSynopsisDto>> SaveSynopsisCore(Guid documentId,string userId,DocumentSynopsisDto request,CancellationToken ct)
+        {
+            if(await _documents.GetAsync(documentId,userId,ct) is null)return NotFound();
+            var synopsis=await _dbContext.DocumentSynopses.SingleOrDefaultAsync(s=>s.DocumentId==documentId,ct);
+            if(request.ExpectedSynopsis is not null && (request.DocumentId!=documentId || Snapshot(synopsis)!=request.ExpectedSynopsis))
+                return Conflict(new { message="Synopsis changed concurrently. Reload current planning before saving your reviewed change." });
+            if(synopsis is null) {
+                synopsis=new DocumentSynopsisRecord { DocumentId=documentId };_dbContext.DocumentSynopses.Add(synopsis);
+            }
+            ApplyDto(request,synopsis);synopsis.UpdatedAt=DateTimeOffset.UtcNow;await _dbContext.SaveChangesAsync(ct);
+            return Ok(MapToDto(documentId,synopsis));
+        }
         [HttpPost("ai/evaluate")]
         public async Task<ActionResult<SynopsisAiResponseDto>> EvaluateSynopsis(
             Guid documentId,
@@ -226,6 +227,21 @@ namespace WriterApp.Controllers
                 .FirstOrDefaultAsync(item => item.DocumentId == documentId, ct);
 
             Synopsis synopsis = MapToDomain(synopsisRecord);
+            if (request?.UserNotes?.Length > 2000 || request is { ContractVersion: 0 } && (request.ExpectedDocumentVersion is not null || request.SourceSynopsis is not null || request.ExpectedProjectId is not null))
+                return BadRequest(new { code = "ai.invalid_synopsis", message = "Use a supported synopsis contract and at most 2,000 characters of notes." });
+            bool checkedSource = request is { ContractVersion: not 0 };
+            if(request?.WebSource is { } webSource) {
+                try { if(webSource.DocumentId!=documentId || webSource.ProjectId!=document.ProjectId)throw new InvalidDataException("Wrong synopsis target.");await new WebAiSourceService(_dbContext,userId).Require(webSource,ct); }
+                catch(Exception e) when(e is DocumentSyncException or InvalidDataException or InvalidOperationException) { return Conflict(new { message=e.Message }); }
+            }
+            SyncSynopsis snapshot = Snapshot(synopsisRecord);
+            if (checkedSource)
+            {
+                try { SynopsisCoaching.Validate(mode, request!); }
+                catch (InvalidDataException e) { return BadRequest(new { code = "ai.invalid_synopsis", message = e.Message }); }
+                if (snapshot != request!.SourceSynopsis || !await IsCurrentSynopsisAsync(document, userId, request, ct))
+                    return Conflict(new { code = "ai.stale_source", message = "Synchronize the intended synopsis and retry." });
+            }
             string synopsisContext = _synopsisContextBuilder.Build(synopsis);
 
             IAiAction? action = _orchestrator.GetAction(actionId);
@@ -239,6 +255,7 @@ namespace WriterApp.Controllers
                 ["synopsis_context"] = synopsisContext,
                 ["user_notes"] = request?.UserNotes ?? string.Empty
             };
+            if (checkedSource) options["synopsis_coaching_version"] = "1";
 
             if (string.Equals(actionId, StoryCoachAction.ActionIdValue, StringComparison.Ordinal))
             {
@@ -303,19 +320,44 @@ namespace WriterApp.Controllers
                 ? outputText
                 : null;
 
+            if (checkedSource)
+            {
+                ct.ThrowIfCancellationRequested();
+                if(request!.WebSource is { } completed) {
+                    try { await new WebAiSourceService(_dbContext,userId).Require(completed,ct); }
+                    catch(Exception e) when(e is DocumentSyncException or InvalidDataException or InvalidOperationException) { return Conflict(new { message=e.Message }); }
+                }
+                if (!await IsCurrentSynopsisAsync(document, userId, request!, ct))
+                    return Conflict(new { code = "ai.stale_source", message = "The synopsis changed during coaching. Synchronize and retry." });
+                try
+                {
+                    if (mode == "suggest") { (proposedText, outputText) = SynopsisCoaching.ParseSuggestion(outputText); }
+                    else SynopsisCoaching.ValidateText(outputText);
+                    if (proposal.ProposalId == Guid.Empty || proposal.ActionId != actionId) throw new InvalidDataException("Invalid synopsis proposal identity.");
+                }
+                catch (Exception e) when (e is InvalidDataException or JsonException)
+                { return BadRequest(new { code = "ai.invalid_synopsis", message = "The AI response was malformed. Regenerate; the synopsis is unchanged." }); }
+            }
+
             SynopsisAiResponseDto response = new(
                 mode,
                 outputText,
                 request?.FocusFieldKey,
-                proposedText);
+                proposedText,
+                checkedSource ? 1 : 0, proposal.ProposalId, documentId,
+                checkedSource ? request!.ExpectedDocumentVersion : null,
+                checkedSource ? snapshot : null,request?.WebSource,new DateTimeOffset(proposal.CreatedUtc));
 
+            string? originalText = checkedSource && mode == "suggest" ? SynopsisCoaching.Value(snapshot, request!.FocusFieldKey!) : null;
             AiActionExecuteResponseDto historyResponse = new(
                 proposal.ProposalId,
-                null,
-                outputText,
+                originalText,
+                proposedText ?? outputText,
                 action.DisplayName,
                 new DateTimeOffset(proposal.CreatedUtc),
-                actionId);
+                actionId,
+                ProposalExplanation: checkedSource && mode == "suggest" ? outputText : null,
+                SourceDocumentVersion: checkedSource ? request!.ExpectedDocumentVersion : null, WebSource: request?.WebSource);
 
             string requestJson = JsonSerializer.Serialize(request ?? new SynopsisAiRequestDto(null, null), JsonOptions);
             string responseJson = JsonSerializer.Serialize(historyResponse, JsonOptions);
@@ -328,8 +370,8 @@ namespace WriterApp.Controllers
                 Guid.Empty,
                 new DateTimeOffset(proposal.CreatedUtc),
                 action.DisplayName,
-                null,
-                outputText,
+                originalText,
+                proposedText ?? outputText,
                 PageId: null,
                 ProviderId: proposal.ProviderId,
                 ModelId: null,
@@ -337,6 +379,19 @@ namespace WriterApp.Controllers
                 ResultJson: responseJson), ct);
 
             return Ok(response);
+        }
+
+        private static SyncSynopsis Snapshot(DocumentSynopsisRecord? s) => new(s?.Logline ?? "", s?.Premise ?? "", s?.Theme ?? "",
+            s?.ProtagonistArc ?? "", s?.CentralConflict ?? "", s?.Stakes ?? "", s?.Setting ?? "", s?.EndingIntent ?? "", s?.OpenQuestions ?? "", s?.Notes ?? "");
+
+        private async Task<bool> IsCurrentSynopsisAsync(DocumentRecord document, string owner, SynopsisAiRequestDto request, CancellationToken ct)
+        {
+            if (!await _dbContext.Documents.AsNoTracking().AnyAsync(d=>d.Id==document.Id && d.OwnerUserId==owner && d.DeletedAtUtc==null
+                && (request.ExpectedProjectId==null || d.ProjectId==request.ExpectedProjectId),ct)
+                || !await _dbContext.DocumentSyncRecords.AsNoTracking().AnyAsync(r=>r.DocumentId==document.Id && r.OwnerUserId==owner
+                    && (request.WebSource!=null || r.Version==request.ExpectedDocumentVersion) && !r.IsDeleted && !r.IsTrashed,ct)) return false;
+            // Compare content too: never rely solely on a token from a writer or schema with incomplete sync notifications.
+            return Snapshot(await _dbContext.DocumentSynopses.AsNoTracking().FirstOrDefaultAsync(s=>s.DocumentId==document.Id,ct))==request.SourceSynopsis;
         }
 
         private static Document BuildAiDocument(DocumentRecord record, Synopsis synopsis)

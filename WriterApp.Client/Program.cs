@@ -51,6 +51,8 @@ builder.Services.AddScoped<WriterApp.Client.Services.OnboardingService>();
 builder.Services.AddScoped<WriterApp.Client.State.OnboardingStateStore>();
 builder.Services.AddScoped<WriterApp.Client.State.OnboardingOverlayStateService>();
 builder.Services.AddScoped<AuthStateService>();
+builder.Services.AddScoped<WebCheckedAi>();
+builder.Services.AddScoped<WebAiHistoryOutbox>();
 builder.Services.AddScoped<EasyAuthMeClient>();
 builder.Services.AddScoped<RecoveryDraftService>();
 builder.Services.AddTransient<EditorSaveCoordinator>();

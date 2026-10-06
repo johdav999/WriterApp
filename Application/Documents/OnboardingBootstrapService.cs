@@ -75,6 +75,23 @@ At one of those moments their eyes met.
             await strategy.ExecuteAsync(async () =>
             {
                 await using Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction transaction = await _dbContext.Database.BeginTransactionAsync(ct);
+                // Serialize initial reservation across windows/devices before reading the owner singleton.
+                await _dbContext.Database.ExecuteSqlRawAsync("UPDATE DocumentSyncClocks SET Sequence=Sequence WHERE Id=1",ct);
+
+                // Reserve/replay by owner, never by an author's project title. Missing/trashed identities are retained.
+                var retained = await _dbContext.OnboardingDemoWorkspaces.AsNoTracking().SingleOrDefaultAsync(x => x.OwnerUserId == ownerUserId, ct);
+                if(retained is null && await _dbContext.UserProfiles.AnyAsync(x => x.UserId==ownerUserId && x.HasCompletedOnboarding,ct))
+                    throw new OnboardingBootstrapException("onboarding_complete","Onboarding is complete. Existing writing is preserved; a new demo will not be seeded.");
+                if (retained is not null) {
+                    var existing = await _dbContext.Projects.AsNoTracking().SingleOrDefaultAsync(x => x.Id == retained.ProjectId && x.OwnerUserId == ownerUserId, ct);
+                    if (existing is null || !await _dbContext.Documents.AnyAsync(x => x.Id == retained.DocumentId && x.OwnerUserId == ownerUserId && x.DeletedAtUtc == null && !x.IsArchived, ct)
+                        || !await _dbContext.Sections.AnyAsync(x => x.Id == retained.SectionId && x.DocumentId == retained.DocumentId, ct)
+                        || !await _dbContext.ProjectNodes.AnyAsync(x => x.Id == retained.SceneNodeId && x.LinkedSectionId == retained.SectionId, ct))
+                        throw new OnboardingBootstrapException("demo_unavailable", "The original demo is missing or in Trash. Restore it; onboarding will not recreate or overwrite it.");
+                    result = new(retained.ProjectId, existing.Title, retained.SceneNodeId);
+                    await transaction.CommitAsync(ct);
+                    return;
+                }
 
                 ProjectRecord project;
                 try
@@ -113,6 +130,9 @@ At one of those moments their eyes met.
                     }
 
                     await EnsureStarterSceneDemoContentAsync(sceneNode, link, ct);
+                    _dbContext.OnboardingDemoWorkspaces.Add(new() { OwnerUserId = ownerUserId, OperationId = Guid.NewGuid(), Intent = normalizedIntent,
+                        ProjectId = project.Id, DocumentId = link.DocumentId, SectionId = link.SectionId, SceneNodeId = sceneNode.Id,
+                        ExpiresAtUtc = DateTimeOffset.UtcNow.Add(WriterApp.Application.AI.OnboardingDemoAiUsage.GrantLifetime) });
 
                     _logger.LogInformation(
                         "Onboarding bootstrap first scene workspace completed. UserId={UserId} ProjectId={ProjectId} SceneNodeId={SceneNodeId} DocumentId={DocumentId} SectionId={SectionId} SceneState={SceneState} SectionState={SectionState} PageState={PageState}",
@@ -215,33 +235,8 @@ At one of those moments their eyes met.
                 paragraphs.Select(paragraph => $"<p>{System.Text.Encodings.Web.HtmlEncoder.Create(System.Text.Unicode.UnicodeRanges.All).Encode(paragraph)}</p>"));
         }
 
-        private async Task<(ProjectRecord Project, bool Created)> GetOrCreateBootstrapProjectAsync(string ownerUserId, string projectTitle, CancellationToken ct)
+        private Task<(ProjectRecord Project, bool Created)> GetOrCreateBootstrapProjectAsync(string ownerUserId, string projectTitle, CancellationToken ct)
         {
-            List<ProjectCandidate> candidates = (await _dbContext.Projects
-                .Where(item => item.OwnerUserId == ownerUserId)
-                .Select(item => new ProjectCandidate(
-                    item,
-                    _dbContext.ProjectNodes.Any(node => node.ProjectId == item.Id),
-                    _dbContext.ProjectNodes.Any(node => node.ProjectId == item.Id && node.NodeType == ProjectNodeType.Scene)))
-                .ToListAsync(ct))
-                .OrderByDescending(item => item.Project.UpdatedUtc)
-                .ToList();
-
-            ProjectRecord? selected =
-                candidates.FirstOrDefault(item => item.HasSceneNodes && string.Equals(item.Project.Title, projectTitle, StringComparison.OrdinalIgnoreCase))?.Project
-                ?? candidates.FirstOrDefault(item => string.Equals(item.Project.Title, projectTitle, StringComparison.OrdinalIgnoreCase))?.Project
-                ?? candidates.FirstOrDefault(item => !item.HasAnyNodes)?.Project;
-
-            if (selected is not null)
-            {
-                _logger.LogInformation(
-                    "Onboarding bootstrap reused project. UserId={UserId} ProjectId={ProjectId} Title={Title}",
-                    ownerUserId,
-                    selected.Id,
-                    selected.Title);
-                return (selected, false);
-            }
-
             DateTimeOffset now = DateTimeOffset.UtcNow;
             ProjectRecord project = new()
             {
@@ -260,7 +255,7 @@ At one of those moments their eyes met.
                 project.Id,
                 project.Title);
 
-            return (project, true);
+            return Task.FromResult((project, true));
         }
 
         private async Task<ProjectNodeRecord> EnsureStarterStructureAsync(ProjectRecord project, string ownerUserId, string intent, CancellationToken ct)
@@ -413,6 +408,5 @@ At one of those moments their eyes met.
             };
         }
 
-        private sealed record ProjectCandidate(ProjectRecord Project, bool HasAnyNodes, bool HasSceneNodes);
     }
 }

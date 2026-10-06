@@ -1,0 +1,12 @@
+.story-canon { border: 1px solid var(--color-border); border-radius: 12px; padding: 16px; margin: 14px 0; background: var(--color-surface-1); overflow-wrap: anywhere; }
+.canon-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.canon-heading h3 { margin: 0; font-size: .95rem; }
+.canon-heading span, .canon-status, .canon-updated { font-size: .78rem; color: var(--color-text-muted); line-height: 1.5; }
+.story-canon p { margin: 6px 0; }
+.story-canon details { padding: 12px 0; border-top: 1px solid var(--color-border); }
+.story-canon summary { cursor: pointer; font-weight: 600; font-size: .85rem; }
+.story-canon summary:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 3px; }
+.canon-fields { margin: 14px 0 0; }
+.canon-fields > dt { color: var(--color-text-muted); font-size: .8rem; font-weight: 600; margin-top: 16px; }
+.canon-fields > dd { margin: 8px 0 14px; line-height: 1.6; }
+.story-canon .canon-reference { border: 0; padding: 4px 0; color: var(--color-text-muted); font-size: .75rem; }

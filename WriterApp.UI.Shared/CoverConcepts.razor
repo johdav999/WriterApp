@@ -1,0 +1,23 @@
+<section class="cover-concepts" aria-label="Generated cover concepts">
+    <h2>Preview concepts</h2>
+    @if (Images.Count == 0) { <p>No concepts yet. Generate a cover or choose a local PNG in Publishing.</p> }
+    else {
+        <p>Select a concept to preview. Save explicitly to change the project cover.</p>
+        <div class="concept-grid">
+        @for(int i=0; i<Images.Count; i++) {
+            int index=i;
+            <button type="button" disabled="@Disabled" aria-pressed="@(index == Selected ? "true" : "false")" aria-label="@($"Select cover concept {index+1}")" @onclick="() => SelectedChanged.InvokeAsync(index)">
+                <img src="@Images[index]" alt="@($"Cover concept {index+1}")" />
+            </button>
+        }
+        </div>
+        @if (ShowPreview && Selected >= 0 && Selected < Images.Count) { <img class="selected-cover" src="@Images[Selected]" alt="Selected cover preview" /> }
+    }
+</section>
+@code {
+    [Parameter] public IReadOnlyList<string> Images { get; set; } = [];
+    [Parameter] public int Selected { get; set; } = -1;
+    [Parameter] public EventCallback<int> SelectedChanged { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public bool ShowPreview { get; set; } = true;
+}

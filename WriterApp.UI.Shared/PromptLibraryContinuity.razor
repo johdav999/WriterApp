@@ -1,0 +1,18 @@
+<section class="preset-continuity" aria-label="Preset storage and transfer">
+    <p><strong>@(CloudLibrary ? "Cloud library" : "Local device library")</strong> ·
+        @(CloudLibrary ? "Save preset updates this account's cloud library. Refresh cloud presets to load changes from another host."
+            : "Save keeps your preset on this device. Imported cloud copies remain separate local versions; editing them does not update the cloud.")</p>
+    <details>
+        <summary>How presets reach another host</summary>
+        <ol>
+            <li>On desktop, save your local edits, then choose <strong>Copy / update cloud</strong>. This retains a snapshot and attempts to send it. The first transfer creates a cloud copy; later transfers update that copy. Copying an imported preset also creates a separate cloud copy unless it was already transferred. In the client, <strong>Save preset</strong> writes directly to the cloud.</li>
+            <li><strong>Pending</strong> means there is no confirmed receipt, even if an interrupted request reached the cloud. Reconnect and choose <strong>Send / retry retained transfer</strong> to retry the same snapshot. Later local edits are not added to that snapshot; cancel it before copying a newer edit. Refresh the cloud library after an uncertain send.</li>
+            <li>After a confirmed transfer or cloud save, choose <strong>Refresh cloud presets</strong> on the other host, using the same account and backend and a matching project context. On desktop, choose <strong>Import separate local copy</strong> to use the cloud version locally. Refresh alone does not change existing local copies. Importing the same cloud revision reuses its existing copy and preserves local edits.</li>
+            <li>If the cloud changed, compare both versions before choosing <strong>Keep both</strong>, <strong>Keep cloud and import</strong>, or <strong>Keep originals and cancel</strong>. Keep both queues a separate cloud copy which still needs Send. Keeping cloud retains the existing local edits and imports the cloud version separately. Canceling a transfer does not undo a cloud change that already completed.</li>
+        </ol>
+        <p>Local presets can be managed offline; AI execution still needs its normal connection, sign-in and quota. Imported copies and retained transfers are scoped to their original account and backend. Delete local leaves cloud copies; Delete cloud leaves local copies. Libraries do not synchronize automatically.</p>
+    </details>
+</section>
+@code {
+    [Parameter] public bool CloudLibrary { get; set; }
+}

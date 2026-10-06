@@ -142,7 +142,7 @@
     private string? _aiError;
     private string _aiInstruction = string.Empty;
     private List<AiActionDescriptorDto> _aiActions = new();
-    private AiActionExecuteResponseDto? _proposal;
+    private AiActionExecuteResponseDto? _proposal = null;
     private List<AiActionHistoryEntryDto> _history = new();
     private Guid? _expandedHistoryId;
     private bool _aiQuotaExceeded;
@@ -260,61 +260,16 @@
         }
     }
 
-    private async Task ExecuteAiAsync(AiActionDescriptorDto action)
+    private Task ExecuteAiAsync(AiActionDescriptorDto action)
     {
-        _proposal = null;
-        _aiQuotaExceeded = false;
-        try
-        {
-            AiActionExecuteRequestDto payload = new(
-                DocumentId,
-                SectionId,
-                PageId,
-                0,
-                PageContent?.Length ?? 0,
-                PageContent,
-                null,
-                null,
-                new Dictionary<string, object?> { ["instruction"] = _aiInstruction });
-
-            using HttpResponseMessage response = await Http.PostAsJsonAsync($"api/ai/actions/{action.ActionKey}/execute", payload);
-            if (response.StatusCode == HttpStatusCode.Unauthorized)
-            {
-                _aiError = "Not authenticated.";
-                return;
-            }
-
-            if (await TryHandleAiQuotaExceededAsync(response))
-            {
-                _aiError = null;
-                return;
-            }
-
-            response.EnsureSuccessStatusCode();
-            _proposal = await response.Content.ReadFromJsonAsync<AiActionExecuteResponseDto>();
-            await LoadHistoryAsync();
-        }
-        catch (Exception ex)
-        {
-            _aiError = $"AI execute failed: {ex.Message}";
-        }
-        finally
-        {
-            await AuthMeStateService.RefreshAsync(force: true);
-        }
+        _aiError = "This legacy drawer has no checked editor persistence contract. Open the manuscript editor to generate and apply a checked proposal.";
+        return Task.CompletedTask;
     }
-
-    private async Task ApplyProposalAsync()
+    private Task ApplyProposalAsync()
     {
-        if (_proposal?.ProposedText is null)
-        {
-            return;
-        }
-
-        await OnApplyProposal.InvokeAsync(_proposal.ProposedText);
-        _proposal = null;
+        _aiError = "This legacy drawer cannot apply unchecked proposals. Generate a new checked proposal in the manuscript editor.";
+        return Task.CompletedTask;
     }
-
     private async Task LoadHistoryAsync()
     {
         try

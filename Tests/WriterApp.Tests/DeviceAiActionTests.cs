@@ -10,7 +10,7 @@ using Xunit;
 
 namespace WriterApp.Tests;
 
-public sealed class DeviceAiActionTests
+public sealed partial class DeviceAiActionTests
 {
     private static readonly Guid DocumentId = Guid.NewGuid();
     private static readonly Guid SectionId = Guid.NewGuid();
@@ -53,14 +53,14 @@ public sealed class DeviceAiActionTests
         }
     }
     [Fact]
-    public void CustomInstructionUsesWholeSectionWhenNoSelectionAndRejectsUnsafePreconditions()
+    public void CustomInstructionRequiresMappedSectionReviewWhenNoSelectionAndRejectsUnsafePreconditions()
     {
         var (document, section, page) = Source();
         var noSelection = Selected with { SelectedText = "", From = 7, To = 7 };
-        var custom = DeviceAiRequests.Build(document, section, page, noSelection, DeviceAiAction.Custom, "Improve flow");
-        Assert.Equal("append", custom.ApplyMode);
-        Assert.Equal("section", custom.Request.Parameters!["scope"]);
-        Assert.Equal("Alpha beta\n\nSecond page", custom.Request.SurroundingText);
+        Assert.Equal(DeviceAiFailure.Invalid, Assert.Throws<DeviceAiException>(() =>
+            DeviceAiRequests.Build(document, section, page, noSelection, DeviceAiAction.Custom, "Improve flow")).Kind);
+        var custom = DeviceAiRequests.Build(document, section, page, Selected, DeviceAiAction.Custom, "Improve flow");
+        Assert.Throws<DeviceAiException>(() => (custom with { ApplyMode = "append" }).RequireManuscriptTarget());
         Assert.Equal(DeviceAiFailure.Invalid, Assert.Throws<DeviceAiException>(() => DeviceAiRequests.Build(document, section, page, noSelection, DeviceAiAction.Rewrite)).Kind);
         Assert.Equal(DeviceAiFailure.Invalid, Assert.Throws<DeviceAiException>(() => DeviceAiRequests.Build(document, section, page, noSelection, DeviceAiAction.Custom, "  ")).Kind);
         Assert.Equal(DeviceAiFailure.Offline, Assert.Throws<DeviceAiException>(() => DeviceAiRequests.Build(document with { SyncState = LocalSyncState.PendingUpload }, section, page, Selected, DeviceAiAction.Summarize)).Kind);
@@ -79,7 +79,8 @@ public sealed class DeviceAiActionTests
         Assert.Equal("replace", prepared.ApplyMode);
         Assert.Equal(wholePage ? DeviceAiApplyTarget.ManuscriptPage : DeviceAiApplyTarget.ManuscriptSelection, prepared.Target);
         Assert.Equal("selection", prepared.Request.Parameters!["scope"]);
-        Assert.Contains("Return only the complete revised writing", prepared.Request.Parameters["template"]!.ToString());
+        Assert.Contains("polish the author's existing style", prepared.Request.Parameters["template"]!.ToString());
+        Assert.Equal(WriterApp.Shared.StyleQualityReview.DefaultGoal, prepared.Request.Parameters[WriterApp.Shared.StyleQualityReview.Parameter]);
         Assert.DoesNotContain("Do not rewrite", prepared.Request.Parameters["template"]!.ToString());
         Assert.Equal(capture.SelectedText, prepared.Request.OriginalText);
         Assert.Equal(capture.SelectionStart, prepared.Request.SelectionStart);
@@ -117,6 +118,7 @@ public sealed class DeviceAiActionTests
     [InlineData(429, "ai.rate_limited", DeviceAiFailure.Server)]
     [InlineData(400, "ai.safety_blocked", DeviceAiFailure.Safety)]
     [InlineData(504, "ai.timeout", DeviceAiFailure.Timeout)]
+    [InlineData(502, "ai.invalid_section_revision", DeviceAiFailure.Invalid)]
     public async Task BackendProblemCodesMapToDistinctUserStates(int status, string code, DeviceAiFailure expected)
     {
         var api = Api(request => new((HttpStatusCode)status)
@@ -124,6 +126,23 @@ public sealed class DeviceAiActionTests
         var error = await Assert.ThrowsAsync<DeviceAiException>(() => api.ExecuteAsync("rewrite.selection", new(null, null, null, null, null, null, null, null, null), default));
         Assert.Equal(expected, error.Kind);
         Assert.DoesNotContain("Provider internals", error.Message);
+    }
+    [Theory]
+    [InlineData(502, "ai.invalid_section_revision", "incomplete or invalid section revision")]
+    [InlineData(502, "ai.style_review_rejected", "could not be validated against your writing")]
+    [InlineData(502, "ai.style_review_incomplete", "stopped before it was complete")]
+    [InlineData(429, "ai.rate_limited", "too many requests")]
+    [InlineData(503, "ai.misconfigured", "not configured for this backend")]
+    public async Task ActionableBackendFailuresDoNotMasqueradeAsServiceOutages(int status, string code, string explanation)
+    {
+        var api = Api(_ => new((HttpStatusCode)status) {
+            Content = JsonContent.Create(new { code, detail = "Untrusted provider internals", message = "Untrusted manuscript text" }) });
+        var error = await Assert.ThrowsAsync<DeviceAiException>(() => api.ExecuteAsync("custom_transform",
+            new(null, null, null, null, null, null, null, null, null), default));
+        Assert.Contains(explanation, error.Message);
+        Assert.Contains("writing is unchanged", error.Message);
+        Assert.DoesNotContain("Untrusted", error.Message);
+        Assert.DoesNotContain("AI service is unavailable", error.Message);
     }
     [Fact]
     public async Task TransportUsesAuthenticatedBackendRoutesAndSharedDtos()
@@ -216,7 +235,7 @@ public sealed class DeviceAiActionTests
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
     private static AiUsageStatusDto Usage(bool enabled = true, long remaining = 100) => new()
-    { AiEnabled = enabled, UiEnabled = true, SupportsDocumentVersionChecks = true, PlanKey = "standard", QuotaRemaining = remaining };
+    { AiEnabled = enabled, UiEnabled = true, SupportsDocumentVersionChecks = true, SupportsStyleQualityReview = true, PlanKey = "standard", QuotaRemaining = remaining };
     private static AiActionExecuteResponseDto Response(string key) => new(Guid.NewGuid(), "beta", "new text", "Preview",
         DateTimeOffset.UtcNow, key, SourceDocumentVersion: "v1");
     private static DeviceAiApi Api(Func<HttpRequestMessage, HttpResponseMessage> respond) =>

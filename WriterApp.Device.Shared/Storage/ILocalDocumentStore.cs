@@ -2,6 +2,12 @@ namespace WriterApp.Device.Shared.Storage;
 
 public interface ILocalDocumentStore
 {
+    Task<LocalDocument> CreateOnboardingPracticeAsync(Guid documentId, Guid guideId, CancellationToken ct = default) =>
+        throw new NotSupportedException("Practice project creation is unavailable in this adapter.");
+    Task<LocalDocument> SetProjectCoverAsync(LocalDocument source, string? cover, Guid changeId, bool restore = false, CancellationToken ct = default) =>
+        throw new NotSupportedException("Project cover storage is unavailable in this adapter.");
+    Task<LocalDocument> CreateTranslationCopyAsync(LocalDocument copy, CancellationToken ct = default) =>
+        throw new NotSupportedException("Recoverable translation copies are unavailable in this storage adapter.");
     Task<LocalDocument> MoveStandaloneToProjectAsync(LocalDocument source, Guid targetDocumentId, CancellationToken ct = default) =>
         throw new NotSupportedException("Moving documents into projects is not supported by this storage adapter.");
     Task<LocalDocument> CreateProjectDocumentAsync(Guid projectId, string title, string kind, CancellationToken ct = default) =>

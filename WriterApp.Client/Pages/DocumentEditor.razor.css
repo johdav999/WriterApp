@@ -1,0 +1,4 @@
+
+.manuscript-page-picker { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: .5rem 0; }
+.manuscript-page-picker select { max-width: 100%; padding: .4rem .6rem; border-radius: .4rem; }
+.manuscript-page-picker [role=alert] { flex-basis: 100%; margin: 0; }

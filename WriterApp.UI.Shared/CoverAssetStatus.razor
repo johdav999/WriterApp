@@ -1,0 +1,15 @@
+<section aria-label="Owned offline cover">
+    @if (Remote) {
+        <p>@(Cached ? "The exact validated owned PNG is cached for offline preview and publishing." : "This project has a remote cover. Cache it through the owned server route for offline preview and publishing.")</p>
+        <button type="button" disabled="@(Busy || !Online)" @onclick="Materialize">@(Busy ? "Working…" : "Cache owned remote cover")</button>
+        <p>Caching leaves the saved cover unchanged. Review the cached image and Save explicitly to replace it, retaining the previous cover.</p>
+    }
+    <p>Supported: PNG, at most 2 MB, from configured trusted provider storage. JPEG, WebP, GIF and SVG are unavailable; choose PNG without replacing the prior cover.</p>
+</section>
+@code {
+    [Parameter] public bool Remote { get; set; }
+    [Parameter] public bool Cached { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public bool Online { get; set; }
+    [Parameter] public EventCallback Materialize { get; set; }
+}

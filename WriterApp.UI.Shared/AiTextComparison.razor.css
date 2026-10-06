@@ -1,0 +1,7 @@
+.ai-preview-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 12px; min-width: 0; }
+.ai-preview-pane { min-width: 0; padding: 10px; border: 1px solid var(--color-border, #ddd); border-radius: 10px; }
+.ai-preview-label { font-size: .8em; margin-bottom: 8px; color: var(--color-text-muted, #566); }
+.ai-preview-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 360px; overflow-y: auto; }
+.ai-preview-text ::deep .ai-change-before { background: #ffe3df; color: #74251f; text-decoration: line-through; }
+.ai-preview-text ::deep .ai-change-after { background: #ddf1e4; color: #185332; }
+@media (max-width: 520px) { .ai-preview-columns { grid-template-columns: minmax(0, 1fr); } }

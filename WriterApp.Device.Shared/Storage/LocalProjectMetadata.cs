@@ -13,6 +13,9 @@ public sealed record LocalProjectMetadata
     public string? Genre { get; init; }
     public string? DefaultExportSettingsJson { get; init; }
     public string? CoverImageUrl { get; init; }
+    public string? PreviousCoverImageUrl { get; init; }
+    public bool HasCoverRecovery { get; init; }
+    public Guid? CoverChangeId { get; init; }
     public long MetadataRevision { get; init; }
     public long? ServerMetadataRevision { get; init; }
     public Guid? ServerPrimaryDocumentId { get; init; }
@@ -20,10 +23,12 @@ public sealed record LocalProjectMetadata
 
     public static LocalProjectMetadata From(LocalProject p) => new()
     {
+        Version = p.HasCoverRecovery ? 2 : 1,
         ProjectId = p.ProjectId, ServerProjectId = p.ServerProjectId,
         PrimaryDocumentId = p.PrimaryDocumentId ?? p.ManuscriptId, Title = p.Title,
         Subtitle = p.Subtitle, AuthorName = p.AuthorName, Language = p.Language, Genre = p.Genre,
         DefaultExportSettingsJson = p.DefaultExportSettingsJson, CoverImageUrl = p.CoverImageUrl,
+        PreviousCoverImageUrl = p.PreviousCoverImageUrl, HasCoverRecovery = p.HasCoverRecovery, CoverChangeId = p.CoverChangeId,
         MetadataRevision = p.MetadataRevision, ServerMetadataRevision = p.ServerMetadataRevision,
         ServerPrimaryDocumentId = p.ServerPrimaryDocumentId, MetadataDirty = p.MetadataDirty
     };
@@ -33,6 +38,7 @@ public sealed record LocalProjectMetadata
         ProjectId = ProjectId, ServerProjectId = ServerProjectId, PrimaryDocumentId = PrimaryDocumentId,
         Title = Title, Subtitle = Subtitle, AuthorName = AuthorName, Language = Language, Genre = Genre,
         DefaultExportSettingsJson = DefaultExportSettingsJson, CoverImageUrl = CoverImageUrl,
+        PreviousCoverImageUrl = PreviousCoverImageUrl, HasCoverRecovery = HasCoverRecovery, CoverChangeId = CoverChangeId,
         MetadataRevision = MetadataRevision, ServerMetadataRevision = ServerMetadataRevision,
         ServerPrimaryDocumentId = ServerPrimaryDocumentId, MetadataDirty = MetadataDirty
     };

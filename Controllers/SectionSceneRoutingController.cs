@@ -30,16 +30,19 @@ namespace WriterApp.Controllers
         public async Task<ActionResult<ProjectSceneOpenTargetDto>> GetSceneTarget(Guid sectionId, CancellationToken ct)
         {
             string userId = _userIdResolver.ResolveUserId(User);
-            ProjectNodeRecord? scene = await (
+            var matches = await (
                     from node in _dbContext.ProjectNodes
                     join project in _dbContext.Projects on node.ProjectId equals project.Id
                     where node.NodeType == ProjectNodeType.Scene
                           && node.LinkedSectionId == sectionId
                           && project.OwnerUserId == userId
-                    orderby node.UpdatedUtc descending
                     select node)
                 .AsNoTracking()
-                .FirstOrDefaultAsync(ct);
+                .ToListAsync(ct);
+            // SQLite cannot order DateTimeOffset. Ownership/section filtering stays in SQL;
+            // compare UTC instants after materializing only the matching owned scene nodes.
+            ProjectNodeRecord? scene = matches.OrderByDescending(node=>node.UpdatedUtc)
+                .ThenBy(node=>node.Id).FirstOrDefault();
 
             if (scene is null)
             {

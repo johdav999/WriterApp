@@ -1,0 +1,19 @@
+@using WriterApp.Shared
+<fieldset class="writing-options" disabled="@Disabled" aria-label="Writing settings">
+    <div class="writing-options-row @(Action == "change_tone" ? "tone-only" : null)">
+    <label>Tone <select aria-label="Tone" value="@Value.Tone" @onchange='e => Change(Value with { Tone = e.Value?.ToString() ?? "Neutral" })'>@foreach (var tone in WritingActions.ToneDescriptors) { <option value="@tone.Value" selected="@(Value.Tone == tone.Value)">@tone.Label</option> }</select></label>
+    @if (Action == "rewrite") {
+    <label>Length <select aria-label="Length" value="@Value.Length" @onchange='e => Change(Value with { Length = e.Value?.ToString() ?? "Same" })'>@foreach (var length in WritingActions.Lengths) { <option value="@length">@length</option> }</select></label>
+    }
+    </div>
+    @if (Action == "rewrite") {
+    <label class="writing-preserve"><input type="checkbox" checked="@Value.PreserveTerms" @onchange="e => Change(Value with { PreserveTerms = e.Value is true })" /> Preserve terms</label>
+    }
+</fieldset>
+@code {
+    [Parameter] public WritingSettings Value { get; set; } = new();
+    [Parameter] public EventCallback<WritingSettings> ValueChanged { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public string Action { get; set; } = "rewrite";
+    private Task Change(WritingSettings value) => ValueChanged.InvokeAsync(value);
+}

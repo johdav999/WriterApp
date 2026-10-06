@@ -69,6 +69,20 @@ namespace WriterApp.Controllers
             return Ok(entries);
         }
 
+        [HttpGet("device")]
+        public async Task<ActionResult<WriterApp.Shared.Quality.DeviceGlossarySnapshot>> DeviceSnapshot(Guid documentId, CancellationToken ct)
+        {
+            string userId;
+            try { userId = _userIdResolver.ResolveUserId(User); }
+            catch (SecurityException) { return Unauthorized(); }
+            if (await _documents.GetAsync(documentId, userId, ct) is null) return NotFound();
+            var terms = await _dbContext.DocumentGlossaryEntries.AsNoTracking()
+                .Where(e => e.DocumentId == documentId).OrderBy(e => e.Term).Select(e => e.Term)
+                .Take(WriterApp.Shared.Quality.DeviceGlossarySnapshot.MaximumTerms + 1).ToArrayAsync(ct);
+            try { return Ok(WriterApp.Shared.Quality.DeviceGlossarySnapshot.Create(documentId, terms)); }
+            catch (System.IO.InvalidDataException) { return UnprocessableEntity(new { message = "Glossary exceeds supported device context limits." }); }
+        }
+
         [HttpPost]
         public async Task<ActionResult<GlossaryEntryDto>> Create(
             Guid documentId,

@@ -88,8 +88,20 @@ namespace WriterApp.Controllers
                 return NotFound();
             }
 
-            QualityCheckRunResultDto result = await _qualityChecks.RunChecksAsync(userId, page, request, ct);
-            return Ok(result);
+            var db=HttpContext.RequestServices.GetService(typeof(WriterApp.Data.AppDbContext)) as WriterApp.Data.AppDbContext;
+            try {
+                if(request.WebSource is { } source) {
+                    if(db is null || source.DocumentId!=page.DocumentId || source.PageId!=page.Id || source.SectionId!=page.SectionId || request.Text?.Length>100_000 || page.Content.Length>100_000 || request.Scope is not ("page" or "selection"))
+                        return BadRequest(new { message="Invalid checked quality target." });
+                    await new WriterApp.Application.AI.WebAiSourceService(db,userId).Require(source,ct);
+                    if(request.Scope=="selection" && (string.IsNullOrWhiteSpace(request.Text) || !WriterApp.Application.State.PlainTextMapper.ToPlainText(page.Content).Contains(request.Text,StringComparison.Ordinal)))
+                        return BadRequest(new { message="Quality selection differs from saved writing. Save and select the current text again." });
+                }
+                QualityCheckRunResultDto result = await _qualityChecks.RunChecksAsync(userId, page, request, ct);
+                ct.ThrowIfCancellationRequested();
+                if(request.WebSource is { } completed) await new WriterApp.Application.AI.WebAiSourceService(db!,userId).Require(completed,ct);
+                return Ok(result with { WebSource=request.WebSource });
+            } catch(Exception e) when(e is DocumentSyncException or InvalidDataException or InvalidOperationException) { return Conflict(new { message=e.Message }); }
         }
 
         [HttpPost("issues/{issueKey}/dismiss")]

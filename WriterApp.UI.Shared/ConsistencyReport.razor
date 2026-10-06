@@ -1,6 +1,7 @@
 @using System.Text.Json
 
 <section class="consistency-report" aria-label="Consistency findings">
+    @if (_omittedSections > 0) { <p class="consistency-help" role="status">This check compared @_comparedSections scene@(_comparedSections == 1 ? "" : "s"). @_omittedSections additional scene@(_omittedSections == 1 ? " was" : "s were") outside the comparison limit.</p> }
     @if (_findings is null)
     {
         <p role="alert">The consistency response could not be read. Run the check again.</p>
@@ -11,23 +12,76 @@
     }
     else
     {
-        <h3>@_findings.Count consistency @(_findings.Count == 1 ? "finding" : "findings")</h3>
+        var pendingCount = _findings.Count(f => !IntentionalSuggestions.Contains(f.Index) && !AppliedSuggestions.Contains(f.Index));
+        <div class="consistency-toolbar"><h3>@pendingCount possible @(pendingCount == 1 ? "inconsistency" : "inconsistencies")</h3>
+        <label>Severity <select aria-label="Consistency severity" disabled="@Busy" @bind="_severity">
+            <option value="all">All severities</option><option>Critical</option><option>High</option><option>Medium</option><option>Low</option>
+        </select></label></div>
+        @if (ReviewSuggestion.HasDelegate) { <p class="consistency-help">Review a suggestion to compare the exact wording. You can then apply the change or discard it.</p> }
+        @if (!_findings.Any(f => _severity == "all" || f.Severity == _severity)) { <p role="status">No findings match this filter.</p> }
         <ul class="consistency-findings">
-            @foreach (var finding in _findings)
+            @foreach (var finding in _findings.Where(f => _severity == "all" || f.Severity == _severity))
             {
                 <li class="consistency-finding">
-                    <div class="consistency-finding-meta"><span class="consistency-severity">@finding.Severity severity</span><strong>@finding.Type</strong></div>
+                    <div class="consistency-finding-meta"><span class="consistency-severity severity-@finding.Severity.ToLowerInvariant()">@finding.Severity severity</span><strong>@finding.Type</strong>
+                    @if (AppliedSuggestions.Contains(finding.Index)) { <span class="consistency-outcome">Applied</span> }
+                    else if (IntentionalSuggestions.Contains(finding.Index)) { <span class="consistency-outcome">Intentional</span> }
+                    else if (DiscardedSuggestions.Contains(finding.Index)) { <span class="consistency-outcome">Discarded</span> }</div>
+                    <div class="consistency-label">Why these details may conflict</div>
                     <p>@finding.Message</p>
+                    @if (FindingLocation is not null) { <p>@FindingLocation(finding.Index)</p> }
                     @if (!string.IsNullOrWhiteSpace(finding.Quote))
                     {
-                        <div class="consistency-label">Evidence</div>
+                        <div class="consistency-label">Passage in your writing</div>
                         <blockquote>@finding.Quote</blockquote>
+                        @if (Jump.HasDelegate) { <button type="button" disabled="@Busy" @onclick="() => Jump.InvokeAsync(finding.Index)">Jump to passage</button> }
                     }
-                    @if (!string.IsNullOrWhiteSpace(finding.SuggestedFix))
+                    @if (finding.Comparison is not null)
                     {
-                        <div class="consistency-label">Suggested revision</div>
-                        <p class="consistency-revision">@finding.SuggestedFix</p>
+                        <div class="consistency-label">Conflicting passage</div>
+                        @if (ComparisonLocation is not null) { <p>@ComparisonLocation(finding.Index)</p> }
+                        <blockquote>@finding.Comparison.Quote</blockquote>
+                        @if (JumpComparison.HasDelegate) { <button type="button" disabled="@Busy" @onclick="() => JumpComparison.InvokeAsync(finding.Index)">View conflicting passage</button> }
                     }
+                    else { <p class="consistency-help">This saved finding has no conflicting passage attached. Run a new check for both source passages.</p> }
+                    @if (IntentionalSuggestions.Contains(finding.Index))
+                    {
+                        <p class="consistency-help">Marked intentional on this device. Your writing is unchanged.</p>
+                        @if (MarkIntentional.HasDelegate) { <button type="button" disabled="@Busy" @onclick="() => MarkIntentional.InvokeAsync(finding.Index)">Check this again</button> }
+                    }
+                    else if (DiscardedSuggestions.Contains(finding.Index))
+                    {
+                        <p class="consistency-help">Suggestion discarded. Your writing is unchanged.</p>
+                        @if (ReviewSuggestion.HasDelegate) { <button type="button" disabled="@Busy" @onclick="() => ReviewSuggestion.InvokeAsync(finding.Index)">Review again</button> }
+                    }
+                    else if (finding.Delete || !string.IsNullOrWhiteSpace(finding.SuggestedFix) && finding.SuggestedFix.Trim() != finding.Quote?.Trim())
+                    {
+                        @if (ReviewingSuggestion != finding.Index) {
+                        <div class="consistency-label">Suggested fix</div>
+                        <p class="consistency-revision">@(finding.Delete ? "Remove this passage; keep the conflicting passage." : finding.SuggestedFix)</p>
+                        }
+                        @if (ReviewSuggestion.HasDelegate)
+                        {
+                            @if (ReviewingSuggestion != finding.Index) {
+                            <button type="button" disabled="@(Busy || AppliedSuggestions.Contains(finding.Index))"
+                                @onclick="() => ReviewSuggestion.InvokeAsync(finding.Index)">@(AppliedSuggestions.Contains(finding.Index) ? "Applied" : "Review & apply suggestion")</button>
+                            }
+                            @SuggestionReview?.Invoke(finding.Index)
+                        }
+                    }
+                    else if (ReviewSuggestion.HasDelegate && !string.IsNullOrWhiteSpace(finding.Quote))
+                    {
+                        @if (ReviewingSuggestion != finding.Index) {
+                        <p class="consistency-help">Generate an AI revision for this passage, then review it before applying.</p>
+                        <button type="button" disabled="@(Busy || AppliedSuggestions.Contains(finding.Index))" @onclick="() => ReviewSuggestion.InvokeAsync(finding.Index)">@(AppliedSuggestions.Contains(finding.Index) ? "Applied" : "Generate & review fix")</button>
+                        }
+                        @SuggestionReview?.Invoke(finding.Index)
+                    }
+                    else if (ReviewSuggestion.HasDelegate) { <p class="consistency-help">This finding has no quoted passage. Run a new check to generate a revision, or edit the scene manually.</p> }
+                    @if (MarkIntentional.HasDelegate && !AppliedSuggestions.Contains(finding.Index) && !IntentionalSuggestions.Contains(finding.Index))
+                    { <button type="button" disabled="@Busy" @onclick="() => MarkIntentional.InvokeAsync(finding.Index)">Mark intentional</button> }
+                    @if (DiscardSuggestion.HasDelegate && ReviewingSuggestion != finding.Index && !AppliedSuggestions.Contains(finding.Index) && !DiscardedSuggestions.Contains(finding.Index) && !IntentionalSuggestions.Contains(finding.Index))
+                    { <button class="consistency-discard" type="button" disabled="@Busy" @onclick="() => DiscardSuggestion.InvokeAsync(finding.Index)">Discard suggestion</button> }
                 </li>
             }
         </ul>
@@ -36,27 +90,51 @@
 
 @code {
     [Parameter] public string? ResponseJson { get; set; }
+    [Parameter] public EventCallback<int> ReviewSuggestion { get; set; }
+    [Parameter] public EventCallback<int> DiscardSuggestion { get; set; }
+    [Parameter] public int? ReviewingSuggestion { get; set; }
+    [Parameter] public IReadOnlyCollection<int> DiscardedSuggestions { get; set; } = Array.Empty<int>();
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public IReadOnlyCollection<int> AppliedSuggestions { get; set; } = Array.Empty<int>();
+    [Parameter] public RenderFragment<int>? SuggestionReview { get; set; }
+    [Parameter] public EventCallback<int> Jump { get; set; }
+    [Parameter] public Func<int, string>? FindingLocation { get; set; }
+    [Parameter] public Func<int, string>? ComparisonLocation { get; set; }
+    [Parameter] public EventCallback<int> JumpComparison { get; set; }
+    [Parameter] public EventCallback<int> MarkIntentional { get; set; }
+    [Parameter] public IReadOnlyCollection<int> IntentionalSuggestions { get; set; } = Array.Empty<int>();
+    private string _severity = "all";
     private string? _loadedJson;
     private IReadOnlyList<Finding>? _findings;
-    private sealed record Finding(string Severity, string Type, string Message, string? Quote, string? SuggestedFix);
+    private int _comparedSections, _omittedSections;
+    private sealed record Finding(int Index, string Severity, string Type, string Message, string? Quote, string? SuggestedFix, WriterApp.Shared.ConsistencyComparison? Comparison, bool Delete);
 
     protected override void OnParametersSet()
     {
         if (_loadedJson == ResponseJson) return;
         _loadedJson = ResponseJson;
+        _severity = "all";
         _findings = Parse(ResponseJson);
+        _comparedSections = _omittedSections = 0;
+        if (_findings is not null && !string.IsNullOrWhiteSpace(ResponseJson)) {
+            using var parsed = JsonDocument.Parse(ResponseJson);
+            if (parsed.RootElement.TryGetProperty("coverage", out var coverage) && coverage.ValueKind == JsonValueKind.Object
+                && coverage.TryGetProperty("comparedSections", out var compared) && compared.TryGetInt32(out int count)
+                && coverage.TryGetProperty("omittedSections", out var omitted) && omitted.TryGetInt32(out int skipped) && count >= 0 && skipped >= 0)
+                { _comparedSections = count; _omittedSections = skipped; }
+        }
     }
 
     private static IReadOnlyList<Finding>? Parse(string? json)
     {
-        if (string.IsNullOrWhiteSpace(json)) return null;
+        if (string.IsNullOrWhiteSpace(json) || json.Length > 100_000) return null;
         try
         {
             using var document = JsonDocument.Parse(json);
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object
                 || Text(root, "schemaVersion") != "1.0"
-                || !root.TryGetProperty("issues", out var issues) || issues.ValueKind != JsonValueKind.Array) return null;
+                || !root.TryGetProperty("issues", out var issues) || issues.ValueKind != JsonValueKind.Array || issues.GetArrayLength() > 200) return null;
             var findings = new List<Finding>();
             foreach (var issue in issues.EnumerateArray())
             {
@@ -67,7 +145,16 @@
                 { "character" => "Character", "place" => "Place", "timeline" => "Timeline", _ => "Consistency" };
                 string? quote = issue.TryGetProperty("evidence", out var evidence) && evidence.ValueKind == JsonValueKind.Object
                     ? Text(evidence, "quote") : null;
-                findings.Add(new(severity, type, Text(issue, "message")!, quote, Text(issue, "suggestedFix")));
+                WriterApp.Shared.ConsistencyComparison? comparison = null;
+                if (issue.TryGetProperty("comparisonEvidence", out var reference) && reference.ValueKind != JsonValueKind.Null)
+                {
+                    if (reference.ValueKind != JsonValueKind.Object || !Guid.TryParse(Text(reference, "sectionId"), out var section) || section == Guid.Empty
+                        || string.IsNullOrWhiteSpace(Text(reference, "quote"))) return null;
+                    comparison = new(section, Text(reference, "quote")!);
+                }
+                string? kind = Text(issue, "fixKind");
+                if (kind is not (null or "replace" or "delete") || kind == "delete" && Text(issue, "suggestedFix") != "") return null;
+                findings.Add(new(findings.Count, severity, type, Text(issue, "message")!, quote, Text(issue, "suggestedFix"), comparison, kind == "delete"));
             }
             return findings;
         }

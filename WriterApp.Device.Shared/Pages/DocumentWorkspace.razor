@@ -32,6 +32,7 @@ else
         <nav class="local-project-context" aria-label="Writing context"><a href="/projects">Projects</a> / <a href="@($"/projects/{project.ProjectId}?documentId={(document.Kind == "manuscript" ? document.DocumentId : project.PrimaryDocumentId)}")">@project.Title</a> / @document.Title / @document.Sections.FirstOrDefault(s => s.Pages.Any(p => p.PageId == _selectedPage))?.Title @if (document.Kind == "manuscript") { <a href="@($"/projects/{project.ProjectId}/storyboard?documentId={document.DocumentId}&scene={project.Nodes.FirstOrDefault(n => n.SectionId == CurrentSectionId && n.DeletionId is null)?.NodeId}")">Storyboard</a> }</nav>
     }
     DeviceDocumentStatus status = DeviceDocumentStatus.For(document, _saveFailed || _autosave?.Error is not null ? LocalSaveState.Error : _busy ? LocalSaveState.Saving : _session.SaveState);
+    @if (document.Project is not null) { <a href="@($"/documents/{DocumentId}/cover")">Cover studio</a> }
     <EditorWorkspace Class="@(View.FocusMode ? "is-focus-mode" : "")" WorkspaceClass="@(View.ContextCollapsed || View.FocusMode ? "is-context-collapsed" : "")" Style="@($"--editor-max-width: {(_wideWriting ? "100%" : "900px")}; --topbar-height: 72px;")">
         <Main>
             <EditorHeading Label="@document.Title" Title="@(document.Sections.FirstOrDefault(s => s.Pages.Any(p => p.PageId == _selectedPage))?.Title ?? "Document")">
@@ -70,7 +71,8 @@ else
                 }
                 <DeviceTextEditor @key="selected.PageId" @ref="_editor" PrintLayout="_printLayout" Content="@_session.ContentFor(selected)" Format="@_session.FormatFor(selected)" ContentChanged="html => OnEdited(selected.PageId, html)" SaveRequested="SaveButtonAsync" SearchText="@_searchMatch" SearchRequest="@SearchRequest" SearchLocated="SearchLocated"
                     Annotations="@LocalAnnotationMarkup.ForPage(_session.Snapshot(), selected.PageId)" AnnotationClicked="ShowAnnotationAsync"
-                    RequestedAnnotationId="@(_selectedPage == _annotationPage ? _requestedAnnotationId : null)" AnnotationRequest="_annotationRequest" AnnotationLocated="AnnotationLocated">
+                    RequestedAnnotationId="@(_selectedPage == _annotationPage ? _requestedAnnotationId : null)" AnnotationRequest="_annotationRequest" AnnotationLocated="AnnotationLocated"
+                    ConsistencyPassage="@(_consistencyPassage?.PageId == selected.PageId ? _consistencyPassage : null)" ConsistencyLocated="ConsistencyLocated">
                     <AdditionalActions>
                         <a class="editor-action-link" href="/account#feedback" title="Report a bug or request an enhancement" aria-label="User feedback"><Icon Name="feedback" /></a>
                         <button type="button" class="icon-only" title="Open Prosa documentation" aria-label="Documentation" disabled="@(!AccountLinks.IsAvailable)" @onclick="OpenDocumentationAsync"><Icon Name="menu_book" /></button>
@@ -96,7 +98,7 @@ else
                         Heading="@PanelLabel"
                         Helper="@PanelHelper" /></Tabs>
                     <Header>
-                        <div class="rp-context-label">@PanelLabel</div>
+                        @if (View.Panel != DeviceEditorPanel.Writing) { <div class="rp-context-label">@PanelLabel</div> }
                         @if (View.Panel == DeviceEditorPanel.Writing)
                         {
                             <div class="rp-title">@WritingSubviewTitle</div>
@@ -104,7 +106,8 @@ else
                         }
                     </Header>
                     <Body>
-                        @if (View.Panel == DeviceEditorPanel.Writing && _preview is null && _selectedPage is not null && !_hasRecovery && document.DeletedAtUtc is null)
+                        <DesktopAiGuide DocumentId="DocumentId" />
+                        @if (View.Panel == DeviceEditorPanel.Writing && ActiveSubview != "tools" && _preview is null && _selectedPage is not null && !_hasRecovery && document.DeletedAtUtc is null)
                         {
                             <WorkspaceCoachCard ContextTitle="Writing" Observations="@WritingObservations" Why="@WritingCoachWhy">
                                 <PrimaryAction>
@@ -144,56 +147,74 @@ else
             <WritingPanel Class="desktop-writing-tools" ShowTitle="false">
                 @if (ActiveSubview == "quality")
                 {
-                    <p>Improve clarity, style, pacing and repetition. Select text for a focused revision, or leave the selection empty to revise this page.</p>
-                    <button type="button" disabled="@(_contextBusy || _busy || _aiBusy || _applyingAi || _transferBusy || document.ServerDocumentId is null)" @onmousedown:preventDefault="true" @onclick="() => RunAiAsync(DeviceAiAction.StyleQuality)">Suggest style & quality revision</button>
+                    <StyleQualityOptions @bind-Goal="_styleGoal" Busy="@PanelOperationsDisabled" />
+                    <p>Select text for a focused review, or leave the selection empty to check this page. Review findings and choose changes before applying.</p>
+                    <button type="button" disabled="@(PanelOperationsDisabled || document.ServerDocumentId is null)" @onmousedown:preventDefault="true" @onclick="() => RunAiAsync(DeviceAiAction.StyleQuality)">Suggest style & quality revision</button>
                     @if (document.ServerDocumentId is null) { <p>Sync this document and sign in to request a style revision.</p> }
                 }
                 else
                 {
-                @if (document.ServerDocumentId is null)
-                { <p class="desktop-writing-hint">AI commands need a synced cloud copy. Local writing and saving remain available.</p> }
-                else
-                { <p class="desktop-writing-hint">Select text for a targeted edit. Summarize reads the current section.</p> }
-                <div class="workspace-ai-actions">
-                    <button type="button" disabled="@(_contextBusy || _busy || _aiBusy || _transferBusy || document.ServerDocumentId is null)" @onmousedown:preventDefault="true" @onclick="() => RunAiAsync(DeviceAiAction.Rewrite)">Rewrite selection</button>
-                    <button type="button" disabled="@(_contextBusy || _busy || _aiBusy || _transferBusy || document.ServerDocumentId is null)" @onmousedown:preventDefault="true" @onclick="() => RunAiAsync(DeviceAiAction.Expand)">Expand selection</button>
-                    <button type="button" disabled="@(_contextBusy || _busy || _aiBusy || _transferBusy || document.ServerDocumentId is null)" @onmousedown:preventDefault="true" @onclick="() => RunAiAsync(DeviceAiAction.Shorten)">Shorten selection</button>
-                    <button type="button" disabled="@(_contextBusy || _busy || _aiBusy || _transferBusy || document.ServerDocumentId is null)" @onmousedown:preventDefault="true" @onclick="() => RunAiAsync(DeviceAiAction.Summarize)">Summarize section</button>
-                </div>
+                <div class="workspace-writing-actions">
+                    <LocalWritingPanel @ref="_writingPanel" DocumentId="DocumentId" SectionId="CurrentSectionId" HasCloudCopy="@(document.ServerDocumentId is not null)"
+                        ExternalBusy="@PanelOperationsDisabled" BeforeWork="BeforeContextWorkAsync" AfterWork="AfterContextWorkAsync" Capture="CaptureWritingSourceAsync">
+                <details class="desktop-writing-more desktop-writing-custom">
+                <summary>Custom prompt</summary>
+                <div class="desktop-writing-details-content">
+                <p>Select a passage to revise it, or leave nothing selected to revise all pages in this section. Review before replacing the original.</p>
                 <label for="custom-ai-instruction">Prompt for the next change</label>
-                <textarea id="custom-ai-instruction" @bind="_customAiInstruction" maxlength="2000" rows="2"
+                <textarea id="custom-ai-instruction" @bind="_customAiInstruction" @bind:event="oninput" maxlength="2000" rows="2"
                           disabled="@(_contextBusy || _busy || _aiBusy || _transferBusy)" placeholder="Describe the change you want"></textarea>
                 <button type="button" disabled="@(_contextBusy || _busy || _aiBusy || _transferBusy || document.ServerDocumentId is null)" @onmousedown:preventDefault="true" @onclick="() => RunAiAsync(DeviceAiAction.Custom)">Preview custom action</button>
+                </div>
+                </details>
+                    </LocalWritingPanel>
+                </div>
+                <div class="desktop-writing-utility">
+                    <button type="button" disabled="@(_contextBusy || _busy || _aiBusy || _transferBusy || document.ServerDocumentId is null)" @onmousedown:preventDefault="true" @onclick="() => RunAiAsync(DeviceAiAction.Summarize)">Summarize section</button>
+                </div>
                 <details class="desktop-writing-more">
-                    <summary>More writing tools</summary>
-                    <label for="translation-target-language">Translation target language</label>
-                    <select id="translation-target-language" @bind="_targetLanguage">
-                        @foreach (TranslationLanguageOption language in TranslationLanguages.All)
-                        {
-                            <option value="@language.DisplayName">@language.SearchLabel</option>
-                        }
-                    </select>
-                    <button type="button" disabled="@(_contextBusy || _busy || _aiBusy || _transferBusy || document.ServerDocumentId is null)" @onmousedown:preventDefault="true" @onclick="() => RunAiAsync(DeviceAiAction.Translate)">Translate selection</button>
+                    <summary>Translate &amp; more</summary>
+                    <div class="desktop-writing-details-content">
+                    <LocalTranslationPanel @key="DocumentId" @ref="_translationPanel" DocumentId="DocumentId" SectionId="CurrentSectionId"
+                        ExternalBusy="@(_contextBusy || _busy || _aiBusy || _applyingAi || _transferBusy || document.ServerDocumentId is null)"
+                        BeforeWork="BeforeContextWorkAsync" AfterWork="AfterContextWorkAsync" SelectionRequest="TranslateSelectionAsync" />
                     <button type="button" @onclick="() => SelectCategoryAsync(DeviceEditorPanel.Advanced)">Prompt Library</button>
+                    </div>
                 </details>
                 }
+                <div class="workspace-ai-feedback" tabindex="-1" @ref="_aiFeedback">
                 @if (_aiBusy)
                 {
-                    <p role="status">Preparing an AI proposal. Your writing is unchanged.</p>
+                    <p role="status">@(_aiMessage ?? "Preparing an AI proposal. Your writing is unchanged.")</p>
                     <button type="button" @onclick="CancelAi">Cancel AI request</button>
                 }
                 @if (_aiError is not null) { <p role="alert">@_aiError</p> }
-                @if (_aiMessage is not null) { <p role="status">@_aiMessage</p> }
+                @if (!_aiBusy && _aiMessage is not null) { <p role="status">@_aiMessage</p> }
                 @if (_aiProposal is { } proposal)
                 {
                     <div class="workspace-ai-preview" role="group" aria-label="AI proposal preview">
                         <h3>Review before applying</h3>
-                        @if (!string.IsNullOrWhiteSpace(proposal.Summary)) { <p>@proposal.Summary</p> }
-                        <AiTextComparison OriginalLabel='@(proposal.Prepared.Target == DeviceAiApplyTarget.ManuscriptPage ? "Original page" : proposal.Prepared.ApplyMode == "append" ? "Source section" : "Original selection")' Original="@proposal.SourceText" Proposed="@proposal.ProposedText" />
-                        <p>@(proposal.Prepared.Target == DeviceAiApplyTarget.ManuscriptPage ? "Apply replaces this page's writing with the reviewed revision. You can undo or restore the original after applying." : proposal.Prepared.ApplyMode == "append" ? "Apply adds this text at the end of the current page." : "Apply replaces only the selected text.")</p>
-                        <button type="button" disabled="@(_contextBusy || _busy || _aiBusy || _applyingAi || _transferBusy)" @onclick="ApplyAiAsync">@(proposal.Prepared.Action == DeviceAiAction.StyleQuality ? "Apply style revision" : "Apply")</button>
+                        @if (proposal.StyleReview is { } styleReview) {
+                            <StyleQualityRevisionReview Report="styleReview" Source="@proposal.SourceText"
+                                Goal="@(proposal.Prepared.Request.Parameters?[WriterApp.Shared.StyleQualityReview.Parameter]?.ToString() ?? WriterApp.Shared.StyleQualityReview.DefaultGoal)"
+                                Approved="_approvedStyleEdits" ApprovedChanged="StyleEditsChanged" Busy="@PanelOperationsDisabled" />
+                        } else {
+                            @if (proposal.Prepared.Action == DeviceAiAction.StyleQuality) { <p>Style &amp; quality revision · Preserve existing voice</p> }
+                            else if (!string.IsNullOrWhiteSpace(proposal.Summary)) { <p>@proposal.Summary</p> }
+                            <AiTextComparison OriginalLabel='@(proposal.Prepared.Target == DeviceAiApplyTarget.ManuscriptPage ? "Original page" : proposal.Prepared.ApplyMode == "append" ? "Source section" : "Original selection")' Original="@proposal.SourceText" Proposed="@proposal.ProposedText" HighlightChanges="@(proposal.Prepared.Action == DeviceAiAction.StyleQuality)" />
+                        }
+                        <p>@(proposal.StyleReview is not null ? "Apply updates only the selected changes. Other writing and formatting stay intact. You can undo or restore the original after applying." : proposal.Prepared.Target == DeviceAiApplyTarget.ManuscriptPage ? "Apply replaces this page's writing with the reviewed revision. You can undo or restore the original after applying." : proposal.Prepared.ApplyMode == "append" ? "Apply adds this text at the end of the current page." : "Apply replaces only the selected text.")</p>
+                        <button type="button" disabled="@(_contextBusy || _busy || _aiBusy || _applyingAi || _transferBusy || proposal.StyleReview is not null && _approvedStyleEdits.Count == 0)" @onclick="ApplyAiAsync">@(proposal.Prepared.Action == DeviceAiAction.StyleQuality ? "Apply style revision" : "Apply")</button>
                         <button type="button" disabled="@(_contextBusy || _busy || _aiBusy || _applyingAi || _transferBusy)" @onclick="DismissAi">Dismiss</button>
                     </div>
+                }
+                </div>
+                @if (ActiveSubview == "quality")
+                {
+                    <LocalQualityPanel @key="_selectedPage" @ref="_qualityPanel" DocumentId="DocumentId" PageId="_selectedPage"
+                        StyleGoal="@_styleGoal" CurrentHtml="@CurrentQualityHtml" ExternalBusy="@PanelOperationsDisabled"
+                        BeforeWork="BeforeContextWorkAsync" AfterWork="AfterContextWorkAsync" Capture="CaptureQualitySourceAsync"
+                        Navigate="NavigateQualityAsync" Highlights="HighlightQualityAsync" />
                 }
                 @if (_aiPendingUndo is { } pending && pending.PageId == _selectedPage)
                 {
@@ -202,7 +223,10 @@ else
                 }
                 @if (_aiRecoveredCopy is { } recovered)
                 { <a href="@($"/documents/{recovered}")">Open recovered copy</a> }
-                <div class="desktop-writing-history"><button type="button" @onclick="() => SelectCategoryAsync(DeviceEditorPanel.History)">Review history</button></div>
+                <div class="desktop-writing-history">
+                    <button type="button" @onclick="() => SelectCategoryAsync(DeviceEditorPanel.History)">Review history</button>
+                    @if (ActiveSubview == "tools") { <button type="button" @onclick='() => SelectSubviewAsync("quality")'>Writing stats</button> }
+                </div>
             </WritingPanel>
             }
             else { <p role="status">Writing tools are unavailable for this protected page. Export its original source from Document actions.</p> }
@@ -212,8 +236,14 @@ else
                     </Body>
                     <TrailingBody>
                         <div class="desktop-context-ai" hidden="@(!ShowContextAi)">
+                            @if(ContextAiMode=="prompts") {
+                                <LocalPromptPanel @key="DocumentId" @ref="_promptPanel" DocumentId="DocumentId" SectionId="CurrentSectionId"
+                                    CloudProjectId="@document.ServerProjectId"
+                                    ExternalBusy="@PanelOperationsDisabled" Capture="CaptureWritingSourceAsync" BeforeWork="BeforeContextWorkAsync" AfterWork="AfterContextWorkAsync" />
+                            } else {
                             <LocalAiPanel @key="DocumentId" @ref="_aiPanel" DocumentId="DocumentId" SectionId="CurrentSectionId" Mode="@ContextAiMode"
-                                BeforeWork="BeforeContextWorkAsync" AfterWork="AfterContextWorkAsync" FixedRequest="@PinStoryCoaching" />
+                                BeforeWork="BeforeContextWorkAsync" AfterWork="AfterContextWorkAsync" FixedRequest="@PinStoryCoaching" JumpConsistency="NavigateConsistencyAsync" ClearConsistencyHighlight="ClearConsistencyHighlight" />
+                            }
                         </div>
                     </TrailingBody>
                 </RightPanelShell>
@@ -283,6 +313,7 @@ else
     private bool HasLocalProject => _session?.Document is { Kind: "manuscript", Project: not null };
     private LocalPlanningPanel? _planningPanel;
     private LocalAiPanel? _aiPanel;
+    private LocalPromptPanel? _promptPanel;
     protected override void OnInitialized() => Sync.Changed += OnSyncChanged;
     private void OnSyncChanged()
     {
@@ -374,12 +405,16 @@ else
     };
     private async Task SelectCategoryAsync(DeviceEditorPanel panel)
     {
-        if (_aiPanel?.IsBusy == true || _aiBusy || _applyingAi || !await FlushPlanningAsync() || _contextBusy) return;
+        if (_promptPanel?.IsBusy == true || _writingPanel?.IsBusy == true || _translationPanel?.IsBusy == true || _qualityPanel?.IsBusy == true || _aiPanel?.IsBusy == true || _aiBusy || _applyingAi || !await FlushPlanningAsync() || _contextBusy) return;
+        if (View.Panel == DeviceEditorPanel.Writing && ActiveSubview == "quality") await HighlightQualityAsync("", [], null);
+        _consistencyPassage = null;
         await View.SelectPanelAsync(panel);
     }
     private async Task SelectSubviewAsync(string subview)
     {
-        if (_aiPanel?.IsBusy == true || _aiBusy || _applyingAi || !DeviceSubviews.Any(s => s.Key == subview) || !await FlushPlanningAsync() || _contextBusy) return;
+        if (_promptPanel?.IsBusy == true || _writingPanel?.IsBusy == true || _translationPanel?.IsBusy == true || _qualityPanel?.IsBusy == true || _aiPanel?.IsBusy == true || _aiBusy || _applyingAi || !DeviceSubviews.Any(s => s.Key == subview) || !await FlushPlanningAsync() || _contextBusy) return;
+        if (View.Panel == DeviceEditorPanel.Writing && ActiveSubview == "quality") await HighlightQualityAsync("", [], null);
+        _consistencyPassage = null;
         _subviews[View.Panel] = subview;
         await InvokeAsync(StateHasChanged);
     }
@@ -420,8 +455,8 @@ else
                     string? before = oldPage is null ? null : _session.ContentFor(oldPage);
                     _session.AdoptSavedDocument(latest);
                     var page = latest.Sections.SelectMany(s => s.Pages).FirstOrDefault(p => p.PageId == _selectedPage);
-                    if (_editor is not null && page is not null && before != page.Content)
-                        await _editor.SetContentAsync(page.Content);
+                    if (_editor is not null && page is not null && (before != page.Content || oldPage?.ContentFormat != page.ContentFormat))
+                        await _editor.SetContentAsync(page.Content, page.ContentFormat);
                 }
             }
         } catch (Exception e) when (e is IOException or InvalidOperationException or UnauthorizedAccessException or JSException) { _error = "Reloading saved panel changes failed. " + e.Message; }
@@ -434,7 +469,7 @@ else
         finally { _contextBusy = false; }
     }
     private string WritingSubviewTitle => ActiveSubview switch { "consistency" => "Consistency Coach", "quality" => "Style & quality Coach", _ => "Writing tools" };
-    private string WritingSubviewDescription => ActiveSubview switch { "consistency" => "Review the facts behind your scene.", "quality" => "Review a suggested style revision, then apply it to your writing.", _ => "Run a command on the page or selection." };
+    private string WritingSubviewDescription => ActiveSubview switch { "consistency" => "Review the facts behind your scene.", "quality" => "Review a suggested style revision, then apply it to your writing.", _ => "Shape your prose. Review every change." };
     private IReadOnlyList<string> WritingObservations => ActiveSubview switch
     {
         "consistency" => [
@@ -477,6 +512,38 @@ else
     private bool _previewBusy;
     private LocalEditorSession? _session;
     private DeviceTextEditor? _editor;
+    private LocalWritingPanel? _writingPanel;
+    private LocalTranslationPanel? _translationPanel;
+    private LocalQualityPanel? _qualityPanel;
+    private ConsistencyPassage? _consistencyPassage;
+    private void ClearConsistencyHighlight() => _consistencyPassage = null;
+    private async Task NavigateConsistencyAsync(ConsistencyPassage passage)
+    {
+        if (_session is null) return;
+        if (passage.DocumentId != DocumentId || !_session.Document.Sections.SelectMany(s => s.Pages).Any(p => p.PageId == passage.PageId))
+            throw new InvalidOperationException("The finding belongs to a different manuscript or unavailable page.");
+        if (_selectedPage != passage.PageId && await SaveAllAsync(releaseEditor: false)) { _selectedPage = passage.PageId; _editor = null; }
+        if (_selectedPage != passage.PageId) throw new InvalidOperationException("Save writing before opening the affected page.");
+        _consistencyPassage = passage;
+    }
+    private void ConsistencyLocated(bool found) => _error = found ? null : "The passage no longer matches current editor text. Run the check again.";
+    private string? CurrentQualityHtml => _session?.Document.Sections.SelectMany(s => s.Pages).FirstOrDefault(p => p.PageId == _selectedPage) is { } p
+        ? _session.ContentFor(p) : null;
+    private async Task<QualityEditorSource> CaptureQualitySourceAsync(CancellationToken ct)
+        => await CaptureEditorSourceAsync(ct, completeWords: false);
+    private async Task<QualityEditorSource> CaptureWritingSourceAsync(CancellationToken ct)
+        => await CaptureEditorSourceAsync(ct, completeWords: true);
+    private async Task<QualityEditorSource> CaptureEditorSourceAsync(CancellationToken ct, bool completeWords)
+    {
+        if (_editor is null || _selectedPage is not { } id) throw new InvalidOperationException("The editor is unavailable.");
+        var capture = await _editor.CaptureAiAsync(currentSelectionOnly: true, quality: true, completeWords: completeWords);
+        var source = await Documents.LoadAsync(DocumentId, ct) ?? throw new IOException("Manuscript unavailable.");
+        return new(source, id, capture);
+    }
+    private Task<bool> NavigateQualityAsync(string plain, WriterApp.Application.Documents.QualityHighlight highlight) =>
+        _editor?.NavigateToQualityAsync(plain, highlight) ?? Task.FromResult(false);
+    private Task HighlightQualityAsync(string plain, IReadOnlyList<WriterApp.Application.Documents.QualityHighlight> highlights, string? selected) =>
+        _editor?.SetQualityHighlightsAsync(plain, highlights, selected) ?? Task.CompletedTask;
     private Guid? _selectedPage;
     private string? _error;
     private bool _busy;
@@ -496,6 +563,15 @@ else
     private bool _applyingAi;
     private string? _aiError;
     private string? _aiMessage;
+    private string _styleGoal = WriterApp.Shared.StyleQualityReview.DefaultGoal;
+    private IReadOnlyCollection<int> _approvedStyleEdits = Array.Empty<int>();
+    private Task StyleEditsChanged(IReadOnlyCollection<int> approved) {
+        if (!PanelOperationsDisabled && _aiProposal is { StyleReview: { } report } proposal) {
+            _aiProposal = proposal with { ProposedText = WriterApp.Shared.StyleQualityReview.Compose(report, proposal.SourceText, approved) };
+            _approvedStyleEdits = approved.ToArray();
+        }
+        return Task.CompletedTask;
+    }
     private DeviceAiProposal? _aiProposal;
     private DeviceAiUndoRecord? _aiUndo;
     private DeviceAiUndoRecord? _aiPendingUndo;
@@ -514,7 +590,7 @@ else
         if (_session?.Document.DocumentId == DocumentId) { await ApplySearchNavigationAsync(); await ApplyPanelNavigationAsync(); return; }
         View.Reset();
         _documentMenuOpen = false;
-        _subviews.Clear(); _planningPanel = null; _aiPanel = null; _lastPanelNavigation = null;
+        _subviews.Clear(); _planningPanel = null; _aiPanel = null; _promptPanel = null; _qualityPanel = null; _translationPanel = null; _consistencyPassage = null; _lastPanelNavigation = null;
         if (_editingId is { } previous) Documents.EndEditing(previous);
         _aiRequest?.Cancel();
         _aiProposal = null; _aiUndo = null; _aiPendingUndo = null; _aiRecoveredCopy = null; _aiError = null; _aiMessage = null;
@@ -627,14 +703,24 @@ else
 
     private async Task RunAiAsync(DeviceAiAction action)
     {
-        if (_contextBusy || _aiBusy || _busy || _applyingAi || _transferBusy || _structureBusy || _previewBusy || _preview is not null || _session is null || _editor is null || _selectedPage is null || _hasRecovery) return;
-        if (!await FlushPlanningAsync()) return;
-        _aiProposal = null; _aiError = null; _aiMessage = null; _aiBusy = true;
+        if (_aiBusy || _applyingAi) return;
+        if (_promptPanel?.IsBusy == true || _writingPanel?.IsBusy == true || _translationPanel?.IsBusy == true || _qualityPanel?.IsBusy == true || PanelOperationsDisabled)
+        { _aiError = "Finish the current operation before requesting an AI review."; _focusAiFeedback = true; return; }
+        if (_session is null || _editor is null || _selectedPage is null)
+        { _aiError = "The editor is not ready. Open a page and try the review again."; _focusAiFeedback = true; return; }
+        if (action == DeviceAiAction.Custom) {
+            DismissAi(); _aiError = null; _aiMessage = null;
+            if (_writingPanel is not null) await _writingPanel.RunCustomAsync(_customAiInstruction);
+            return;
+        }
+        _aiProposal = null; _aiError = null; _aiMessage = "Saving the writing for review…"; _aiBusy = true;
         using var request = new CancellationTokenSource();
         _aiRequest = request;
         Guid pageId = _selectedPage.Value;
         try
         {
+            if (!await FlushPlanningAsync())
+            { _aiError = "Save the pending planning changes before requesting an AI review."; return; }
             var capture = await _editor.CaptureAiAsync(currentSelectionOnly: action == DeviceAiAction.StyleQuality);
             if (action == DeviceAiAction.StyleQuality && string.IsNullOrWhiteSpace(capture.SelectedText))
                 capture = await _editor.CaptureAiAsync(wholePage: true);
@@ -643,7 +729,10 @@ else
                 throw new DeviceAiException(DeviceAiFailure.Invalid, "Select text in the editor first.");
             if (_session.ContentFor(_session.Document.Sections.SelectMany(s => s.Pages).Single(p => p.PageId == pageId)) != capture.Html)
                 await OnEdited(pageId, capture.Html);
-            if (!await SaveCurrentAsync()) return;
+            if (!await SaveCurrentAsync())
+            { _aiError = _error ?? "Save the writing before requesting an AI review."; _aiMessage = null; return; }
+            _aiMessage = "Synchronizing the saved writing before requesting AI…";
+            StateHasChanged();
             await Sync.SyncAsync(request.Token);
             request.Token.ThrowIfCancellationRequested();
             LocalDocument latest = await Documents.LoadAsync(DocumentId, request.Token)
@@ -652,19 +741,48 @@ else
             LocalPage page = section.Pages.Single(p => p.PageId == pageId);
             if (_selectedPage != pageId || page.Content != capture.Html)
                 throw new DeviceAiException(DeviceAiFailure.Invalid, "The writing changed while syncing. Review it and run AI again.");
-            var prepared = DeviceAiRequests.Build(latest, section, page, capture, action, action == DeviceAiAction.Translate ? _targetLanguage : _customAiInstruction);
+            var prepared = DeviceAiRequests.Build(latest, section, page, capture, action, action == DeviceAiAction.Translate ? _targetLanguage : _customAiInstruction,
+                translationSource: _translationSource, translationStyle: _translationStyle, styleGoal: _styleGoal);
+            prepared=LocalWritingOutline.Bind(prepared,latest);
+            if(prepared.Request.WritingOutline is not null)await Ai.RequireWritingOutlineCapabilityAsync(request.Token);
+            _aiMessage = "Checking the writing with AI. Your writing is unchanged.";
+            StateHasChanged();
             var proposal = await Ai.ProposeAsync(prepared, request.Token);
-            _aiHistoryRecord = new(1, Guid.NewGuid(), DocumentId, prepared.Key, action == DeviceAiAction.Translate ? "Translation selection" : "Manuscript " + prepared.ApplyMode, latest.LocalRevision, latest.ServerVersion, DateTimeOffset.UtcNow, "Reviewed", latest, proposal.ProposedText, pageId, OriginalText: proposal.SourceText);
+            if(prepared.Request.WritingOutline is { } generatedOutline)LocalWritingOutline.RequireCurrent(await Documents.LoadAsync(DocumentId,request.Token) ?? throw new IOException("Document unavailable."),generatedOutline);
+            Ai.RequireCurrentAccount(proposal);request.Token.ThrowIfCancellationRequested();
+            if (proposal.StyleReview is { Edits.Count: > 0 } styleReport)
+                await _editor.PreviewStyleQualityAsync(capture.Html, capture.SelectionStart, proposal.SourceText, styleReport.Edits);
+            _aiHistoryRecord = new(1, Guid.NewGuid(), DocumentId, prepared.Key, action == DeviceAiAction.Translate ? "Translation selection" : "Manuscript " + prepared.ApplyMode, latest.LocalRevision, latest.ServerVersion, DateTimeOffset.UtcNow, "Reviewed", latest, proposal.ProposedText, pageId, OriginalText: proposal.SourceText, CloudOrigin:proposal.HistoryOrigin);
             await AiHistory.SaveHistoryAsync(_aiHistoryRecord, request.Token);
+            Ai.RequireCurrentAccount(proposal);request.Token.ThrowIfCancellationRequested();
             _aiProposal = proposal;
+            _approvedStyleEdits = proposal.StyleReview is { } report ? Enumerable.Range(0, report.Edits.Count).ToArray() : Array.Empty<int>();
             await ReloadHistoryAsync();
-            _aiMessage = "Proposal ready. Review both versions before applying.";
+            _aiMessage = proposal.StyleReview is { Edits.Count: 0 }
+                ? "Style review completed. No changes suggested; your writing is unchanged."
+                : "Proposal ready. Review both versions before applying.";
         }
         catch (OperationCanceledException) { _aiMessage = "AI request canceled. Your writing is unchanged."; }
         catch (DeviceAiException error) { _aiError = error.Message; }
-        catch (Exception error) when (error is HttpRequestException or IOException or InvalidOperationException or JSException)
+        catch (InvalidDataException error) { _aiError = error.Message; }
+        catch (JSException) when (action == DeviceAiAction.StyleQuality) { _aiError = "Some suggested changes could not be mapped safely to the page formatting. Check a shorter selection; your writing is unchanged."; }
+        catch (Exception error) when (error is HttpRequestException or IOException or UnauthorizedAccessException or InvalidOperationException or JSException)
         { _aiError = "AI could not prepare a proposal. Check the connection or editor and try again; your writing is unchanged."; }
-        finally { _aiRequest = null; _aiBusy = false; if (!_disposed) StateHasChanged(); }
+        finally { _aiRequest = null; _aiBusy = false; if (_aiError is not null) _aiMessage = null; _focusAiFeedback = true; if (!_disposed) StateHasChanged(); }
+    }
+    private ElementReference _aiFeedback;
+    private bool _focusAiFeedback;
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_focusAiFeedback || View.Panel != DeviceEditorPanel.Writing || ActiveSubview is not ("tools" or "quality")) return;
+        _focusAiFeedback = false;
+        try { await _aiFeedback.FocusAsync(); }
+        catch (JSException) { /* Feedback remains directly below the request button if focus fails. */ }
+    }
+    private string _translationSource = "auto", _translationStyle = "natural";
+    private Task TranslateSelectionAsync(WriterApp.Shared.TranslationSelectionOptions options) {
+        _targetLanguage = options.TargetLanguage; _translationSource = options.SourceLanguage; _translationStyle = options.Style;
+        return RunAiAsync(DeviceAiAction.Translate);
     }
     private void CancelAi() => _aiRequest?.Cancel();
     private void DismissAi() { _aiProposal = null; _aiMessage = "Proposal dismissed. Your writing is unchanged."; }
@@ -681,13 +799,19 @@ else
             if (_aiHistoryRecord is null) throw new InvalidOperationException("Recovery evidence is missing.");
             var latest = await Documents.LoadAsync(DocumentId) ?? throw new IOException("Document unavailable.");
             AdvancedAiRequests.RequireFresh(latest, new(_aiHistoryRecord.Before, Guid.Empty, null, "", LocalAiTarget.Analysis, proposal.Prepared));
+            if(proposal.Prepared.Request.WritingOutline is { } reviewedOutline)LocalWritingOutline.RequireCurrent(latest,reviewedOutline);
+            if (proposal.StyleReview is not null)
+                _aiHistoryRecord = LocalStyleQualityApproval.Prepare(proposal, _approvedStyleEdits, _aiHistoryRecord);
             await AiHistory.SaveHistoryAsync(_aiHistoryRecord with { Status = "Applying" });
             var record = new DeviceAiUndoRecord(DocumentId, _selectedPage.Value, proposal.Prepared.BaseHtml, null, DateTimeOffset.UtcNow);
             await AiUndo.SaveBeforeAsync(record);
             _aiPendingUndo = record;
             Ai.RequireCurrentAccount(proposal);
-            string after = await _editor.ApplyAiAsync(proposal.Prepared.BaseHtml, proposal.Prepared.From, proposal.Prepared.To,
-                proposal.Prepared.SelectedText, proposal.ProposedText, proposal.Prepared.ApplyMode);
+            string after = proposal.StyleReview is { } styleReport
+                ? await _editor.ApplyStyleQualityAsync(proposal.Prepared.BaseHtml, proposal.Prepared.Request.SelectionStart!.Value, proposal.SourceText,
+                    styleReport.Edits.Where((edit, index) => _approvedStyleEdits.Contains(index)).ToArray())
+                : await _editor.ApplyAiAsync(proposal.Prepared.BaseHtml, proposal.Prepared.From, proposal.Prepared.To,
+                    proposal.Prepared.SelectedText, proposal.ProposedText, proposal.Prepared.ApplyMode);
             _aiProposal = null;
             bool saved = await SaveCurrentAsync();
             if (!saved) return;
@@ -831,7 +955,7 @@ else
     private void OnSaveChanged() { if (!_disposed) _ = InvokeAsync(StateHasChanged); }
     private async Task<bool> InvokeFlushAsync(bool closing)
     {
-        if (_contextBusy || _aiPanel?.IsBusy == true || _aiBusy || _structureBusy || _previewBusy || _transferBusy || _applyingAi) return false;
+        if (_promptPanel?.IsBusy == true || _writingPanel?.IsBusy == true || _translationPanel?.IsBusy == true || _qualityPanel?.IsBusy == true || _contextBusy || _aiPanel?.IsBusy == true || _aiBusy || _structureBusy || _previewBusy || _transferBusy || _applyingAi) return false;
         bool saved = false;
         await InvokeAsync(async () => saved = await SaveAllAsync(releaseEditor: !closing));
         return saved;
@@ -892,7 +1016,7 @@ else
 
     private async Task SwitchPageAsync(Guid? id)
     {
-        if (id is null || id == _selectedPage || _transferBusy || _structureBusy || _previewBusy || _preview is not null || _aiBusy || _applyingAi) return;
+        if (id is null || id == _selectedPage || _contextBusy || _promptPanel?.IsBusy == true || _writingPanel?.IsBusy == true || _translationPanel?.IsBusy == true || _qualityPanel?.IsBusy == true || _aiPanel?.IsBusy == true || _transferBusy || _structureBusy || _previewBusy || _preview is not null || _aiBusy || _applyingAi) return;
         if (await SaveAllAsync(releaseEditor: false))
         {
             _selectedPage = id; _editor = null;
@@ -904,7 +1028,7 @@ else
 
     private async Task BeforeNavigationAsync(LocationChangingContext context)
     {
-        if (_applyingAi || _transferBusy || _structureBusy || _previewBusy) { context.PreventNavigation(); return; }
+        if (_contextBusy || _promptPanel?.IsBusy == true || _writingPanel?.IsBusy == true || _translationPanel?.IsBusy == true || _qualityPanel?.IsBusy == true || _aiPanel?.IsBusy == true || _applyingAi || _transferBusy || _structureBusy || _previewBusy) { context.PreventNavigation(); return; }
         if (_contextBusy || !await SaveAllAsync(releaseEditor: false) || _session?.IsDirty == true)
         {
             context.PreventNavigation();

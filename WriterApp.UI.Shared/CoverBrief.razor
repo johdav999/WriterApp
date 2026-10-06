@@ -1,0 +1,16 @@
+@using WriterApp.Shared
+<fieldset class="cover-brief" disabled="@Disabled">
+    <legend>Cover brief</legend>
+    <label>Describe your cover<textarea maxlength="4000" value="@Value.Description" @onchange="e => Change(description: e.Value?.ToString())" placeholder="Subject, setting and visual details"></textarea></label>
+    <label>Genre<select value="@Value.Genre" @onchange="e => Change(genre: e.Value?.ToString())">@foreach(var value in CoverStudioContract.Genres) { <option>@value</option> }</select></label>
+    <label>Mood<select value="@Value.Mood" @onchange="e => Change(mood: e.Value?.ToString())">@foreach(var value in CoverStudioContract.Moods) { <option>@value</option> }</select></label>
+    <label>Visual style<select value="@Value.Style" @onchange="e => Change(style: e.Value?.ToString())">@foreach(var value in CoverStudioContract.Styles) { <option>@value</option> }</select></label>
+    <label>Color palette<select value="@Value.ColorPalette" @onchange="e => Change(palette: e.Value?.ToString())">@foreach(var value in CoverStudioContract.Palettes) { <option>@value</option> }</select></label>
+</fieldset>
+@code {
+    [Parameter] public CoverPrompt Value { get; set; } = new() { Genre="Fantasy", Mood="Dark", Style="Cinematic", ColorPalette="Warm" };
+    [Parameter] public EventCallback<CoverPrompt> ValueChanged { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    private Task Change(string? description=null, string? genre=null, string? mood=null, string? style=null, string? palette=null) => ValueChanged.InvokeAsync(new() {
+        Description=description ?? Value.Description, Genre=genre ?? Value.Genre, Mood=mood ?? Value.Mood, Style=style ?? Value.Style, ColorPalette=palette ?? Value.ColorPalette });
+}

@@ -1,7 +1,11 @@
 import { Editor, Extension, getSchema } from "@tiptap/core";
-import { DOMParser as ProseMirrorDOMParser } from "@tiptap/pm/model";
+import { DOMParser as ProseMirrorDOMParser, DOMSerializer, Fragment, Slice, type Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { TextSelection } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
 import { annotationExtension, setAnnotations, navigateToAnnotation, selectedAnnotationText, type TextAnnotation } from "./device-annotations";
+import { qualityExtension, qualityRange, qualityBlockSeparator, setQualityHighlights, navigateToQuality, type QualityHighlight } from "./device-quality";
+import { targetedRevisionTransaction } from "./targeted-revision";
+import { consistencyPassageExtension, highlightConsistencyPassage } from "./device-consistency";
 import TextAlign from "@tiptap/extension-text-align";
 import { Table, TableRow, TableHeader, TableCell } from "@tiptap/extension-table";
 import { EditorImage, IndentExtension } from "./editor-rich-extensions";
@@ -127,6 +131,256 @@ function prepare(content: string, format: string) {
     return { type: "doc", content: content.split(/\r?\n/).map(text => ({ type: "paragraph", content: text ? [{ type: "text", text }] : [] })) };
 }
 
+// Page-local text markers retain the complete schema tree, including marks and block attributes.
+// Translation never interprets provider text as HTML or lets it alter the tree.
+export function captureTranslation(content: string, format: string) {
+    if (content.length > 500000) throw new Error("This page exceeds the translation source limit. Translate a smaller selection.");
+    if (format === "Html" && /<!--/.test(content)) throw new Error("Translation cannot preserve embedded HTML comments. Use selection translation; the original is unchanged.");
+    if (format === "Html") {
+        // Inspect inert source before schema parsing: a block image nested in a paragraph
+        // can otherwise be discarded by the parser before the node-level refusal runs.
+        const source = document.createElement("template"); source.innerHTML = content;
+        if (source.content.querySelector("img,pre,code"))
+            throw new Error("Translation cannot preserve image captions or code semantics yet. Translate a text-only section or selection; the original is unchanged.");
+    }
+    const json = prepare(content, format);
+    const runs: { id: string, text: string }[] = [];
+    function visit(node: any, path: number[]) {
+        if (["image", "codeBlock"].includes(node.type) || (node.marks || []).some((mark: any) => mark.type === "code"))
+            throw new Error("Translation cannot preserve image captions or code semantics yet. Translate a text-only section or selection; the original is unchanged.");
+        if (node.type === "text") {
+            if (/[\r\n\0]/.test(node.text)) throw new Error("Translation needs explicit paragraph or hard-break structure. Normalize line breaks in this page or translate a selection.");
+            runs.push({ id: path.join("."), text: node.text });
+        }
+        (node.content || []).forEach((child: any, index: number) => visit(child, [...path, index]));
+    }
+    visit(json, []);
+    return { runs };
+}
+
+export function previewTranslation(content: string, format: string, translated: { id: string, text: string }[]) {
+    const original = captureTranslation(content, format).runs;
+    if (original.length !== translated.length || original.some((run, index) => run.id !== translated[index]?.id)
+        || translated.some(run => typeof run.text !== "string" || !run.text.length || /[\r\n\0]/.test(run.text)))
+        throw new Error("Translation text markers do not match this complete page.");
+    const json = prepare(content, format);
+    for (const run of translated) {
+        const path = run.id.split(".").map(Number);
+        let node = json;
+        for (const index of path) node = node.content[index];
+        if (node.type !== "text") throw new Error("Invalid translation text marker.");
+        node.text = run.text;
+    }
+    const schema = getSchema(richExtensions()); const doc = schema.nodeFromJSON(json); doc.check();
+    const container = document.createElement("div");
+    container.appendChild(DOMSerializer.fromSchema(schema).serializeFragment(doc.content));
+    return container.innerHTML;
+}
+
+// Build a reviewed replacement without touching the live editor or its selection.
+// Uses the same schema and content checks as the writing surface, including legacy conversion.
+export function previewConsistencyRevision(content: string, format: string, original: string, proposed: string, exactStart?: number, quality = false) {
+    const editor = new Editor({ element: document.createElement("div"), extensions: richExtensions(),
+        content: prepare(content, format), editable: true });
+    try {
+        const doc = editor.state.doc;
+        const separator = quality ? qualityBlockSeparator : "\n";
+        const plain = doc.textBetween(0, doc.content.size, separator, "\n");
+        const start = exactStart ?? plain.indexOf(original);
+        if (!original.trim() || !Number.isSafeInteger(start) || start < 0 || plain.slice(start, start + original.length) !== original
+            || exactStart === undefined && plain.indexOf(original, start + 1) >= 0)
+            throw new Error("The affected writing could not be matched uniquely. Run the consistency check again.");
+        if (proposed === original || proposed.length > 0 && !proposed.trim()) throw new Error("This suggestion makes no change to the writing.");
+        let from: number | undefined, to: number | undefined;
+        doc.descendants((node, pos) => {
+            if (!node.isText) return;
+            const prefix = doc.textBetween(0, pos, separator, "\n").length;
+            if (start >= prefix && start < prefix + node.nodeSize) from = pos + start - prefix;
+            const end = start + original.length;
+            if (end > prefix && end <= prefix + node.nodeSize) to = pos + end - prefix;
+        });
+        if (from === undefined || to === undefined || doc.textBetween(from, to, separator, "\n") !== original)
+            throw new Error("The affected writing cannot be replaced safely. Run the consistency check again.");
+        // Provider prose stays inert, and a phrase replacement retains the source's inline marks.
+        const lines = proposed.replace(/\r\n?/g, "\n").split("\n");
+        const sourceMarks = doc.nodeAt(from)?.marks ?? doc.resolve(from).marks();
+        const replacement = proposed.length === 0 ? Slice.empty : lines.length === 1
+            ? new Slice(Fragment.from(editor.schema.text(proposed, sourceMarks)), 0, 0)
+            : new Slice(Fragment.fromArray(lines.map(line => (quality ? doc.resolve(from!).parent.type : editor.schema.nodes.paragraph).create(
+                quality ? doc.resolve(from!).parent.attrs : null,
+                line ? editor.schema.text(line, sourceMarks) : undefined))), 1, 1);
+        const rangeFrom = from, rangeTo = to;
+        if (!editor.commands.command(({ tr, dispatch }) => {
+            if (dispatch) tr.replaceRange(rangeFrom, rangeTo, replacement);
+            return true;
+        }))
+            throw new Error("The suggested revision could not be applied.");
+        return editor.getHTML();
+    } finally { editor.destroy(); }
+}
+
+export function validateQualityRange(content: string, format: string, from: number, to: number, expected: string, quality = true, allowMixedMarks = false) {
+    if (!Number.isSafeInteger(to) || to !== from + expected.length) throw new Error("The quality range is invalid.");
+    const editor = new Editor({ element: document.createElement("div"), extensions: richExtensions(), content: prepare(content, format), editable: false });
+    try {
+        const doc = editor.state.doc;
+        const separator = quality ? qualityBlockSeparator : "\n";
+        const plain = doc.textBetween(0, doc.content.size, separator, "\n");
+        const word = (character: string) => /[\p{L}\p{N}]/u.test(character);
+        const splitsCharacter = (at: number) => at > 0 && /[\uD800-\uDBFF]/.test(plain[at-1]) && /[\uDC00-\uDFFF]/.test(plain[at] ?? "");
+        if (splitsCharacter(from) || splitsCharacter(to)
+            || from > 0 && word(plain[from-1]) && word(plain[from] ?? "")
+            || to < plain.length && word(plain[to-1] ?? "") && word(plain[to]))
+            throw new Error("Select a complete passage or whole words before reviewing this fix.");
+        const range = qualityRange(doc, { issueKey: "", from, to, expectedText: expected, severity: "info" }, separator);
+        if (!range) throw new Error("The quality passage no longer matches the writing. Check again.");
+        const start = doc.resolve(range.from), end = doc.resolve(range.to);
+        const sourceMarks = JSON.stringify(doc.nodeAt(range.from)?.marks ?? start.marks());
+        let uniform = start.sameParent(end);
+        doc.nodesBetween(range.from, range.to, node => {
+            if (!allowMixedMarks && node.isText && JSON.stringify(node.marks) !== sourceMarks || node.isLeaf && !node.isText) uniform = false;
+        });
+        if (!uniform) throw new Error("This passage spans different formatting, blocks or embedded content. Revise it manually to preserve that structure.");
+    } finally { editor.destroy(); }
+}
+export function previewQualityRevision(content: string, format: string, from: number, to: number, expected: string, proposed: string) {
+    validateQualityRange(content, format, from, to, expected);
+    return previewConsistencyRevision(content, format, expected, proposed, from, true);
+}
+
+// Targeted findings include sentence context. Its unchanged marks need not match;
+// the replacement below must still fit wholly inside one formatting run.
+export function validateTargetedQualityRange(content: string, format: string, from: number, to: number, expected: string) {
+    validateQualityRange(content, format, from, to, expected, true, true);
+}
+export function previewTargetedQualityRevision(content: string, format: string, from: number, to: number, expected: string, proposed: string) {
+    validateTargetedQualityRange(content, format, from, to, expected);
+    // Paragraph splits retain the established stricter block/mark validation.
+    if (/[\r\n]/.test(proposed)) return previewQualityRevision(content, format, from, to, expected, proposed);
+    if (proposed === expected || proposed.length > 0 && !proposed.trim()) throw new Error("This suggestion makes no change to the writing.");
+    const editor = new Editor({ element: document.createElement("div"), extensions: richExtensions(), content: prepare(content, format), editable: false });
+    try {
+        const doc = editor.state.doc;
+        const range = qualityRange(doc, { issueKey: "", from, to, expectedText: expected, severity: "info" })!;
+        const transaction = targetedRevisionTransaction(editor, range.from, range.to, expected, proposed, qualityBlockSeparator);
+        const container = document.createElement("div");
+        container.appendChild(DOMSerializer.fromSchema(editor.schema).serializeFragment(transaction.doc.content));
+        return container.innerHTML;
+    } finally { editor.destroy(); }
+}
+
+export function consistencyPlainText(content: string, format: string) {
+    const doc = getSchema(richExtensions()).nodeFromJSON(prepare(content, format));
+    return doc.textBetween(0, doc.content.size, "\n", "\n");
+}
+export function qualityPlainText(content: string, format: string) {
+    const doc = getSchema(richExtensions()).nodeFromJSON(prepare(content, format));
+    return doc.textBetween(0, doc.content.size, qualityBlockSeparator, "\n");
+}
+// Continuation owns a new paragraph; no source node is replaced or interpreted as provider markup.
+export function previewContinuation(content: string, format: string, paragraph: string) {
+    if (!paragraph.trim() || paragraph.length > 20000 || /[\r\n\0]/.test(paragraph)) throw new Error("Review exactly one new paragraph.");
+    const schema = getSchema(richExtensions()); const original = schema.nodeFromJSON(prepare(content, format)); original.check();
+    const added = schema.nodes.paragraph.create(null, schema.text(paragraph));
+    const revised = original.copy(original.content.append(added.content.size ? Fragment.from(added) : Fragment.empty)); revised.check();
+    const container = document.createElement("div"); container.appendChild(DOMSerializer.fromSchema(schema).serializeFragment(revised.content));
+    return container.innerHTML;
+}
+export function previewSafeConsistencyRevision(content: string, format: string, from: number, expected: string, proposed: string) {
+    validateQualityRange(content, format, from, from + expected.length, expected, false);
+    if (/[\r\n]/.test(proposed)) throw new Error("Review a single-block revision manually to preserve its structure.");
+    return previewConsistencyRevision(content, format, expected, proposed, from);
+}
+
+export type StyleQualityEdit = { original: string; replacement: string };
+function styleQualityTransaction(editor: Editor, baseHtml: string, sourceFrom: number, source: string, edits: StyleQualityEdit[]) {
+    const doc = editor.state.doc;
+    const plain = doc.textBetween(0, doc.content.size, "\n", "\n");
+    if (editor.getHTML() !== baseHtml || !Number.isSafeInteger(sourceFrom) || sourceFrom < 0
+        || !source || plain.slice(sourceFrom, sourceFrom + source.length) !== source
+        || !Array.isArray(edits) || edits.length === 0 || edits.length > 24)
+        throw new Error("The style review no longer matches the writing. Run the coach again.");
+    const patches: { from: number; to: number; text: string; marks: any }[] = [];
+    const anchors: { from: number; to: number }[] = [];
+    for (const edit of edits) {
+        if (!edit || typeof edit.original !== "string" || typeof edit.replacement !== "string"
+            || !edit.original.trim() || !edit.replacement.trim() || edit.original === edit.replacement || edit.replacement.length > 20000)
+            throw new Error("Invalid reviewed style change.");
+        const offset = source.indexOf(edit.original);
+        if (offset < 0 || source.indexOf(edit.original, offset + 1) >= 0
+            || anchors.some(a => offset < a.to && offset + edit.original.length > a.from))
+            throw new Error("Ambiguous or overlapping style changes. Review a shorter selection.");
+        anchors.push({ from: offset, to: offset + edit.original.length });
+        const range = qualityRange(doc, { issueKey: "", from: sourceFrom + offset, to: sourceFrom + offset + edit.original.length,
+            expectedText: edit.original, severity: "info" }, "\n");
+        if (!range || !doc.resolve(range.from).sameParent(doc.resolve(range.to)))
+            throw new Error("Review a single paragraph or phrase to preserve its structure.");
+        let prefix = 0, suffix = 0;
+        while (prefix < edit.original.length && prefix < edit.replacement.length && edit.original[prefix] === edit.replacement[prefix]) prefix++;
+        if (prefix > 0 && /[\uD800-\uDBFF]/.test(edit.original[prefix - 1])) prefix--;
+        while (suffix < edit.original.length - prefix && suffix < edit.replacement.length - prefix
+            && edit.original[edit.original.length - suffix - 1] === edit.replacement[edit.replacement.length - suffix - 1]) suffix++;
+        if (suffix > 0 && /[\uDC00-\uDFFF]/.test(edit.original[edit.original.length - suffix])) suffix--;
+        const word = (c: string) => /[\p{L}\p{N}]/u.test(c);
+        while (prefix > 0 && word(edit.original[prefix - 1]) && word(edit.original[prefix] ?? "")) prefix--;
+        while (suffix > 0 && word(edit.original[edit.original.length - suffix - 1] ?? "") && word(edit.original[edit.original.length - suffix])) suffix--;
+        const from = range.from + prefix, to = range.to - suffix;
+        const text = edit.replacement.slice(prefix, edit.replacement.length - suffix);
+        const before = edit.original.slice(prefix, edit.original.length - suffix);
+        if (/[\r\n]/.test(text) || /[\r\n]/.test(before) || doc.textBetween(from, to, "\n", "\n") !== before)
+            throw new Error("This style change crosses a line break. Review a shorter passage.");
+        const marks = to > from ? doc.nodeAt(from)?.marks ?? doc.resolve(from).marks() : doc.resolve(from).marks();
+        let uniform = true;
+        if (to > from) doc.nodesBetween(from, to, node => {
+            if (node.isText && JSON.stringify(node.marks) !== JSON.stringify(marks) || node.isLeaf && !node.isText) uniform = false;
+        });
+        if (!uniform) throw new Error("This changed wording spans mixed formatting or embedded content. Review a smaller passage.");
+        patches.push({ from, to, text, marks });
+    }
+    const transaction = editor.state.tr;
+    for (const patch of patches.sort((a, b) => b.from - a.from))
+        transaction.replaceWith(patch.from, patch.to, patch.text ? doc.type.schema.text(patch.text, patch.marks) : Fragment.empty);
+    transaction.doc.check();
+    return transaction;
+}
+export function previewStyleQualityRevision(content: string, sourceFrom: number, source: string, edits: StyleQualityEdit[]) {
+    const editor = new Editor({ element: document.createElement("div"), extensions: richExtensions(), content: prepare(content, "Html"), editable: false });
+    try {
+        const revised = styleQualityTransaction(editor, content, sourceFrom, source, edits).doc;
+        const container = document.createElement("div");
+        container.appendChild(DOMSerializer.fromSchema(editor.schema).serializeFragment(revised.content));
+        return container.innerHTML;
+    } finally { editor.destroy(); }
+}
+
+// A mouse drag can stop inside a word. Writing tools review complete words;
+// quality findings retain their exact offsets and continue to use strict validation.
+function completeWritingWords(doc: ProseMirrorNode, from: number, to: number) {
+    const boundary = (position: number, direction: -1 | 1) => {
+        const resolved = doc.resolve(position);
+        if (!resolved.parent.isTextblock) return position;
+        // Inline leaves occupy one document position. A non-word placeholder
+        // prevents expansion across images or hard breaks; marks do not split words.
+        const text = resolved.parent.textBetween(0, resolved.parent.content.size, "", "\uFFFC");
+        let offset = resolved.parentOffset;
+        const before = (at: number) => text.slice(Math.max(0, at - 2), at).match(/.$/u)?.[0] ?? "";
+        const after = (at: number) => at < text.length ? String.fromCodePoint(text.codePointAt(at)!) : "";
+        const word = (character: string) => /[\p{L}\p{N}\p{M}_]/u.test(character);
+        const connector = (character: string) => /['’\-]/u.test(character);
+        const insideWord = (at: number) => {
+            const left = before(at), right = after(at);
+            return word(left) && word(right)
+                || word(left) && connector(right) && word(after(at + right.length))
+                || connector(left) && word(before(at - left.length)) && word(right);
+        };
+        // UTF-16 selections must also encompass a complete supplementary character.
+        if (offset > 0 && /[\uD800-\uDBFF]/.test(text[offset - 1]) && /[\uDC00-\uDFFF]/.test(text[offset] ?? "")) offset += direction;
+        while (insideWord(offset)) offset += direction < 0 ? -before(offset).length : after(offset).length;
+        return resolved.start() + offset;
+    };
+    return { from: boundary(from, -1), to: boundary(to, 1) };
+}
+
 export function create(host: HTMLElement, content: string, format: string, receiver: any, externalToolbar = false) {
     const initial = prepare(content, format);
     const toolbar = document.createElement("div");
@@ -231,7 +485,7 @@ export function create(host: HTMLElement, content: string, format: string, recei
     let editorReady = false;
     const editor = new Editor({
         element: canvas,
-        extensions: [...richExtensions(), shortcuts, annotationExtension(id => notify("OnAnnotationClicked", id))],
+        extensions: [...richExtensions(), shortcuts, annotationExtension(id => notify("OnAnnotationClicked", id)), qualityExtension, consistencyPassageExtension],
         content: initial,
         parseOptions: { preserveWhitespace: "full" },
         enableContentCheck: true,
@@ -334,6 +588,19 @@ export function create(host: HTMLElement, content: string, format: string, recei
     });
     return {
         setAnnotations: (items: TextAnnotation[]) => setAnnotations(editor, items),
+        setQualityHighlights: (plain: string, items: QualityHighlight[], selected: string | null) => setQualityHighlights(editor, plain, items, selected),
+        navigateToQuality: (plain: string, item: QualityHighlight) => navigateToQuality(editor, plain, item),
+        clearConsistencyHighlight: () => highlightConsistencyPassage(editor, null),
+        navigateToConsistency(plain: string, from: number, expected: string) {
+            const doc = editor.state.doc;
+            const range = doc.textBetween(0, doc.content.size, "\n", "\n") === plain
+                ? qualityRange(doc, { issueKey: "", from, to: from + expected.length, expectedText: expected, severity: "info" }, "\n")
+                : null;
+            highlightConsistencyPassage(editor, range);
+            if (!range) return false;
+            editor.view.dispatch(editor.state.tr.setSelection(TextSelection.create(doc, range.from, range.to)).scrollIntoView());
+            editor.view.focus(); return true;
+        },
         navigateToAnnotation: (id: string) => navigateToAnnotation(editor, id),
         selectedText: () => selectedAnnotationText(editor),
         navigateToText(text: string) {
@@ -388,14 +655,35 @@ export function create(host: HTMLElement, content: string, format: string, recei
             for (const entry of buttons) entry.button.disabled = !value || (entry.enabled ? !entry.enabled() : false);
         },
         snapshot: () => ({ html: editor.getHTML(), version }),
-        captureAi(wholePage = false, currentSelectionOnly = false) {
+        captureAi(wholePage = false, currentSelectionOnly = false, quality = false, completeWords = false) {
             const doc = editor.state.doc;
             const range = !editor.state.selection.empty
                 ? editor.state.selection
                 : currentSelectionOnly ? null : lastAiSelection;
-            const from = wholePage ? 0 : range?.from ?? editor.state.selection.from;
-            const to = wholePage ? doc.content.size : range?.to ?? editor.state.selection.to;
-            const text = (start: number, end: number) => doc.textBetween(start, end, "\n", "\n");
+            let from = wholePage ? 0 : range?.from ?? editor.state.selection.from;
+            let to = wholePage ? doc.content.size : range?.to ?? editor.state.selection.to;
+            if (quality && !wholePage && from < to) {
+                // Dragging through a paragraph's end can include an empty block even
+                // though only the prose is visibly selected. Exclude structural
+                // boundary positions, retaining all selected text and embedded leaves.
+                let first: number | undefined, last: number | undefined;
+                doc.nodesBetween(from, to, (node, pos) => {
+                    if (!node.isLeaf) return;
+                    first ??= Math.max(from, pos);
+                    last = Math.min(to, pos + node.nodeSize);
+                });
+                if (first !== undefined && last !== undefined) { from = first; to = last; }
+            }
+            if (completeWords && !wholePage && from < to) {
+                ({ from, to } = completeWritingWords(doc, from, to));
+                // Reflect the reviewed target in the visible selection without editing
+                // prose, moving focus out of the panel or creating a save/history event.
+                if (from !== editor.state.selection.from || to !== editor.state.selection.to) {
+                    const backward = editor.state.selection.anchor > editor.state.selection.head;
+                    editor.view.dispatch(editor.state.tr.setSelection(TextSelection.create(doc, backward ? to : from, backward ? from : to)));
+                }
+            }
+            const text = (start: number, end: number) => doc.textBetween(start, end, quality ? qualityBlockSeparator : "\n", "\n");
             const selectedText = text(from, to);
             const selectionStart = text(0, from).length;
             return {
@@ -423,6 +711,13 @@ export function create(host: HTMLElement, content: string, format: string, recei
             lastAiSelection = null;
             return { html: editor.getHTML(), version };
         },
+        applyStyleQuality(baseHtml: string, sourceFrom: number, source: string, edits: StyleQualityEdit[]) {
+            if (!editor.isEditable) throw new Error("The editor is read-only.");
+            const transaction = styleQualityTransaction(editor, baseHtml, sourceFrom, source, edits);
+            editor.view.dispatch(transaction.scrollIntoView());
+            lastAiSelection = null;
+            return { html: editor.getHTML(), version };
+        },
         restoreAi(expectedHtml: string, originalHtml: string) {
             if (!editor.isEditable || editor.getHTML() !== expectedHtml)
                 throw new Error("The writing changed after AI was applied. Restore the original as a separate copy instead.");
@@ -431,11 +726,11 @@ export function create(host: HTMLElement, content: string, format: string, recei
             return { html: editor.getHTML(), version };
         },
         // Only apply explicit external updates. Ordinary .NET rerenders never reset content or selection.
-        setContent(html: string) {
-            validateHtml(html);
-            if (html === editor.getHTML()) return;
+        setContent(content: string, format = "Html") {
+            const prepared = prepare(content, format);
+            if (editor.schema.nodeFromJSON(prepared).eq(editor.state.doc)) return;
             const selection = editor.state.selection;
-            editor.commands.setContent(prepare(html, "Html"), { emitUpdate: false, errorOnInvalidContent: true });
+            editor.commands.setContent(prepared, { emitUpdate: false, errorOnInvalidContent: true });
             const max = editor.state.doc.content.size;
             editor.commands.setTextSelection({ from: Math.min(selection.from, max), to: Math.min(selection.to, max) });
         },

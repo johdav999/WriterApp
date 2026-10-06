@@ -281,6 +281,8 @@ namespace WriterApp.AI.Core
                     "type",
                     "message",
                     "evidence",
+                    "comparisonEvidence",
+                    "fixKind",
                     "suggestedFix",
                     "anchor"
                 };
@@ -300,6 +302,17 @@ namespace WriterApp.AI.Core
                         {
                             return false;
                         }
+                    }
+
+                    if (issue.TryGetProperty("fixKind", out var kind) && kind.ValueKind != JsonValueKind.Null
+                        && (kind.ValueKind != JsonValueKind.String || kind.GetString() is not ("replace" or "delete")
+                            || kind.GetString() == "delete" && (!issue.TryGetProperty("suggestedFix", out var replacement)
+                                || replacement.ValueKind != JsonValueKind.String || replacement.GetString() != ""))) return false;
+                    if (issue.TryGetProperty("comparisonEvidence", out var comparison) && comparison.ValueKind != JsonValueKind.Null)
+                    {
+                        if (comparison.ValueKind != JsonValueKind.Object) return false;
+                        foreach (JsonProperty property in comparison.EnumerateObject())
+                            if (!evidenceAllowed.Contains(property.Name)) return false;
                     }
 
                     if (!issue.TryGetProperty("evidence", out JsonElement evidenceElement) || evidenceElement.ValueKind != JsonValueKind.Object)
@@ -445,7 +458,26 @@ namespace WriterApp.AI.Core
                 proposedText = textArtifact?.TextContent ?? string.Empty;
                 originalText = request.Context.SelectionText ?? request.Context.OriginalText ?? input.SelectedText;
 
-                if (input.SelectionRange.Length > 0 && !string.IsNullOrWhiteSpace(input.SelectedText))
+                if (request.Inputs.TryGetValue("recommended_tool", out var recommendedId)) {
+                    string id = recommendedId.ToString()!;
+                    try {
+                        if (WriterApp.Shared.RecommendedWriting.Revises(id)) _ = WriterApp.Shared.RecommendedWriting.Revision(proposedText, WriterApp.Shared.WritingActions.Parse(originalText!), id);
+                        else _ = WriterApp.Shared.RecommendedWriting.TextResult(proposedText, id, originalText ?? "");
+                    } catch (Exception e) when (e is System.IO.InvalidDataException or System.Text.Json.JsonException or InvalidOperationException) { return AiExecutionOutcome.Rejected(result, providerId, "ai.recommendation_rejected", e.Message); }
+                    summaryLabel = WriterApp.Shared.RecommendedWriting.Tool(id).DisplayName;
+                    // Typed recommendation output is reviewed by host-specific approval; never a flat section replacement.
+                }
+                else if (request.Inputs.TryGetValue("style_quality_review", out var styleReview) && styleReview is true) {
+                    try { _ = WriterApp.Shared.StyleQualityReview.Parse(proposedText, originalText ?? ""); }
+                    catch (System.IO.InvalidDataException error) {
+                        _logger.LogWarning("Style review validation rejected provider findings. RequestId={RequestId}, Reason={Reason}", request.RequestId, error.Message);
+                        return AiExecutionOutcome.Rejected(result, providerId, "ai.style_review_rejected", error.Message);
+                    }
+                    summaryLabel = "Style & quality review";
+                    // Findings JSON is review data, never a manuscript replacement operation.
+                }
+                else if (request.Inputs.TryGetValue("structured_writing",out var customMapped)&&customMapped is true) { }
+                else if (input.SelectionRange.Length > 0 && !string.IsNullOrWhiteSpace(input.SelectedText))
                 {
                     operations.Add(new ReplaceTextRangeOperation(input.ActiveSectionId, input.SelectionRange, proposedText));
                 }
@@ -468,7 +500,9 @@ namespace WriterApp.AI.Core
                 proposedText = textArtifact?.TextContent ?? string.Empty;
                 originalText = request.Context.OriginalText ?? string.Empty;
                 TextRange sectionRange = new(0, (originalText ?? string.Empty).Length);
-                operations.Add(new ReplaceTextRangeOperation(input.ActiveSectionId, sectionRange, proposedText));
+                // Page-mapped JSON is a typed preview, never a flat section text replacement operation.
+                if (!request.Inputs.TryGetValue("structured_writing", out var mapped) || mapped is not true)
+                    operations.Add(new ReplaceTextRangeOperation(input.ActiveSectionId, sectionRange, proposedText));
             }
             else if (string.Equals(action.ActionId, StoryCoachAction.ActionIdValue, StringComparison.Ordinal))
             {
@@ -635,7 +669,7 @@ namespace WriterApp.AI.Core
                 operations,
                 artifactIds,
                 BuildUserSummary(action.ActionId, input.Instruction, input.Options),
-                BuildTargetScope(action.ActionId),
+                action.ActionId==CustomTransformAction.ActionIdValue&&input.Options?.GetValueOrDefault("scope")?.ToString()=="selection"?"Selection":BuildTargetScope(action.ActionId),
                 input.Instruction,
                 originalText,
                 proposedText);
@@ -775,6 +809,8 @@ namespace WriterApp.AI.Core
 
             if (string.Equals(actionId, CustomTransformAction.ActionIdValue, StringComparison.Ordinal))
             {
+                if (options?.TryGetValue(WriterApp.Shared.StyleQualityReview.Parameter, out var styleGoal) == true)
+                    return "Style & quality review · " + WriterApp.Shared.StyleQualityReview.Goal(styleGoal?.ToString() ?? "").Label;
                 return "Run custom prompt";
             }
 
@@ -1006,12 +1042,13 @@ namespace WriterApp.AI.Core
             string excerpt = BuildReadableAnchorExcerpt(text, start, length, 380);
             ContinuityEvidence evidence = issue.Evidence ?? new ContinuityEvidence(string.Empty, string.Empty);
             string normalizedFix = NormalizeContinuitySuggestedFix(issue.SuggestedFix);
+            if (length > 0 && normalizedFix == text.Substring(start, length)) normalizedFix = "";
             return issue with
             {
                 Anchor = new ContinuityAnchor(start, length),
                 Evidence = evidence with
                 {
-                    Quote = string.IsNullOrWhiteSpace(excerpt) ? evidence.Quote : excerpt
+                    Quote = string.IsNullOrWhiteSpace(evidence.Quote) ? excerpt : evidence.Quote
                 },
                 SuggestedFix = normalizedFix
             };
@@ -1328,7 +1365,9 @@ namespace WriterApp.AI.Core
             string Message,
             ContinuityEvidence Evidence,
             string SuggestedFix,
-            ContinuityAnchor Anchor);
+            ContinuityAnchor Anchor,
+            ContinuityEvidence? ComparisonEvidence = null,
+            string? FixKind = null);
 
         private sealed record ContinuityEvidence(string SectionId, string Quote);
 

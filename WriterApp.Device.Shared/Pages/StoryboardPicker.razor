@@ -1,0 +1,84 @@
+@page "/storyboard"
+@page "/storyboard/{DocumentId:guid}"
+@inject LocalDocumentRepository Documents
+@inject NavigationManager Navigation
+
+<PageTitle>Storyboard · Prosa</PageTitle>
+
+<section class="storyboard-picker" aria-labelledby="storyboard-picker-heading">
+    <h1 id="storyboard-picker-heading">Storyboard</h1>
+    <p>Choose a manuscript to arrange its chapters and scenes.</p>
+    @if (_loading)
+    {
+        <p role="status">Loading projects…</p>
+    }
+    else
+    {
+        @if (_error is not null) { <p role="alert">@_error</p> }
+        @if (_notice is not null) { <p role="status">@_notice</p> }
+        @if (_documents.Count > 0)
+        {
+            <ul>
+                @foreach (LocalDocument document in _documents)
+                {
+                    <li><a href="@GetStoryboardHref(document)">@document.Project!.Title · @document.Title</a></li>
+                }
+            </ul>
+        }
+        else if (_error is null)
+        {
+            <p>Create a project or turn a standalone document into a project to start its storyboard.</p>
+        }
+        <a href="/projects">Go to Projects</a>
+    }
+</section>
+
+@code {
+    [Parameter] public Guid? DocumentId { get; set; }
+    private IReadOnlyList<LocalDocument> _documents = [];
+    private bool _loading = true;
+    private string? _error;
+    private string? _notice;
+    private string? _openHref;
+
+    private static string GetStoryboardHref(LocalDocument document) =>
+        $"/projects/{document.Project!.ProjectId:D}/storyboard?documentId={document.DocumentId:D}";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true;
+        _error = _notice = _openHref = null;
+        try
+        {
+            LocalDocumentList result = await Documents.ListAsync();
+            _documents = result.Documents.Where(d => d.Project is not null && d.Kind == "manuscript")
+                .OrderBy(d => d.Project!.Title).ThenBy(d => d.Title).ToArray();
+            if (DocumentId is { } id)
+            {
+                var source = result.Documents.FirstOrDefault(d => d.DocumentId == id);
+                var document = _documents.FirstOrDefault(d => d.DocumentId == id)
+                    ?? _documents.FirstOrDefault(d => source?.Project is { } project && d.Project!.ProjectId == project.ProjectId && d.DocumentId == project.PrimaryDocumentId)
+                    ?? _documents.FirstOrDefault(d => source?.Project is { } project && d.Project!.ProjectId == project.ProjectId);
+                if (document is not null) _openHref = GetStoryboardHref(document);
+                else _notice = "This document has no available storyboard. Choose a manuscript or create a project from your document in Projects.";
+            }
+            if (result.Issues.Count > 0) _error = "Some local documents could not be read. Available manuscripts are listed below.";
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            _documents = [];
+            _error = "Unable to read local projects. Check access and try again.";
+        }
+        finally { _loading = false; }
+    }
+
+    protected override Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_openHref is { } href)
+        {
+            _openHref = null;
+            Navigation.NavigateTo(href, replace: true);
+        }
+        return Task.CompletedTask;
+    }
+}

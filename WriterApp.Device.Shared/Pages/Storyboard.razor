@@ -29,7 +29,7 @@
             <div class="storyboard-page__panel storyboard-page__panel--board">
                 <h2 class="storyboard-page__panel-title">Storyboard</h2>
                 <div class="storyboard-page__panel-body">
-                    <StoryboardBoard @ref="_board" Project="_tree.Project" Nodes="_tree.Nodes" SelectedSceneId="Selected?.NodeId" SelectedSceneIds="_selection"
+                    <StoryboardBoard @ref="_board" UsePointerDragging="true" Project="_tree.Project" Nodes="_tree.Nodes" SelectedSceneId="Selected?.NodeId" SelectedSceneIds="_selection"
                         OnSelectionChanged="SelectAsync" OnStructureChanged="RebuildAsync" OnSceneUpdated="SceneUpdatedAsync"
                         OpenSceneRequested="OpenSceneAsync" RevealNodeRequested="RevealNode" />
                 </div>
@@ -182,7 +182,13 @@
         finally { if (_editingDocument is { } current) Documents.BeginEditing(current); }
     }
     private Task CollapsedChanged(bool value) { _insightsCollapsed = value; return Task.CompletedTask; }
-    private async Task<bool> CreateSuggestedAsync(StoryboardNextSceneSuggestion suggestion) => _board is not null && await _board.CreateSuggestedSceneAsync(suggestion);
+    private async Task<bool> CreateSuggestedAsync(StoryboardNextSceneSuggestion suggestion) {
+        if (_board is null) return false;
+        var intent = await Data.BeginSuggestedSceneAsync();
+        bool created = await _board.CreateSuggestedSceneAsync(suggestion);
+        if (created) await Data.CompleteSuggestedSceneAsync(intent);
+        return created;
+    }
     private async Task OpenSceneAsync(Guid id)
     {
         if (!await FlushAsync()) return;

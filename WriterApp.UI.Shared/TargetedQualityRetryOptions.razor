@@ -1,0 +1,12 @@
+@using WriterApp.Shared
+<div class="targeted-retry-options">
+    <label><input type="checkbox" checked="@Enabled" disabled="@Busy" aria-describedby="@_description" @onchange="Change" /> @TargetedQualityRetry.Label</label>
+    <p id="@_description">@TargetedQualityRetry.Explanation</p>
+</div>
+@code {
+    [Parameter] public bool Enabled { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public EventCallback<bool> EnabledChanged { get; set; }
+    private readonly string _description = "targeted-retry-" + Guid.NewGuid().ToString("N");
+    private Task Change(ChangeEventArgs args) => Busy ? Task.CompletedTask : EnabledChanged.InvokeAsync(args.Value is true);
+}

@@ -1,0 +1,5 @@
+.concept-grid { display:flex;gap:.75rem;flex-wrap:wrap; }
+button { padding:.35rem;border:2px solid var(--border-color,#888);background:var(--surface,#fff);border-radius:8px; }
+button[aria-pressed=true] { border-color:var(--accent-color,#5841ad);outline:2px solid var(--accent-color,#5841ad); }
+button img { width:90px;height:120px;object-fit:contain; }
+.selected-cover { max-width:100%;width:320px;max-height:400px;object-fit:contain;margin-top:1rem; }

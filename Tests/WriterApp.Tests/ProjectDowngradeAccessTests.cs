@@ -19,7 +19,7 @@ using Xunit;
 
 namespace WriterApp.Tests
 {
-    public sealed class ProjectDowngradeAccessTests
+    public sealed partial class ProjectDowngradeAccessTests
     {
         [Fact]
         public async Task ListProjectItems_AllowsExistingProjects_ForFreeUser()

@@ -8,6 +8,9 @@
 .panel-annotation blockquote { margin-inline: 0; padding-inline: var(--space-2); border-left: 2px solid var(--color-border); }
 .panel-annotation.is-selected { border-color: var(--color-primary); box-shadow: 0 0 0 1px var(--color-primary); }
 .panel-annotation .annotation-text-link { display: block; width: 100%; margin-block: var(--space-2); padding: 0; border: 0; background: transparent; color: var(--color-primary); text-align: start; white-space: pre-wrap; overflow-wrap: anywhere; text-decoration: underline; text-underline-offset: .15em; }
+.panel-annotation .annotation-title-link, .panel-annotation .annotation-title { font-weight:600; }
+.panel-annotation .annotation-details { margin-block:var(--space-2); font-size:var(--font-size-helper); }
+.panel-annotation .annotation-details summary { cursor:pointer; color:var(--color-text-muted); }
 .panel-scene-card { margin-block: var(--space-3); }
 .panel-storyboard h3 { font-size: var(--font-size-section-title); }
 .local-planning-panel ::deep .scene-planning-fields, .local-planning-panel ::deep .synopsis-fields { min-width: 0; }

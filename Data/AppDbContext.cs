@@ -43,6 +43,12 @@ namespace WriterApp.Data
         public DbSet<DocumentSyncRecord> DocumentSyncRecords => Set<DocumentSyncRecord>();
         public DbSet<DocumentSyncClock> DocumentSyncClocks => Set<DocumentSyncClock>();
         public DbSet<DocumentSyncOperation> DocumentSyncOperations => Set<DocumentSyncOperation>();
+        public DbSet<WebTranslationOperation> WebTranslationOperations => Set<WebTranslationOperation>();
+        public DbSet<OnboardingDemoWorkspaceRecord> OnboardingDemoWorkspaces => Set<OnboardingDemoWorkspaceRecord>();
+        public DbSet<OnboardingProgressOperationRecord> OnboardingProgressOperations => Set<OnboardingProgressOperationRecord>();
+        public DbSet<CoverAssetRecord> CoverAssets => Set<CoverAssetRecord>();
+        public DbSet<CoverEditSaveRecord> CoverEditSaves => Set<CoverEditSaveRecord>();
+        public DbSet<CoverEditProposalRecord> CoverEditProposals => Set<CoverEditProposalRecord>();
         public DbSet<SectionRecord> Sections => Set<SectionRecord>();
         public DbSet<PageRecord> Pages => Set<PageRecord>();
         public DbSet<PageAnnotationRecord> PageAnnotations => Set<PageAnnotationRecord>();
@@ -72,7 +78,10 @@ namespace WriterApp.Data
         public DbSet<DocumentGlossaryEntryRecord> DocumentGlossaryEntries => Set<DocumentGlossaryEntryRecord>();
         public DbSet<AiActionHistoryEntryRecord> AiActionHistoryEntries => Set<AiActionHistoryEntryRecord>();
         public DbSet<AiActionAppliedEventRecord> AiActionAppliedEvents => Set<AiActionAppliedEventRecord>();
+        public DbSet<WebAiHistoryOperationRecord> WebAiHistoryOperations => Set<WebAiHistoryOperationRecord>();
+        public DbSet<DeviceAiHistoryEventRecord> DeviceAiHistoryEvents => Set<DeviceAiHistoryEventRecord>();
         public DbSet<PromptPresetRecord> PromptPresets => Set<PromptPresetRecord>();
+        public DbSet<PromptPresetTransferRecord> PromptPresetTransfers => Set<PromptPresetTransferRecord>();
         public DbSet<BibleSnapshotRecord> BibleSnapshots => Set<BibleSnapshotRecord>();
         public DbSet<ExportTemplate> ExportTemplates => Set<ExportTemplate>();
         public DbSet<ExportPreset> ExportPresets => Set<ExportPreset>();
@@ -129,6 +138,49 @@ namespace WriterApp.Data
 
         protected override void OnModelCreating(ModelBuilder builder)
         {
+            builder.Entity<CoverEditProposalRecord>(e=>{
+                e.HasKey(x=>x.Id);e.Property(x=>x.OwnerUserId).HasMaxLength(128);e.HasIndex(x=>new{x.OwnerUserId,x.ProjectId});
+            });
+            builder.Entity<CoverEditSaveRecord>(e=>{
+                e.HasKey(x=>x.Id); e.Property(x=>x.OwnerUserId).HasMaxLength(128);e.Property(x=>x.State).HasMaxLength(16);
+                e.HasIndex(x=>new{x.OwnerUserId,x.ProjectId});
+            });
+            builder.Entity<CoverAssetRecord>(e => {
+                e.HasKey(x => x.Id);
+                e.Property(x => x.OwnerUserId).HasMaxLength(128);
+                e.Property(x => x.ReferenceHash).HasMaxLength(64);
+                e.Property(x => x.ContentHash).HasMaxLength(64);
+                e.Property(x => x.RemoteReference).HasMaxLength(4096);
+                e.Property(x => x.SourceDocumentVersion).HasMaxLength(64);
+                e.Property(x => x.MediaType).HasMaxLength(40);
+                e.HasIndex(x => new {x.OwnerUserId,x.ProjectId,x.ReferenceHash}).IsUnique();
+            });
+            builder.Entity<OnboardingDemoWorkspaceRecord>(e => {
+                e.HasKey(x => x.OwnerUserId);
+                e.Property(x => x.OwnerUserId).HasMaxLength(128);
+                e.Property(x => x.Intent).HasMaxLength(100);
+                e.HasIndex(x => x.DocumentId).IsUnique();
+            });
+            builder.Entity<OnboardingProgressOperationRecord>(e => {
+                e.HasKey(x => new { x.OwnerUserId, x.OperationId });
+                e.Property(x => x.OwnerUserId).HasMaxLength(128);
+                e.Property(x => x.RequestHash).HasMaxLength(64);
+            });
+            builder.Entity<WebTranslationOperation>(e => {
+                e.HasKey(x => new { x.OwnerUserId, x.OperationId });
+                e.Property(x => x.OwnerUserId).HasMaxLength(128);
+                e.Property(x => x.RequestHash).HasMaxLength(64);
+                e.HasIndex(x => new { x.OwnerUserId, x.DocumentId });
+                e.HasIndex(x => new { x.OwnerUserId, x.ProposalId }).IsUnique();
+            });
+            builder.Entity<WebAiHistoryOperationRecord>(e => {
+                e.HasKey(x => new { x.OwnerUserId, x.OperationId });
+                e.Property(x => x.OwnerUserId).HasMaxLength(128);
+                e.Property(x => x.RequestHash).HasMaxLength(64);
+                e.Property(x => x.Outcome).HasMaxLength(16);
+                e.HasIndex(x => new { x.OwnerUserId, x.ApplicationId, x.Sequence }).IsUnique();
+                e.HasIndex(x => new { x.OwnerUserId, x.DocumentId });
+            });
             builder.Entity<DocumentSyncClock>(e => { e.HasKey(x => x.Id); e.Property(x => x.Id).ValueGeneratedNever(); e.HasData(new DocumentSyncClock { Id = 1 }); });
             builder.Entity<DocumentSyncRecord>(e =>
             {
@@ -876,6 +928,18 @@ namespace WriterApp.Data
                     .OnDelete(DeleteBehavior.Cascade);
             });
 
+            builder.Entity<DeviceAiHistoryEventRecord>(entity =>
+            {
+                entity.HasKey(e => new { e.OwnerUserId, e.OperationId });
+                entity.Property(e => e.OwnerUserId).HasMaxLength(128).IsRequired();
+                entity.Property(e => e.State).HasMaxLength(16).IsRequired();
+                entity.Property(e => e.RequestHash).HasMaxLength(64).IsRequired();
+                entity.Property(e => e.ReportJson).IsRequired();
+                entity.HasIndex(e => new { e.OwnerUserId, e.LocalEntryId, e.Sequence }).IsUnique();
+                entity.HasIndex(e => new { e.OwnerUserId, e.DocumentId });
+                entity.HasIndex(e => e.ProposalId);
+            });
+
             builder.Entity<PromptPresetRecord>(entity =>
             {
                 entity.HasKey(preset => preset.Id);
@@ -889,6 +953,14 @@ namespace WriterApp.Data
                 entity.HasIndex(preset => new { preset.OwnerUserId, preset.ProjectId });
                 entity.HasIndex(preset => new { preset.OwnerUserId, preset.Kind });
                 entity.HasIndex(preset => preset.UpdatedUtc);
+            });
+
+            builder.Entity<PromptPresetTransferRecord>(entity => {
+                entity.HasKey(x=>new{x.OwnerUserId,x.OperationId});
+                entity.Property(x=>x.OwnerUserId).HasMaxLength(128).IsRequired();
+                entity.Property(x=>x.RequestHash).HasMaxLength(64).IsRequired();
+                entity.Property(x=>x.ResultJson).IsRequired();
+                entity.HasIndex(x=>x.CreatedUtc);
             });
 
             builder.Entity<BibleSnapshotRecord>(entity =>

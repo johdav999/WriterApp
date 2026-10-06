@@ -16,7 +16,7 @@ using WriterApp.Shared;
 
 namespace WriterApp.Application.Covers
 {
-    public sealed class CoverImageService : ICoverImageService
+    public sealed partial class CoverImageService : ICoverImageService
     {
         private const string OpenAiProviderId = "openai";
         private const string DefaultBaseUrl = "https://api.openai.com/v1/";
@@ -32,6 +32,7 @@ namespace WriterApp.Application.Covers
         private readonly IAiUsagePolicy _usagePolicy;
         private readonly WriterAiOpenAiOptions _options;
         private readonly ILogger<CoverImageService> _logger;
+        private readonly WriterApp.Application.Usage.IUsageMeter? _usageMeter;
 
         public CoverImageService(
             HttpClient httpClient,
@@ -39,7 +40,7 @@ namespace WriterApp.Application.Covers
             IAiProviderRegistry providerRegistry,
             IAiUsagePolicy usagePolicy,
             IOptions<WriterAiOptions> options,
-            ILogger<CoverImageService> logger)
+            ILogger<CoverImageService> logger, WriterApp.Application.Usage.IUsageMeter? usageMeter = null)
         {
             _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
             _keyProvider = keyProvider ?? throw new ArgumentNullException(nameof(keyProvider));
@@ -47,6 +48,7 @@ namespace WriterApp.Application.Covers
             _usagePolicy = usagePolicy ?? throw new ArgumentNullException(nameof(usagePolicy));
             _options = options?.Value?.Providers.OpenAI ?? throw new ArgumentNullException(nameof(options));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _usageMeter = usageMeter;
         }
 
         public async Task<List<string>> GenerateCoverConceptsAsync(CoverPrompt prompt, CancellationToken ct = default)
@@ -119,10 +121,10 @@ namespace WriterApp.Application.Covers
 
             ApplyAuthHeaders(request);
 
-            using HttpResponseMessage response = await _httpClient.SendAsync(request, ct);
+            using HttpResponseMessage response = await _httpClient.SendAsync(request,HttpCompletionOption.ResponseHeadersRead, ct);
             await EnsureSuccessAsync(response, ct);
 
-            string json = await response.Content.ReadAsStringAsync(ct);
+            string json = await ReadBoundedAsync(response,16*1024*1024,ct);
             List<string> imageUrls = ExtractImageUrls(json, model);
             if (imageUrls.Count == 0)
             {
@@ -326,7 +328,7 @@ namespace WriterApp.Application.Covers
             string? errorBody = null;
             try
             {
-                string json = await response.Content.ReadAsStringAsync(ct);
+                string json = await ReadBoundedAsync(response,64*1024,ct);
                 errorBody = string.IsNullOrWhiteSpace(json) ? null : json;
                 if (!string.IsNullOrWhiteSpace(json))
                 {
@@ -361,6 +363,15 @@ namespace WriterApp.Application.Covers
                 string.IsNullOrWhiteSpace(errorMessage)
                     ? $"OpenAI image request failed with status {(int)response.StatusCode}."
                     : $"OpenAI image request failed: {errorMessage}");
+        }
+        private static async Task<string> ReadBoundedAsync(HttpResponseMessage response,int limit,CancellationToken ct) {
+            if(response.Content.Headers.ContentLength>limit)throw new CoverImageGenerationException("ai.provider_unavailable","Image provider response exceeds the safe limit.");
+            await using var stream=await response.Content.ReadAsStreamAsync(ct);using var buffer=new System.IO.MemoryStream();byte[] block=new byte[16384];int read;
+            while((read=await stream.ReadAsync(block,ct))>0) {
+                if(buffer.Length+read>limit)throw new CoverImageGenerationException("ai.provider_unavailable","Image provider response exceeds the safe limit.");
+                await buffer.WriteAsync(block.AsMemory(0,read),ct);
+            }
+            return Encoding.UTF8.GetString(buffer.ToArray());
         }
     }
 }

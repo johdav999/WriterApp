@@ -36,6 +36,33 @@ public sealed class ConsistencyReportPresentationTests
     }
 
     [Fact]
+    public async Task ReviewOffersAnActionPerSuggestionAndMarksApprovedSuggestions()
+    {
+        string html = await Render<AiResultPreview>(new() {
+            ["ActionKey"] = "continuity.check_section", ["Proposed"] = Report,
+            ["ReviewConsistencySuggestion"] = EventCallback.Factory.Create<int>(new object(), _ => Task.CompletedTask),
+            ["AppliedConsistencySuggestions"] = new[] { 1 },
+            ["ConsistencySuggestionReview"] = (RenderFragment<int>)(index => builder => {
+                if (index == 2) { builder.OpenElement(0, "section"); builder.AddAttribute(1, "aria-label", "Approve consistency suggestion"); builder.AddContent(2, "Approval preview"); builder.CloseElement(); }
+            })
+        });
+        var buttons = new HtmlParser().ParseDocument(html).QuerySelectorAll(".consistency-finding button");
+        Assert.Equal(3, buttons.Length);
+        Assert.Equal("Review & apply suggestion", buttons[0].TextContent);
+        Assert.False(buttons[0].HasAttribute("disabled"));
+        Assert.Equal("Applied", buttons[1].TextContent);
+        Assert.True(buttons[1].HasAttribute("disabled"));
+        var findings = new HtmlParser().ParseDocument(html).QuerySelectorAll(".consistency-finding");
+        Assert.Null(findings[0].QuerySelector("[aria-label='Approve consistency suggestion']"));
+        Assert.NotNull(findings[2].QuerySelector("[aria-label='Approve consistency suggestion']"));
+        string busy = await Render<AiResultPreview>(new() {
+            ["ActionKey"] = "continuity.check_section", ["Proposed"] = Report, ["Busy"] = true,
+            ["ReviewConsistencySuggestion"] = EventCallback.Factory.Create<int>(new object(), _ => Task.CompletedTask)
+        });
+        Assert.All(new HtmlParser().ParseDocument(busy).QuerySelectorAll("button"), b => Assert.True(b.HasAttribute("disabled")));
+    }
+
+    [Fact]
     public async Task ExistingHistoryRecordsUseReadableReportWithoutRewritingStoredJson()
     {
         var entry = new AiHistoryItem(Guid.NewGuid(), "continuity.check_section", "Analysis", "Reviewed", DateTimeOffset.UtcNow, "Analyzed writing", Report);
@@ -51,6 +78,23 @@ public sealed class ConsistencyReportPresentationTests
         string html = await Render<ConsistencyReport>(new() { ["ResponseJson"] = "{\"schemaVersion\":\"1.0\",\"issues\":[]}" });
         Assert.Contains("No consistency issues found", html);
         Assert.DoesNotContain("role=\"alert\"", html);
+    }
+    [Fact]
+    public async Task TwoPassagesCoverageAndIntentionalActionAreReadableAndKeepReviewControlsSafe()
+    {
+        const string json = """
+        {"schemaVersion":"1.0","coverage":{"comparedSections":2,"omittedSections":1},"issues":[{"severity":"high","type":"character","message":"Eye color differs.","evidence":{"sectionId":"8272ab13-2a97-49bf-8713-b8f76935c438","quote":"Blue eyes."},"comparisonEvidence":{"sectionId":"8272ab13-2a97-49bf-8713-b8f76935c439","quote":"Brown eyes."},"suggestedFix":"Brown eyes."}]}
+        """;
+        string html = await Render<ConsistencyReport>(new() { ["ResponseJson"] = json,
+            ["FindingLocation"] = (Func<int,string>)(_ => "Chapter 1"), ["ComparisonLocation"] = (Func<int,string>)(_ => "Chapter 3"),
+            ["JumpComparison"] = EventCallback.Factory.Create<int>(new object(), _ => Task.CompletedTask),
+            ["MarkIntentional"] = EventCallback.Factory.Create<int>(new object(), _ => Task.CompletedTask), ["IntentionalSuggestions"] = new[] { 0 },
+            ["ReviewSuggestion"] = EventCallback.Factory.Create<int>(new object(), _ => Task.CompletedTask) });
+        var markup = new HtmlParser().ParseDocument(html);
+        Assert.Equal(new[] { "Blue eyes.", "Brown eyes." }, markup.QuerySelectorAll("blockquote").Select(e => e.TextContent));
+        Assert.Contains("Chapter 1", html); Assert.Contains("Chapter 3", html); Assert.Contains("outside the comparison limit", html);
+        Assert.Contains("View conflicting passage", html); Assert.Contains("Check this again", html);
+        Assert.DoesNotContain("Review &amp; apply suggestion", html); Assert.DoesNotContain("schemaVersion", html);
     }
 
     [Theory]
@@ -77,6 +121,51 @@ public sealed class ConsistencyReportPresentationTests
         Assert.DoesNotContain("<script>", html);
     }
 
+    [Fact]
+    public async Task CanonShowsReadableFactsQuotesAndSceneNamesWithoutInternalIds()
+    {
+        const string id = "8272ab13-2a97-49bf-8713-b8f76935c438";
+        var content = WriterApp.Shared.Canon.CanonContent.Parse(WriterApp.Shared.Canon.CanonKind.Character,
+            "{\"schemaVersion\":\"1.0\",\"characters\":[{\"name\":\"Elin\",\"facts\":[{\"fact\":\"Elin arrives after sunset.\",\"evidence\":{\"sectionId\":\"" + id + "\",\"quote\":\"Elin stepped down.\"}}],\"traits\":[\"independent\"]}]}");
+        string html = await Render<StoryCanonView>(new() { ["Kind"] = content.Kind, ["Content"] = content, ["Status"] = "Current",
+            ["SceneNames"] = new Dictionary<string, string> { [id] = "Arrival at the station" } });
+        string? evidence = Environment.GetEnvironmentVariable("WRITERAPP_P03_EVIDENCE");
+        if (evidence is not null) await File.WriteAllTextAsync(Path.Combine(evidence, "canon-reference.html"), html);
+        var markup = new HtmlParser().ParseDocument(html);
+        Assert.Contains("Elin arrives after sunset.", markup.Body!.TextContent);
+        Assert.Equal("Elin stepped down.", markup.QuerySelector("blockquote")!.TextContent);
+        Assert.Contains("From your manuscript", markup.Body.TextContent);
+        Assert.Contains("Facts", markup.Body.TextContent);
+        Assert.DoesNotContain("sectionId", html);
+        Assert.Contains("From scene: Arrival at the station", markup.Body.TextContent);
+        Assert.DoesNotContain(id, html);
+    }
+
+    [Fact]
+    public async Task TimelineUsesEnglishLabelsAndNamesIncludingHonestMissingLinkFallbacks()
+    {
+        var kind = WriterApp.Shared.Canon.CanonKind.Timeline;
+        var timeline = WriterApp.Shared.Canon.CanonContent.Parse(kind, """
+            {"schemaVersion":"1.0","events":[{"id":"evt_arrival","title":"Elin meets Jonas at the station","timeRef":"just after sunset","order":2,"locationId":"loc_vinterhamn_station","participants":["chr_elin","chr_jonas","chr_unknown_person"],"evidence":[{"sectionId":"8272ab13-2a97-49bf-8713-b8f76935c438","quote":"Elin met Jonas."}]}]}
+            """);
+        var contents = new Dictionary<WriterApp.Shared.Canon.CanonKind, WriterApp.Shared.Canon.CanonContent> {
+            [kind] = timeline,
+            [WriterApp.Shared.Canon.CanonKind.Character] = WriterApp.Shared.Canon.CanonContent.Parse(WriterApp.Shared.Canon.CanonKind.Character,
+                """{"schemaVersion":"1.0","characters":[{"id":"chr_elin","name":"Elin"},{"id":"chr_jonas","name":"Jonas"}]}"""),
+            [WriterApp.Shared.Canon.CanonKind.Place] = WriterApp.Shared.Canon.CanonContent.Parse(WriterApp.Shared.Canon.CanonKind.Place,
+                """{"schemaVersion":"1.0","places":[{"id":"loc_vinterhamn_station","name":"Vinterhamn station"}]}""")
+        };
+        string html = await Render<StoryCanonView>(new() { ["Kind"] = kind, ["Content"] = timeline, ["Contents"] = contents });
+        var markup = new HtmlParser().ParseDocument(html);
+        Assert.Equal(new[] { "When", "Event number", "Where", "Who is there", "Evidence" }, markup.QuerySelectorAll(".canon-fields > dt").Select(e => e.TextContent));
+        var people = markup.QuerySelectorAll(".canon-values > li span").Select(e => e.TextContent).ToArray();
+        Assert.Contains("Elin", people); Assert.Contains("Jonas", people); Assert.Contains("Unknown Person (not linked)", people);
+        Assert.Contains("Vinterhamn station", markup.Body!.TextContent);
+        Assert.DoesNotContain("chr_", html); Assert.DoesNotContain("loc_", html); Assert.DoesNotContain("evt_", html);
+        Assert.DoesNotContain("8272ab13", html);
+        string? evidence = Environment.GetEnvironmentVariable("WRITERAPP_P03_EVIDENCE");
+        if (evidence is not null) await File.WriteAllTextAsync(Path.Combine(evidence, "timeline-plain-english.html"), html);
+    }
     [Fact]
     public async Task PlainTextAnalysisKeepsOriginalAndProposedText()
     {

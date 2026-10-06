@@ -13,7 +13,8 @@
 @implements IAsyncDisposable
 
 <CascadingValue Name="StoryboardButtons" Value="ActionTemplate">
-<section class="project-storyboard" aria-label="Storyboard">
+<section @ref="_boardElement" class="project-storyboard @(UsePointerDragging ? "pointer-drag-enabled" : "")"
+         data-storyboard-busy="@(_moveInFlight ? "true" : "false")" aria-label="Storyboard">
     @if (!string.IsNullOrWhiteSpace(_storyboardError))
     {
         <div class="project-storyboard-error">@_storyboardError</div>
@@ -304,6 +305,7 @@
                             else
                             {
                             <div class="@GetColumnDropClass(column.Chapter.Id, null)"
+                                 data-storyboard-chapter="@column.Chapter.Id"
                                  @ondragover:preventDefault
                                  @ondrop:preventDefault
                                  @ondragover="args => OnColumnDragOver(column.Chapter.Id, null, args)"
@@ -315,6 +317,7 @@
                                 else
                                 {
                                     <div class="@GetGapDropClass(column.Chapter.Id, column.Scenes[0].SceneId)"
+                                         data-storyboard-before="@column.Scenes[0].SceneId"
                                          @ondragover:preventDefault
                                          @ondrop:preventDefault
                                          @ondragover="args => OnColumnDragOver(column.Chapter.Id, column.Scenes[0].SceneId, args)"
@@ -324,13 +327,15 @@
                                     {
                                         <div id="@GetSceneElementId(scene.SceneId)"
                                              class="@GetSceneDropClass(column.Chapter.Id, scene.SceneId)"
-                                             draggable="@(_moveInFlight ? "false" : "true")"
+                                             data-storyboard-scene="@scene.SceneId"
+                                             draggable="@(_moveInFlight || UsePointerDragging ? "false" : "true")"
                                              @ondragstart="args => OnSceneDragStart(scene.SceneId, args)"
                                              @ondragend="OnSceneDragEnd"
                                              @onclick:stopPropagation="true"
                                              @onclick="args => HandleSceneClickAsync(column.Chapter.Id, scene.SceneId, args)">
                                             <SceneCard SceneId="@scene.SceneId"
                                                        EnableDragging="@(!_moveInFlight)"
+                                                       EnableNativeDragging="@(!UsePointerDragging)"
                                                        Title="@scene.Title"
                                                        Summary="@scene.Summary"
                                                        WordCount="@scene.WordCount"
@@ -353,6 +358,7 @@
                                         </div>
 
                                         <div class="@GetGapDropClass(column.Chapter.Id, GetNextSceneId(column.Scenes, scene.SceneId))"
+                                             data-storyboard-before="@(GetNextSceneId(column.Scenes, scene.SceneId)?.ToString() ?? "")"
                                              @ondragover:preventDefault
                                              @ondrop:preventDefault
                                              @ondragover="args => OnColumnDragOver(column.Chapter.Id, GetNextSceneId(column.Scenes, scene.SceneId), args)"
@@ -471,17 +477,25 @@
 </CascadingValue>
 
 @code {
+    [Parameter] public bool UsePointerDragging { get; set; }
     [Parameter] public RenderFragment<StoryboardActionButton>? ActionTemplate { get; set; }
     [Parameter] public Func<Guid, Task>? OpenSceneRequested { get; set; }
     [Parameter] public Action<Guid?>? RevealNodeRequested { get; set; }
     private IJSObjectReference? _module;
+    private ElementReference _boardElement;
+    private DotNetObjectReference<StoryboardBoard>? _dragReference;
     public async ValueTask DisposeAsync()
     {
         if (_module is not null)
         {
-            try { await _module.DisposeAsync(); }
+            try
+            {
+                await _module.InvokeVoidAsync("detachPointerDrag", _boardElement);
+                await _module.DisposeAsync();
+            }
             catch (JSDisconnectedException) { }
         }
+        _dragReference?.Dispose();
     }
 
     private IReadOnlyList<StoryboardChapterColumn> ChapterColumns => BuildChapterColumns();
@@ -595,6 +609,15 @@
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         _module ??= await JS.InvokeAsync<IJSObjectReference>("import", "./_content/WriterApp.UI.Shared/storyboard.js");
+        if (UsePointerDragging)
+        {
+            _dragReference ??= DotNetObjectReference.Create(this);
+            await _module.InvokeVoidAsync("attachPointerDrag", _boardElement, _dragReference);
+        }
+        else if (_dragReference is not null)
+        {
+            await _module.InvokeVoidAsync("detachPointerDrag", _boardElement);
+        }
         if (_pendingScrollChapterId.HasValue)
         {
             Guid chapterId = _pendingScrollChapterId.Value;
@@ -1165,6 +1188,24 @@
     private static string GetChapterDisplayTitle(string? title)
     {
         return string.IsNullOrWhiteSpace(title) ? "Untitled chapter" : title.Trim();
+    }
+
+    [JSInvokable]
+    public async Task DropStoryboardSceneAsync(string scene, string chapter, string? before)
+    {
+        if (!UsePointerDragging || _moveInFlight || !Guid.TryParse(scene, out var sceneId)
+            || !Guid.TryParse(chapter, out var chapterId)
+            || !_renderNodes.Any(n => n.Id == sceneId && IsScene(n))
+            || !_renderNodes.Any(n => n.Id == chapterId && IsChapter(n))) return;
+        Guid? beforeId = null;
+        if (!string.IsNullOrEmpty(before))
+        {
+            if (!Guid.TryParse(before, out var id) || !_renderNodes.Any(n => n.Id == id && n.ParentId == chapterId && IsScene(n))) return;
+            beforeId = id;
+        }
+        _dragSceneId = sceneId;
+        await OnColumnDropAsync(chapterId, beforeId, new DragEventArgs());
+        await InvokeAsync(StateHasChanged);
     }
 
     private void OnSceneDragStart(Guid sceneId, DragEventArgs args)

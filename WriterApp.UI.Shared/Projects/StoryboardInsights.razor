@@ -88,39 +88,9 @@
             </ul>
         }
 
-        @if (_subplotContinuityFindings.Count > 0)
+        @if (_subplotReportJson is not null)
         {
-            <div class="storyboard-insights-grouped-findings">
-                @foreach (IGrouping<string, StoryboardSubplotContinuityFinding> group in _subplotContinuityFindings
-                    .GroupBy(finding => finding.SubplotName, StringComparer.OrdinalIgnoreCase)
-                    .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase))
-                {
-                    <div class="storyboard-insights-subplot-group">
-                        <h4>@group.Key</h4>
-                        <div class="storyboard-insights-subplot-items">
-                            @foreach (StoryboardSubplotContinuityFinding finding in group)
-                            {
-                                <div class="storyboard-insights-subplot-item">
-                                    <div class="storyboard-insights-subplot-item__meta">
-                                        <span class="storyboard-insights-chip">@finding.IssueType</span>
-                                    </div>
-                                    <div class="storyboard-insights-subplot-item__body">@finding.Explanation</div>
-                                    @if (finding.AffectedScenes.Count > 0)
-                                    {
-                                        <div class="storyboard-insights-subplot-item__affected">
-                                            Affected: @string.Join(", ", finding.AffectedScenes)
-                                        </div>
-                                    }
-                                    @if (!string.IsNullOrWhiteSpace(finding.Recommendation))
-                                    {
-                                        <div class="storyboard-insights-subplot-item__recommendation">@finding.Recommendation</div>
-                                    }
-                                </div>
-                            }
-                        </div>
-                    </div>
-                }
-            </div>
+            <SubplotContinuityReview ResponseJson="@_subplotReportJson" StoryboardContext="@_subplotContext" />
         }
 
         @if (PovCounts.Count > 0)
@@ -180,6 +150,11 @@
             Storyboard-level analysis tools operate across the full board, not on the selected scene.
         </div>
         <div class="storyboard-insights-actions" aria-label="Storyboard AI suggestions">
+            <StoryboardActionButton Feature="StoryCoach" Class="storyboard-insights-action"
+                LockedTitle="Upgrade to check subplot continuity." AllowedTitle="Trace subplot threads across the saved storyboard."
+                ShowLockIndicator="false" IsBusy="@_subplotContinuityInFlight" OnClick="CheckSubplotContinuityAsync">
+                @(_subplotContinuityInFlight ? "Checking continuity…" : "Check subplot continuity")
+            </StoryboardActionButton>
             <StoryboardActionButton Feature="StoryCoach"
                              Class="storyboard-insights-action"
                              LockedTitle="Upgrade to use storyboard structure suggestions."
@@ -377,9 +352,11 @@
     private bool _createSuggestedSceneInFlight;
     private string? _nextSceneError;
     private StoryboardNextSceneSuggestion? _nextSceneSuggestion;
+    private Guid _nextSceneProposalId;
+    private Guid _missingSceneProposalId;
     private readonly HashSet<string> _missingSceneCreateInFlight = new(StringComparer.Ordinal);
     private List<StoryboardNextSceneSuggestion> _missingSceneSuggestions = new();
-    private List<StoryboardSubplotContinuityFinding> _subplotContinuityFindings = new();
+    private string? _subplotReportJson, _subplotContext;
     private List<StoryboardPovBalanceFinding> _povBalanceFindings = new();
 
     private StoryboardInsightsSummary Summary => BuildSummary();
@@ -399,6 +376,10 @@
 
     private string? GetContentRegionId() => IsCollapsed ? null : "storyboard-insights-content";
 
+    private void ValidateCheckedStoryboardTarget(AiActionExecuteResponseDto? result) {
+        if(result?.WebSource is { } source && (source.ProjectId!=ProjectId || Project?.DocumentId is { } id && source.DocumentId!=id))
+            throw new InvalidOperationException("Storyboard manuscript changed during coaching. Generate again.");
+    }
     private async Task SuggestNextSceneAsync()
     {
         if (_nextSceneInFlight)
@@ -447,6 +428,7 @@
                 });
 
             AiActionExecuteResponseDto? result = await Data.ExecuteAiAsync(ProjectId, SuggestNextSceneActionKey, payload, Project?.DocumentId);
+            ValidateCheckedStoryboardTarget(result);
 
             
             StoryboardNextSceneSuggestion? suggestion = ParseSuggestedScene(result?.ProposedText);
@@ -457,6 +439,7 @@
             }
 
             _nextSceneSuggestion = suggestion;
+            _nextSceneProposalId=result!.ProposalId;
         }
         catch (Exception ex)
         {
@@ -481,7 +464,7 @@
 
         try
         {
-            await Data.ValidateSuggestionAsync(ProjectId, Project?.DocumentId);
+            await Data.ValidateSuggestionAsync(ProjectId, Project?.DocumentId,_nextSceneProposalId);
             bool created = await CreateSuggestedScene.Invoke(_nextSceneSuggestion);
             if (created)
             {
@@ -495,7 +478,7 @@
         catch (Exception ex)
         {
             Logger.LogWarning(ex, "Storyboard suggested scene creation failed. ProjectId={ProjectId}", ProjectId);
-            _nextSceneError = "Failed to create the suggested scene.";
+            _nextSceneError = ex.Message;
         }
         finally
         {
@@ -550,6 +533,7 @@
                 });
 
             AiActionExecuteResponseDto? result = await Data.ExecuteAiAsync(ProjectId, DetectMissingScenesActionKey, payload, Project?.DocumentId);
+            ValidateCheckedStoryboardTarget(result);
 
             
             IReadOnlyList<StoryboardNextSceneSuggestion> suggestions = ParseMissingSceneSuggestions(result?.ProposedText);
@@ -560,6 +544,7 @@
             }
 
             _missingSceneSuggestions = suggestions.ToList();
+            _missingSceneProposalId=result!.ProposalId;
         }
         catch (Exception ex)
         {
@@ -589,7 +574,7 @@
 
         try
         {
-            await Data.ValidateSuggestionAsync(ProjectId, Project?.DocumentId);
+            await Data.ValidateSuggestionAsync(ProjectId, Project?.DocumentId,_missingSceneProposalId);
             bool created = await CreateSuggestedScene.Invoke(suggestion);
             if (created)
             {
@@ -627,6 +612,7 @@
 
         _subplotContinuityInFlight = true;
         _nextSceneError = null;
+        _subplotReportJson = null; _subplotContext = null;
 
         try
         {
@@ -658,16 +644,11 @@
                 });
 
             AiActionExecuteResponseDto? result = await Data.ExecuteAiAsync(ProjectId, CheckSubplotContinuityActionKey, payload, Project?.DocumentId);
+            ValidateCheckedStoryboardTarget(result);
 
             
-            IReadOnlyList<StoryboardSubplotContinuityFinding> findings = ParseSubplotContinuityFindings(result?.ProposedText);
-            if (findings.Count == 0)
-            {
-                _nextSceneError = "No subplot continuity findings were returned.";
-                return;
-            }
-
-            _subplotContinuityFindings = findings.ToList();
+            _subplotReportJson = result?.ProposedText ?? "";
+            _subplotContext = contextJson;
         }
         catch (Exception ex)
         {
@@ -727,6 +708,7 @@
                 });
 
             AiActionExecuteResponseDto? result = await Data.ExecuteAiAsync(ProjectId, AnalyzePovBalanceActionKey, payload, Project?.DocumentId);
+            ValidateCheckedStoryboardTarget(result);
 
             
             IReadOnlyList<StoryboardPovBalanceFinding> findings = ParsePovBalanceFindings(result?.ProposedText);
@@ -992,7 +974,9 @@
                         narrativeIntent,
                         pov,
                         subplotTags,
-                        emotionalBeat = sceneCard?.EmotionalBeat
+                        emotionalBeat = sceneCard?.EmotionalBeat,
+                        keyEvents = sceneCard?.KeyEvents,
+                        openQuestions = sceneCard?.OpenQuestions
                     };
                 })
             })
@@ -1127,56 +1111,6 @@
         catch
         {
             return Array.Empty<StoryboardNextSceneSuggestion>();
-        }
-    }
-
-    private static IReadOnlyList<StoryboardSubplotContinuityFinding> ParseSubplotContinuityFindings(string? json)
-    {
-        if (string.IsNullOrWhiteSpace(json))
-        {
-            return Array.Empty<StoryboardSubplotContinuityFinding>();
-        }
-
-        try
-        {
-            using JsonDocument document = JsonDocument.Parse(json);
-            JsonElement root = document.RootElement;
-            JsonElement findingsElement;
-            if (root.ValueKind == JsonValueKind.Array)
-            {
-                findingsElement = root;
-            }
-            else if (!TryGetProperty(root, "findings", out findingsElement) || findingsElement.ValueKind != JsonValueKind.Array)
-            {
-                return Array.Empty<StoryboardSubplotContinuityFinding>();
-            }
-
-            List<StoryboardSubplotContinuityFinding> findings = new();
-            foreach (JsonElement item in findingsElement.EnumerateArray())
-            {
-                string? subplotName = GetString(item, "subplotName");
-                string? issueType = GetString(item, "issueType");
-                string? explanation = GetString(item, "explanation");
-                if (string.IsNullOrWhiteSpace(subplotName)
-                    || string.IsNullOrWhiteSpace(issueType)
-                    || string.IsNullOrWhiteSpace(explanation))
-                {
-                    continue;
-                }
-
-                findings.Add(new StoryboardSubplotContinuityFinding(
-                    subplotName.Trim(),
-                    issueType.Trim(),
-                    explanation.Trim(),
-                    GetStringArray(item, "affectedScenes"),
-                    GetString(item, "recommendation")));
-            }
-
-            return findings;
-        }
-        catch
-        {
-            return Array.Empty<StoryboardSubplotContinuityFinding>();
         }
     }
 
@@ -1320,13 +1254,6 @@
             return Array.Empty<StoryboardPovBalanceFinding>();
         }
     }
-
-    private sealed record StoryboardSubplotContinuityFinding(
-        string SubplotName,
-        string IssueType,
-        string Explanation,
-        IReadOnlyList<string> AffectedScenes,
-        string? Recommendation);
 
     private sealed record StoryboardPovBalanceFinding(
         string Title,

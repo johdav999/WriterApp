@@ -198,6 +198,13 @@ namespace WriterApp.Tests
                 Title = "Scene",
                 UpdatedUtc = updatedUtc
             });
+            if(OnboardingDemoSceneMetadata.IsDemoScene(metadataJson)) {
+                var section=db.Sections.Local.Single(x => x.Id==sectionId);
+                if(!db.OnboardingDemoWorkspaces.Local.Any(x => x.OwnerUserId=="user-1"))
+                    db.OnboardingDemoWorkspaces.Add(new(){OwnerUserId="user-1",OperationId=Guid.NewGuid(),ProjectId=projectId,
+                        DocumentId=section.DocumentId,SectionId=sectionId,SceneNodeId=sceneNodeId,ExpiresAtUtc=DateTimeOffset.UtcNow.AddDays(1)});
+                if(!db.Pages.Local.Any(x => x.SectionId==sectionId))db.Pages.Add(new(){Id=Guid.NewGuid(),DocumentId=section.DocumentId,SectionId=sectionId,Content="<p>Demo writing.</p>"});
+            }
 
             return sceneNodeId;
         }

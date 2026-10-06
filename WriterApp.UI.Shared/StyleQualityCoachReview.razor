@@ -1,0 +1,37 @@
+@using WriterApp.Shared
+<section class="style-quality-coach" aria-label="Explained style review">
+    <h3>Explained style review</h3>
+    <label>Review writing
+        <select aria-label="Style review scope" value="@Scope" disabled="@Busy" @onchange="ChangeScope">
+            <option value="page">Current page</option><option value="selection">Current selection</option>
+        </select>
+    </label>
+    <button type="button" disabled="@(Busy || !CanGenerate)" @onmousedown:preventDefault="true" @onclick="Generate">Suggest explained revision</button>
+    @if (!CanGenerate && !string.IsNullOrWhiteSpace(Unavailable)) { <p role="status">@Unavailable</p> }
+    @if (!string.IsNullOrWhiteSpace(Error)) { <p role="alert">@Error</p> }
+    @if (Report is not null) {
+        <StyleQualityRevisionReview Report="Report" Source="@Source" Goal="@Goal" Approved="Approved" ApprovedChanged="ApprovedChanged" Busy="Busy" />
+        <p>Apply changes only the selected edits in this page or captured selection. Other writing and formatting stay intact. A failed save retains a recovery draft; AI history Undo restores the saved original.</p>
+        <div class="style-review-actions">
+            <button type="button" disabled="@(Busy || Approved.Count == 0)" @onclick="Apply">Apply selected style changes</button>
+            <button type="button" disabled="@Busy" @onclick="Dismiss">Dismiss style review</button>
+        </div>
+    }
+</section>
+@code {
+    [Parameter] public StyleQualityReport? Report { get; set; }
+    [Parameter] public string Source { get; set; } = "";
+    [Parameter] public string Goal { get; set; } = StyleQualityReview.DefaultGoal;
+    [Parameter] public string Scope { get; set; } = "page";
+    [Parameter] public string? Error { get; set; }
+    [Parameter] public string? Unavailable { get; set; }
+    [Parameter] public bool CanGenerate { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public IReadOnlyCollection<int> Approved { get; set; } = Array.Empty<int>();
+    [Parameter] public EventCallback<IReadOnlyCollection<int>> ApprovedChanged { get; set; }
+    [Parameter] public EventCallback<string> ScopeChanged { get; set; }
+    [Parameter] public EventCallback Generate { get; set; }
+    [Parameter] public EventCallback Apply { get; set; }
+    [Parameter] public EventCallback Dismiss { get; set; }
+    private Task ChangeScope(ChangeEventArgs e) => ScopeChanged.InvokeAsync(e.Value?.ToString() ?? "page");
+}

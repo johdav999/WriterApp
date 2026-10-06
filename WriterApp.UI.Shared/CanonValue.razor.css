@@ -1,0 +1,12 @@
+.canon-values { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+.canon-values > li { border-bottom: 1px solid var(--color-border); padding-bottom: 12px; }
+.canon-values > li:last-child { border: 0; padding-bottom: 0; }
+.canon-fact { margin: 0; font-size: .85rem; line-height: 1.6; }
+.canon-evidence { margin-top: 8px; padding: 10px 12px; background: var(--color-surface-2); border-radius: 8px; }
+.canon-evidence-label { color: var(--color-text-muted); font-size: .7rem; }
+.canon-value blockquote { margin: 6px 0; font-size: .82rem; line-height: 1.6; color: var(--color-text-muted); }
+.canon-source { margin-top: 8px; color: var(--color-text-subtle); font-size: .7rem; overflow-wrap: anywhere; }
+.canon-source summary { cursor: pointer; }
+.canon-value dl { margin: 8px 0; }
+.canon-value dt { font-size: .75rem; font-weight: 600; color: var(--color-text-muted); }
+.canon-value dd { margin: 4px 0; }

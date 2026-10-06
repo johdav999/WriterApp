@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text;
 using System.Globalization;
+using WriterApp.Shared.Canon;
 
 namespace WriterApp.Application.Continuity
 {
@@ -56,13 +57,13 @@ namespace WriterApp.Application.Continuity
                 if (candidate.TryGetPropertyValue("ops", out JsonNode? opsNode) && opsNode is JsonArray ops)
                 {
                     BibleRefreshStats stats = ApplyOps(bibleType, root, ops);
-                    result = new BiblePatchApplyResult(root.ToJsonString(BibleJson.JsonOptions), stats);
+                    result = new BiblePatchApplyResult(NormalizeContent(bibleType, root.ToJsonString(BibleJson.JsonOptions)), stats);
                     return true;
                 }
 
                 if (IsFullBiblePayload(candidate, bibleType))
                 {
-                    result = new BiblePatchApplyResult(candidate.ToJsonString(BibleJson.JsonOptions), new BibleRefreshStats(0, 0, 0, 0, 0, 0));
+                    result = new BiblePatchApplyResult(NormalizeContent(bibleType, candidate.ToJsonString(BibleJson.JsonOptions)), new BibleRefreshStats(0, 0, 0, 0, 0, 0));
                     return true;
                 }
 
@@ -74,6 +75,26 @@ namespace WriterApp.Application.Continuity
                 failureReason = BuildJsonExceptionReason("Patch application failed while reading JSON.", ex);
                 return false;
             }
+            catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException or ArgumentException)
+            {
+                failureReason = $"Canon schema validation failed. {ex.Message}";
+                return false;
+            }
+        }
+
+        public static string NormalizeContent(BibleType bibleType, string json)
+        {
+            // Earlier timeline prompts and the deterministic fallback used an empty
+            // string for an unknown place. Null carries the same meaning without
+            // presenting an invalid link to the shared canon reader.
+            var root = JsonNode.Parse(json) as JsonObject ?? throw new InvalidDataException("Invalid canon object.");
+            if (bibleType == BibleType.Timeline && root["events"] is JsonArray events)
+                foreach (var entry in events.OfType<JsonObject>())
+                    if (entry["locationId"] is JsonValue location && location.TryGetValue<string>(out var id) && string.IsNullOrWhiteSpace(id))
+                        entry["locationId"] = null;
+            string normalized = root.ToJsonString(BibleJson.JsonOptions);
+            _ = CanonContent.Parse((CanonKind)bibleType, normalized);
+            return normalized;
         }
 
         private static bool TryParseCandidateObject(string payload, out JsonObject? candidate, out string failureReason)

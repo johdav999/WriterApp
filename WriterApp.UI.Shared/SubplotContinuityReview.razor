@@ -1,0 +1,118 @@
+@using System.Text.Json
+@using WriterApp.Shared
+
+<section class="subplot-review" aria-label="Subplot continuity report">
+    <header class="subplot-review__header">
+        <div><span class="subplot-review__eyebrow">STORYBOARD ANALYSIS</span><h3>Subplot continuity</h3><p>Follow each story thread through your chapter and scene plan.</p></div>
+        <span class="subplot-review__badge">@(_report?.Findings.Count > 0 ? $"{_report.Findings.Count} finding{(_report.Findings.Count == 1 ? "" : "s")}" : "Review")</span>
+    </header>
+    @if (_chapters.Count > 0)
+    {
+        <dl class="subplot-review__coverage" aria-label="Analysis coverage">
+            <div><dt>Chapters</dt><dd>@_chapters.Count</dd></div>
+            <div><dt>Scenes</dt><dd>@_scenes.Length</dd></div>
+            <div><dt>Tagged scenes</dt><dd>@_scenes.Count(s => s.Tags.Length > 0)</dd></div>
+            <div><dt>Subplots</dt><dd>@_scenes.SelectMany(s => s.Tags).Distinct(StringComparer.OrdinalIgnoreCase).Count()</dd></div>
+        </dl>
+    }
+    @if (_error is not null)
+    {
+        <div class="subplot-review__state subplot-review__state--warning" role="alert"><h4>Unable to read this report</h4><p>@_error</p></div>
+    }
+    else if (_report is not null)
+    {
+        <div class="subplot-review__state @(_report.Assessment == "needs_context" || InsufficientContext ? "subplot-review__state--warning" : "")" role="status">
+            <h4>@StatusTitle</h4>
+            <p>@(_report.Summary ?? (_report.Findings.Count > 0 ? "Review the affected scenes and suggested next steps below." : InsufficientContext
+                ? "Add subplot tags, scene summaries or key events to your scene cards, then run the check again. Titles alone cannot establish continuity."
+                : "The check returned no findings. This does not establish that every subplot is resolved; review the storyboard coverage below and rerun after adding detail."))</p>
+        </div>
+        @foreach (var group in _report.Findings.GroupBy(f => f.SubplotName, StringComparer.OrdinalIgnoreCase))
+        {
+            <section class="subplot-review__thread" aria-label="@($"Subplot: {group.Key}")">
+                <h4>@group.Key</h4>
+                @foreach (var finding in group)
+                {
+                    <article class="subplot-review__finding">
+                        <span class="subplot-review__issue">@IssueLabel(finding.IssueType)</span><p>@finding.Explanation</p>
+                        @if (finding.AffectedScenes.Count > 0)
+                        {
+                            <div class="subplot-review__references" aria-label="Affected scenes">
+                                @foreach (var scene in finding.AffectedScenes) { <span>@scene</span> }
+                            </div>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(finding.Recommendation))
+                        {
+                            <div class="subplot-review__recommendation"><strong>Suggested next step</strong><p>@finding.Recommendation</p></div>
+                        }
+                    </article>
+                }
+            </section>
+        }
+    }
+    @if (_chapters.Count > 0)
+    {
+        <details class="subplot-review__source"><summary>Storyboard included in this check</summary>
+            <p>Analysis uses saved scene cards and their order. The full manuscript is not included.</p>
+            @foreach (var chapter in _chapters)
+            {
+                <h4>@chapter.Title</h4><ol>
+                    @foreach (var scene in chapter.Scenes)
+                    {
+                        <li><strong>@scene.Title</strong>
+                            @if (!string.IsNullOrWhiteSpace(scene.Summary)) { <p>@scene.Summary</p> }
+                            <span class="subplot-review__source-tags">@(scene.Tags.Length > 0 ? string.Join(" · ", scene.Tags) : "No subplot tags")</span>
+                        </li>
+                    }
+                </ol>
+            }
+        </details>
+    }
+    <footer class="subplot-review__footer">Review recommendations in your scene cards before changing the story.</footer>
+</section>
+
+@code {
+    [Parameter] public string? ResponseJson { get; set; }
+    [Parameter] public string? StoryboardContext { get; set; }
+    private SubplotContinuityReport? _report;
+    private string? _error;
+    private List<Chapter> _chapters = [];
+    private Scene[] _scenes = [];
+    private bool InsufficientContext => StoryboardContext is not null && (_scenes.Length < 2 || !_scenes.Any(s => s.Tags.Length > 0 || !string.IsNullOrWhiteSpace(s.Summary) || !string.IsNullOrWhiteSpace(s.KeyEvents)));
+    private string StatusTitle => _report!.Findings.Count > 0 ? "Story threads to review"
+        : _report.Assessment == "needs_context" || InsufficientContext ? "More story context needed"
+        : _report.Assessment == "no_issues_found" ? "No continuity issues identified" : "No findings returned";
+    protected override void OnParametersSet()
+    {
+        _report = null; _error = null; _chapters = []; _scenes = [];
+        try { _report = SubplotContinuityReport.Parse(ResponseJson); }
+        catch (InvalidDataException e) { _error = e.Message; }
+        try
+        {
+            using var document = JsonDocument.Parse(StoryboardContext ?? "{}");
+            if (document.RootElement.TryGetProperty("chapters", out var chapters) && chapters.ValueKind == JsonValueKind.Array)
+                foreach (var chapter in chapters.EnumerateArray())
+                {
+                    var scenes = new List<Scene>();
+                    if (chapter.TryGetProperty("scenes", out var items) && items.ValueKind == JsonValueKind.Array)
+                        foreach (var scene in items.EnumerateArray())
+                        {
+                            string[] tags = scene.TryGetProperty("subplotTags", out var t) ? StoryboardAnalysis.Tags(t.ValueKind == JsonValueKind.String ? t.GetString() : t.GetRawText()) : [];
+                            scenes.Add(new(Text(scene, "title") ?? "Untitled scene", Text(scene, "summary"), Text(scene, "keyEvents"), tags));
+                        }
+                    _chapters.Add(new(Text(chapter, "title") ?? "Untitled chapter", scenes));
+                }
+            _scenes = _chapters.SelectMany(c => c.Scenes).ToArray();
+        }
+        catch (Exception e) when (e is JsonException or InvalidOperationException) { _chapters = []; _scenes = []; }
+    }
+    private static string? Text(JsonElement element, string key) => element.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+    private static string IssueLabel(string type) => type switch
+    {
+        "disappears_too_long" => "Long absence", "introduced_not_developed" => "Needs development",
+        "abrupt_return" => "Abrupt return", "clustered_together" => "Uneven pacing", "lacks_resolution" => "Resolution to review",
+        _ => type.Replace('_', ' ')
+    };
+    private sealed record Scene(string Title, string? Summary, string? KeyEvents, string[] Tags);
+    private sealed record Chapter(string Title, IReadOnlyList<Scene> Scenes);
+}

@@ -36,6 +36,19 @@ public static class LocalPlanning
         { Annotations = n.Annotations.Select(a => a.LocalId == annotationId ? a with { Value = a.Value with
             { Status = resolved ? "resolved" : "open", ResolvedAt = resolved ? DateTimeOffset.UtcNow : null } } : a).ToArray() } : n).ToArray() } };
     }
+    public static LocalDocument Reanchor(LocalDocument document, Guid nodeId, Guid annotationId, string quote)
+    {
+        var project = Active(document);
+        var scene = project.Nodes.Single(n => n.NodeId == nodeId && n.NodeType == "scene" && n.DeletionId is null);
+        if (!scene.Annotations.Any(a => a.LocalId == annotationId)) throw new InvalidOperationException("Annotation unavailable.");
+        if (quote.Length > 100_000 || !UniqueQuote(SceneText(document, scene), quote)
+            || !document.Sections.Where(s => s.SectionId == scene.SectionId).SelectMany(s => s.Pages)
+                .Any(p => LocalDocumentPreview.PlainText(p).Contains(quote, StringComparison.Ordinal)))
+            throw new InvalidOperationException("Select a unique passage on one page to link this annotation.");
+        return document with { Project = project with { Version = Math.Max(2, project.Version), Nodes = project.Nodes.Select(n => n.NodeId == nodeId ? n with
+        { Annotations = n.Annotations.Select(a => a.LocalId == annotationId ? a with { Value = a.Value with
+            { AnchorText = quote, AnchorFrom = 0, AnchorTo = 0, AnchorDetached = false } } : a).ToArray() } : n).ToArray() } };
+    }
     public static string SceneText(LocalDocument document, LocalProjectNode node) => string.Join("\n\n",
         document.Sections.Where(s => s.SectionId == node.SectionId).SelectMany(s => s.Pages.OrderBy(p => p.OrderIndex)).Select(LocalDocumentPreview.PlainText));
     public static bool UniqueQuote(string text, string quote)
@@ -53,7 +66,7 @@ public static class LocalPlanning
             var before = previous.Project?.Nodes.FirstOrDefault(x => x.NodeId == n.NodeId);
             bool changed = before is not null && SceneText(previous, before) != SceneText(next, n);
             return n with { Annotations = n.Annotations.Select(a => a with { Value = a.Value with {
-                AnchorDetached = a.Value.AnchorDetached || (a.Value.AnchorText.Length > 0 && !UniqueQuote(SceneText(next, n), a.Value.AnchorText)),
+                AnchorDetached = a.Value.AnchorText.Length > 0 && !UniqueQuote(SceneText(next, n), a.Value.AnchorText),
                 AnchorFrom = changed ? 0 : a.Value.AnchorFrom, AnchorTo = changed ? 0 : a.Value.AnchorTo } }).ToArray() };
         }).ToArray() } };
     }

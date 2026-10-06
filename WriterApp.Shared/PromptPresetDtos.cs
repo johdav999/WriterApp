@@ -10,7 +10,8 @@ namespace WriterApp.Controllers
         string? TemplateText,
         Dictionary<string, object?> Parameters,
         DateTimeOffset CreatedUtc,
-        DateTimeOffset UpdatedUtc);
+        DateTimeOffset UpdatedUtc,
+        WriterApp.Shared.WritingScope? Scope = null, bool? Pinned = null, string? Version = null);
 
     public sealed record UpsertPromptPresetRequest(
         Guid? ProjectId,

@@ -61,21 +61,35 @@ public sealed class LocalAnnotationMarkupTests
     }
 
     [Fact]
-    public void DetachedAndDeletedSceneAnnotationsStayUnmarkedEvenIfTheirQuoteExists()
+    public void DeletedSceneAnnotationsStayUnmarkedEvenIfTheirQuoteExists()
     {
         var document = Book("<p>Anchor</p>");
         var scene = document.Project!.Nodes.Single(n => n.NodeType == "scene");
         document = LocalPlanning.AddAnnotation(document, scene.NodeId, "comment", "Comment", "Anchor");
         var annotated = document.Project!.Nodes.Single(n => n.NodeId == scene.NodeId);
         var annotation = annotated.Annotations.Single();
-        foreach (var node in new[] {
-            annotated with { DeletionId = Guid.NewGuid() },
-            annotated with { Annotations = [annotation with { Value = annotation.Value with { AnchorDetached = true } }] }
-        })
+        foreach (var node in new[] { annotated with { DeletionId = Guid.NewGuid() } })
         {
             var updated = document with { Project = document.Project with { Nodes = document.Project.Nodes.Select(n => n.NodeId == node.NodeId ? node : n).ToArray() } };
             Assert.Empty(LocalAnnotationMarkup.ForPage(updated, document.Sections[0].Pages[0].PageId));
             Assert.Null(LocalAnnotationMarkup.PageFor(updated, annotation.LocalId));
         }
+    }
+
+    [Fact]
+    public void RestoredUniqueQuoteIgnoresStaleDetachedFlagWithoutChangingSavedWriting()
+    {
+        var document = Book("<p>Before <strong>unique passage</strong>.</p>");
+        var scene = document.Project!.Nodes.Single(n => n.NodeType == "scene");
+        document = LocalPlanning.AddAnnotation(document, scene.NodeId, "comment", "Review", "unique passage");
+        scene = document.Project!.Nodes.Single(n => n.NodeId == scene.NodeId);
+        var annotation = scene.Annotations.Single();
+        scene = scene with { Annotations = [annotation with { Value = annotation.Value with { AnchorDetached = true } }] };
+        document = document with { Project = document.Project! with { Nodes = document.Project.Nodes.Select(n => n.NodeId == scene.NodeId ? scene : n).ToArray() } };
+        var page = document.Sections[0].Pages[0];
+        Assert.Equal(annotation.LocalId, Assert.Single(LocalAnnotationMarkup.ForPage(document, page.PageId)).Id);
+        Assert.Equal(page.PageId, LocalAnnotationMarkup.PageFor(document, annotation.LocalId));
+        Assert.Equal("<p>Before <strong>unique passage</strong>.</p>", page.Content);
+        Assert.False(LocalPlanning.Reconcile(document, document).Project!.Nodes.Single(n => n.NodeId == scene.NodeId).Annotations.Single().Value.AnchorDetached);
     }
 }

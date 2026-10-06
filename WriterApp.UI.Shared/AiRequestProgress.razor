@@ -1,0 +1,13 @@
+@if (IsPending)
+{
+    <div class="ai-request-progress">
+        <p role="status" aria-live="polite">Preparing or generating @RequestName…</p>
+        <button type="button" @onclick="Cancel">Cancel AI request</button>
+    </div>
+}
+
+@code {
+    [Parameter] public bool IsPending { get; set; }
+    [Parameter] public string RequestName { get; set; } = "AI suggestion";
+    [Parameter] public EventCallback Cancel { get; set; }
+}

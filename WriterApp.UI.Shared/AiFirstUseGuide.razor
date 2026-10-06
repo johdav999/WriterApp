@@ -1,0 +1,50 @@
+<section class="ai-first-use" aria-label="AI practice guide" aria-busy="@(Busy ? "true" : "false")">
+    <h2 tabindex="-1" @ref="_heading">@Title</h2>
+    <p>Step @(Step + 1) of 5 · @Description</p>
+    @if (Step == 0) {
+        <p>Create a separate, clearly labelled practice project. Local creating, opening, writing and saving work offline and without an account. Opening this guide never sends an AI request.</p>
+    } else if (Step == 1) {
+        <p>Open Writing tools. Select a passage with the mouse or Shift + arrow keys, keep “Selected passage” as the target, and choose a writing preset. Alternatively choose “All pages in current section” and Shorten section.</p>
+    } else if (Step == 2) {
+        <p>When ready, sign in from Account, connect and enable cloud sync for the practice document in its status bar. Then deliberately choose a writing action. The server checks identity, ownership, provider availability, plan and quota. A local practice project does not grant a free demo allowance. Cancel stops a pending request; failures leave your writing in place.</p>
+    } else if (Step == 3) {
+        <p>Compare Original and Proposed. Choose “Approve &amp; apply revision” only if you want the change, or “Dismiss writing proposal” to retain the original. Open History, choose the applied change and Undo; Redo and recovery copies remain available. Review and undo are also useful on your own documents.</p>
+    } else {
+        <p>Continue with Story → Synopsis for evaluation and guiding questions, Prompt Library for reusable presets, or Cover studio for concepts. These optional actions do not need to be run to finish the guide.</p>
+    }
+    @if (WorkspaceUrl is not null) {
+        <div class="guide-links">
+            <a href="@(WorkspaceUrl + "?panel=Writing&view=tools")">Open Writing tools</a>
+            <a href="@(WorkspaceUrl + "?panel=History&view=history")">Open History for undo</a>
+            @if (Step == 4) {
+                <a href="@(WorkspaceUrl + "?panel=Story&view=synopsis")">Open Synopsis</a>
+                <a href="@(WorkspaceUrl + "?panel=Advanced&view=prompts")">Open Prompt Library</a>
+                <a href="@(WorkspaceUrl + "/cover")">Open Cover studio</a>
+            }
+        </div>
+    }
+    <div class="guide-actions">
+        @if (Step == 0 || WorkspaceUrl is null) { <button type="button" disabled="@Busy" @onclick="OpenPractice">Open practice project</button> }
+        @if (Step > 0) { <button type="button" disabled="@Busy" @onclick="Back">Back</button> }
+        <button type="button" disabled="@Busy" @onclick="Next">@(Step == 4 ? "Finish guide" : "Continue")</button>
+        <button type="button" disabled="@Busy" @onclick="Skip">Skip for now</button>
+    </div>
+</section>
+@code {
+    [Parameter] public int Step { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public string? WorkspaceUrl { get; set; }
+    [Parameter] public EventCallback OpenPractice { get; set; }
+    [Parameter] public EventCallback Back { get; set; }
+    [Parameter] public EventCallback Next { get; set; }
+    [Parameter] public EventCallback Skip { get; set; }
+    private ElementReference _heading;
+    private int _focused = -1;
+    private string Title => Step switch { 0 => "Try AI on practice writing", 1 => "Choose your passage and preset", 2 => "Request a proposal when ready", 3 => "Review, apply or dismiss, then undo", _ => "Explore when you need it" };
+    private string Description => Step switch { 0 => "Your own writing stays in your library", 1 => "Choose a precise target", 2 => "Online prerequisites appear here", 3 => "You decide what changes", _ => "Optional next steps" };
+    protected override async Task OnAfterRenderAsync(bool firstRender) {
+        if (_focused == Step) return;
+        _focused = Step;
+        await _heading.FocusAsync(preventScroll: true);
+    }
+}

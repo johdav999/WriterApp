@@ -1,0 +1,12 @@
+.ai-request-progress {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: .75rem;
+    padding: .75rem;
+    border: 1px solid var(--color-border, #d6d3d1);
+    border-radius: .5rem;
+}
+
+.ai-request-progress p { margin: 0; flex: 1 1 16rem; }
+.ai-request-progress button { min-height: 2.5rem; cursor: pointer; }

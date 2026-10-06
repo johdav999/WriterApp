@@ -70,3 +70,9 @@ Project tree scenes and raw document sections are distinct: adding a section in 
 7. **Scope gaps:** richer editor schema, full advanced panels/issue cards, complete cloud history, expanded publishing controls, cover studio and onboarding require separate implementation and acceptance. Use the matrix's next actions; do not show nonfunctional controls to suggest parity.
 
 The staging gates require configuration and authorized test accounts absent from this session. They remain release prerequisites rather than reasons to alter production registrations or deploy Azure during this task.
+
+## Current Desktop AI continuation (2026-10-04)
+
+The tables above retain their historical parity-run scope. AI implementations and available checks through prompts 22–23 are tracked in [desktopai-release-checklist.md](desktopai-release-checklist.md), [the gap table](desktopai-gap-analysis.md) and dated [UAT](desktopai-uat.md). Current source includes native iOS identity, advanced AI review/recovery, owned covers, guidance, checked web requests and durable cloud history reporting; the older functional-gap wording above must not be read as a current source audit.
+
+Current local evidence: 1,863 Release passes; 71 shipped-editor checks, 156 Razor renders and 16 complete LocalDev web-shell checks; SQLite and disposable local SQL Server upgrade/concurrency execution; disk-saved DOCX/EPUB with exact cover bytes; five clean Release targets; verified test-signed Development MSIX integrity and embedded configuration. Trusted Windows installation/update/native lifecycle, Mac simulator, physical iOS device, real account/provider/deployed migration and distribution remain independent open gates. No release recommendation follows from managed iOS compilation or an untrusted review package.

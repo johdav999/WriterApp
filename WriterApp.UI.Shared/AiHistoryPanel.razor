@@ -28,19 +28,24 @@
                         <span class="history-chevron" aria-hidden="true">⌄</span>
                     </summary>
                     <div class="history-detail">
-                        <AiResultPreview ActionKey="@item.Action" Original="@item.Original" Proposed="@item.Proposed" />
+                        <p class="history-note">@item.Origin@if (item.Freshness is not null) { <span> · @item.Freshness</span> }</p>
+                        <AiResultPreview ActionKey="@(PlainComparisons ? string.Empty : item.Action)" Original="@item.Original" Proposed="@item.Proposed" />
                         @if (!string.IsNullOrWhiteSpace(item.UnavailableReason)) { <p class="history-note">@item.UnavailableReason</p> }
-                        @if (Recover.HasDelegate)
+                        @if (Recover.HasDelegate && item.CanRecover)
                         {
                             <div class="history-recovery"><span>Create a separate copy of the original writing and planning.</span><button type="button" class="history-button" disabled="@Busy" @onclick="() => Recover.InvokeAsync(item.Id)">Recover a copy</button></div>
                         }
                     </div>
                 </details>
-                @if (Undo.HasDelegate || Redo.HasDelegate)
+                @if (Undo.HasDelegate || Redo.HasDelegate || Dismiss.HasDelegate)
                 {
                     <div class="history-item-actions">
                         @if (item.Status is "Applied" or "Undoing") { <button type="button" class="history-button" disabled="@(Busy || !item.CanUndo)" title="@item.UnavailableReason" @onclick="() => Undo.InvokeAsync(item.Id)"><Icon Name="undo" />Undo change</button> }
                         else if (item.Status is "Undone" or "Redoing") { <button type="button" class="history-button" disabled="@(Busy || !item.CanRedo)" title="@item.UnavailableReason" @onclick="() => Redo.InvokeAsync(item.Id)"><Icon Name="redo" />Redo change</button> }
+                        @if (Dismiss.HasDelegate && item.Status is not ("Applying" or "Undoing" or "Redoing"))
+                        {
+                            <button type="button" class="history-button history-dismiss" disabled="@Busy" title="Remove this entry from this device's history list. Your writing stays as it is." @onclick="() => Dismiss.InvokeAsync(item.Id)">Remove from history</button>
+                        }
                         <span class="history-note">@(item.Status == "Reviewed" ? "Reviewed only · no changes applied" : item.Status == "Applying" ? "Apply interrupted · review recovery details" : item.CanUndo ? "Restore the affected writing or fields" : item.CanRedo ? "Reapply this saved change" : item.UnavailableReason)</span>
                     </div>
                 }
@@ -53,6 +58,7 @@
 @code {
     [Parameter] public IReadOnlyList<AiHistoryItem> Entries { get; set; } = [];
     [Parameter] public EventCallback<Guid> Recover { get; set; }
+    [Parameter] public EventCallback<Guid> Dismiss { get; set; }
     [Parameter] public EventCallback<Guid> Undo { get; set; }
     [Parameter] public EventCallback<Guid> Redo { get; set; }
     [Parameter] public EventCallback Refresh { get; set; }
@@ -61,15 +67,18 @@
     [Parameter] public bool CanUndoLatest { get; set; }
     [Parameter] public bool CanRedoLatest { get; set; }
     [Parameter] public bool Busy { get; set; }
+    [Parameter] public bool PlainComparisons { get; set; }
     private static string ActionLabel(string action) => action switch {
         "scene.suggest" => "Suggest scene details", "scene.refine" => "Refine scene details",
         "synopsis.story_coach" => "Improve synopsis", "storyboard.check-subplot-continuity" => "Check subplot continuity",
-        "continuity.check_section" => "Check scene consistency", "translate.selection" => "Translate selection",
+        "continuity.check_section" => "Check scene consistency", "continuity.apply_suggestion" => "Apply consistency suggestion", "translate.selection" => "Translate selection",
         "custom_transform" => "Custom writing prompt", "rewrite.selection" => "Rewrite selection",
         "expand.selection" => "Expand selection", "shorten.selection" or "tighten.selection" => "Shorten selection",
         "summarize.section" => "Summarize scene", "style.quality" => "Improve style & quality",
         _ => System.Globalization.CultureInfo.CurrentCulture.TextInfo.ToTitleCase(action.Replace('.', ' ').Replace('_', ' ').Replace('-', ' ')) };
-    private static string TargetLabel(string target) => target.Replace("SynopsisField:", "Synopsis · ").Replace("SceneCard:", "Scene details ").Replace("Analysis:", "Analysis ").Replace('_', ' ').Trim();
+    private static string TargetLabel(string target) => target == "Storyboard:created-scene" ? "Suggested scene creation" : target
+        .Replace("SynopsisField:", "Synopsis · ").Replace("SceneCard:", "Scene details ").Replace("Analysis:", "Analysis ")
+        .Replace("Writing:", "Writing · ").Replace("Translation:", "Translation · ").Replace('_', ' ').Replace('-', ' ').Trim();
     private static string StatusLabel(string status) => status switch { "Reviewed" => "Reviewed", "Undone" => "Undone", "Undoing" => "Finish undo", "Redoing" => "Finish redo", "Applying" => "Needs review", _ => status };
     private static string StatusClass(string status) => status switch { "Applied" => "is-applied", "Undone" => "is-undone", "Applying" or "Undoing" or "Redoing" => "is-pending", _ => "" };
 }

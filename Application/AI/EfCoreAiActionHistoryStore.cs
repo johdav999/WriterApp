@@ -72,8 +72,38 @@ namespace WriterApp.Application.AI
                         group.Key,
                         group.Count(),
                         group.Max(evt => evt.AppliedAt),
-                        group.Any(evt => evt.UndoneAt == null)));
+                        group.Any(evt => evt.UndoneAt == null),
+                        group.Any(evt => evt.UndoneAt is null && !string.IsNullOrWhiteSpace(evt.BeforeContent) && !string.IsNullOrWhiteSpace(evt.AfterContent)),
+                        group.Any(evt => evt.UndoneAt is not null && !string.IsNullOrWhiteSpace(evt.BeforeContent) && !string.IsNullOrWhiteSpace(evt.AfterContent))));
 
+            var deviceEvents = await _dbContext.DeviceAiHistoryEvents.AsNoTracking()
+                .Where(e => e.OwnerUserId == userId && e.DocumentId == documentId && ids.Contains(e.ProposalId)).ToListAsync(ct);
+            foreach (var group in deviceEvents.GroupBy(e => e.ProposalId))
+            {
+                applied.TryGetValue(group.Key, out var previous);
+                var latestApplied = group.Where(e => e.State == "Applied").Select(e => (DateTimeOffset?)e.ReceivedAt).Max();
+                applied[group.Key] = new(group.Key, (previous?.AppliedCount ?? 0) + group.Count(e => e.State == "Applied"),
+                    previous?.LastAppliedAt > latestApplied ? previous.LastAppliedAt : latestApplied ?? previous?.LastAppliedAt,
+                    group.GroupBy(e => e.LocalEntryId).Any(g => g.OrderByDescending(e => e.Sequence).First().State == "Applied") || previous?.IsApplied == true,
+                    previous?.CanCloudUndo ?? false, previous?.CanCloudRedo ?? false);
+            }
+            var translationReceipts = await _dbContext.WebTranslationOperations.AsNoTracking()
+                .Where(e => e.OwnerUserId == userId && e.DocumentId == documentId && ids.Contains(e.ProposalId)).ToListAsync(ct);
+            foreach (var receipt in translationReceipts)
+            {
+                var result = JsonSerializer.Deserialize<WriterApp.Shared.WebTranslationReceipt>(receipt.ReceiptJson, JsonOptions);
+                if (result?.State == "Committed")
+                    applied[receipt.ProposalId] = new(receipt.ProposalId, 1, receipt.CreatedAt, true, false, false);
+            }
+            var webEvents=await _dbContext.WebAiHistoryOperations.AsNoTracking().Where(e=>e.OwnerUserId==userId && e.DocumentId==documentId && e.CommittedAt!=null && ids.Contains(e.ProposalId)).ToListAsync(ct);
+            foreach(var group in webEvents.GroupBy(e=>e.ProposalId)) {
+                var latest=group.GroupBy(e=>e.ApplicationId).Select(g=>g.MaxBy(e=>e.Sequence)!).ToArray();
+                bool isApplied=latest.Any(e=>e.Outcome!="Undone");
+                applied[group.Key]=new(group.Key,group.Count(e=>e.Sequence==1),group.Where(e=>e.Outcome!="Undone").Max(e=>e.CommittedAt),isApplied,
+                    latest.Any(e=>e.Outcome!="Undone" && (e.RecoveryJson!=null || WebAiHistoryOperations.Intent(e).TargetKind is "Page" or "SceneContent")),
+                    latest.Any(e=>e.Outcome=="Undone" && (e.RecoveryJson!=null || WebAiHistoryOperations.Intent(e).TargetKind is "Page" or "SceneContent")),
+                    latest.Any(e=>WebAiHistoryOperations.Intent(e).TargetKind is not ("Page" or "SceneContent"))?"Scoped":"Page");
+            }
             return records
                 .OrderByDescending(record => record.CreatedAt)
                 .Select(record => MapToEntry(record, applied))
@@ -142,7 +172,7 @@ namespace WriterApp.Application.AI
 
             target.UndoneAt = DateTimeOffset.UtcNow;
             await _dbContext.SaveChangesAsync(ct);
-            return new AiActionUndoRedoResult(target.HistoryEntryId, target.BeforeContent);
+            return new AiActionUndoRedoResult(target.HistoryEntryId, target.BeforeContent,target.AfterContent);
         }
 
         public async Task<AiActionUndoRedoResult?> RedoAsync(
@@ -171,7 +201,7 @@ namespace WriterApp.Application.AI
             target.UndoneAt = null;
             target.AppliedAt = DateTimeOffset.UtcNow;
             await _dbContext.SaveChangesAsync(ct);
-            return new AiActionUndoRedoResult(target.HistoryEntryId, target.AfterContent);
+            return new AiActionUndoRedoResult(target.HistoryEntryId, target.AfterContent,target.BeforeContent);
         }
 
         private static AiActionHistoryEntry MapToEntry(AiActionHistoryEntryRecord record, Dictionary<Guid, AppliedStats> applied)
@@ -198,7 +228,7 @@ namespace WriterApp.Application.AI
                 record.ResultJson,
                 isApplied,
                 lastAppliedAt,
-                appliedCount);
+                appliedCount, stats?.CanCloudUndo ?? false, stats?.CanCloudRedo ?? false, stats?.ReplayScope);
         }
 
         private static AiActionExecuteResponseDto? TryReadResponse(string? json)
@@ -222,6 +252,6 @@ namespace WriterApp.Application.AI
             Guid HistoryEntryId,
             int AppliedCount,
             DateTimeOffset? LastAppliedAt,
-            bool IsApplied);
+            bool IsApplied, bool CanCloudUndo, bool CanCloudRedo, string? ReplayScope = null);
     }
 }

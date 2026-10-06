@@ -51,6 +51,9 @@
     [Parameter] public Guid? RequestedAnnotationId { get; set; }
     [Parameter] public Guid? AnnotationRequest { get; set; }
     [Parameter] public EventCallback<bool> AnnotationLocated { get; set; }
+    [Parameter] public ConsistencyPassage? ConsistencyPassage { get; set; }
+    [Parameter] public EventCallback<bool> ConsistencyLocated { get; set; }
+    private Guid? _lastConsistencyRequest;
     private LocalTextAnnotation[]? _lastAnnotations;
     private Guid? _lastAnnotationRequest;
     private string? _lastSearchText;
@@ -123,6 +126,16 @@
     private async Task ApplyAnnotationsAsync()
     {
         if (_editor is null || _disposed) return;
+        if (ConsistencyPassage is { } passage && _lastConsistencyRequest != passage.RequestId)
+        {
+            _lastConsistencyRequest = passage.RequestId;
+            await ConsistencyLocated.InvokeAsync(await _editor.InvokeAsync<bool>("navigateToConsistency", passage.PlainText, passage.Start, passage.Quote));
+        }
+        else if (ConsistencyPassage is null && _lastConsistencyRequest is not null)
+        {
+            await _editor.InvokeVoidAsync("clearConsistencyHighlight");
+            _lastConsistencyRequest = null;
+        }
         if (_lastAnnotations is null || !Annotations.SequenceEqual(_lastAnnotations))
         {
             var annotations = Annotations.ToArray();
@@ -154,16 +167,28 @@
         await OnContentChanged(snapshot.Html, snapshot.Version);
     }
 
-    public async Task<AiEditorSnapshot> CaptureAiAsync(bool wholePage = false, bool currentSelectionOnly = false)
+    public async Task<AiEditorSnapshot> CaptureAiAsync(bool wholePage = false, bool currentSelectionOnly = false, bool quality = false, bool completeWords = false)
     {
         if (_editor is null || _disposed) throw new InvalidOperationException("The editor is not ready.");
-        return await _editor.InvokeAsync<AiEditorSnapshot>("captureAi", wholePage, currentSelectionOnly);
+        return await _editor.InvokeAsync<AiEditorSnapshot>("captureAi", wholePage, currentSelectionOnly, quality, completeWords);
     }
 
     public async Task<string> ApplyAiAsync(string baseHtml, int from, int to, string original, string proposed, string mode)
     {
         if (_editor is null || _disposed) throw new InvalidOperationException("The editor is not ready.");
         Snapshot result = await _editor.InvokeAsync<Snapshot>("applyAi", baseHtml, from, to, original, proposed, mode);
+        await OnContentChanged(result.Html, result.Version);
+        return result.Html;
+    }
+    public async Task PreviewStyleQualityAsync(string html, int sourceFrom, string source, IReadOnlyList<WriterApp.Shared.StyleQualityEdit> edits)
+    {
+        if (_module is null || _disposed) throw new InvalidOperationException("The editor is not ready.");
+        if (edits.Count > 0) await _module.InvokeAsync<string>("previewStyleQualityRevision", html, sourceFrom, source, edits);
+    }
+    public async Task<string> ApplyStyleQualityAsync(string html, int sourceFrom, string source, IReadOnlyList<WriterApp.Shared.StyleQualityEdit> edits)
+    {
+        if (_editor is null || _disposed) throw new InvalidOperationException("The editor is not ready.");
+        Snapshot result = await _editor.InvokeAsync<Snapshot>("applyStyleQuality", html, sourceFrom, source, edits);
         await OnContentChanged(result.Html, result.Version);
         return result.Html;
     }
@@ -175,10 +200,18 @@
         return result.Html;
     }
 
-    public async Task SetContentAsync(string html)
+    public async Task SetContentAsync(string html, LocalContentFormat format = LocalContentFormat.Html)
     {
         if (_editor is null || _disposed) throw new InvalidOperationException("The editor is not ready.");
-        await _editor.InvokeVoidAsync("setContent", html);
+        await _editor.InvokeVoidAsync("setContent", html, format.ToString());
+    }
+    public async Task SetQualityHighlightsAsync(string plainText, IReadOnlyList<WriterApp.Application.Documents.QualityHighlight> highlights, string? selected)
+    {
+        if (_editor is not null && !_disposed) await _editor.InvokeVoidAsync("setQualityHighlights", plainText, highlights, selected);
+    }
+    public async Task<bool> NavigateToQualityAsync(string plainText, WriterApp.Application.Documents.QualityHighlight highlight)
+    {
+        return _editor is not null && !_disposed && await _editor.InvokeAsync<bool>("navigateToQuality", plainText, highlight);
     }
 
     public async ValueTask DisposeAsync()

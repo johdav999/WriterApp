@@ -1,0 +1,138 @@
+@implements IDisposable
+@using System.Text.Json
+@using WriterApp.Shared.Canon
+@inject DeviceBibleService Bibles
+@inject LocalDocumentRepository Documents
+@inject DeviceSyncEngine Sync
+@inject DeviceAccountService Account
+@inject DeviceConnectivity Network
+
+<section aria-label="Story canon controls">
+    <h2>Saved story facts</h2>
+    <p>Characters, places and events found in your manuscript. Check consistency prepares these references automatically. You can inspect or update them here.</p>
+    <p>Updating story facts sends your synced manuscript to AI and saves the notes. Your writing stays unchanged.</p>
+    @if (!Bibles.CanView) { <p>Sign in to view your saved story facts on this device.</p> }
+    else
+    {
+        var contents = _cached.Where(p => p.Value.Snapshot?.Exists == true)
+            .ToDictionary(p => p.Key, p => CanonContent.Parse(p.Key, p.Value.Snapshot!.ContentJson));
+        var scenes = _document?.Sections.SelectMany(s => s.ServerSectionId is { } serverId
+            ? new[] { (s.SectionId.ToString(), s.Title), (serverId.ToString(), s.Title) }
+            : new[] { (s.SectionId.ToString(), s.Title) }).GroupBy(s => s.Item1)
+            .ToDictionary(g => g.Key, g => g.First().Title);
+        @if (!Network.IsOnline) { <p role="status">Offline: showing story facts saved on this device.</p> }
+        @if (_error is not null) { <p role="alert">@_error</p> }
+        @if (_busy) { <p role="status">@_operation</p><button type="button" @onclick="() => _cancel?.Cancel()">Cancel canon request</button> }
+        <button type="button" disabled="@(_busy || ExternalBusy || !Network.IsOnline || _document?.ServerDocumentId is null)"
+            @onclick="() => Run(null, true, false)">Update story facts</button>
+        @if (ReferenceWarnings().Count > 0) {
+            <details class="canon-link-notice"><summary>Some events are not linked to saved characters or places</summary>
+                <p>Update story facts to try again. These are missing links in the reference notes, not suggested changes to your writing.</p>
+                @foreach (var warning in ReferenceWarnings()) { <p>@warning</p> }
+            </details>
+        }
+        @foreach (var kind in Enum.GetValues<CanonKind>())
+        {
+            var cache = _cached.GetValueOrDefault(kind);
+            <StoryCanonView Kind="kind" Content="contents.GetValueOrDefault(kind)" Contents="contents" SceneNames="scenes"
+                Status="@Status(cache)" RefreshedAt="cache?.Snapshot?.RefreshedAt">
+                <fieldset disabled="@(_busy || ExternalBusy || !Network.IsOnline || _document?.ServerDocumentId is null)">
+                    <legend>@CanonPresentation.Heading(kind)</legend>
+                    <button type="button" @onclick="() => Run(kind, false, false)">Load saved facts</button>
+                    <button type="button" @onclick="() => Run(kind, true, false)">@(cache?.Snapshot?.Exists == true ? "Update facts" : "Find story facts")</button>
+                    @if (cache?.Snapshot?.Exists == true) { <button type="button" @onclick="() => Run(kind, true, true)">Find all facts again</button> }
+                </fieldset>
+            </StoryCanonView>
+        }
+        <p>The check uses facts that match your saved draft. It tells you when some facts cannot be used.</p>
+    }
+</section>
+@code {
+    [Parameter] public Guid DocumentId { get; set; }
+    [Parameter] public Guid? SectionId { get; set; }
+    [Parameter] public bool ExternalBusy { get; set; }
+    [Parameter] public Func<Task<bool>>? BeforeWork { get; set; }
+    [Parameter] public Func<Task>? AfterWork { get; set; }
+    [Parameter] public EventCallback<bool> BusyChanged { get; set; }
+    public bool IsBusy => _busy;
+    private LocalDocument? _document;
+    private Dictionary<CanonKind, LocalBibleCache> _cached = [];
+    private string? _error, _operation;
+    private bool _busy, _disposed;
+    private long _loadSequence;
+    private CancellationTokenSource? _cancel;
+    private string? _accountId;
+    private long _generation;
+    private (Guid, long)? _loadedIdentity;
+    protected override void OnInitialized() { _accountId = Account.AccountId; _generation = Account.Generation; Account.Changed += AccountChanged; Documents.Changed += Changed; Network.Changed += Changed; }
+    protected override Task OnParametersSetAsync() {
+        if (_busy || _loadedIdentity == (DocumentId, Account.Generation)) return Task.CompletedTask;
+        _loadedIdentity = (DocumentId, Account.Generation); _cached = []; _document = null;
+        return LoadCached();
+    }
+    private void AccountChanged()
+    {
+        if (_disposed || (_accountId == Account.AccountId && _generation == Account.Generation)) return;
+        _accountId = Account.AccountId; _generation = Account.Generation;
+        _cached = []; ++_loadSequence; _cancel?.Cancel(); Changed();
+    }
+    private void Changed()
+    {
+        if (_disposed) return;
+        if (!Network.IsOnline) _cancel?.Cancel();
+        _ = InvokeAsync(async () => { StateHasChanged(); if (!_busy) await LoadCached(); StateHasChanged(); });
+    }
+    private async Task LoadCached()
+    {
+        long sequence = ++_loadSequence, generation = Account.Generation; var id = DocumentId;
+        _error = null;
+        try
+        {
+            _document = await Documents.LoadAsync(id);
+            if (_document?.ServerDocumentId is null || !Bibles.CanView) return;
+            var values = new Dictionary<CanonKind, LocalBibleCache>();
+            foreach (var kind in Enum.GetValues<CanonKind>())
+                if (await Bibles.CachedAsync(_document, kind) is { } cached) values[kind] = cached;
+            if (!_disposed && sequence == _loadSequence && id == DocumentId && generation == Account.Generation && Bibles.CanView) _cached = values;
+        }
+        catch (Exception e) when (e is IOException or InvalidOperationException or JsonException or DeviceSignInRequiredException or UnauthorizedAccessException)
+        { if (sequence == _loadSequence) _error = "Cached canon could not be loaded. Existing files are preserved. " + e.Message; }
+    }
+    private string Status(LocalBibleCache? cache) => cache is null ? "No facts saved on this device. Load saved facts or find them in your manuscript."
+        : cache.RefreshState != "Ready" ? "The last request was interrupted. Load saved canon before retrying. Previous entries are retained."
+        : cache.Snapshot is not { Exists: true } ? "No saved facts. Find them in your manuscript."
+        : cache.Snapshot.SourceDocumentVersion == _document?.ServerVersion && _document?.SyncState == LocalSyncState.Synced
+            ? $"Up to date with your last synced draft. Loaded {cache.CheckedAt.ToLocalTime():g}. Load again to see changes from another device."
+            : "These facts may be out of date. Save and sync your draft, then update the facts before checking.";
+    private IReadOnlyList<string> ReferenceWarnings() => new DeviceCanonContext(_document?.ServerDocumentId ?? Guid.Empty,
+        _document?.ServerVersion ?? "", _cached.Where(p => p.Value.Snapshot?.Exists == true)
+            .ToDictionary(p => p.Key, p => p.Value.Snapshot!)).UnresolvedReferences();
+    private async Task Run(CanonKind? kind, bool refresh, bool rebuild)
+    {
+        if (_busy || ExternalBusy) return;
+        _busy = true; _error = null; _operation = $"{(refresh ? "Updating" : "Loading")} {kind?.ToString().ToLowerInvariant() ?? "all"} canon…";
+        using var cancellation = new CancellationTokenSource(); _cancel = cancellation;
+        await BusyChanged.InvokeAsync(true); bool began = false;
+        try
+        {
+            if (BeforeWork is not null && !await BeforeWork()) throw new InvalidOperationException("Save writing and planning before updating canon.");
+            began = true; await Sync.SyncAsync(cancellation.Token);
+            var source = await Documents.LoadAsync(DocumentId, cancellation.Token) ?? throw new IOException("Manuscript unavailable.");
+            foreach (var current in kind is { } selected ? new[] { selected } : Enum.GetValues<CanonKind>())
+            {
+                _operation = $"{(refresh ? "Updating" : "Loading")} {current.ToString().ToLowerInvariant()} canon…";
+                await InvokeAsync(StateHasChanged);
+                await Bibles.LoadAsync(source, current, refresh, rebuild, SectionId, cancellation.Token);
+            }
+        }
+        catch (OperationCanceledException) { _error = "Canon request canceled or timed out. Load saved canon before retrying; the server may have completed the refresh."; }
+        catch (Exception e) when (e is IOException or InvalidOperationException or JsonException or HttpRequestException or DeviceSignInRequiredException or DeviceIdentityUnavailableException or UnauthorizedAccessException)
+        { _error = e.Message + (kind is null ? " Any earlier completed bible updates remain saved. Load saved canon before retrying." : ""); }
+        finally
+        {
+            try { if (began && AfterWork is not null) await AfterWork(); }
+            finally { _busy = false; _cancel = null; var error = _error; if (!_disposed) await LoadCached(); _error ??= error; await BusyChanged.InvokeAsync(false); }
+        }
+    }
+    public void Dispose() { _disposed = true; ++_loadSequence; _cancel?.Cancel(); Account.Changed -= AccountChanged; Documents.Changed -= Changed; Network.Changed -= Changed; }
+}

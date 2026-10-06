@@ -7,7 +7,7 @@ using WriterApp.UI.Shared.Projects;
 namespace WriterApp.Device.Shared.Services;
 
 /// <summary>Durable, target-scoped AI undo. Never replaces a whole document snapshot.</summary>
-public sealed class LocalAiHistoryActions(LocalDocumentRepository documents, LocalAiStore history)
+public sealed class LocalAiHistoryActions(LocalDocumentRepository documents, LocalAiStore history, DeviceAccountService? account = null, DeviceHostOptions? host = null)
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
 
@@ -17,6 +17,24 @@ public sealed class LocalAiHistoryActions(LocalDocumentRepository documents, Loc
         try
         {
             var entry = (await history.HistoryAsync(documentId, ct)).Single(h => h.Id == entryId);
+            if (entry.CloudOrigin is { } origin && (account?.IsSignedIn != true || host is null || string.IsNullOrWhiteSpace(account.AccountId)
+                || origin.Scope != LocalBibleStore.ScopeKey(host.ApiBaseAddress, account.AccountId)))
+                throw new InvalidOperationException("Sign in to the original account and backend before changing this history entry. Local writing remains available.");
+            if (entry.Target == "Translation:duplicate-document")
+            {
+                if (entry.After is null || (redo ? entry.Status is not ("Undone" or "Redoing") : entry.Status is not ("Applied" or "Undoing")))
+                    throw new InvalidOperationException("No completed translated copy is available for this operation.");
+                var copy = await documents.LoadAsync(entry.After.DocumentId, ct) ?? throw new IOException("Translated copy unavailable.");
+                if (LocalTranslation.Signature(copy) != LocalTranslation.Signature(entry.After) || copy.SyncState == LocalSyncState.Conflict)
+                    throw new InvalidOperationException("The translated copy has later changes. Keep it and recover the original separately.");
+                await history.SaveHistoryAsync(entry with { Status = redo ? "Redoing" : "Undoing" }, ct);
+                if (redo ? copy.DeletedAtUtc is not null : copy.DeletedAtUtc is null)
+                {
+                    if (redo) await documents.RestoreAsync(copy, ct); else await documents.MoveToTrashAsync(copy, ct);
+                }
+                await history.SaveHistoryAsync(entry with { Status = redo ? "Applied" : "Undone" }, CancellationToken.None);
+                return;
+            }
             var current = await documents.LoadAsync(documentId, ct) ?? throw new IOException("Document unavailable.");
             var next = Change(current, entry, redo);
             // Record intent first. A retry after interruption can finish an already saved change.
@@ -30,12 +48,15 @@ public sealed class LocalAiHistoryActions(LocalDocumentRepository documents, Loc
 
     public static string? UnavailableReason(LocalDocument current, LocalAiHistory entry, bool redo)
     {
+        if (entry.Target == "Translation:duplicate-document" && entry.After is not null
+            && (redo ? entry.Status is "Undone" or "Redoing" : entry.Status is "Applied" or "Undoing")) return null;
         try { Change(current, entry, redo); return null; }
         catch (Exception e) when (e is InvalidOperationException or InvalidDataException or JsonException) { return e.Message; }
     }
 
     public static LocalDocument Change(LocalDocument current, LocalAiHistory entry, bool redo)
     {
+        if (entry.Version == 5) LocalSynopsisCoaching.ValidateEntry(entry);
         if (current.DocumentId != entry.DocumentId || current.DeletedAtUtc is not null || current.SyncState == LocalSyncState.Conflict)
             throw new InvalidOperationException("Restore the document and resolve any sync conflict before changing AI history.");
         if (redo ? entry.Status is not ("Undone" or "Redoing") : entry.Status is not ("Applied" or "Undoing"))
@@ -55,6 +76,20 @@ public sealed class LocalAiHistoryActions(LocalDocumentRepository documents, Loc
             return result;
         }
         LocalDocument next;
+        if (entry.Version == 3 && entry.PageId is { } writingPage) {
+            LocalWriting.ValidateEntry(entry);
+            var section = current.Sections.SingleOrDefault(s => s.SectionId == entry.SectionId);
+            var original = entry.Before.Sections.Single(s => s.SectionId == entry.SectionId).Pages.Single(p => p.PageId == writingPage);
+            if (section is null || !section.Pages.Any(p => p.PageId == writingPage && p.OrderIndex == original.OrderIndex)
+                || entry.Target == "Writing:continuation" && section.Pages.OrderBy(p => p.OrderIndex).Last().PageId != writingPage)
+                throw new InvalidOperationException("The reviewed writing page moved. Recover its original as a copy.");
+        }
+        if (entry.Version == 3 && entry.Target == "Writing:section") {
+            LocalWriting.ValidateEntry(entry);
+            return LocalTranslationHistory.Change(current, entry with { Target = "Translation:replace" }, redo);
+        }
+        if (entry.Target.StartsWith("Translation:", StringComparison.Ordinal))
+            return LocalTranslationHistory.Change(current, entry, redo);
         if (entry.PageId is { } pageId)
         {
             var page = current.Sections.SelectMany(s => s.Pages).SingleOrDefault(p => p.PageId == pageId)
@@ -81,6 +116,7 @@ public sealed class LocalAiHistoryActions(LocalDocumentRepository documents, Loc
         }
         else if (entry.Target.StartsWith("SceneCard:", StringComparison.Ordinal))
         {
+            if (entry.Version == 4) LocalSceneCoaching.ValidateEntry(entry);
             RequireProject(current, entry);
             Guid id = SceneNode(entry);
             var node = current.Project!.Nodes.SingleOrDefault(n => n.NodeId == id && n.DeletionId is null)
@@ -88,6 +124,15 @@ public sealed class LocalAiHistoryActions(LocalDocumentRepository documents, Loc
             var actual = node.Card ?? LocalPlanning.EmptyCard;
             var from = expected.Project!.Nodes.Single(n => n.NodeId == id).Card ?? LocalPlanning.EmptyCard;
             var to = desired.Project!.Nodes.Single(n => n.NodeId == id).Card ?? LocalPlanning.EmptyCard;
+            if (entry.Version == 4) {
+                if (node.SectionId != entry.SectionId) throw new InvalidOperationException("The reviewed scene moved. Recover the original as a copy.");
+                var scoped = actual;
+                foreach (var field in entry.SceneFields!) scoped = SceneCoaching.Set(scoped, field,
+                    Replace(SceneCoaching.Value(actual, field), SceneCoaching.Value(from, field), SceneCoaching.Value(to, field)));
+                next = LocalPlanning.Scene(current, id, scoped, node.Notes ?? "");
+                if (!changed) throw new InvalidOperationException("This operation made no changes to undo.");
+                return next;
+            }
             var card = actual with {
                 Summary = Replace(actual.Summary, from.Summary, to.Summary),
                 NarrativePurpose = Replace(actual.NarrativePurpose, from.NarrativePurpose, to.NarrativePurpose),

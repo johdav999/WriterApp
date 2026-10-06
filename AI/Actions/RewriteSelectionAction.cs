@@ -42,7 +42,7 @@ namespace WriterApp.AI.Actions
                 normalizedRange,
                 selectionText,
                 string.IsNullOrWhiteSpace(input.Document.Metadata.Title) ? null : input.Document.Metadata.Title,
-                null,
+                WriterApp.Shared.WritingOutline.FromOptions(input.Options),
                 null,
                 languageHint,
                 selectionText,

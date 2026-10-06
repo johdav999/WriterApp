@@ -10,6 +10,9 @@
 @inject HttpClient Http
 @inject ILogger<StoryboardSceneInspector> Logger
 @inject FeatureAccessService FeatureAccessService
+@using WriterApp.Shared
+@inject WebAiHistoryOutbox HistoryOutbox
+@inject WebCheckedAi CheckedAi
 
 <aside class="storyboard-inspector" aria-label="Scene inspector">
     @if (SceneNode is null)
@@ -44,7 +47,7 @@
 
         <div class="storyboard-inspector-scroll">
             <div class="storyboard-inspector-body">
-                <ScenePlanningFields Values="PlanningValues" Changed="PlanningChanged" Blurred="SaveNowAsync" />
+                <ScenePlanningFields Values="PlanningValues" Changed="PlanningChanged" Blurred="SaveNowAsync" Busy="@(_sceneApplying || _saveInFlight || _loading || _scopedRecoveryBusy)" />
 
                 <section class="storyboard-inspector-section">
                 <h4>Actions</h4>
@@ -84,21 +87,21 @@
                         <PlanGatedButton Feature="@nameof(FeatureKey.SceneAiSuggestions)"
                                          Class="storyboard-inspector-ai-button"
                                          ShowLockIndicator="false"
-                                         IsActionDisabled="@(_aiInFlight || _loading || SceneNode is null)"
+                                         IsActionDisabled="@(_aiInFlight || _loading || _scopedRecoveryBusy || SceneNode is null)"
                                          OnClick="@(() => RunSceneAiAsync("scene.suggest", "Generate a concise 1-2 sentence summary for this scene card based on the section text. Prefer updating the summary field and preserve existing scene metadata unless the text strongly suggests a correction."))">
                             Generate summary
                         </PlanGatedButton>
                         <PlanGatedButton Feature="@nameof(FeatureKey.SceneAiSuggestions)"
                                          Class="storyboard-inspector-ai-button"
                                          ShowLockIndicator="false"
-                                         IsActionDisabled="@(_aiInFlight || _loading || SceneNode is null)"
+                                         IsActionDisabled="@(_aiInFlight || _loading || _scopedRecoveryBusy || SceneNode is null)"
                                          OnClick="@(() => RunSceneAiAsync("scene.suggest", "Suggest the strongest narrative role and narrative intent for this scene based on the section text. Treat narrative role as the structural classification and narrative intent as the emotional or dramatic aim of the scene. Prioritize updating those two fields and only adjust other metadata if needed for consistency."))">
                             Suggest scene role/intent
                         </PlanGatedButton>
                         <PlanGatedButton Feature="@nameof(FeatureKey.SceneAiSuggestions)"
                                          Class="storyboard-inspector-ai-button"
                                          ShowLockIndicator="false"
-                                         IsActionDisabled="@(_aiInFlight || _loading || SceneNode is null)"
+                                         IsActionDisabled="@(_aiInFlight || _loading || _scopedRecoveryBusy || SceneNode is null)"
                                          OnClick="@(() => RunSceneAiAsync("scene.refine", "Improve the scene structure of this scene card using goal, conflict, and outcome framing. Strengthen summary, narrative role, narrative intent, key events, and open questions so the card clearly reflects the scene's structural place, what the character wants, what opposes them, and what changes by the end."))">
                             Improve structure
                         </PlanGatedButton>
@@ -117,39 +120,10 @@
                             {
                                 <div class="storyboard-inspector-preview-explanation">@_aiExplanation</div>
                             }
-                            <div class="storyboard-inspector-preview-grid">
-                                <div>
-                                    <strong>Summary</strong>
-                                    <div>@(string.IsNullOrWhiteSpace(_aiProposal.Summary) ? "(not provided)" : _aiProposal.Summary)</div>
-                                </div>
-                                <div>
-                                    <strong>Status</strong>
-                                    <div>@(string.IsNullOrWhiteSpace(_aiProposal.Status) ? "(not provided)" : _aiProposal.Status)</div>
-                                </div>
-                                <div>
-                                    <strong>Narrative role</strong>
-                                    <div>@(string.IsNullOrWhiteSpace(GetProposalNarrativeRole(_aiProposal)) ? "(not provided)" : GetProposalNarrativeRole(_aiProposal))</div>
-                                </div>
-                                <div>
-                                    <strong>Narrative intent</strong>
-                                    <div>@(string.IsNullOrWhiteSpace(GetProposalNarrativeIntent(_aiProposal)) ? "(not provided)" : GetProposalNarrativeIntent(_aiProposal))</div>
-                                </div>
-                                <div>
-                                    <strong>POV</strong>
-                                    <div>@(string.IsNullOrWhiteSpace(_aiProposal.PovCharacterId) ? "(not provided)" : _aiProposal.PovCharacterId)</div>
-                                </div>
-                                <div>
-                                    <strong>Subplot tags</strong>
-                                    <div>@GetTagDisplay(_aiProposal.SubplotTags)</div>
-                                </div>
-                                <div>
-                                    <strong>Open questions</strong>
-                                    <div>@(string.IsNullOrWhiteSpace(_aiProposal.OpenQuestions) ? "(not provided)" : _aiProposal.OpenQuestions)</div>
-                                </div>
-                            </div>
+                            <SceneCoachingReview Changes="_sceneAiChanges" Approved="_approvedSceneFields" ApprovedChanged="ApprovedSceneFieldsChanged" Busy="@(_saveInFlight || _sceneApplying || _scopedRecoveryBusy)" />
                             <div class="storyboard-inspector-ai-actions">
-                                <button type="button" class="storyboard-inspector-primary" @onclick="ApplySceneAiProposalAsync">Apply</button>
-                                <button type="button" class="storyboard-inspector-secondary" @onclick="DiscardSceneAiProposal">Discard</button>
+                                <button type="button" class="storyboard-inspector-primary" disabled="@(_sceneApplying || _scopedRecoveryBusy || _saveInFlight || _approvedSceneFields.Count == 0)" @onclick="ApplySceneAiProposalAsync">Apply approved fields</button>
+                                <button type="button" class="storyboard-inspector-secondary" disabled="@(_sceneApplying || _scopedRecoveryBusy)" @onclick="DiscardSceneAiProposal">Discard</button>
                             </div>
                         </div>
                     }
@@ -158,15 +132,22 @@
             </div>
         </div>
     }
+    @if(_documentId is { } historyDocument && !_loading){
+        <WriterApp.Client.Components.WebAiRecoveryPanel DocumentId="historyDocument" BeforeWork="FlushAsync" Changed="ReloadAfterScopedRecovery" BusyChanged="ScopedRecoveryBusyChanged" />
+    }
 </aside>
 
 @code {
+    private bool _scopedRecoveryBusy;
+    private void ScopedRecoveryBusyChanged(bool busy){if(busy && (_aiInFlight || _saveInFlight || _sceneApplying || _loading))throw new InvalidOperationException("Finish the current scene action before recovery.");_scopedRecoveryBusy=busy;}
+    private async Task ReloadAfterScopedRecovery(){DiscardSceneAiProposal();if(SceneNode is { } node)await LoadSceneAsync(node.Id,_loadVersion);}
     private IReadOnlyDictionary<string,string> PlanningValues => new Dictionary<string,string> {
         ["Title"] = _title, ["Summary"] = _summary, ["Notes"] = _notes, ["NarrativeRole"] = _narrativeRole,
         ["NarrativeIntent"] = _narrativeIntent, ["Pov"] = _povCharacterId, ["SubplotTags"] = _subplotTagsText,
         ["EmotionalBeat"] = _emotionalBeat, ["KeyEvents"] = _keyEvents, ["OpenQuestions"] = _openQuestions, ["Status"] = _status };
     private void PlanningChanged(ScenePlanningChange change)
     {
+        if (_sceneApplying) return;
         var e = new ChangeEventArgs { Value = change.Value };
         switch(change.Field) {
             case "Title": OnTitleInput(e); break;
@@ -352,6 +333,7 @@
             }
 
             _summary = card?.Summary ?? string.Empty;
+            _preservedCard=card;
             _status = NormalizeSceneCardStatus(card?.Status);
             _narrativeRole = card?.NarrativeRole ?? GetNormalizedLegacyNarrativeRole(card?.NarrativePurpose) ?? string.Empty;
             _narrativeIntent = card?.NarrativeIntent ?? GetLegacyNarrativeIntent(card?.NarrativePurpose) ?? string.Empty;
@@ -570,7 +552,7 @@
 
     private async Task SaveNowAsync()
     {
-        if (_loading || _saveInFlight || SceneNode is null)
+        if (_loading || _saveInFlight || _sceneApplying || SceneNode is null)
         {
             return;
         }
@@ -584,19 +566,20 @@
                 NormalizeOptional(_keyEvents),
                 NormalizeOptional(_openQuestions),
                 NormalizeOptional(_povCharacterId),
-                null,
-                null,
-                null,
-                Array.Empty<string>(),
-                Array.Empty<SceneCardReferenceDto>(),
+                _preservedCard?.PlaceId,
+                _preservedCard?.TimelineEventId,
+                _preservedCard?.TimeRef,
+                _preservedCard?.Tags,
+                _preservedCard?.References,
                 NormalizeOptional(_summary),
                 NormalizeSceneCardStatus(_status),
                 ParseTags(_subplotTagsText),
                 NormalizeNarrativeRole(_narrativeRole),
-                NormalizeOptional(_narrativeIntent));
+                NormalizeOptional(_narrativeIntent),
+                _preservedCard is null ? null : WriterApp.Shared.WebSceneCardSources.Fingerprint(_preservedCard));
 
-            using HttpResponseMessage sceneResponse =
-                await Http.PutAsJsonAsync($"api/scenes/{SceneNode.Id}/scene-card", scenePayload);
+            using var message=new HttpRequestMessage(HttpMethod.Put,$"api/scenes/{SceneNode.Id}/scene-card"){Content=JsonContent.Create(scenePayload)};
+            using HttpResponseMessage sceneResponse=await Http.SendAsync(message);
             if (!sceneResponse.IsSuccessStatusCode)
             {
                 _saveStatus = "Failed to save scene.";
@@ -604,6 +587,9 @@
             }
 
             SceneCardDto? updatedCard = await sceneResponse.Content.ReadFromJsonAsync<SceneCardDto>();
+            if(_preservedCard is not null)WebCheckedAi.RequireMutationReceipt(sceneResponse);
+            _preservedCard=updatedCard;
+
 
             using HttpResponseMessage notesResponse =
                 await Http.PutAsJsonAsync($"api/scenes/{SceneNode.Id}/notes", new SceneNotesUpdateRequest(_notes ?? string.Empty));
@@ -665,7 +651,7 @@
 
     private async Task RunSceneAiAsync(string actionKey, string instruction)
     {
-        if (_aiInFlight || _loading || SceneNode is null)
+        if (_aiInFlight || _sceneApplying || _loading || SceneNode is null)
         {
             return;
         }
@@ -676,6 +662,7 @@
             return;
         }
 
+        _aiProposal = null; _approvedSceneFields = []; _sceneAiChanges = [];
         _aiInFlight = true;
         _aiError = string.Empty;
         try
@@ -690,7 +677,11 @@
             _documentId = target.DocumentId;
             _sectionId = target.SectionId;
 
+            _saveCts?.Cancel();await SaveNowAsync();
+            if(_saveInFlight || _saveStatus!="Scene saved.")throw new InvalidOperationException("Save scene planning before coaching.");
             string originalSnapshot = BuildSceneCardSnapshotJson();
+            var lease=await CheckedAi.Capture(target.DocumentId.Value,target.SectionId,null,SceneNode.Id);
+            long loadVersion=_loadVersion;Guid sceneId=SceneNode.Id;
             AiActionExecuteRequestDto payload = new(
                 target.DocumentId,
                 target.SectionId,
@@ -705,8 +696,8 @@
                     ["instruction"] = instruction
                 });
 
-            using HttpResponseMessage response =
-                await Http.PostAsJsonAsync($"api/ai/actions/{actionKey}/execute", payload);
+            payload=await CheckedAi.BindCanon(actionKey,payload,lease);
+            using HttpResponseMessage response=await CheckedAi.Execute(actionKey,payload,lease);
             if (!response.IsSuccessStatusCode)
             {
                 _aiError = await ReadApiErrorAsync(response, "AI action failed.");
@@ -721,13 +712,17 @@
                 return;
             }
 
+            if(SceneNode?.Id!=sceneId || _loadVersion!=loadVersion || originalSnapshot!=BuildSceneCardSnapshotJson())throw new InvalidOperationException("Scene changed during coaching.");
+            _sceneAiLease=lease;_sceneAiOriginal=originalSnapshot;_sceneAiCreated=result.CreatedUtc;
+            _sceneAiChanges=SceneCardApprovals.Changes(JsonSerializer.Deserialize<SectionSceneCardProposalDto>(originalSnapshot,JsonOptions)!,result.ProposedSceneCard);
+            _approvedSceneFields=[];_sceneAiProposalId=result.ProposalId;
             _aiProposal = result.ProposedSceneCard;
             _aiExplanation = result.ProposalExplanation ?? result.ChangesSummary;
         }
         catch (Exception ex)
         {
             Logger.LogWarning(ex, "Storyboard scene inspector AI failed. SceneNodeId={SceneNodeId}", SceneNode.Id);
-            _aiError = "AI action failed.";
+            _aiError = ex.Message;
         }
         finally
         {
@@ -746,39 +741,60 @@
         return await response.Content.ReadFromJsonAsync<ProjectSceneOpenTargetDto>();
     }
 
+    private IReadOnlyList<SceneFieldChange> _sceneAiChanges=[];
+    private IReadOnlyList<SceneCoachingField> _approvedSceneFields=[];
+    private bool _sceneApplying;
+    private Guid _sceneAiProposalId;
+    private WebAiHistoryIntent? _sceneHistoryIntent;
+    private Task ApprovedSceneFieldsChanged(IReadOnlyList<SceneCoachingField> fields) {
+        if(!_sceneApplying)_approvedSceneFields=fields.ToArray();return Task.CompletedTask;
+    }
     private async Task ApplySceneAiProposalAsync()
     {
-        if (_aiProposal is null)
-        {
-            return;
-        }
-
-        ApplySuggestedValue(ref _summary, _aiProposal.Summary);
-        ApplySuggestedValue(ref _status, _aiProposal.Status);
-        ApplySuggestedValue(ref _narrativeRole, GetProposalNarrativeRole(_aiProposal));
-        ApplySuggestedValue(ref _narrativeIntent, GetProposalNarrativeIntent(_aiProposal));
-        ApplySuggestedValue(ref _emotionalBeat, _aiProposal.EmotionalBeat);
-        ApplySuggestedValue(ref _keyEvents, _aiProposal.KeyEvents);
-        ApplySuggestedValue(ref _openQuestions, _aiProposal.OpenQuestions);
-        ApplySuggestedValue(ref _povCharacterId, _aiProposal.PovCharacterId);
-
-        IReadOnlyList<string> subplotTags = NormalizeTagList(_aiProposal.SubplotTags);
-        if (subplotTags.Count > 0)
-        {
-            _subplotTagsText = string.Join(", ", subplotTags);
-        }
-
-        _aiProposal = null;
-        _aiExplanation = null;
-        await SaveNowAsync();
+        if(_sceneApplying || _saveInFlight || _aiProposal is null || _approvedSceneFields.Count==0)return;
+        _sceneApplying=true;
+        var proposal=_aiProposal;var approved=_approvedSceneFields.ToArray();var lease=_sceneAiLease;
+        var loadVersion=_loadVersion;
+        try {
+            SceneCardApprovals.Require(approved,_sceneAiChanges);
+            if(lease is null || SceneNode?.Id!=lease.Source.SceneId || _sceneAiOriginal!=BuildSceneCardSnapshotJson() || _preservedCard is null)
+                throw new InvalidOperationException("Scene planning changed or preview is unchecked. Regenerate.");
+            WebAiSources.RequireTime(_sceneAiCreated);await CheckedAi.Confirm(lease);
+            if(_aiProposal!=proposal || _loadVersion!=loadVersion || _sceneAiOriginal!=BuildSceneCardSnapshotJson())
+                throw new InvalidOperationException("Scene review changed. Regenerate.");
+            var payload=SceneCardApprovals.Request(proposal,approved,WebSceneCardSources.Fingerprint(_preservedCard));
+            var after=JsonSerializer.Serialize(payload,WebAiHistoryContracts.Json);
+            if(_sceneHistoryIntent?.ProposalId!=_sceneAiProposalId || _sceneHistoryIntent.AfterContent!=after) {
+                var id=Guid.NewGuid();_sceneHistoryIntent=new(1,id,id,_sceneAiProposalId,1,null,"Applied",lease.Source,"SceneCard",WebSceneCardSources.Canonical(_preservedCard),after);
+            }
+            using var message=CheckedAi.Mutation(HttpMethod.Put,$"api/scenes/{SceneNode!.Id}/scene-card",payload,lease);
+            await HistoryOutbox.Attach(message,_sceneHistoryIntent,lease,CancellationToken.None);
+            using var response=await Http.SendAsync(message);
+            if(!response.IsSuccessStatusCode)throw new InvalidOperationException(await ReadApiErrorAsync(response,"Scene save failed. Your review is retained."));
+            await HistoryOutbox.Saved(_sceneHistoryIntent,lease,response);_sceneHistoryIntent=null;
+            CheckedAi.RequireLease(lease);
+            if(_loadVersion!=loadVersion || SceneNode?.Id!=lease.Source.SceneId)return;
+            var sceneId=lease.Source.SceneId!.Value;
+            DiscardSceneAiProposal();
+            await LoadSceneAsync(sceneId,loadVersion);
+            if(_loadVersion!=loadVersion || SceneNode?.Id!=sceneId)return;
+            _saveStatus="Scene saved.";
+            if(SceneUpdated.HasDelegate && SceneNode is { } currentScene)await SceneUpdated.InvokeAsync(new WriterApp.UI.Shared.Projects.StoryboardSceneInspectorUpdate(currentScene with { MetadataJson=BuildMetadataJson(_preservedCard,_notes,_sceneMetadataJson) }));
+        } catch(Exception e) { if(_loadVersion==loadVersion && _aiProposal==proposal)_aiError=e.Message; }
+        finally { _sceneApplying=false; }
     }
 
     private void DiscardSceneAiProposal()
     {
+        _approvedSceneFields=[];_sceneAiChanges=[];
         _aiProposal = null;
         _aiExplanation = null;
         _aiError = string.Empty;
     }
+    private SceneCardDto? _preservedCard;
+    private WebCheckedAi.Lease? _sceneAiLease;
+    private string? _sceneAiOriginal;
+    private DateTimeOffset _sceneAiCreated;
 
     private string BuildSceneCardSnapshotJson()
     {
@@ -788,11 +804,11 @@
             NormalizeOptional(_keyEvents),
             NormalizeOptional(_openQuestions),
             NormalizeOptional(_povCharacterId),
-            null,
-            null,
-            null,
-            Array.Empty<string>(),
-            Array.Empty<SceneCardReferenceDto>(),
+            _preservedCard?.PlaceId,
+            _preservedCard?.TimelineEventId,
+            _preservedCard?.TimeRef,
+            _preservedCard?.Tags,
+            _preservedCard?.References,
             NormalizeOptional(_summary),
             NormalizeSceneCardStatus(_status),
             ParseTags(_subplotTagsText),

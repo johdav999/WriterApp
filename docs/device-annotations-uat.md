@@ -1,4 +1,44 @@
-# Desktop annotation flow — 2026-10-01
+# Desktop annotation flow — 2026-10-04
+
+## Compact titles, visible color and long-passage jumps — 2026-10-04
+
+Profile: author, local synthetic document; production Razor components and shipped editor assets in headless Edge at `http://127.0.0.1:5179/WriterApp.Client/tests/device-editor.html`; Windows Debug desktop build.
+
+| ID | Severity | Flow | Correction and evidence | State |
+| --- | --- | --- | --- | --- |
+| ANN-007 | P2 | Read and activate an annotation title | The comment's first nonempty line is the title (at most 100 characters). The title is the passage link. Long comment bodies and the quoted manuscript are collapsed under details. `PanelUsesACompactTitleLinkAndKeepsTheQuoteAndCommentBodyCollapsed` verifies the production markup; workspace tests verify repeat navigation requests. | Component verified |
+| ANN-008 | P1 | Jump to a long annotated passage | The previous selection-scroll behavior left the start of a long quote above the writing viewport. A new browser regression failed before the correction. Navigation now selects the exact quote, focuses synchronously and scrolls its first decoration into view. Title keyboard activation also focuses and selects the exact text without changing prose or save version. | Browser verified |
+| ANN-009 | P2 | See comment/task markings in the main editor | The device bundle now supplies purple comment, yellow task and green highlight colors with an underline. A standalone-host regression verifies visible distinct colors without a web editor wrapper; existing checks verify quoted text, resolve/reopen and unchanged stored HTML. | Browser verified |
+
+Validation: 24/24 annotation/planning tests pass using `artifacts/annotation-title-fix/AnnotationTests.csproj`, which links the repository's actual test files and production device project. The full test project is currently blocked by unrelated `SectionDto`, `PageDto` and `WriterApp.Application.State` compile errors in `WriterApp.Client/Pages/DocumentEditor.CheckedCanon.cs`. The focused project avoids changing that unrelated work. All 75 shipped-editor checks pass with no page errors, plus title keyboard activation. Final Windows Debug desktop build succeeds with zero warnings/errors.
+
+Evidence: `artifacts/annotation-title-fix/before.json`, `browser-results.json` and `editor-colors.png`. Native UI automation could not initialize (`helper_unknown_error: apply deny-read ACLs`); the native click flow remains an acceptance check, despite the successful desktop build.
+
+Repeat in the rebuilt desktop: select a unique paragraph, add a comment, confirm its purple marking, move/scroll elsewhere, then activate its title or **Show in text**. Confirm the start of the passage is visible and the editor has focus. Repeat with a task, resolve/reopen, and save/reopen. Quotes that are absent or repeated, and scene notes without a quote, still require an explicit **Link to selected text** action; no text location is guessed.
+
+## Quote markup and navigation repair — 2026-10-04
+
+Profile: Windows Debug desktop, author, existing local document inspected read-only; focused synthetic component/store tests; headless Edge with the shipped editor at `http://127.0.0.1:5179/WriterApp.Client/tests/device-editor.html`.
+
+The reported annotation retains an older quote whose wording differs from the current scene. Its `AnchorDetached` flag is true, so it had no editor decorations or navigation link. The other reported comment has an empty quote and is a scene-level note. The quoted passage in the right panel was also a plain blockquote with no navigation callback, even for valid linked annotations.
+
+| ID | Severity | Flow | Correction and acceptance evidence | State |
+| --- | --- | --- | --- | --- |
+| ANN-004 | P2 | Undo or restore the exact quoted passage | Markup and navigation revalidate the current unique quote instead of permanently excluding a saved detached flag. `RestoredUniqueQuoteIgnoresStaleDetachedFlagWithoutChangingSavedWriting` and store undo/restore cases pass. | Component/store verified |
+| ANN-005 | P2 | Click quoted text in the right panel | Linked quotes now render as keyboard-accessible buttons using the existing page navigation callback. The workspace regression checks the quote link and annotation request; shipped-editor browser checks focus, selection and visible decoration. | Component/browser verified |
+| ANN-006 | P2 | Recover a comment after its passage changes | Select its current passage and choose **Link to selected text**. Existing scene notes support the same action. The save preserves annotation identity, content, kind and resolution; absent, repeated and cross-page quotes are rejected. Panel/store regressions verify save and reopen. | Component/store verified |
+
+Validation: 23/23 focused .NET tests; 73/73 shipped-editor browser checks, no browser errors; Windows Debug build succeeded with zero warnings and errors in both isolated and standard output. The actual workspace executable was closed normally through its save handler, rebuilt, and relaunched. Native clicking was not automated: the browser automation runtime failed to initialize with `helper_unknown_error: apply deny-read ACLs`, so the browser checks used the repository-compatible headless Edge runner. The signed-in native relink interaction remains a manual acceptance case.
+
+Repeat in the updated native app:
+
+1. Select the current passage for the detached comment and choose **Link to selected text**. Confirm immediate markup and unchanged prose.
+2. Click another place in the editor, then click the quoted passage in the right panel. Confirm editor focus, scrolling and selection at the passage.
+3. Resolve/reopen and save/reopen; confirm the link persists. Remove the passage, save, restore it exactly and confirm markup returns.
+
+These current rules supersede the earlier permanent-detachment rule below. Missing and repeated quotes still have no inferred text location.
+
+## Earlier annotation flow — 2026-10-01
 
 The device editor now captures selected writing when the author starts a comment or task. Adding the annotation refreshes the workspace immediately, and linked comment text navigates back to the passage. The existing **Show in text** action remains available.
 

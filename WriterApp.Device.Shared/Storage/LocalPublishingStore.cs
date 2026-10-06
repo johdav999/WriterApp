@@ -4,7 +4,8 @@ using System.Text.Json.Serialization;
 using WriterApp.Device.Shared.Services;
 namespace WriterApp.Device.Shared.Storage;
 
-public sealed record LocalCover(Guid Id, Guid DocumentId, Guid? ProjectId, string FileName, byte[] Png)
+public sealed record LocalCover(Guid Id, Guid DocumentId, Guid? ProjectId, string FileName, byte[] Png,
+    string? RemoteReference = null, string? ContentHash = null, string? AccountScope = null)
 {
     [JsonIgnore] public string DataUri => "data:image/png;base64," + Convert.ToBase64String(Png);
     public static LocalCover Create(LocalDocument doc, DeviceImportFile file)
@@ -12,19 +13,14 @@ public sealed record LocalCover(Guid Id, Guid DocumentId, Guid? ProjectId, strin
         Validate(file.Content);
         return new(Guid.NewGuid(),doc.DocumentId,doc.Project?.ProjectId,Path.GetFileName(file.FileName),file.Content.ToArray());
     }
-    public static void Validate(byte[] bytes)
+    public static LocalCover? FromProject(LocalDocument doc)
     {
-        if (bytes is null || bytes.Length < 45 || bytes.Length > 2 * 1024 * 1024 || !bytes.AsSpan(0,8).SequenceEqual(new byte[]{137,80,78,71,13,10,26,10})
-            || !bytes.AsSpan(12,4).SequenceEqual("IHDR"u8)) throw new InvalidDataException("Choose a PNG cover of at most 2 MB.");
-        uint width=BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(16,4)), height=BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(20,4));
-        if(width==0 || height==0 || width>8000 || height>8000 || (long)width*height>32_000_000) throw new InvalidDataException("Cover dimensions exceed 8000 pixels or 32 megapixels.");
-        int offset=8; bool end=false, image=false;
-        while(offset<=bytes.Length-12) { uint size=BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(offset,4)); if(size>bytes.Length-offset-12) throw new InvalidDataException("Truncated PNG cover."); uint crc=0xffffffff; foreach(byte b in bytes.AsSpan(offset+4,(int)size+4)) { crc^=b; for(int bit=0;bit<8;bit++) crc=(crc>>1)^((crc&1)==1?0xedb88320u:0u); }
-            if((crc^0xffffffff)!=BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(offset+8+(int)size,4))) throw new InvalidDataException("PNG checksum mismatch.");
-            image |= bytes.AsSpan(offset+4,4).SequenceEqual("IDAT"u8) && size>0;
-            if(bytes.AsSpan(offset+4,4).SequenceEqual("IEND"u8)) { end=true; break; } offset+=checked((int)size+12); }
-        if(!end || !image) throw new InvalidDataException("Truncated PNG cover.");
+        if(doc.Project?.CoverImageUrl is not { } url || !url.StartsWith("data:",StringComparison.OrdinalIgnoreCase)) return null;
+        byte[] png=WriterApp.Shared.CoverStudioContract.ReadPng(url);
+        return new(doc.Project.CoverChangeId ?? doc.Project.ProjectId, doc.DocumentId,doc.Project.ProjectId,"project-cover.png",png);
     }
+    public static void Validate(byte[] bytes) => WriterApp.Shared.CoverStudioContract.ValidatePng(bytes);
+
 }
 public sealed record LocalExportPreset(Guid Id, string Name, LocalPublishingOptions Options);
 public sealed record LocalPublishingState(int Version, Guid DocumentId, Guid? ProjectId, long Revision,

@@ -8,6 +8,8 @@
 @inject WriterApp.Client.State.AuthMeStateService AuthMeStateService
 @inject WriterApp.Client.Services.FeatureAccessService FeatureAccessService
 @inject NavigationManager Navigation
+@inject WriterApp.Client.Services.AuthStateService Authentication
+@inject Microsoft.JSInterop.IJSRuntime JS
 
 <section class="cover-studio" aria-label="Cover studio">
     <div class="cover-studio-panel cover-studio-brief">
@@ -16,56 +18,11 @@
             <p>Generate and customize cover artwork for your manuscript.</p>
         </div>
 
-        <div class="cover-form">
-            <label class="cover-field" for="cover-description">
-                <span>Describe your cover</span>
-                <textarea id="cover-description"
-                          @bind="_description"
-                          placeholder="Describe the subject, setting, typography mood, and any visual details you want on the cover."></textarea>
-            </label>
-
-            <label class="cover-field" for="cover-genre">
-                <span>Genre</span>
-                <select id="cover-genre" @bind="_genre">
-                    @foreach (string option in GenreOptions)
-                    {
-                        <option value="@option">@option</option>
-                    }
-                </select>
-            </label>
-
-            <label class="cover-field" for="cover-mood">
-                <span>Mood</span>
-                <select id="cover-mood" @bind="_mood">
-                    @foreach (string option in MoodOptions)
-                    {
-                        <option value="@option">@option</option>
-                    }
-                </select>
-            </label>
-
-            <label class="cover-field" for="cover-style">
-                <span>Visual Style</span>
-                <select id="cover-style" @bind="_visualStyle">
-                    @foreach (string option in VisualStyleOptions)
-                    {
-                        <option value="@option">@option</option>
-                    }
-                </select>
-            </label>
-
-            <label class="cover-field" for="cover-palette">
-                <span>Color palette</span>
-                <select id="cover-palette" @bind="_colorPalette">
-                    @foreach (string option in ColorPaletteOptions)
-                    {
-                        <option value="@option">@option</option>
-                    }
-                </select>
-            </label>
-        </div>
+        <WriterApp.UI.Shared.CoverBrief Value="@BuildPrompt()" ValueChanged="BriefChanged" Disabled="@(_isGenerating || _isSavingCover)" />
 
         <div class="cover-actions">
+            <button type="button" class="secondary" disabled="@(!_isGenerating)" @onclick="CancelEdit">Cancel generation</button>
+            <button type="button" class="secondary" disabled="@(_isGenerating || _isSavingCover)" @onclick="DismissEditAsync">Dismiss preview</button>
             <button type="button"
                     class="@GetGenerationButtonClass("primary")"
                     title="@GetGenerationTooltip()"
@@ -90,9 +47,9 @@
                         <Icon Name="lock" />
                     </span>
                 }
-                <span>Surprise me</span>
+                <span>Choose another brief</span>
             </button>
-            <button type="button" class="secondary" @onclick="SaveProjectCoverAsync" disabled="@(!_selectedImageAvailable || _isSavingCover)">
+            <button type="button" class="secondary" @onclick="SaveProjectCoverAsync" disabled="@(!_selectedImageAvailable || _isSavingCover || _isGenerating)">
                 @(_isSavingCover ? "Saving..." : "Save as project cover")
             </button>
         </div>
@@ -100,6 +57,9 @@
         @if (!string.IsNullOrWhiteSpace(_saveStatus))
         {
             <div class="cover-save-status">@_saveStatus</div>
+        }
+        @if(_editPreview is { } review && review.Edit.Request.Source.MetadataRevision!=_metadataRevision && review.Receipt is null) {
+            <p role="status">This cover review has an older project revision. Reconcile an approved save or generate a new edit before saving.</p>
         }
     </div>
 
@@ -124,6 +84,8 @@
             }
         </div>
 
+        @if (_generatedImageUrls.Count == 0 || !string.IsNullOrWhiteSpace(_coverError))
+        {
         <div class="cover-preview-frame">
             @if (!string.IsNullOrWhiteSpace(_coverError))
             {
@@ -143,119 +105,34 @@
             }
         </div>
 
-        @if (_generatedImageUrls.Count > 0)
-        {
-            <div class="cover-preview-grid" role="list" aria-label="Generated cover concepts">
-                @foreach (string imageUrl in _generatedImageUrls)
-                {
-                    <button type="button"
-                            class="cover-preview-card @(string.Equals(_selectedImageUrl, imageUrl, StringComparison.Ordinal) ? "is-selected" : null)"
-                            @onclick="() => SelectImage(imageUrl)">
-                        <img src="@imageUrl" alt="Generated book cover concept" />
-                    </button>
-                }
-            </div>
         }
+        @if(_editPreview is { } edit) {
+            <WriterApp.UI.Shared.CoverEditReview Operation="@edit.Edit.Request.Operation" AssetId="@edit.Edit.Request.AssetId" Hash="@edit.Edit.Request.ContentHash"
+                Original="@edit.Original" Proposed="@EditedImage(edit)" Selected="edit.Selected" SelectedChanged="SelectEditAsync" Disabled="@(_isGenerating || _isSavingCover)" />
+        } else { <WriterApp.UI.Shared.CoverConcepts Images="_generatedImageUrls" Selected="@_generatedImageUrls.IndexOf(_selectedImageUrl ?? string.Empty)" SelectedChanged="i => SelectImage(_generatedImageUrls[i])" Disabled="@(_isGenerating || _isSavingCover)" /> }
+
     </div>
 
     <div class="cover-studio-panel cover-studio-controls">
-        <div class="cover-studio-header">
-            <h3>Controls</h3>
-            <p>Shape the next pass before generation is connected.</p>
-        </div>
-
-        <div class="cover-control-list">
-            <button type="button" class="@GetGenerationButtonClass("secondary")" title="@GetGenerationTooltip()" aria-disabled="@(!IsProfessional)" @onclick="OnGenerateVariationsClickedAsync">
-                @if (!IsProfessional)
-                {
-                    <span class="cover-gated-button-icon" aria-hidden="true">
-                        <Icon Name="lock" />
-                    </span>
-                }
-                <span>Generate variations</span>
-            </button>
-            <button type="button" class="@GetGenerationButtonClass("secondary")" title="@GetGenerationTooltip()" aria-disabled="@(!IsProfessional)" @onclick="OnMakeDarkerClickedAsync">
-                @if (!IsProfessional)
-                {
-                    <span class="cover-gated-button-icon" aria-hidden="true">
-                        <Icon Name="lock" />
-                    </span>
-                }
-                <span>Make darker</span>
-            </button>
-            <button type="button" class="@GetGenerationButtonClass("secondary")" title="@GetGenerationTooltip()" aria-disabled="@(!IsProfessional)" @onclick="OnMakeBrighterClickedAsync">
-                @if (!IsProfessional)
-                {
-                    <span class="cover-gated-button-icon" aria-hidden="true">
-                        <Icon Name="lock" />
-                    </span>
-                }
-                <span>Make brighter</span>
-            </button>
-            <button type="button" class="@GetGenerationButtonClass("secondary")" title="@GetGenerationTooltip()" aria-disabled="@(!IsProfessional)" @onclick="OnMoreCinematicClickedAsync">
-                @if (!IsProfessional)
-                {
-                    <span class="cover-gated-button-icon" aria-hidden="true">
-                        <Icon Name="lock" />
-                    </span>
-                }
-                <span>More cinematic</span>
-            </button>
-            <button type="button" class="@GetGenerationButtonClass("secondary")" title="@GetGenerationTooltip()" aria-disabled="@(!IsProfessional)" @onclick="OnMoreMinimalClickedAsync">
-                @if (!IsProfessional)
-                {
-                    <span class="cover-gated-button-icon" aria-hidden="true">
-                        <Icon Name="lock" />
-                    </span>
-                }
-                <span>More minimal</span>
-            </button>
-        </div>
-
-        @if (!string.IsNullOrWhiteSpace(_lastAction))
-        {
-            <div class="cover-action-status">@_lastAction</div>
-        }
+        <WriterApp.UI.Shared.CoverEditControls Capabilities="_editCapabilities" Disabled="@(_isGenerating || _isSavingCover || !IsProfessional)" HasSource="_selectedImageAvailable" Requested="EditAsync" />
+        <button type="button" disabled="@(_isGenerating || _isSavingCover)" @onclick="RefreshEditsAsync">Refresh availability / reopen cached review</button>
+        <button type="button" disabled="@(_isGenerating || _isSavingCover || _editPreview?.SaveApproved!=true)" @onclick="ReconcileEditAsync">Check approved save</button>
+        <button type="button" disabled="@(_isGenerating || _isSavingCover || !HasEditRecovery)" @onclick="RestoreEditAsync">Restore previous project cover</button>
+        <p>Cached reviews can be reopened offline. Saving and restoring on the web require connectivity and an owned persistence acknowledgement.</p>
     </div>
+
 </section>
 
 @code {
-    private static readonly string[] GenreOptions =
-    [
-        "Fantasy",
-        "Romance",
-        "Sci-fi",
-        "Thriller",
-        "Mystery",
-        "Literary"
-    ];
-
-    private static readonly string[] MoodOptions =
-    [
-        "Dark",
-        "Hopeful",
-        "Epic",
-        "Mysterious",
-        "Romantic"
-    ];
-
-    private static readonly string[] VisualStyleOptions =
-    [
-        "Cinematic",
-        "Painted",
-        "Illustrated",
-        "Minimalist",
-        "Photorealistic"
-    ];
-
-    private static readonly string[] ColorPaletteOptions =
-    [
-        "Warm",
-        "Cold",
-        "Dark",
-        "High contrast",
-        "Pastel"
-    ];
+    private static readonly string[] GenreOptions = CoverStudioContract.Genres;
+    private static readonly string[] MoodOptions = CoverStudioContract.Moods;
+    private static readonly string[] VisualStyleOptions = CoverStudioContract.Styles;
+    private static readonly string[] ColorPaletteOptions = CoverStudioContract.Palettes;
+    private long _metadataRevision;
+    private long _epoch;
+    private readonly System.Threading.CancellationTokenSource _lifetime=new();
+    private System.Threading.CancellationTokenSource? _request;
+    private void BriefChanged(CoverPrompt prompt) { _description=prompt.Description ?? ""; _genre=prompt.Genre ?? GenreOptions[0]; _mood=prompt.Mood ?? MoodOptions[0]; _visualStyle=prompt.Style ?? VisualStyleOptions[0]; _colorPalette=prompt.ColorPalette ?? ColorPaletteOptions[0]; }
 
     private string _description = string.Empty;
     private string _genre = GenreOptions[0];
@@ -287,6 +164,7 @@
     protected override void OnParametersSet()
     {
         bool projectChanged = _boundProjectId != Project?.Id;
+        if(projectChanged) { _epoch++; _request?.Cancel(); _generatedImageUrls.Clear(); _conceptAssets.Clear(); _editPreview=null; _coverRecovery=null; _editCapabilities=null; _selectedImageUrl=null; _coverError=null; _saveStatus=null; }
         _boundProjectId = Project?.Id;
 
         if (Project is null)
@@ -295,17 +173,19 @@
             return;
         }
 
-        _projectCoverImageUrl = Project.CoverImageUrl;
-        if (!string.IsNullOrWhiteSpace(Project.CoverImageUrl))
+        if(projectChanged || Project.MetadataRevision >= _metadataRevision) {
+            _projectCoverImageUrl = Project.CoverImageUrl; _metadataRevision = Project.MetadataRevision;
+        }
+        if (!string.IsNullOrWhiteSpace(_projectCoverImageUrl))
         {
-            if (!_generatedImageUrls.Any(url => string.Equals(url, Project.CoverImageUrl, StringComparison.Ordinal)))
+            if (!_generatedImageUrls.Any(url => string.Equals(url, _projectCoverImageUrl, StringComparison.Ordinal)))
             {
-                _generatedImageUrls.Insert(0, Project.CoverImageUrl);
+                _generatedImageUrls.Insert(0, _projectCoverImageUrl);
             }
 
             if (projectChanged || string.IsNullOrWhiteSpace(_selectedImageUrl))
             {
-                _selectedImageUrl = Project.CoverImageUrl;
+                _selectedImageUrl = _projectCoverImageUrl;
                 _previewCaption = null;
             }
         }
@@ -318,10 +198,12 @@
     public void Dispose()
     {
         AuthMeStateService.Changed -= HandleAuthMeChanged;
+        _lifetime.Cancel(); _request?.Cancel();
     }
 
     private void HandleAuthMeChanged()
     {
+        _epoch++; _request?.Cancel(); _generatedImageUrls.Clear(); _conceptAssets.Clear(); _editPreview=null; _coverRecovery=null; _editCapabilities=null; _selectedImageUrl=null;
         InvokeAsync(StateHasChanged);
     }
 
@@ -343,56 +225,6 @@
         }
 
         await SurpriseMeAsync();
-    }
-
-    private async Task OnGenerateVariationsClickedAsync()
-    {
-        if (await RedirectToUpgradeIfLockedAsync())
-        {
-            return;
-        }
-
-        await GenerateVariationsAsync();
-    }
-
-    private async Task OnMakeDarkerClickedAsync()
-    {
-        if (await RedirectToUpgradeIfLockedAsync())
-        {
-            return;
-        }
-
-        await MakeDarkerAsync();
-    }
-
-    private async Task OnMakeBrighterClickedAsync()
-    {
-        if (await RedirectToUpgradeIfLockedAsync())
-        {
-            return;
-        }
-
-        await MakeBrighterAsync();
-    }
-
-    private async Task OnMoreCinematicClickedAsync()
-    {
-        if (await RedirectToUpgradeIfLockedAsync())
-        {
-            return;
-        }
-
-        await MoreCinematicAsync();
-    }
-
-    private async Task OnMoreMinimalClickedAsync()
-    {
-        if (await RedirectToUpgradeIfLockedAsync())
-        {
-            return;
-        }
-
-        await MoreMinimalAsync();
     }
 
     private Task<bool> RedirectToUpgradeIfLockedAsync()
@@ -422,6 +254,9 @@
 
     private async Task GenerateCoverConceptsAsync()
     {
+        if(_isGenerating || _isSavingCover) return;
+        var sourceProject=Project?.Id; var epoch=_epoch;
+        using var request=System.Threading.CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token); _request=request;
         _isGenerating = true;
         _coverError = null;
         _saveStatus = null;
@@ -430,8 +265,25 @@
 
         try
         {
-            CoverGenerationResponse response = await CoverApiClient.GenerateCoverConceptsAsync(BuildPrompt());
+            var brief=BuildPrompt();
+            if(brief.ProjectId is not { } project || brief.DocumentId is not { } document)throw new InvalidOperationException("Choose a saved project manuscript first.");
+            var context=await CoverApiClient.EditCallAsync<CoverAssetSource>(HttpMethod.Get,$"api/covers/generation-source/{project}/{document}?revision={_metadataRevision}",null,request.Token,16_384);
+            if(context.ProjectId!=project || context.DocumentId!=document || context.MetadataRevision!=_metadataRevision)throw new InvalidOperationException("Cover source changed. Reload first.");
+            brief=new CoverPrompt {ContractVersion=1,ProjectId=project,DocumentId=document,ExpectedMetadataRevision=context.MetadataRevision,ExpectedDocumentVersion=context.DocumentVersion,
+                Description=brief.Description,Genre=brief.Genre,Mood=brief.Mood,Style=brief.Style,ColorPalette=brief.ColorPalette};
+            CoverGenerationResponse response = await CoverApiClient.GenerateCoverConceptsAsync(brief,request.Token);
+            if(Project?.Id != sourceProject || epoch!=_epoch) return;
+            request.Token.ThrowIfCancellationRequested();
+            if(response.ContractVersion!=1 || response.ProjectId!=project || response.DocumentId!=document || response.MetadataRevision!=context.MetadataRevision || response.DocumentVersion!=context.DocumentVersion)
+                throw new InvalidOperationException("The backend did not confirm the saved cover source.");
+            if(response.ImageUrls is null || response.ImageUrls.Count is <1 or >4) throw new InvalidOperationException("Invalid cover concept count.");
+            foreach(var image in response.ImageUrls) CoverStudioContract.ReadPng(image);
             _generatedImageUrls.Clear();
+            _editPreview=null;_conceptAssets.Clear();
+            if(response.Assets is { } assets) {
+                if(assets.Count!=response.ImageUrls.Count)throw new InvalidOperationException("Cover asset mapping is incomplete.");
+                for(int i=0;i<assets.Count;i++)if(assets[i] is { } asset){CoverAssetContract.Validate(asset,CoverStudioContract.ReadPng(response.ImageUrls[i]),project);_conceptAssets[response.ImageUrls[i]]=asset;}
+            }
             _generatedImageUrls.AddRange(response.ImageUrls);
             _selectedImageUrl = _generatedImageUrls.Count > 0 ? _generatedImageUrls[0] : null;
             _lastAction = _generatedImageUrls.Count > 0
@@ -440,14 +292,13 @@
         }
         catch (Exception ex)
         {
+            if(epoch!=_epoch) return;
             _coverError = ex.Message;
-            _generatedImageUrls.Clear();
-            _selectedImageUrl = null;
             _lastAction = null;
         }
         finally
         {
-            _isGenerating = false;
+            _isGenerating = false; if(_request==request) _request=null;
         }
     }
 
@@ -460,31 +311,6 @@
         _visualStyle = VisualStyleOptions[(Array.IndexOf(VisualStyleOptions, _visualStyle) + 1) % VisualStyleOptions.Length];
         _colorPalette = ColorPaletteOptions[(Array.IndexOf(ColorPaletteOptions, _colorPalette) + 1) % ColorPaletteOptions.Length];
         return SetPendingActionAsync("Surprise me clicked.");
-    }
-
-    private Task GenerateVariationsAsync()
-    {
-        return SetPendingActionAsync("Generate variations clicked.");
-    }
-
-    private Task MakeDarkerAsync()
-    {
-        return SetPendingActionAsync("Make darker clicked.");
-    }
-
-    private Task MakeBrighterAsync()
-    {
-        return SetPendingActionAsync("Make brighter clicked.");
-    }
-
-    private Task MoreCinematicAsync()
-    {
-        return SetPendingActionAsync("More cinematic clicked.");
-    }
-
-    private Task MoreMinimalAsync()
-    {
-        return SetPendingActionAsync("More minimal clicked.");
     }
 
     private Task SetPendingActionAsync(string action)
@@ -507,7 +333,8 @@
             Genre = _genre,
             Mood = _mood,
             Style = _visualStyle,
-            ColorPalette = _colorPalette
+            ColorPalette = _colorPalette,
+            ProjectId=Project?.Id,DocumentId=Project?.PrimaryDocumentId ?? Project?.DocumentId,ExpectedMetadataRevision=_metadataRevision
         };
     }
 
@@ -521,19 +348,24 @@
 
     private async Task SaveProjectCoverAsync()
     {
-        if (Project is null || !_selectedImageAvailable)
+        if (Project is null || !_selectedImageAvailable || _isGenerating || _isSavingCover)
         {
             return;
         }
+        if(_editPreview is not null) {await SaveEditAsync();return;}
 
+        var sourceProject=Project.Id; var epoch=_epoch;
+        using var request=System.Threading.CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token); _request=request;
         _isSavingCover = true;
         _coverError = null;
         _saveStatus = null;
 
         try
         {
-            ProjectDto updatedProject = await CoverApiClient.SaveProjectCoverAsync(Project.Id, _selectedImageUrl!);
+            ProjectDto updatedProject = await CoverApiClient.SaveProjectCoverAsync(sourceProject, _selectedImageUrl!, _metadataRevision,request.Token);
+            if(Project?.Id!=sourceProject || epoch!=_epoch) return;
             _projectCoverImageUrl = updatedProject.CoverImageUrl;
+            _metadataRevision = updatedProject.MetadataRevision;
             _selectedImageUrl = updatedProject.CoverImageUrl;
             _saveStatus = "Cover saved.";
             _lastAction = "Saved as project cover.";
@@ -544,7 +376,7 @@
         }
         finally
         {
-            _isSavingCover = false;
+            _isSavingCover = false; if(_request==request) _request=null;
         }
     }
 }

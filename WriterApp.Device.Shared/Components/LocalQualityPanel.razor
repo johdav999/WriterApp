@@ -1,0 +1,286 @@
+@implements IDisposable
+@using WriterApp.Application.Documents
+@using Microsoft.JSInterop
+@using WriterApp.UI.Shared.Components
+@inject LocalDocumentRepository Documents
+@inject DeviceSyncEngine Sync
+@inject DeviceAiService Ai
+@inject DeviceAccountService Account
+@inject LocalQualityActions Actions
+@inject DeviceGlossaryService Glossary
+@inject DeviceQualityDismissals Decisions
+@inject IJSRuntime JS
+
+<section aria-label="Local style and quality checks">
+    <h3>Style &amp; quality findings</h3>
+    <p><strong>What local checks cover:</strong> repeated words, sentences over 30 words, paragraphs over 120 words, readability hints, English passive-voice patterns, name casing and timeline hints.</p>
+    <p>These are review hints, not a quality score. Saved glossary terms add casing and near-match hints when available. Local checks omit saved scene hints. AI fixes use your chosen style goal and require sign-in and synchronization.</p>
+    <TargetedQualityRetryOptions Enabled="@_strictRetry" EnabledChanged="RetryChanged" Busy="@(_busy || ExternalBusy)" />
+    <fieldset disabled="@(_busy || ExternalBusy)">
+        <legend>Writing to check</legend>
+        <label><input type="radio" name="quality-scope" checked="@(!_selection)" @onchange="() => _selection = false" /> Current page</label>
+        <label><input type="radio" name="quality-scope" checked="@_selection" @onchange="() => _selection = true" /> Selected writing</label>
+        <button type="button" @onclick="Analyze">Check style &amp; quality</button>
+    </fieldset>
+    @if (_busy) { <p role="status">Preparing quality review…</p><button type="button" @onclick="() => _cancel?.Cancel()">Cancel quality request</button> }
+    @if (_error is not null && _reviewIssueKey is null) { <p role="alert">@_error</p> }
+    @if (_message is not null) { <p role="status">@_message</p> }
+    @if (_analysis is { } analysis)
+    {
+        <p>Checked @(_selectionAtRun ? "selection" : "page"): @analysis.Source.Sections.SelectMany(s => s.Pages).Single(p => p.PageId == analysis.PageId).Title.</p>
+        @if (analysis.Glossary is { } glossary)
+        {
+            <p role="status">@glossary.Message
+                @if (glossary.CheckedAt is { } checkedAt) { <br /><span>Last successful glossary check: @checkedAt.ToString("u"). @glossary.Terms.Count saved terms.</span> }
+            </p>
+        }
+        @if (analysis.Issues.Count == 200) { <p>Showing up to 200 findings. Check a shorter selection for more focused results.</p> }
+        <QualityDismissalReview Items="DecisionRows" Message="@_decisions?.Message" Busy="@(_busy || ExternalBusy)" Restore="Restore" />
+        <QualityFindings Issues="Findings" Severity="@_severity" Rule="@_rule" Selected="@_selected" Busy="@(_busy || ExternalBusy)"
+            SeverityChanged="SeverityChanged" RuleChanged="RuleChanged" SelectedChanged="Select" Jump="Jump" Review="Review" Dismiss="Dismiss">
+            <TargetedReview Context="issueKey">
+                @if (_preview is { } preview && preview.Fix.Issue.IssueKey == issueKey)
+                {
+                    <section class="quality-fix-review" aria-label="Review targeted quality change" tabindex="-1" @ref="_reviewElement">
+                        <h3>Review writing change</h3>
+                        @if (_error is not null) { <p role="alert">@_error</p> }
+                        <p>@(preview.Provider is null ? "Local quality fix. No AI request was needed." : "AI-generated revision. Review its meaning and voice before applying.")</p>
+                        <p>Apply changes only this reviewed passage. Undo or recover the earlier writing in History.</p>
+                        <button type="button" disabled="@(_busy || ExternalBusy)" @onclick="Apply">Approve &amp; apply quality fix</button>
+                        <button type="button" disabled="@_busy" @onclick="DismissPreview">Dismiss quality fix</button>
+                        <p>@WriterApp.Shared.StyleQualityReview.RuleGuidance(preview.Fix.Issue.RuleId)</p>
+                        <AiTextComparison Original="@preview.Fix.Before" Proposed="@preview.Proposed" HighlightChanges="true" />
+                    </section>
+                }
+                else if (_reviewIssueKey == issueKey)
+                {
+                    <section class="quality-fix-review" aria-label="Targeted quality request" tabindex="-1" @ref="_reviewElement">
+                        @if (_busy) { <p role="status">Preparing this quality fix…</p> }
+                        else if (_error is not null) { <p role="alert">@_error Writing is unchanged. Try reviewing this finding again, or dismiss it if the repetition is intentional.</p> }
+                        else if (_message is not null) { <p role="status">@_message</p> }
+                    </section>
+                }
+            </TargetedReview>
+        </QualityFindings>
+    }
+</section>
+@code {
+    [Parameter] public Guid DocumentId { get; set; }
+    [Parameter] public Guid? PageId { get; set; }
+    [Parameter] public string? CurrentHtml { get; set; }
+    [Parameter] public bool ExternalBusy { get; set; }
+    [Parameter] public string StyleGoal { get; set; } = WriterApp.Shared.StyleQualityReview.DefaultGoal;
+    [Parameter] public Func<Task<bool>>? BeforeWork { get; set; }
+    [Parameter] public Func<Task>? AfterWork { get; set; }
+    [Parameter] public Func<CancellationToken, Task<QualityEditorSource>>? Capture { get; set; }
+    [Parameter] public Func<string, QualityHighlight, Task<bool>>? Navigate { get; set; }
+    [Parameter] public Func<string, IReadOnlyList<QualityHighlight>, string?, Task>? Highlights { get; set; }
+    public bool IsBusy => _busy;
+    private LocalQualityAnalysis? _analysis;
+    private LocalQualityPreview? _preview;
+    private ElementReference _reviewElement;
+    private bool _focusReview;
+    private string? _reviewIssueKey;
+    private readonly HashSet<string> _dismissed = [];
+    private LocalQualityDecisionView? _decisions;
+    private IReadOnlyList<WriterApp.Shared.Quality.QualityDismissedFinding> DecisionRows => _decisions?.Items.Select(d =>
+        new WriterApp.Shared.Quality.QualityDismissedFinding(d.Id, d.RuleId, d.Message, d.Anchor, d.Pending ? d.Status + "; delivery pending" : d.Status,
+            _analysis is { } a && d.SourceHash == DeviceQualityDismissals.SourceHash(a) && a.Issues.Any(i => i.IssueKey == d.IssueKey), d.Dismissed)).ToArray() ?? [];
+    private void SetDecisions(LocalQualityDecisionView view) { _decisions = view; _dismissed.Clear(); _dismissed.UnionWith(view.Hidden); }
+    private string _severity = "all", _rule = "all";
+    private string? _selected, _error, _message;
+    private bool _selection, _selectionAtRun, _busy, _disposed;
+    private bool _strictRetry;
+    private void RetryChanged(bool value) { if (!_busy && !ExternalBusy) _strictRetry = value; }
+    private CancellationTokenSource? _cancel;
+    private long _accountGeneration;
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_focusReview || _reviewIssueKey is null || _busy || ExternalBusy) return;
+        _focusReview = false;
+        try { await _reviewElement.FocusAsync(); }
+        catch (JSException) { /* The inline review remains available if focus fails. */ }
+    }
+    private void DismissPreview() { _preview = null; _reviewIssueKey = null; _focusReview = false; }
+    protected override void OnInitialized()
+    {
+        _accountGeneration = Account.Generation;
+        Account.Changed += AccountChanged;
+    }
+    private void AccountChanged()
+    {
+        if (_disposed || _accountGeneration == Account.Generation) return;
+        _accountGeneration = Account.Generation;
+        _cancel?.Cancel();
+        _ = InvokeAsync(async () => {
+            _analysis = null; DismissPreview(); _selected = null; _dismissed.Clear(); _decisions = null;
+            _message = "The account changed. Run quality checks again for this account's glossary.";
+            await Highlight();
+            StateHasChanged();
+        });
+    }
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_analysis is { } a && (a.Source.DocumentId != DocumentId || a.PageId != PageId
+            || a.Source.Sections.SelectMany(s => s.Pages).Single(p => p.PageId == a.PageId).Content != CurrentHtml))
+        {
+            _analysis = null; DismissPreview(); _selected = null;
+            _message = "The checked writing changed. Run quality checks again.";
+            await Highlight();
+        }
+    }
+    private async Task<QualityEditorSource> Source(CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (_disposed) throw new OperationCanceledException(ct);
+        if (Capture is null) throw new InvalidOperationException("The editor is unavailable.");
+        var source = await Capture(ct);
+        if (source.Document.DocumentId != DocumentId || source.PageId != PageId)
+            throw new InvalidOperationException("The active page changed. Run quality checks again.");
+        return source;
+    }
+    private Task Analyze() => Work(async ct => {
+        var source = await Source(ct);
+        long generation = Account.Generation;
+        var glossary = await Glossary.PrepareAsync(source.Document, ct);
+        var current = await Source(ct);
+        ct.ThrowIfCancellationRequested();
+        if (generation != Account.Generation || source.Document.DocumentId != current.Document.DocumentId
+            || source.PageId != current.PageId || source.Document.ServerDocumentId != current.Document.ServerDocumentId
+            || source.Editor.Html != current.Editor.Html || source.Editor.PlainText != current.Editor.PlainText
+            || _selection && (source.Editor.SelectionStart != current.Editor.SelectionStart || source.Editor.SelectionEnd != current.Editor.SelectionEnd))
+            throw new InvalidOperationException("The checked writing or account changed. Run quality checks again.");
+        DismissPreview(); _selected = null; _dismissed.Clear(); _severity = "all"; _rule = "all"; _selectionAtRun = _selection;
+        _analysis = LocalQualityChecks.Analyze(current.Document, current.PageId, current.Editor, _selection, glossary);
+        _decisions = null;
+        SetDecisions(await Decisions.LoadAsync(_analysis, ct));
+        _message = "Quality checks completed locally. No AI request was sent.";
+        await Highlight();
+    });
+    private IReadOnlyList<PageQualityIssueDto> Findings => (_analysis?.Issues ?? []).Where(i => !_dismissed.Contains(i.IssueKey)).ToArray();
+    private IEnumerable<PageQualityIssueDto> Visible => Findings.Where(i =>
+        (_severity == "all" || i.Severity == _severity) && (_rule == "all" || i.RuleId == _rule));
+    private async Task Highlight()
+    {
+        var items = new List<QualityHighlight>();
+        if (_analysis is { } a)
+            foreach (var issue in Visible)
+                try { items.Add(LocalQualityChecks.Passage(a, issue.IssueKey)); } catch (InvalidOperationException) { }
+        if (Highlights is not null) await Highlights(_analysis?.PlainText ?? "", items, _selected);
+    }
+    private async Task SeverityChanged(string value) { _severity = value; _selected = null; DismissPreview(); await Highlight(); }
+    private async Task RuleChanged(string value) { _rule = value; _selected = null; DismissPreview(); await Highlight(); }
+    private async Task Select(string key) { if (_selected != key) DismissPreview(); _selected = key; await Highlight(); }
+    private Task Dismiss(string key) => Work(async ct => {
+        if (!Findings.Any(i => i.IssueKey == key)) return;
+        var analysis = await CurrentAnalysis(ct);
+        SetDecisions(await Decisions.DismissAsync(analysis, key, ct));
+        if (_selected == key) _selected = null;
+        if (_reviewIssueKey == key) DismissPreview();
+        _message = "Finding dismissed and saved for this exact source and account. Review dismissed findings to restore it.";
+        await Highlight();
+    });
+    private Task Restore(string id) => Work(async ct => {
+        var analysis = await CurrentAnalysis(ct);
+        SetDecisions(await Decisions.RestoreAsync(analysis, id, ct));
+        _selected = null; DismissPreview(); await Highlight();
+        _message = "Finding restored locally. Backend delivery status is shown with saved decisions.";
+    });
+    private async Task<LocalQualityAnalysis> CurrentAnalysis(CancellationToken ct)
+    {
+        var analysis = _analysis ?? throw new InvalidOperationException("Check the writing first.");
+        var source = await Source(ct);
+        LocalQualityChecks.RequireFresh(source.Document, analysis);
+        if (source.Editor.Html != analysis.Html || source.Editor.PlainText != analysis.PlainText)
+            throw new InvalidOperationException("The editor changed. Run quality checks again.");
+        return analysis;
+    }
+    private Task Jump(string key) => Work(async ct => {
+        var a = _analysis ?? throw new InvalidOperationException("Check the writing first.");
+        LocalQualityChecks.RequireFresh((await Source(ct)).Document, a);
+        _selected = key; await Highlight();
+        if (Navigate is null || !await Navigate(a.PlainText, LocalQualityChecks.Passage(a, key)))
+            throw new InvalidOperationException("This passage no longer matches the editor. Check the writing again.");
+    });
+    private Task Review(string key) => Work(async ct => {
+        var a = _analysis ?? throw new InvalidOperationException("Check the writing first.");
+        DismissPreview(); _reviewIssueKey = key; _selected = key;
+        LocalQualityChecks.RequireFresh((await Source(ct)).Document, a);
+        var fix = LocalQualityChecks.Target(a, key);
+        await using var module = await JS.InvokeAsync<IJSObjectReference>("import", ct, "./_content/WriterApp.Device.Shared/editor/device-editor.js");
+        await module.InvokeVoidAsync("validateTargetedQualityRange", ct, a.Html, "Html", fix.From, fix.To, fix.Before);
+        string proposed; DeviceAiProposal? provider = null;
+        if (fix.LocalReplacement is { } local) proposed = local;
+        else
+        {
+            await Sync.SyncAsync(ct); ct.ThrowIfCancellationRequested();
+            var synchronized = await Documents.LoadAsync(DocumentId, ct) ?? throw new IOException("Manuscript unavailable.");
+            var prepared = LocalQualityChecks.Rewrite(synchronized, fix, StyleGoal);
+            async Task Check(CancellationToken token)
+            {
+                var source = await Source(token);
+                LocalQualityChecks.RequireFresh(source.Document, a);
+                if (source.Editor.Html != a.Html || source.Editor.PlainText != a.PlainText
+                    || source.Document.ServerDocumentId != synchronized.ServerDocumentId || source.Document.ServerVersion != synchronized.ServerVersion)
+                    throw new InvalidOperationException("The source changed. Check and review again.");
+                if (provider is not null) Ai.RequireCurrentAccount(provider);
+                await module.InvokeVoidAsync("validateTargetedQualityRange", token, a.Html, "Html", fix.From, fix.To, fix.Before);
+            }
+            var result = await WriterApp.Shared.TargetedQualityRetry.RunAsync(_strictRetry, fix.Issue, fix.Before,
+                async (strict, token) => {
+                    var request = prepared;
+                    if (strict) request = prepared with { Request = prepared.Request with { Parameters = new(prepared.Request.Parameters!) {
+                        ["instruction"] = prepared.Request.Parameters!["instruction"] + " " + WriterApp.Shared.TargetedQualityRetry.StrictInstruction } } };
+                    provider = await Ai.ProposeAsync(request, token);
+                    return provider;
+                }, p => p.ProposedText, Check, ct, async () => {
+                    _message = "Trying one strict retry. This extra AI request may consume quota.";
+                    await InvokeAsync(StateHasChanged);
+                });
+            provider = result.Proposal; proposed = result.Text;
+        }
+        var latest = await Source(ct);
+        LocalQualityChecks.RequireFresh(latest.Document, a);
+        if (latest.Editor.Html != a.Html || latest.Editor.PlainText != a.PlainText)
+            throw new InvalidOperationException("The editor changed after the check. Run quality checks again.");
+        if (provider is not null) Ai.RequireCurrentAccount(provider);
+        string after = await module.InvokeAsync<string>("previewTargetedQualityRevision", ct, a.Html, "Html", fix.From, fix.To, fix.Before, proposed);
+        ct.ThrowIfCancellationRequested();
+        if (provider is not null) Ai.RequireCurrentAccount(provider);
+        _selected = key; _preview = new(fix, proposed, after, provider, DateTimeOffset.UtcNow);
+        _focusReview = true;
+        await Highlight();
+    });
+    private Task Apply() => Work(async ct => {
+        var preview = _preview ?? throw new InvalidOperationException("Review a quality fix first.");
+        var source = await Source(ct);
+        if (source.Editor.Html != preview.Fix.Analysis.Html || source.Editor.PlainText != preview.Fix.Analysis.PlainText)
+            throw new InvalidOperationException("The editor changed. Check and review again.");
+        await Actions.ApplyAsync(DocumentId, preview, ct);
+        DismissPreview(); _analysis = null; _selected = null;
+        await Highlight();
+        _message = "Quality fix applied and saved. Open History to undo or redo; check again for current findings.";
+    });
+    private async Task Work(Func<CancellationToken, Task> action)
+    {
+        if (_busy || ExternalBusy) return;
+        _busy = true; _error = null; _message = null;
+        using var cancel = new CancellationTokenSource(); _cancel = cancel; bool began = false;
+        try
+        {
+            if (BeforeWork is not null && !await BeforeWork()) throw new InvalidOperationException("Save the writing and planning before continuing.");
+            began = true; await action(cancel.Token);
+        }
+        catch (OperationCanceledException) { _message = "Quality request canceled. Writing is unchanged unless its approved save completed."; }
+        catch (Exception e) when (e is IOException or InvalidDataException or InvalidOperationException or System.Text.Json.JsonException or DeviceAiException
+            or DeviceSignInRequiredException or DeviceIdentityUnavailableException or HttpRequestException or UnauthorizedAccessException or JSException)
+        { _error = e is JSException ? e.Message.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "The quality preview could not be created." : e.Message; }
+        finally
+        {
+            try { if (began && AfterWork is not null) await AfterWork(); }
+            finally { _busy = false; _cancel = null; if (_reviewIssueKey is not null) _focusReview = true; }
+        }
+    }
+    public void Dispose() { _disposed = true; _cancel?.Cancel(); Account.Changed -= AccountChanged; }
+}
+

@@ -7,6 +7,12 @@ namespace WriterApp.Application.Usage
         public bool AiEnabled { get; init; }
         public bool UiEnabled { get; init; }
         public bool SupportsDocumentVersionChecks { get; init; }
+        public bool SupportsCanonVersionChecks { get; init; }
+        public bool SupportsStructuredTranslation { get; init; }
+        public bool SupportsStyleQualityReview { get; init; }
+        public bool SupportsRecommendedWriting { get; init; }
+        public bool SupportsSynopsisCoaching { get; init; }
+        public bool SupportsWebCheckedSources { get; init; }
         public long QuotaTotal { get; init; }
         public long QuotaRemaining { get; init; }
         public bool HasReachedAiLimit => QuotaRemaining <= 0;

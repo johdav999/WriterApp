@@ -56,7 +56,9 @@ namespace WriterApp.Application.Documents
         string? Status = "Draft",
         IReadOnlyList<string>? SubplotTags = null,
         string? NarrativeRole = null,
-        string? NarrativeIntent = null);
+        string? NarrativeIntent = null,
+        string? ExpectedCardFingerprint = null,
+        IReadOnlyList<SceneCoachingField>? ApprovedFields = null);
 
     public sealed record SceneAnnotationDto(
         Guid Id,

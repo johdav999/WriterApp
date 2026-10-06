@@ -182,6 +182,47 @@ namespace WriterApp.Tests
             Assert.Equal(sectionId.ToString(), events[0].GetProperty("id").GetString());
         }
 
+        [Theory]
+        [InlineData(BibleType.Character, "characters", "name")]
+        [InlineData(BibleType.Place, "places", "name")]
+        [InlineData(BibleType.Timeline, "events", "title")]
+        public async Task RefreshAsync_RepairsSchemaFailuresBeforeSaving(BibleType type, string collection, string nameKey)
+        {
+            var document = BuildDocument(out var sectionId);
+            // Valid JSON with a malformed entry previously bypassed the repair path.
+            var invalid = JsonSerializer.Serialize(new Dictionary<string, object> {
+                ["schemaVersion"] = "1.0", [collection] = new[] { new { id = "entry-1" } } });
+            var valid = JsonSerializer.Serialize(new Dictionary<string, object> {
+                ["schemaVersion"] = "1.0", [collection] = new[] { new Dictionary<string, string> { ["id"] = "entry-1", [nameKey] = "Mira" } } });
+            var orchestrator = new SequenceAiOrchestrator(invalid, valid);
+            var snapshot = await BuildService(orchestrator).RefreshAsync(document, "user-1", sectionId, type, false, default);
+            Assert.Equal("Mira", Assert.Single(WriterApp.Shared.Canon.CanonContent.Parse((WriterApp.Shared.Canon.CanonKind)type, snapshot.ContentJson).Entries).Name);
+            Assert.Equal(2, orchestrator.CallCount);
+            Assert.True(orchestrator.SawRepairAttempt);
+        }
+
+        [Theory]
+        [InlineData(BibleType.Character)]
+        [InlineData(BibleType.Place)]
+        public async Task RefreshAsync_FailedSchemaRepairPreservesSavedSnapshotAndCursor(BibleType type)
+        {
+            var document = BuildDocument(out var sectionId);
+            string collection = type == BibleType.Character ? "characters" : "places";
+            var valid = JsonSerializer.Serialize(new Dictionary<string, object> {
+                ["schemaVersion"] = "1.0", [collection] = new[] { new { id = "saved", name = "Saved" } } });
+            var invalid = JsonSerializer.Serialize(new Dictionary<string, object> {
+                ["schemaVersion"] = "1.0", [collection] = new[] { new { id = "broken" } } });
+            var store = new InMemoryBibleStore();
+            var orchestrator = new SequenceAiOrchestrator(valid, invalid, invalid);
+            var service = new BibleRefreshService(orchestrator, new StubEntitlementService(true, "professional"), store,
+                new BiblePatchApplier(), NullLogger<BibleRefreshService>.Instance);
+            var saved = await service.RefreshAsync(document, "user-1", sectionId, type, true, default);
+            var error = await Assert.ThrowsAsync<BibleRefreshInvalidPayloadException>(() => service.RefreshAsync(document, "user-1", sectionId, type, true, default));
+            Assert.True(error.RepairAttempted);
+            Assert.Equal(saved, await store.GetSnapshotAsync(document.DocumentId, type, default));
+            Assert.Equal(3, orchestrator.CallCount);
+        }
+
         [Fact]
         public async Task RefreshAsync_ThrowsEntitlementDenied_WhenAiDisabled()
         {

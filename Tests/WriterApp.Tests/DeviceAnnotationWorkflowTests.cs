@@ -48,13 +48,91 @@ public sealed class DeviceAnnotationWorkflowTests : IDisposable
             // The actual workspace must propagate the committed annotation without another click.
             Assert.Contains("Review wording", output.ToHtmlString());
             Assert.Contains("annotation-text-link", output.ToHtmlString());
+            Assert.Contains("annotation-title-link", output.ToHtmlString());
+            Assert.DoesNotContain("annotation-quote-link", output.ToHtmlString());
+            Assert.Matches("<summary[^>]*>Quoted passage</summary>", output.ToHtmlString());
             var markup = Assert.Single(workspace.TextEditor.Annotations);
             await workspace.NavigateAsync(markup.Id);
             Assert.Equal(markup.Id, workspace.TextEditor.RequestedAnnotationId);
             Assert.NotNull(workspace.TextEditor.AnnotationRequest);
+            var firstRequest = workspace.TextEditor.AnnotationRequest;
+            await workspace.NavigateAsync(markup.Id);
+            Assert.NotEqual(firstRequest, workspace.TextEditor.AnnotationRequest);
 
             await workspace.CommitAsync(d => LocalPlanning.Resolve(d, scene.NodeId, markup.Id, true));
             Assert.Equal("resolved", Assert.Single(workspace.TextEditor.Annotations).Status);
+        });
+    }
+
+    [Theory]
+    [InlineData("Old wording")]
+    [InlineData("")]
+    public async Task PanelRelinksDetachedQuotesAndSceneNotesToSelectedWriting(string oldQuote)
+    {
+        using var services = Services();
+        var repository = services.GetRequiredService<LocalDocumentRepository>();
+        var document = Book(await repository.CreateImportedAsync("Draft", "<p>A current passage.</p>"));
+        var sceneId = document.Project!.Nodes.Single(n => n.NodeType == "scene").NodeId;
+        document = LocalPlanning.AddAnnotation(document, sceneId, "comment", "Review facts", oldQuote);
+        var original = document.Project!.Nodes.Single(n => n.NodeId == sceneId).Annotations.Single();
+        PanelHarness? panel = null;
+        string selection = "";
+        await using var renderer = new HtmlRenderer(services, services.GetRequiredService<ILoggerFactory>());
+        await renderer.Dispatcher.InvokeAsync(async () =>
+        {
+            var output = await renderer.RenderComponentAsync<PanelHarness>(ParameterView.FromDictionary(new Dictionary<string, object?>
+            {
+                ["Document"] = document, ["SectionId"] = document.Sections[0].SectionId, ["Subview"] = "annotations",
+                ["Ready"] = (Action<PanelHarness>)(value => panel = value),
+                ["AnnotationRequested"] = EventCallback.Factory.Create<Guid>(this, _ => { }),
+                ["GetSelectedText"] = (Func<Task<string>>)(() => Task.FromResult(selection)),
+                ["Commit"] = (Func<Func<LocalDocument, LocalDocument>, Task<LocalDocument?>>)(mutation =>
+                { document = mutation(document); return Task.FromResult<LocalDocument?>(document); })
+            }));
+            Assert.Contains("Link to selected text", output.ToHtmlString());
+            await panel!.RelinkAsync(original);
+            Assert.Equal(original, document.Project!.Nodes.Single(n => n.NodeId == sceneId).Annotations.Single());
+            selection = "current passage";
+            await panel.RelinkAsync(original);
+            await panel.RenderAsync();
+            Assert.Contains("annotation-title-link", output.ToHtmlString());
+            Assert.DoesNotContain("Link to selected text", output.ToHtmlString());
+        });
+        var after = document.Project!.Nodes.Single(n => n.NodeId == sceneId).Annotations.Single();
+        Assert.Equal(original.LocalId, after.LocalId);
+        Assert.Equal(original.Value.Content, after.Value.Content);
+        Assert.Equal("current passage", after.Value.AnchorText);
+        Assert.False(after.Value.AnchorDetached);
+        Assert.Equal(document.Sections[0].Pages[0].PageId, LocalAnnotationMarkup.PageFor(document, after.LocalId));
+    }
+
+    [Fact]
+    public async Task PanelUsesACompactTitleLinkAndKeepsTheQuoteAndCommentBodyCollapsed()
+    {
+        using var services = Services();
+        var repository = services.GetRequiredService<LocalDocumentRepository>();
+        const string quote = "A paragraph of annotated writing that should remain in the editor.";
+        var document = Book(await repository.CreateImportedAsync("Draft", $"<p>{quote}</p>"));
+        var scene = document.Project!.Nodes.Single(n => n.NodeType == "scene");
+        document = LocalPlanning.AddAnnotation(document, scene.NodeId, "comment", "Arrival scene\nCheck the station details.", quote);
+        await using var renderer = new HtmlRenderer(services, services.GetRequiredService<ILoggerFactory>());
+        await renderer.Dispatcher.InvokeAsync(async () =>
+        {
+            var output = await renderer.RenderComponentAsync<LocalPlanningPanel>(ParameterView.FromDictionary(new Dictionary<string, object?>
+            {
+                ["Document"] = document, ["SectionId"] = document.Sections[0].SectionId, ["Subview"] = "annotations",
+                ["AnnotationRequested"] = EventCallback.Factory.Create<Guid>(this, _ => { })
+            }));
+            string html = output.ToHtmlString();
+            Assert.Matches("<button[^>]*annotation-title-link[^>]*>Arrival scene</button>", html);
+            Assert.DoesNotContain("annotation-quote-link", html);
+            var dom = new AngleSharp.Html.Parser.HtmlParser().ParseDocument(html);
+            var details = dom.QuerySelectorAll(".panel-annotation details");
+            Assert.Equal(2, details.Length);
+            Assert.All(details, item => Assert.False(item.HasAttribute("open")));
+            Assert.Equal(quote, dom.QuerySelector(".panel-annotation blockquote")!.TextContent);
+            Assert.Contains(details, item => item.QuerySelector("summary")?.TextContent == "Comment details");
+            Assert.Contains(details, item => item.QuerySelector("summary")?.TextContent == "Quoted passage");
         });
     }
 
@@ -97,6 +175,8 @@ public sealed class DeviceAnnotationWorkflowTests : IDisposable
         protected override void OnInitialized() => Ready(this);
         public Task CaptureAsync() => Invoke("CaptureSelectedTextAsync");
         public Task AddAsync() => Invoke("AddAnnotationAsync");
+        public Task RelinkAsync(LocalSceneAnnotation annotation) => (Task)typeof(LocalPlanningPanel).GetMethod("ReanchorAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(this, [annotation])!;
+        public Task RenderAsync() => InvokeAsync(StateHasChanged);
         public void Write(string content) => typeof(LocalPlanningPanel).GetField("_annotationText", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(this, content);
         private Task Invoke(string method) => (Task)typeof(LocalPlanningPanel).GetMethod(method, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(this, null)!;
     }

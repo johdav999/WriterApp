@@ -26,14 +26,19 @@ public sealed partial class DocumentSyncService(AppDbContext db, IUserEntitlemen
     IDataProtectionProvider protection, ProjectDeletionService deletion, ISearchIndexBackfillQueue search)
 {
     public const string Entitlement = "documents.sync";
-    public const int MaxRequestBytes = 2 * 1024 * 1024;
+    public const int MaxRequestBytes = 5 * 1024 * 1024;
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private static DocumentSyncException Invalid(string message) => new(400, "invalid_sync_request", message);
     private static SyncChange State(DocumentSyncRecord record) => new(record.DocumentId, record.Version, record.IsDeleted, record.IsTrashed);
 
-    private async Task AuthorizeAsync(string owner, CancellationToken ct)
+    private async Task AuthorizeAsync(string owner, CancellationToken ct, Guid? onboardingDocument = null)
     {
         if (string.IsNullOrWhiteSpace(owner)) throw new DocumentSyncException(401, "authentication_required", "Sign in to synchronize.");
+        if(onboardingDocument is { } demo) {
+            if(!await db.OnboardingDemoWorkspaces.AnyAsync(x => x.OwnerUserId==owner && x.DocumentId==demo,ct))
+                throw new DocumentSyncException(404,"demo_not_found","This document is not the server-owned demo for this account.");
+            return;
+        }
         // Read current subscription state, rather than the one-minute feature-display cache.
         if (!EntitlementAccessEvaluator.Evaluate(await entitlements.GetOrCreateAsync(owner, ct)).IsPaidAccessActive)
             throw new DocumentSyncException(403, "entitlement_required", "documents.sync requires an active paid plan. Local editing remains available.");
@@ -61,9 +66,9 @@ public sealed partial class DocumentSyncService(AppDbContext db, IUserEntitlemen
         return new(page.Select(State).ToArray(), protector.Protect((page.LastOrDefault()?.Sequence ?? sequence).ToString(CultureInfo.InvariantCulture)), more);
     }
 
-    public async Task<SyncSnapshot> DownloadAsync(string owner, Guid id, CancellationToken ct = default, bool projects = false, bool planning = false, bool multipleDocuments = false)
+    public async Task<SyncSnapshot> DownloadAsync(string owner, Guid id, CancellationToken ct = default, bool projects = false, bool planning = false, bool multipleDocuments = false, bool onboardingDemo = false)
     {
-        await AuthorizeAsync(owner, ct);
+        await AuthorizeAsync(owner, ct, onboardingDemo ? id : null);
         return await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
         {
             await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
@@ -83,10 +88,12 @@ public sealed partial class DocumentSyncService(AppDbContext db, IUserEntitlemen
         await db.DocumentSyncRecords.AsNoTracking().SingleOrDefaultAsync(x => x.DocumentId == id && x.OwnerUserId == owner, ct)
         ?? throw new DocumentSyncException(404, "document_not_found", "Document not found.");
 
-    public async Task<SyncMutationResult> MutateAsync(string owner, Guid id, SyncMutation request, CancellationToken ct = default, bool projects = false, bool planning = false, bool multipleDocuments = false)
+    public async Task<SyncMutationResult> MutateAsync(string owner, Guid id, SyncMutation request, CancellationToken ct = default, bool projects = false, bool planning = false, bool multipleDocuments = false, bool onboardingDemo = false)
     {
-        await AuthorizeAsync(owner, ct);
+        await AuthorizeAsync(owner, ct, onboardingDemo ? id : null);
         Validate(id, request);
+        if(onboardingDemo && request.Action=="upload" && !await db.DocumentSyncRecords.AnyAsync(x => x.OwnerUserId==owner && x.DocumentId==id && !x.IsDeleted,ct))
+            throw new DocumentSyncException(409,"demo_deleted","A missing demo cannot be recreated. Restore or recover its existing identity.");
         if (request.Document?.Project is { Version: >= 3 } && !multipleDocuments) throw MultipleDocumentCapability();
         if (request.Document?.Project is not null && !projects) throw ProjectCapability();
         if (request.Document?.Project is { } proposed) { if (proposed.Version >= 2 && !planning) throw PlanningCapability(); ValidateProject(proposed, request.Document.Sections); }
@@ -266,7 +273,15 @@ public sealed partial class DocumentSyncService(AppDbContext db, IUserEntitlemen
     {
         if (id == Guid.Empty || request.OperationId == Guid.Empty || request.ExpectedVersion?.Length > 64
             || request.Action is not ("upload" or "rename" or "trash" or "restore" or "delete")) throw Invalid("Invalid identity, version, or action.");
-        if (JsonSerializer.SerializeToUtf8Bytes(request, Json).Length > MaxRequestBytes) throw new DocumentSyncException(413, "payload_too_large", "Maximum request size is 2 MiB.");
+        if (JsonSerializer.SerializeToUtf8Bytes(request, Json).Length > MaxRequestBytes) throw new DocumentSyncException(413, "payload_too_large", "Maximum request size including a PNG cover is 5 MiB.");
+        var contentOnly = request;
+        if (request.Document?.Project?.CoverImageUrl is { } cover && cover.StartsWith("data:", StringComparison.OrdinalIgnoreCase)) {
+            try { WriterApp.Shared.CoverStudioContract.ReadPng(cover); }
+            catch (System.IO.InvalidDataException e) { throw Invalid(e.Message); }
+            contentOnly = request with { Document = request.Document with { Project = request.Document.Project with { CoverImageUrl = null } } };
+        }
+        if (JsonSerializer.SerializeToUtf8Bytes(contentOnly, Json).Length > 2 * 1024 * 1024)
+            throw new DocumentSyncException(413, "payload_too_large", "Writing and planning remain limited to 2 MiB, plus one validated PNG cover of at most 2 MiB.");
         if (request.Action == "rename" && (string.IsNullOrWhiteSpace(request.Title) || request.Title.Length > 200)) throw Invalid("Title must contain 1–200 characters.");
         if (request.Action != "upload")
         { if (request.Document is not null) throw Invalid("Only upload accepts document content."); return; }

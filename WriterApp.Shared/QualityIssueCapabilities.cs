@@ -4,6 +4,9 @@ namespace WriterApp.Application.Documents
 {
     public static class QualityIssueCapabilities
     {
+        public static bool CanReview(PageQualityIssueDto issue) => IsAutoProposable(issue)
+            || issue.Fix is { Kind: "replace" } fix && !string.IsNullOrWhiteSpace(fix.Text);
+
         public static bool IsAutoProposable(PageQualityIssueDto issue)
         {
             if (issue is null)

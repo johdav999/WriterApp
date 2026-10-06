@@ -11,7 +11,7 @@
             <span class="scene-card-drag-handle drag-handle"
                   title="Drag scene"
                   aria-label="Drag scene"
-                  draggable="@(EnableDragging ? "true" : "false")">
+                  draggable="@(EnableDragging && EnableNativeDragging ? "true" : "false")">
                 <span class="scene-card-drag-dots" aria-hidden="true">
                     <span></span>
                     <span></span>
@@ -187,6 +187,7 @@
 
 @code {
     [Parameter] public bool EnableDragging { get; set; } = true;
+    [Parameter] public bool EnableNativeDragging { get; set; } = true;
     [Parameter]
     public Guid SceneId { get; set; }
 

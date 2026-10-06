@@ -208,6 +208,21 @@ namespace WriterApp.Controllers
             SectionSceneCardRecord? card = await _dbContext.SectionSceneCards
                 .FindAsync(new object?[] { sectionId }, ct);
 
+            if (card is null && request.ApprovedFields is not null
+                && await FindAnySceneCardBySectionAsync(sectionId,ct) is { } inherited) {
+                // A legacy section reads its linked scene until it owns a card. Materialize that
+                // exact baseline before a partial write so omitted fields do not disappear.
+                card=new SectionSceneCardRecord {
+                    SectionId=sectionId,NarrativePurpose=inherited.NarrativePurpose,NarrativeRole=inherited.NarrativeRole,
+                    NarrativeIntent=inherited.NarrativeIntent,EmotionalBeat=inherited.EmotionalBeat,KeyEvents=inherited.KeyEvents,
+                    OpenQuestions=inherited.OpenQuestions,Summary=inherited.Summary,Status=inherited.Status,
+                    PovCharacterId=inherited.PovCharacterId,PlaceId=inherited.PlaceId,TimelineEventId=inherited.TimelineEventId,
+                    TimeRef=inherited.TimeRef,TagsJson=inherited.TagsJson,SubplotTagsJson=inherited.SubplotTagsJson,
+                    ReferencesJson=inherited.ReferencesJson,UpdatedUtc=inherited.UpdatedAtUtc
+                };
+                _dbContext.SectionSceneCards.Add(card);
+            }
+
             bool undoEnabled = IsUndoEnabled();
             UpdateSceneCardCommand.SceneCardState beforeState = card is null
                 ? new UpdateSceneCardCommand.SceneCardState()
@@ -220,7 +235,7 @@ namespace WriterApp.Controllers
                     KeyEvents = card.KeyEvents,
                     OpenQuestions = card.OpenQuestions,
                     Summary = card.Summary,
-                    Status = NormalizeStatus(card.Status),
+                    Status = card.Status,
                     PovCharacterId = card.PovCharacterId,
                     PlaceId = card.PlaceId,
                     TimelineEventId = card.TimelineEventId,
@@ -255,7 +270,20 @@ namespace WriterApp.Controllers
                 SubplotTagsJson = subplotTagsJson,
                 ReferencesJson = referencesJson
             };
-            if (undoEnabled)
+            // A full manual save receives a projected legacy purpose. Preserve its raw
+            // storage when role/intent are unchanged, so scoped Undo cannot revive it.
+            var savedNarrative = ResolveNarrativeFields(beforeState.NarrativeRole, beforeState.NarrativeIntent, beforeState.NarrativePurpose);
+            if (request.ApprovedFields is null && savedNarrative == (narrativeRole, narrativeIntent))
+                afterState.NarrativePurpose = beforeState.NarrativePurpose;
+            if (request.ApprovedFields is { } approved) {
+                if(approved.Contains(SceneCoachingField.NarrativePurpose))afterState.NarrativePurpose=NormalizeSceneField(request.NarrativePurpose);
+                foreach (var field in Enum.GetValues<SceneCoachingField>()) {
+                    if (approved.Contains(field)) continue;
+                    var property = typeof(UpdateSceneCardCommand.SceneCardState).GetProperty(SceneCardApprovals.Property(field))!;
+                    property.SetValue(afterState, property.GetValue(beforeState));
+                }
+            }
+            if (undoEnabled && _dbContext.Database.CurrentTransaction is null)
             {
                 await _structureCommands.ExecuteAsync(
                     new UpdateSceneCardCommand(
@@ -268,6 +296,8 @@ namespace WriterApp.Controllers
             }
             else
             {
+                if(undoEnabled && _dbContext.Database.CurrentTransaction is not null)
+                    HttpContext.Items["WebAiCommittedStructureCommand"]=new UpdateSceneCardCommand(userId,section.DocumentId,sectionId,SerializeState(beforeState),SerializeState(afterState));
                 if (card is null)
                 {
                     card = new SectionSceneCardRecord
@@ -277,21 +307,21 @@ namespace WriterApp.Controllers
                     _dbContext.SectionSceneCards.Add(card);
                 }
 
-                card.NarrativeRole = afterState.NarrativeRole;
-                card.NarrativeIntent = afterState.NarrativeIntent;
-                card.NarrativePurpose = SceneNarrativeRoleCatalog.ToLegacyPurpose(afterState.NarrativeRole, afterState.NarrativeIntent) ?? string.Empty;
-                card.EmotionalBeat = afterState.EmotionalBeat ?? string.Empty;
-                card.KeyEvents = afterState.KeyEvents ?? string.Empty;
-                card.OpenQuestions = afterState.OpenQuestions ?? string.Empty;
-                card.Summary = afterState.Summary;
-                card.Status = NormalizeStatus(afterState.Status);
-                card.PovCharacterId = afterState.PovCharacterId;
-                card.PlaceId = afterState.PlaceId;
-                card.TimelineEventId = afterState.TimelineEventId;
-                card.TimeRef = afterState.TimeRef;
-                card.TagsJson = afterState.TagsJson;
-                card.SubplotTagsJson = afterState.SubplotTagsJson;
-                card.ReferencesJson = afterState.ReferencesJson;
+                if (SceneCardApprovals.Writes(request.ApprovedFields, SceneCoachingField.NarrativeRole)) card.NarrativeRole = afterState.NarrativeRole;
+                if (SceneCardApprovals.Writes(request.ApprovedFields, SceneCoachingField.NarrativeIntent)) card.NarrativeIntent = afterState.NarrativeIntent;
+                if (SceneCardApprovals.Writes(request.ApprovedFields, SceneCoachingField.NarrativePurpose)) card.NarrativePurpose = afterState.NarrativePurpose;
+                if (SceneCardApprovals.Writes(request.ApprovedFields, SceneCoachingField.EmotionalBeat)) card.EmotionalBeat = afterState.EmotionalBeat ?? string.Empty;
+                if (SceneCardApprovals.Writes(request.ApprovedFields, SceneCoachingField.KeyEvents)) card.KeyEvents = afterState.KeyEvents ?? string.Empty;
+                if (SceneCardApprovals.Writes(request.ApprovedFields, SceneCoachingField.OpenQuestions)) card.OpenQuestions = afterState.OpenQuestions ?? string.Empty;
+                if (SceneCardApprovals.Writes(request.ApprovedFields, SceneCoachingField.Summary)) card.Summary = afterState.Summary;
+                if (SceneCardApprovals.Writes(request.ApprovedFields, SceneCoachingField.Status)) card.Status = NormalizeStatus(afterState.Status);
+                if (SceneCardApprovals.Writes(request.ApprovedFields, SceneCoachingField.PovCharacterId)) card.PovCharacterId = afterState.PovCharacterId;
+                if (SceneCardApprovals.Writes(request.ApprovedFields, SceneCoachingField.PlaceId)) card.PlaceId = afterState.PlaceId;
+                if (SceneCardApprovals.Writes(request.ApprovedFields, SceneCoachingField.TimelineEventId)) card.TimelineEventId = afterState.TimelineEventId;
+                if (SceneCardApprovals.Writes(request.ApprovedFields, SceneCoachingField.TimeRef)) card.TimeRef = afterState.TimeRef;
+                if (SceneCardApprovals.Writes(request.ApprovedFields, SceneCoachingField.Tags)) card.TagsJson = afterState.TagsJson;
+                if (SceneCardApprovals.Writes(request.ApprovedFields, SceneCoachingField.SubplotTags)) card.SubplotTagsJson = afterState.SubplotTagsJson;
+                if (SceneCardApprovals.Writes(request.ApprovedFields, SceneCoachingField.References)) card.ReferencesJson = afterState.ReferencesJson;
                 card.UpdatedUtc = DateTimeOffset.UtcNow;
                 await _dbContext.SaveChangesAsync(ct);
             }
@@ -302,7 +332,8 @@ namespace WriterApp.Controllers
             {
                 return NotFound();
             }
-            await MirrorSectionSceneCardToScenesAsync(sectionId, updatedCard, ct);
+            await MirrorSectionSceneCardToScenesAsync(sectionId, updatedCard, ct, request.ApprovedFields);
+            await _dbContext.SaveChangesAsync(ct);
             await _searchIndex.UpsertSceneCardAsync(section, updatedCard, ct);
             IReadOnlyList<string> updatedTags = DeserializeTags(updatedCard.TagsJson);
             IReadOnlyList<string> updatedSubplotTags = DeserializeTags(updatedCard.SubplotTagsJson);
@@ -496,7 +527,8 @@ namespace WriterApp.Controllers
         private async Task MirrorSectionSceneCardToScenesAsync(
             Guid sectionId,
             SectionSceneCardRecord updatedCard,
-            CancellationToken ct)
+            CancellationToken ct,
+            IReadOnlyList<SceneCoachingField>? approvedFields = null)
         {
             Guid[] sceneNodeIds = await _dbContext.ProjectNodes
                 .Where(node => node.NodeType == ProjectNodeType.Scene && node.LinkedSectionId == sectionId)
@@ -522,21 +554,21 @@ namespace WriterApp.Controllers
                     _dbContext.SceneCards.Add(sceneCard);
                 }
 
-                sceneCard.NarrativeRole = updatedCard.NarrativeRole;
-                sceneCard.NarrativeIntent = updatedCard.NarrativeIntent;
-                sceneCard.NarrativePurpose = SceneNarrativeRoleCatalog.ToLegacyPurpose(updatedCard.NarrativeRole, updatedCard.NarrativeIntent);
-                sceneCard.EmotionalBeat = updatedCard.EmotionalBeat;
-                sceneCard.KeyEvents = updatedCard.KeyEvents;
-                sceneCard.OpenQuestions = updatedCard.OpenQuestions;
-                sceneCard.Summary = updatedCard.Summary;
-                sceneCard.Status = NormalizeStatus(updatedCard.Status);
-                sceneCard.PovCharacterId = updatedCard.PovCharacterId;
-                sceneCard.PlaceId = updatedCard.PlaceId;
-                sceneCard.TimelineEventId = updatedCard.TimelineEventId;
-                sceneCard.TimeRef = updatedCard.TimeRef;
-                sceneCard.TagsJson = updatedCard.TagsJson;
-                sceneCard.SubplotTagsJson = updatedCard.SubplotTagsJson;
-                sceneCard.ReferencesJson = updatedCard.ReferencesJson;
+                if (SceneCardApprovals.Writes(approvedFields, SceneCoachingField.NarrativeRole)) sceneCard.NarrativeRole = updatedCard.NarrativeRole;
+                if (SceneCardApprovals.Writes(approvedFields, SceneCoachingField.NarrativeIntent)) sceneCard.NarrativeIntent = updatedCard.NarrativeIntent;
+                if (SceneCardApprovals.Writes(approvedFields, SceneCoachingField.NarrativePurpose)) sceneCard.NarrativePurpose = approvedFields is null ? SceneNarrativeRoleCatalog.ToLegacyPurpose(updatedCard.NarrativeRole, updatedCard.NarrativeIntent) : updatedCard.NarrativePurpose;
+                if (SceneCardApprovals.Writes(approvedFields, SceneCoachingField.EmotionalBeat)) sceneCard.EmotionalBeat = updatedCard.EmotionalBeat;
+                if (SceneCardApprovals.Writes(approvedFields, SceneCoachingField.KeyEvents)) sceneCard.KeyEvents = updatedCard.KeyEvents;
+                if (SceneCardApprovals.Writes(approvedFields, SceneCoachingField.OpenQuestions)) sceneCard.OpenQuestions = updatedCard.OpenQuestions;
+                if (SceneCardApprovals.Writes(approvedFields, SceneCoachingField.Summary)) sceneCard.Summary = updatedCard.Summary;
+                if (SceneCardApprovals.Writes(approvedFields, SceneCoachingField.Status)) sceneCard.Status = NormalizeStatus(updatedCard.Status);
+                if (SceneCardApprovals.Writes(approvedFields, SceneCoachingField.PovCharacterId)) sceneCard.PovCharacterId = updatedCard.PovCharacterId;
+                if (SceneCardApprovals.Writes(approvedFields, SceneCoachingField.PlaceId)) sceneCard.PlaceId = updatedCard.PlaceId;
+                if (SceneCardApprovals.Writes(approvedFields, SceneCoachingField.TimelineEventId)) sceneCard.TimelineEventId = updatedCard.TimelineEventId;
+                if (SceneCardApprovals.Writes(approvedFields, SceneCoachingField.TimeRef)) sceneCard.TimeRef = updatedCard.TimeRef;
+                if (SceneCardApprovals.Writes(approvedFields, SceneCoachingField.Tags)) sceneCard.TagsJson = updatedCard.TagsJson;
+                if (SceneCardApprovals.Writes(approvedFields, SceneCoachingField.SubplotTags)) sceneCard.SubplotTagsJson = updatedCard.SubplotTagsJson;
+                if (SceneCardApprovals.Writes(approvedFields, SceneCoachingField.References)) sceneCard.ReferencesJson = updatedCard.ReferencesJson;
                 sceneCard.UpdatedAtUtc = updatedCard.UpdatedUtc;
             }
         }

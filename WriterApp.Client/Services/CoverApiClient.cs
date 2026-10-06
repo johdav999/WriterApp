@@ -9,7 +9,7 @@ using WriterApp.Shared;
 
 namespace WriterApp.Client.Services
 {
-    internal sealed class CoverApiClient
+    internal sealed partial class CoverApiClient
     {
         private readonly HttpClient _http;
 
@@ -25,14 +25,19 @@ namespace WriterApp.Client.Services
                 throw new ArgumentNullException(nameof(prompt));
             }
 
-            using HttpResponseMessage response = await _http.PostAsJsonAsync("api/covers/generate", prompt, ct);
+            using var request = new HttpRequestMessage(HttpMethod.Post,"api/covers/generate") { Content=JsonContent.Create(prompt) };
+            using HttpResponseMessage response = await _http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,ct);
             if (!response.IsSuccessStatusCode)
             {
                 ApiErrorDetails? error = await ApiErrorDetailsReader.ReadAsync(response);
                 throw new InvalidOperationException(error?.UserMessage ?? "Cover generation failed.");
             }
 
-            CoverGenerationResponse? payload = await response.Content.ReadFromJsonAsync<CoverGenerationResponse>(cancellationToken: ct);
+            const int limit=16*1024*1024;
+            if(response.Content.Headers.ContentLength>limit) throw new InvalidOperationException("Cover response exceeds the safe limit.");
+            await using var stream=await response.Content.ReadAsStreamAsync(ct); using var buffer=new System.IO.MemoryStream(); byte[] block=new byte[16384];
+            int read; while((read=await stream.ReadAsync(block,ct))>0) { if(buffer.Length+read>limit) throw new InvalidOperationException("Cover response exceeds the safe limit."); await buffer.WriteAsync(block.AsMemory(0,read),ct); }
+            CoverGenerationResponse? payload = System.Text.Json.JsonSerializer.Deserialize<CoverGenerationResponse>(buffer.ToArray(),new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
             if (payload is null)
             {
                 throw new InvalidOperationException("Cover generation returned an empty response.");
@@ -41,7 +46,7 @@ namespace WriterApp.Client.Services
             return payload;
         }
 
-        public async Task<ProjectDto> SaveProjectCoverAsync(Guid projectId, string imageUrl, CancellationToken ct = default)
+        public async Task<ProjectDto> SaveProjectCoverAsync(Guid projectId, string imageUrl, long? metadataRevision = null, CancellationToken ct = default)
         {
             if (projectId == Guid.Empty)
             {
@@ -55,7 +60,7 @@ namespace WriterApp.Client.Services
 
             using HttpResponseMessage response = await _http.PostAsJsonAsync(
                 $"api/projects/{projectId}/cover",
-                new ProjectCoverUpdateRequest(imageUrl),
+                new ProjectCoverUpdateRequest(imageUrl, metadataRevision),
                 ct);
             if (!response.IsSuccessStatusCode)
             {

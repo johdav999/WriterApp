@@ -56,7 +56,7 @@ public sealed class MsalDeviceIdentityClient(DeviceAuthOptions options) : IDevic
                 foreach (var previous in await app.GetAccountsAsync())
                     if (previous.HomeAccountId.Identifier != result.Account.HomeAccountId.Identifier)
                         await app.RemoveAsync(previous);
-            return new(result.AccessToken, result.ExpiresOn, result.Account?.Username);
+            return new(result.AccessToken, result.ExpiresOn, result.Account?.Username, result.Account?.HomeAccountId.Identifier);
         }
         catch (MsalUiRequiredException) { throw new DeviceSignInRequiredException(); }
         catch (MsalClientException error) when (error.ErrorCode == "authentication_canceled") { throw new OperationCanceledException(cancellationToken); }

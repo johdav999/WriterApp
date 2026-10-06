@@ -73,8 +73,9 @@
     overflow: hidden;
 }
 .rp-shell.has-pinned-body .rp-content {
-    flex: 1 1 0;
-    min-height: 80px;
+    box-sizing: border-box;
+    flex: 0 0 var(--story-panel-height, min(320px, max(0px, calc(100% - 172px))));
+    min-height: 0;
     overflow-y: auto;
     scrollbar-gutter: stable;
     overscroll-behavior: contain;
@@ -82,10 +83,13 @@
 .rp-shell.has-pinned-body .rp-trailing-body:not([hidden]) {
     display: flex;
     flex-direction: column;
-    flex: 0 1 auto;
+    flex: 1 1 0;
     min-height: 0;
-    overflow: hidden;
-    border-top: 1px solid var(--panel-border, var(--color-border));
+    overflow-y: scroll;
+    overflow-x: hidden;
+    scrollbar-gutter: stable;
+    scrollbar-width: auto;
+    overscroll-behavior: contain;
 }
 
 .rp-footer {
@@ -95,16 +99,22 @@
     background: var(--panel-bg, var(--color-surface-2));
 }
 
-.rp-scroll::-webkit-scrollbar {
+.rp-scroll::-webkit-scrollbar,
+.rp-content::-webkit-scrollbar,
+.rp-trailing-body::-webkit-scrollbar {
     width: 10px;
 }
 
-.rp-scroll::-webkit-scrollbar-thumb {
+.rp-scroll::-webkit-scrollbar-thumb,
+.rp-content::-webkit-scrollbar-thumb,
+.rp-trailing-body::-webkit-scrollbar-thumb {
     background: rgba(107, 114, 128, 0.55);
     border-radius: 999px;
 }
 
-.rp-scroll::-webkit-scrollbar-track {
+.rp-scroll::-webkit-scrollbar-track,
+.rp-content::-webkit-scrollbar-track,
+.rp-trailing-body::-webkit-scrollbar-track {
     background: rgba(229, 231, 235, 0.45);
 }
 
@@ -121,5 +131,9 @@
 
     .rp-sticky-header {
         position: static;
+    }
+
+    .rp-shell.has-pinned-body {
+        height: max(480px, calc(100dvh - 120px));
     }
 }

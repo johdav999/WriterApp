@@ -1,0 +1,8 @@
+.style-revision-review { min-width: 0; overflow-wrap: anywhere; }
+.style-edit-list { display: grid; gap: 14px; margin: 12px 0; padding-left: 22px; }
+.style-edit-list li { min-width: 0; padding: 12px; border: 1px solid var(--color-border, #ddd); border-radius: 10px; }
+.style-edit-choice { display: flex; align-items: flex-start; gap: 8px; font-weight: 600; }
+.style-edit-choice input { flex-shrink: 0; margin-top: 4px; }
+.style-edit-list p { line-height: 1.5; margin: 8px 0; }
+details { margin-top: 12px; }
+summary { cursor: pointer; padding: 8px 0; }

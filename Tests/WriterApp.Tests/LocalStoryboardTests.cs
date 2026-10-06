@@ -141,6 +141,66 @@ public sealed class LocalStoryboardTests : IDisposable
         await data.LoadAsync(project); Assert.Equal(2, data.Document!.Sections.Count);
     }
     [Fact]
+    public async Task SyncAcknowledgmentDoesNotBlockMoveOrSubsequentSceneAndChapterCreation()
+    {
+        var (data, project, chapter, scene) = await Book(synced: true);
+        var target = await data.CreateNodeAsync(project, new(null, "chapter", "Destination", null, null, null));
+        var source = data.Document!;
+        var acknowledged = await Store.ApplySyncAsync(source with { ServerVersion = "v2", LastSyncedAtUtc = DateTimeOffset.UtcNow,
+            SyncState = LocalSyncState.Synced }, source.LocalRevision, default, projects: true);
+        var original = data.Tree(project).Nodes.Single(n => n.Id == scene);
+
+        await data.MoveSceneAsync(project, scene,
+            new(original.Title, target.Id, original.LinkedSectionId, original.MetadataJson, "scene"), new([scene]));
+        var addedScene = await data.CreateNodeAsync(project, new(target.Id, "scene", "Next scene", null, null, null));
+        var addedChapter = await data.CreateNodeAsync(project, new(null, "chapter", "Next chapter", null, null, null));
+
+        var reopened = Data(); await reopened.LoadAsync(project);
+        Assert.Equal(target.Id, reopened.Document!.Project!.Nodes.Single(n => n.NodeId == scene).ParentId);
+        Assert.Contains(reopened.Tree(project).Nodes, n => n.Id == addedScene.Id && n.ParentId == target.Id);
+        Assert.Contains(reopened.Tree(project).Nodes, n => n.Id == addedChapter.Id);
+        Assert.Equal(source.Sections[0].Pages, reopened.Document.Sections.Single(s => s.SectionId == original.LinkedSectionId).Pages);
+        Assert.Equal(acknowledged.ServerVersion, reopened.Document.ServerVersion);
+        Assert.Equal(acknowledged.LastSyncedAtUtc, reopened.Document.LastSyncedAtUtc);
+    }
+
+    [Fact]
+    public async Task SyncAcknowledgmentDuringCommitIsRetriedWithoutLosingPlanningDraft()
+    {
+        var (data, project, chapter, scene) = await Book(synced: true);
+        int attempts = 0;
+        await data.CommitAsync(d =>
+        {
+            if (++attempts == 1)
+                Store.ApplySyncAsync(d with { ServerVersion = "v2" }, d.LocalRevision, default, projects: true).GetAwaiter().GetResult();
+            return LocalPlanning.Scene(d, scene, LocalPlanning.EmptyCard with { Summary = "Draft summary" }, "Draft notes");
+        });
+        Assert.Equal(2, attempts);
+        Assert.Equal("v2", data.Document!.ServerVersion);
+        var savedScene = data.Document.Project!.Nodes.Single(n => n.NodeId == scene);
+        Assert.Equal("Draft summary", savedScene.Card!.Summary);
+        Assert.Equal("Draft notes", savedScene.Notes);
+        await data.CreateNodeAsync(project, new(chapter, "scene", "After draft", null, null, null));
+    }
+
+    [Fact]
+    public async Task WritingChangedDuringCommitIsNotOverwrittenByRetry()
+    {
+        var (data, project, chapter, scene) = await Book();
+        LocalDocument? concurrent = null;
+        int attempts = 0;
+        await Assert.ThrowsAsync<LocalDocumentConflictException>(() => data.CommitAsync(d =>
+        {
+            ++attempts;
+            concurrent = Repo.SaveAsync(d with { Sections = d.Sections.Select(s => s with
+                { Pages = s.Pages.Select(p => p with { Content = "<p>Newer writing</p>" }).ToArray() }).ToArray() }).GetAwaiter().GetResult();
+            return LocalProjectStructure.Apply(d, new(LocalProjectAction.Rename, scene, Title: "Stale change"), DateTimeOffset.UtcNow);
+        }));
+        Assert.Equal(1, attempts);
+        Assert.Equal(LocalDocumentCodec.Encode(concurrent!), LocalDocumentCodec.Encode((await Repo.LoadAsync(data.Document!.DocumentId))!));
+    }
+
+    [Fact]
     public async Task StaleSourceAndInvalidHierarchyNeverOverwriteTheManuscript()
     {
         var (data, project, chapter, scene) = await Book(); var original = data.Tree(project).Nodes.Single(n => n.Id == scene);
@@ -174,14 +234,16 @@ public sealed class LocalStoryboardTests : IDisposable
         var result = await data.ExecuteAiAsync(project, key, new(target!.DocumentId, target.SectionId, null,null,null,null,null,null,new() { ["storyboard_context"] = "saved board" }));
         Assert.Equal(key, result.ActionKey); Assert.Equal(d.ServerDocumentId, _api.Request!.DocumentId);
         Assert.Equal(d.Sections[0].ServerSectionId, _api.Request.SectionId); Assert.Equal("v1", _api.Request.ExpectedDocumentVersion);
-        Assert.Equal("saved board", _api.Request.Parameters!["storyboard_context"]);
+        Assert.Equal(AdvancedAiRequests.StoryboardContext(d), _api.Request.Parameters!["storyboard_context"]);
         await data.ValidateSuggestionAsync(project);
         await data.CreateNodeAsync(project, new(chapter, "scene", "Changed board",null,null,null));
         await Assert.ThrowsAsync<InvalidOperationException>(() => data.ValidateSuggestionAsync(project));
         Assert.Equal("<p>Original writing 日本語</p>", data.Document!.Sections[0].Pages[0].Content);
     }
-    [Fact]
-    public async Task SharedBoardRendersExplicitNativeDragValuesForSceneSlotsAndHandles()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SharedBoardRendersDragTransportForSceneSlotsAndHandles(bool pointer)
     {
         var (data, project, chapter, _) = await Book();
         await data.CreateNodeAsync(project, new(chapter, "scene", "Second", null, null, null));
@@ -190,14 +252,15 @@ public sealed class LocalStoryboardTests : IDisposable
         await using var renderer = new HtmlRenderer(services, services.GetRequiredService<ILoggerFactory>());
         var tree = data.Tree(project);
         string html = await renderer.Dispatcher.InvokeAsync(async () => (await renderer.RenderComponentAsync<StoryboardBoard>(
-            ParameterView.FromDictionary(new Dictionary<string, object?> { ["Project"] = tree.Project, ["Nodes"] = tree.Nodes }))).ToHtmlString());
+            ParameterView.FromDictionary(new Dictionary<string, object?> { ["Project"] = tree.Project, ["Nodes"] = tree.Nodes, ["UsePointerDragging"] = pointer }))).ToHtmlString());
         var document = new HtmlParser().ParseDocument(html);
         var slots = document.QuerySelectorAll(".storyboard-scene-slot");
         Assert.Equal(2, slots.Length);
         Assert.All(slots, slot =>
         {
-            Assert.Equal("true", slot.GetAttribute("draggable"));
-            Assert.Equal("true", slot.QuerySelector(".scene-card-drag-handle")?.GetAttribute("draggable"));
+            Assert.Equal(pointer ? "false" : "true", slot.GetAttribute("draggable"));
+            Assert.Equal(pointer ? "false" : "true", slot.QuerySelector(".scene-card-drag-handle")?.GetAttribute("draggable"));
+            Assert.False(string.IsNullOrEmpty(slot.GetAttribute("data-storyboard-scene")));
         });
 
         html = await renderer.Dispatcher.InvokeAsync(async () => (await renderer.RenderComponentAsync<SceneCard>(
@@ -225,6 +288,33 @@ public sealed class LocalStoryboardTests : IDisposable
             ["Project"] = tree.Project, ["ProjectId"] = project, ["Nodes"] = tree.Nodes
         }))).ToHtmlString());
         Assert.Contains("Storyboard Insights", html); Assert.Contains("Suggest next scene", html); Assert.Contains("POV", html);
+        Assert.Contains("Check subplot continuity", html);
+    }
+    private sealed class InsightsActivator : IComponentActivator
+    {
+        public StoryboardInsights Panel = null!;
+        public IComponent CreateInstance(Type type) { var component = (IComponent)Activator.CreateInstance(type)!; if (component is StoryboardInsights panel) Panel = panel; return component; }
+    }
+    [Fact]
+    public async Task SharedInsightsActionShowsEmptyAndInvalidReportsWithoutRetainingEarlierFindings()
+    {
+        var (data, project, _, _) = await Book(synced: true); await Account.SignInAsync();
+        var activator = new InsightsActivator();
+        using var services = new ServiceCollection().AddLogging().AddSingleton<IStoryboardData>(data).AddSingleton<IComponentActivator>(activator).BuildServiceProvider();
+        await using var renderer = new HtmlRenderer(services, services.GetRequiredService<ILoggerFactory>());
+        var tree = data.Tree(project);
+        var root = await renderer.Dispatcher.InvokeAsync(() => renderer.RenderComponentAsync<StoryboardInsights>(ParameterView.FromDictionary(new Dictionary<string, object?> {
+            ["Project"] = tree.Project, ["ProjectId"] = project, ["Nodes"] = tree.Nodes
+        })));
+        foreach (var (response, expected) in new[] { ("{\"findings\":[]}", "More story context needed"), ("invalid json", "Unable to read this report") })
+        {
+            _api.Output = response;
+            await renderer.Dispatcher.InvokeAsync(() => EventCallback.Factory.Create(activator.Panel, (Func<Task>)(() =>
+                (Task)typeof(StoryboardInsights).GetMethod("CheckSubplotContinuityAsync", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.Invoke(activator.Panel, null)!)).InvokeAsync());
+            string html = await renderer.Dispatcher.InvokeAsync(root.ToHtmlString);
+            Assert.Contains(expected, html); Assert.DoesNotContain("No subplot continuity findings were returned", html);
+            Assert.Equal("<p>Original writing 日本語</p>", data.Document!.Sections[0].Pages[0].Content);
+        }
     }
     private sealed class Nav : NavigationManager { public Nav() => Initialize("http://localhost/", "http://localhost/"); protected override void NavigateToCore(string uri, bool forceLoad) { } }
     [Fact]
@@ -271,10 +361,10 @@ public sealed class LocalStoryboardTests : IDisposable
     { public bool IsConfigured => true; public Task<DeviceAccessToken?> AcquireAsync(bool interactive, CancellationToken ct) => Task.FromResult<DeviceAccessToken?>(new("test",DateTimeOffset.UtcNow.AddHours(1),"Tester")); public Task SignOutAsync() => Task.CompletedTask; }
     private sealed class Api : IDeviceAiApi
     {
-        public int Calls; public AiActionExecuteRequestDto? Request;
+        public int Calls; public AiActionExecuteRequestDto? Request; public string Output = "{\"title\":\"Next\"}";
         public Task<AiUsageStatusDto> GetUsageAsync(CancellationToken ct) => Task.FromResult(new AiUsageStatusDto { AiEnabled = true, UiEnabled = true, SupportsDocumentVersionChecks = true, QuotaRemaining = 10 });
         public Task<AiActionExecuteResponseDto> ExecuteAsync(string key, AiActionExecuteRequestDto r, CancellationToken ct)
-        { Calls++; Request = r; return Task.FromResult(new AiActionExecuteResponseDto(Guid.NewGuid(),null,"{\"title\":\"Next\"}",null,DateTimeOffset.UtcNow,key,SourceDocumentVersion:r.ExpectedDocumentVersion)); }
+        { Calls++; Request = r; return Task.FromResult(new AiActionExecuteResponseDto(Guid.NewGuid(),null,Output,null,DateTimeOffset.UtcNow,key,SourceDocumentVersion:r.ExpectedDocumentVersion)); }
     }
     public void Dispose() { if (Directory.Exists(_root)) Directory.Delete(_root,true); }
 }

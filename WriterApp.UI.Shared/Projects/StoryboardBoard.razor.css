@@ -642,6 +642,19 @@
     opacity: 0.45;
 }
 
+.pointer-drag-enabled .storyboard-scene-slot {
+    user-select: none;
+}
+
+.pointer-drag-enabled ::deep .scene-card-drag-handle {
+    touch-action: none;
+}
+
+.is-pointer-dragging,
+.is-pointer-dragging ::deep * {
+    cursor: grabbing !important;
+}
+
 .storyboard-scene-slot.is-new {
     box-shadow: 0 0 0 2px rgba(47, 111, 235, 0.18);
 }

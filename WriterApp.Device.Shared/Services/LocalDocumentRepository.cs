@@ -5,6 +5,9 @@ namespace WriterApp.Device.Shared.Services;
 /// <summary>Device UI entry point. Callers use document identities and returned revisions, never filesystem paths.</summary>
 public sealed class LocalDocumentRepository(ILocalDocumentStore store)
 {
+    public Task<LocalDocument> SetProjectCoverAsync(LocalDocument source, string? cover, Guid changeId, bool restore = false, CancellationToken ct = default) =>
+        Notify(store.SetProjectCoverAsync(source, cover, changeId, restore, ct));
+    public Task<LocalDocument> CreateTranslationCopyAsync(LocalDocument copy, CancellationToken ct = default) => Notify(store.CreateTranslationCopyAsync(copy, ct));
     public event Action? Changed;
     public Task<LocalDocument> RecoverSnapshotAsync(LocalDocument source, CancellationToken cancellationToken = default) =>
         Notify(store.RecoverSnapshotAsync(source, cancellationToken));

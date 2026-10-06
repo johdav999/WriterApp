@@ -165,6 +165,16 @@ namespace WriterApp.Application.AI
                     candidates.Length);
             }
 
+            var grant = await _dbContext.OnboardingDemoWorkspaces.AsNoTracking().SingleOrDefaultAsync(x => x.OwnerUserId == userId, ct);
+            if (grant is null || grant.Version != 1 || grant.DocumentId != documentId || grant.SectionId != sectionId || grant.SceneNodeId != matched.SceneNodeId)
+                return OnboardingDemoEligibilityResult.Denied("demo-not-authorized",sectionId,candidates.Length);
+            if (grant.RequestUsed) return OnboardingDemoEligibilityResult.Denied("demo-already-used",sectionId,candidates.Length);
+            if (grant.ExpiresAtUtc <= DateTimeOffset.UtcNow) return OnboardingDemoEligibilityResult.Denied("demo-expired",sectionId,candidates.Length);
+            if (!await _dbContext.Documents.AnyAsync(d => d.Id == documentId && d.OwnerUserId == userId && d.ProjectId == grant.ProjectId && d.DeletedAtUtc == null && !d.IsArchived,ct)
+                || !await _dbContext.Pages.AnyAsync(p => p.DocumentId==documentId && p.SectionId==sectionId,ct)
+                || await _dbContext.DocumentSyncRecords.AnyAsync(x => x.DocumentId == documentId && (x.IsDeleted || x.IsTrashed),ct))
+                return OnboardingDemoEligibilityResult.Denied("demo-unavailable",sectionId,candidates.Length);
+
             _logger.LogInformation(
                 "Onboarding demo eligibility granted. UserId={UserId} ActionKey={ActionKey} DocumentId={DocumentId} SectionId={SectionId} SceneNodeId={SceneNodeId}",
                 userId,

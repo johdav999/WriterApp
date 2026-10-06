@@ -1009,16 +1009,11 @@
         anchorMatchedAtRange = anchorCandidates.includes(mappedRangeText);
         if (!anchorMatchedAtRange) {
           const matches = findAnchorOccurrences(plainText, anchorCandidates);
+          if (matches.length === 0) return { ok: false, reason: "anchor_not_found", issueKey };
           if (matches.length > 0) {
-            const selected = matches
-              .slice()
-              .sort((a, b) => {
-                const aCenter = (a.from + a.to) / 2;
-                const bCenter = (b.from + b.to) / 2;
-                return Math.abs(aCenter - expectedCenter) - Math.abs(bCenter - expectedCenter);
-              })[0];
-
-            target = { from: selected.from, to: selected.to, source: matches.length === 1 ? "anchor-single" : "anchor-nearest" };
+            if (matches.length !== 1) return { ok: false, reason: "ambiguous_anchor", issueKey };
+            const selected = matches[0];
+            target = { from: selected.from, to: selected.to, source: "anchor-single" };
           }
         }
       }
@@ -1086,425 +1081,53 @@
       };
     };
 
+    // Preflight only: use the Apply range guards without creating a transaction.
+    api.validateTargetedQualityRange = function (editor, from, to, expected) {
+      if (!editor?.view || !api.validateTargetedRevisionRange) return false;
+      try { api.validateTargetedRevisionRange(editor, from, to, expected); return true; }
+      catch { return false; }
+    };
+
     api.applyQualityIssueFixDetailed = function (editor, fix) {
-      if (!editor?.view || !fix) {
+      if (!editor?.view || !fix || !api.targetedRevisionTransaction) {
         return buildFixApplyResult(false, false, "invalid_editor_or_fix");
       }
-
-      console.warn("[quality] apply fix detailed called", {
-        kind: fix.kind,
-        from: fix.from,
-        to: fix.to,
-        issueKey: fix.issueKey || null
-      });
-
       const kind = String(fix.kind || "").toLowerCase();
       const issueKey = fix.issueKey ? String(fix.issueKey) : null;
-
-      if (kind !== "replace" && kind !== "delete" && kind !== "insert") {
+      if (!["replace", "delete", "insert"].includes(kind))
         return buildFixApplyResult(false, false, "unsupported_fix_kind", { issueKey, kind });
-      }
-
-      if ((kind === "replace" || kind === "insert") && typeof fix.text !== "string") {
+      if (kind !== "delete" && typeof fix.text !== "string")
         return buildFixApplyResult(false, false, "invalid_fix_text", { issueKey, kind });
+      const from = Number(fix.from), to = Number(fix.to);
+      const plain = getEditorPlainText(editor);
+      const expected = typeof fix.expectedText === "string" ? fix.expectedText
+        : typeof fix.anchorText === "string" ? fix.anchorText : null;
+      // Checked callers provide the exact source passage. Never move an Apply to
+      // a nearest/normalized anchor, or substitute newly read text for that source.
+      if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 0 || to < from || to > plain.length
+          || kind === "insert" && to !== from || kind !== "insert" && to === from
+          || expected === null || expected !== plain.slice(from, to)
+          || fix.expectedHtml != null && fix.expectedHtml !== editor.getHTML())
+        return buildFixApplyResult(false, false, "doc_expected_text_mismatch", { issueKey, kind });
+      const segments = buildPlainTextSegments(editor.state.doc);
+      const docFrom = mapPlainOffsetToDoc(segments, from), docTo = mapPlainOffsetToDoc(segments, to);
+      const capturedFrom = parseOptionalNumber(fix.docFrom), capturedTo = parseOptionalNumber(fix.docTo);
+      if (docFrom === null || docTo === null
+          || capturedFrom !== null && capturedFrom !== docFrom || capturedTo !== null && capturedTo !== docTo)
+        return buildFixApplyResult(false, false, "could_not_resolve_range", { issueKey, kind });
+      try {
+        const tr = api.targetedRevisionTransaction(editor, docFrom, docTo, expected, kind === "delete" ? "" : fix.text);
+        if (!tr.docChanged) return buildFixApplyResult(false, false, "transaction_noop", { issueKey, kind });
+        // Appended editor transactions must not add or rewrite unrelated nodes.
+        // For example, an unnormalized trailing table can trigger an extra block.
+        if (!editor.state.applyTransaction(tr).state.doc.eq(tr.doc))
+          return buildFixApplyResult(false, false, "unsafe_targeted_revision", { issueKey, kind });
+        // All structure, source, mark and complete-result checks precede dispatch.
+        editor.view.dispatch(tr.scrollIntoView());
+        return buildFixApplyResult(true, true, "applied", { issueKey, kind, from, to, docFrom, docTo, source: "checked-range" });
+      } catch (error) {
+        return buildFixApplyResult(false, false, "unsafe_targeted_revision", { issueKey, kind, detail: error.message });
       }
-
-      const replacementText = kind === "delete" ? "" : String(fix.text || "");
-      const plainText = getEditorPlainText(editor);
-
-      if (window.__waQualityDebug === true) {
-        console.debug("[quality] apply fix request", {
-          issueKey,
-          kind,
-          from: fix.from,
-          to: fix.to,
-          text: replacementText,
-          anchorText: fix.anchorText || null
-        });
-      }
-
-      let docFrom = parseOptionalNumber(fix.docFrom);
-      let docTo = parseOptionalNumber(fix.docTo);
-      let target = { from: Number(fix.from) || 0, to: Number(fix.to) || 0, source: "doc-captured-range" };
-      let anchorMatchedAtRange = false;
-      const docSize = Number(editor?.state?.doc?.content?.size) || 0;
-      const requiresRange = kind === "replace" || kind === "delete";
-
-      const resolveFallbackTarget = () => {
-        const resolved = resolveTargetRangeFromFix(editor, fix);
-        if (!resolved.ok) {
-          return buildFixApplyResult(false, false, "could_not_resolve_range", {
-            issueKey,
-            kind,
-            source: resolved.target?.source ?? null,
-            from: resolved.target?.from ?? null,
-            to: resolved.target?.to ?? null,
-            resolutionReason: resolved.reason || "range_resolution_failed"
-          });
-        }
-
-        target = resolved.target;
-        docFrom = resolved.docFrom;
-        docTo = resolved.docTo;
-        anchorMatchedAtRange = !!resolved.anchorMatchedAtRange;
-        return null;
-      };
-
-      const hasCapturedDocRange = docFrom !== null && docTo !== null;
-      if (hasCapturedDocRange) {
-        const capturedLooksValid = docFrom > 0
-          && docTo > 0
-          && docFrom <= docSize
-          && docTo <= docSize
-          && (!requiresRange || docTo > docFrom);
-
-        if (!capturedLooksValid) {
-          const fallbackFailure = resolveFallbackTarget();
-          if (fallbackFailure) {
-            return fallbackFailure;
-          }
-        } else {
-          target = {
-            from: Number.isFinite(Number(fix.from)) ? Number(fix.from) : 0,
-            to: Number.isFinite(Number(fix.to)) ? Number(fix.to) : 0,
-            source: "doc-captured-range"
-          };
-        }
-      } else {
-        const fallbackFailure = resolveFallbackTarget();
-        if (fallbackFailure) {
-          return fallbackFailure;
-        }
-      }
-
-      if (docFrom === null || docTo === null) {
-        const fallbackFailure = resolveFallbackTarget();
-        if (fallbackFailure) {
-          return fallbackFailure;
-        }
-      }
-
-      if (!Number.isFinite(docFrom) || !Number.isFinite(docTo)) {
-        return buildFixApplyResult(false, false, "could_not_resolve_range", {
-          issueKey,
-          kind,
-          source: target.source,
-          from: target?.from ?? null,
-          to: target?.to ?? null,
-          resolutionReason: "doc_range_missing_after_resolution"
-        });
-      }
-
-      if (requiresRange && docTo <= docFrom) {
-        const fallbackFailure = resolveFallbackTarget();
-        if (fallbackFailure) {
-          return fallbackFailure;
-        }
-      }
-
-      if (requiresRange && docTo <= docFrom) {
-        return buildFixApplyResult(false, false, "could_not_resolve_range", {
-          issueKey,
-          kind,
-          source: target.source,
-          docFrom,
-          docTo,
-          resolutionReason: "resolved_doc_range_invalid"
-        });
-      }
-
-      if (docFrom > docSize || docTo > docSize || docFrom < 0 || docTo < 0) {
-        const fallbackFailure = resolveFallbackTarget();
-        if (fallbackFailure) {
-          return fallbackFailure;
-        }
-      }
-
-      if (docFrom > docSize || docTo > docSize || docFrom < 0 || docTo < 0) {
-        return buildFixApplyResult(false, false, "could_not_resolve_range", {
-          issueKey,
-          kind,
-          source: target.source,
-          docFrom,
-          docTo,
-          resolutionReason: "resolved_doc_range_out_of_bounds"
-        });
-      }
-
-      docFrom = Number(docFrom);
-      docTo = Number(docTo);
-
-      if (window.__waQualityDebug === true) {
-        console.debug("[quality] apply target resolved", {
-          issueKey,
-          kind,
-          source: target.source,
-          plainFrom: target.from,
-          plainTo: target.to,
-          docFrom,
-          docTo,
-          docSize
-        });
-      }
-
-      if (target.source === "doc-captured-range") {
-        target = {
-          from: Number.isFinite(Number(fix.from)) ? Number(fix.from) : 0,
-          to: Number.isFinite(Number(fix.to)) ? Number(fix.to) : 0,
-          source: "doc-captured-range"
-        };
-      }
-
-      const expectedText = typeof fix.expectedText === "string" ? fix.expectedText : null;
-      const beforeAnchor = typeof fix.beforeAnchor === "string" ? fix.beforeAnchor : null;
-      const afterAnchor = typeof fix.afterAnchor === "string" ? fix.afterAnchor : null;
-      const needleText = typeof fix.needleText === "string" ? fix.needleText : null;
-      const buildDocRangeFromPlain = (plainFrom, plainTo) => {
-        const normalizedFrom = Number(plainFrom);
-        const normalizedTo = Number(plainTo);
-        if (!Number.isFinite(normalizedFrom) || !Number.isFinite(normalizedTo) || normalizedTo < normalizedFrom) {
-          return null;
-        }
-
-        const segments = buildPlainTextSegments(editor.state.doc);
-        const mappedFrom = mapPlainOffsetToDoc(segments, normalizedFrom);
-        const mappedTo = mapPlainOffsetToDoc(segments, normalizedTo);
-        if (mappedFrom === null || mappedTo === null || (kind !== "insert" && mappedTo <= mappedFrom)) {
-          return null;
-        }
-
-        return { docFrom: mappedFrom, docTo: mappedTo, from: normalizedFrom, to: normalizedTo };
-      };
-
-      const tryRecoverRangeFromExpectedText = () => {
-        if (!expectedText || kind === "insert") {
-          return null;
-        }
-
-        const currentPlain = getEditorPlainText(editor);
-        const expectedCandidates = [expectedText, ...buildAnchorCandidates(expectedText)]
-          .filter((value, index, arr) => value && arr.indexOf(value) === index);
-        const matches = findAnchorOccurrences(currentPlain, expectedCandidates);
-        if (!matches.length) {
-          if (window.__waQualityDebug === true) {
-            console.debug("[quality] expected-text recovery no matches", { issueKey, expectedLength: expectedText.length });
-          }
-          return null;
-        }
-
-        const currentTargetCenter = (Number(target?.from) + Number(target?.to)) / 2;
-        const nearest = matches
-          .slice()
-          .sort((a, b) => {
-            const aCenter = (a.from + a.to) / 2;
-            const bCenter = (b.from + b.to) / 2;
-            return Math.abs(aCenter - currentTargetCenter) - Math.abs(bCenter - currentTargetCenter);
-          })[0];
-
-        const mapped = buildDocRangeFromPlain(nearest.from, nearest.to);
-        if (!mapped) {
-          if (window.__waQualityDebug === true) {
-            console.debug("[quality] expected-text recovery mapping failed", { issueKey, from: nearest.from, to: nearest.to });
-          }
-          return null;
-        }
-
-        if (window.__waQualityDebug === true) {
-          console.debug("[quality] expected-text recovery selected", { issueKey, matches: matches.length, from: nearest.from, to: nearest.to });
-        }
-
-        return {
-          source: "expected-nearest",
-          from: nearest.from,
-          to: nearest.to,
-          docFrom: mapped.docFrom,
-          docTo: mapped.docTo
-        };
-      };
-
-      const tryRecoverRangeFromAnchor = () => {
-        const anchorCandidates = buildAnchorCandidates(fix.anchorText);
-        if (!anchorCandidates.length) {
-          return null;
-        }
-
-        const currentPlain = getEditorPlainText(editor);
-        const matches = findAnchorOccurrences(currentPlain, anchorCandidates);
-        if (!matches.length) {
-          if (window.__waQualityDebug === true) {
-            console.debug("[quality] anchor recovery no matches", { issueKey });
-          }
-          return null;
-        }
-
-        const currentTargetCenter = (Number(target?.from) + Number(target?.to)) / 2;
-        const nearest = matches
-          .slice()
-          .sort((a, b) => {
-            const aCenter = (a.from + a.to) / 2;
-            const bCenter = (b.from + b.to) / 2;
-            return Math.abs(aCenter - currentTargetCenter) - Math.abs(bCenter - currentTargetCenter);
-          })[0];
-
-        const mapped = buildDocRangeFromPlain(nearest.from, nearest.to);
-        if (!mapped) {
-          if (window.__waQualityDebug === true) {
-            console.debug("[quality] anchor recovery mapping failed", { issueKey, from: nearest.from, to: nearest.to });
-          }
-          return null;
-        }
-
-        if (window.__waQualityDebug === true) {
-          console.debug("[quality] anchor recovery selected", { issueKey, matches: matches.length, from: nearest.from, to: nearest.to });
-        }
-
-        return {
-          source: "anchor-nearest",
-          from: nearest.from,
-          to: nearest.to,
-          docFrom: mapped.docFrom,
-          docTo: mapped.docTo
-        };
-      };
-
-      const tryRecoverRangeFromContext = () => {
-        if (!needleText || kind === "insert") {
-          return null;
-        }
-
-        const currentPlain = getEditorPlainText(editor);
-        const currentTargetCenter = (Number(target?.from) + Number(target?.to)) / 2;
-        const contextual = findBestContextMatch(currentPlain, beforeAnchor, needleText, afterAnchor, currentTargetCenter);
-        if (!contextual) {
-          if (window.__waQualityDebug === true) {
-            console.debug("[quality] contextual recovery no match", { issueKey });
-          }
-          return null;
-        }
-
-        const mapped = buildDocRangeFromPlain(contextual.from, contextual.to);
-        if (!mapped) {
-          if (window.__waQualityDebug === true) {
-            console.debug("[quality] contextual recovery mapping failed", { issueKey, from: contextual.from, to: contextual.to });
-          }
-          return null;
-        }
-
-        if (window.__waQualityDebug === true) {
-          console.debug("[quality] contextual recovery selected", { issueKey, from: contextual.from, to: contextual.to });
-        }
-
-        return {
-          source: "contextual-nearest",
-          from: contextual.from,
-          to: contextual.to,
-          docFrom: mapped.docFrom,
-          docTo: mapped.docTo
-        };
-      };
-
-      if (expectedText !== null && kind !== "insert") {
-        const plainFrom = Number(target?.from);
-        const plainTo = Number(target?.to);
-        let current = null;
-        if (Number.isFinite(plainFrom) && Number.isFinite(plainTo) && plainTo >= plainFrom && plainTo <= plainText.length) {
-          current = plainText.slice(plainFrom, plainTo);
-        } else {
-          current = editor.state.doc.textBetween(docFrom, docTo, "", "");
-        }
-
-        if (current !== expectedText) {
-          let recovered = null;
-
-          const fallbackResolved = resolveTargetRangeFromFix(editor, { ...fix, docFrom: null, docTo: null });
-          if (fallbackResolved.ok) {
-            const fallbackCurrent = editor.state.doc.textBetween(fallbackResolved.docFrom, fallbackResolved.docTo, "", "");
-            if (fallbackCurrent === expectedText) {
-              recovered = {
-                source: `${fallbackResolved.target.source}-retry`,
-                from: fallbackResolved.target.from,
-                to: fallbackResolved.target.to,
-                docFrom: fallbackResolved.docFrom,
-                docTo: fallbackResolved.docTo
-              };
-            }
-          }
-
-          if (!recovered) {
-            recovered = tryRecoverRangeFromExpectedText();
-          }
-
-          if (!recovered && kind === "delete") {
-            recovered = tryRecoverRangeFromAnchor();
-          }
-
-          if (!recovered) {
-            recovered = tryRecoverRangeFromContext();
-          }
-
-          if (!recovered) {
-            return buildFixApplyResult(false, false, "doc_expected_text_mismatch", {
-              issueKey,
-              kind,
-              source: target.source,
-              docFrom,
-              docTo,
-              expectedLength: expectedText?.length || 0
-            });
-          }
-
-          target = {
-            from: recovered.from,
-            to: recovered.to,
-            source: recovered.source
-          };
-          docFrom = recovered.docFrom;
-          docTo = recovered.docTo;
-        }
-      }
-
-      const tr = editor.state.tr;
-      if (kind === "insert") {
-        tr.insertText(replacementText, docFrom, docFrom);
-      } else {
-        tr.insertText(replacementText, docFrom, docTo);
-      }
-
-      if (!tr.docChanged) {
-        return buildFixApplyResult(false, false, "transaction_noop", {
-          issueKey,
-          kind,
-          from: target?.from ?? null,
-          to: target?.to ?? null,
-          source: target.source
-        });
-      }
-
-      editor.view.dispatch(tr.scrollIntoView());
-      const afterPlain = getEditorPlainText(editor);
-      const changed = afterPlain !== plainText;
-      if (window.__waQualityDebug === true) {
-        console.debug("[quality] apply fix resolved", {
-          issueKey,
-          docFrom,
-          docTo,
-          plainFrom: target.from,
-          plainTo: target.to,
-          source: target.source,
-          anchorMatchedAtRange,
-          expectedLength: expectedText?.length || 0
-        });
-      }
-
-      return buildFixApplyResult(true, changed, changed ? "applied" : "no_plain_text_change", {
-        issueKey,
-        kind,
-        from: target.from,
-        to: target.to,
-        source: target.source,
-        docFrom,
-        docTo
-      });
     };
 
     api.applyQualityIssueFix = function (editor, fix) {
@@ -1519,6 +1142,7 @@
   }
 
   const getEditorContext = (editor) => {
+    if (!editor || editor.isDestroyed) return null;
     const view = editor?.view?.dom;
     if (!view) {
       return null;
@@ -1741,7 +1365,7 @@
 
   const createDebounced = (fn, waitMs) => {
     let timer = null;
-    return () => {
+    const trigger = () => {
       if (timer) {
         window.clearTimeout(timer);
       }
@@ -1751,6 +1375,8 @@
         fn();
       }, waitMs);
     };
+    trigger.cancel = () => { window.clearTimeout(timer); timer = null; };
+    return trigger;
   };
 
   const PAGINATION_META_KEY = "writerPagination";
@@ -2603,6 +2229,7 @@
     // -> spacer DOM/layout mutation -> observer callback again.
     let lastObservedViewport = getViewportMetrics(editor);
     const trigger = createDebounced(() => {
+      if (editor.isDestroyed || !editor.__writerReflowAttached) return;
       const state = getPatchedPaginationState(editor);
       if (!state) {
         return;
@@ -2655,6 +2282,7 @@
 
     editor.__writerReflowAttached = true;
     editor.__writerReflowCleanup = () => {
+      trigger.cancel();
       try {
         resizeObserver?.disconnect();
       } catch {
@@ -2800,6 +2428,7 @@
   if (!api.__writerDestroyWrapped && typeof api.destroy === "function") {
     const originalDestroy = api.destroy.bind(api);
     api.destroy = function (editor) {
+      if (!editor || editor.isDestroyed) return;
       const root = editor?.view?.dom;
       if (root?.__writerShortcutHandler) {
         root.removeEventListener("keydown", root.__writerShortcutHandler, true);
@@ -2814,6 +2443,10 @@
         editor.__writerReflowCleanup = null;
       }
       const paginationState = editor?.__writerPaginationPatchState;
+      if (paginationState?.rafId) {
+        window.cancelAnimationFrame(paginationState.rafId);
+        paginationState.rafId = 0;
+      }
       if (paginationState?.idleTimer) {
         window.clearTimeout(paginationState.idleTimer);
         paginationState.idleTimer = 0;

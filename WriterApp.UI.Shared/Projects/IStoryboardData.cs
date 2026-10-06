@@ -21,4 +21,5 @@ public interface IStoryboardData
     Task<ProjectSceneOpenTargetDto?> ResolveTargetAsync(Guid projectId, Guid sceneId, Guid? documentId = null);
     Task<AiActionExecuteResponseDto> ExecuteAiAsync(Guid projectId, string key, AiActionExecuteRequestDto request, Guid? documentId = null);
     Task ValidateSuggestionAsync(Guid projectId, Guid? documentId = null);
+    Task ValidateSuggestionAsync(Guid projectId, Guid? documentId,Guid proposalId)=>ValidateSuggestionAsync(projectId,documentId);
 }

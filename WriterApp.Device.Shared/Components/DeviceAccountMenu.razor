@@ -15,7 +15,7 @@
     <div class="device-account-panel">
     <a href="/account">Account, plan and help</a>
     <p>Sign in for online features. Local writing and saving work without an account.</p>
-    @if (!Account.IsConfigured && Account.Message is null) { <p>Sign-in settings are missing from this build. Install a configured Prosa desktop build.</p> }
+    @if (!Account.IsConfigured && Account.Message is null) { <p>Sign-in settings are missing from this build. Install a configured Prosa build.</p> }
     @if (Account.Message is not null) { <p role="status">@Account.Message</p> }
     @if (_message is not null) { <p role="status">@_message</p> }
     <button disabled="@(_busy || !Account.IsConfigured)" @onclick="SignInAsync">@(Account.IsSignedIn ? "Switch account" : "Sign in with browser")</button>

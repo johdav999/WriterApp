@@ -36,7 +36,10 @@ namespace WriterApp.Application.AI
         string? SurroundingText,
         string? OutlineText,
         Dictionary<string, object?>? Parameters,
-        string? ExpectedDocumentVersion = null);
+        string? ExpectedDocumentVersion = null,
+        IReadOnlyDictionary<WriterApp.Shared.Canon.CanonKind, string>? ExpectedCanonVersions = null,
+        WriterApp.Shared.WritingOutlineSnapshot? WritingOutline = null,
+        WriterApp.Shared.WebAiSource? WebSource = null);
 
     public sealed record AiActionExecuteResponseDto(
         Guid ProposalId,
@@ -51,7 +54,10 @@ namespace WriterApp.Application.AI
         SectionSceneCardProposalDto? ProposedSceneCard = null,
         string? ProposalExplanation = null,
         IReadOnlyList<AiTextOperationDto>? Operations = null,
-        string? SourceDocumentVersion = null);
+        string? SourceDocumentVersion = null,
+        IReadOnlyDictionary<WriterApp.Shared.Canon.CanonKind, string>? SourceCanonVersions = null,
+        string? SourceOutlineFingerprint = null,
+        WriterApp.Shared.WebAiSource? WebSource = null);
 
     public sealed record AiActionHistoryEntryDto(
         Guid ProposalId,
@@ -63,14 +69,18 @@ namespace WriterApp.Application.AI
         bool IsApplied = false,
         DateTimeOffset? LastAppliedAt = null,
         int AppliedCount = 0,
-        AiCommandStatusDto Status = AiCommandStatusDto.Pending);
+        AiCommandStatusDto Status = AiCommandStatusDto.Pending,
+        bool? CanCloudUndo = null, bool? CanCloudRedo = null, string? ReplayScope = null);
 
     public sealed record AiActionUndoRedoRequestDto(
         Guid? DocumentId,
         Guid? SectionId,
-        Guid? PageId);
+        Guid? PageId,
+        WriterApp.Shared.WebAiSource? WebSource = null);
 
     public sealed record AiActionUndoRedoResponseDto(
         Guid HistoryEntryId,
-        string Content);
+        string Content,
+        string? ExpectedContent = null,
+        WriterApp.Shared.WebAiSource? WebSource = null);
 }

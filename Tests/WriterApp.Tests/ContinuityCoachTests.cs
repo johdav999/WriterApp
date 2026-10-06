@@ -196,6 +196,34 @@ namespace WriterApp.Tests
             Assert.True(string.IsNullOrWhiteSpace(issue.SuggestedFix), $"Unexpected suggested fix: '{issue.SuggestedFix}'");
         }
 
+        [Fact]
+        public async Task TrainDeletionReportPreservesBothExactPassagesAndExplicitEditThroughExecutor()
+        {
+            var document = DocumentFactory.CreateNewDocument();
+            var section = document.Chapters[0].Sections[0];
+            const string first = "The train gently pulled into Vinterhamn.";
+            const string later = "Then the train entered the station.";
+            string plain = first + " Elin stepped off. " + later;
+            document.Chapters[0].Sections[0] = section with { Content = section.Content with { Value = "<p>" + plain + "</p>" } };
+            string json = System.Text.Json.JsonSerializer.Serialize(new { schemaVersion = "1.0", issues = new[] { new {
+                severity = "medium", type = "timeline", message = "Train arrives twice.", evidence = new { sectionId = section.SectionId, quote = later },
+                comparisonEvidence = new { sectionId = section.SectionId, quote = first }, fixKind = "delete", suggestedFix = "",
+                anchor = new { plainTextStart = plain.IndexOf(later, StringComparison.Ordinal), plainTextLength = later.Length }
+            } } });
+            var orchestrator = BuildOrchestrator(new ContinuityTestProvider { ReportJson = json }, new ContinuityCheckAction());
+            var result = await orchestrator.ExecuteActionAsync(ContinuityCheckAction.ActionIdValue,
+                new AiActionInput(document, section.SectionId, new TextRange(0, plain.Length), plain, "Check", new Dictionary<string, object?>()), default);
+            Assert.True(result.Succeeded);
+            Assert.True(ContinuityJson.TryParseContinuityReport(result.Proposal!.ProposedText, out var report));
+            var issue = Assert.Single(report!.Issues);
+            Assert.Equal(later, issue.Evidence.Quote);
+            Assert.Equal(first, issue.ComparisonEvidence!.Quote);
+            Assert.Equal("delete", issue.FixKind);
+            Assert.Equal("", issue.SuggestedFix);
+            WriterApp.Shared.ConsistencyChecks.WithVerifiedCoverage(result.Proposal.ProposedText!,
+                WriterApp.Shared.ConsistencyChecks.Sources(new[] { new WriterApp.Shared.ConsistencySource(section.SectionId, "Arrival", plain) }, section.SectionId), section.SectionId);
+        }
+
         private static IAiOrchestrator BuildOrchestrator(params IAiAction[] actions)
         {
             return BuildOrchestrator(new ContinuityTestProvider(), actions);
@@ -237,6 +265,7 @@ namespace WriterApp.Tests
 
         private sealed class ContinuityTestProvider : IAiProvider
         {
+            public string? ReportJson { get; init; }
             public string ProviderId => "continuity-test";
 
             public AiProviderCapabilities Capabilities => new(true, false);
@@ -248,7 +277,7 @@ namespace WriterApp.Tests
                 {
                     "continuity.extract_character_bible" => "{\"schemaVersion\":\"1.0\",\"characters\":[{\"name\":\"Mira\",\"facts\":[{\"fact\":\"Blue eyes\",\"evidence\":{\"sectionId\":\"" + request.Context.SectionId + "\",\"quote\":\"Mira has blue eyes.\"}}],\"traits\":[\"observant\"]}]}",
                     "continuity.extract_place_bible" => "{\"schemaVersion\":\"1.0\",\"places\":[{\"name\":\"Ashmere\",\"facts\":[{\"fact\":\"Market square\",\"evidence\":{\"sectionId\":\"" + request.Context.SectionId + "\",\"quote\":\"In the market scene.\"}}]}]}",
-                    "continuity.check_section" => BuildContinuityReport(request),
+                    "continuity.check_section" => ReportJson ?? BuildContinuityReport(request),
                     _ => "{\"schemaVersion\":\"1.0\",\"issues\":[]}"
                 };
 

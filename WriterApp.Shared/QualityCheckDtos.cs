@@ -35,14 +35,16 @@ namespace WriterApp.Application.Documents
     public sealed record QualityCheckRunRequest(
         string Scope,
         string? Text,
-        bool Force);
+        bool Force,
+        WriterApp.Shared.WebAiSource? WebSource = null);
 
     public sealed record QualityCheckRunResultDto(
         Guid PageId,
         string Scope,
         string ContentHash,
         bool FromCache,
-        IReadOnlyList<PageQualityIssueDto> Issues);
+        IReadOnlyList<PageQualityIssueDto> Issues,
+        WriterApp.Shared.WebAiSource? WebSource = null);
 
     public sealed record GlossaryEntryDto(
         Guid Id,

@@ -1,7 +1,11 @@
 @if (ActionKey == "continuity.check_section")
 {
-    <ConsistencyReport ResponseJson="@Proposed" />
+    <ConsistencyReport ResponseJson="@Proposed" ReviewSuggestion="ReviewConsistencySuggestion" DiscardSuggestion="DiscardConsistencySuggestion" DiscardedSuggestions="DiscardedConsistencySuggestions" ReviewingSuggestion="ReviewingConsistencySuggestion" Busy="Busy" AppliedSuggestions="AppliedConsistencySuggestions" SuggestionReview="ConsistencySuggestionReview" Jump="JumpConsistency" FindingLocation="ConsistencyLocation" JumpComparison="JumpConsistencyComparison" ComparisonLocation="ConsistencyComparisonLocation" MarkIntentional="MarkConsistencyIntentional" IntentionalSuggestions="IntentionalConsistencySuggestions" />
     <details><summary>Analyzed writing</summary><div class="ai-preview-text">@Original</div></details>
+}
+else if (ActionKey == "storyboard.check-subplot-continuity")
+{
+    <SubplotContinuityReview ResponseJson="@Proposed" StoryboardContext="@StoryboardContext" />
 }
 else if (ActionKey is "scene.suggest" or "scene.refine" or "scene.find-open-questions")
 {
@@ -15,5 +19,19 @@ else
     [Parameter] public string? ActionKey { get; set; }
     [Parameter] public string? Original { get; set; }
     [Parameter] public string? Proposed { get; set; }
+    [Parameter] public string? StoryboardContext { get; set; }
+    [Parameter] public EventCallback<int> ReviewConsistencySuggestion { get; set; }
+    [Parameter] public EventCallback<int> DiscardConsistencySuggestion { get; set; }
+    [Parameter] public int? ReviewingConsistencySuggestion { get; set; }
+    [Parameter] public IReadOnlyCollection<int> DiscardedConsistencySuggestions { get; set; } = Array.Empty<int>();
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public IReadOnlyCollection<int> AppliedConsistencySuggestions { get; set; } = Array.Empty<int>();
+    [Parameter] public RenderFragment<int>? ConsistencySuggestionReview { get; set; }
+    [Parameter] public EventCallback<int> JumpConsistency { get; set; }
+    [Parameter] public Func<int, string>? ConsistencyLocation { get; set; }
+    [Parameter] public EventCallback<int> JumpConsistencyComparison { get; set; }
+    [Parameter] public Func<int, string>? ConsistencyComparisonLocation { get; set; }
+    [Parameter] public EventCallback<int> MarkConsistencyIntentional { get; set; }
+    [Parameter] public IReadOnlyCollection<int> IntentionalConsistencySuggestions { get; set; } = Array.Empty<int>();
     [Parameter] public WriterApp.Application.Documents.SectionSceneCardProposalDto? SceneCard { get; set; }
 }

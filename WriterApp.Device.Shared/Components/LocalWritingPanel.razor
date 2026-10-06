@@ -1,0 +1,295 @@
+@implements IDisposable
+@implements IAsyncDisposable
+@using Microsoft.JSInterop
+@using WriterApp.Shared
+@inject LocalDocumentRepository Documents
+@inject DeviceSyncEngine Sync
+@inject DeviceAiService Ai
+@inject IDeviceAiApi Api
+@inject LocalAiStore History
+@inject LocalWritingActions Actions
+@inject DeviceAccountService Account
+@inject DevicePromptLibrary PromptLibrary
+@inject IJSRuntime JS
+
+<section class="writing-panel" aria-label="Writing actions">
+    @if (!PresetOnly) {
+    <label class="writing-field">Writing target <select aria-label="Writing target" @bind="_scope" @bind:after="ScopeChanged" disabled="@ControlsBusy"><option value="@WritingScope.Selection">Selected passage</option><option value="@WritingScope.Section">All pages in current section</option><option value="@WritingScope.Continuation">Next paragraph at section end</option></select></label>
+    <p class="writing-hint">@(_scope == WritingScope.Selection ? "Select a passage, then choose an action. The preview includes complete words." : _scope == WritingScope.Section ? "Revise every page in this section." : "Continue from the saved section ending.")</p>
+    @if (_scope != WritingScope.Continuation) {
+        @if (_savedPresets.Count > 0) {
+            <label>Saved preset <select aria-label="Saved preset" value="@_presetId" @onchange="SelectPreset" disabled="@ControlsBusy"><option value="">Current settings</option>@foreach (var preset in _savedPresets) { <option value="@preset.Id">@preset.Name · @(preset.Scope == WritingScope.Section ? "Section" : "Passage")</option> }</select></label>
+        }
+        <div class="writing-operations" role="group" aria-label="Writing action">
+        @foreach (var action in Operations.Where(a => _scope != WritingScope.Section || a.Key != "rewrite")) {
+            var key = action.Key + (_scope == WritingScope.Section ? ".section" : ".selection");
+            <button type="button" class="@(_action == action.Key ? "writing-action-selected" : null)" aria-pressed="@(_action == action.Key ? "true" : "false")" aria-label="@(action.Label + " " + _scope.ToString().ToLowerInvariant())" @onmousedown:preventDefault="true" disabled="@(ControlsBusy || !Available(key))" @onclick="() => SelectAction(action.Key)">@action.Label</button>
+        }
+        </div>
+        @if (_action is "rewrite" or "change_tone") {
+            <WritingOptions Action="@_action" Value="@_settings" ValueChanged="SettingsChanged" Disabled="@ControlsBusy" />
+        }
+        <button type="button" class="writing-rewrite writing-preview" @onmousedown:preventDefault="true" disabled="@(ControlsBusy || !Available(SelectedKey))" @onclick="PreviewAction">@PreviewLabel</button>
+        <details class="writing-save-preset">
+            <summary>Save as preset</summary>
+            <div class="writing-details-content">
+                <p>Save this action, target and settings for reuse. Manage saved presets and custom templates in Prompt Library.</p>
+                <label>Preset name <input aria-label="Preset name" maxlength="100" @bind="_presetName" @bind:event="oninput" disabled="@(_busy || ExternalBusy || _savingPreset)" /></label>
+                <button type="button" disabled="@(_busy || ExternalBusy || _savingPreset || string.IsNullOrWhiteSpace(_presetName))" @onclick="SavePreset">Save preset</button>
+                @if (_presetError is not null) { <p role="alert">@_presetError</p> }
+                @if (_presetMessage is not null) { <p role="status">@_presetMessage</p> }
+            </div>
+        </details>
+    } else {
+        <label>Recommended craft focus <select aria-label="Recommended craft focus" @bind="_taskId" @bind:after="Dismiss" disabled="@(_busy || ExternalBusy)"><option value="">Continue naturally</option>@foreach (var tool in PromptStrategyResolver.GetTopWritingToolsForIntent(_intent)) { <option value="@tool.Id">@tool.DisplayName</option> }</select></label>
+        <button type="button" @onmousedown:preventDefault="true" disabled="@(_busy || ExternalBusy || !Available("propose.next-paragraph"))" @onclick='() => Generate("propose.next-paragraph")'>Propose next paragraph</button>
+    }
+    <h3>Recommended writing tools</h3>
+    <label>Writing intent <select aria-label="Writing intent" @bind="_intent" @bind:after="IntentChanged" disabled="@ControlsBusy"><option>Novel</option><option>ShortStory</option><option>NonFiction</option><option>Blog</option><option>Other</option></select></label>
+    <label>Recommended tool <select aria-label="Recommended writing tool" @bind="_recommendedId" @bind:after="Dismiss" disabled="@ControlsBusy"><option value="">Choose a tool</option>@foreach (var tool in PromptStrategyResolver.GetTopWritingToolsForIntent(_intent)) { <option value="@tool.Id">@tool.DisplayName</option> }</select></label>
+    @if (_recommendedId.Length > 0) { <p>@RecommendedWriting.Tool(_recommendedId).Description @RecommendedWriting.Target(_recommendedId).</p> }
+    <button type="button" @onmousedown:preventDefault="true" disabled="@(ControlsBusy || _recommendedId.Length == 0 || !Available("custom_transform") || _available?.Recommendations != true)" @onclick="GenerateRecommended">Run recommended tool</button>
+    @if (_available is not null && !_available.Recommendations) { <p role="status">Update the backend to enable recommended writing tools.</p> }
+    @if (AnyUnavailable && _error is null) {
+        <p class="writing-hint" role="status">Some actions are unavailable. Check sign-in and the required plan, then refresh.</p>
+    }
+    <details class="writing-help">
+        <summary>About writing tools</summary>
+        <div class="writing-details-content">
+            <p>Uses saved section titles and this manuscript's outline after save and sync. Up to 1,000 sections/nodes and 20,000 title characters; larger outlines require revision. Continuation uses the existing recent-prose window of at most 2,500 characters.</p>
+            @if (_scope == WritingScope.Section) { <p>Every page is included. Paragraphs, marks and other supported formatting stay in place. Comments, tasks and highlights are retained. Image captions, code and unsupported content need a selection action or manual editing.</p> }
+            @if (_scope == WritingScope.Continuation) { <p>Uses the saved section ending, genre and scene beats. Craft focus guides the new paragraph. Apply appends to the last page of this section.</p> }
+            <p>Disabled actions need sign-in, an available provider, the required plan or a backend update.</p>
+            <button type="button" disabled="@(_busy || ExternalBusy)" @onclick="Refresh">Refresh writing availability</button>
+        </div>
+    </details>
+    @if (_demoStatus?.Workspace?.DocumentId is { } demoDocument && _demoDocumentId == demoDocument) {
+        <p role="status">@(_demoStatus.Available ? "The server-authorized demo shortens every page in its practice section." : "Demo unavailable: " + _demoStatus.Reason)</p>
+        <button type="button" disabled="@(_busy || ExternalBusy || !_demoStatus.Available)" @onclick="GenerateDemo">Run server-authorized demo · review before applying</button>
+    }
+    }
+    @ChildContent
+    @if (_busy) { <p role="status">Preparing writing. The original is retained.</p><button type="button" @onclick="() => _cancel?.Cancel()">Cancel writing request</button> }
+    @if (_error is not null) { <p class="writing-status" role="@(_cloudLinked && Account.IsSignedIn ? "alert" : "status")">@_error</p> }
+    @if (_demoError is not null) { <p role="status">@_demoError</p> }
+    @if (_message is not null) { <p role="status">@_message</p> }
+    @if (_copyReview is { } copyReview) { <RecommendedTextReview @key="copyReview.Proposal.ProposalId" ToolId="@copyReview.ToolId" Result="copyReview.Result" Busy="@ControlsBusy" Message="@_message" Copy="CopyRecommended" Dismiss="Dismiss" /> }
+    @if (_entry is { } entry && _prepared is { } prepared && _proposal is not null) {
+        <section class="writing-review" aria-label="Review writing proposal">
+            <h3>Review before applying</h3><p>@prepared.Preset?.Name @(prepared.RecommendationId is { } tool ? RecommendedWriting.Tool(tool).DisplayName + " · " + RecommendedWriting.Target(tool) : "") @prepared.Source.Title · @prepared.Command.Scope · source revision @prepared.Source.LocalRevision</p>
+            <WritingOutlineSummary Value="@prepared.Request.Request.WritingOutline" />
+            @if (prepared.Source.Project?.Nodes.Any(n => n.SectionId == prepared.SectionId && n.DeletionId is null && n.Annotations.Count > 0) == true) {
+                <p>Comments, tasks and highlights are retained. If an anchored quote changes or becomes ambiguous, relink it in Notes &amp; Tasks.</p>
+            }
+            @foreach (var comparison in _comparisons) { <h4>@comparison.Title</h4><div class="writing-comparison"><div><strong>Original</strong><pre>@comparison.Before</pre></div><div><strong>Proposed</strong><pre>@comparison.After</pre></div></div> }
+            <div class="writing-review-actions">
+            <button type="button" class="primary" disabled="@(_busy || ExternalBusy)" @onclick="Apply">@(prepared.Command.Scope == WritingScope.Continuation ? "Approve & append new paragraph" : "Approve & apply revision")</button>
+            <button type="button" disabled="@_busy" @onclick="Dismiss">Dismiss writing proposal</button>
+            </div>
+        </section>
+    }
+</section>
+@code {
+    [Parameter] public Guid DocumentId { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    [Parameter] public bool PresetOnly { get; set; }
+    [Parameter] public bool? HasCloudCopy { get; set; }
+    [Parameter] public EventCallback<bool> BusyChanged {get;set;}
+    [Parameter] public Guid? SectionId { get; set; }
+    [Parameter] public bool ExternalBusy { get; set; }
+    [Parameter] public Func<Task<bool>>? BeforeWork { get; set; }
+    [Parameter] public Func<Task>? AfterWork { get; set; }
+    [Parameter] public Func<CancellationToken, Task<QualityEditorSource>>? Capture { get; set; }
+    private static readonly (string Key, string Label)[] Operations = [("rewrite", "Rewrite"), ("expand", "Expand"), ("tighten", "Shorten"), ("change_tone", "Change tone"), ("show_dont_tell", "Show, don't tell")];
+    private WritingSettings _settings = new(); private WritingScope _scope; private WritingAvailability? _available;
+    private string _intent = "Other", _taskId = ""; private Guid _documentId; private Guid? _sectionId;
+    private bool _busy, _disposed; public bool IsBusy => _busy;
+    private CancellationTokenSource? _cancel; private string? _error, _message;
+    private LocalWritingPrepared? _prepared; private DeviceAiProposal? _proposal; private LocalAiHistory? _entry;
+    private string _recommendedId = "";
+    private sealed record CopyReview(string ToolId, RecommendedTextResult Result, DeviceAiProposal Proposal, LocalDocument Source);
+    private CopyReview? _copyReview;
+    private readonly List<(string Title, string Before, string After)> _comparisons = [];
+    private long _accountGeneration;private bool _signedIn;
+    private bool _cloudLinked;
+    private OnboardingDemoStatus? _demoStatus;private Guid? _demoDocumentId;private string? _demoError;
+    private CancellationTokenSource? _availabilityCancel;
+    private long _availabilityEpoch;
+    private Task _availabilityRefresh = Task.CompletedTask;
+    private readonly HashSet<Task> _accountRefreshes = [];
+    protected override void OnInitialized(){_accountGeneration=Account.Generation;_signedIn=Account.IsSignedIn;Account.Changed+=AccountChanged;}
+    protected override async Task OnParametersSetAsync() {
+        if (_documentId == DocumentId && _sectionId == SectionId && (!HasCloudCopy.HasValue || HasCloudCopy == _cloudLinked)) return;
+        _cancel?.Cancel(); Dismiss(); _documentId = DocumentId; _sectionId = SectionId;
+        try { var source = await Latest(default); _intent = PromptStrategyResolver.NormalizeIntent(source.Project?.Genre); _cloudLinked = HasCloudCopy ?? source.ServerDocumentId is not null; } catch (IOException) { _cloudLinked = false; }
+        await Refresh();
+    }
+    private bool Available(string key) => _cloudLinked && Account.IsSignedIn && _available?.SavedOutlineContext == true && _available.AllowedActions.Contains(key) && (_scope != WritingScope.Section || _available.StructuredSections) && !(key == "rewrite.section");
+    private bool AnyUnavailable => _available is null || (_scope == WritingScope.Continuation ? !Available("propose.next-paragraph")
+        : Operations.Where(a => _scope != WritingScope.Section || a.Key != "rewrite").Any(a => !Available(a.Key + (_scope == WritingScope.Section ? ".section" : ".selection"))));
+    private void AccountChanged() {
+        if(_accountGeneration==Account.Generation&&_signedIn==Account.IsSignedIn)return;
+        _accountGeneration=Account.Generation;_signedIn=Account.IsSignedIn;_available = null;_demoStatus=null;_demoDocumentId=null;_demoError=null;
+        _availabilityCancel?.Cancel(); _availabilityEpoch++; _cancel?.Cancel(); ClearPreset(); Dismiss(); _savedPresets = [];
+        if (_disposed) return;
+        _availabilityRefresh = InvokeAsync(async () => { if (_disposed) return; await Refresh(); if (!_disposed) StateHasChanged(); });
+        lock (_accountRefreshes) _accountRefreshes.Add(_availabilityRefresh);
+        _ = _availabilityRefresh.ContinueWith(completed => { lock (_accountRefreshes) _accountRefreshes.Remove(completed); }, TaskScheduler.Default);
+    }
+    private Task SettingsChanged(WritingSettings value) { _settings = value; ClearPreset(); Dismiss(); return Task.CompletedTask; }
+    private void IntentChanged() { _taskId = ""; _recommendedId = ""; Dismiss(); }
+    private void Dismiss() { _prepared = null; _proposal = null; _entry = null; _copyReview = null; _comparisons.Clear(); }
+    private async Task Refresh() {
+        await LoadPresets();
+        _availabilityCancel?.Cancel();
+        _error = null; _available = null; _demoStatus = null; _demoDocumentId = null; _demoError = null;
+        var generation = Account.Generation; var epoch = ++_availabilityEpoch;
+        if (!_cloudLinked) { _error = "Sync this document to use AI writing tools."; return; }
+        if (!Account.IsSignedIn) { _error = "Sign in to use writing AI. Local writing remains available."; return; }
+        using var cancel = new CancellationTokenSource(); _availabilityCancel = cancel;
+        bool Current() => !_disposed && epoch == _availabilityEpoch && Account.Generation == generation && Account.IsSignedIn;
+        try {
+            var result = await Api.GetWritingAvailabilityAsync(cancel.Token);
+            var usage = await Api.GetUsageAsync(cancel.Token);
+            cancel.Token.ThrowIfCancellationRequested();
+            if (!Current()) return;
+            _available = !usage.AiEnabled || !usage.UiEnabled || usage.QuotaRemaining <= 0 ? result with { AllowedActions = [] } : result;
+            if (!usage.AiEnabled || !usage.UiEnabled) _error = "AI is unavailable for this plan or environment. Check your subscription or backend settings.";
+            else if (usage.QuotaRemaining <= 0) _error = "Your AI quota is exhausted. Refresh after your quota renews.";
+            // Ordinary writing depends on capabilities and quota, not optional practice-demo storage.
+            await InvokeAsync(StateHasChanged);
+            try {
+                var demo = await Api.GetOnboardingDemoAsync(cancel.Token);
+                if (demo is not { Version: 1, Workspace: { } workspace }) return;
+                var source = await Latest(cancel.Token);
+                cancel.Token.ThrowIfCancellationRequested();
+                if (Current() && source.ServerDocumentId == workspace.DocumentId
+                    && source.Sections.Any(s => s.SectionId == SectionId && s.ServerSectionId == workspace.SectionId)) {
+                    _demoStatus = demo; _demoDocumentId = source.ServerDocumentId;
+                }
+            }
+            catch (Exception e) when (e is HttpRequestException or System.Text.Json.JsonException or IOException
+                || e is DeviceAiException { Kind: not DeviceAiFailure.Authentication }) {
+                if (Current()) _demoError = "Practice demo unavailable. Refresh availability to retry the demo. Ordinary writing actions use their own plan and quota checks.";
+            }
+        }
+        catch (OperationCanceledException) when (cancel.IsCancellationRequested) { }
+        catch (Exception e) when (e is HttpRequestException or DeviceAiException or DeviceSignInRequiredException or DeviceIdentityUnavailableException or System.Text.Json.JsonException) {
+            if (!_disposed && epoch == _availabilityEpoch && Account.Generation == generation) { _available = null; _error = e.Message; }
+        }
+        finally { if (_availabilityCancel == cancel) _availabilityCancel = null; }
+    }
+    private Task Generate(string key) => GenerateRequest(key,null);
+    private Task GenerateRecommended() => GenerateRequest("custom_transform", null, recommendationId: _recommendedId);
+    private Task CopyRecommended(string text) => Work(async ct => {
+        var review = _copyReview ?? throw new InvalidOperationException("Review a result first.");
+        if (!review.Result.Items.Contains(text)) throw new InvalidDataException("Choose a reviewed result.");
+        LocalTranslation.RequireFresh(await Latest(ct), review.Source); Ai.RequireCurrentAccount(review.Proposal);
+        await JS.InvokeVoidAsync("navigator.clipboard.writeText", ct, text); _message = "Selected text copied. Your manuscript is unchanged.";
+    });
+    private Task GenerateDemo() => GenerateRequest(OnboardingAiDemoRequest.ActionKey,null,true);
+    public Task RunPresetAsync(PromptDefinition preset) => GenerateRequest("",preset);
+    public Task RunCustomAsync(string instruction) => GenerateRequest("",null,customInstruction:instruction);
+    private Task GenerateRequest(string key,PromptDefinition? preset,bool demo=false,string? customInstruction=null,string? recommendationId=null) => Work(async ct => {
+        Dismiss();
+        QualityEditorSource? customSelection = null;
+        if (customInstruction is not null) {
+            if (string.IsNullOrWhiteSpace(customInstruction) || customInstruction.Length > 2000)
+                throw new InvalidOperationException("Enter a custom instruction of at most 2,000 characters.");
+            customSelection = Capture is null ? throw new InvalidOperationException("The editor selection is unavailable.") : await Capture(ct);
+            var editor = customSelection.Editor;
+            var scope = editor.From < editor.To && !string.IsNullOrWhiteSpace(editor.SelectedText) ? WritingScope.Selection : WritingScope.Section;
+            preset = new("Custom prompt",null,"custom",null,customInstruction.Trim(),new(),scope);
+        }
+        if(preset is not null){ReusablePrompts.ValidateForRun(preset);key=ReusablePrompts.Resolve(preset);}
+        var command = new WritingCommand(key,demo || recommendationId is not null ? WritingScope.Section : preset?.Scope??_scope,recommendationId is not null ? new() : preset is null?_settings:new()); WritingActions.Validate(command);
+        var source = await Latest(ct); var sectionId = SectionId ?? throw new InvalidOperationException("Choose a section first.");
+        var pages = source.Sections.Single(s => s.SectionId == sectionId).Pages.OrderBy(p => p.OrderIndex).ToArray();
+        if (pages.Sum(p => (long)p.Content.Length) > 2_000_000) throw new InvalidDataException("Revise a smaller scope.");
+        await using var module = await JS.InvokeAsync<IJSObjectReference>("import", ct, "./_content/WriterApp.Device.Shared/editor/device-editor.js");
+        var captures = new Dictionary<Guid, TranslationPageCapture>(); var plain = new Dictionary<Guid, string>(); QualityEditorSource? selection = null;
+        if (command.Scope == WritingScope.Selection) {
+            selection = customSelection ?? (Capture is null ? throw new InvalidOperationException("The editor selection is unavailable.") : await Capture(ct));
+            var editor = selection.Editor; var page = pages.Single(p => p.PageId == selection.PageId);
+            if (editor.PlainText != await module.InvokeAsync<string>("qualityPlainText", ct, page.Content, page.ContentFormat.ToString()))
+                throw new InvalidOperationException("The selected page changed. Save and select the passage again.");
+            await module.InvokeVoidAsync("validateQualityRange", ct, page.Content, page.ContentFormat.ToString(), editor.SelectionStart, editor.SelectionEnd, editor.SelectedText, true);
+        } else foreach (var page in pages) {
+            if (command.Scope == WritingScope.Section) captures.Add(page.PageId, await module.InvokeAsync<TranslationPageCapture>("captureTranslation", ct, page.Content, page.ContentFormat.ToString()));
+            else plain.Add(page.PageId, await module.InvokeAsync<string>("consistencyPlainText", ct, page.Content, page.ContentFormat.ToString()));
+        }
+        await Sync.SyncAsync(ct); ct.ThrowIfCancellationRequested(); var saved = await Latest(ct);
+        if (LocalTranslation.Signature(saved) != LocalTranslation.Signature(source)) throw new InvalidOperationException("Writing changed during sync. Review and retry.");
+        if (selection is not null) selection = selection with { Document = saved };
+        var task = PromptStrategyResolver.GetTopWritingToolsForIntent(_intent).SingleOrDefault(t => t.Id == _taskId)?.Description ?? "Continue naturally";
+        var prepared = LocalWriting.Prepare(saved, sectionId, command, captures, selection, plain, task,preset,recommendationId);
+        if (demo) {
+            if(_demoStatus is not {Available:true,Workspace:{ } workspace} || workspace.DocumentId!=saved.ServerDocumentId
+                || saved.Sections.Single(s => s.SectionId==sectionId).ServerSectionId!=workspace.SectionId)
+                throw new InvalidOperationException("Refresh the server-authorized demo for this exact practice section.");
+            var parameters = new Dictionary<string, object?>(prepared.Request.Request.Parameters ?? new Dictionary<string, object?>()) {
+                [OnboardingAiDemoRequest.ParameterKey] = true
+            };
+            prepared = prepared with { Request = prepared.Request with { Request = prepared.Request.Request with { Parameters = parameters } } };
+        }
+        var proposal = await Actions.ProposeAsync(prepared, ct); ct.ThrowIfCancellationRequested(); Ai.RequireCurrentAccount(proposal);
+        RecommendedTextResult? textResult = recommendationId is not null && !RecommendedWriting.Revises(recommendationId) ? RecommendedWriting.TextResult(proposal.ProposedText, recommendationId, prepared.Request.Request.SurroundingText ?? "") : null;
+        if (recommendationId is not null && RecommendedWriting.CopyOnly(recommendationId)) {
+            LocalTranslation.RequireFresh(await Latest(ct), saved); Ai.RequireCurrentAccount(proposal); ct.ThrowIfCancellationRequested();
+            _copyReview = new(recommendationId, textResult!, proposal, saved); _message = "Result ready for selection and copy. No manuscript Apply is offered."; return;
+        }
+        var html = new Dictionary<Guid, string>(); var comparisons = new List<(string, string, string)>();
+        if (command.Scope == WritingScope.Section) {
+            var result = textResult is not null ? prepared.Structure! : recommendationId is null ? WritingActions.Result(proposal.ProposedText, prepared.Structure!) : RecommendedWriting.Revision(proposal.ProposedText, prepared.Structure!, recommendationId);
+            for (int i = 0; i < pages.Length; i++) {
+                bool append = textResult is not null && i == pages.Length - 1;
+                html.Add(pages[i].PageId, append ? await module.InvokeAsync<string>("previewContinuation", ct, pages[i].Content, pages[i].ContentFormat.ToString(), textResult!.Items[0]) : await module.InvokeAsync<string>("previewTranslation", ct, pages[i].Content, pages[i].ContentFormat.ToString(), result.Pages[i].Runs));
+                comparisons.Add((pages[i].Title, string.Join("\n", prepared.Structure!.Pages[i].Runs.Select(r => r.Text)), append ? "Append after original writing: " + textResult!.Items[0] : string.Join("\n", result.Pages[i].Runs.Select(r => r.Text))));
+            }
+        } else {
+            var page = pages.Single(p => p.PageId == prepared.PageId); string text = proposal.ProposedText;
+            if (command.Scope == WritingScope.Continuation) {
+                text = WritingActions.Continuation(text, prepared.Request.Request.SurroundingText ?? "");
+                html.Add(page.PageId, await module.InvokeAsync<string>("previewContinuation", ct, page.Content, page.ContentFormat.ToString(), text));
+                comparisons.Add((page.Title + " · append after existing writing", "The original section stays in place.", text));
+            } else {
+                if (!WritingActions.IsProse(text)) throw new InvalidDataException("The revision is not valid prose. Run AI again.");
+                html.Add(page.PageId, await module.InvokeAsync<string>("previewQualityRevision", ct, page.Content, page.ContentFormat.ToString(), selection!.Editor.SelectionStart, selection.Editor.SelectionEnd, selection.Editor.SelectedText, text));
+                comparisons.Add((page.Title, selection!.Editor.SelectedText, text));
+            }
+        }
+        LocalTranslation.RequireFresh(await Latest(ct), saved); Ai.RequireCurrentAccount(proposal); ct.ThrowIfCancellationRequested();
+        var entry = LocalWriting.Entry(prepared, proposal, LocalWriting.Preview(prepared, html));
+        await History.SaveHistoryAsync(entry, ct); Ai.RequireCurrentAccount(proposal); ct.ThrowIfCancellationRequested();
+        _prepared = prepared; _proposal = proposal; _entry = entry; _comparisons.AddRange(comparisons); _message = "Proposal ready. Review the target and every changed page.";
+    });
+    private Task Apply() => Work(async ct => {
+        if (_prepared?.Command.Scope == WritingScope.Selection) {
+            var selected = Capture is null ? throw new InvalidOperationException("Select the reviewed passage again.") : await Capture(ct);
+            if (selected.PageId != _prepared.PageId || selected.Editor.From != _prepared.Request.From || selected.Editor.To != _prepared.Request.To || selected.Editor.SelectedText != _prepared.Request.SelectedText)
+                throw new InvalidOperationException("The selection changed. Review the intended passage again before applying.");
+        }
+        await Actions.ApplyAsync(_entry ?? throw new InvalidOperationException("Review writing first."), _proposal ?? throw new InvalidOperationException("Proposal unavailable."), ct); Dismiss(); _message = "Writing saved locally. History can undo, redo or recover the original.";
+    });
+    private async Task<LocalDocument> Latest(CancellationToken ct) => await Documents.LoadAsync(DocumentId, ct) ?? throw new IOException("Manuscript unavailable.");
+    private async Task Work(Func<CancellationToken, Task> action) {
+        if (_busy || ExternalBusy) return; _busy = true; _error = null; _message = null; bool began = false;
+        using var cancel = new CancellationTokenSource(); _cancel = cancel;
+        await BusyChanged.InvokeAsync(true);
+        await InvokeAsync(StateHasChanged);
+        try { if (BeforeWork is not null && !await BeforeWork()) throw new InvalidOperationException("Save writing and planning first."); began = true; await action(cancel.Token); }
+        catch (OperationCanceledException) { _message = "Writing request canceled. History retains any approved save for recovery."; }
+        catch (Exception e) when (e is IOException or InvalidDataException or InvalidOperationException or System.Text.Json.JsonException or DeviceAiException or DeviceSignInRequiredException or DeviceIdentityUnavailableException or HttpRequestException or UnauthorizedAccessException or JSException) {
+            var message = e is JSException ? e.Message.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "The writing preview could not be created." : e.Message;
+            _error = message.Replace("Translation", "Writing revision", StringComparison.Ordinal).Replace("translation", "writing revision", StringComparison.Ordinal)
+                .Replace("Translate", "Revise", StringComparison.Ordinal).Replace("translate", "revise", StringComparison.Ordinal);
+        }
+        finally { try { if (began && AfterWork is not null) await AfterWork(); } finally { _busy = false; _cancel = null; if(!_disposed){await BusyChanged.InvokeAsync(false);await InvokeAsync(StateHasChanged);} } }
+    }
+    public void Dispose() { _disposed = true; _availabilityCancel?.Cancel(); _cancel?.Cancel(); Account.Changed -= AccountChanged; }
+    public async ValueTask DisposeAsync() {
+        Dispose();
+        Task[] pending; lock (_accountRefreshes) pending = _accountRefreshes.ToArray();
+        await Task.WhenAll(pending);
+    }
+}

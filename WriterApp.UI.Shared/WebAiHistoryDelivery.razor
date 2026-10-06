@@ -1,0 +1,23 @@
+@namespace WriterApp.UI.Shared
+<section aria-label="AI history delivery" class="history-delivery">
+    <h3>History delivery</h3>
+    <p>Saved writing is independent of history delivery. Retry sends saved outcomes; it does not apply retained drafts.</p>
+    @if (!string.IsNullOrWhiteSpace(Error)) { <p role="status">@Error</p> }
+    <button type="button" disabled="@Busy" @onclick="Retry">@(Busy ? "Checking…" : "Retry delivery")</button>
+    @if (Entries.Count == 0) { <p>No retained delivery entries for this account and manuscript.</p> }
+    @foreach(var entry in Entries) {
+        <details @key="entry.OperationId">
+            <summary>@(entry.Saved ? entry.Outcome : entry.Outcome=="Applied" ? "Apply intent" : entry.Outcome+" intent") · @entry.TargetKind · @entry.Status · step @entry.Sequence</summary>
+            <p>@entry.Message</p><p>Operation @entry.OperationId</p>
+            @if(entry.Before is not null) { <h4>Original saved content</h4><pre>@entry.Before</pre><h4>Approved content</h4><pre>@entry.After</pre> }
+            else { <p>Aggregate content uses its durable operation and original-copy recovery. It cannot be replayed as page HTML.</p> }
+            @if(entry.TargetKind is "SceneCard" or "SectionCard") { <p>This planning receipt cannot authorize manuscript Undo. Inspect current planning before restoring individual fields.</p> }
+        </details>
+    }
+</section>
+@code {
+    [Parameter] public IReadOnlyList<WebAiHistoryDeliveryItem> Entries {get;set;}=[];
+    [Parameter] public string? Error {get;set;}
+    [Parameter] public bool Busy {get;set;}
+    [Parameter] public EventCallback Retry {get;set;}
+}

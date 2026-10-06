@@ -1,0 +1,37 @@
+@using WriterApp.Shared
+<section class="style-revision-review" aria-label="Review style findings">
+    <p><strong>@StyleQualityReview.Goal(Goal).Label</strong> · Clarity, repetition, flow, word choice, grammar and punctuation</p>
+    <p>AI suggestions are judgments to review. Select the changes you want; unchecked suggestions keep your original wording.</p>
+    @if (Report.Edits.Count == 0) { <p role="status">No changes suggested for these criteria. Your writing is unchanged.</p> }
+    else {
+        <p role="status">@Approved.Count of @Report.Edits.Count changes selected.</p>
+        <ol class="style-edit-list">
+        @for (int i = 0; i < Report.Edits.Count; i++) {
+            int index = i; var edit = Report.Edits[i];
+            <li @key="index">
+                <label class="style-edit-choice"><input type="checkbox" checked="@Approved.Contains(index)" disabled="@Busy" @onchange="e => Toggle(index, e.Value is true)" />
+                    @StyleQualityReview.CriterionLabel(edit.Criterion) · @(edit.Kind == "correction" ? "Possible correction" : "Optional style preference")</label>
+                <p><strong>Why:</strong> @edit.Reason</p>
+                @if (edit.Tradeoff != "None") { <p><strong>Effect on voice or emphasis:</strong> @edit.Tradeoff</p> }
+                <AiTextComparison OriginalLabel="Current passage" ProposedLabel="Suggested change" Original="@edit.Original" Proposed="@edit.Replacement" HighlightChanges="true" />
+            </li>
+        }
+        </ol>
+        <details><summary>Full preview with selected changes</summary>
+            <AiTextComparison OriginalLabel="Original writing" ProposedLabel="Selected revision" Original="@Source" Proposed="@StyleQualityReview.Compose(Report, Source, Approved)" />
+        </details>
+    }
+</section>
+@code {
+    [Parameter, EditorRequired] public StyleQualityReport Report { get; set; } = new([]);
+    [Parameter] public string Source { get; set; } = "";
+    [Parameter] public string Goal { get; set; } = StyleQualityReview.DefaultGoal;
+    [Parameter] public IReadOnlyCollection<int> Approved { get; set; } = Array.Empty<int>();
+    [Parameter] public EventCallback<IReadOnlyCollection<int>> ApprovedChanged { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    private Task Toggle(int index, bool selected) {
+        var next = Approved.ToHashSet();
+        if (selected) next.Add(index); else next.Remove(index);
+        return ApprovedChanged.InvokeAsync(next);
+    }
+}

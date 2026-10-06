@@ -22,7 +22,20 @@ internal sealed class AtomicDocumentWriter(Action<string>? beforeCommit = null)
 
             beforeCommit?.Invoke(temporary); // Internal fault-injection seam after durable staging.
             cancellationToken.ThrowIfCancellationRequested();
-            File.Move(temporary, destination, overwrite: true);
+            // Windows readers/indexers can briefly deny replacing a just-opened snapshot.
+            // Retry the same durable staging file; never fall back to truncating the destination.
+            for (int attempt = 0; ; attempt++) {
+                cancellationToken.ThrowIfCancellationRequested();
+                try { File.Move(temporary, destination, overwrite: true); break; }
+                catch (IOException error) when (OperatingSystem.IsWindows() && attempt < 5
+                    && (error.HResult & 0xffff) is 5 or 32 or 33) {
+                    await Task.Delay(25 << attempt, cancellationToken);
+                }
+                catch (UnauthorizedAccessException) when (OperatingSystem.IsWindows() && attempt < 5
+                    && File.Exists(destination) && !File.GetAttributes(destination).HasFlag(FileAttributes.ReadOnly)) {
+                    await Task.Delay(25 << attempt, cancellationToken);
+                }
+            }
         }
         finally
         {

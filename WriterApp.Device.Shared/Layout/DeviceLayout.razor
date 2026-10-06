@@ -15,7 +15,9 @@
     <Navigation>
         <NavLink class="app-nav-link" href="/" Match="NavLinkMatch.All">@if (IsLibraryRoute) { <LibraryIcon Name="document" /> }<span>Projects &amp; documents</span></NavLink>
         <NavLink class="app-nav-link" href="@SynopsisHref" title="Open the story synopsis.">@if (IsLibraryRoute) { <LibraryIcon Name="synopsis" /> }<span>Synopsis</span></NavLink>
+        <NavLink class="app-nav-link" href="@StoryboardHref" title="Open the visual scene board.">@if (IsLibraryRoute) { <LibraryIcon Name="storyboard" /> }<span>Storyboard</span></NavLink>
         <NavLink class="app-nav-link" href="/projects">@if (IsLibraryRoute) { <LibraryIcon Name="folder" /> }<span>Projects</span></NavLink>
+        <NavLink class="app-nav-link" href="/ai-guide">AI practice guide</NavLink>
         @if (!IsLibraryRoute) { <NavLink class="app-nav-link" href="/account">Account &amp; Help</NavLink> }
     </Navigation>
     <SidebarFooter>
@@ -34,6 +36,21 @@
 @code {
     private DeviceWorkspaceView View { get; } = new();
     private bool IsLibraryRoute => new Uri(Navigation.Uri).AbsolutePath == "/";
+    private string StoryboardHref
+    {
+        get
+        {
+            var uri = new Uri(Navigation.Uri);
+            string[] segments = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            if (segments.Length >= 2 && Guid.TryParse(segments[1], out Guid id))
+            {
+                if (segments[0].Equals("documents", StringComparison.OrdinalIgnoreCase) ||
+                    segments[0].Equals("synopsis", StringComparison.OrdinalIgnoreCase)) return $"/storyboard/{id:D}";
+                if (segments[0].Equals("projects", StringComparison.OrdinalIgnoreCase)) return $"/projects/{id:D}/storyboard{uri.Query}";
+            }
+            return "/storyboard";
+        }
+    }
     private string SynopsisHref
     {
         get

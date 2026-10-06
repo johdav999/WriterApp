@@ -1,0 +1,18 @@
+@using WriterApp.Shared
+<section class="preset-conflict" aria-label="Resolve preset conflict">
+    <h4>Cloud preset changed</h4><p>The queued version and current cloud version are both retained. Choose how to continue.</p>
+    @if(Local is { } local){<h5>Queued local version: @local.Name</h5><p>@local.Category · @local.Kind · @local.Scope · @(local.Pinned?"Pinned":"Unpinned")</p><pre>@local.Template @local.ActionKey</pre><pre>@System.Text.Json.JsonSerializer.Serialize(local.Parameters)</pre>}
+    @if(Cloud is { } cloud){<h5>Current cloud version: @cloud.Name</h5><p>@cloud.Category · @cloud.Kind · @cloud.Scope · @(cloud.Pinned?"Pinned":"Unpinned")</p><pre>@cloud.Template @cloud.ActionKey</pre><pre>@System.Text.Json.JsonSerializer.Serialize(cloud.Parameters)</pre>}
+    else{<p>The cloud version was deleted. It will remain deleted unless you explicitly create a separate copy.</p>}
+    @if(Local is not null){<button type="button" disabled="@Disabled" @onclick="KeepBoth">Keep both: queue a separate cloud copy</button>}
+    @if(Cloud is not null){<button type="button" disabled="@Disabled" @onclick="KeepCloud">Keep cloud and import a separate local copy</button>}
+    <button type="button" disabled="@Disabled" @onclick="Cancel">Keep originals and cancel transfer</button>
+</section>
+@code {
+    [Parameter] public PromptDefinition? Local {get;set;}
+    [Parameter] public PromptDefinition? Cloud {get;set;}
+    [Parameter] public bool Disabled {get;set;}
+    [Parameter] public EventCallback KeepBoth {get;set;}
+    [Parameter] public EventCallback KeepCloud {get;set;}
+    [Parameter] public EventCallback Cancel {get;set;}
+}

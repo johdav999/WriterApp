@@ -1,0 +1,33 @@
+@using WriterApp.Shared
+<section class="preset-list" aria-label="@(Cloud ? "Cloud presets" : "Local presets")">
+    @foreach(var item in Items) {
+        <article @key="item.Id">
+            <h4>@item.Preset.Name @(item.Preset.Pinned ? "★" : "")</h4>
+            <p class="preset-origin">@(item.Origin ?? (Cloud ? "Cached cloud preset" : "Local preset"))</p>
+            @if(item.TransferStatus is { } transfer){<p class="preset-transfer-status" role="status">@transfer</p>}
+            <p>@(item.Preset.Category??"Uncategorized") · @item.Preset.Kind · @(item.Preset.Scope==WritingScope.Selection?"Selected passage":"All pages in section")</p>
+            @if(item.Notice is { } notice){<p role="status">@notice</p>}
+            @if(Cloud){<button type="button" disabled="@Disabled" @onclick="() => Import.InvokeAsync(item.Id)">Import separate local copy</button>}
+            else {
+                <button type="button" @onmousedown:preventDefault="true" disabled="@(Disabled||item.Notice is not null)" @onclick="() => Run.InvokeAsync(item.Id)">Run @item.Preset.Name</button>
+                <button type="button" disabled="@Disabled" @onclick="() => Edit.InvokeAsync(item.Id)">Edit @item.Preset.Name</button>
+                <button type="button" disabled="@Disabled" @onclick="() => Pin.InvokeAsync(item.Id)">@(item.Preset.Pinned?"Unpin":"Pin") @item.Preset.Name</button>
+                <button type="button" disabled="@(Disabled||!CanTransfer)" @onclick="() => Copy.InvokeAsync(item.Id)">Copy / update cloud</button>
+            }
+            <button type="button" disabled="@(Disabled||Cloud&&!CanTransfer)" @onclick="() => Delete.InvokeAsync(item.Id)">Delete @(Cloud?"cloud":"local") preset @item.Preset.Name</button>
+        </article>
+    }
+    @if(Items.Count==0){<p>No @(Cloud?"cached cloud":"local") presets in this category.</p>}
+</section>
+@code {
+    [Parameter] public IReadOnlyList<PromptLibraryItem> Items {get;set;}=[];
+    [Parameter] public bool Cloud {get;set;}
+    [Parameter] public bool Disabled {get;set;}
+    [Parameter] public bool CanTransfer {get;set;}
+    [Parameter] public EventCallback<Guid> Run {get;set;}
+    [Parameter] public EventCallback<Guid> Edit {get;set;}
+    [Parameter] public EventCallback<Guid> Pin {get;set;}
+    [Parameter] public EventCallback<Guid> Copy {get;set;}
+    [Parameter] public EventCallback<Guid> Import {get;set;}
+    [Parameter] public EventCallback<Guid> Delete {get;set;}
+}

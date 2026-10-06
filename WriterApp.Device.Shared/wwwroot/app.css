@@ -17,26 +17,34 @@
 .local-navigator .tree-node-badge { grid-column:2; }
 .local-navigator .tree-select { grid-column:3; }
 
-/* Keep the local editor's writing tools as compact as the shared client drawer. */
+/* Writing tools follow the shared drawer tokens, with room for each action. */
 .prosa-editor .desktop-coach-action { width:100%; min-height:34px; border:0; border-radius:6px; background:var(--color-primary); color:#fff; font-weight:600; cursor:pointer; }
 .prosa-editor .desktop-coach-action:hover { filter:brightness(1.08); }
-.prosa-editor .desktop-writing-tools { margin:0; padding:0; border:0; display:grid; gap:10px; min-width:0; }
+.prosa-editor .desktop-writing-tools { margin:0; padding:0; border:0; display:grid; gap:20px; min-width:0; }
 .prosa-editor .desktop-writing-tools p { margin:0; }
 .prosa-editor .desktop-writing-hint { color:var(--color-text-muted); font-size:var(--font-size-helper); line-height:1.45; }
-.prosa-editor .desktop-writing-tools .workspace-ai-actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; margin:0; }
+.prosa-editor .desktop-writing-tools .workspace-writing-actions { display:grid; grid-template-columns:minmax(0,1fr); align-items:start; gap:16px; margin:0; }
 .prosa-editor .desktop-writing-tools button,
-.prosa-editor .desktop-writing-history button { margin:0; min-height:34px; padding:6px 10px; border:1px solid var(--color-border); border-radius:6px; background:var(--color-surface-1); color:var(--color-text); font:inherit; cursor:pointer; }
+.prosa-editor .desktop-writing-history button { margin:0; min-height:42px; padding:10px 12px; border:1px solid var(--color-border); border-radius:var(--radius-sm); background:var(--color-surface-1); color:var(--color-text); font:inherit; font-size:var(--font-size-helper); line-height:1.35; cursor:pointer; }
 .prosa-editor .desktop-writing-tools button:hover:not(:disabled) { border-color:var(--color-primary); }
 .prosa-editor .desktop-writing-tools button:disabled { opacity:.55; cursor:not-allowed; }
+.prosa-editor .desktop-writing-tools .writing-rewrite { background:var(--color-primary);color:#fff;border-color:var(--color-primary);font-weight:600; }
+.prosa-editor .desktop-writing-tools button.primary { background:var(--color-primary); color:#fff; border-color:var(--color-primary); font-weight:600; }
+.prosa-editor .desktop-writing-tools button.primary:hover:not(:disabled),
+.prosa-editor .desktop-writing-tools .writing-rewrite:hover:not(:disabled) { background:var(--color-primary-hover); border-color:var(--color-primary-hover); }
 .prosa-editor .desktop-writing-tools > label { font-size:var(--font-size-helper); font-weight:600; }
 .prosa-editor .desktop-writing-tools textarea,
-.prosa-editor .desktop-writing-tools input { width:100%; min-width:0; border:1px solid var(--color-border); border-radius:7px; background:var(--color-surface-1); padding:9px; font:inherit; }
+.prosa-editor .desktop-writing-tools input:not([type="checkbox"]):not([type="radio"]) { box-sizing:border-box; width:100%; min-width:0; border:1px solid var(--color-border-strong); border-radius:var(--radius-sm); background:var(--color-surface-1); color:var(--color-text); padding:12px; font:inherit; }
 .prosa-editor .desktop-writing-tools textarea { resize:vertical; min-height:72px; }
-.prosa-editor .desktop-writing-more { border-top:1px solid var(--color-border); padding-top:9px; font-size:var(--font-size-helper); }
-.prosa-editor .desktop-writing-more summary { cursor:pointer; font-weight:600; }
-.prosa-editor .desktop-writing-more[open] { display:grid; gap:8px; }
-.prosa-editor .desktop-writing-more label { display:grid; gap:5px; }
-.prosa-editor .desktop-writing-history { display:flex; align-items:center; gap:8px; border-top:1px solid var(--color-border); padding-top:9px; }
+.prosa-editor .desktop-writing-more { border-top:1px solid var(--color-border); font-size:var(--font-size-helper); }
+.prosa-editor .desktop-writing-more summary { padding:12px 0; cursor:pointer; font-weight:600; line-height:1.5; }
+.prosa-editor .desktop-writing-details-content { display:grid; gap:16px; padding:8px 0; }
+.prosa-editor .desktop-writing-more label { display:grid; gap:8px; }
+.prosa-editor .desktop-writing-more select { box-sizing:border-box; width:100%; min-width:0; min-height:40px; padding:8px 10px; border:1px solid var(--color-border-strong); border-radius:var(--radius-sm); background:var(--color-surface-1); color:var(--color-text); font:inherit; }
+.prosa-editor .desktop-writing-more section { display:grid; gap:16px; min-width:0; }
+.prosa-editor .desktop-writing-utility { display:grid; }
+.prosa-editor .desktop-writing-history { display:flex; flex-wrap:wrap; align-items:center; gap:12px; border-top:1px solid var(--color-border); padding-top:16px; }
+.prosa-editor .desktop-writing-history button { flex:1; background:transparent; color:var(--color-primary); }
 .prosa-editor .desktop-writing-history span { min-width:23px; min-height:23px; display:grid; place-items:center; border-radius:999px; background:var(--color-surface-3); font-size:var(--font-size-caption); }
 .prosa-editor .desktop-writing-summary { display:grid; gap:10px; padding:12px; border:1px solid var(--color-border); border-radius:10px; background:var(--color-surface-2); font-size:var(--font-size-helper); }
 .prosa-editor .desktop-writing-summary p { margin:0; }

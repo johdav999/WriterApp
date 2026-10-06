@@ -56,6 +56,8 @@ namespace WriterApp.AI.Actions
                 ["existing_value"] = existingValue,
                 ["user_notes"] = userNotes
             };
+            if (input.Options?.TryGetValue("synopsis_coaching_version", out var version) == true)
+                inputs["synopsis_coaching_version"] = version!;
 
             return new AiRequest(
                 Guid.NewGuid(),

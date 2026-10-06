@@ -20,12 +20,16 @@
             </div>
         }
         <div class="rp-panel" id="@PanelId" role="@(PanelId is null ? null : "tabpanel")" aria-labelledby="@LabelledBy" tabindex="@(PanelId is null ? null : "0")">
-            <div class="rp-content">
+            <div class="rp-content" tabindex="@(PinTrailingBody ? "0" : null)">
                 @Body
             </div>
+            @if (PinTrailingBody && TrailingBody is not null && TrailingBodyVisible)
+            {
+                <StoryPanelResizeHandle />
+            }
             @if (TrailingBody is not null)
             {
-                <div class="rp-trailing-body" hidden="@(!TrailingBodyVisible)">
+                <div class="rp-trailing-body" hidden="@(!TrailingBodyVisible)" tabindex="@(PinTrailingBody ? "0" : null)">
                     @TrailingBody
                 </div>
             }

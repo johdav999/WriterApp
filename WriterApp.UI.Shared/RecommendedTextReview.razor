@@ -1,0 +1,26 @@
+@using WriterApp.Shared
+<section class="recommended-text-review" aria-label="Review recommended writing result">
+    <h3>@RecommendedWriting.Tool(ToolId).DisplayName</h3>
+    <p>@RecommendedWriting.Target(ToolId). This result is for selection and copy. Your manuscript stays unchanged.</p>
+    <fieldset disabled="@Busy"><legend>Choose text to copy</legend>
+        @for (int i = 0; i < Result.Items.Count; i++) {
+            int index = i;
+            <label><input type="radio" name="@_group" checked="@(_selected == index)" @onchange="() => _selected = index" /><span>@Result.Items[index]</span></label>
+        }
+    </fieldset>
+    <div class="recommended-text-actions">
+        <button type="button" disabled="@Busy" @onclick="() => Copy.InvokeAsync(Result.Items[_selected])">Copy selected text</button>
+        <button type="button" disabled="@Busy" @onclick="Dismiss">Dismiss result</button>
+    </div>
+    @if (Message is not null) { <p role="status">@Message</p> }
+</section>
+@code {
+    [Parameter, EditorRequired] public string ToolId { get; set; } = "blog.generate_headlines";
+    [Parameter, EditorRequired] public RecommendedTextResult Result { get; set; } = new([]);
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public string? Message { get; set; }
+    [Parameter] public EventCallback<string> Copy { get; set; }
+    [Parameter] public EventCallback Dismiss { get; set; }
+    private int _selected;
+    private readonly string _group = "recommended-" + Guid.NewGuid().ToString("N");
+}

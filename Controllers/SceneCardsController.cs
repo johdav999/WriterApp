@@ -128,25 +128,30 @@ namespace WriterApp.Controllers
                 request.NarrativeRole,
                 request.NarrativeIntent,
                 request.NarrativePurpose);
+            // An unrelated manual edit must not materialize the DTO's legacy projection.
+            var savedNarrative = ResolveNarrativeFields(card.NarrativeRole, card.NarrativeIntent, card.NarrativePurpose);
+            string? savedPurpose = card.NarrativePurpose;
             if (!string.IsNullOrWhiteSpace(narrativeIntent) && narrativeIntent.Length > MaxNarrativeIntentLength)
             {
                 return BadRequest(new { message = $"narrativeIntent max length is {MaxNarrativeIntentLength}." });
             }
-            card.NarrativeRole = narrativeRole;
-            card.NarrativeIntent = NormalizeSceneField(narrativeIntent);
-            card.NarrativePurpose = SceneNarrativeRoleCatalog.ToLegacyPurpose(narrativeRole, narrativeIntent) ?? string.Empty;
-            card.EmotionalBeat = NormalizeSceneField(request.EmotionalBeat) ?? string.Empty;
-            card.KeyEvents = NormalizeSceneField(request.KeyEvents) ?? string.Empty;
-            card.OpenQuestions = NormalizeSceneField(request.OpenQuestions) ?? string.Empty;
-            card.Summary = NormalizeSceneField(request.Summary);
-            card.Status = NormalizeStatus(request.Status);
-            card.PovCharacterId = NormalizeSceneField(request.PovCharacterId);
-            card.PlaceId = NormalizeSceneField(request.PlaceId);
-            card.TimelineEventId = NormalizeSceneField(request.TimelineEventId);
-            card.TimeRef = NormalizeSceneField(request.TimeRef);
-            card.TagsJson = JsonSerializer.Serialize(NormalizeTags(request.Tags), JsonOptions);
-            card.SubplotTagsJson = JsonSerializer.Serialize(NormalizeTags(request.SubplotTags), JsonOptions);
-            card.ReferencesJson = JsonSerializer.Serialize(NormalizeReferences(request.References), JsonOptions);
+            if (SceneCardApprovals.Writes(request.ApprovedFields, SceneCoachingField.NarrativeRole)) card.NarrativeRole = narrativeRole;
+            if (SceneCardApprovals.Writes(request.ApprovedFields, SceneCoachingField.NarrativeIntent)) card.NarrativeIntent = NormalizeSceneField(narrativeIntent);
+            if (SceneCardApprovals.Writes(request.ApprovedFields, SceneCoachingField.NarrativePurpose)) card.NarrativePurpose = request.ApprovedFields is null
+                ? savedNarrative == (narrativeRole, narrativeIntent) ? savedPurpose : SceneNarrativeRoleCatalog.ToLegacyPurpose(narrativeRole, narrativeIntent) ?? string.Empty
+                : NormalizeSceneField(request.NarrativePurpose);
+            if (SceneCardApprovals.Writes(request.ApprovedFields, SceneCoachingField.EmotionalBeat)) card.EmotionalBeat = NormalizeSceneField(request.EmotionalBeat) ?? string.Empty;
+            if (SceneCardApprovals.Writes(request.ApprovedFields, SceneCoachingField.KeyEvents)) card.KeyEvents = NormalizeSceneField(request.KeyEvents) ?? string.Empty;
+            if (SceneCardApprovals.Writes(request.ApprovedFields, SceneCoachingField.OpenQuestions)) card.OpenQuestions = NormalizeSceneField(request.OpenQuestions) ?? string.Empty;
+            if (SceneCardApprovals.Writes(request.ApprovedFields, SceneCoachingField.Summary)) card.Summary = NormalizeSceneField(request.Summary);
+            if (SceneCardApprovals.Writes(request.ApprovedFields, SceneCoachingField.Status)) card.Status = NormalizeStatus(request.Status);
+            if (SceneCardApprovals.Writes(request.ApprovedFields, SceneCoachingField.PovCharacterId)) card.PovCharacterId = NormalizeSceneField(request.PovCharacterId);
+            if (SceneCardApprovals.Writes(request.ApprovedFields, SceneCoachingField.PlaceId)) card.PlaceId = NormalizeSceneField(request.PlaceId);
+            if (SceneCardApprovals.Writes(request.ApprovedFields, SceneCoachingField.TimelineEventId)) card.TimelineEventId = NormalizeSceneField(request.TimelineEventId);
+            if (SceneCardApprovals.Writes(request.ApprovedFields, SceneCoachingField.TimeRef)) card.TimeRef = NormalizeSceneField(request.TimeRef);
+            if (SceneCardApprovals.Writes(request.ApprovedFields, SceneCoachingField.Tags)) card.TagsJson = JsonSerializer.Serialize(NormalizeTags(request.Tags), JsonOptions);
+            if (SceneCardApprovals.Writes(request.ApprovedFields, SceneCoachingField.SubplotTags)) card.SubplotTagsJson = JsonSerializer.Serialize(NormalizeTags(request.SubplotTags), JsonOptions);
+            if (SceneCardApprovals.Writes(request.ApprovedFields, SceneCoachingField.References)) card.ReferencesJson = JsonSerializer.Serialize(NormalizeReferences(request.References), JsonOptions);
             card.UpdatedAtUtc = DateTimeOffset.UtcNow;
 
             await _dbContext.SaveChangesAsync(ct);

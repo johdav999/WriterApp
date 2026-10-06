@@ -4,8 +4,8 @@ using WriterApp.Device.Shared.Storage;
 
 namespace WriterApp.Device.Shared.Services;
 
-/// <summary>Explicit copy transfers: the existing API has no idempotent upsert or conflict token.</summary>
-public sealed class DevicePromptLibrary(HttpClient http, DeviceAccountService account, LocalAiStore store)
+/// <summary>Explicit preset transfers. Legacy plain-copy methods are retained for compatibility; the desktop library uses the versioned queue.</summary>
+public sealed partial class DevicePromptLibrary(HttpClient http, DeviceAccountService account, LocalAiStore store)
 {
     private long RequireAccount()
     {

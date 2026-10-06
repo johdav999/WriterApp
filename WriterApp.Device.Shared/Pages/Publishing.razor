@@ -4,6 +4,9 @@
 @inject LocalPublishingStore Settings
 @inject IDeviceFileDialog Files
 @inject IDevicePdfExport Pdf
+@inject DeviceCoverStudio CoverStudio
+@inject DeviceAccountService Account
+@implements IDisposable
 <PageTitle>Publishing · Prosa</PageTitle>
 <div class="publishing">
 <h1>Publishing</h1>
@@ -11,6 +14,7 @@
 {
     <p>@_document.Title · Exports stay on this device. No manuscript is uploaded for conversion.</p>
     <a href="@($"/documents/{DocumentId}")">Return to writing</a>
+    @if (_document.Project is not null) { <a href="@($"/documents/{DocumentId}/cover")">AI cover studio</a> }
     <div class="publishing-layout">
     <fieldset disabled="@_busy">
         <legend>Export settings</legend>
@@ -36,9 +40,11 @@
         @if (Options.Format != DeviceExportFormat.Text)
         { <label class="check"><input type="checkbox" @bind="TitlePage" /> Include title page</label> }
         <label class="check"><input type="checkbox" @bind="IncludeCover" /> Include cover</label>
-        <p>PNG cover, at most 2 MB. Stored with this manuscript's local publishing settings.</p>
+        <p>PNG cover, at most 2 MB. A saved project PNG is used for publishing. Choosing a local PNG also updates the project cover when this document belongs to a project.</p>
         <button @onclick="PickCover" disabled="@(!Files.IsAvailable)">Choose local cover</button>
-        @if (_state.Cover is { } cover) { <img class="cover" src="@cover.DataUri" alt="Local publishing cover" /><p>@cover.FileName</p> }
+        @{ var display=CoverForDisplay(); }
+        @if (display.Cover is { } cover) { <img class="cover" src="@cover.DataUri" alt="Saved publishing cover" /><p>@cover.FileName</p> }
+        @if (display.Error is not null) { <p role="alert">@display.Error</p> }
         <button @onclick="SaveOptions">Save settings on this device</button>
         <label>Saved preset<select value="" @onchange="LoadPreset">
             <option value="">Choose preset</option>
@@ -71,6 +77,8 @@ else if (_error is null) { <p>Loading publishing settings…</p> }
     private LocalDocument? _document;
     private LocalPublishingState? _state;
     private PublishingSnapshot? _snapshot;
+    private LocalCover? _remoteCover;
+    private long _generation;
     private string? _error, _message;
     private string _presetName="";
     private bool _busy;
@@ -80,12 +88,19 @@ else if (_error is null) { <p>Loading publishing settings…</p> }
     private string Template { get=>Options.Template; set=>Options=Options with { Template=value }; }
     private bool TitlePage { get=>Options.TitlePage; set=>Options=Options with { TitlePage=value }; }
     private bool IncludeCover { get=>Options.IncludeCover; set=>Options=Options with { IncludeCover=value }; }
+    private (LocalCover? Cover,string? Error) CoverForDisplay() {
+        try { return (LocalCover.FromProject(_document!) ?? (_document!.Project?.CoverImageUrl?.StartsWith("https://",StringComparison.OrdinalIgnoreCase)==true ? _remoteCover : _state!.Cover),null); }
+        catch(InvalidDataException) { return (_state?.Cover,"The saved project cover is invalid. Choose a valid local PNG or save a new cover before exporting with Include cover."); }
+    }
     private string Section { get=>Options.SectionId?.ToString() ?? ""; set=>Options=Options with { SectionId=Guid.Parse(value) }; }
+    protected override void OnInitialized() { _generation=Account.Generation;Account.Changed+=AccountChanged; }
+    private void AccountChanged() { if(_generation==Account.Generation)return;_generation=Account.Generation;_remoteCover=null;_snapshot=null;_=InvokeAsync(StateHasChanged); }
+    public void Dispose() { Account.Changed-=AccountChanged; }
     protected override async Task OnParametersSetAsync()
     {
         if(_loaded==DocumentId) return;
-        _loaded=DocumentId; _state=null; _document=null; _snapshot=null;
-        await Run(async () => { _document=await Latest(); _state=await Settings.LoadAsync(_document); });
+        _loaded=DocumentId; _state=null; _document=null; _snapshot=null;_remoteCover=null;
+        await Run(async () => { _document=await Latest(); _state=await Settings.LoadAsync(_document);_remoteCover=await CoverStudio.CachedProjectCoverAsync(_document); });
     }
     private async Task<LocalDocument> Latest()
     {
@@ -100,6 +115,7 @@ else if (_error is null) { <p>Loading publishing settings…</p> }
         if(file is null) { _message="Cover selection canceled."; return; }
         var doc=await Latest();
         var next=_state! with { Cover=LocalCover.Create(doc,file) };
+        if(doc.Project is not null) { doc=await Documents.SetProjectCoverAsync(doc,next.Cover.DataUri,Guid.NewGuid()); _document=doc; }
         _state=await Settings.SaveAsync(doc,next); _snapshot=null; _message="Cover saved on this device.";
     });
     private void LoadPreset(ChangeEventArgs e) { if(Guid.TryParse(e.Value?.ToString(),out var id)) Options=_state!.Presets.Single(p=>p.Id==id).Options; }
@@ -111,12 +127,17 @@ else if (_error is null) { <p>Loading publishing settings…</p> }
     private async Task<PublishingSnapshot> Snapshot()
     {
         var doc=await Latest();
-        _snapshot=await DevicePublishing.PrepareAsync(doc,Options,_state?.Cover);
+        _document=doc;
+        long generation=Account.Generation;var id=DocumentId;
+        _remoteCover=await CoverStudio.CachedProjectCoverAsync(doc);
+        var snapshot=await DevicePublishing.PrepareAsync(doc,Options,_remoteCover ?? _state?.Cover);
+        if(generation!=Account.Generation || id!=DocumentId)throw new InvalidOperationException("Account or document changed. Reopen publishing before using its preview.");
+        _snapshot=snapshot with{AccountGeneration=generation};
         return _snapshot;
     }
     private Task Preview() => Run(async () => { await Snapshot(); });
     private Task Export() => Run(async () => {
-        var snapshot=await Snapshot();
+        var snapshot=await Snapshot();long generation=snapshot.AccountGeneration;
         var file=snapshot.File;
         if(snapshot.Options.Format==DeviceExportFormat.Pdf) {
             var layout=ExportTemplatePresets.GetByKey(snapshot.Options.Template)!;
@@ -124,6 +145,7 @@ else if (_error is null) { <p>Loading publishing settings…</p> }
             if(pdf is null) { _message="PDF preview canceled. No file saved."; return; }
             file=new(Path.ChangeExtension(file.SuggestedFileName,".pdf"),".pdf",pdf);
         }
+        if(generation!=Account.Generation || snapshot.DocumentId!=DocumentId)throw new InvalidOperationException("Account or document changed. Reopen publishing before exporting.");
         bool saved=await Files.SaveAsync(file.SuggestedFileName,file.Extension,file.Content);
         _message=saved ? $"Exported saved writing revision {snapshot.Revision}." : "Export canceled. No file saved.";
     });
@@ -133,7 +155,7 @@ else if (_error is null) { <p>Loading publishing settings…</p> }
         _busy=true; _message=null; _error=null;
         try { await action(); }
         catch(OperationCanceledException) { _message="Canceled. Writing was not changed."; }
-        catch(Exception e) when(e is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException or ArgumentException or System.Text.Json.JsonException or System.Runtime.InteropServices.COMException)
+        catch(Exception e) when(e is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException or ArgumentException or System.Text.Json.JsonException or System.Runtime.InteropServices.COMException or DeviceSignInRequiredException)
         { _error="Publishing did not complete. Writing was not changed. "+e.Message; }
         finally { _busy=false; }
     }

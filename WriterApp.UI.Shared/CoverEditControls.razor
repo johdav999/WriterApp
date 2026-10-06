@@ -1,0 +1,15 @@
+@using WriterApp.Shared
+<div class="cover-edit-controls" aria-label="Cover adjustments">
+    <h3>Adjust selected concept</h3>
+    @foreach(var operation in CoverEdits.Operations) {
+        <button type="button" disabled="@(Disabled || !HasSource || Capabilities?.Version!=1 || Capabilities.Operations?.Contains(operation)!=true)"
+                @onclick="()=>Requested.InvokeAsync(operation)">@CoverEdits.Label(operation)</button>
+    }
+    <p role="status">@(Capabilities is null ? "Connect and refresh image-edit availability before adjusting a saved cover or concept." : Capabilities.UnavailableReason ?? "Edits use the selected owned PNG. Review and select a concept before saving; the current cover stays unchanged.")</p>
+</div>
+@code {
+    [Parameter] public CoverEditCapabilities? Capabilities {get;set;}
+    [Parameter] public bool Disabled {get;set;}
+    [Parameter] public bool HasSource {get;set;}
+    [Parameter] public EventCallback<string> Requested {get;set;}
+}

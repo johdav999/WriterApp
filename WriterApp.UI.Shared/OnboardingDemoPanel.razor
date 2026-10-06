@@ -1,0 +1,26 @@
+@using WriterApp.Shared
+<section aria-label="Server-authorized AI demo">
+    <h2>Try the online AI demo</h2>
+    <p>Your local guide and guest practice stay separate. This choice creates or reopens a server-owned practice workspace and synchronizes its writing.</p>
+    @if (!SignedIn) { <p>Sign in to choose the online demo, or continue the local guide offline.</p> }
+    else {
+        <button type="button" disabled="@Busy" @onclick="Open">Create or reopen online demo</button>
+        <button type="button" disabled="@Busy" @onclick="Refresh">Refresh server demo status</button>
+        @if (Status is { } status) {
+            <p role="status">@(status.Available ? "One server-authorized section-shortening request is available." : "Demo unavailable: " + status.Reason) · @(status.RequestUsed ? "Request used" : "Request not used")</p>
+            @if (WorkspaceUrl is not null) { <p><a href="@WorkspaceUrl">Open linked demo writing</a></p> }
+            <p>Request success and applying a reviewed change are separate from completing onboarding.</p>
+            @if (status.HasCompletedOnboarding) { <p>Online onboarding completed.</p> }
+            else { <button type="button" disabled="@Busy" @onclick="Complete">Complete online onboarding explicitly</button> }
+        }
+    }
+</section>
+@code {
+    [Parameter] public bool SignedIn { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public OnboardingDemoStatus? Status { get; set; }
+    [Parameter] public string? WorkspaceUrl { get; set; }
+    [Parameter] public EventCallback Open { get; set; }
+    [Parameter] public EventCallback Refresh { get; set; }
+    [Parameter] public EventCallback Complete { get; set; }
+}

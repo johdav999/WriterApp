@@ -58,12 +58,20 @@
                     bool linked = AnnotationRequested.HasDelegate && LocalAnnotationMarkup.PageFor(_document!, annotation.LocalId) is not null;
                     <article class="panel-annotation @(SelectedAnnotationId == annotation.LocalId ? "is-selected" : "")" aria-current="@(SelectedAnnotationId == annotation.LocalId ? "true" : null)" @key="annotation.LocalId"><strong>@annotation.Value.Kind · @annotation.Value.Status</strong>
                     @if (linked)
-                    { <button type="button" class="annotation-text-link" title="Show this annotation in the text" @onmousedown:preventDefault="true" @onclick="() => AnnotationRequested.InvokeAsync(annotation.LocalId)">@annotation.Value.Content</button> }
-                    else { <p>@annotation.Value.Content</p> }
-                    @if (annotation.Value.AnchorText.Length > 0) { <blockquote>@annotation.Value.AnchorText</blockquote><p>@AnchorLabel(annotation)</p> }
+                    { <button type="button" class="annotation-text-link annotation-title-link" title="Show this annotation in the text" @onmousedown:preventDefault="true" @onclick="() => AnnotationRequested.InvokeAsync(annotation.LocalId)">@AnnotationTitle(annotation)</button> }
+                    else { <p class="annotation-title">@AnnotationTitle(annotation)</p> }
+                    @if (AnnotationTitle(annotation) != annotation.Value.Content.Trim())
+                    { <details class="annotation-details"><summary>Comment details</summary><p>@annotation.Value.Content</p></details> }
+                    @if (annotation.Value.AnchorText.Length > 0)
+                    {
+                        <details class="annotation-details"><summary>Quoted passage</summary><blockquote>@annotation.Value.AnchorText</blockquote></details>
+                        <p>@AnchorLabel(annotation)</p>
+                    }
                     else { <p>Scene-level note</p> }
                     @if (linked)
                     { <button type="button" @onmousedown:preventDefault="true" @onclick="() => AnnotationRequested.InvokeAsync(annotation.LocalId)">Show in text</button> }
+                    else if (GetSelectedText is not null)
+                    { <button type="button" disabled="@_saving" @onmousedown:preventDefault="true" @onclick="() => ReanchorAsync(annotation)">Link to selected text</button> }
                     <button type="button" disabled="@_saving" @onclick="() => ResolveAsync(annotation)">@(annotation.Value.Status == "open" ? "Resolve" : "Reopen")</button></article>
                 }
                 <label>Kind <select @bind="_kind"><option value="comment">Comment</option><option value="todo">Task</option></select></label>
@@ -252,7 +260,21 @@ else
         if (_error is not null) { _annotationText = text; _quote = quote; }
     }
     private Task ResolveAsync(LocalSceneAnnotation a) => MutateAsync(d => LocalPlanning.Resolve(d, _sceneId!.Value, a.LocalId, a.Value.Status == "open"));
-    private string AnchorLabel(LocalSceneAnnotation a) => a.Value.AnchorDetached || !LocalPlanning.UniqueQuote(LocalPlanning.SceneText(_document!, Selected!), a.Value.AnchorText)
-        ? "Detached quote — review against the current writing" : "Exact quote present in this scene";
+    private async Task ReanchorAsync(LocalSceneAnnotation annotation)
+    {
+        string quote = GetSelectedText is null ? "" : await GetSelectedText();
+        if (string.IsNullOrWhiteSpace(quote)) { _error = "Select the passage in the writing, then choose Link to selected text."; return; }
+        Guid sceneId = _sceneId!.Value;
+        await MutateAsync(d => LocalPlanning.Reanchor(d, sceneId, annotation.LocalId, quote));
+    }
+    private static string AnnotationTitle(LocalSceneAnnotation annotation)
+    {
+        string title = annotation.Value.Content.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .FirstOrDefault(line => !string.IsNullOrWhiteSpace(line))?.Trim() ?? "";
+        if (title.Length == 0) return annotation.Value.Kind == "todo" ? "Task" : "Comment";
+        return title.Length <= 100 ? title : title[..100].TrimEnd() + "…";
+    }
+    private string AnchorLabel(LocalSceneAnnotation a) => LocalAnnotationMarkup.PageFor(_document!, a.LocalId) is null
+        ? "Quote no longer matches uniquely — select its current passage and link it again" : "Linked passage — click to go to the text";
     private static IReadOnlyList<string> Tags(string? json) { try { return JsonSerializer.Deserialize<string[]>(json ?? "[]") ?? []; } catch (JsonException) { return []; } }
 }

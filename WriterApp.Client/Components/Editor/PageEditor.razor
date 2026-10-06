@@ -1,5 +1,6 @@
 @using System.Net.Http
 @using System.Net.Http.Json
+@using System.Text.Json
 @using System.Text.RegularExpressions
 @using System.Linq
 @using System.Globalization
@@ -293,6 +294,7 @@ else
     private Task OnEditorReady(IJSObjectReference editor)
     {
         _editorInstance = editor;
+        _ = JSRuntime.InvokeVoidAsync("tiptapEditor.setEditable", editor, !_translationReadOnly);
         _lastAnnotationsFingerprint = null;
         _lastQualityIssuesFingerprint = null;
         _ = UpdatePageBreaksAsync();
@@ -637,6 +639,11 @@ else
             });
 
             HttpResponseMessage response;
+            if(_aiHistoryProposal is { } proposal && _aiSaveSource is { } historySource) {
+                _aiHistoryIntent ??= new WriterApp.Shared.WebAiHistoryIntent(1,_aiHistoryOperation,_aiHistoryOperation,proposal,1,null,"Applied",historySource,
+                    UseSceneContentPersistence?"SceneContent":"Page",activePage.Content,content);
+                if(_aiHistoryIntent.AfterContent!=content)throw new InvalidOperationException("The approved AI draft changed before receipt confirmation. Reload to reconcile the retained operation.");
+            }
             if (UseSceneContentPersistence
                 && activeSceneProjectId.HasValue
                 && activeSceneProjectId.Value != Guid.Empty
@@ -644,10 +651,10 @@ else
                 && activeSceneNodeId.Value != Guid.Empty)
             {
                 SceneContentUpdateRequest request = new(content, null);
-                response = await Http.PutAsJsonAsync(
-                    $"api/projects/{activeSceneProjectId.Value}/scenes/{activeSceneNodeId.Value}/content",
-                    request,
-                    ct);
+                using var message=new HttpRequestMessage(HttpMethod.Put,$"api/projects/{activeSceneProjectId.Value}/scenes/{activeSceneNodeId.Value}/content"){Content=JsonContent.Create(request)};
+                if(_aiSaveSource is not null)message.Headers.Add("X-WriterApp-AI-Source",JsonSerializer.Serialize(_aiSaveSource));
+                if(_aiHistoryIntent is not null)await HistoryOutbox.Attach(message,_aiHistoryIntent,HistoryLease(),ct);
+                response=await Http.SendAsync(message,ct);
             }
             else
             {
@@ -662,6 +669,9 @@ else
                 {
                     message.Headers.Add("X-Trace-Id", HeadingNumberingTraceId);
                 }
+
+                if(_aiSaveSource is not null)message.Headers.Add("X-WriterApp-AI-Source",JsonSerializer.Serialize(_aiSaveSource));
+                if(_aiHistoryIntent is not null)await HistoryOutbox.Attach(message,_aiHistoryIntent,HistoryLease(),ct);
 
                 response = await Http.SendAsync(message, ct);
             }
@@ -680,6 +690,7 @@ else
                 }
 
                 PageDto updated;
+                if(_aiSaveSource is not null)WebCheckedAi.RequireMutationReceipt(response);
                 if (UseSceneContentPersistence)
                 {
                     SceneContentDto? sceneUpdated = await response.Content.ReadFromJsonAsync<SceneContentDto>(cancellationToken: ct);
@@ -712,6 +723,10 @@ else
                     return EditorSaveResult.Failed("Save result became stale after page switch.");
                 }
 
+                if(updated.Id!=activePage.Id) return EditorSaveResult.Failed("Save response belongs to another page.");
+                if(_aiHistoryIntent is not null)await HistoryOutbox.Saved(_aiHistoryIntent,HistoryLease(),response,ct);
+                _aiHistoryIntent=null;_aiHistoryProposal=null;
+                _aiSaveSource=null;
                 _currentPage = updated;
                 _content = updated.Content ?? string.Empty;
                 _wordCount = CountWords(_content);
@@ -926,6 +941,61 @@ else
 
         return Task.CompletedTask;
     }
+    private WriterApp.Shared.WebAiSource? _aiSaveSource;
+    [Inject] public WebAiHistoryOutbox? AiHistoryOutbox {get;set;}
+    [Inject] public WebCheckedAi? CheckedAi {get;set;}
+    private WebAiHistoryOutbox? _fallbackHistoryOutbox;
+    private WebAiHistoryOutbox HistoryOutbox=>AiHistoryOutbox ?? (_fallbackHistoryOutbox ??= new(Http,JSRuntime,CheckedAi ?? new WebCheckedAi(Http)));
+    private WebCheckedAi.Lease HistoryLease()=>new(_aiSaveSource ?? throw new InvalidOperationException("Checked AI source is required."),Http.BaseAddress?.AbsoluteUri ?? "",_aiHistoryAccount);
+    private Guid? _aiHistoryProposal;
+    private Guid _aiHistoryOperation;
+    private string? _aiHistoryAccount;
+    private WriterApp.Shared.WebAiHistoryIntent? _aiHistoryIntent;
+    public void SetAiHistoryProposal(Guid proposal,WebCheckedAi.Lease lease) {
+        if(_aiHistoryProposal!=proposal) { _aiHistoryOperation=Guid.NewGuid();_aiHistoryIntent=null; }
+        _aiHistoryProposal=proposal;_aiHistoryAccount=lease.Account;
+    }
+    public void SetAiHistoryMove(WriterApp.Shared.WebAiHistoryIntent intent,WebCheckedAi.Lease lease) {
+        _aiHistoryProposal=intent.ProposalId;_aiHistoryOperation=intent.OperationId;_aiHistoryIntent=intent;_aiHistoryAccount=lease.Account;_aiSaveSource=lease.Source;
+    }
+    public void SetAiSaveSource(WriterApp.Shared.WebAiSource source) => _aiSaveSource=source;
+    public sealed record StyleQualitySource(string Html, string Plain, int From, string Text);
+    public async Task<StyleQualitySource> CaptureStyleQualityAsync(bool wholePage, CancellationToken ct) =>
+        await JSRuntime.InvokeAsync<StyleQualitySource>("tiptapEditor.captureStyleQuality", ct, [_editorInstance, wholePage])
+            ?? throw new InvalidOperationException("The editor is not ready for style review.");
+    public async Task PreviewStyleQualityAsync(StyleQualitySource source, IReadOnlyList<WriterApp.Shared.StyleQualityEdit> edits, CancellationToken ct) {
+        if (edits.Count == 0) return;
+        if (!await JSRuntime.InvokeAsync<bool>("tiptapEditor.previewStyleQuality", ct, [_editorInstance, source, edits]))
+            throw new InvalidOperationException("The suggested edits cannot preserve the captured formatting. Review a shorter selection.");
+    }
+    public async Task ApplyStyleQualityAsync(StyleQualitySource source, IReadOnlyList<WriterApp.Shared.StyleQualityEdit> edits, Guid proposal, WebCheckedAi.Lease lease) {
+        RequireSavedForAi();
+        if (_currentPage?.Id != lease.Source.PageId) throw new InvalidOperationException("The reviewed page changed. Generate another review.");
+        await PreviewStyleQualityAsync(source, edits, default);
+        SetAiSaveSource(lease.Source); SetAiHistoryProposal(proposal, lease);
+        try {
+            string html = await JSRuntime.InvokeAsync<string>("tiptapEditor.applyStyleQuality", _editorInstance, source, edits);
+            if (string.IsNullOrEmpty(html) || html == source.Html) throw new InvalidOperationException("No style changes were applied.");
+            _content = html;
+            await SaveCheckedAiAsync();
+        } catch {
+            // A refused transaction must not attach AI metadata to later ordinary writing.
+            // An uncertain or failed save retains its checked intent and recovery draft.
+            if (await GetContentAsync() == source.Html) { _aiSaveSource = null; _aiHistoryProposal = null; _aiHistoryIntent = null; }
+            throw;
+        }
+    }
+    public void RequireSavedForAi()
+    {
+        if(_isDirty || _isLoadingPage || SaveCoordinator.State is EditorSaveState.Saving or EditorSaveState.Failed)
+            throw new InvalidOperationException("Finish saving the editor before AI generation or Apply. Your local draft is retained.");
+    }
+    public async Task SaveCheckedAiAsync()
+    {
+        await ForceSaveIfDifferentAsync("checked-ai-apply");
+        RequireSavedForAi();
+        if(_aiSaveSource is not null)throw new InvalidOperationException("AI change is not confirmed saved. Reload current writing and use the retained draft for recovery.");
+    }
 
     public async Task ForceSaveIfDifferentAsync(string reason)
     {
@@ -938,6 +1008,14 @@ else
         string hash = ComputeShortHash(html);
         if (string.Equals(hash, _lastLoadedHash, StringComparison.Ordinal))
         {
+            // Initialization/formatting callbacks can mark the coordinator dirty even when
+            // its persisted content is identical. Settle that state before guarded page/AI work.
+            if(SaveCoordinator.IsDirty || SaveCoordinator.State==EditorSaveState.Saving)
+            {
+                await SaveCoordinator.SaveNowAsync(html);
+                SyncSaveStateFromCoordinator();
+            }
+            SyncSaveStateFromCoordinator();
             await DebugLogAsync("AUTOSAVE_SKIPPED", new
             {
                 traceId = HeadingNumberingTraceId,
@@ -968,14 +1046,16 @@ else
         return _content;
     }
 
-    public async Task<string> GetContentAsync()
+    public async Task<string> GetContentAsync(CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         if (_editorRef is null)
         {
             return _content;
         }
 
-        string html = await _editorRef.GetContentAsync();
+        string html = await _editorRef.GetContentAsync().WaitAsync(ct);
+        ct.ThrowIfCancellationRequested();
         _content = html ?? string.Empty;
         return _content;
     }
@@ -1305,28 +1385,31 @@ else
         return result;
     }
 
-    public async Task<SelectionDocRange?> GetSelectionDocRangeAsync()
+    public async Task<SelectionDocRange?> GetSelectionDocRangeAsync(CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         if (_editorInstance is null)
         {
             return null;
         }
 
-        return await JSRuntime.InvokeAsync<SelectionDocRange?>("tiptapEditor.getSelectionDocRange", _editorInstance);
+        return await JSRuntime.InvokeAsync<SelectionDocRange?>("tiptapEditor.getSelectionDocRange", ct, [_editorInstance]).AsTask().WaitAsync(ct);
     }
 
-    public async Task<string?> GetSelectionTextAsync()
+    public async Task<string?> GetSelectionTextAsync(CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         if (_editorInstance is null)
         {
             return null;
         }
 
-        return await JSRuntime.InvokeAsync<string?>("tiptapEditor.getSelectionText", _editorInstance);
+        return await JSRuntime.InvokeAsync<string?>("tiptapEditor.getSelectionText", ct, [_editorInstance]).AsTask().WaitAsync(ct);
     }
 
-    public async Task<string?> GetPlainTextAsync()
+    public async Task<string?> GetPlainTextAsync(CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         if (_editorInstance is null)
         {
             return null;
@@ -1334,7 +1417,7 @@ else
 
         try
         {
-            return await JSRuntime.InvokeAsync<string?>("tiptapEditor.getPlainText", _editorInstance);
+            return await JSRuntime.InvokeAsync<string?>("tiptapEditor.getPlainText", ct, [_editorInstance]).AsTask().WaitAsync(ct);
         }
         catch (JSException)
         {
@@ -1518,41 +1601,6 @@ else
                 return false;
             }
 
-            bool shouldRetry = (!result.Applied || !result.Changed)
-                && (string.Equals(result.Reason, "doc_expected_text_mismatch", StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(result.Reason, "could_not_resolve_range", StringComparison.OrdinalIgnoreCase));
-            if (shouldRetry)
-            {
-                Logger.LogWarning(
-                    "Quality fix apply retry requested. PageId={PageId}, IssueKey={IssueKey}, Reason={Reason}",
-                    Page?.Id,
-                    resolvedIssueKey,
-                    result.Reason);
-
-                QualityIssueRangeResolution? resolution = await ResolvePlainRangeAsync(fix.From, fix.To, anchorText);
-                object retryPayload = new
-                {
-                    kind = effectiveKind,
-                    from = fix.From,
-                    to = fix.To,
-                    text = fix.Text,
-                    anchorText,
-                    issueKey = resolvedIssueKey,
-                    docFrom = resolution?.DocFrom,
-                    docTo = resolution?.DocTo,
-                    expectedText = resolution?.ExpectedText ?? fix.ExpectedText,
-                    beforeAnchor = fix.BeforeAnchor,
-                    afterAnchor = fix.AfterAnchor,
-                    needleText = fix.NeedleText
-                };
-
-                QualityIssueFixApplyResult? retryResult = await ApplyOnceAsync(retryPayload);
-                if (retryResult is not null)
-                {
-                    result = retryResult;
-                }
-            }
-
             if (!result.Applied || !result.Changed)
             {
                 _lastQualityFixFailureReason = result.Reason;
@@ -1593,35 +1641,22 @@ else
         {
             _lastQualityFixFailureReason = "js_exception";
             _lastQualityFixFailureSource = null;
-            try
-            {
-                return await JSRuntime.InvokeAsync<bool>(
-                    "tiptapEditor.applyQualityIssueFix",
-                    _editorInstance,
-                    new
-                    {
-                        kind = effectiveKind,
-                        from = fix.From,
-                        to = fix.To,
-                        text = fix.Text,
-                        anchorText,
-                        issueKey = resolvedIssueKey
-                    });
-            }
-            catch (JSException)
-            {
-                _lastQualityFixFailureReason = "js_exception";
-                _lastQualityFixFailureSource = null;
-                return false;
-            }
+            return false;
         }
     }
 
     public string? LastQualityFixFailureReason => _lastQualityFixFailureReason;
     public string? LastQualityFixFailureSource => _lastQualityFixFailureSource;
 
-    public async Task<QualityIssueRangeResolution?> ResolvePlainRangeAsync(int from, int to, string? anchorText = null)
+    public async Task<bool> ValidateTargetedQualityRangeAsync(int from, int to, string expected, CancellationToken ct)
     {
+        if (_editorInstance is null) return false;
+        return await JSRuntime.InvokeAsync<bool>("tiptapEditor.validateTargetedQualityRange", ct, [_editorInstance, from, to, expected]);
+    }
+
+    public async Task<QualityIssueRangeResolution?> ResolvePlainRangeAsync(int from, int to, string? anchorText = null, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
         if (_editorInstance is null)
         {
             return null;
@@ -1631,13 +1666,14 @@ else
         {
             return await JSRuntime.InvokeAsync<QualityIssueRangeResolution>(
                 "tiptapEditor.resolvePlainRangeDetailed",
-                _editorInstance,
+                ct,
+                [_editorInstance,
                 new
                 {
                     from,
                     to,
                     anchorText
-                });
+                }]).AsTask().WaitAsync(ct);
         }
         catch (JSException)
         {
@@ -1675,8 +1711,17 @@ else
             && message.Contains("disposed", StringComparison.OrdinalIgnoreCase);
     }
 
+    public async Task SetTranslationReadOnlyAsync(bool readOnly)
+    {
+        _translationReadOnly = readOnly;
+        if (_editorInstance is not null)
+            await JSRuntime.InvokeVoidAsync("tiptapEditor.setEditable", _editorInstance, !readOnly);
+    }
+    private bool _translationReadOnly;
+
     public async Task InvokeCommandAsync(string command, params object?[] extraArgs)
     {
+        if (_translationReadOnly) return;
         if (_editorInstance is null)
         {
             return;

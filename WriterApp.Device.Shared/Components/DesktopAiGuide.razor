@@ -1,0 +1,122 @@
+@using Microsoft.Extensions.DependencyInjection
+@inject IServiceProvider Services
+@inject NavigationManager Navigation
+@implements IDisposable
+
+@if (_service is not null && _progress is { } progress && (DocumentId is null || progress.PracticeDocumentId == DocumentId || progress.DemoDocumentId == DocumentId)) {
+    @if (Banner) {
+        @if (progress.Status != "Completed") { <aside class="guide-banner"><a href="/ai-guide">@(progress.Status == "Skipped" ? "Resume AI practice guide" : "Get started with AI practice")</a><span> · Your local writing stays available offline.</span></aside> }
+    } else {
+        @if (_error is not null) { <p role="alert">@_error</p> }
+        <OnboardingDemoPanel SignedIn="@(_account?.IsSignedIn == true)" Busy="_busy" Status="progress.Demo"
+            WorkspaceUrl="@(progress.DemoDocumentId is { } demo ? $"/documents/{demo}?panel=Writing&view=tools" : null)"
+            Open="OpenServerDemo" Refresh="RefreshServerDemo" Complete="CompleteServerOnboarding" />
+        @if (progress.Status == "Active") {
+            <AiFirstUseGuide Step="progress.Step" Busy="_busy" WorkspaceUrl="@(progress.PracticeCreated ? $"/documents/{progress.PracticeDocumentId}" : null)"
+                OpenPractice="OpenPractice" Back="Back" Next="Next" Skip="Skip" />
+        } else {
+            <p role="status">@(progress.Status == "Completed" ? "AI practice guide completed." : "AI practice guide skipped. Your progress is saved.")</p>
+            <button type="button" disabled="@_busy" @onclick="Resume">Resume guide</button>
+        }
+        <button type="button" disabled="@_busy" @onclick="Restart">Restart guide</button>
+        <p><a href="/">Open your library</a> · <a href="/account">Account and online prerequisites</a></p>
+        <p>Restart changes guidance only. It reuses the practice project and preserves all edits. Completion is optional and never runs AI.</p>
+    }
+} else if (!Banner && _progress is { PracticeDocumentId: null } && _practiceAvailable) {
+    <p>This account has a separate guide. Your practice writing remains on this device.</p>
+    <button type="button" disabled="@_busy" @onclick="ContinuePractice">Continue guide on this practice project</button>
+    @if (_error is not null) { <p role="alert">@_error</p> }
+} else if (!Banner && DocumentId is null && _error is not null) {
+    <p role="alert">@_error</p><button type="button" disabled="@_busy" @onclick="Reload">Retry guide</button><a href="/">Continue local writing</a>
+}
+@code {
+    [Parameter] public bool Banner { get; set; }
+    [Parameter] public Guid? DocumentId { get; set; }
+    private DeviceOnboarding? _service;
+    private DeviceAccountService? _account;
+    private LocalOnboardingProgress? _progress;
+    private bool _busy, _disposed;
+    private bool _practiceAvailable;
+    private string? _error;
+    private long _generation;
+    private readonly CancellationTokenSource _lifetime = new();
+    private Task _refresh = Task.CompletedTask;
+    private Guid? _loadedDocumentId;
+    protected override async Task OnInitializedAsync() {
+        _service = Services.GetService<DeviceOnboarding>();
+        if (_service is null) return;
+        _account = Services.GetRequiredService<DeviceAccountService>();
+        _generation = _account.Generation;
+        _account.Changed += AccountChanged;
+        await Load();
+    }
+    protected override async Task OnParametersSetAsync() {
+        if (_service is not null && _loadedDocumentId != DocumentId) await Load();
+    }
+    private async Task Load() {
+        var scope = _service!.Scope;
+        var documentId = DocumentId;
+        try {
+            var progress = await _service.ReadAsync(_lifetime.Token);
+            var document = documentId is { } id ? await Services.GetRequiredService<ILocalDocumentStore>().GetAsync(id, _lifetime.Token) : null;
+            if (!_disposed && _service.Scope == scope && documentId == DocumentId) {
+                _progress = progress; _error = null;
+                _loadedDocumentId = documentId;
+                _practiceAvailable = document is { DeletedAtUtc: null } && document.ExtensionData?.ContainsKey("desktopAiPracticeGuide") == true;
+            }
+        } catch (OperationCanceledException) when (_disposed) { }
+        catch (Exception e) when (e is IOException or InvalidOperationException or System.Text.Json.JsonException or UnauthorizedAccessException) {
+            if (!_disposed && _service.Scope == scope && documentId == DocumentId) _error = e.Message;
+        }
+    }
+    private void AccountChanged() {
+        if (_account!.Generation == _generation && _progress?.Scope == _service!.Scope) return;
+        _generation = _account.Generation;
+        _progress = null;
+        if (!_disposed) _refresh = InvokeAsync(async () => { await Load(); if (!_disposed) StateHasChanged(); });
+    }
+    private Task OpenPractice() => Work(async () => {
+        var opened = await _service!.OpenPracticeAsync(_progress!);
+        if (_service.Scope != opened.Progress.Scope) return;
+        _progress = await _service.ChangeAsync(opened.Progress, Math.Max(1, opened.Progress.Step), "Active");
+        if (_service.Scope != opened.Progress.Scope || _disposed) return;
+        Navigation.NavigateTo($"/documents/{opened.Document.DocumentId}?panel=Writing&view=tools");
+    });
+    private Task ContinuePractice() => Work(async () => {
+        var progress = await _service!.ContinuePracticeAsync(_progress!, DocumentId!.Value);
+        if (_service.Scope == progress.Scope) _progress = progress;
+    });
+    private Task OpenServerDemo() => Work(async () => {
+        var opened=await _service!.OpenServerDemoAsync(_progress!,_lifetime.Token);
+        if(_disposed || _service.Scope!=opened.Progress.Scope)return;
+        _progress=opened.Progress;
+        Navigation.NavigateTo($"/documents/{opened.Document.DocumentId}?panel=Writing&view=tools");
+    });
+    private Task RefreshServerDemo() => Work(async () => {
+        var state=await _service!.RefreshDemoAsync(_progress!,_lifetime.Token);
+        if(!_disposed && _service.Scope==state.Scope)_progress=state;
+    });
+    private Task CompleteServerOnboarding() => Work(async () => {
+        var state=await _service!.ReconcileProgressAsync(_progress!,true,_lifetime.Token);
+        if(!_disposed && _service.Scope==state.Scope)_progress=state;
+    });
+    private Task Back() => Change(Math.Max(0, _progress!.Step - 1), "Active");
+    private Task Next() => Change(Math.Min(4, _progress!.Step + 1), _progress.Step == 4 ? "Completed" : "Active");
+    private Task Skip() => Change(_progress!.Step, "Skipped");
+    private Task Resume() => Change(_progress!.Step, "Active");
+    private Task Restart() => Change(0, "Active");
+    private async Task Reload() { if (_busy) return; _busy = true; try { await Load(); } finally { _busy = false; } }
+    private Task Change(int step, string status) => Work(async () => {
+        var progress = await _service!.ChangeAsync(_progress!, step, status);
+        if (_service.Scope == progress.Scope) _progress = progress;
+    });
+    private async Task Work(Func<Task> action) {
+        if (_busy || _progress is null) return;
+        _busy = true; _error = null;
+        await InvokeAsync(StateHasChanged);
+        try { await action(); }
+        catch (Exception e) when (e is IOException or InvalidOperationException or System.Text.Json.JsonException or UnauthorizedAccessException or HttpRequestException or DeviceSignInRequiredException or DeviceIdentityUnavailableException) { await Load(); _error = e.Message; }
+        finally { _busy = false; }
+    }
+    public void Dispose() { _disposed = true; _lifetime.Cancel(); if (_account is not null) _account.Changed -= AccountChanged; }
+}

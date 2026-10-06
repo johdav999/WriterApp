@@ -1,0 +1,30 @@
+@using WriterApp.Application.Documents
+<section aria-label="Review scene fields">
+<h3>Review scene fields</h3>
+<p>Approve the fields to update. Omitted, empty and invalid values preserve authored data.</p>
+@if (Changes.Count == 0) { <p role="status">No changes were proposed for this target.</p> }
+@if (Changes.Any(c => c.Error is null)) {
+    <div class="scene-review-selection">
+        <button type="button" disabled="@Busy" @onclick="ApproveAll">Approve all changed fields</button>
+        <button type="button" disabled="@(Busy || Approved.Count == 0)" @onclick="Clear">Clear selection</button>
+        <span role="status">@Approved.Count fields approved</span>
+    </div>
+}
+@foreach (var change in Changes) {
+    <section class="scene-field-review" aria-label="@SceneCoaching.Label(change.Field)">
+        <h4>@SceneCoaching.Label(change.Field)</h4>
+        <AiTextComparison Original="@change.Before" Proposed="@change.After" />
+        @if (change.Error is not null) { <p role="alert">@change.Error</p> }
+        else { <label><input type="checkbox" checked="@Approved.Contains(change.Field)" disabled="@Busy" @onchange="e => Toggle(change.Field, e.Value is true)" /> Approve @SceneCoaching.Label(change.Field)</label> }
+    </section>
+}
+</section>
+@code {
+    [Parameter] public IReadOnlyList<SceneFieldChange> Changes { get; set; } = [];
+    [Parameter] public IReadOnlyList<SceneCoachingField> Approved { get; set; } = [];
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public EventCallback<IReadOnlyList<SceneCoachingField>> ApprovedChanged { get; set; }
+    private Task Toggle(SceneCoachingField field, bool enabled) => ApprovedChanged.InvokeAsync(enabled ? Approved.Append(field).Distinct().ToArray() : Approved.Where(f => f != field).ToArray());
+    private Task ApproveAll() => ApprovedChanged.InvokeAsync(Changes.Where(c => c.Error is null).Select(c => c.Field).Distinct().ToArray());
+    private Task Clear() => ApprovedChanged.InvokeAsync(Array.Empty<SceneCoachingField>());
+}

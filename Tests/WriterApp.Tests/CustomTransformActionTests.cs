@@ -17,7 +17,7 @@ using Xunit;
 
 namespace WriterApp.Tests
 {
-    public sealed class CustomTransformActionTests
+    public sealed partial class CustomTransformActionTests
     {
         [Fact]
         public void ExpandTemplate_ReplacesTokens()
@@ -214,6 +214,7 @@ namespace WriterApp.Tests
             {
                 string original = request.Context.SelectionText ?? request.Context.OriginalText ?? string.Empty;
                 string rewritten = $"[custom] {original}";
+                if(request.Inputs.ContainsKey("structured_writing"))rewritten=original;
                 AiArtifact artifact = new(
                     Guid.NewGuid(),
                     AiModality.Text,

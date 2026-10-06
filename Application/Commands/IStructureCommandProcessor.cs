@@ -7,6 +7,7 @@ namespace WriterApp.Application.Commands
     public interface IStructureCommandProcessor
     {
         Task ExecuteAsync(IStructureUndoCommand command, CancellationToken ct);
+        void RecordCommitted(IStructureUndoCommand command) { }
 
         Task<bool> UndoAsync(string userId, Guid documentId, CancellationToken ct);
 

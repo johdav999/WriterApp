@@ -6,6 +6,9 @@ declare global {
     }
 }
 import { Editor, Extension } from "@tiptap/core";
+import { captureTranslation, previewTranslation } from "./device-editor";
+import { targetedRevisionTransaction, validateTargetedRevisionRange } from "./targeted-revision";
+import { captureStyleQuality, previewStyleQuality, applyStyleQuality } from "./web-style-quality";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import StarterKit from "@tiptap/starter-kit";
@@ -828,6 +831,7 @@ function resolvePageBreakOptions(options) {
 }
 
 function getPageBreakContext(editor) {
+    if (!editor || editor.isDestroyed) return null;
     const view = editor?.view?.dom;
     if (!view) {
         return null;
@@ -1887,7 +1891,7 @@ function buildPageGapDecorations(editor, options) {
 }
 
 function updatePageGapDecorations(editor) {
-    if (!editor?.view) {
+    if (!editor || editor.isDestroyed || !editor.view) {
         return null;
     }
 
@@ -1998,7 +2002,7 @@ function getCurrentPageIndex(info, scrollContainer, scrollTop) {
 }
 
 function notifyPageBreakStatus(editor, reason) {
-    if (!editor || !editor.__pageBreakState) {
+    if (!editor || editor.isDestroyed || !editor.__pageBreakState?.enabled) {
         return;
     }
 
@@ -2053,7 +2057,7 @@ function notifyPageBreakStatus(editor, reason) {
 }
 
 function schedulePageBreakUpdate(editor, reason) {
-    if (!editor) {
+    if (!editor || editor.isDestroyed) {
         return;
     }
     if (editor.__paginationApplying) {
@@ -3123,6 +3127,13 @@ window.tiptapEditor = {
     },
 
     destroy: function (editor) {
+        if (!editor || editor.isDestroyed) return;
+        if (editor.__pageBreakState) {
+            editor.__pageBreakState.enabled = false;
+            editor.__pageBreakState.interopState && (editor.__pageBreakState.interopState.enabled = false);
+            clearTimeout(editor.__pageBreakState.timer);
+            editor.__pageBreakState.timer = null;
+        }
         if (editor && editor.__interopState) {
             editor.__interopState.enabled = false;
         }
@@ -3266,4 +3277,12 @@ if (!window.__writerAppDragInit) {
 }
 
 console.log('tiptap bundle loaded', !!(window as any).tiptapEditor);
+(window as any).tiptapEditor.captureTranslation = captureTranslation;
+(window as any).tiptapEditor.previewTranslation = previewTranslation;
+(window as any).tiptapEditor.targetedRevisionTransaction = targetedRevisionTransaction;
+(window as any).tiptapEditor.validateTargetedRevisionRange = validateTargetedRevisionRange;
+(window as any).tiptapEditor.setEditable = (editor: Editor, editable: boolean) => editor.setEditable(editable);
+(window as any).tiptapEditor.captureStyleQuality = captureStyleQuality;
+(window as any).tiptapEditor.previewStyleQuality = previewStyleQuality;
+(window as any).tiptapEditor.applyStyleQuality = applyStyleQuality;
 

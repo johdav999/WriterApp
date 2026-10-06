@@ -32,7 +32,8 @@ namespace WriterApp.AI.Actions
 
             Section? section = ResolveSection(input.Document, input.ActiveSectionId);
             string sectionTitle = section?.Title ?? string.Empty;
-            string sectionText = PlainTextMapper.ToPlainText(section?.Content.Value ?? string.Empty).Trim();
+            string sectionText = GetOption(input.Options, "section_text_override");
+            if (string.IsNullOrWhiteSpace(sectionText)) sectionText = PlainTextMapper.ToPlainText(section?.Content.Value ?? string.Empty).Trim();
             string recentContext = ExtractRecentContext(sectionText);
 
             string instruction = string.IsNullOrWhiteSpace(input.Instruction)
@@ -49,7 +50,7 @@ namespace WriterApp.AI.Actions
                 new TextRange(0, 0),
                 string.Empty,
                 input.Document.Metadata.Title,
-                null,
+                WriterApp.Shared.WritingOutline.FromOptions(input.Options),
                 sectionTitle,
                 languageHint,
                 null,
@@ -64,6 +65,8 @@ namespace WriterApp.AI.Actions
                 ["instruction"] = instruction,
                 ["section_title"] = sectionTitle,
                 ["recent_context"] = recentContext,
+                ["narrative_role"] = GetOption(input.Options, "narrative_role"),
+                ["narrative_intent"] = GetOption(input.Options, "narrative_intent"),
                 ["narrative_purpose"] = GetOption(input.Options, "narrative_purpose"),
                 ["emotional_beat"] = GetOption(input.Options, "emotional_beat"),
                 ["key_events"] = GetOption(input.Options, "key_events"),

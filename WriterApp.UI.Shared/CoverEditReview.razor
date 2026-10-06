@@ -1,0 +1,20 @@
+@using WriterApp.Shared
+<section aria-label="Cover adjustment review">
+    <h3>@CoverEdits.Label(Operation) · review before saving</h3>
+    <p>Original is concept 1; proposed is concept 2. Source asset @AssetId.ToString("N")[..8] · hash @Hash[..Math.Min(12,Hash.Length)].</p>
+    <div class="cover-edit-comparison">
+        <figure><figcaption>Original · concept 1</figcaption><img src="@Original" alt="Original owned cover" /></figure>
+        <figure><figcaption>Proposed · concept 2</figcaption><img src="@Proposed" alt="Proposed cover adjustment" /></figure>
+    </div>
+    <CoverConcepts Images="@(new[]{Original,Proposed})" Selected="Selected" SelectedChanged="SelectedChanged" Disabled="Disabled" ShowPreview="false" />
+</section>
+@code {
+    [Parameter] public string Operation {get;set;}="variation";
+    [Parameter] public Guid AssetId {get;set;}
+    [Parameter] public string Hash {get;set;}="";
+    [Parameter] public string Original {get;set;}="";
+    [Parameter] public string Proposed {get;set;}="";
+    [Parameter] public int Selected {get;set;}
+    [Parameter] public bool Disabled {get;set;}
+    [Parameter] public EventCallback<int> SelectedChanged {get;set;}
+}

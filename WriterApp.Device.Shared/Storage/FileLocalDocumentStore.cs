@@ -28,6 +28,25 @@ public sealed class FileLocalDocumentStore : ILocalDocumentStore
             return document;
         }, cancellationToken);
 
+    public Task<LocalDocument> CreateOnboardingPracticeAsync(Guid documentId, Guid guideId, CancellationToken ct = default) =>
+        LockedAsync(async () => {
+            if (guideId == Guid.Empty) throw new ArgumentException("Guide identity is required.", nameof(guideId));
+            var current = await ReadAsync(documentId, ct);
+            if (current is not null) {
+                if (current.ExtensionData is null || !current.ExtensionData.TryGetValue("desktopAiPracticeGuide", out var marker)
+                    || marker.ValueKind != JsonValueKind.String || marker.GetString() != guideId.ToString("D"))
+                    throw new InvalidOperationException("The reserved practice identity belongs to existing writing. It was preserved.");
+                return current; // Includes empty/edited/trashed content. Never reseed on retry.
+            }
+            var document = Services.LocalProjectStructure.Attach(LocalDocumentCodec.NewDocument(documentId,
+                "AI practice — sample writing", _time.GetUtcNow(),
+                "<p>Mara stood at the station window, watching the rain run down the glass. She held a letter that she had read three times already, but she still could not bring herself to open the door.</p><p>The last train was leaving. She folded the letter, put it in her pocket, and stepped outside.</p>", LocalContentFormat.Html), "AI practice — sample project") with {
+                ExtensionData = new() { ["desktopAiPracticeGuide"] = JsonSerializer.SerializeToElement(guideId.ToString("D")) }
+            };
+            await WriteAsync(document, ct);
+            return document;
+        }, ct);
+
     public Task<LocalDocument> CreateProjectAsync(string title, CancellationToken cancellationToken = default) =>
         LockedAsync(async () =>
         {
@@ -60,6 +79,24 @@ public sealed class FileLocalDocumentStore : ILocalDocumentStore
             if (target.Project is not { } project || target.DeletedAtUtc is not null)
                 throw new InvalidOperationException("Choose an active project.");
             return await CommitChangeAsync(Services.LocalProjectStructure.AttachToProject(current, project), current, ct);
+        }, ct);
+
+    public Task<LocalDocument> SetProjectCoverAsync(LocalDocument source, string? cover, Guid changeId, bool restore = false, CancellationToken ct = default) =>
+        LockedAsync(async () => {
+            var current = await RequireAsync(source.DocumentId, source.LocalRevision, ct);
+            var p = current.Project ?? throw new InvalidOperationException("Choose a project for its cover.");
+            if (changeId == Guid.Empty || source.Project?.ProjectId != p.ProjectId || source.Project.MetadataRevision != p.MetadataRevision
+                || current.DeletedAtUtc is not null || current.SyncState == LocalSyncState.Conflict)
+                throw new LocalDocumentConflictException(source.DocumentId);
+            if (restore) {
+                if (!p.HasCoverRecovery) throw new InvalidOperationException("No previous project cover is retained.");
+                cover = p.PreviousCoverImageUrl;
+            } else WriterApp.Shared.CoverStudioContract.ReadPng(cover!);
+            var metadata = LocalProjectMetadata.From(p) with { Version = 2, CoverImageUrl = cover, PreviousCoverImageUrl = p.CoverImageUrl,
+                HasCoverRecovery = true, CoverChangeId = changeId, MetadataRevision = checked(p.MetadataRevision + 1), MetadataDirty = true };
+            // The authoritative project record contains both the new asset and its recovery in one atomic replacement.
+            await WriteMetadataAsync(metadata, ct);
+            return current with { Project = metadata.Apply(p), SyncState = current.SyncState == LocalSyncState.Synced ? LocalSyncState.PendingUpload : current.SyncState };
         }, ct);
 
     public Task<LocalDocument> UpdateProjectMetadataAsync(LocalDocument source, string? title = null, bool makePrimary = false, CancellationToken ct = default) =>
@@ -222,6 +259,21 @@ public sealed class FileLocalDocumentStore : ILocalDocumentStore
             return copy;
         }, cancellationToken);
 
+    public Task<LocalDocument> CreateTranslationCopyAsync(LocalDocument copy, CancellationToken ct = default) => LockedAsync(async () =>
+    {
+        LocalDocumentCodec.Validate(copy);
+        if (copy.SyncState != LocalSyncState.LocalOnly || copy.ServerDocumentId is not null || copy.ServerProjectId is not null
+            || copy.ServerVersion is not null || copy.LastSyncedAtUtc is not null || copy.LocalRevision != 1 || copy.DeletedAtUtc is not null)
+            throw new InvalidDataException("A translated copy must have detached local identities.");
+        var existing = await ReadAsync(copy.DocumentId, ct);
+        if (existing is not null) {
+            if (existing.DeletedAtUtc is not null || Services.LocalTranslation.Signature(existing) != Services.LocalTranslation.Signature(copy))
+                throw new InvalidOperationException("This translated copy identity already contains different writing. It will not be overwritten.");
+            return existing;
+        }
+        await WriteAsync(copy, ct); return copy;
+    }, ct);
+
     public Task<LocalDocument> RecoverSnapshotAsync(LocalDocument source, CancellationToken cancellationToken = default) =>
         LockedAsync(async () =>
         {
@@ -297,6 +349,8 @@ public sealed class FileLocalDocumentStore : ILocalDocumentStore
                 if (preservesPendingMetadata && (canonical is null || (metadata.ServerMetadataRevision ?? 0) >= (canonical.ServerMetadataRevision ?? 0)))
                 {
                     metadata = metadata with { MetadataRevision = canonical?.MetadataRevision ?? metadata.MetadataRevision,
+                        Version = canonical?.Version ?? metadata.Version, PreviousCoverImageUrl = canonical?.PreviousCoverImageUrl,
+                        HasCoverRecovery = canonical?.HasCoverRecovery ?? false, CoverChangeId = canonical?.CoverChangeId,
                         MetadataDirty = !overwriteProjectMetadata && document.SyncState != LocalSyncState.Synced && canonical?.MetadataDirty == true };
                     // Preserve local primary identity when the cloud identifier still points at that same document.
                     if (!overwriteProjectMetadata && canonical is not null && canonical.ServerPrimaryDocumentId == metadata.ServerPrimaryDocumentId)
@@ -452,7 +506,7 @@ public sealed class FileLocalDocumentStore : ILocalDocumentStore
     {
         if (!File.Exists(MetadataPath(id))) return null;
         var value = JsonSerializer.Deserialize<LocalProjectMetadata>(await File.ReadAllBytesAsync(MetadataPath(id), ct));
-        if (value is null || value.Version != 1 || value.ProjectId != id || value.PrimaryDocumentId == Guid.Empty
+        if (value is null || value.Version is not (1 or 2) || value.ProjectId != id || value.PrimaryDocumentId == Guid.Empty
             || string.IsNullOrWhiteSpace(value.Title)) throw new JsonException("Invalid project metadata; original preserved.");
         return value;
     }
@@ -479,7 +533,7 @@ public sealed class FileLocalDocumentStore : ILocalDocumentStore
             metadata = LocalProjectMetadata.From(project);
             await WriteMetadataAsync(metadata, ct);
         }
-        return document with { Project = metadata.Apply(project) };
+        return document with { Project = metadata.Apply(project), SyncState = metadata.MetadataDirty && document.SyncState == LocalSyncState.Synced ? LocalSyncState.PendingUpload : document.SyncState };
     }
 
     private string GetPath(Guid id)

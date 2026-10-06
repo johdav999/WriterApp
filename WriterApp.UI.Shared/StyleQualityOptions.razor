@@ -1,0 +1,19 @@
+@using WriterApp.Shared
+<section class="style-quality-options" aria-label="Style review criteria">
+    @if (TargetedOnly) { <p><strong>What AI fixes consider</strong><br />AI reviews the chosen passage for clarity, repetition, sentence flow, word choice, grammar and punctuation while addressing the selected finding.</p> }
+    else { <p><strong>What the AI reviews</strong><br />@StyleQualityReview.Criteria</p> }
+    <p>@StyleQualityReview.Preservation Review suggestions to confirm they fit your intent.</p>
+    <label>Style goal for AI suggestions
+        <select aria-label="Style goal" value="@Goal" @onchange="ChangeGoal" disabled="@Busy">
+            @foreach (var goal in StyleQualityReview.Goals) { <option value="@goal.Key">@goal.Label</option> }
+        </select>
+    </label>
+    <p class="style-goal-note">@StyleQualityReview.Goal(Goal).Instruction Style preferences are optional; you decide which changes to accept.</p>
+</section>
+@code {
+    [Parameter] public string Goal { get; set; } = StyleQualityReview.DefaultGoal;
+    [Parameter] public EventCallback<string> GoalChanged { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public bool TargetedOnly { get; set; }
+    private Task ChangeGoal(ChangeEventArgs e) => GoalChanged.InvokeAsync(StyleQualityReview.Goal(e.Value?.ToString() ?? StyleQualityReview.DefaultGoal).Key);
+}

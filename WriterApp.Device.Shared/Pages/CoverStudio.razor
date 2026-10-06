@@ -1,0 +1,104 @@
+@page "/documents/{DocumentId:guid}/cover"
+@using WriterApp.Shared
+@using System.Text.Json
+@implements IDisposable
+@inject LocalDocumentRepository Documents
+@inject DeviceCoverStudio Studio
+@inject DeviceAccountService Account
+@inject DeviceConnectivity Network
+@inject IDeviceAiApi AiApi
+<PageTitle>Cover studio · Prosa</PageTitle>
+<main class="desktop-cover-studio">
+    <h1>Cover studio</h1>
+    <a href="@($"/documents/{DocumentId}/publishing")">Publishing and local cover selection</a>
+    @if (_document?.Project is { } project) {
+        <p>@project.Title · @(_document.Title)</p>
+        <p>Generation requires a synchronized document, the Professional plan, and available image quota. Your cover changes only when you save.</p>
+        <p role="status">@(_usage ?? (Studio.CanGenerate ? "AI access is checked by the server on generation." : "Sign in and connect to generate. Saved covers and cached concepts remain available offline."))</p>
+        <div class="studio-layout">
+        <section aria-label="Cover generation">
+            <CoverBrief @bind-Value="_brief" Disabled="@_busy" />
+            <div class="studio-actions">
+                <button type="button" disabled="@(_busy || !Studio.CanGenerate)" @onclick="Generate">@(_busy ? "Working…" : "Generate cover concepts")</button>
+                <button type="button" disabled="@(!_busy)" @onclick="Cancel">Cancel</button>
+                <button type="button" disabled="@(_busy || _draft is null || !Studio.IsCurrent(_document,_draft))" @onclick="Save">Save as project cover</button>
+                <button type="button" disabled="@(_busy || _draft is null)" @onclick="Dismiss">Dismiss preview</button>
+                <button type="button" disabled="@(_busy || !project.HasCoverRecovery)" @onclick="Restore">Restore previous project cover</button>
+            </div>
+            <CoverEditControls Capabilities="_editCapabilities" Disabled="@(_busy || !Studio.CanGenerate)" HasSource="@(_draft is not null || project.CoverImageUrl is not null)" Requested="Edit" />
+            <button type="button" disabled="@(_busy || !Studio.CanGenerate)" @onclick="RefreshEdits">Refresh image-edit availability</button>
+            <p>PNG only, at most 2 MB. Save retains the prior project cover for recovery and queues the new cover for normal project sync.</p>
+            <CoverAssetStatus Remote="@(project.CoverImageUrl?.StartsWith("https://",StringComparison.OrdinalIgnoreCase)==true)" Cached="@(_savedAsset is not null)"
+                Busy="_busy" Online="@Studio.CanGenerate" Materialize="Materialize" />
+            @if (_draft is not null && !Studio.IsCurrent(_document,_draft)) { <p role="status">These cached concepts have a different source revision. You may view them; generate again before saving.</p> }
+            @if(_draft?.Edit is { } edit) {
+                <CoverEditReview Operation="@edit.Request.Operation" AssetId="@edit.Request.AssetId" Hash="@edit.Request.ContentHash"
+                    Original="@_draft.Images[0]" Proposed="@_draft.Images[1]" Selected="@_draft.Selected" SelectedChanged="Select" Disabled="_busy" />
+            } else { <CoverConcepts Images="@(_draft?.Images ?? [])" Selected="@(_draft?.Selected ?? -1)" SelectedChanged="Select" Disabled="@_busy" /> }
+        </section>
+        <section aria-label="Saved project cover"><h2>Current saved cover</h2>
+            @if (project.CoverImageUrl?.StartsWith("data:image/png;base64,",StringComparison.Ordinal) == true) {
+                <img class="saved-cover" src="@project.CoverImageUrl" alt="Current saved project cover" />
+            } else if(_savedAsset is { } cached) { <img class="saved-cover" src="@cached.DataUri" alt="Validated cached project cover" /> }
+            else { <p>@(project.CoverImageUrl is null ? "No project cover saved yet." : "The project has a remote cover. Keep it or cache its owned PNG for offline publishing.")</p> }
+            <p>Publishing embeds the saved project PNG. Offline local publishing covers remain supported.</p>
+        </section>
+        </div>
+    } else if (_document is not null) { <p>Choose a project for AI cover generation. Standalone documents can choose a local cover in Publishing.</p> }
+    else if (_error is null) { <p>Loading cover studio…</p> }
+    @if (_message is not null) { <p role="status">@_message</p> }
+    @if (_error is not null) { <p role="alert">@_error</p> }
+</main>
+@code {
+    [Parameter] public Guid DocumentId { get; set; }
+    private LocalDocument? _document;
+    private LocalCoverDraft? _draft;
+    private LocalCover? _savedAsset;
+    private CoverEditCapabilities? _editCapabilities;
+    private CoverPrompt _brief = new() { Genre="Fantasy", Mood="Dark", Style="Cinematic", ColorPalette="Warm" };
+    private bool _busy;
+    private Guid _loaded;
+    private string? _error, _message, _usage;
+    private CancellationTokenSource? _operation;
+    private TaskCompletionSource? _idle;
+    private long _accountGeneration;
+    protected override void OnInitialized() { _accountGeneration=Account.Generation; Account.Changed+=AccountChanged; Network.Changed+=NetworkChanged; }
+    protected override async Task OnParametersSetAsync() {
+        if(_loaded==DocumentId) return; Cancel(); if(_idle is { } idle) await idle.Task; _loaded=DocumentId; _draft=null; _savedAsset=null; _editCapabilities=null; _document=null; _usage=null;
+        await Run(async ct => { var id=DocumentId; var doc=await Documents.LoadAsync(id,ct) ?? throw new IOException("Document unavailable.");
+            if(doc.DeletedAtUtc is not null) throw new InvalidOperationException("Restore the document before changing its cover.");
+            if(id==DocumentId) _document=doc;
+            var draft=doc.Project is null ? null : await Studio.CachedAsync(doc,ct); if(id==DocumentId) _draft=draft;
+            var cached=await Studio.CachedProjectCoverAsync(doc,ct);if(id==DocumentId)_savedAsset=cached; });
+        if(Studio.CanGenerate) await RefreshEdits();
+    }
+    private void AccountChanged() { if(_accountGeneration==Account.Generation) return; _accountGeneration=Account.Generation; Cancel(); _draft=null; _savedAsset=null; _usage=null; _message=null; _error=null; _=InvokeAsync(async () => { StateHasChanged(); if(_idle is { } idle) await idle.Task; if(_document?.Project is not null) await Run(async ct=>{_draft=await Studio.CachedAsync(_document,ct);_savedAsset=await Studio.CachedProjectCoverAsync(_document,ct);}); }); }
+    private void NetworkChanged() { if(!Network.IsOnline) Cancel(); _=InvokeAsync(StateHasChanged); }
+    private Task Generate() => Run(async ct => {
+        var source=_document!; long generation=Account.Generation;
+        var usage=await AiApi.GetUsageAsync(ct);
+        if(generation!=Account.Generation) throw new DeviceSignInRequiredException();
+        _usage=$"{usage.PlanKey} · {usage.QuotaRemaining} AI tokens remaining (server rechecks image access).";
+        if(!usage.AiEnabled || usage.HasReachedAiLimit || !string.Equals(usage.PlanKey,"Professional",StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Cover generation requires the Professional plan and available AI quota.");
+        _draft=await Studio.GenerateAsync(source,_brief,ct); _message="Concepts cached on this device. Select and save one.";
+    });
+    private Task Select(int index) => Run(async ct => { _draft=await Studio.SelectAsync(_document!,_draft!,index,ct); _message="Concept selected. The saved cover has not changed."; });
+    private Task RefreshEdits()=>Run(async ct=>{_editCapabilities=await Studio.EditCapabilitiesAsync(ct);});
+    private Task Edit(string operation)=>Run(async ct=>{_draft=await Studio.EditAsync(_document!,_draft,operation,_brief,ct);_message="Adjustment cached. Review original and proposed, select one, then explicitly save.";});
+    private Task Materialize() => Run(async ct => { var doc=_document!;var draft=await Studio.MaterializeProjectCoverAsync(doc,ct);
+        var cached=await Studio.CachedProjectCoverAsync(doc,ct);if(DocumentId!=doc.DocumentId) return;
+        _draft=draft;_savedAsset=cached;_message="Owned PNG cached. The saved project cover is unchanged; offline publishing can use these exact bytes."; });
+    private Task Save() => Run(async ct=> { _document=await Studio.SaveAsync(_document!,_draft!,ct); _message="Project cover saved locally with prior-cover recovery. Use normal cloud sync to upload it."; });
+    private void Dismiss() { if(_busy) return; _draft=null; _message="Preview dismissed. Cached concepts are retained on this device; reopen to inspect them. The saved cover is unchanged."; }
+    private Task Restore() => Run(async ct=> { _document=await Documents.SetProjectCoverAsync(_document!,null,Guid.NewGuid(),restore:true,ct:ct); _savedAsset=await Studio.CachedProjectCoverAsync(_document,ct);_message="Previous project cover restored locally. Use normal cloud sync to upload the change."; });
+    private void Cancel() { _operation?.Cancel(); }
+    private async Task Run(Func<CancellationToken,Task> action) {
+        if(_busy) return; _busy=true; _error=null; _message=null; using var operation=new CancellationTokenSource(); _operation=operation; var idle=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously); _idle=idle;
+        try { await action(operation.Token); }
+        catch(OperationCanceledException) { _message="Canceled. Reopen to confirm any completed atomic cover save; the prior cover is retained for recovery."; }
+        catch(Exception e) when(e is IOException or InvalidDataException or InvalidOperationException or ArgumentException or HttpRequestException or JsonException or UnauthorizedAccessException or DeviceSignInRequiredException or DeviceAiException) { _error=e.Message; }
+        finally { if(_operation==operation) _operation=null; _busy=false; if(_idle==idle) _idle=null; idle.TrySetResult(); }
+    }
+    public void Dispose() { Cancel(); Account.Changed-=AccountChanged; Network.Changed-=NetworkChanged; }
+}

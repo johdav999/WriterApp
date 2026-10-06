@@ -89,7 +89,7 @@ namespace WriterApp.Tests
         }
 
         [Fact]
-        public async Task CreateStarterWorkspaceForOnboarding_RecoversPartialProjectWithoutDuplicatingProject()
+        public async Task CreateStarterWorkspaceForOnboarding_DoesNotAdoptAnExistingEmptyProject()
         {
             await using SqliteConnection connection = new("Data Source=:memory:");
             await connection.OpenAsync();
@@ -109,11 +109,12 @@ namespace WriterApp.Tests
 
             OnboardingBootstrapResult result = await service.CreateStarterWorkspaceForOnboardingAsync("user-1", "Blog", CancellationToken.None);
 
-            Assert.Equal(projectId, result.ProjectId);
-            Assert.Equal(1, await db.Projects.CountAsync(item => item.OwnerUserId == "user-1"));
-            Assert.Equal(2, await db.ProjectNodes.CountAsync(item => item.ProjectId == projectId && item.ParentId == null));
-            Assert.Equal(1, await db.ProjectNodes.CountAsync(item => item.ProjectId == projectId && item.NodeType == ProjectNodeType.Scene));
-            Assert.Equal(1, await db.Documents.CountAsync(item => item.ProjectId == projectId && item.DocumentKind == DocumentKind.Manuscript));
+            Assert.NotEqual(projectId, result.ProjectId);
+            Assert.Equal(2, await db.Projects.CountAsync(item => item.OwnerUserId == "user-1"));
+            Assert.Empty(await db.ProjectNodes.Where(item => item.ProjectId == projectId).ToListAsync());
+            Assert.Empty(await db.Documents.Where(item => item.ProjectId == projectId).ToListAsync());
+            Assert.Equal(2, await db.ProjectNodes.CountAsync(item => item.ProjectId == result.ProjectId && item.ParentId == null));
+            Assert.Equal(1, await db.ProjectNodes.CountAsync(item => item.ProjectId == result.ProjectId && item.NodeType == ProjectNodeType.Scene));
         }
 
         private static AppDbContext BuildDbContext(SqliteConnection connection)

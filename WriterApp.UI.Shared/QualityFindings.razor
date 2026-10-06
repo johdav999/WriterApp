@@ -1,0 +1,62 @@
+@using WriterApp.Application.Documents
+
+<section class="quality-findings" aria-label="Style and quality findings">
+    <label>Severity
+        <select aria-label="Quality severity" value="@Severity" @onchange="ChangeSeverity" disabled="@Busy">
+            <option value="all">All severities</option><option value="info">Information</option><option value="warning">Warning</option><option value="error">Error</option>
+        </select>
+    </label>
+    <label>Rule
+        <select aria-label="Quality rule" value="@Rule" @onchange="ChangeRule" disabled="@Busy">
+            <option value="all">All rules</option>
+            @foreach (var id in Issues.Select(i => i.RuleId).Distinct()) { <option value="@id">@RuleLabel(id)</option> }
+        </select>
+    </label>
+    @if (Issues.Count == 0) { <p role="status">No findings to review in this check.</p> }
+    else if (!Visible.Any()) { <p role="status">No findings match these filters.</p> }
+    <ul>
+    @foreach (var issue in Visible)
+    {
+        <li @key="issue.IssueKey" data-quality-issue="@issue.IssueKey" class="@(issue.IssueKey == Selected ? "quality-selected" : null)">
+            <button type="button" disabled="@Busy" aria-pressed="@(issue.IssueKey == Selected ? "true" : "false")"
+                @onclick="() => SelectedChanged.InvokeAsync(issue.IssueKey)">Select finding: @issue.Message</button>
+            <p>@SeverityLabel(issue.Severity) · @RuleLabel(issue.RuleId)</p>
+            <p>@WriterApp.Shared.StyleQualityReview.RuleGuidance(issue.RuleId)</p>
+            @if (!string.IsNullOrWhiteSpace(issue.AnchorText)) { <blockquote>@issue.AnchorText</blockquote> }
+            @if (!string.IsNullOrWhiteSpace(issue.Suggestion)) { <p>@issue.Suggestion</p> }
+            @if (!string.IsNullOrWhiteSpace(issue.AnchorText)) {
+                <button type="button" disabled="@Busy" @onclick="() => Jump.InvokeAsync(issue.IssueKey)">Jump to passage</button>
+            }
+            @if (QualityIssueCapabilities.CanReview(issue)) {
+                <button type="button" disabled="@Busy" @onclick="() => Review.InvokeAsync(issue.IssueKey)">Review targeted fix</button>
+            } else { <p>Information only. Revise this passage yourself and check again.</p> }
+            <button type="button" disabled="@Busy" @onclick="() => Dismiss.InvokeAsync(issue.IssueKey)">Dismiss finding</button>
+            @if (TargetedReview is not null) { @TargetedReview(issue.IssueKey) }
+        </li>
+    }
+    </ul>
+</section>
+@code {
+    [Parameter] public IReadOnlyList<PageQualityIssueDto> Issues { get; set; } = [];
+    [Parameter] public string Severity { get; set; } = "all";
+    [Parameter] public string Rule { get; set; } = "all";
+    [Parameter] public string? Selected { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public EventCallback<string> SeverityChanged { get; set; }
+    [Parameter] public EventCallback<string> RuleChanged { get; set; }
+    [Parameter] public EventCallback<string> SelectedChanged { get; set; }
+    [Parameter] public EventCallback<string> Jump { get; set; }
+    [Parameter] public EventCallback<string> Review { get; set; }
+    [Parameter] public EventCallback<string> Dismiss { get; set; }
+    [Parameter] public RenderFragment<string>? TargetedReview { get; set; }
+    private IEnumerable<PageQualityIssueDto> Visible => Issues.Where(i => (Severity == "all" || i.Severity == Severity) && (Rule == "all" || i.RuleId == Rule));
+    private Task ChangeSeverity(ChangeEventArgs e) => SeverityChanged.InvokeAsync(e.Value?.ToString() ?? "all");
+    private Task ChangeRule(ChangeEventArgs e) => RuleChanged.InvokeAsync(e.Value?.ToString() ?? "all");
+    private static string SeverityLabel(string value) => value switch { "error" => "Error", "warning" => "Warning", _ => "Information" };
+    private static string RuleLabel(string value) => value switch {
+        "readability.sentence_length" => "Long sentences", "readability.paragraph_length" => "Long paragraphs",
+        "readability.score" => "Readability", "style.repeated_words" => "Repeated words", "style.passive_voice" => "Passive voice",
+        "consistency.proper_names" => "Name casing", "consistency.timeline_hint" => "Timeline hints", "terminology.glossary" => "Glossary", _ => "Other findings"
+    };
+}
+

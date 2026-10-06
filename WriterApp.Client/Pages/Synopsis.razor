@@ -9,6 +9,8 @@
 @using WriterApp.Application.Subscriptions
 @using WriterApp.Client.Services
 @using WriterApp.Client.State
+@using WriterApp.Shared
+@using WriterApp.Client.Components
 @inject HttpClient Http
 @inject NavigationManager Navigation
 @inject AuthMeStateService AuthMeStateService
@@ -28,7 +30,7 @@
     </header>
     @if (_manuscripts.Count > 1)
     {
-        <ProjectDocuments Documents="_manuscripts" SelectedDocumentId="DocumentId" CanManage="false" Disabled="@(_loading || _saving || _aiInFlight)" SelectedIdChanged="SelectManuscriptAsync" />
+        <ProjectDocuments Documents="_manuscripts" SelectedDocumentId="DocumentId" CanManage="false" Disabled="@(_loading || _saving || _aiInFlight || _scopedRecoveryBusy)" SelectedIdChanged="SelectManuscriptAsync" />
     }
 
     @if (DocumentId is null)
@@ -48,6 +50,7 @@
     }
     else
     {
+        <fieldset disabled="@_scopedRecoveryBusy" style="border:0;padding:0;margin:0;min-width:0;">
         <div class="synopsis-layout">
             <section class="synopsis-form">
                 <div class="synopsis-form-heading">
@@ -137,10 +140,18 @@
                 </div>
             </aside>
         </div>
+        </fieldset>
+    }
+    @if(DocumentId is { } historyDocument && !_loading){
+        <WebAiRecoveryPanel DocumentId="historyDocument" BeforeWork="SaveBeforeRecovery" Changed="ReloadAfterRecovery" BusyChanged="ScopedRecoveryBusyChanged" />
     }
 </div>
 
 @code {
+    private bool _scopedRecoveryBusy;
+    private void ScopedRecoveryBusyChanged(bool busy){if(busy && (_saving || _aiInFlight))throw new InvalidOperationException("Finish saving/coaching before recovery.");_scopedRecoveryBusy=busy;}
+    private async Task<bool> SaveBeforeRecovery(){if(_aiInFlight || _saving)return false;await SaveSynopsisAsync();return _statusMessage=="Saved.";}
+    private async Task ReloadAfterRecovery(){_synopsisAiLease=null;_synopsisAiRequest=null;_synopsisAiResponse=null;_aiProposedText=null;if(DocumentId is { } id)await LoadSynopsisAsync(id);}
     private WriterApp.Shared.Sync.SyncSynopsis SharedSynopsis => _synopsis is { } s ? new(s.Logline,s.Premise,s.Theme,s.ProtagonistArc,s.CentralConflict,s.Stakes,s.Setting,s.EndingIntent,s.OpenQuestions,s.Notes) : new();
     private void SharedSynopsisChanged(ScenePlanningChange c) {
         string key = c.Field switch { "ProtagonistArc" => "protagonist_arc", "CentralConflict" => "central_conflict", "EndingIntent" => "ending_intent", "OpenQuestions" => "open_questions", _ => c.Field.ToLowerInvariant() };
@@ -226,6 +237,8 @@
         try
         {
             var document = await Http.GetFromJsonAsync<DocumentDetailDto>($"api/documents/{documentId}");
+            _synopsisProject=document?.ProjectId;
+            _synopsisAiLease=null;_synopsisAiRequest=null;_synopsisAiResponse=null;
             if (document?.Kind != "manuscript") { _error = "Choose a manuscript to open its synopsis."; return; }
             _manuscripts = document.ProjectId == Guid.Empty ? [] :
                 (await Http.GetFromJsonAsync<List<ProjectDocumentDto>>($"api/projects/{document.ProjectId}/documents") ?? [])
@@ -233,6 +246,7 @@
             DocumentSynopsisDto? result =
                 await Http.GetFromJsonAsync<DocumentSynopsisDto>($"api/documents/{documentId}/synopsis");
             _synopsis = result ?? CreateEmptySynopsis(documentId);
+            _savedSynopsisSource=SynopsisSnapshot(_synopsis);
             _loadedDocumentId = documentId;
         }
         catch (Exception ex)
@@ -256,16 +270,21 @@
 
         _saving = true;
         _statusMessage = null;
+        var savedDocument=DocumentId;var savedDraft=_synopsis;
 
         try
         {
             using HttpResponseMessage response =
-                await Http.PutAsJsonAsync($"api/documents/{DocumentId}/synopsis", _synopsis);
+                await Http.PutAsJsonAsync($"api/documents/{savedDocument}/synopsis",savedDraft with { ExpectedSynopsis=_savedSynopsisSource });
             response.EnsureSuccessStatusCode();
             DocumentSynopsisDto? updated = await response.Content.ReadFromJsonAsync<DocumentSynopsisDto>();
+            if(updated is null || updated.DocumentId!=savedDocument)throw new InvalidDataException("Synopsis save was not confirmed for this manuscript.");
             if (updated is not null)
             {
-                _synopsis = updated;
+                if(DocumentId!=savedDocument)return;
+                _savedSynopsisSource=SynopsisSnapshot(updated);
+                if(_synopsis is not null && SynopsisSnapshot(_synopsis)==SynopsisSnapshot(savedDraft))_synopsis=updated;
+                else _saveQueued=true;
             }
             _statusMessage = "Saved.";
         }
@@ -310,6 +329,7 @@
 
         string value = args.Value?.ToString() ?? string.Empty;
         _synopsis = SetFieldValue(_synopsis, key, value);
+        if(_saving)_saveQueued=true;
         _statusMessage = null;
         _ = ScheduleAutosaveAsync();
     }
@@ -386,9 +406,15 @@
 
         try
         {
+            _autosaveCts?.Cancel();
+            await SaveSynopsisAsync();
+            if(_saving || _saveQueued || _statusMessage!="Saved." || _synopsis is null)throw new InvalidOperationException("Finish saving the synopsis before coaching.");
+            var lease=await CheckedAi.Capture(DocumentId.Value);
+            var savedSnapshot=SynopsisSnapshot(_synopsis);
             SynopsisAiRequestDto payload = new(
                 mode == "suggest" ? _aiSelectedFieldKey : null,
-                _aiUserNotes);
+                _aiUserNotes,1,lease.Source.DocumentVersion,savedSnapshot,_synopsisProject,lease.Source);
+            WriterApp.Shared.SynopsisCoaching.Validate(mode,payload);
 
             using HttpResponseMessage response = await Http.PostAsJsonAsync(
                 $"api/documents/{DocumentId}/synopsis/ai/{mode}",
@@ -406,13 +432,19 @@
                 return;
             }
 
-            SynopsisAiResponseDto? result = await response.Content.ReadFromJsonAsync<SynopsisAiResponseDto>();
+            SynopsisAiResponseDto? result = await WebAiSources.Read<SynopsisAiResponseDto>(response.Content);
             if (result is null)
             {
                 _aiError = "AI coaching returned no response.";
                 return;
             }
 
+            WriterApp.Shared.SynopsisCoaching.ValidateResponse(lease.Source.DocumentId,mode,payload,result);
+            if(result.WebSource!=lease.Source)throw new InvalidDataException("Unchecked synopsis result. Update the backend.");
+            WebAiSources.RequireTime(result.CreatedUtc);await CheckedAi.Confirm(lease);
+            if(DocumentId!=lease.Source.DocumentId || lease.Backend!=(Http.BaseAddress?.AbsoluteUri ?? "") || _synopsis is null || SynopsisSnapshot(_synopsis)!=savedSnapshot || mode=="suggest" && payload.FocusFieldKey!=_aiSelectedFieldKey)
+                throw new InvalidOperationException("Synopsis target changed during coaching. Generate again.");
+            _synopsisAiLease=lease;_synopsisAiRequest=payload;_synopsisAiResponse=result;
             _aiMode = result.Mode;
             _aiOutput = result.OutputText;
             _aiProposedText = result.ProposedText;
@@ -420,7 +452,7 @@
         catch (Exception ex)
         {
             Logger.LogError(ex, "Synopsis AI failed.");
-            _aiError = "AI coaching failed.";
+            _aiError = ex.Message;
         }
         finally
         {
@@ -436,11 +468,28 @@
             return;
         }
 
-        _synopsis = SetFieldValue(_synopsis, _aiSelectedFieldKey, _aiProposedText);
+        try {
+        await RequireSynopsisApproval();
+        var next=SetFieldValue(_synopsis,_synopsisAiRequest!.FocusFieldKey!,_aiProposedText);
+        var operation=Guid.NewGuid();
+        var history=new WebAiHistoryIntent(1,operation,operation,_synopsisAiResponse!.ProposalId,1,null,"Applied",_synopsisAiLease!.Source,"Synopsis",
+            JsonSerializer.Serialize(SynopsisSnapshot(_synopsis),WebAiHistoryContracts.Json),JsonSerializer.Serialize(next,WebAiHistoryContracts.Json));
+        using var mutation=CheckedAi.Mutation(HttpMethod.Put,$"api/documents/{DocumentId}/synopsis",next,_synopsisAiLease!);
+        await HistoryOutbox.Attach(mutation,history,_synopsisAiLease!,CancellationToken.None);
+        using var response=await Http.SendAsync(mutation);
+        response.EnsureSuccessStatusCode();CheckedAi.RequireLease(_synopsisAiLease!);
+        WebCheckedAi.RequireMutationReceipt(response);
+        var saved=await WebAiSources.Read<DocumentSynopsisDto>(response.Content);
+        if(saved.DocumentId!=_synopsisAiLease!.Source.DocumentId || DocumentId!=saved.DocumentId || Http.BaseAddress?.AbsoluteUri!=_synopsisAiLease.Backend)throw new InvalidDataException("Synopsis target changed during Save. Reload current planning.");
+        _synopsis=saved;
+        await HistoryOutbox.Saved(history,_synopsisAiLease!,response);
+        _savedSynopsisSource=SynopsisSnapshot(_synopsis);
         _aiOutput = null;
         _aiProposedText = null;
         _aiMode = null;
-        await SaveSynopsisAsync();
+        _synopsisAiLease=null;_synopsisAiRequest=null;_synopsisAiResponse=null;
+        _statusMessage="Saved.";
+        } catch(Exception e) { _aiError=e.Message; }
     }
 
     private bool CanApplySuggestion =>

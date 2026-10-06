@@ -1,0 +1,50 @@
+@using WriterApp.Shared
+<section class="preset-editor" aria-label="Edit reusable preset">
+    <h3>@(Editing ? "Edit preset" : "Create preset")</h3>
+    <label>Name <input maxlength="100" value="@Value.Name" @onchange="e => Change(Value with {Name=Text(e)})" disabled="@Disabled" /></label>
+    <label>Category <input maxlength="100" value="@Value.Category" @onchange="e => Change(Value with {Category=Text(e)})" disabled="@Disabled" /></label>
+    <label>Kind <select aria-label="Preset kind" value="@Value.Kind" @onchange="Kind" disabled="@Disabled"><option value="custom" selected="@(Value.Kind=="custom")">Custom template</option><option value="builtin" selected="@(Value.Kind=="builtin")">Built-in action</option></select></label>
+    <p>Changing kind resets the draft action, template and parameters. The saved original remains until Save.</p>
+    <label>Writing target <select aria-label="Writing target" value="@Value.Scope" @onchange="Scope" disabled="@Disabled"><option value="Selection" selected="@(Value.Scope==WritingScope.Selection)">Selected passage</option><option value="Section" selected="@(Value.Scope==WritingScope.Section)">All pages in current section</option></select></label>
+    @if(Value.Kind=="builtin") {
+        <label>Action <select aria-label="Action" value="@Value.ActionKey" @onchange="e => Change(Value with {ActionKey=Text(e)})" disabled="@Disabled">
+            @if(!ReusablePrompts.Actions.Any(a=>a.Key==Value.ActionKey)){<option value="@Value.ActionKey">@Value.ActionKey (stored action)</option>}
+            @foreach(var a in ReusablePrompts.Actions){<option value="@a.Key" selected="@(Value.ActionKey==a.Key)">@a.Label</option>}
+        </select></label>
+    } else {
+        <label>Custom template <textarea aria-label="Custom template" rows="5" maxlength="2000" @onchange="e => Change(Value with {Template=Text(e)})" disabled="@Disabled">@Value.Template</textarea></label>
+        <p>Use {context} for the declared passage or section. Variables also support {{name}} and ${name}. Results are reviewed before Apply.</p>
+        @foreach(var token in PromptTokens.Names(Value.Template??"").Where(t=>t is not ("context" or "scope" or "tone" or "length"))) {
+            <label>Variable @token <input maxlength="2000" value="@Parameter(token)" @onchange="e => Set(token,Text(e))" disabled="@Disabled" /></label>
+        }
+    }
+    @if(Value.Kind=="custom"||Value.ActionKey?.StartsWith("rewrite.")==true||Value.ActionKey?.StartsWith("change_tone.")==true) {
+        <label>Tone (optional) <input maxlength="100" value="@Parameter("tone")" @onchange='e => Set("tone",Text(e))'  disabled="@Disabled" /></label>
+    }
+    @if(Value.Kind=="custom"||Value.ActionKey?.StartsWith("rewrite.")==true) {
+        <label>Length <select aria-label="Length" value="@Parameter("length")" @onchange='e => Set("length",Text(e))'  disabled="@Disabled"><option value="" selected="@(Parameter("length")=="")">Default</option>@foreach(var l in WritingActions.Lengths){<option selected="@(Parameter("length")==l)">@l</option>}</select></label>
+    }
+    @if(Value.Kind=="builtin"&&Value.ActionKey?.StartsWith("rewrite.")==true) {
+        <label><input type="checkbox" checked="@(ReusablePrompts.Primitive(Value.Parameters.GetValueOrDefault("preserve_terms")) is not false)" @onchange='e => Set("preserve_terms",e.Value is true)'  disabled="@Disabled" /> Preserve names and terms</label>
+    }
+    <label><input type="checkbox" checked="@Value.Pinned" @onchange="e => Change(Value with {Pinned=e.Value is true})" disabled="@Disabled" /> Pin for quick access (up to 3)</label>
+    @if(ReusablePrompts.Unavailable(Value) is { } notice){<p role="status">@notice</p>}
+    <details><summary>Retained parameters</summary><pre>@System.Text.Json.JsonSerializer.Serialize(Value.Parameters)</pre><button type="button" disabled="@Disabled" @onclick="() => Change(Value with {Parameters=new()})">Reset draft parameters</button></details>
+    @if(Value.ProjectId is not null){<p>This preset is bound to its cloud project. It can run only in that project.</p>}
+    <button type="button" disabled="@Disabled" @onclick="Save">Save preset locally</button>
+    <button type="button" disabled="@Disabled" @onclick="Cancel">Cancel preset edit</button>
+</section>
+@code {
+    [Parameter,EditorRequired] public PromptDefinition Value {get;set;}=new("",null,"custom",null,"Revise {context}",new());
+    [Parameter] public EventCallback<PromptDefinition> ValueChanged {get;set;}
+    [Parameter] public EventCallback Save {get;set;}
+    [Parameter] public EventCallback Cancel {get;set;}
+    [Parameter] public bool Editing {get;set;}
+    [Parameter] public bool Disabled {get;set;}
+    private static string Text(ChangeEventArgs e)=>e.Value?.ToString()??"";
+    private Task Change(PromptDefinition p)=>ValueChanged.InvokeAsync(p);
+    private string Parameter(string key)=>ReusablePrompts.Primitive(Value.Parameters.GetValueOrDefault(key))?.ToString()??"";
+    private Task Set(string key,object value){var p=new Dictionary<string,object?>(Value.Parameters);if(value is string s&&s.Length==0)p.Remove(key);else p[key]=value;return Change(Value with{Parameters=p});}
+    private Task Kind(ChangeEventArgs e)=>Change(Value with{Kind=Text(e),ActionKey=Text(e)=="builtin"?"rewrite.selection":null,Template=Text(e)=="custom"?"Revise {context}":null,Parameters=new()});
+    private Task Scope(ChangeEventArgs e){var scope=Enum.Parse<WritingScope>(Text(e));var p=new Dictionary<string,object?>(Value.Parameters);if(p.ContainsKey("scope"))p["scope"]=scope.ToString().ToLowerInvariant();return Change(Value with{Scope=scope,Parameters=p});}
+}

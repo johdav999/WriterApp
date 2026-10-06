@@ -1,0 +1,32 @@
+@using WriterApp.Shared.Quality
+
+<details class="quality-dismissals">
+    <summary>Review dismissed findings (@Items.Count(i => i.Dismissed))</summary>
+    <p>Dismissals apply to an exact checked source and occurrence. Changed writing or glossary makes findings eligible again.</p>
+    <p role="status">@Message</p>
+    @if (Items.Count == 0) { <p>No saved decisions for this page and account.</p> }
+    else
+    {
+        <ul>
+            @foreach (var item in Items)
+            {
+                <li @key="item.Id" data-quality-decision="@item.Id">
+                    <p><strong>@item.Rule</strong>: @item.Message</p>
+                    @if (item.Anchor is not null) { <blockquote>@item.Anchor</blockquote> }
+                    <p>@(item.Active ? "Current checked source" : "Earlier source; this decision does not hide current findings. Restore clears its local decision only; backend delivery requires the exact source again"). @item.Status.</p>
+                    @if (item.Dismissed)
+                    {
+                        <button type="button" disabled="@Busy" @onclick="() => Restore.InvokeAsync(item.Id)">Restore finding</button>
+                    }
+                    else { <p>Restored locally; backend delivery is pending.</p> }
+                </li>
+            }
+        </ul>
+    }
+</details>
+@code {
+    [Parameter] public IReadOnlyList<QualityDismissedFinding> Items { get; set; } = [];
+    [Parameter] public string? Message { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public EventCallback<string> Restore { get; set; }
+}

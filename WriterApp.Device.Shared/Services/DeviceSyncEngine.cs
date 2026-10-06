@@ -227,7 +227,15 @@ public sealed class DeviceSyncEngine : IDisposable
                     : entry.DeleteRequested ? "delete"
                     : fingerprint != entry.BaseFingerprint && !entry.ServerTrashed
                         ? DeviceSyncMapping.ContentFingerprint(local) == entry.BaseContentFingerprint ? "rename" : "upload" : null;
-                if (action is null) return;
+                if (action is null)
+                {
+                    // Repair metadata from older clients or an interrupted acknowledgment even
+                    // when the journal already proves there is no new writing to upload.
+                    if (local.SyncState != LocalSyncState.Synced || local.Sections.Any(s =>
+                        s.ServerSectionId is null || s.Pages.Any(p => p.ServerPageId is null)))
+                        await UpdateMetadataAsync(entry, ct);
+                    return;
+                }
                 entry.Pending = new(new(Guid.NewGuid(), entry.Version, action, action == "upload" ? DeviceSyncMapping.Upload(local) : null,
                     action == "rename" ? local.Title : null), fingerprint, DeviceSyncMapping.ContentFingerprint(local));
                 await PersistAsync(ct); // Must succeed before any network mutation.
@@ -370,7 +378,16 @@ public sealed class DeviceSyncEngine : IDisposable
     {
         var local = await _store.GetAsync(entry.LocalId, ct);
         if (local is null) return;
+        bool acknowledged = entry.Version is not null && !entry.Deleted && entry.Conflict is null
+            && DeviceSyncMapping.WritingFingerprint(local) == entry.BaseFingerprint
+            && (local.DeletedAtUtc is not null) == entry.ServerTrashed;
         var updated = local with { ServerDocumentId = entry.ServerId,
+            // Upload sends these exact IDs. Bind them only when the current writing matches
+            // the acknowledged request, so newly added targets never acquire unconfirmed IDs.
+            Sections = acknowledged ? local.Sections.Select(s => s with {
+                ServerSectionId = s.ServerSectionId ?? s.SectionId,
+                Pages = s.Pages.Select(p => p with { ServerPageId = p.ServerPageId ?? p.PageId }).ToArray()
+            }).ToArray() : local.Sections,
             ServerProjectId = local.Project is { } localProject ? localProject.ServerProjectId ?? localProject.ProjectId : local.ServerProjectId,
             Project = local.Project is { } p ? p with { ServerProjectId = p.ServerProjectId ?? p.ProjectId,
                 ServerMetadataRevision = entry.ProjectMetadataRevision ?? p.ServerMetadataRevision,

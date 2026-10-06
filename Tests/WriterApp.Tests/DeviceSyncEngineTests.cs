@@ -14,7 +14,7 @@ using Xunit;
 
 namespace WriterApp.Tests;
 
-public sealed class DeviceSyncEngineTests : IDisposable
+public sealed partial class DeviceSyncEngineTests : IAsyncLifetime
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "WriterApp.SyncEngineTests", Guid.NewGuid().ToString("N"));
     private readonly FakeApi _api = new();
@@ -389,26 +389,30 @@ public sealed class DeviceSyncEngineTests : IDisposable
     {
         var doc = await Store.CreateProjectAsync("Draft");
         using var services = RenderServices();
+        await services.GetRequiredService<DeviceAccountService>().SignInAsync();
         var engine = services.GetRequiredService<DeviceSyncEngine>();
         await using var renderer = new HtmlRenderer(services, services.GetRequiredService<ILoggerFactory>());
         var output = await renderer.Dispatcher.InvokeAsync(() => renderer.RenderComponentAsync<DocumentWorkspace>(
             ParameterView.FromDictionary(new Dictionary<string, object?> { ["DocumentId"] = doc.DocumentId })));
         string before = await renderer.Dispatcher.InvokeAsync(output.ToHtmlString);
-        Assert.Contains("AI commands need a synced cloud copy", before);
+        Assert.Contains("Sync this document to use AI writing tools.", before);
         var markup = new AngleSharp.Html.Parser.HtmlParser().ParseDocument(before);
         var statusBar = markup.QuerySelector(".editor-status-bar");
         Assert.NotNull(statusBar);
         Assert.Single(statusBar.QuerySelectorAll("button"), b => b.TextContent == "Enable cloud sync");
         Assert.DoesNotContain(markup.QuerySelectorAll(".context-drawer button"), b => b.TextContent.Contains("Enable cloud sync"));
-        string[] labels = ["Rewrite selection", "Expand selection", "Shorten selection", "Summarize section", "Preview custom action", "Translate selection"];
+        string[] labels = ["Preview rewrite", "Expand", "Shorten", "Change tone", "Show, don&#x27;t tell", "Summarize section", "Preview custom action", "Translate selection"];
         foreach (string label in labels) Assert.True(ButtonDisabled(before, label));
 
         await renderer.Dispatcher.InvokeAsync(() => engine.EnableAsync(doc.DocumentId));
-        string after = await WaitForHtmlAsync(renderer, output.ToHtmlString, html => !html.Contains("AI commands need a synced cloud copy"));
-        Assert.DoesNotContain("AI commands need a synced cloud copy", after);
+        Assert.Equal("Synchronization complete.", engine.Message);
+        string after = await WaitForHtmlAsync(renderer, output.ToHtmlString,
+            html => labels.All(label => !ButtonDisabled(html, label)));
+        Assert.DoesNotContain("Sync this document to use AI writing tools.",
+            new AngleSharp.Html.Parser.HtmlParser().ParseDocument(after).QuerySelector(".writing-panel")!.TextContent);
         Assert.DoesNotContain("Enable cloud sync</button>", after);
         Assert.Contains("Cloud linked", new AngleSharp.Html.Parser.HtmlParser().ParseDocument(after).QuerySelector(".editor-status-bar")!.TextContent);
-        foreach (string label in labels) Assert.False(ButtonDisabled(after, label));
+        foreach (string label in labels) Assert.False(ButtonDisabled(after, label), "Action stayed disabled after sync: " + label);
     }
 
     [Fact]
@@ -457,6 +461,8 @@ public sealed class DeviceSyncEngineTests : IDisposable
     private ServiceProvider RenderServices() => new ServiceCollection()
         .AddLogging()
         .AddWriterAppDeviceCore(new("Test", new Uri("https://test.invalid/")), _root)
+        .AddSingleton<IDeviceIdentityClient, Identity>()
+        .AddSingleton<IDeviceAiApi, LocalWritingTests.Api>()
         .AddSingleton<IDeviceSyncApi>(_api)
         .AddSingleton<IJSRuntime, NoJs>()
         .AddSingleton<NavigationManager, TestNavigation>()
@@ -586,9 +592,13 @@ public sealed class DeviceSyncEngineTests : IDisposable
         public void DeleteRemote()
         { var pair = Documents.Single(); Documents[pair.Key] = new(pair.Value.State with { Version = (++_version).ToString(), IsDeleted = true }, null); }
     }
-    public void Dispose()
+    public Task InitializeAsync() => Task.CompletedTask;
+    public async Task DisposeAsync()
     {
+        _network.SetOnline(false);
         foreach (var engine in _engines) engine.Dispose();
+        using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        foreach (var engine in _engines) await engine.SyncAsync(timeout.Token);
         if (Directory.Exists(_root)) Directory.Delete(_root, recursive: true);
     }
 }

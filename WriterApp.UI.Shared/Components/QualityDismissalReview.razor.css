@@ -1,0 +1,5 @@
+.quality-dismissals { margin-block: 1rem; padding: .75rem; border: 1px solid var(--color-border, #ddd); border-radius: .5rem; }
+.quality-dismissals summary { cursor: pointer; font-weight: 600; }
+.quality-dismissals li { margin-block: 1rem; overflow-wrap: anywhere; }
+.quality-dismissals blockquote { margin-inline: .5rem; white-space: pre-wrap; }
+.quality-dismissals button { max-width: 100%; white-space: normal; }

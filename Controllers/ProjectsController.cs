@@ -379,9 +379,21 @@ namespace WriterApp.Controllers
                 return NotFound();
             }
 
-            project.CoverImageUrl = Normalize(request.ImageUrl);
-            project.UpdatedUtc = DateTimeOffset.UtcNow;
-            await _dbContext.SaveChangesAsync(ct);
+            if (request.ExpectedMetadataRevision is { } expected && expected != project.MetadataRevision)
+                return Conflict(new { message = "Project metadata changed. Reload before saving its cover." });
+            string? coverUrl = Normalize(request.ImageUrl);
+            if (coverUrl?.StartsWith("data:", StringComparison.OrdinalIgnoreCase) == true) {
+                try { WriterApp.Shared.CoverStudioContract.ReadPng(coverUrl); }
+                catch (System.IO.InvalidDataException e) { return BadRequest(new { message = e.Message }); }
+            } else if (coverUrl is not null && (!Uri.TryCreate(coverUrl, UriKind.Absolute, out var coverUri) || coverUri.Scheme != "https" || !string.IsNullOrEmpty(coverUri.UserInfo)))
+                return BadRequest(new { message = "Use a PNG data URI or an HTTPS image URL without credentials." });
+            long revision = project.MetadataRevision;
+            DateTimeOffset updated = DateTimeOffset.UtcNow;
+            int changed = await _dbContext.Projects.Where(p => p.Id == projectId && p.OwnerUserId == userId && p.MetadataRevision == revision)
+                .ExecuteUpdateAsync(set => set.SetProperty(p => p.CoverImageUrl, coverUrl).SetProperty(p => p.MetadataRevision, revision + 1).SetProperty(p => p.UpdatedUtc, updated), ct);
+            if (changed != 1) return Conflict(new { message = "Project metadata changed. Reload before saving its cover." });
+            _dbContext.Entry(project).State = EntityState.Detached;
+            project.CoverImageUrl = coverUrl; project.MetadataRevision = revision + 1; project.UpdatedUtc = updated;
 
             int total = await _dbContext.ProjectNodes
                 .AsNoTracking()
@@ -2723,7 +2735,7 @@ namespace WriterApp.Controllers
                 project.CoverImageUrl,
                 project.CreatedUtc,
                 project.UpdatedUtc,
-                totalWords, project.PrimaryDocumentId, _dbContext.ManuscriptScopeId);
+                totalWords, project.PrimaryDocumentId, _dbContext.ManuscriptScopeId, project.MetadataRevision);
         }
 
         private static ProjectNodeDto ToDto(ProjectNodeRecord node)

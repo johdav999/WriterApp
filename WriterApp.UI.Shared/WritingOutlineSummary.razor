@@ -1,0 +1,5 @@
+@using WriterApp.Shared
+@if (Value is { } outline) {
+    <p>Saved outline: @outline.Sections.Count sections · @outline.Nodes.Count nodes from this manuscript. Changed writing or planning requires a new review.</p>
+}
+@code { [Parameter] public WritingOutlineSnapshot? Value { get; set; } }

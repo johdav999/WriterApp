@@ -74,7 +74,11 @@ namespace WriterApp.AI.Actions
                 ["timeline_event_id"] = GetOption(input.Options, "timeline_event_id"),
                 ["time_ref"] = GetOption(input.Options, "time_ref"),
                 ["tags_json"] = GetOption(input.Options, "tags_json"),
-                ["references_json"] = GetOption(input.Options, "references_json")
+                ["references_json"] = GetOption(input.Options, "references_json"),
+                ["scene_coaching_version"] = GetOption(input.Options, "scene_coaching_version"),
+                ["focus_field"] = GetOption(input.Options, "focus_field"),
+                ["current_scene_card"] = GetOption(input.Options, "current_scene_card"),
+                ["scene_entities_json"] = GetOption(input.Options, "scene_entities_json")
             };
 
             return new AiRequest(

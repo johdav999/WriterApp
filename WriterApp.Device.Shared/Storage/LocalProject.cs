@@ -23,6 +23,9 @@ public sealed record LocalProject
     public string? Genre { get; init; }
     public string? DefaultExportSettingsJson { get; init; }
     public string? CoverImageUrl { get; init; }
+    public string? PreviousCoverImageUrl { get; init; }
+    public bool HasCoverRecovery { get; init; }
+    public Guid? CoverChangeId { get; init; }
     public IReadOnlyList<LocalProjectNode> Nodes { get; init; } = [];
     public WriterApp.Shared.Sync.SyncSynopsis? Synopsis { get; init; }
     public Guid? LastPageId { get; init; }

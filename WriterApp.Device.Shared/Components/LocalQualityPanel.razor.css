@@ -1,0 +1,11 @@
+.quality-fix-review {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--color-border, #ddd);
+    scroll-margin-block: 16px;
+}
+
+.quality-fix-review:focus-visible {
+    outline: 2px solid var(--color-primary, #6556a8);
+    outline-offset: 4px;
+}

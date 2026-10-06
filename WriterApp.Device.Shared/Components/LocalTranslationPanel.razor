@@ -1,0 +1,135 @@
+@implements IDisposable
+@using Microsoft.JSInterop
+@using WriterApp.Shared
+@using WriterApp.Shared.Localization
+@inject LocalDocumentRepository Documents
+@inject DeviceSyncEngine Sync
+@inject DeviceAiService Ai
+@inject LocalAiStore History
+@inject LocalTranslationActions Actions
+@inject DeviceAccountService Account
+@inject IJSRuntime JS
+
+<section aria-label="Translate writing">
+    <TranslationOptions Scope="@_scope" ScopeChanged="ScopeChanged" TargetLanguage="@_language" TargetLanguageChanged="LanguageChanged"
+        SourceLanguage="@_sourceLanguage" SourceLanguageChanged="SourceChanged" Style="@_style" StyleChanged="StyleChanged" Disabled="@(_busy || ExternalBusy)" />
+    @if (_scope != "selection") {
+        <label>Apply translation <select @bind="_mode" @bind:after="Dismiss" disabled="@(_busy || ExternalBusy)">
+            <option value="replace">Replace @_scope</option>
+            <option value="@(_scope == "section" ? "duplicate-section" : "duplicate-document")">Duplicate as new @_scope</option>
+        </select></label>
+        <p>All pages are included in order. Rich text stays in place. Image captions, code and anchored annotations require selection translation or a text-only scope.</p>
+    }
+    <button type="button" disabled="@(_busy || ExternalBusy)" @onmousedown:preventDefault="true" @onclick="Generate">Translate @_scope</button>
+    @if (_busy) { <p role="status">Preparing translation. The original is retained.</p><button type="button" @onclick="() => _cancel?.Cancel()">Cancel translation request</button> }
+    @if (_error is not null) { <p role="alert">@_error</p> }
+    @if (_message is not null) { <p role="status">@_message</p> }
+    @if (_prepared is { } prepared && _result is { } result && _entry is { } entry && _proposal is not null) {
+        <section aria-label="Review complete translation">
+            <h3>Review before applying</h3>
+            <p>Target: @prepared.Source.Title · @prepared.Structure.Scope · @TranslationLanguages.GetDisplayNameOrValue(prepared.Structure.TargetLanguage) · @(entry.Target == "Translation:replace" ? "Replace " + prepared.Structure.Scope : "Create a new " + prepared.Structure.Scope)</p>
+            <p>Source revision @prepared.Source.LocalRevision. @prepared.Structure.Sections.Sum(s => s.Pages.Count) pages mapped. Apply saves the complete reviewed result locally; History retains the original.</p>
+            @for (int s = 0; s < prepared.Structure.Sections.Count; s++) {
+                var sourceSection = LocalTranslation.Scope(prepared.Source, prepared.SectionId, prepared.Structure.Scope)[s];
+                var orderedPages = sourceSection.Pages.OrderBy(p => p.OrderIndex).ToArray();
+                @for (int p = 0; p < orderedPages.Length; p++) {
+                    <h4>@sourceSection.Title · @orderedPages[p].Title</h4>
+                    <TranslationProposalPanel SourceText="@Text(prepared.Structure.Sections[s].Pages[p])" TranslatedText="@Text(result.Sections[s].Pages[p])" />
+                }
+            }
+            <button type="button" disabled="@(_busy || ExternalBusy)" @onclick="Apply">Approve &amp; apply translation</button>
+            <button type="button" disabled="@_busy" @onclick="Dismiss">Dismiss translation</button>
+        </section>
+    }
+    @if (_copyId is { } copy) { <a href="@($"/documents/{copy}")">Open translated copy</a> }
+</section>
+@code {
+    [Parameter] public Guid DocumentId { get; set; }
+    [Parameter] public Guid? SectionId { get; set; }
+    [Parameter] public bool ExternalBusy { get; set; }
+    [Parameter] public Func<Task<bool>>? BeforeWork { get; set; }
+    [Parameter] public Func<Task>? AfterWork { get; set; }
+    [Parameter] public EventCallback<TranslationSelectionOptions> SelectionRequest { get; set; }
+    public bool IsBusy => _busy;
+    private string _scope = "selection", _language = "en", _mode = "replace";
+    private string _sourceLanguage = "auto", _style = "natural";
+    private string? _error, _message; private Guid? _copyId;
+    private bool _busy, _disposed; private CancellationTokenSource? _cancel;
+    private LocalTranslationPrepared? _prepared; private TranslationStructure? _result;
+    private DeviceAiProposal? _proposal; private LocalAiHistory? _entry;
+    private long _generation; private (Guid, Guid?) _loaded;
+    protected override void OnInitialized() { _generation = Account.Generation; Account.Changed += AccountChanged; }
+    protected override void OnParametersSet() {
+        if (_loaded != (DocumentId, SectionId)) { _loaded = (DocumentId, SectionId); Dismiss(); _copyId = null; }
+    }
+    private void AccountChanged() {
+        if (_disposed || Account.Generation == _generation) return;
+        _generation = Account.Generation; _cancel?.Cancel();
+        _ = InvokeAsync(() => { Dismiss(); _message = "The account changed. Generate a new translation before applying."; StateHasChanged(); });
+    }
+    private Task ScopeChanged(string scope) { _scope = scope; _mode = "replace"; Dismiss(); return Task.CompletedTask; }
+    private Task LanguageChanged(string language) { _language = language; Dismiss(); return Task.CompletedTask; }
+    private Task SourceChanged(string language) { _sourceLanguage = language; Dismiss(); return Task.CompletedTask; }
+    private Task StyleChanged(string style) { _style = style; Dismiss(); return Task.CompletedTask; }
+    private void Dismiss() { _prepared = null; _result = null; _entry = null; _proposal = null; }
+    private static string Text(TranslationPage page) => string.Join("\n", page.Runs.Select(r => r.Text));
+    private async Task Generate() {
+        if (_scope == "selection") { if (!_busy && !ExternalBusy) await SelectionRequest.InvokeAsync(new TranslationSelectionOptions(_language, _sourceLanguage, _style)); return; }
+        await Work(async ct => {
+            Dismiss(); _copyId = null;
+            var source = await Latest(ct); var sectionId = SectionId ?? throw new InvalidOperationException("Choose a section first.");
+            var scope = _scope; var language = _language; var mode = _mode; var sourceLanguage = _sourceLanguage; var style = _style;
+            if (LocalTranslation.Scope(source, sectionId, scope).SelectMany(s => s.Pages).Sum(p => (long)p.Content.Length) > 2_000_000)
+                throw new InvalidDataException("The saved rich source is too large for one translation. Translate a smaller section or selection.");
+            await using var module = await JS.InvokeAsync<IJSObjectReference>("import", ct, "./_content/WriterApp.Device.Shared/editor/device-editor.js");
+            // Preflight every page before synchronization/generation; unsupported content is never omitted.
+            var captured = new Dictionary<Guid, TranslationPageCapture>();
+            foreach (var section in LocalTranslation.Scope(source, sectionId, scope))
+                foreach (var page in section.Pages.OrderBy(p => p.OrderIndex))
+                    captured.Add(page.PageId, await module.InvokeAsync<TranslationPageCapture>("captureTranslation", ct, page.Content, page.ContentFormat.ToString()));
+            await Sync.SyncAsync(ct); ct.ThrowIfCancellationRequested();
+            var saved = await Latest(ct);
+            if (LocalTranslation.Signature(saved) != LocalTranslation.Signature(source)) throw new InvalidOperationException("Writing changed while synchronizing. Review and retry.");
+            var prepared = LocalTranslation.Prepare(saved, sectionId, scope, language, captured, sourceLanguage, style);
+            var proposal = await Ai.ProposeAsync(prepared.Request, ct); ct.ThrowIfCancellationRequested(); Ai.RequireCurrentAccount(proposal);
+            var result = TranslationStructures.Result(proposal.ProposedText, prepared.Structure);
+            var html = new Dictionary<Guid, string>(); var sections = LocalTranslation.Scope(saved, sectionId, scope);
+            for (int s = 0; s < sections.Count; s++) {
+                var pages = sections[s].Pages.OrderBy(p => p.OrderIndex).ToArray();
+                for (int p = 0; p < pages.Length; p++) html.Add(pages[p].PageId,
+                    await module.InvokeAsync<string>("previewTranslation", ct, pages[p].Content, pages[p].ContentFormat.ToString(), result.Sections[s].Pages[p].Runs));
+            }
+            LocalTranslation.RequireFresh(await Latest(ct), saved); Ai.RequireCurrentAccount(proposal); ct.ThrowIfCancellationRequested();
+            var after = LocalTranslation.Preview(prepared, html, mode);
+            var entry = new LocalAiHistory(2, Guid.NewGuid(), DocumentId, prepared.Request.Key, "Translation:" + mode,
+                saved.LocalRevision, saved.ServerVersion, DateTimeOffset.UtcNow, "Reviewed", saved, proposal.ProposedText,
+                OriginalText: string.Join("\n\n", prepared.Structure.Sections.SelectMany(s => s.Pages).Select(Text)), After: after, CloudOrigin:proposal.HistoryOrigin);
+            await History.SaveHistoryAsync(entry, ct); Ai.RequireCurrentAccount(proposal); ct.ThrowIfCancellationRequested();
+            _prepared = prepared; _proposal = proposal; _result = result; _entry = entry;
+            _message = "Complete translation ready. Review each page and the application target.";
+        });
+    }
+    private Task Apply() => Work(async ct => {
+        var entry = _entry ?? throw new InvalidOperationException("Review a translation first.");
+        var proposal = _proposal ?? throw new InvalidOperationException("The proposal is unavailable.");
+        await Actions.ApplyAsync(entry, proposal, ct);
+        if (entry.Target == "Translation:duplicate-document") _copyId = entry.After!.DocumentId;
+        Dismiss(); _message = "Translation saved locally. History can undo, redo or recover the original. A translated document copy starts locally; enable its cloud sync explicitly.";
+    });
+    private async Task<LocalDocument> Latest(CancellationToken ct) => await Documents.LoadAsync(DocumentId, ct) ?? throw new IOException("Document unavailable.");
+    private async Task Work(Func<CancellationToken, Task> action) {
+        if (_busy || ExternalBusy) return; _busy = true; _error = null; _message = null;
+        using var cancel = new CancellationTokenSource(); _cancel = cancel; bool began = false;
+        try {
+            if (BeforeWork is not null && !await BeforeWork()) throw new InvalidOperationException("Save writing and planning before translating.");
+            began = true; await action(cancel.Token);
+        } catch (OperationCanceledException) { _message = "Translation canceled. If an approved save was interrupted, open History to finish or recover it."; }
+        catch (Exception e) when (e is IOException or InvalidDataException or InvalidOperationException or System.Text.Json.JsonException or DeviceAiException
+            or DeviceSignInRequiredException or DeviceIdentityUnavailableException or HttpRequestException or UnauthorizedAccessException or JSException) { _error = e.Message; }
+        finally {
+            try { if (began && AfterWork is not null) await AfterWork(); }
+            finally { _busy = false; _cancel = null; }
+        }
+    }
+    public void Dispose() { _disposed = true; _cancel?.Cancel(); Account.Changed -= AccountChanged; }
+}

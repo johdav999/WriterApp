@@ -8,7 +8,7 @@ using WriterApp.UI.Shared.Projects;
 
 namespace WriterApp.Device.Shared.Services;
 
-public sealed class LocalStoryboardData(LocalDocumentRepository documents, DeviceAiService ai) : IStoryboardData
+public sealed class LocalStoryboardData(LocalDocumentRepository documents, DeviceAiService ai, LocalAiStore? history = null) : IStoryboardData
 {
     public LocalDocument? Document { get; private set; }
     public Func<Task<bool>>? BeforeMutation { get; set; }
@@ -37,10 +37,33 @@ public sealed class LocalStoryboardData(LocalDocumentRepository documents, Devic
         await _gate.WaitAsync();
         try
         {
-            var source = Document ?? throw new InvalidOperationException("Load a project first.");
-            var next = mutation(source);
-            LocalProjectStructure.Validate(next);
-            Document = await documents.SaveAsync(next);
+            for (int attempt = 0; ; attempt++)
+            {
+                var source = Document ?? throw new InvalidOperationException("Load a project first.");
+                var latest = await documents.LoadAsync(source.DocumentId)
+                    ?? throw new LocalDocumentConflictException(source.DocumentId);
+                if (latest.LocalRevision != source.LocalRevision)
+                {
+                    // Background sync advances the revision even when writing and planning
+                    // are unchanged. Adopt its acknowledgment before applying the edit.
+                    // Actual content/structure changes must still require a reload.
+                    if (DeviceSyncMapping.Fingerprint(latest) != DeviceSyncMapping.Fingerprint(source))
+                        throw new LocalDocumentConflictException(source.DocumentId);
+                    Document = source = latest;
+                }
+                var next = mutation(source);
+                LocalProjectStructure.Validate(next);
+                try
+                {
+                    Document = await documents.SaveAsync(next);
+                    break;
+                }
+                catch (LocalDocumentConflictException) when (attempt < 2)
+                {
+                    // Sync may acknowledge between the read and the compare-and-swap.
+                    // Recheck against the unchanged source before retrying the mutation.
+                }
+            }
             if (AfterMutation is not null) await AfterMutation();
             return Document;
         }
@@ -182,11 +205,16 @@ public sealed class LocalStoryboardData(LocalDocumentRepository documents, Devic
         var d = Current(projectId, documentId);
         if (request.DocumentId != d.DocumentId || request.SectionId is not { } section) throw new InvalidOperationException("Select a scene from this project.");
         var prepared = AdvancedAiRequests.Build(d, section, AdvancedAiAction.Storyboard).Request;
-        prepared = prepared with { Key = key, Request = prepared.Request with { Parameters = request.Parameters } };
+        var parameters = request.Parameters is null ? new Dictionary<string, object?>() : new(request.Parameters);
+        parameters["storyboard_context"] = AdvancedAiRequests.StoryboardContext(d);
+        prepared = prepared with { Key = key, Request = prepared.Request with { Parameters = parameters } };
         var proposal = await ai.ProposeAsync(prepared, CancellationToken.None);
         var latest = await documents.LoadAsync(d.DocumentId) ?? throw new IOException("Manuscript unavailable.");
         if (latest.LocalRevision != d.LocalRevision) throw new InvalidOperationException("The storyboard changed. Reload and run AI again.");
         _aiSource = d; _aiProposal = proposal;
+        if (history is not null) await history.SaveHistoryAsync(new(1, Guid.NewGuid(), d.DocumentId, key, "Analysis:Storyboard",
+            d.LocalRevision, d.ServerVersion, DateTimeOffset.UtcNow, "Reviewed", d, proposal.ProposedText,
+            OriginalText: proposal.SourceText, CloudOrigin:proposal.HistoryOrigin));
         return new(proposal.ProposalId, null, proposal.ProposedText, proposal.Summary, proposal.PreparedAt, key, SourceDocumentVersion: d.ServerVersion);
     }
     public async Task ValidateSuggestionAsync(Guid projectId, Guid? documentId = null)
@@ -197,5 +225,23 @@ public sealed class LocalStoryboardData(LocalDocumentRepository documents, Devic
         var latest = await documents.LoadAsync(d.DocumentId);
         if (latest?.LocalRevision != _aiSource.LocalRevision || d.LocalRevision != _aiSource.LocalRevision)
             throw new InvalidOperationException("The storyboard changed. Run AI again before creating a suggested scene.");
+    }
+    public async Task<LocalAiHistory?> BeginSuggestedSceneAsync()
+    {
+        if (_aiSource is null || _aiProposal is null || history is null) return null;
+        await ValidateSuggestionAsync(_aiSource.Project!.ProjectId, _aiSource.DocumentId);
+        var intent = new LocalAiHistory(1, Guid.NewGuid(), _aiSource.DocumentId, _aiProposal.Prepared.Key, "Storyboard:created-scene",
+            _aiSource.LocalRevision, _aiSource.ServerVersion, DateTimeOffset.UtcNow, "Applying", _aiSource, _aiProposal.ProposedText,
+            OriginalText:_aiProposal.SourceText, CloudOrigin:_aiProposal.HistoryOrigin);
+        await history.SaveHistoryAsync(intent); return intent;
+    }
+    public async Task CompleteSuggestedSceneAsync(LocalAiHistory? intent)
+    {
+        if (intent is null || history is null) return;
+        var saved = await documents.LoadAsync(intent.DocumentId) ?? throw new IOException("Created scene document unavailable.");
+        var created = saved.Project?.Nodes.Where(n => n.NodeType == "scene" && n.DeletionId is null
+            && intent.Before.Project!.Nodes.All(old => old.NodeId != n.NodeId)).ToArray();
+        if (created?.Length != 1) throw new InvalidOperationException("Scene creation cannot be confirmed uniquely. Keep the saved storyboard and inspect its local recovery record.");
+        await history.SaveHistoryAsync(intent with { Status = "Applied", After = saved });
     }
 }

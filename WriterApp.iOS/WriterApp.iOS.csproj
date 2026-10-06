@@ -15,6 +15,12 @@
     <ApplicationDisplayVersion>0.1.0</ApplicationDisplayVersion>
     <ApplicationVersion>1</ApplicationVersion>
     <SupportedOSPlatformVersion>15.0</SupportedOSPlatformVersion>
+    <ProsaEnvironment Condition="'$(ProsaEnvironment)' == '' and '$(Configuration)' == 'Debug'">Development</ProsaEnvironment>
+    <ProsaEnvironment Condition="'$(ProsaEnvironment)' == ''">Production</ProsaEnvironment>
+    <ProsaApiBaseUrl Condition="'$(ProsaApiBaseUrl)' == '' and '$(ProsaEnvironment)' == 'Development'">http://localhost:5387/</ProsaApiBaseUrl>
+    <ProsaApiBaseUrl Condition="'$(ProsaApiBaseUrl)' == '' and '$(ProsaEnvironment)' == 'Production'">https://app.prosa-app.com/</ProsaApiBaseUrl>
+    <ProsaIosAuthSettingsFile Condition="'$(ProsaIosAuthSettingsFile)' == ''">native-auth.json</ProsaIosAuthSettingsFile>
+    <CodesignEntitlements>Platforms/iOS/Entitlements.plist</CodesignEntitlements>
   </PropertyGroup>
 
   <ItemGroup>
@@ -28,12 +34,26 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
+    <PackageReference Include="Microsoft.Identity.Client" Version="4.90.1" />
     <PackageReference Include="Microsoft.AspNetCore.Components.WebView.Maui" Version="$(MauiVersion)" />
     <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.12" />
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="$(ProsaIosAuthSettingsFile)" LogicalName="Prosa.IosNativeAuthentication" />
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>ProsaEnvironment</_Parameter1><_Parameter2>$(ProsaEnvironment)</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>ProsaApiBaseUrl</_Parameter1><_Parameter2>$(ProsaApiBaseUrl)</_Parameter2>
+    </AssemblyAttribute>
     <ProjectReference Include="..\WriterApp.Device.Shared\WriterApp.Device.Shared.csproj" />
   </ItemGroup>
+
+  <Target Name="ValidateProsaIosEnvironment" BeforeTargets="CoreCompile">
+    <Error Condition="'$(ProsaEnvironment)' != 'Development' and '$(ProsaEnvironment)' != 'Staging' and '$(ProsaEnvironment)' != 'Production'" Text="Choose Development, Staging, or Production." />
+    <Error Condition="'$(ProsaApiBaseUrl)' == ''" Text="This iOS environment requires an explicit backend URL." />
+    <Error Condition="'$(ApplicationId)' != 'com.prosa.writer.ios'" Text="Update the iOS bundle, Info.plist callback, entitlements and IosIdentityOptions together before changing ApplicationId." />
+  </Target>
 
 </Project>

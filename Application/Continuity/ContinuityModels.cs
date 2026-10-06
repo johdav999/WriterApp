@@ -27,9 +27,11 @@ namespace WriterApp.Application.Continuity
         string Message,
         ContinuityEvidence Evidence,
         string SuggestedFix,
-        ContinuityAnchor Anchor);
+        ContinuityAnchor Anchor,
+        WriterApp.Shared.ConsistencyComparison? ComparisonEvidence = null,
+        string? FixKind = null);
 
-    public sealed record ContinuityReport(string SchemaVersion, IReadOnlyList<ContinuityIssue> Issues);
+    public sealed record ContinuityReport(string SchemaVersion, IReadOnlyList<ContinuityIssue> Issues, WriterApp.Shared.ConsistencyCoverage? Coverage = null);
 
     public static class ContinuityJson
     {
@@ -127,7 +129,7 @@ namespace WriterApp.Application.Continuity
 
                 report = new ContinuityReport(
                     string.IsNullOrWhiteSpace(parsed.SchemaVersion) ? "1.0" : parsed.SchemaVersion.Trim(),
-                    normalized);
+                    normalized, parsed.Coverage);
                 return true;
             }
             catch (JsonException)

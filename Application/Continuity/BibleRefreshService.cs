@@ -47,6 +47,21 @@ namespace WriterApp.Application.Continuity
             bool fullRebuild,
             CancellationToken ct)
         {
+            var prepared = await PrepareAsync(document, userId, activeSectionId, bibleType, fullRebuild, ct);
+            return await CommitAsync(prepared, ct);
+        }
+
+        public Task<BibleSnapshotState> CommitAsync(PreparedBibleRefresh prepared, CancellationToken ct) =>
+            prepared.Unchanged ? Task.FromResult(prepared.Existing!) : _bibleStore.UpsertSnapshotAsync(
+                prepared.DocumentId, prepared.Type, prepared.ContentJson, prepared.SourceHash, prepared.Cursor, prepared.Stats, ct);
+
+        // Generate/validate outside the database transaction. The device controller commits
+        // only after rechecking ownership, manuscript revision and snapshot concurrency.
+        public async Task<PreparedBibleRefresh> PrepareAsync(Document document, string userId,
+            Guid activeSectionId, BibleType bibleType, bool fullRebuild, CancellationToken ct)
+        {
+            if (document.Chapters.SelectMany(c => c.Sections).Sum(s => (long)(s.Content.Value?.Length ?? 0)) > 2_000_000)
+                throw new InvalidOperationException("The manuscript exceeds the supported canon request size.");
             const string featureKey = "ai.bibles.refresh";
             UserEntitlements entitlements = await _entitlementService.GetEntitlementsAsync(userId);
             bool aiEnabled = await _entitlementService.HasAsync(userId, "ai.enabled");
@@ -67,12 +82,17 @@ namespace WriterApp.Application.Continuity
             BibleSnapshotState? existing = await _bibleStore.GetSnapshotAsync(document.DocumentId, bibleType, ct);
             BibleRefreshCursor cursor = existing?.Cursor ?? BibleJson.EmptyCursor();
             Dictionary<Guid, string> currentHashes = ComputeSectionHashes(document);
+            // Deletion has no prose delta to send. Re-extract from the remaining
+            // manuscript instead of labeling old section evidence as current.
+            fullRebuild |= cursor.SectionHashes.Keys.Except(currentHashes.Keys).Any();
             List<SectionDeltaPayload> changedSections = ResolveChangedSections(document, cursor.SectionHashes, currentHashes);
 
-            if (!fullRebuild && changedSections.Count == 0 && existing is not null)
+            if (!fullRebuild && changedSections.Count == 0 && existing is not null
+                && !cursor.SectionHashes.Keys.Except(currentHashes.Keys).Any())
             {
                 _logger.LogInformation("[BIBLE] Skipping refresh for {BibleType}; no changed sections.", bibleType);
-                return existing;
+                return new(document.DocumentId, bibleType, existing, BiblePatchApplier.NormalizeContent(bibleType, existing.ContentJson),
+                    existing.LastRefreshSourceHash, existing.Cursor, existing.Stats, true);
             }
 
             string actionId = ResolveRefreshActionId(bibleType, fullRebuild);
@@ -115,78 +135,33 @@ namespace WriterApp.Application.Continuity
                     ? changedSections
                     : ResolveAllSections(document);
 
-                if (ShouldAttemptCharacterRepair(bibleType, failureReason))
+                repairAttempted = true;
+                _logger.LogWarning(
+                    "[BIBLE] Refresh payload validation failed; attempting JSON repair. BibleType={BibleType} DocumentId={DocumentId} ActionId={ActionId} Reason={Reason} Preview={Preview}",
+                    bibleType, document.DocumentId, actionId, failureReason, preview);
+
+                PayloadRepairAttemptResult repairResult = await TryRepairPayloadAsync(
+                    bibleType, actionId, input, existingJson, payloadForDiagnostics, failureReason, ct);
+                if (repairResult.Succeeded)
                 {
-                    repairAttempted = true;
-                    _logger.LogWarning(
-                        "[BIBLE] Character refresh payload parse failed; attempting JSON repair. BibleType={BibleType} DocumentId={DocumentId} ActionId={ActionId} Reason={Reason} Preview={Preview}",
-                        bibleType,
-                        document.DocumentId,
-                        actionId,
-                        failureReason,
-                        preview);
-
-                    CharacterRepairAttemptResult repairResult = await TryRepairCharacterPayloadAsync(
-                        actionId,
-                        input,
-                        existingJson,
-                        payloadForDiagnostics,
-                        failureReason,
-                        ct);
-
-                    if (repairResult.Succeeded)
-                    {
-                        patchResult = repairResult.PatchResult;
-                        payloadForDiagnostics = repairResult.Payload;
-                    }
-                    else
-                    {
-                        failureReason = repairResult.FailureReason;
-                        preview = CreatePreview(repairResult.Payload);
-                        payloadForDiagnostics = repairResult.Payload;
-
-                        _logger.LogWarning(
-                            "[BIBLE] Invalid refresh payload after repair attempt. BibleType={BibleType} DocumentId={DocumentId} ActionId={ActionId} Reason={Reason} Preview={Preview}",
-                            bibleType,
-                            document.DocumentId,
-                            actionId,
-                            failureReason,
-                            preview);
-                        throw new BibleRefreshInvalidPayloadException(
-                            bibleType,
-                            document.DocumentId,
-                            actionId,
-                            failureReason,
-                            preview,
-                            CreateDiagnosticPayload(payloadForDiagnostics),
-                            repairAttempted);
-                    }
+                    patchResult = repairResult.PatchResult;
+                    payloadForDiagnostics = repairResult.Payload;
                 }
                 else if (bibleType == BibleType.Timeline
                     && TryApplyTimelineFallbackPatch(existingJson, fallbackSections, out patchResult))
                 {
-                    _logger.LogWarning(
-                        "[BIBLE] Timeline patch validation failed; applied deterministic fallback patch with {SectionCount} sections. preview={Preview}",
-                        fallbackSections.Count,
-                        preview);
+                    _logger.LogWarning("[BIBLE] Timeline repair failed; applied validated fallback with {SectionCount} sections.", fallbackSections.Count);
                 }
                 else
                 {
+                    failureReason = repairResult.FailureReason;
+                    payloadForDiagnostics = repairResult.Payload;
+                    preview = CreatePreview(payloadForDiagnostics);
                     _logger.LogWarning(
-                        "[BIBLE] Invalid refresh payload. BibleType={BibleType} DocumentId={DocumentId} ActionId={ActionId} Reason={Reason} Preview={Preview}",
-                        bibleType,
-                        document.DocumentId,
-                        actionId,
-                        failureReason,
-                        preview);
-                    throw new BibleRefreshInvalidPayloadException(
-                        bibleType,
-                        document.DocumentId,
-                        actionId,
-                        failureReason,
-                        preview,
-                        CreateDiagnosticPayload(payloadForDiagnostics),
-                        repairAttempted);
+                        "[BIBLE] Invalid refresh payload after repair attempt. BibleType={BibleType} DocumentId={DocumentId} ActionId={ActionId} Reason={Reason} Preview={Preview}",
+                        bibleType, document.DocumentId, actionId, failureReason, preview);
+                    throw new BibleRefreshInvalidPayloadException(bibleType, document.DocumentId, actionId,
+                        failureReason, preview, CreateDiagnosticPayload(payloadForDiagnostics), repairAttempted);
                 }
             }
 
@@ -198,14 +173,9 @@ namespace WriterApp.Application.Continuity
             };
 
             BibleRefreshCursor nextCursor = new(currentHashes, DateTimeOffset.UtcNow, "bySectionHash-v1");
-            BibleSnapshotState saved = await _bibleStore.UpsertSnapshotAsync(
-                document.DocumentId,
-                bibleType,
-                patchResult.ContentJson,
-                sourceHash,
-                nextCursor,
-                stats,
-                ct);
+            ct.ThrowIfCancellationRequested();
+            var prepared = new PreparedBibleRefresh(document.DocumentId, bibleType, existing,
+                patchResult.ContentJson, sourceHash, nextCursor, stats, false);
 
             _logger.LogInformation(
                 "[BIBLE] Refreshed {BibleType} doc={DocumentId} delta={Delta} bytesIn={BytesIn} bytesOut={BytesOut}",
@@ -213,12 +183,15 @@ namespace WriterApp.Application.Continuity
                 document.DocumentId,
                 changedSections.Count,
                 payloadForDiagnostics.Length,
-                saved.ContentJson.Length);
+                prepared.ContentJson.Length);
 
-            return saved;
+            return prepared;
         }
 
-        private async Task<CharacterRepairAttemptResult> TryRepairCharacterPayloadAsync(
+        public static string SourceHash(Document document) => BuildSourceHash(ComputeSectionHashes(document));
+
+        private async Task<PayloadRepairAttemptResult> TryRepairPayloadAsync(
+            BibleType bibleType,
             string actionId,
             AiActionInput originalInput,
             string existingJson,
@@ -236,14 +209,14 @@ namespace WriterApp.Application.Continuity
 
             AiActionInput repairInput = originalInput with
             {
-                Instruction = "Re-emit the prior character bible response as one valid JSON object only.",
+                Instruction = $"Re-emit the prior {bibleType.ToString().ToLowerInvariant()} bible response as one valid JSON object matching the canon schema.",
                 Options = repairOptions
             };
 
             AiExecutionResult repairResult = await _aiOrchestrator.ExecuteActionAsync(actionId, repairInput, ct);
             if (!repairResult.Succeeded || repairResult.Proposal is null || string.IsNullOrWhiteSpace(repairResult.Proposal.ProposedText))
             {
-                return new CharacterRepairAttemptResult(
+                return new PayloadRepairAttemptResult(
                     false,
                     new BiblePatchApplyResult(existingJson, BibleJson.EmptyStats()),
                     invalidPayload,
@@ -252,23 +225,12 @@ namespace WriterApp.Application.Continuity
 
             string repairedPayload = repairResult.Proposal.ProposedText!;
             bool ok = _patchApplier.TryApply(
-                BibleType.Character,
+                bibleType,
                 existingJson,
                 repairedPayload,
                 out BiblePatchApplyResult patchResult,
                 out string repairFailureReason);
-            return new CharacterRepairAttemptResult(ok, patchResult, repairedPayload, repairFailureReason);
-        }
-
-        private static bool ShouldAttemptCharacterRepair(BibleType bibleType, string failureReason)
-        {
-            if (bibleType != BibleType.Character || string.IsNullOrWhiteSpace(failureReason))
-            {
-                return false;
-            }
-
-            return failureReason.Contains("JSON could not be parsed into an object", StringComparison.OrdinalIgnoreCase)
-                || failureReason.Contains("Patch application failed while reading JSON", StringComparison.OrdinalIgnoreCase);
+            return new PayloadRepairAttemptResult(ok, patchResult, repairedPayload, repairFailureReason);
         }
 
         private static string ResolveRefreshActionId(BibleType bibleType, bool fullRebuild)
@@ -415,7 +377,7 @@ namespace WriterApp.Application.Continuity
                     ["title"] = string.IsNullOrWhiteSpace(section.Title) ? "Untitled Scene" : section.Title.Trim(),
                     ["timeRef"] = string.Empty,
                     ["order"] = section.Order,
-                    ["locationId"] = string.Empty,
+                    ["locationId"] = null,
                     ["participants"] = new JsonArray(),
                     ["summary"] = summary,
                     ["constraints"] = new JsonArray(),
@@ -476,7 +438,7 @@ namespace WriterApp.Application.Continuity
             string Content,
             bool IsNew);
 
-        private sealed record CharacterRepairAttemptResult(
+        private sealed record PayloadRepairAttemptResult(
             bool Succeeded,
             BiblePatchApplyResult PatchResult,
             string Payload,

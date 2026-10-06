@@ -1,0 +1,33 @@
+@using WriterApp.Shared
+@using WriterApp.Shared.Sync
+<section class="synopsis-feedback" aria-label="@Title">
+    <h2>@Title</h2>
+    @if (Mode == "suggest") {
+        <p class="synopsis-feedback-target">@SynopsisCoaching.Fields.Single(f=>f.Key==Field).Label</p>
+        <AiTextComparison OriginalLabel="Current field" ProposedLabel="Suggested field" Original="@Original" Proposed="@Proposed" HighlightChanges="true" />
+        @if (!string.IsNullOrWhiteSpace(Feedback)) { <h3>Coaching commentary</h3><p>@Feedback</p> }
+    } else {
+        @foreach (var line in Feedback.Replace("\r\n","\n").Split('\n').Where(l=>!string.IsNullOrWhiteSpace(l))) {
+            string heading = line.Trim().Trim('#','*',' ',':');
+            @if (Mode == "evaluate" && (line.TrimStart().StartsWith('#') || heading is "Strengths" or "Potential weaknesses" or "Missing elements" or "Clarity issues")) { <h3>@heading</h3> }
+            else { <p>@line</p> }
+        }
+        <p>Feedback only. This result does not change your synopsis or writing.</p>
+    }
+    @if (Source is not null) {
+        <details><summary>Synopsis analyzed</summary>
+            @foreach (var field in SynopsisCoaching.Fields) { <h3>@field.Label</h3><p>@(string.IsNullOrWhiteSpace(SynopsisCoaching.Value(Source,field.Key))?"Not defined yet":SynopsisCoaching.Value(Source,field.Key))</p> }
+            @if (!string.IsNullOrWhiteSpace(UserNotes)) { <h3>Author coaching notes</h3><p>@UserNotes</p> }
+        </details>
+    }
+</section>
+@code {
+    [Parameter] public string Mode {get;set;}="evaluate";
+    [Parameter] public string Field {get;set;}="logline";
+    [Parameter] public string Original {get;set;}="";
+    [Parameter] public string Proposed {get;set;}="";
+    [Parameter] public string Feedback {get;set;}="";
+    [Parameter] public SyncSynopsis? Source {get;set;}
+    [Parameter] public string? UserNotes {get;set;}
+    private string Title=>Mode switch { "questions"=>"Guiding questions", "suggest"=>"Review synopsis field suggestion", _=>"Synopsis evaluation" };
+}

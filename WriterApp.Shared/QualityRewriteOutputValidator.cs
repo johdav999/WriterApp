@@ -149,12 +149,8 @@ namespace WriterApp.Application.Documents
                 return false;
             }
 
-            if (strictAnchor && candidateCount > _options.PreferMaxAnchorCount)
-            {
-                reason = "repetition_still_high";
-                return false;
-            }
-
+            // A targeted revision can reduce repetition while retaining multiple necessary uses.
+            // The preferred count is a writing goal, not a requirement to delete valid prose.
             return true;
         }
 

@@ -15,7 +15,8 @@ namespace WriterApp.Application.Documents
         DateTimeOffset UpdatedUtc,
         int TotalWordCount,
         Guid? PrimaryDocumentId = null,
-        Guid? DocumentId = null);
+        Guid? DocumentId = null,
+        long MetadataRevision = 0);
 
     public sealed record ProjectCreateRequest(
         string? Title,
@@ -35,7 +36,7 @@ namespace WriterApp.Application.Documents
         string? DefaultExportSettingsJson,
         string? CoverImageUrl = null);
 
-    public sealed record ProjectCoverUpdateRequest(string? ImageUrl);
+    public sealed record ProjectCoverUpdateRequest(string? ImageUrl, long? ExpectedMetadataRevision = null);
 
     public sealed record ProjectNodeDto(
         Guid Id,

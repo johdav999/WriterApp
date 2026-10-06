@@ -22,6 +22,22 @@ namespace WriterApp.Tests
         }
 
         [Fact]
+        public void RepeatedWordRule_NormalArticlesDoNotBecomeRewriteTargets()
+        {
+            const string text = "The train reached the platform beside the station. A porter carried a bag and an umbrella past an officer.";
+            Assert.Empty(new RepeatedWordRule().Evaluate(BuildContext(text)));
+        }
+
+        [Fact]
+        public void RepeatedWordRule_KeepsLatestOccurrenceInItsRollingWindow()
+        {
+            const string text = "clock one two clock three four clock";
+            var issues = new RepeatedWordRule().Evaluate(BuildContext(text)).ToArray();
+            Assert.Equal(2, issues.Length);
+            Assert.All(issues, issue => Assert.Equal("clock", text[issue.StartOffset..issue.EndOffset]));
+        }
+
+        [Fact]
         public void PassiveVoiceRule_ProducesIssueWithoutFix()
         {
             const string text = "The gate was opened at dawn.";

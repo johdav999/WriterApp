@@ -9,6 +9,7 @@ namespace WriterApp.Application.AI
         public const string InstructionParameterKey = "instruction";
         public const string HttpContextValidatedKey = "__onboarding_demo_validated";
         public const string DemoActionKey = WriterApp.Shared.OnboardingAiDemoRequest.ActionKey;
+        public static readonly TimeSpan GrantLifetime = TimeSpan.FromDays(7);
 
         private static readonly HashSet<string> AllowedActionKeys = new(StringComparer.Ordinal)
         {

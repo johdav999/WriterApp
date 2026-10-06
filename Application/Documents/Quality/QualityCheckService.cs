@@ -2,8 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
-using System.Security.Cryptography;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -11,6 +9,7 @@ using Microsoft.Extensions.Logging;
 using WriterApp.Application.State;
 using WriterApp.Data;
 using WriterApp.Data.Documents;
+using WriterApp.Shared.Quality;
 
 namespace WriterApp.Application.Documents
 {
@@ -43,17 +42,7 @@ namespace WriterApp.Application.Documents
         {
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _engine = new QualityCheckEngine(new IQualityRule[]
-            {
-                new SentenceLengthRule(),
-                new ParagraphLengthRule(),
-                new ReadabilityScoreRule(),
-                new RepeatedWordRule(),
-                new PassiveVoiceRule(),
-                new ProperNameConsistencyRule(),
-                new TimelineHintRule(),
-                new GlossaryRule()
-            });
+            _engine = new QualityCheckEngine(QualityRuleCatalog.Create());
         }
 
         public async Task<QualityCheckRunResultDto> RunChecksAsync(
@@ -67,7 +56,11 @@ namespace WriterApp.Application.Documents
                 ? request.Text ?? string.Empty
                 : PlainTextMapper.ToPlainText(page.Content);
 
-            string contentHash = ComputeHash(text);
+            // Glossary edits/deletions must invalidate findings even when writing is unchanged.
+            IReadOnlyList<string> glossary = await _dbContext.DocumentGlossaryEntries
+                .AsNoTracking().Where(entry => entry.DocumentId == page.DocumentId)
+                .OrderBy(entry => entry.Term).Select(entry => entry.Term).ToListAsync(ct);
+            string contentHash = QualityDismissalIdentity.Source(text, glossary);
             bool fromCache = false;
             List<PageQualityIssueRecord> records = new();
 
@@ -82,13 +75,6 @@ namespace WriterApp.Application.Documents
 
             if (!fromCache)
             {
-                IReadOnlyList<string> glossary = await _dbContext.DocumentGlossaryEntries
-                    .AsNoTracking()
-                    .Where(entry => entry.DocumentId == page.DocumentId)
-                    .OrderBy(entry => entry.Term)
-                    .Select(entry => entry.Term)
-                    .ToListAsync(ct);
-
                 IReadOnlyList<QualityToken> tokens = QualityTextAnalyzer.GetTokens(text);
                 IReadOnlyList<QualitySentence> sentences = QualityTextAnalyzer.GetSentences(text);
                 IReadOnlyList<QualityParagraph> paragraphs = QualityTextAnalyzer.GetParagraphs(text);
@@ -144,7 +130,7 @@ namespace WriterApp.Application.Documents
                 HashSet<string> dismissedKeysSet = dismissedKeys.ToHashSet(StringComparer.Ordinal);
 
                 List<PageQualityIssueDto> computedIssues = records
-                    .Where(record => !dismissedKeysSet.Contains(record.IssueKey))
+                    .Where(record => !IsDismissed(dismissedKeysSet, record))
                     .OrderBy(record => record.Severity)
                     .ThenBy(record => record.StartOffset)
                     .Select(record =>
@@ -187,7 +173,7 @@ namespace WriterApp.Application.Documents
             HashSet<string> dismissedSet = dismissed.ToHashSet(StringComparer.Ordinal);
 
             List<PageQualityIssueDto> resultIssues = records
-                .Where(record => !dismissedSet.Contains(record.IssueKey))
+                .Where(record => !IsDismissed(dismissedSet, record))
                 .OrderBy(record => record.Severity)
                 .ThenBy(record => record.StartOffset)
                 .Select(record => MapToDto(record, BuildFixFromRecord(text, record)))
@@ -244,7 +230,7 @@ namespace WriterApp.Application.Documents
             HashSet<string> dismissedSet = dismissed.ToHashSet(StringComparer.Ordinal);
 
             return records
-                .Where(record => !dismissedSet.Contains(record.IssueKey))
+                .Where(record => !IsDismissed(dismissedSet, record))
                 .OrderBy(record => record.Severity)
                 .ThenBy(record => record.StartOffset)
                 .Select(record => MapToDto(record, BuildFixFromRecord(pageText, record)))
@@ -274,16 +260,17 @@ namespace WriterApp.Application.Documents
 
         public async Task ReopenIssueAsync(string userId, Guid pageId, string issueKey, CancellationToken ct)
         {
-            PageQualityIssueDismissalRecord? existing = await _dbContext.PageQualityIssueDismissals
-                .FindAsync(new object[] { userId, pageId, issueKey }, ct);
-            if (existing is null)
-            {
-                return;
-            }
-
-            _dbContext.PageQualityIssueDismissals.Remove(existing);
+            // Keep the existing client Restore route useful for source-bound device decisions too.
+            var hashes = await _dbContext.PageQualityIssues.AsNoTracking().Where(i => i.PageId == pageId && i.IssueKey == issueKey)
+                .Select(i => i.ContentHash).Distinct().ToListAsync(ct);
+            var keys = hashes.Select(h => QualityDismissalIdentity.Key(h, issueKey)).Append(issueKey).ToArray();
+            var existing = await _dbContext.PageQualityIssueDismissals.Where(d => d.UserId == userId && d.PageId == pageId && keys.Contains(d.IssueKey)).ToListAsync(ct);
+            _dbContext.PageQualityIssueDismissals.RemoveRange(existing);
             await _dbContext.SaveChangesAsync(ct);
         }
+
+        private static bool IsDismissed(IReadOnlySet<string> dismissed, PageQualityIssueRecord issue) =>
+            dismissed.Contains(issue.IssueKey) || issue.Scope == "page" && dismissed.Contains(QualityDismissalIdentity.Key(issue.ContentHash, issue.IssueKey));
 
         private static PageQualityIssueDto MapToDto(PageQualityIssueRecord record, QualityIssueFix? fix)
         {
@@ -320,6 +307,9 @@ namespace WriterApp.Application.Documents
             if (string.Equals(record.RuleId, "consistency.proper_names", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(record.RuleId, "terminology.glossary", StringComparison.OrdinalIgnoreCase))
             {
+                // Near matches are informational in the shared rule; loading a cached finding
+                // must not turn its suggestion into an automatic replacement.
+                if (record.RuleId == "terminology.glossary" && record.Severity != "warning") return null;
                 string? replacement = TryExtractQuotedSuggestion(record.Suggestion);
                 if (!string.IsNullOrWhiteSpace(replacement))
                 {
@@ -409,17 +399,5 @@ namespace WriterApp.Application.Documents
             return match.Groups[1].Value.Trim();
         }
 
-        private static string ComputeHash(string value)
-        {
-            using SHA256 sha = SHA256.Create();
-            byte[] hash = sha.ComputeHash(Encoding.UTF8.GetBytes(value ?? string.Empty));
-            StringBuilder builder = new(hash.Length * 2);
-            foreach (byte b in hash)
-            {
-                builder.Append(b.ToString("x2"));
-            }
-
-            return builder.ToString();
-        }
     }
 }

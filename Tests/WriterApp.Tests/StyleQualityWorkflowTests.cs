@@ -12,7 +12,7 @@ using Xunit;
 
 namespace WriterApp.Tests;
 
-public sealed class StyleQualityWorkflowTests
+public sealed partial class StyleQualityWorkflowTests
 {
     [Theory]
     [InlineData(false)]
@@ -60,6 +60,8 @@ public sealed class StyleQualityWorkflowTests
     {
         [Parameter] public LocalDocument Saved { get; set; } = default!;
         [Parameter] public DeviceAiProposal? Preview { get; set; }
+        [Parameter] public bool Running { get; set; }
+        [Parameter] public string? Failure { get; set; }
         [Inject] public LocalDocumentRepository Repository { get; set; } = default!;
         protected override void OnInitialized() { }
         protected override Task OnParametersSetAsync()
@@ -68,6 +70,9 @@ public sealed class StyleQualityWorkflowTests
             Set("_session", new LocalEditorSession(Repository, Saved));
             Set("_selectedPage", Saved.Sections[0].Pages[0].PageId);
             Set("_aiProposal", Preview);
+            Set("_aiBusy", Running);
+            Set("_aiError", Failure);
+            Set("_approvedStyleEdits", Preview?.StyleReview is { } report ? Enumerable.Range(0, report.Edits.Count).ToArray() : Array.Empty<int>());
             var subviews = (Dictionary<DeviceEditorPanel, string>)typeof(DocumentWorkspace)
                 .GetField("_subviews", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(this)!;
             subviews[DeviceEditorPanel.Writing] = "quality";

@@ -1,9 +1,26 @@
 <div class="ai-preview-columns">
-    <div class="ai-preview-pane"><div class="ai-preview-label">@OriginalLabel</div><div class="ai-preview-text">@Original</div></div>
-    <div class="ai-preview-pane"><div class="ai-preview-label">Proposed</div><div class="ai-preview-text">@Proposed</div></div>
+    <div class="ai-preview-pane"><div class="ai-preview-label">@OriginalLabel</div><div class="ai-preview-text">@Content(Original, true)</div></div>
+    <div class="ai-preview-pane"><div class="ai-preview-label">@ProposedLabel</div><div class="ai-preview-text">@Content(Proposed, false)</div></div>
 </div>
 @code {
     [Parameter] public string OriginalLabel { get; set; } = "Original";
+    [Parameter] public string ProposedLabel { get; set; } = "Proposed";
     [Parameter] public string? Original { get; set; }
     [Parameter] public string? Proposed { get; set; }
+    [Parameter] public bool HighlightChanges { get; set; }
+    private RenderFragment Content(string? value, bool original) => builder => {
+        string text = value ?? "", before = Original ?? "", after = Proposed ?? "";
+        if (!HighlightChanges || before == after) { builder.AddContent(0, text); return; }
+        int prefix = 0, suffix = 0;
+        while (prefix < before.Length && prefix < after.Length && before[prefix] == after[prefix]) prefix++;
+        if (prefix > 0 && char.IsHighSurrogate(before[prefix - 1])) prefix--;
+        while (suffix < before.Length - prefix && suffix < after.Length - prefix && before[^(suffix + 1)] == after[^(suffix + 1)]) suffix++;
+        if (suffix > 0 && char.IsLowSurrogate(before[before.Length - suffix])) suffix--;
+        builder.AddContent(1, text[..prefix]);
+        builder.OpenElement(2, "mark");
+        builder.AddAttribute(3, "class", original ? "ai-change-before" : "ai-change-after");
+        builder.AddContent(4, text[prefix..(text.Length - suffix)]);
+        builder.CloseElement();
+        builder.AddContent(5, text[(text.Length - suffix)..]);
+    };
 }

@@ -232,10 +232,13 @@ namespace WriterApp.Application.Documents
 
             DateTimeOffset now = DateTimeOffset.UtcNow;
             List<PageVersionRecord> pageVersions = await _dbContext.PageVersions
-                .Where(version => version.PageId == pageId)
-                .OrderByDescending(version => version.CreatedAt)
-                .ThenByDescending(version => version.Id)
+                .Where(version => version.PageId == pageId && _dbContext.Documents.Any(document =>
+                    document.Id == version.DocumentId && document.OwnerUserId == userId))
                 .ToListAsync(ct);
+            // SQLite cannot order DateTimeOffset. Keep the page/owner filter in SQL and
+            // use the same in-memory timestamp ordering as listing and latest lookup.
+            pageVersions = pageVersions.OrderByDescending(version => version.CreatedAt)
+                .ThenByDescending(version => version.Id).ToList();
             if (pageVersions.Count == 0)
             {
                 return;

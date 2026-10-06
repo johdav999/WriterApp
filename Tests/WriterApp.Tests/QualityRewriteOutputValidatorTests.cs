@@ -58,6 +58,18 @@ namespace WriterApp.Tests
         }
 
         [Fact]
+        public void TryValidateRepeatedWordReduction_AcceptsReductionWithTwoOccurrencesRemaining()
+        {
+            Assert.True(QualityRewriteOutputValidator.TryValidateRepeatedWordReduction(
+                "The clock rang while another clock answered the clock in the hall.",
+                "The clock rang while another clock answered the chime in the hall.", "clock",
+                out int before, out int after, out string? reason));
+            Assert.Equal(3, before);
+            Assert.Equal(2, after);
+            Assert.Null(reason);
+        }
+
+        [Fact]
         public void TryValidateRepeatedWordReduction_RejectsUnchangedRepetition()
         {
             const string original = "Maya looked at the clock and the clock made her anxious.";

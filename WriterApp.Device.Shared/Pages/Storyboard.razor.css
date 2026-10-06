@@ -1,22 +1,26 @@
 .storyboard-page {
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
+    display: flex;
+    flex-direction: column;
     gap: var(--space-4);
     min-height: 0;
+    min-width: 0;
     height: 100%;
-    overflow: hidden;
+    /* Short windows scroll in the shell instead of squeezing the heading or panels. */
+    overflow: visible;
 }
 
-.storyboard-page.has-error { grid-template-rows: auto auto minmax(0, 1fr); }
+.storyboard-page > :not(.storyboard-page__layout) { flex-shrink: 0; }
 .storyboard-inspector-header h2 { margin: 0; }
 .storyboard-inspector-section { margin-top: var(--space-4); }
 
 .storyboard-page__layout {
+    flex: 1 0 320px;
     display: grid;
     grid-template-columns: minmax(0, 1fr) 320px 360px;
     gap: var(--space-4);
     align-items: stretch;
     min-height: 0;
+    min-width: 0;
     overflow: hidden;
     position: relative;
     transition: grid-template-columns 220ms ease;
@@ -28,11 +32,15 @@
 
 .storyboard-page__panel {
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
     gap: var(--space-3);
     min-width: 0;
     min-height: 0;
     overflow: hidden;
+}
+
+.storyboard-page__panel--board {
+    grid-template-rows: auto minmax(0, 1fr);
 }
 
 .storyboard-page__panel-body {
@@ -99,7 +107,11 @@
     align-items: start;
     justify-content: space-between;
     gap: var(--space-3);
+    flex-wrap: wrap;
+    min-width: 0;
 }
+
+.storyboard-page__header > div { min-width: 0; }
 
 .storyboard-page__header h1 {
     margin: 0;
@@ -145,15 +157,16 @@
 @media (max-width: 1200px) {
     .storyboard-page { height: auto; min-height: 100%; overflow: visible; }
     .storyboard-page__layout {
+        flex: none;
         overflow: visible;
         grid-template-columns: 1fr;
-        grid-template-rows: minmax(320px, 1.4fr) minmax(260px, 1fr) minmax(320px, 1fr);
+        grid-template-rows: minmax(320px, 65dvh) minmax(260px, 55dvh) minmax(320px, 65dvh);
         transition: none;
     }
 
     .storyboard-page__layout--insights-collapsed {
         grid-template-columns: 1fr;
-        grid-template-rows: minmax(320px, 1.4fr) minmax(320px, 1fr);
+        grid-template-rows: minmax(320px, 65dvh) minmax(320px, 65dvh);
     }
 
     .storyboard-page__insights-rail {

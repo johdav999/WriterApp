@@ -32,7 +32,7 @@ namespace WriterApp.Controllers
     [ApiController]
     [Route("api/ai/actions")]
     [Authorize]
-    public sealed class AiActionsController : ControllerBase
+    public sealed partial class AiActionsController : ControllerBase
     {
         private readonly IAiOrchestrator _orchestrator;
         private readonly IDocumentRepository _documents;
@@ -98,6 +98,18 @@ namespace WriterApp.Controllers
             return Ok(actions);
         }
 
+        [HttpGet("writing-availability")]
+        public async Task<ActionResult<WriterApp.Shared.WritingAvailability>> WritingAvailability()
+        {
+            string userId = _userIdResolver.ResolveUserId(User);
+            var entitlements = await _entitlementService.GetEntitlementsAsync(userId);
+            var tier = _entitlementService.GetUserTier(entitlements);
+            var allowed = _orchestrator.Actions.Where(a => _orchestrator.CanRunAction(a.ActionId))
+                .Where(a => ResolveFeatureForAction(a.ActionId) is not { } feature || FeatureRegistry.IsFeatureAllowed(feature, tier))
+                .Select(a => a.ActionId).ToArray();
+            return Ok(new WriterApp.Shared.WritingAvailability(allowed, true, true, true, true));
+        }
+
         [HttpGet("history")]
         public async Task<ActionResult<IReadOnlyList<AiActionHistoryEntryDto>>> ListHistory(
             [FromQuery] Guid documentId,
@@ -140,7 +152,8 @@ namespace WriterApp.Controllers
                         entry.IsApplied,
                         entry.LastAppliedAt,
                         entry.AppliedCount,
-                        entry.IsApplied ? AiCommandStatusDto.Applied : AiCommandStatusDto.Succeeded))
+                        entry.IsApplied ? AiCommandStatusDto.Applied : AiCommandStatusDto.Succeeded,
+                        entry.CanCloudUndo, entry.CanCloudRedo, entry.ReplayScope))
                     .ToList();
 
                 _logger.LogInformation(
@@ -255,6 +268,8 @@ namespace WriterApp.Controllers
                 return gate;
             }
 
+            if(request.WebSource is { } undoSource && (_dbContext.Database.CurrentTransaction is null || undoSource.SceneId is not null))
+                return Conflict(new { message="Checked AI history requires a manuscript page and its approval source header. Use ordinary scene editor undo or original-copy recovery." });
             AiActionUndoRedoResult? result = await _historyStore.UndoAsync(
                 userId,
                 request.DocumentId.Value,
@@ -267,7 +282,8 @@ namespace WriterApp.Controllers
                 return NoContent();
             }
 
-            return Ok(new AiActionUndoRedoResponseDto(result.HistoryEntryId, result.Content));
+            if(request.WebSource is { } source && !await CheckedUndoSource(request,userId,result,ct))return Conflict(new { message="Writing changed since this AI event. Use ordinary editor undo or recover the original; no checked replacement can apply." });
+            return Ok(new AiActionUndoRedoResponseDto(result.HistoryEntryId, result.Content,result.ExpectedContent,request.WebSource));
         }
 
         [HttpPost("history/redo")]
@@ -296,6 +312,8 @@ namespace WriterApp.Controllers
                 return gate;
             }
 
+            if(request.WebSource is { } redoSource && (_dbContext.Database.CurrentTransaction is null || redoSource.SceneId is not null))
+                return Conflict(new { message="Checked AI history requires a manuscript page and its approval source header. Use ordinary scene editor redo or original-copy recovery." });
             AiActionUndoRedoResult? result = await _historyStore.RedoAsync(
                 userId,
                 request.DocumentId.Value,
@@ -308,10 +326,38 @@ namespace WriterApp.Controllers
                 return NoContent();
             }
 
-            return Ok(new AiActionUndoRedoResponseDto(result.HistoryEntryId, result.Content));
+            if(request.WebSource is { } source && !await CheckedUndoSource(request,userId,result,ct))return Conflict(new { message="Writing changed since this AI event. Use ordinary editor redo or recover the original; no checked replacement can apply." });
+            return Ok(new AiActionUndoRedoResponseDto(result.HistoryEntryId, result.Content,result.ExpectedContent,request.WebSource));
+        }
+
+        private async Task<bool> MatchesCanonAsync(AiActionExecuteRequestDto request, Document document, CancellationToken ct)
+        {
+            if (request.ExpectedCanonVersions is not { } versions) return true; // Legacy client contract.
+            if (request.SurroundingText?.Length is not (> 0 and <= 100_000) || request.OutlineText?.Length > 100_000
+                || Enum.GetValues<WriterApp.Shared.Canon.CanonKind>().Sum(kind =>
+                    request.Parameters?.GetValueOrDefault(kind.ToString().ToLowerInvariant() + "_bible_json")?.ToString()?.Length ?? 0) > 250_000) return false;
+            var store = new WriterApp.Application.Continuity.EfCoreBibleStore(_dbContext);
+            string hash = WriterApp.Application.Continuity.BibleRefreshService.SourceHash(document);
+            foreach (var kind in Enum.GetValues<WriterApp.Shared.Canon.CanonKind>())
+            {
+                string key = kind.ToString().ToLowerInvariant() + "_bible_json";
+                string supplied = request.Parameters?.GetValueOrDefault(key)?.ToString() ?? "";
+                if (!versions.TryGetValue(kind, out var token))
+                {
+                    if (supplied != "{}") return false;
+                    continue;
+                }
+                var snapshot = await store.GetSnapshotAsync(document.DocumentId, (WriterApp.Application.Continuity.BibleType)kind, ct);
+                if (snapshot is null || DocumentBiblesController.SnapshotToken(snapshot) != token
+                    || snapshot.LastRefreshSourceHash != hash || snapshot.ContentJson != supplied) return false;
+                try { _ = WriterApp.Shared.Canon.CanonContent.Parse(kind, supplied); }
+                catch (Exception e) when (e is System.IO.InvalidDataException or JsonException) { return false; }
+            }
+            return true;
         }
 
         [HttpPost("{actionKey}/execute")]
+        [RequestSizeLimit(2_000_000)]
         public async Task<ActionResult<AiActionExecuteResponseDto>> ExecuteAction(
             string actionKey,
             [FromBody] AiActionExecuteRequestDto request,
@@ -356,7 +402,20 @@ namespace WriterApp.Controllers
             _dbContext.ManuscriptScopeId = documentId;
 
             Guid? resolvedSectionId = request.SectionId;
-            if (request.ExpectedDocumentVersion is { } expectedVersion && !await _dbContext.DocumentSyncRecords.AsNoTracking()
+            if (!await WebSourceCurrent(request,userId,ct))
+                return Conflict(new { code="ai.stale_web_source", message="Writing, planning, canon or target changed. Save and capture a new checked source." });
+            if (request.WebSource is not null && (request.OriginalText?.Length > 100_000 || request.SurroundingText?.Length > 100_000
+                || request.OutlineText?.Length > 100_000 || JsonSerializer.Serialize(request.Parameters).Length > 500_000))
+                return BadRequest(new { message="AI context exceeds the supported bounds. Choose a smaller scope." });
+            if(request.WritingOutline is { } outlineSource) {
+                try { WriterApp.Shared.WritingOutline.Validate(outlineSource); }
+                catch(InvalidDataException e){return BadRequest(new{code="ai.invalid_outline",message=e.Message});}
+                if(!WriterApp.Shared.WritingOutline.Consumes(actionKey) || outlineSource.DocumentId!=documentId
+                    || outlineSource.ProjectId!=documentRecord.ProjectId || outlineSource.DocumentVersion!=request.ExpectedDocumentVersion
+                    || !await WritingOutlineCurrentAsync(documentId,userId,outlineSource,ct,request.WebSource is not null))
+                    return Conflict(new{code="ai.stale_outline",message="Saved writing outline changed or belongs to another manuscript. Capture and review it again."});
+            }
+            if (request.WebSource is null && request.ExpectedDocumentVersion is { } expectedVersion && !await _dbContext.DocumentSyncRecords.AsNoTracking()
                 .AnyAsync(x => x.DocumentId == documentId && x.Version == expectedVersion && !x.IsDeleted && !x.IsTrashed, ct))
                 return Conflict(new { code = "ai.stale_source", message = "Synchronize and retry against the current manuscript." });
             if (resolvedSectionId is null && request.PageId is not null)
@@ -479,7 +538,129 @@ namespace WriterApp.Controllers
                 aiDocument = await BuildAiDocumentAsync(documentRecord, sectionRecords, userId, synopsisRecord, ct);
             }
             TextRange selectionRange = BuildSelectionRange(request);
+            if(request.WebSource is not null) {
+                try { request=await PrepareWebInput(actionKey,request,sectionId,ct); }
+                catch(InvalidDataException e) { return BadRequest(new { message=e.Message }); }
+            }
+            WriterApp.Shared.RecommendedWritingRun? recommendation = null;
+            try {
+                recommendation = WriterApp.Shared.RecommendedWriting.From(request.Parameters);
+                if (recommendation is not null) {
+                    WriterApp.Shared.RecommendedWriting.ValidateParameters(request.Parameters!, recommendation);
+                    if (actionKey != "custom_transform" || request.ExpectedDocumentVersion is null || request.SelectionStart is not null || request.SelectionEnd is not null || request.OriginalText is not null
+                        || !request.Parameters!.ContainsKey(WriterApp.Shared.WritingActions.Parameter))
+                        return BadRequest(new { message = "Recommended tools require their declared saved section contract." });
+                }
+            } catch (Exception e) when (e is InvalidDataException or InvalidOperationException or JsonException) { return BadRequest(new { message = e.Message }); }
+            WriterApp.Shared.PromptDefinition? reusablePreset=null;
+            if(request.Parameters?.TryGetValue(WriterApp.Shared.ReusablePrompts.Parameter,out var presetJson)==true) {
+                try {
+                    reusablePreset=WriterApp.Shared.ReusablePrompts.Parse(presetJson?.ToString()??"");
+                    WriterApp.Shared.ReusablePrompts.ValidateForRun(reusablePreset);
+                    if(request.ExpectedDocumentVersion is null||WriterApp.Shared.ReusablePrompts.Resolve(reusablePreset)!=actionKey
+                        ||reusablePreset.ProjectId is { } project&&project!=documentRecord.ProjectId
+                        ||reusablePreset.Scope==WriterApp.Shared.WritingScope.Selection&&(request.PageId is null||request.SelectionStart is null||request.SelectionEnd is null||request.SelectionEnd<=request.SelectionStart||string.IsNullOrWhiteSpace(request.OriginalText))
+                        ||reusablePreset.Scope==WriterApp.Shared.WritingScope.Section&&!request.Parameters.ContainsKey(WriterApp.Shared.WritingActions.Parameter))
+                        return BadRequest(new{message="Preset requires its declared synchronized project and writing target."});
+                    if(reusablePreset.Scope==WriterApp.Shared.WritingScope.Selection) {
+                        int start=request.SelectionStart!.Value,end=request.SelectionEnd!.Value;
+                        if(request.SurroundingText is not { } text||start<0||end>text.Length||text[start..end]!=request.OriginalText)
+                            return BadRequest(new{message="Preset selection must match its exact page text and range."});
+                    } else if(request.SelectionStart is not null||request.SelectionEnd is not null||request.OriginalText is not null)
+                        return BadRequest(new{message="Section preset cannot carry a different selection target."});
+                    var expected=WriterApp.Shared.ReusablePrompts.ExecutionParameters(reusablePreset);
+                    foreach(var pair in expected)if(!request.Parameters.TryGetValue(pair.Key,out var value)||WriterApp.Shared.ReusablePrompts.Canonical(WriterApp.Shared.ReusablePrompts.Primitive(value))!=WriterApp.Shared.ReusablePrompts.Canonical(pair.Value))
+                        return BadRequest(new{message="Preset parameters differ from the reviewed definition."});
+                    var allowed=expected.Keys.Concat([WriterApp.Shared.ReusablePrompts.Parameter,WriterApp.Shared.WritingActions.Parameter,"context"]).ToHashSet();
+                    if(request.Parameters.Keys.Any(k=>!allowed.Contains(k)))return BadRequest(new{message="Preset contains unsupported execution parameters."});
+                }catch(Exception e)when(e is System.IO.InvalidDataException or InvalidOperationException or JsonException){return BadRequest(new{message=e.Message});}
+            }
+            WriterApp.Shared.WritingStructure? writingSource = null;
+            if (request.Parameters?.TryGetValue(WriterApp.Shared.WritingActions.Parameter, out var writingJson) == true)
+            {
+                try {
+                    writingSource = WriterApp.Shared.WritingActions.Parse(writingJson?.ToString() ?? "");
+                    if (request.ExpectedDocumentVersion is null || !(WriterApp.Shared.WritingActions.SectionKeys.Contains(actionKey)||actionKey=="custom_transform"&&(reusablePreset?.Scope==WriterApp.Shared.WritingScope.Section || recommendation is not null))
+                        || writingSource.DocumentId != documentId || writingSource.SectionId != sectionId)
+                        return BadRequest(new { message = "Section revision requires its synchronized document and section." });
+                    var pages = await _pages.ListBySectionAsync(sectionId, userId, ct);
+                    if (recommendation is not null) {
+                        WriterApp.Shared.RecommendedWriting.ValidateSource(writingSource, recommendation.ToolId);
+                        WriterApp.Shared.RecommendedWriting.ValidateOpeningHtml(pages.OrderBy(p => p.OrderIndex).First().Content, recommendation.ToolId);
+                    }
+                    if (!pages.OrderBy(p => p.OrderIndex).Select(p => p.Id).SequenceEqual(writingSource.Pages.Select(p => p.Id)))
+                        return BadRequest(new { message = "Section revision must include every page in order." });
+                    if (recommendation is not null && WriterApp.Shared.RecommendedWriting.Output(recommendation.ToolId) == WriterApp.Shared.RecommendedOutput.AppendParagraph
+                        && request.PageId != writingSource.Pages.Last().Id) return BadRequest(new { message = "Open the last page of this section before generating an appended paragraph." });
+                    if(request.WebSource is not null || recommendation is not null) foreach(var mapped in writingSource.Pages) {
+                        _=WebTranslationHtml.Map(pages.Single(p=>p.Id==mapped.Id).Content,mapped,mapped);
+                    }
+                    if (recommendation is not null) request = request with { SurroundingText = string.Join("\n\n", writingSource.Pages.Select(p => string.Join("\n", p.Runs.Select(r => r.Text)))) };
+                } catch (Exception error) when (error is System.IO.InvalidDataException or JsonException) {
+                    return BadRequest(new { message = "Invalid or oversized section revision structure. Use a smaller scope." });
+                }
+            }
+            if(reusablePreset?.Kind=="custom") {
+                string expectedContext=reusablePreset.Scope==WriterApp.Shared.WritingScope.Selection?request.OriginalText??"":string.Join("\n\n",writingSource!.Pages.Select(p=>string.Join("\n",p.Runs.Select(r=>r.Text))));
+                if(request.Parameters?.GetValueOrDefault("context")?.ToString()!=expectedContext)return BadRequest(new{message="Custom preset context must match its declared writing target."});
+            }
+            WriterApp.Shared.TranslationStructure? translationSource = null;
+            if (request.Parameters?.TryGetValue(WriterApp.Shared.TranslationStructures.Parameter, out var translationJson) == true)
+            {
+                try
+                {
+                    translationSource = WriterApp.Shared.TranslationStructures.Parse(translationJson?.ToString() ?? "");
+                    if (request.ExpectedDocumentVersion is null || actionKey != "translate." + translationSource.Scope
+                        || translationSource.DocumentId != documentId
+                        || translationSource.TargetLanguage != request.Parameters.GetValueOrDefault("target_language")?.ToString())
+                        return BadRequest(new { message = "Translation requires a matching scope, language and synchronized revision." });
+                    var expectedSections = translationSource.Scope == "section"
+                        ? sectionRecords.Where(s => s.Id == sectionId).ToArray() : sectionRecords.OrderBy(s => s.OrderIndex).ToArray();
+                    if (!expectedSections.Select(s => s.Id).SequenceEqual(translationSource.Sections.Select(s => s.Id)))
+                        return BadRequest(new { message = "Translation must contain every intended section in order." });
+                    foreach (var section in translationSource.Sections)
+                    {
+                        var pages = await _pages.ListBySectionAsync(section.Id, userId, ct);
+                        if (!pages.OrderBy(p => p.OrderIndex).Select(p => p.Id).SequenceEqual(section.Pages.Select(p => p.Id)))
+                            return BadRequest(new { message = "Translation must contain every intended page in order." });
+                    }
+                    if (request.Parameters.TryGetValue("web_translation_source",out var webSourceJson))
+                    {
+                        var webSource=JsonSerializer.Deserialize<WebTranslationSource>(webSourceJson?.ToString() ?? "",new JsonSerializerOptions(JsonSerializerDefaults.Web))
+                            ?? throw new System.IO.InvalidDataException("Missing checked web source.");
+                        var validator=new WebTranslationsController(_dbContext,_userIdResolver) { ControllerContext=ControllerContext };
+                        await validator.ValidateGeneration(webSource,translationSource,ct);
+                    }
+                }
+                catch (DocumentSyncException error) { return StatusCode(error.Status,new { message=error.Message }); }
+                catch (Exception error) when (error is System.IO.InvalidDataException or JsonException)
+                { return BadRequest(new { message = "Invalid or oversized translation structure. Translate a smaller scope." }); }
+            }
+            if (request.ExpectedCanonVersions is not null && (actionKey != "continuity.check_section" && !IsSceneCardAction(actionKey)
+                || request.ExpectedDocumentVersion is null || request.ExpectedCanonVersions.Count > 3
+                || request.ExpectedCanonVersions.Any(p => !Enum.IsDefined(p.Key) || string.IsNullOrWhiteSpace(p.Value) || p.Value.Length > 200)))
+                return BadRequest(new { code = "ai.invalid_canon", message = "Invalid canon version contract." });
+            if(request.WebSource is not null && (actionKey=="continuity.check_section" || IsSceneCardAction(actionKey))
+                && (request.ExpectedCanonVersions is null || IsSceneCardAction(actionKey) && request.Parameters?.GetValueOrDefault("scene_coaching_version")?.ToString()!="1"))
+                return BadRequest(new { message="Checked coaching requires typed current canon and scene contracts. Update the web client and backend together." });
+            if (!await MatchesCanonAsync(request, aiDocument, ct))
+                return Conflict(new { code = "ai.stale_source", message = "Canon changed or does not match this manuscript. Load canon and retry." });
             string selectedText = request.OriginalText ?? string.Empty;
+            if (IsSceneCardAction(actionKey) && request.Parameters?.ContainsKey("scene_coaching_version") == true) {
+                string? version = request.Parameters.GetValueOrDefault("scene_coaching_version")?.ToString();
+                string? focus = request.Parameters.GetValueOrDefault("focus_field")?.ToString();
+                string? cardJson = request.Parameters.GetValueOrDefault("current_scene_card")?.ToString();
+                string? entitiesJson = request.Parameters.GetValueOrDefault("scene_entities_json")?.ToString();
+                if (version != "1" || request.ExpectedDocumentVersion is null || request.ExpectedCanonVersions is null
+                    || cardJson is not { Length: > 0 and <= 100_000 } || entitiesJson is not { Length: > 0 and <= 100_000 }
+                    || !string.IsNullOrEmpty(focus) && !Enum.GetValues<WriterApp.Application.Documents.SceneCoachingField>().Any(f => WriterApp.Application.Documents.SceneCoaching.Key(f) == focus))
+                    return BadRequest(new { code = "ai.invalid_scene_coaching", message = "Invalid scene coaching target or context. Update the desktop and backend together." });
+                try {
+                    using var card = JsonDocument.Parse(cardJson);
+                    using var entities = JsonDocument.Parse(entitiesJson);
+                    if (card.RootElement.ValueKind != JsonValueKind.Object || entities.RootElement.ValueKind != JsonValueKind.Array) throw new JsonException();
+                } catch (JsonException) { return BadRequest(new { code = "ai.invalid_scene_coaching", message = "Invalid structured scene context." }); }
+            }
             string? instruction = GetInstruction(request.Parameters);
 
             Dictionary<string, object?> options = request.Parameters is null
@@ -489,10 +670,15 @@ namespace WriterApp.Controllers
             {
                 options[OnboardingDemoAiUsage.RequestParameterKey] = true;
             }
+            else options.Remove(OnboardingDemoAiUsage.RequestParameterKey);
+            options.Remove(WriterApp.Shared.WritingOutline.Option);
+            if(request.WritingOutline is { } savedOutline)options[WriterApp.Shared.WritingOutline.Option]=WriterApp.Shared.WritingOutline.ProviderText(savedOutline);
             if (!string.IsNullOrWhiteSpace(request.SurroundingText))
             {
                 options["section_text_override"] = request.SurroundingText;
             }
+            if (actionKey == "continuity.check_section" && request.OutlineText is { } storyContext)
+                options["story_context"] = storyContext;
             if (string.Equals(actionKey, GenerateOutlineAction.ActionIdValue, StringComparison.Ordinal))
             {
                 options["max_section_chars"] = OutlineMaxSectionChars;
@@ -547,7 +733,7 @@ namespace WriterApp.Controllers
                 options["references_json"] = sceneCard?.ReferencesJson ?? "[]";
                 if (IsSceneCardAction(actionKey))
                 {
-                    options["max_section_chars"] = SceneMaxSectionChars;
+                    options["max_section_chars"] = request.Parameters?.GetValueOrDefault("scene_coaching_version")?.ToString() == "1" ? 100_000 : SceneMaxSectionChars;
                 }
             }
 
@@ -587,6 +773,16 @@ namespace WriterApp.Controllers
                 request.Parameters?.Count ?? 0);
 
             AiExecutionResult result;
+            if (onboardingDemoAllowed) {
+                var currentDemo = await _onboardingDemoEligibilityService.EvaluateSectionAiDemoAsync(userId,documentId,sectionId,actionKey,ct);
+                if (!currentDemo.IsEligible) return Conflict(new { code="onboarding.demo_unavailable",message="The server demo changed before generation. Refresh its status; your writing is preserved." });
+                // Consume the server-owned one-request grant atomically before provider work. An ambiguous provider outcome cannot grant another free request.
+                int reserved = await _dbContext.OnboardingDemoWorkspaces.Where(x => x.OwnerUserId == userId && x.DocumentId == documentId
+                    && x.SectionId == sectionId && !x.RequestUsed
+                    && !_dbContext.UserProfiles.Any(p => p.UserId==userId && p.HasCompletedOnboarding))
+                    .ExecuteUpdateAsync(update => update.SetProperty(x => x.RequestUsed,true),ct);
+                if (reserved != 1) return Conflict(new { code="onboarding.demo_already_used",message="The server-authorized demo request was already used. Refresh onboarding status; ordinary AI still uses its actual plan and quota." });
+            }
             try
             {
                 result = await _orchestrator.ExecuteActionAsync(actionKey, input, ct);
@@ -679,6 +875,46 @@ namespace WriterApp.Controllers
             }
 
             AiProposal proposal = result.Proposal;
+            if (recommendation is not null) {
+                try {
+                    if (WriterApp.Shared.RecommendedWriting.Revises(recommendation.ToolId)) _ = WriterApp.Shared.RecommendedWriting.Revision(proposal.ProposedText ?? "", writingSource!, recommendation.ToolId);
+                    else _ = WriterApp.Shared.RecommendedWriting.TextResult(proposal.ProposedText ?? "", recommendation.ToolId, string.Join("\n\n", writingSource!.Pages.Select(p => string.Join("\n", p.Runs.Select(r => r.Text)))));
+                } catch (Exception e) when (e is InvalidDataException or InvalidOperationException or JsonException) { return StatusCode(502, new { message = "Recommended output was refused. " + e.Message }); }
+            }
+            if (actionKey == "continuity.check_section") {
+                try {
+                    var sources = WriterApp.Shared.ConsistencyChecks.Sources(aiDocument.Chapters.SelectMany(c => c.Sections).OrderBy(s => s.Order)
+                        .Select(s => new WriterApp.Shared.ConsistencySource(s.SectionId, s.Title ?? "Untitled scene",
+                            s.SectionId == sectionId ? request.SurroundingText ?? WriterApp.Application.State.PlainTextMapper.ToPlainText(s.Content.Value ?? "")
+                            : WriterApp.Application.State.PlainTextMapper.ToPlainText(s.Content.Value ?? ""))), sectionId);
+                    proposal = proposal with { ProposedText = WriterApp.Shared.ConsistencyChecks.WithVerifiedCoverage(proposal.ProposedText ?? "", sources, sectionId) };
+                } catch (Exception e) when (e is InvalidDataException or JsonException or InvalidOperationException or KeyNotFoundException) {
+                    return StatusCode(502, new { message = "The consistency response could not be verified. Run the check again. No writing was changed." });
+                }
+            }
+            if(request.WebSource is not null) {
+                if(proposal.ProposedText?.Length>100_000 || proposal.OriginalText?.Length>100_000)return StatusCode(502,new { message="AI output exceeds the supported checked limit. Choose a smaller target." });
+                try { WebAiSources.RequireTime(new DateTimeOffset(proposal.CreatedUtc)); }
+                catch(InvalidDataException e) { return StatusCode(502,new { message=e.Message }); }
+            }
+            if (translationSource is not null)
+            {
+                try { _ = WriterApp.Shared.TranslationStructures.Result(proposal.ProposedText ?? "", translationSource); }
+                catch (Exception error) when (error is System.IO.InvalidDataException or JsonException)
+                { return StatusCode(502, new { message = "The provider returned an incomplete or mismatched translation. No writing was applied." }); }
+            }
+            if (writingSource is not null && (recommendation is null || WriterApp.Shared.RecommendedWriting.Revises(recommendation.ToolId))) {
+                try { _ = WriterApp.Shared.WritingActions.Result(proposal.ProposedText ?? "", writingSource); }
+                catch (Exception error) when (error is System.IO.InvalidDataException or JsonException)
+                { return StatusCode(502, new { code = "ai.invalid_section_revision", message = "Incomplete or invalid section revision. No writing was applied." }); }
+            }
+            if(request.WebSource is not null && IsSceneCardAction(actionKey) && request.Parameters?.ContainsKey("scene_coaching_version")==true) {
+                try {
+                    var entities=JsonSerializer.Deserialize<WriterApp.Application.Documents.SceneEntity[]>(request.Parameters["scene_entities_json"]!.ToString()!,new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+                    var checkedScene=WriterApp.Application.Documents.SceneCoaching.Parse(proposal.ProposedText ?? "",entities);
+                    if(checkedScene.Errors.Count>0)throw new InvalidDataException("Scene proposal contains unsupported fields or unresolved entities.");
+                } catch(Exception e) when(e is InvalidDataException or JsonException) { return StatusCode(502,new { message=e.Message }); }
+            }
             string? summary = string.IsNullOrWhiteSpace(proposal.UserSummary) ? proposal.SummaryLabel : proposal.UserSummary;
             IReadOnlyList<DocumentOutlineNodeDto>? outlineNodes = null;
             string? previewText = null;
@@ -741,13 +977,24 @@ namespace WriterApp.Controllers
                 wasTruncated,
                 proposedSceneCard,
                 proposalExplanation,
-                operations, request.ExpectedDocumentVersion);
+                operations, request.ExpectedDocumentVersion, request.ExpectedCanonVersions,request.WritingOutline?.Fingerprint,request.WebSource);
 
-            if (request.ExpectedDocumentVersion is { } completedVersion && !await _dbContext.DocumentSyncRecords.AsNoTracking()
+            ct.ThrowIfCancellationRequested();
+            if (!await WebSourceCurrent(request,userId,ct))
+                return Conflict(new { code="ai.stale_web_source", message="Writing, planning, canon or target changed during generation. Generate again." });
+
+            if(request.WritingOutline is { } completedOutline && !await WritingOutlineCurrentAsync(documentId,userId,completedOutline,ct,request.WebSource is not null))
+                return Conflict(new{code="ai.stale_outline",message="Saved outline changed during generation. Generate and review again."});
+
+            if (request.WebSource is null && request.ExpectedDocumentVersion is { } completedVersion && !await _dbContext.DocumentSyncRecords.AsNoTracking()
                 .AnyAsync(x => x.DocumentId == documentId && x.Version == completedVersion && !x.IsDeleted && !x.IsTrashed, ct))
                 return Conflict(new { code = "ai.stale_source", message = "The manuscript changed during analysis. Synchronize and retry." });
+            if (!await MatchesCanonAsync(request, aiDocument, ct))
+                return Conflict(new { code = "ai.stale_source", message = "Canon changed during analysis. Load canon and retry." });
 
             string requestJson = JsonSerializer.Serialize(request, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            if (onboardingDemoAllowed) await _dbContext.OnboardingDemoWorkspaces.Where(x => x.OwnerUserId==userId && x.DocumentId==documentId)
+                .ExecuteUpdateAsync(update => update.SetProperty(x => x.ProposalId,proposal.ProposalId),ct);
             string responseJson = JsonSerializer.Serialize(response, new JsonSerializerOptions(JsonSerializerDefaults.Web));
 
             try
@@ -871,6 +1118,7 @@ namespace WriterApp.Controllers
                 "ai.provider_unavailable" => StatusCodes.Status503ServiceUnavailable,
                 "ai.provider_missing" => StatusCodes.Status503ServiceUnavailable,
                 "ai.action_missing" => StatusCodes.Status400BadRequest,
+                "ai.style_review_rejected" => StatusCodes.Status502BadGateway,
                 _ => StatusCodes.Status400BadRequest
             };
         }
@@ -884,6 +1132,11 @@ namespace WriterApp.Controllers
         {
             string message = exception.Message ?? string.Empty;
             string normalized = message.ToLowerInvariant();
+
+            if (message == WriterApp.AI.Providers.OpenAI.OpenAiProvider.InvalidWritingResponse)
+                return (StatusCodes.Status502BadGateway, "ai.invalid_section_revision", "Incomplete or invalid section revision. No writing was applied.");
+            if (message == WriterApp.AI.Providers.OpenAI.OpenAiProvider.IncompleteStyleReviewResponse)
+                return (StatusCodes.Status502BadGateway, "ai.style_review_incomplete", "The style review did not complete. No writing was applied.");
 
             if (normalized.Contains("api key is not configured", StringComparison.Ordinal)
                 || normalized.Contains("status 401", StringComparison.Ordinal)

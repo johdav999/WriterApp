@@ -87,8 +87,26 @@ public sealed class LocalPlanningTests : IDisposable
         if (detached)
         {
             d = await Store.SaveAsync(d with { Sections = d.Sections.Select(s => s with { Pages = s.Pages.Select(p => p with { Content = "<p>A unique anchor remains.</p>" }).ToArray() }).ToArray() });
-            Assert.True(d.Project!.Nodes.Single(n => n.NodeId == node.NodeId).Annotations.Single().Value.AnchorDetached);
+            Assert.False(d.Project!.Nodes.Single(n => n.NodeId == node.NodeId).Annotations.Single().Value.AnchorDetached);
+            Assert.Equal(d.Sections[0].Pages[0].PageId, LocalAnnotationMarkup.PageFor(d, annotation.LocalId));
         }
+    }
+    [Fact]
+    public async Task ExplicitRelinkingPersistsTheNewQuoteAndPreservesAnnotationIdentityAndResolution()
+    {
+        var document = await Book();
+        var sceneId = document.Project!.Nodes.Single(n => n.NodeType == "scene").NodeId;
+        document = await Store.SaveAsync(LocalPlanning.AddAnnotation(document, sceneId, "todo", "Review the facts", "Old wording"));
+        var annotation = document.Project!.Nodes.Single(n => n.NodeId == sceneId).Annotations.Single();
+        document = await Store.SaveAsync(LocalPlanning.Resolve(document, sceneId, annotation.LocalId, true));
+        var before = document.Project!.Nodes.Single(n => n.NodeId == sceneId).Annotations.Single();
+        Assert.Throws<InvalidOperationException>(() => LocalPlanning.Reanchor(document, sceneId, annotation.LocalId, "Missing"));
+        document = await Store.SaveAsync(LocalPlanning.Reanchor(document, sceneId, annotation.LocalId, "unique anchor"));
+        var reopened = (await new FileLocalDocumentStore(_root).GetAsync(document.DocumentId))!;
+        var after = reopened.Project!.Nodes.Single(n => n.NodeId == sceneId).Annotations.Single();
+        Assert.Equal(before with { Value = before.Value with { AnchorText = "unique anchor", AnchorDetached = false } }, after);
+        Assert.Equal(document.Sections[0].Pages[0], reopened.Sections[0].Pages[0]);
+        Assert.Single(LocalAnnotationMarkup.ForPage(reopened, reopened.Sections[0].Pages[0].PageId));
     }
     [Fact]
     public async Task PlanningSearchRevalidatesDeletionAndScopes()

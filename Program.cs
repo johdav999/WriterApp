@@ -201,7 +201,8 @@ builder.Services.AddAuthorization(options =>
             .AddRequirements(new AdminOnlyRequirement()));
 });
 builder.Services.Configure<WriterAuthOptions>(builder.Configuration.GetSection("WriterApp:Auth"));
-var mvcBuilder = builder.Services.AddControllers();
+builder.Services.AddScoped<WriterApp.Application.AI.WebAiMutationFilter>();
+var mvcBuilder = builder.Services.AddControllers(options => options.Filters.AddService<WriterApp.Application.AI.WebAiMutationFilter>());
 mvcBuilder.ConfigureApplicationPartManager(manager =>
 {
     manager.ApplicationParts.Clear();
@@ -287,6 +288,10 @@ builder.Services.AddScoped<WriterApp.Application.Documents.IProjectGoalsService,
 builder.Services.AddScoped<WriterApp.Application.Documents.IProjectSceneLinkingService, WriterApp.Application.Documents.ProjectSceneLinkingService>();
 builder.Services.AddScoped<WriterApp.Application.Documents.IProjectDeletionService, WriterApp.Application.Documents.ProjectDeletionService>();
 builder.Services.AddScoped<WriterApp.Application.Documents.IOnboardingBootstrapService, WriterApp.Application.Documents.OnboardingBootstrapService>();
+builder.Services.Configure<CoverAssetOptions>(builder.Configuration.GetSection("CoverAssets"));
+builder.Services.AddSingleton<ICoverAssetNetwork,CoverAssetNetwork>();
+builder.Services.AddScoped<TrustedCoverFetcher>();
+builder.Services.AddScoped<CoverAssetService>();
 builder.Services.AddHttpClient<ICoverImageService, CoverImageService>((sp, client) =>
 {
     WriterAiOpenAiOptions options = sp.GetRequiredService<IOptions<WriterAiOptions>>().Value.Providers.OpenAI ?? new WriterAiOpenAiOptions();
@@ -1106,7 +1111,13 @@ app.MapGet("/api/ai/status", async (
             UiEnabled = aiOptions.Enabled && aiOptions.UI.ShowAiMenu,
             QuotaTotal = status.QuotaTotal,
             QuotaRemaining = status.QuotaRemaining,
-            SupportsDocumentVersionChecks = true
+            SupportsDocumentVersionChecks = true,
+            SupportsCanonVersionChecks = true,
+            SupportsStructuredTranslation = true,
+            SupportsStyleQualityReview = true,
+            SupportsRecommendedWriting = true,
+            SupportsSynopsisCoaching = true,
+            SupportsWebCheckedSources = true
         });
     }
     catch (SecurityException)

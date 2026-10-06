@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using WriterApp.Application.Continuity;
 using WriterApp.Application.Documents;
@@ -22,7 +23,7 @@ namespace WriterApp.Controllers
     [ApiController]
     [Route("api/documents/{documentId:guid}/bibles")]
     [Authorize]
-    public sealed class DocumentBiblesController : ControllerBase
+    public sealed partial class DocumentBiblesController : ControllerBase
     {
         private readonly IDocumentRepository _documents;
         private readonly ISectionRepository _sections;
@@ -32,6 +33,7 @@ namespace WriterApp.Controllers
         private readonly BibleRefreshService _refreshService;
         private readonly IEntitlementService _entitlementService;
         private readonly ILogger<DocumentBiblesController> _logger;
+        private readonly WriterApp.Data.AppDbContext _dbContext;
 
         public DocumentBiblesController(
             IDocumentRepository documents,
@@ -41,7 +43,8 @@ namespace WriterApp.Controllers
             IBibleStore bibleStore,
             BibleRefreshService refreshService,
             IEntitlementService entitlementService,
-            ILogger<DocumentBiblesController> logger)
+            ILogger<DocumentBiblesController> logger,
+            WriterApp.Data.AppDbContext dbContext)
         {
             _documents = documents ?? throw new ArgumentNullException(nameof(documents));
             _sections = sections ?? throw new ArgumentNullException(nameof(sections));
@@ -51,6 +54,7 @@ namespace WriterApp.Controllers
             _refreshService = refreshService ?? throw new ArgumentNullException(nameof(refreshService));
             _entitlementService = entitlementService ?? throw new ArgumentNullException(nameof(entitlementService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _dbContext = dbContext;
         }
 
         [HttpGet("{bibleType}")]
@@ -148,13 +152,34 @@ namespace WriterApp.Controllers
             BibleSnapshotState snapshot;
             try
             {
-                snapshot = await _refreshService.RefreshAsync(
+                var initial = await _bibleStore.GetSnapshotAsync(documentId, parsedType, ct);
+                var prepared = await _refreshService.PrepareAsync(
                     document,
                     userId,
                     activeSectionId,
                     parsedType,
                     request?.FullRebuild ?? false,
                     ct);
+                // Legacy clients keep their DTO; their writes still honor the same
+                // concurrent manuscript/canon boundaries as the device routes.
+                var committed = await _dbContext.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+                {
+                    _dbContext.ChangeTracker.Clear();
+                    await using var transaction = await _dbContext.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, ct);
+                    var owned = await _documents.GetAsync(documentId, userId, ct);
+                    if (owned is null) return null;
+                    var currentSections = await _sections.ListByDocumentAsync(documentId, userId, ct);
+                    var currentDocument = await BuildDocumentAsync(owned, currentSections, userId, ct);
+                    var currentCanon = await _bibleStore.GetSnapshotAsync(documentId, parsedType, ct);
+                    if (BibleRefreshService.SourceHash(currentDocument) != BibleRefreshService.SourceHash(document)
+                        || SnapshotToken(currentCanon) != SnapshotToken(initial)
+                        || SnapshotToken(prepared.Existing) != SnapshotToken(initial)) return null;
+                    var saved = await _refreshService.CommitAsync(prepared, ct);
+                    await transaction.CommitAsync(ct);
+                    return saved;
+                });
+                if (committed is null) return Stale();
+                snapshot = committed;
             }
             catch (EntitlementDeniedException ex)
             {
@@ -264,7 +289,7 @@ namespace WriterApp.Controllers
 
         private static bool TryParseBibleType(string value, out BibleType bibleType)
         {
-            if (Enum.TryParse(value, ignoreCase: true, out bibleType))
+            if (Enum.TryParse(value, ignoreCase: true, out bibleType) && Enum.IsDefined(bibleType))
             {
                 return true;
             }
@@ -292,7 +317,7 @@ namespace WriterApp.Controllers
                 }
             }
 
-            return changed;
+            return changed + cursor.SectionHashes.Keys.Except(currentHashes.Keys).Count();
         }
 
         private static string ComputeHash(string input)

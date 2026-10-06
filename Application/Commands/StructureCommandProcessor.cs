@@ -26,6 +26,10 @@ namespace WriterApp.Application.Commands
             await command.ExecuteAsync(dbContext, ct);
             await dbContext.SaveChangesAsync(ct);
 
+            RecordCommitted(command);
+        }
+        public void RecordCommitted(IStructureUndoCommand command)
+        {
             string key = BuildKey(command.UserId, command.DocumentId);
             _undo.GetOrAdd(key, _ => new Stack<IStructureUndoCommand>()).Push(command);
             _redo.TryRemove(key, out _);

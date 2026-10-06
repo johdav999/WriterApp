@@ -1,0 +1,39 @@
+@using System.Text.Json
+@using WriterApp.Shared.Canon
+@if (Value.ValueKind == JsonValueKind.Object)
+{
+    <div class="canon-value">
+    @foreach (var field in Value.EnumerateObject()) {
+        @if (field.Name == "fact") { <p class="canon-fact"><CanonValue Value="field.Value" Contents="Contents" SceneNames="SceneNames" /></p> }
+        else if (field.Name == "quote") { <blockquote>@field.Value.ToString()</blockquote> }
+        else if (field.Name == "evidence") { <div class="canon-evidence"><span class="canon-evidence-label">From your manuscript</span><CanonValue Value="field.Value" Contents="Contents" SceneNames="SceneNames" /></div> }
+        else if (field.Name == "sectionId") {
+            @if (SceneNames?.GetValueOrDefault(field.Value.ToString()) is { } scene) { <p class="canon-source">From scene: @scene</p> }
+        }
+        else if (field.Name == "id") { }
+        else { <dl><dt>@Label(field.Name)</dt><dd><CanonValue Value="field.Value" Field="@field.Name" Contents="Contents" SceneNames="SceneNames" /></dd></dl> }
+    }
+    </div>
+}
+else if (Value.ValueKind == JsonValueKind.Array)
+{
+    <ul class="canon-values">@foreach (var item in Value.EnumerateArray()) { <li><CanonValue Value="item" Field="@Field" Contents="Contents" SceneNames="SceneNames" /></li> }</ul>
+}
+else if (Value.ValueKind != JsonValueKind.Null)
+{
+    <span>@DisplayValue()</span>
+}
+@code {
+    [Parameter] public JsonElement Value { get; set; }
+    [Parameter] public string? Field { get; set; }
+    [Parameter] public IReadOnlyDictionary<CanonKind, CanonContent>? Contents { get; set; }
+    [Parameter] public IReadOnlyDictionary<string, string>? SceneNames { get; set; }
+    public static string Label(string name) => CanonPresentation.Label(name);
+    private string DisplayValue() => Field switch {
+        "participants" or "characterId" => CanonPresentation.Reference(CanonKind.Character, Value.ToString(), Contents),
+        "locationId" or "placeId" => CanonPresentation.Reference(CanonKind.Place, Value.ToString(), Contents),
+        "eventId" => CanonPresentation.Reference(CanonKind.Timeline, Value.ToString(), Contents),
+        "sectionId" => SceneNames?.GetValueOrDefault(Value.ToString()) ?? "Source scene unavailable",
+        _ => Value.ToString()
+    };
+}

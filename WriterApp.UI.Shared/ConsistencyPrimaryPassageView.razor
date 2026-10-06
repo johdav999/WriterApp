@@ -1,0 +1,13 @@
+<div class="consistency-primary-passage">
+    <strong>Passage in your writing
+        @if (!string.IsNullOrWhiteSpace(Location)) { <text> · @Location</text> }
+    </strong>
+    <p>@Quote</p>
+    @if (!string.IsNullOrWhiteSpace(Error)) { <p role="status">@Error</p> }
+</div>
+
+@code {
+    [Parameter] public string? Location { get; set; }
+    [Parameter] public string? Quote { get; set; }
+    [Parameter] public string? Error { get; set; }
+}

@@ -24,7 +24,7 @@ using Xunit;
 
 namespace WriterApp.Tests
 {
-    public sealed class AiActionsControllerTests
+    public sealed partial class AiActionsControllerTests
     {
         [Theory]
         [InlineData("old", false, false)]
@@ -547,10 +547,11 @@ namespace WriterApp.Tests
         private static void SeedLinkedScene(AppDbContext db, Guid sectionId, string? metadataJson, DateTimeOffset updatedUtc)
         {
             ProjectRecord project = db.Projects.Single();
+            Guid sceneId=Guid.NewGuid();
 
             db.ProjectNodes.Add(new ProjectNodeRecord
             {
-                Id = Guid.NewGuid(),
+                Id = sceneId,
                 ProjectId = project.Id,
                 NodeType = ProjectNodeType.Scene,
                 LinkedSectionId = sectionId,
@@ -558,6 +559,9 @@ namespace WriterApp.Tests
                 Title = "Scene",
                 UpdatedUtc = updatedUtc
             });
+            if(OnboardingDemoSceneMetadata.IsDemoScene(metadataJson))db.OnboardingDemoWorkspaces.Add(new(){OwnerUserId=project.OwnerUserId,
+                OperationId=Guid.NewGuid(),ProjectId=project.Id,DocumentId=db.Sections.Single(s=>s.Id==sectionId).DocumentId,
+                SectionId=sectionId,SceneNodeId=sceneId,ExpiresAtUtc=DateTimeOffset.UtcNow.AddDays(1)});
         }
 
         private static void SeedUserProfile(AppDbContext db, bool completedOnboarding)

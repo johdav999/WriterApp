@@ -1,4 +1,5 @@
 @implements IDisposable
+@implements IAsyncDisposable
 @inject LocalDocumentRepository Documents
 @inject DeviceSyncEngine Sync
 @inject DeviceAiService Ai
@@ -6,21 +7,48 @@
 @inject LocalAiHistoryActions HistoryActions
 @inject DevicePromptLibrary CloudPrompts
 @inject DeviceAccountService Account
+@inject DeviceBibleService Bibles
+@inject Microsoft.JSInterop.IJSRuntime JS
+@inject IServiceProvider Services
+@using Microsoft.Extensions.DependencyInjection
+@using Microsoft.JSInterop
 @using WriterApp.Controllers
-<div class="ai-workspace @(FixedRequest ? "ai-workspace-fixed" : null)" role="@(FixedRequest ? "region" : null)" aria-label="@(FixedRequest ? Heading : null)" tabindex="@(FixedRequest ? "0" : null)">
+@using WriterApp.Shared.Canon
+<div class="ai-workspace @(Mode == "consistency" ? "consistency-workspace" : null) @(Mode == "storyboard" ? "storyboard-workspace" : null) @(Mode == "synopsis" ? "synopsis-workspace" : null) @(FixedRequest ? "ai-workspace-fixed" : null)" role="@(FixedRequest ? "region" : null)" aria-label="@(FixedRequest ? Heading : null)" tabindex="@(FixedRequest ? "0" : null)">
 <div class="ai-request">
-@if (Mode != "history") { <h3>@Heading</h3><p>Running AI sends saved scene context to your configured backend. Review every proposal before Apply.</p> }
+@if (Mode != "history") { <h3>@(Mode == "consistency" ? "Find story inconsistencies" : Heading)</h3><p>@(Mode == "storyboard" ? "Trace story threads across the saved storyboard. Review gaps, pacing and unresolved threads in one report." : Mode == "consistency" ? "Find contradictions in characters, places and timing. Story references are prepared automatically. You decide which writing changes to apply." : Mode == "synopsis" ? "Running synopsis coaching sends your saved synopsis and coaching notes to your configured backend. Review field suggestions before Apply." : "Running AI sends saved scene context to your configured backend. Review every proposal before Apply.")</p> }
+@if (Mode == "scene") {
+<DeviceBiblePanel DocumentId="DocumentId" SectionId="SectionId" BeforeWork="BeforeWork" AfterWork="AfterWork"
+    ExternalBusy="_busy" BusyChanged="BibleBusyChanged" />
+}
 @if(_document is not null && Mode != "history") {
-<fieldset disabled="@_busy"><legend>Analyze saved writing and planning</legend>
-<p>Scene: @_document.Sections.FirstOrDefault(s => s.SectionId == _section)?.Title</p>
-@if(_action==AdvancedAiAction.Consistency) { <p>Checks the saved section only. Character, place and timeline bibles are not included in this desktop analysis.</p> }
-@if(_action==AdvancedAiAction.Synopsis) { <label>Synopsis target<select @bind="_field">@foreach(var f in AdvancedAiRequests.SynopsisFields) { <option value="@f.Key">@f.Field</option> }</select></label> }
+<fieldset disabled="@(_busy || _bibleBusy)"><legend>@(Mode == "storyboard" ? "Analyze saved storyboard" : Mode == "synopsis" ? "Analyze saved synopsis" : "Analyze saved writing and planning")</legend>
+@if (Mode == "storyboard") { var count = _document.Project?.Nodes.Count(n => n.NodeType == "scene" && n.DeletionId is null) ?? 0; <p class="storyboard-scope">Entire storyboard · @count scene@(count == 1 ? "" : "s")</p><p>Uses chapter order, subplot tags, summaries and key events from saved scene cards.</p> }
+else if (Mode != "synopsis") { <p>Scene: @_document.Sections.FirstOrDefault(s => s.SectionId == _section)?.Title</p> }
+@if(_action==AdvancedAiAction.Synopsis) {
+<div class="synopsis-coaching-options">
+<label>Synopsis coaching mode<select aria-label="Synopsis coaching mode" @bind="_synopsisMode"><option value="evaluate">Evaluate synopsis</option><option value="questions">Ask guiding questions</option><option value="suggest">Improve a field</option></select></label>
+@if (_synopsisMode == "suggest") { <label>Synopsis target<select aria-label="Synopsis target" @bind="_field">@foreach(var f in WriterApp.Shared.SynopsisCoaching.Fields) { <option value="@f.Key">@f.Label</option> }</select></label> }
+</div>
+<p>Coaching uses all ten saved synopsis fields and your notes. Scenes and manuscript pages are not required.</p>
+@if (_document.Project is null) { <p role="status">Choose a project manuscript before synopsis coaching.</p> }
+else if (WriterApp.Shared.SynopsisCoaching.Fields.All(f=>string.IsNullOrWhiteSpace(WriterApp.Shared.SynopsisCoaching.Value(_document.Project.Synopsis ?? new(), f.Key)))) {
+<p role="status">Your synopsis is empty. Guiding questions can help you start; field suggestions need synopsis details or coaching notes.</p>
+}
+}
+@if (_action == AdvancedAiAction.SceneCard) {
+<label>Scene coaching target<select aria-label="Scene coaching target" @bind="_sceneField"><option value="">Whole scene card</option>
+@foreach (var field in Enum.GetValues<WriterApp.Application.Documents.SceneCoachingField>()) { <option value="@WriterApp.Application.Documents.SceneCoaching.Key(field)">@WriterApp.Application.Documents.SceneCoaching.Label(field)</option> }
+</select></label>
+<p>Links use exact IDs from current project canon and planning. Missing or stale canon cannot resolve new links. Narrative coaching remains available.</p>
+<button type="button" @onclick="FindOpenQuestions">Find open questions</button>
+}
 @if (Mode == "prompts") {
 <label>Saved local prompt<select @onchange="ChoosePrompt"><option value="">Choose prompt</option>@foreach(var p in _prompts) { <option value="@p.Id">@p.Name</option> }</select></label>
 }
 @if (Mode is "prompts" or "scene" or "synopsis" or "storyboard") {
-<label>Instruction / coaching notes<textarea @bind="_instruction" @bind:event="oninput" maxlength="2000" rows="4"></textarea></label>
-<p>This text is used for reusable prompts and scene, storyboard or synopsis coaching. Consistency and style checks use their predefined instructions.</p>
+<label>@(Mode == "storyboard" ? "Focus for this check (optional)" : Mode == "synopsis" ? "Notes for the coach (optional)" : "Instruction / coaching notes")<textarea @bind="_instruction" @bind:event="oninput" maxlength="2000" rows="3" placeholder="@(Mode == "storyboard" ? "For example: follow the family conflict through the final chapters…" : Mode == "synopsis" ? "For example: sharpen the stakes while keeping the ending unresolved…" : null)"></textarea></label>
+<p>@(Mode == "storyboard" ? "Leave blank for a full continuity review. Add scene summaries or subplot tags when the board needs more context." : Mode == "synopsis" ? "These notes guide the request and remain separate from your authored synopsis notes." : "This text is used for reusable prompts and scene, storyboard or synopsis coaching. Consistency and style checks use their predefined instructions.")</p>
 }
 @if (Mode == "prompts") {
 <label>New local prompt name<input @bind="_name" @bind:event="oninput" maxlength="100" /></label><button @onclick="SavePrompt">Save a new local prompt</button>
@@ -30,26 +58,105 @@
 @if (Account.Generation == _cloudGeneration) { @foreach (var cloud in _cloudPrompts) { <button @onclick="() => ImportPrompt(cloud.Id)">Copy @cloud.Name to this device</button> } }
 <p>Only account-wide custom prompts without extra parameters are supported. If an upload is interrupted, refresh the cloud list before retrying; the server may already have saved the copy.</p>
 }
-<button disabled="@(_document.ServerDocumentId is null || _document.DeletedAtUtc is not null || _section == Guid.Empty)" @onclick="RunAi">@RunLabel</button>
+<button class="@(Mode is "consistency" or "storyboard" ? "primary consistency-run" : Mode == "synopsis" ? "primary synopsis-run" : null)" disabled="@(_document.ServerDocumentId is null || _document.DeletedAtUtc is not null || (_action == AdvancedAiAction.Synopsis ? _document.Project is null : _section == Guid.Empty))" @onclick="RunAi">@RunLabel</button>
+@if (Mode == "consistency") { <p class="consistency-request-note">AI compares your saved scene with passages from this manuscript and available story references. Writing changes only when you apply a reviewed revision.</p> }
 @if(_document.ServerDocumentId is null) { <p>Enable cloud sync explicitly in the document before running AI. Local prompts and history remain available.</p> }
 </fieldset>
 }
 </div>
 @if (_busy || _proposal is not null || _error is not null || _message is not null || Mode == "history") {
 <div class="ai-response" role="region" aria-label="AI results and status" tabindex="@(FixedRequest ? "0" : null)">
-@if(_busy) { <p role="status">@(Mode == "history" ? "Updating AI history…" : "Working…")</p><button @onclick="Cancel">Cancel request</button> }
+@if(_busy) { <p role="status">@(_operation ?? (Mode == "history" ? "Updating AI history…" : "Working…"))</p><button @onclick="Cancel">Cancel request</button> }
 @if(_proposal is not null && _prepared is not null) {
-<section aria-label="Review AI result"><h2>Review AI result</h2><p>Target: @_prepared.Target · source revision @_prepared.Source.LocalRevision · cloud version @_prepared.Source.ServerVersion</p>
-<AiResultPreview ActionKey="@_prepared.Request.Key" Original="@Original(_prepared)" Proposed="@_proposal.ProposedText" SceneCard="@AdvancedAiRequests.SceneProposal(_proposal)" />
-@if(_prepared.Target == LocalAiTarget.SceneCard) { <p>Apply updates summary, purpose, role, intent, emotional beat, key events and open questions only. Entity links, tags and status stay as authored.</p> }
-@if(_prepared.Target is LocalAiTarget.SceneCard or LocalAiTarget.SynopsisField) { <button disabled="@(_busy || (_prepared.Target == LocalAiTarget.SceneCard && AdvancedAiRequests.SceneProposal(_proposal) is null))" @onclick="Apply">Apply to @_prepared.Target only</button> }
-else { <p>Analysis only. No manuscript changes will be applied.</p> }
-<button disabled="@_busy" @onclick="() => _proposal=null">Dismiss</button></section>
+<section aria-label="Review AI result">
+@if (Mode == "storyboard") { <p class="storyboard-result-source">Based on saved storyboard · revision @_prepared.Source.LocalRevision</p> }
+else if (Mode != "synopsis") { <h2>@(Mode == "consistency" ? "Consistency review" : "Review AI result")</h2> }
+@if (Mode == "synopsis") {
+<p class="synopsis-result-source">Based on saved synopsis · revision @_prepared.Source.LocalRevision</p>
+<details class="synopsis-result-details"><summary>Source details</summary><p>Cloud version: @_prepared.Source.ServerVersion</p></details>
+}
+else if (Mode is not ("consistency" or "storyboard")) { <p>Target: @(_prepared.Request.SynopsisRequest is not null ? _prepared.Target == LocalAiTarget.SynopsisField ? "Synopsis · " + WriterApp.Shared.SynopsisCoaching.Fields.Single(f=>f.Key==_prepared.Field).Label : "Synopsis feedback" : _prepared.Target.ToString()) · source revision @_prepared.Source.LocalRevision · cloud version @_prepared.Source.ServerVersion</p> }
+@if (_runCanon is not null && _prepared.Request.Key == "continuity.check_section") {
+@if (_runCanon.Snapshots.Count != 3) { <p class="consistency-coverage" role="status">Some story references could not be prepared. This check uses your writing and the available references.</p> }
+<details class="consistency-analysis-context"><summary>Check coverage</summary><p>@string.Join(", ", Enum.GetValues<CanonKind>().Select(k => _runCanon.Snapshots.ContainsKey(k) ? k + " current" : k + " omitted")).</p>
+<p>Missing reference links are not story inconsistencies and do not block the check.</p>
+@foreach (var warning in _runCanon.UnresolvedReferences().Distinct()) { <p>@warning</p> }</details>
+}
+@if (_prepared.Request.SynopsisRequest is { } synopsisRequest) {
+<SynopsisCoachingFeedback Mode="@(_prepared.Request.Key == "synopsis.evaluate" ? "evaluate" : _prepared.Request.Key == "synopsis.questions" ? "questions" : "suggest")"
+    Field="@_prepared.Field" Original="@Original(_prepared)" Proposed="@_proposal.ProposedText" Feedback="@(_proposal.Summary ?? "")" Source="@synopsisRequest.SourceSynopsis" UserNotes="@synopsisRequest.UserNotes" />
+} else if (_sceneReview is not null && _prepared.Target == LocalAiTarget.SceneCard) {
+<SceneCoachingReview Changes="_sceneReview.Changes" Approved="_approvedSceneFields" ApprovedChanged="ApprovedSceneFieldsChanged" Busy="_busy" />
+} else {
+<AiResultPreview ActionKey="@_prepared.Request.Key" Original="@Original(_prepared)" Proposed="@_proposal.ProposedText" SceneCard="@AdvancedAiRequests.SceneProposal(_proposal)" StoryboardContext="@(_prepared.Request.Request.Parameters?.GetValueOrDefault("storyboard_context")?.ToString())"
+    ReviewConsistencySuggestion="ReviewConsistencySuggestion" DiscardConsistencySuggestion="DiscardConsistencySuggestion" DiscardedConsistencySuggestions="_discardedSuggestions" ReviewingConsistencySuggestion="_consistencyPreview?.Index" Busy="IsBusy" AppliedConsistencySuggestions="_appliedSuggestions" JumpConsistency="JumpFinding" ConsistencyLocation="FindingLocation"
+    JumpConsistencyComparison="JumpComparison" ConsistencyComparisonLocation="ComparisonLocation" MarkConsistencyIntentional="MarkIntentional" IntentionalConsistencySuggestions="_intentionalSuggestions">
+<ConsistencySuggestionReview Context="index">
+@if (_consistencyReviewIndex == index) {
+    @if (_busy) { <p class="consistency-review-feedback" role="status">Preparing suggestion…</p> }
+    @if (_error is not null) { <p class="consistency-review-feedback" role="alert">@_error</p> }
+}
+@if (_consistencyPreview is { } preview && preview.Index == index) {
+<section class="consistency-approval" aria-label="Approve consistency suggestion">
+<h3>Compare the wording</h3>
+<AiTextComparison OriginalLabel="Current wording" ProposedLabel="@(preview.Revision.Delete ? "Suggested deletion" : "Suggested wording")" Original="@preview.Revision.Original" Proposed="@(preview.Revision.Delete ? "Remove this passage." : preview.Revision.Proposed)" />
+<p>Apply @(preview.Revision.Delete ? "removes" : "replaces") only this passage. You can undo the saved change in History.</p>
+<div class="consistency-approval-actions"><button class="primary" type="button" disabled="@IsBusy" @onclick="ApplyConsistencySuggestion">Apply suggestion</button>
+<button type="button" disabled="@IsBusy" @onclick="() => DiscardConsistencySuggestion(index)">Discard suggestion</button></div>
+</section>
+}
+</ConsistencySuggestionReview>
+</AiResultPreview>
+}
+@if (_prepared.Target == LocalAiTarget.SynopsisField) { <p class="synopsis-apply-note">Apply updates only the reviewed @WriterApp.Shared.SynopsisCoaching.Fields.Single(f=>f.Key==_prepared.Field).Label field. You can undo the saved change in History.</p> }
+<div class="ai-result-actions">
+@if(_prepared.Target is LocalAiTarget.SceneCard or LocalAiTarget.SynopsisField) { <button class="@(_prepared.Target == LocalAiTarget.SynopsisField ? "primary" : null)" disabled="@(_busy || (_prepared.Target == LocalAiTarget.SceneCard && (_sceneReview is null || _approvedSceneFields.Count == 0)))" @onclick="Apply">@(_prepared.Target == LocalAiTarget.SynopsisField ? "Apply field suggestion" : "Apply to " + _prepared.Target + " only")</button> }
+else if (_prepared.Request.Key == "continuity.check_section") { <p>Review and approve individual suggestions to update your writing. Applied revisions can be undone in History.</p> }
+else if (_prepared.Request.SynopsisRequest is null) { <p>Analysis only. No manuscript changes will be applied.</p> }
+<button disabled="@_busy" @onclick="() => _proposal=null">Dismiss</button></div></section>
 }
 @if(_error is not null) { <p role="alert">@_error</p> }
 @if(_message is not null) { <p role="status">@_message</p> }
-@if (Mode == "history") { <AiHistoryPanel Entries="HistoryItems" Busy="_busy" Recover="Recover" Refresh="RefreshHistory" Undo="UndoHistory" Redo="RedoHistory" /> }
+@if (Mode == "history") {
+    @if (CloudHistory is { } cloudHistory) {
+        <div class="history-cloud-controls" aria-label="Cloud history">
+            <p>Local saves and recovery are independent of cloud reporting. @_pendingHistory event(s) await confirmation.</p>
+            @if (cloudHistory.DeliveryError is { } deliveryError) { <p role="status">@deliveryError</p> }
+            <button type="button" disabled="@(_busy || !cloudHistory.CanConnect || _document?.ServerDocumentId is null)" @onclick="LoadCloudHistory">Load cloud history</button>
+            <button type="button" disabled="@(_busy || !cloudHistory.CanConnect || _pendingHistory == 0)" @onclick="DeliverHistory">Report saved events</button>
+            @if (_cloudHistory?.Snapshot.Truncated == true) { <p>Cloud inspection is limited to 200 entries. Other retained entries are available in web history.</p> }
+            <p>Cloud-only entries are comparisons. Undo and recovery use retained local snapshots. The combined list shows up to 200 entries.</p>
+        </div>
+    }
+    <AiHistoryPanel Entries="HistoryItems" Busy="_busy" Recover="Recover" Refresh="RefreshHistory" Undo="UndoHistory" Redo="RedoHistory" Dismiss="DismissHistory" />
+}
+@if (Mode == "history") {
+    @foreach (var pending in VisibleHistory.Where(h => h.Version == 5 && h.Status == "Applying")) {
+        <p role="alert">An approved synopsis field save was interrupted. The original and approved field text are retained.</p>
+        <button type="button" disabled="@_busy" @onclick="() => ResumeSynopsis(pending.Id)">Finish approved synopsis save</button>
+    }
+    @foreach (var pending in VisibleHistory.Where(h => h.Version == 4 && h.Status == "Applying")) {
+        <p role="alert">An approved scene save was interrupted. Original and approved fields are retained.</p>
+        <button type="button" disabled="@_busy" @onclick="() => ResumeScene(pending.Id)">Finish approved scene save</button>
+    }
+    @foreach (var pending in VisibleHistory.Where(h => h.Version == 3 && h.Status == "Applying" && h.Target.StartsWith("Writing:", StringComparison.Ordinal))) {
+        <p role="alert">An approved writing save was interrupted. The complete original and reviewed writing are retained.</p>
+        <button type="button" disabled="@_busy" @onclick="() => ResumeWriting(pending.Id)">Finish approved writing save</button>
+    }
+    @foreach (var pending in VisibleHistory.Where(h => h.Version == 2 && h.Status == "Applying" && h.Target.StartsWith("Translation:", StringComparison.Ordinal))) {
+        <p role="alert">An approved translation save was interrupted. The complete original and translated preview are retained.</p>
+        <button type="button" disabled="@_busy" @onclick="() => ResumeTranslation(pending.Id)">Finish approved translation save</button>
+    }
+    @foreach (var copy in VisibleHistory.Where(h => h.Target == "Translation:duplicate-document" && h.After is not null && h.Status == "Applied")) {
+        <a href="@($"/documents/{copy.After!.DocumentId}")">Open translated copy</a>
+    }
+}
 </div>
+}
+@if (Mode == "consistency") {
+<details class="consistency-reference"><summary><span>Story reference</span><span>Characters, places & timeline</span></summary>
+<DeviceBiblePanel DocumentId="DocumentId" SectionId="SectionId" BeforeWork="BeforeWork" AfterWork="AfterWork" ExternalBusy="_busy" BusyChanged="BibleBusyChanged" />
+</details>
 }
 </div>
 @code {
@@ -59,70 +166,199 @@ else { <p>Analysis only. No manuscript changes will be applied.</p> }
     [Parameter] public bool FixedRequest {get;set;}
     [Parameter] public Func<Task<bool>>? BeforeWork {get;set;}
     [Parameter] public Func<Task>? AfterWork {get;set;}
-    public bool IsBusy => _busy;
+    [Parameter] public EventCallback<ConsistencyPassage> JumpConsistency {get;set;}
+    [Parameter] public EventCallback ClearConsistencyHighlight {get;set;}
+    private DeviceCanonContext? _canon, _runCanon;
+    private Dictionary<CanonKind, string> _canonStatus = [];
+    private string? _operation;
+    private IReadOnlyList<ConsistencyPageText> _reportPages = [];
+    private long _accountGeneration;
+    private bool _bibleBusy;
+    public bool IsBusy => _busy || _bibleBusy;
     private bool _refineScene;
+    private string _sceneField = "";
+    private string _synopsisMode = "suggest";
+    private LocalSceneReview? _sceneReview;
+    private IReadOnlyList<WriterApp.Application.Documents.SceneCoachingField> _approvedSceneFields = [];
+    private Task ApprovedSceneFieldsChanged(IReadOnlyList<WriterApp.Application.Documents.SceneCoachingField> fields) { _approvedSceneFields = fields; return Task.CompletedTask; }
+    private Task FindOpenQuestions() { _sceneField = "openQuestions"; _refineScene = false; return RunAi(); }
     public Task SuggestSceneAsync(string instruction, bool refine = false)
     {
         if (Mode != "scene" || _busy) return Task.CompletedTask;
-        _instruction = instruction; _refineScene = refine; _action = AdvancedAiAction.SceneCard;
+        _instruction = instruction; _refineScene = refine; _sceneField = ""; _action = AdvancedAiAction.SceneCard;
         return RunAi();
     }
     private (Guid, Guid?, string)? _loaded;
     private string Heading => Mode switch { "history" => "History", "consistency" => "Consistency Coach", "quality" => "Style & quality Coach", "scene" => "Scene card Coach", "synopsis" => "Synopsis coaching", "storyboard" => "Storyboard coaching", _ => "Prompt Library" };
-    private string RunLabel => Mode switch { "consistency" => "Check consistency", "quality" => "Analyze style & quality", "scene" => "Suggest scene details", "synopsis" => "Improve synopsis field", "storyboard" => "Check subplot continuity", _ => "Preview prompt result" };
+    private string RunLabel => Mode switch { "consistency" => "Check consistency", "quality" => "Analyze style & quality", "scene" => "Suggest scene details", "synopsis" => _synopsisMode switch { "evaluate" => "Evaluate synopsis", "questions" => "Ask guiding questions", _ => "Improve synopsis field" }, "storyboard" => "Check subplot continuity", _ => "Preview prompt result" };
     private LocalDocument? _document; private Guid _section; private AdvancedAiAction _action;
     private string _field="logline",_instruction="",_name=""; private string? _error,_message;
     private bool _busy; private CancellationTokenSource? _cancel;
     private long _cloudGeneration = -1; private IReadOnlyList<PromptPresetDto> _cloudPrompts=[];
     private IReadOnlyList<LocalAiPrompt> _prompts=[]; private IReadOnlyList<LocalAiHistory> _history=[];
+    private IReadOnlySet<Guid> _dismissedHistory = new HashSet<Guid>();
+    private IEnumerable<LocalAiHistory> VisibleHistory => _history.Where(h => !_dismissedHistory.Contains(h.Id) && (h.CloudOrigin is null || h.CloudOrigin.Scope == CloudHistory?.Scope));
+    private bool _accountSignedIn;
+    private DeviceAiHistoryService? CloudHistory => Services.GetService<DeviceAiHistoryService>();
+    private LocalCloudHistoryCache? _cloudHistory;
+    private int _pendingHistory;
     private AdvancedAiPrepared? _prepared; private DeviceAiProposal? _proposal; private LocalAiHistory? _record;
+    private readonly HashSet<int> _appliedSuggestions = [];
+    private readonly HashSet<int> _discardedSuggestions = [];
+    private readonly HashSet<int> _intentionalSuggestions = [];
+    private LocalDocument? _consistencySource;
+    private sealed record ConsistencyPreview(int Index, ConsistencyRevision Revision, LocalDocument Source, string AfterHtml, DeviceAiProposal? Generated = null);
+    private ConsistencyPreview? _consistencyPreview;
+    private int? _consistencyReviewIndex;
     private bool _disposed;
     protected override void OnInitialized()
     {
         Sync.Changed += OnDocumentChanged;
         Documents.Changed += OnDocumentChanged;
+        _accountGeneration = Account.Generation; _accountSignedIn = Account.IsSignedIn; Account.Changed += AccountChanged;
     }
+    private void AccountChanged()
+    {
+        if (_accountGeneration == Account.Generation && _accountSignedIn == Account.IsSignedIn) return;
+        _accountGeneration = Account.Generation; _accountSignedIn = Account.IsSignedIn; Cancel();
+        _cloudHistory = null; _pendingHistory = 0; _history = _history.Where(h => h.CloudOrigin is null).ToArray();
+        _proposal = null; _sceneReview = null; _approvedSceneFields = []; _consistencyPreview = null; _runCanon = _canon = null; _canonStatus.Clear(); _intentionalSuggestions.Clear();
+        if (!_disposed) _ = InvokeAsync(async () => { StateHasChanged(); await RefreshDocumentAsync(); StateHasChanged(); });
+    }
+    private async Task BibleBusyChanged(bool busy) { _bibleBusy = busy; if (!busy) await RefreshDocumentAsync(); }
+    private async Task RefreshCanon()
+    {
+        _canon = null; _canonStatus.Clear();
+        if (Mode is not ("consistency" or "scene") || _document is null || !Bibles.CanView) return;
+        var source = _document; var generation = Account.Generation;
+        var context = await Bibles.ContextAsync(source);
+        var statuses = new Dictionary<CanonKind, string>();
+        foreach (var kind in Enum.GetValues<CanonKind>()) {
+            var cache = await Bibles.CachedAsync(source, kind);
+            statuses[kind] = context.Snapshots.ContainsKey(kind) ? "Current" : cache?.RefreshState == "Interrupted" ? "Interrupted — omitted"
+                : cache?.RefreshState == "Refreshing" ? "Refresh pending — omitted" : cache?.Snapshot?.Exists == true ? "Stale — omitted" : "Missing — omitted";
+        }
+        if (generation == Account.Generation && source.DocumentId == DocumentId) { _canon = context; _canonStatus = statuses; }
+    }
+    private readonly HashSet<Task> _documentRefreshes = [];
     private void OnDocumentChanged()
     {
         if (_disposed || _busy) return;
-        _ = InvokeAsync(async () => { await RefreshDocumentAsync(); if (!_disposed) StateHasChanged(); });
+        var task=InvokeAsync(async () => { await RefreshDocumentAsync(); if (!_disposed) StateHasChanged(); });
+        lock(_documentRefreshes)_documentRefreshes.Add(task);
+        _=task.ContinueWith(completed=>{lock(_documentRefreshes)_documentRefreshes.Remove(completed);},TaskScheduler.Default);
     }
     private async Task RefreshDocumentAsync(bool afterWork = false)
     {
+        if(_disposed)return;
         Guid id = DocumentId;
         try
         {
             var latest = await Documents.LoadAsync(id);
             if (!_disposed && (!_busy || afterWork) && DocumentId == id && latest is not null
-                && (_document is null || _document.DocumentId != id || latest.LocalRevision >= _document.LocalRevision)) _document = latest;
+                && (_document is null || _document.DocumentId != id || latest.LocalRevision >= _document.LocalRevision)) {
+                _document = latest; await RefreshCanon();
+                if (_proposal is not null && _prepared?.Request.SynopsisRequest is not null) {
+                    try { AdvancedAiRequests.RequireFresh(latest,_prepared); }
+                    catch (InvalidOperationException e) { _proposal=null; _error=e.Message; }
+                }
+                if (_sceneReview is not null && _proposal is not null) {
+                    try { AdvancedAiRequests.RequireFresh(latest, _sceneReview.Prepared); if (_canon is not null) LocalConsistencyContext.RequireSameCanon(_sceneReview.Canon, _canon); }
+                    catch (InvalidOperationException e) { _proposal = null; _sceneReview = null; _approvedSceneFields = []; _error = e.Message; }
+                }
+            }
         }
-        catch (Exception e) when (e is IOException or InvalidOperationException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        catch (Exception e) when (e is IOException or InvalidOperationException or UnauthorizedAccessException or System.Text.Json.JsonException or DeviceSignInRequiredException)
         { if (!_disposed && (!_busy || afterWork) && DocumentId == id) _error = e.Message; }
     }
-    private IReadOnlyList<AiHistoryItem> HistoryItems => _history.Select(h => {
+    private IReadOnlyList<AiHistoryItem> HistoryItems {
+        get {
+        var items = VisibleHistory.Select(h => {
         bool redo = h.Status is "Undone" or "Redoing";
         string? reason = _document is null ? "Document unavailable." : LocalAiHistoryActions.UnavailableReason(_document, h, redo);
         string target = h.Target;
-        if (h.PageId is { } page) target = "Writing · " + (h.Before.Sections.SelectMany(s => s.Pages).FirstOrDefault(p => p.PageId == page)?.Title ?? "Page");
+        if (h.Version == 3) target = h.Target.Replace("Writing:", "Writing · ", StringComparison.Ordinal) + " · " + h.Before.Sections.FirstOrDefault(s => s.SectionId == h.SectionId)?.Title;
+        else if (h.PageId is { } page) target = "Writing · " + (h.Before.Sections.SelectMany(s => s.Pages).FirstOrDefault(p => p.PageId == page)?.Title ?? "Page");
         else if (h.NodeId is { } node) target = "Scene details · " + h.Before.Project?.Nodes.FirstOrDefault(n => n.NodeId == node)?.Title;
         return new AiHistoryItem(h.Id, h.Action, target, h.Status, h.CreatedAt,
-            h.OriginalText ?? (h.PageId is { } id ? h.Before.Sections.SelectMany(s=>s.Pages).FirstOrDefault(p=>p.PageId==id)?.Content ?? "" : "Original manuscript retained for recovery."),
-            h.Proposed, !redo && reason is null, redo && reason is null, reason);
+            h.Version == 4 ? LocalSceneCoaching.Readable(h,true) : h.OriginalText ?? (h.PageId is { } id ? h.Before.Sections.SelectMany(s=>s.Pages).FirstOrDefault(p=>p.PageId==id)?.Content ?? "" : "Original manuscript retained for recovery."),
+            h.Version == 4 ? LocalSceneCoaching.Readable(h,false) : h.Version == 3 ? LocalWriting.ReadableProposal(h) : h.Proposed + (string.IsNullOrWhiteSpace(h.SynopsisCommentary) ? "" : "\n\nCoaching commentary:\n" + h.SynopsisCommentary), !redo && reason is null, redo && reason is null, reason);
     }).ToArray();
+        return _document is not null && CloudHistory is { } cloud ? cloud.Combine(_document, items, _history, _cloudHistory, _dismissedHistory) : items;
+        }
+    }
     protected override async Task OnParametersSetAsync()
     {
         if (_loaded == (DocumentId, SectionId, Mode) || _busy) return;
-        _loaded = (DocumentId, SectionId, Mode); _proposal = null; _error = null; _message = null;
+        _loaded = (DocumentId, SectionId, Mode); _proposal = null; _sceneReview = null; _approvedSceneFields = []; _consistencyPreview = null; _consistencyReviewIndex = null; _appliedSuggestions.Clear(); _discardedSuggestions.Clear(); _error = null; _message = null;
         _action = Mode switch { "consistency" => AdvancedAiAction.Consistency, "quality" => AdvancedAiAction.StyleQuality,
             "scene" => AdvancedAiAction.SceneCard, "synopsis" => AdvancedAiAction.Synopsis, "storyboard" => AdvancedAiAction.Storyboard, _ => AdvancedAiAction.Custom };
         try { _document = await Latest(); _section = SectionId ?? AdvancedAiRequests.ActiveSections(_document).FirstOrDefault()?.SectionId ?? Guid.Empty;
-            _prompts = await Store.PromptsAsync(); _history = await Store.HistoryAsync(DocumentId); }
-        catch (Exception e) when (e is IOException or InvalidOperationException or UnauthorizedAccessException or System.Text.Json.JsonException) { _error = e.Message; }
+            _prompts = await Store.PromptsAsync(); _history = await Store.HistoryAsync(DocumentId); await RefreshCanon(); await LoadHistoryCache(); }
+        catch (Exception e) when (e is IOException or InvalidOperationException or UnauthorizedAccessException or System.Text.Json.JsonException or DeviceSignInRequiredException) { _error = e.Message; }
     }
-    private Task RefreshHistory() => Work(async ct => { _document = await Latest(ct); _history = await Store.HistoryAsync(DocumentId, ct); });
+    private async Task LoadHistoryCache(CancellationToken ct = default) {
+        var document = DocumentId; var scope = CloudHistory?.Scope;
+        var dismissed = await Store.DismissedHistoryAsync(document, scope, ct);
+        if (DocumentId != document || CloudHistory?.Scope != scope) return;
+        _dismissedHistory = dismissed;
+        if (Mode != "history" || CloudHistory is not { } cloud || _document is null) return;
+        _cloudHistory = await cloud.CachedAsync(_document,ct); _pendingHistory = await cloud.PendingAsync(DocumentId,ct);
+    }
+    private Task RefreshHistory() => Work(async ct => { _document = await Latest(ct); _history = await Store.HistoryAsync(DocumentId, ct); await LoadHistoryCache(ct); });
+    private Task LoadCloudHistory() => Work(async ct => {
+        var source = await Latest(ct); var generation = Account.Generation;
+        var cache = await CloudHistory!.RefreshAsync(source,ct);
+        if (generation == Account.Generation && source.DocumentId == DocumentId) _cloudHistory = cache;
+    });
+    private Task DeliverHistory() => Work(async ct => {
+        int count = await CloudHistory!.DeliverAsync(DocumentId,ct); await LoadHistoryCache(ct);
+        _message = $"Confirmed {count} saved event(s). Local writing was not changed. Load cloud history to inspect its latest state.";
+    });
+    private void RequireHistoryAccount(LocalAiHistory entry) { if (entry.CloudOrigin is not null && entry.CloudOrigin.Scope != CloudHistory?.Scope) throw new InvalidOperationException("Sign in to the original account and backend to use this recovery record."); }
+    private Task ResumeSynopsis(Guid id) => Work(async ct => {
+        var entry=(await Store.HistoryAsync(DocumentId,ct)).Single(h=>h.Id==id); RequireHistoryAccount(entry);
+        await LocalSynopsisCoaching.ResumeAsync(Documents,Store,entry,ct);
+        _document=await Latest(ct);_message="Approved synopsis field saved locally.";
+    });
+    private Task ResumeWriting(Guid id) => Work(async ct => {
+        var entry = (await Store.HistoryAsync(DocumentId, ct)).Single(h => h.Id == id); RequireHistoryAccount(entry);
+        await LocalWritingActions.ResumeAsync(Documents, Store, entry, ct);
+        _document = await Latest(ct); _history = await Store.HistoryAsync(DocumentId, ct);
+        _message = "Approved writing save completed. History can undo or recover it.";
+    });
+    private Task ResumeScene(Guid id) => Work(async ct => {
+        var entry = (await Store.HistoryAsync(DocumentId, ct)).Single(h => h.Id == id); RequireHistoryAccount(entry);
+        await LocalSceneCoaching.ResumeAsync(Documents, Store, entry, ct);
+        _document = await Latest(ct); _message = "Approved scene fields saved locally.";
+    });
+    private Task ResumeTranslation(Guid id) => Work(async ct => {
+        var entry = (await Store.HistoryAsync(DocumentId, ct)).Single(h => h.Id == id); RequireHistoryAccount(entry);
+        await LocalTranslationActions.ResumeAsync(Documents, Store, entry, ct);
+        _document = await Latest(ct); _history = await Store.HistoryAsync(DocumentId, ct);
+        _message = "Approved translation save completed. Open History to undo or recover it.";
+    });
+    private Task DismissHistory(Guid id) => Work(async ct => {
+        var item = HistoryItems.SingleOrDefault(h => h.Id == id) ?? throw new InvalidOperationException("Refresh history before removing this entry.");
+        if (item.Status is "Applying" or "Undoing" or "Redoing") throw new InvalidOperationException("Finish the interrupted change before removing its history entry.");
+        var entry = _history.SingleOrDefault(h => h.Id == id);
+        if (entry is not null) RequireHistoryAccount(entry);
+        var scope = entry is null ? CloudHistory?.Scope ?? throw new InvalidOperationException("Cloud history account unavailable.") : entry.CloudOrigin?.Scope;
+        await Store.DismissHistoryAsync(DocumentId, id, scope, ct);
+        await LoadHistoryCache(ct);
+        _message = "Removed from history on this device. Your writing is unchanged.";
+    }, saveDocument: false);
     private Task UndoHistory(Guid id) => ChangeHistory(id, false);
     private Task RedoHistory(Guid id) => ChangeHistory(id, true);
     private Task ChangeHistory(Guid id, bool redo) => Work(async ct => {
+        if (redo) {
+            var entry = (await Store.HistoryAsync(DocumentId,ct)).Single(h => h.Id == id); RequireHistoryAccount(entry);
+            if (entry.Version == 4 && entry.SceneFields?.Any(f => f is WriterApp.Application.Documents.SceneCoachingField.PovCharacterId or WriterApp.Application.Documents.SceneCoachingField.PlaceId
+                or WriterApp.Application.Documents.SceneCoachingField.TimelineEventId or WriterApp.Application.Documents.SceneCoachingField.References) == true) {
+                var current = await Latest(ct);
+                LocalSceneCoaching.RequireCurrentLinks(current,entry,await Bibles.ContextAsync(current,ct));
+            }
+        }
         await HistoryActions.ChangeAsync(DocumentId, id, redo, ct);
         _document = await Latest(ct); _history = await Store.HistoryAsync(DocumentId, ct); _proposal = null;
         _message = redo ? "AI change reapplied and saved." : "AI change undone and saved.";
@@ -132,22 +368,232 @@ else { <p>Analysis only. No manuscript changes will be applied.</p> }
     private Task LoadCloud() => Work(async ct => { _cloudPrompts=[]; var generation=Account.Generation; var prompts=await CloudPrompts.ListAsync(ct); if (Account.Generation==generation) { _cloudPrompts=prompts; _cloudGeneration=generation; } });
     private Task UploadPrompt(LocalAiPrompt prompt) => Work(async ct => { await CloudPrompts.UploadCopyAsync(prompt,ct);_message="Cloud copy created. Refresh the cloud list before making another copy."; });
     private Task ImportPrompt(Guid id) => Work(async ct => { if (_cloudGeneration != Account.Generation) throw new InvalidOperationException("Account changed. Refresh cloud prompts."); await CloudPrompts.ImportCopyAsync(id,ct);_prompts=await Store.PromptsAsync(ct);_message="Prompt copied to the local library."; });
-    private void GuardNavigation(Microsoft.AspNetCore.Components.Routing.LocationChangingContext context) { if(_busy) context.PreventNavigation(); }
+    private void GuardNavigation(Microsoft.AspNetCore.Components.Routing.LocationChangingContext context) { if(IsBusy) context.PreventNavigation(); }
     private Task SavePrompt() => Work(async ct=> { await Store.SavePromptAsync(_name,_instruction,ct);_prompts=await Store.PromptsAsync(ct);_message="Prompt saved locally."; });
     private Task RunAi() => Work(async ct=> {
-        _proposal=null; await Sync.SyncAsync(ct);ct.ThrowIfCancellationRequested();
-        _document=await Latest(ct);_prepared=AdvancedAiRequests.Build(_document,_section,_action,_field,_instruction);
-        if (_action == AdvancedAiAction.SceneCard && _refineScene)
-            _prepared = _prepared with { Request = _prepared.Request with { Key = "scene.refine" } };
+        _proposal=null; _sceneReview=null; _approvedSceneFields=[]; _consistencyPreview=null; _consistencyReviewIndex=null; _appliedSuggestions.Clear(); _discardedSuggestions.Clear(); _intentionalSuggestions.Clear(); await Sync.SyncAsync(ct);ct.ThrowIfCancellationRequested();
+        _document=await Latest(ct);
+        if (_action == AdvancedAiAction.Consistency) {
+            _runCanon = await Bibles.PrepareConsistencyAsync(_document, _section, async kind => {
+                _operation = $"Preparing {kind.ToString().ToLowerInvariant()} references…";
+                await InvokeAsync(StateHasChanged);
+            }, ct);
+            _operation = "Checking for contradictions…"; await InvokeAsync(StateHasChanged);
+            await RefreshCanon();
+            _reportPages = await PageTexts(_document, ct);
+            _prepared = LocalConsistencyContext.Prepare(AdvancedAiRequests.Build(_document,_section,_action, consistencyPages: _reportPages), _runCanon, _reportPages, true);
+        } else if (_action == AdvancedAiAction.SceneCard) {
+            _runCanon = await Bibles.ContextAsync(_document, ct);
+            WriterApp.Application.Documents.SceneCoachingField? field = string.IsNullOrEmpty(_sceneField) ? null
+                : Enum.GetValues<WriterApp.Application.Documents.SceneCoachingField>().Single(f => WriterApp.Application.Documents.SceneCoaching.Key(f) == _sceneField);
+            _prepared = LocalSceneCoaching.Prepare(_document, _section, field, _instruction, _refineScene, _runCanon, await PageTexts(_document, ct));
+        } else if (_action == AdvancedAiAction.Synopsis) {
+            _runCanon=null; _prepared=LocalSynopsisCoaching.Prepare(_document,_synopsisMode,_field,_instruction);
+        } else { _runCanon = null; _prepared=AdvancedAiRequests.Build(_document,_section,_action,_field,_instruction); }
         var result=await Ai.ProposeAsync(_prepared.Request,ct);ct.ThrowIfCancellationRequested();
         AdvancedAiRequests.RequireFresh(await Latest(ct),_prepared);
-        _record=new(1,Guid.NewGuid(),DocumentId,_prepared.Request.Key,_prepared.Target+":"+_prepared.Field,
-            _document.LocalRevision,_document.ServerVersion,DateTimeOffset.UtcNow,"Reviewed",_document,result.ProposedText, OriginalText: Original(_prepared), NodeId: _prepared.NodeId);
-        await Store.SaveHistoryAsync(_record,ct);_history=await Store.HistoryAsync(DocumentId,ct);_proposal=result;
+        if (_runCanon is not null) LocalConsistencyContext.RequireSameCanon(_runCanon, await Bibles.ContextAsync(_prepared.Source, ct));
+        Ai.RequireCurrentAccount(result);
+        if (_prepared.Target == LocalAiTarget.SceneCard) {
+            _sceneReview = LocalSceneCoaching.Review(_prepared, result, _runCanon!);
+            if (_prepared.Field != "whole") _approvedSceneFields = _sceneReview.Changes.Where(c => c.Error is null).Select(c => c.Field).ToArray();
+        }
+        _record=new(_prepared.Request.SynopsisRequest is not null ? 5 : _prepared.Target == LocalAiTarget.SceneCard ? 4 : 1,Guid.NewGuid(),DocumentId,_prepared.Request.Key,_prepared.Target+":"+_prepared.Field,
+            _document.LocalRevision,_document.ServerVersion,DateTimeOffset.UtcNow,"Reviewed",_document,result.ProposedText, OriginalText: Original(_prepared), NodeId: _prepared.NodeId,
+            SectionId: _prepared.Target == LocalAiTarget.SceneCard ? _prepared.SectionId : null, SceneEntities: _sceneReview?.Entities,
+            SynopsisCommentary: _prepared.Request.SynopsisRequest is not null && _prepared.Target == LocalAiTarget.SynopsisField ? result.Summary : null,
+            SynopsisUserNotes: _prepared.Request.SynopsisRequest?.UserNotes, CloudOrigin:result.HistoryOrigin);
+        await Store.SaveHistoryAsync(_record,ct);_history=await Store.HistoryAsync(DocumentId,ct);ct.ThrowIfCancellationRequested(); Ai.RequireCurrentAccount(result); _proposal=result; _consistencySource=_document;
+        if (_action == AdvancedAiAction.Consistency) {
+            using var parsed = System.Text.Json.JsonDocument.Parse(result.ProposedText);
+            if (parsed.RootElement.TryGetProperty("issues", out var issues) && issues.ValueKind == System.Text.Json.JsonValueKind.Array)
+                for (int i = 0; i < issues.GetArrayLength(); i++) {
+                    try { if (await Store.IsConsistencyIntentionalAsync(DocumentId, Bibles.CurrentScope, DecisionKey(i), ct)) _intentionalSuggestions.Add(i); }
+                    catch (InvalidDataException) { /* Legacy findings without a valid passage have no saved decision. */ }
+                }
+        }
     });
+    private Task ReviewConsistencySuggestion(int index) => Work(async ct => {
+        _consistencyPreview = null;
+        if (_proposal is null || _prepared is null || _consistencySource is null || _appliedSuggestions.Contains(index) || _intentionalSuggestions.Contains(index)) return;
+        Ai.RequireCurrentAccount(_proposal);
+        var current = await Latest(ct);
+        LocalConsistencyRevisions.RequireUnchanged(current, _consistencySource);
+        await RequireCanon(ct);
+        var pages = await PageTexts(current, ct);
+        var revision = ResolveFinding(index, current, pages, requireFix: false);
+        var page = current.Sections.SelectMany(s => s.Pages).Single(p => p.PageId == revision.PageId);
+        await using var module = await JS.InvokeAsync<IJSObjectReference>("import", ct, "./_content/WriterApp.Device.Shared/editor/device-editor.js");
+        await module.InvokeVoidAsync("validateQualityRange", ct, page.Content, page.ContentFormat.ToString(), revision.Start, revision.Start + revision.Original.Length, revision.Original, false);
+        DeviceAiProposal? generated = null;
+        string? prose = revision.Delete ? "" : LocalConsistencyRevisions.Prose(revision.Proposed);
+        if (!revision.Delete && prose == revision.Original) prose = null;
+        if (prose is null) {
+            if (current.SyncState != LocalSyncState.Synced) throw new InvalidOperationException("Save, synchronize and run a fresh check before generating another fix. Earlier approved changes remain saved.");
+            await Sync.SyncAsync(ct); LocalConsistencyRevisions.RequireUnchanged(await Latest(ct), current);
+            var request = LocalConsistencyRevisions.RewriteRequest(current, revision, pages.Single(p => p.PageId == page.PageId).PlainText);
+            generated = await Ai.ProposeAsync(request, ct);
+            prose = LocalConsistencyRevisions.Prose(generated.ProposedText)
+                ?? throw new InvalidDataException("The generated fix contains instructions or invalid prose. Writing is unchanged; regenerate the finding.");
+        }
+        if (prose == revision.Original) throw new InvalidDataException("The fix makes no change to the writing.");
+        LocalConsistencyRevisions.ValidateReplacement(revision, pages.Single(p => p.PageId == page.PageId).PlainText, prose);
+        revision = revision with { Proposed = prose };
+        string after = await module.InvokeAsync<string>("previewSafeConsistencyRevision", ct, page.Content, page.ContentFormat.ToString(), revision.Start, revision.Original, revision.Proposed);
+        ct.ThrowIfCancellationRequested(); Ai.RequireCurrentAccount(_proposal); if (generated is not null) Ai.RequireCurrentAccount(generated);
+        LocalConsistencyRevisions.RequireUnchanged(await Latest(ct), current); await RequireCanon(ct);
+        _consistencyPreview = new(index, revision, current, after, generated);
+        _discardedSuggestions.Remove(index);
+    }, consistencyIndex: index);
+    private async Task DiscardConsistencySuggestion(int index)
+    {
+        if (IsBusy || _proposal is null || _appliedSuggestions.Contains(index)) return;
+        _discardedSuggestions.Add(index);
+        if (_consistencyPreview?.Index == index) _consistencyPreview = null;
+        _error = null;
+        _message = "Suggestion discarded. Your writing is unchanged.";
+        await ClearConsistencyHighlight.InvokeAsync();
+    }
+    private Task ApplyConsistencySuggestion() => Work(async ct => {
+        if (_consistencyPreview is not { } preview || _proposal is null || _appliedSuggestions.Contains(preview.Index)) return;
+        Ai.RequireCurrentAccount(_proposal);
+        if (preview.Generated is { } generated) Ai.RequireCurrentAccount(generated);
+        await RequireCanon(ct);
+        var current = await Latest(ct);
+        if (preview.Generated is { } fix && (fix.Prepared.Request.ExpectedDocumentVersion != current.ServerVersion
+            || fix.Prepared.Request.DocumentId != current.ServerDocumentId || fix.Prepared.LocalPageId != preview.Revision.PageId
+            || fix.Prepared.SelectedText != preview.Revision.Original || LocalConsistencyRevisions.Prose(fix.ProposedText) != preview.Revision.Proposed))
+            throw new InvalidDataException("The generated fix no longer matches the approved passage.");
+        var next = LocalConsistencyRevisions.Apply(current, preview.Source, preview.Revision, preview.AfterHtml);
+        var record = new LocalAiHistory(1, Guid.NewGuid(), DocumentId, "continuity.apply_suggestion", "Manuscript revision",
+            current.LocalRevision, current.ServerVersion, DateTimeOffset.UtcNow, "Applying", current, preview.Revision.Proposed,
+            PageId: preview.Revision.PageId, OriginalText: preview.Revision.Original, AfterHtml: preview.AfterHtml, CloudOrigin:(preview.Generated ?? _proposal)?.HistoryOrigin);
+        await Store.SaveHistoryAsync(record, ct);
+        await RequireCanon(ct);
+        Ai.RequireCurrentAccount(_proposal); ct.ThrowIfCancellationRequested();
+        if (preview.Generated is { } approvedFix) Ai.RequireCurrentAccount(approvedFix);
+        _document = await Documents.SaveAsync(next, ct);
+        _consistencySource = _document; _appliedSuggestions.Add(preview.Index); _consistencyPreview = null;
+        try { await Store.SaveHistoryAsync(record with { Status = "Applied", After = _document }, CancellationToken.None); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException) {
+            throw new IOException("The consistency change was saved, but history completion failed. The original remains in its recovery record; reopen History.", e);
+        }
+        _message = "Consistency revision applied and saved locally. Open History to undo or redo this change.";
+    }, consistencyIndex: _consistencyPreview?.Index);
+    private async Task<IReadOnlyList<ConsistencyPageText>> PageTexts(LocalDocument source, CancellationToken ct, bool allSections = false)
+    {
+        await using var module = await JS.InvokeAsync<IJSObjectReference>("import", ct, "./_content/WriterApp.Device.Shared/editor/device-editor.js");
+        var pages = new List<ConsistencyPageText>();
+        var sourcePages = (allSections ? source.Sections : source.Sections.Where(s => s.SectionId == _section)).SelectMany(s => s.Pages.OrderBy(p => p.OrderIndex)).ToArray();
+        if (sourcePages.Length > (allSections ? 2000 : 200) || sourcePages.Any(p => p.Content.Length > 500_000))
+            throw new InvalidDataException($"Check a {(allSections ? "manuscript with at most 2,000" : "section with at most 200")} pages of supported size.");
+        foreach (var page in sourcePages)
+            pages.Add(new(page.PageId, await module.InvokeAsync<string>("consistencyPlainText", ct, page.Content, page.ContentFormat.ToString())));
+        return pages;
+    }
+    private async Task RequireCanon(CancellationToken ct)
+    {
+        if (_runCanon is not null && _prepared is not null)
+            LocalConsistencyContext.RequireSameCanon(_runCanon, await Bibles.ContextAsync(_prepared.Source, ct));
+    }
+    private ConsistencyRevision ResolveFinding(int index, LocalDocument current, IReadOnlyList<ConsistencyPageText> pages, bool requireFix = true)
+    {
+        var revision = LocalConsistencyRevisions.Resolve(_prepared!, _proposal!, index, _reportPages, requireFix);
+        return _appliedSuggestions.Count == 0 ? revision : LocalConsistencyRevisions.Locate(revision, pages);
+    }
+    private string FindingLocation(int index)
+    {
+        if (_prepared is null || _proposal is null) return "Affected page unavailable";
+        try {
+            var revision = LocalConsistencyRevisions.Resolve(_prepared, _proposal, index, _reportPages, requireFix: false);
+            var section = _prepared.Source.Sections.Single(s => s.SectionId == _prepared.SectionId);
+            return section.Title + " · " + section.Pages.Single(p => p.PageId == revision.PageId).Title;
+        } catch (Exception e) when (e is InvalidDataException or InvalidOperationException or System.Text.Json.JsonException) { return "Affected passage unavailable — rerun the check"; }
+    }
+    private async Task JumpFinding(int index)
+    {
+        ConsistencyPassage? passage = null;
+        await Work(async ct => {
+            if (_proposal is null || _prepared is null || _consistencySource is null) return;
+            Ai.RequireCurrentAccount(_proposal); await RequireCanon(ct);
+            var current = await Latest(ct); LocalConsistencyRevisions.RequireUnchanged(current, _consistencySource);
+            var pages = await PageTexts(current, ct); var revision = ResolveFinding(index, current, pages, requireFix: false);
+            passage = new(revision.PageId, pages.Single(p => p.PageId == revision.PageId).PlainText, revision.Start, revision.Original, Guid.NewGuid(), current.DocumentId);
+        });
+        if (passage is not null && JumpConsistency.HasDelegate) {
+            try { await JumpConsistency.InvokeAsync(passage); }
+            catch (Exception e) when (e is IOException or InvalidOperationException or JSException) { _error = e.Message; }
+        }
+    }
+    private WriterApp.Shared.ConsistencyComparison? Comparison(int index) => _proposal is null ? null
+        : WriterApp.Shared.ConsistencyChecks.Comparison(_proposal.ProposedText, index);
+    private string ComparisonLocation(int index)
+    {
+        try {
+            var comparison = Comparison(index);
+            var section = _prepared?.Source.Sections.SingleOrDefault(s => s.SectionId == comparison?.SectionId || s.ServerSectionId == comparison?.SectionId);
+            return section?.Title ?? "Reference passage unavailable — run the check again";
+        } catch (Exception e) when (e is InvalidDataException or System.Text.Json.JsonException or InvalidOperationException) { return "Reference passage unavailable"; }
+    }
+    private string DecisionKey(int index)
+    {
+        var revision = LocalConsistencyRevisions.Resolve(_prepared!, _proposal!, index, _reportPages, requireFix: false);
+        using var parsed = System.Text.Json.JsonDocument.Parse(_proposal!.ProposedText);
+        return WriterApp.Shared.ConsistencyChecks.DecisionKey(_prepared!.SectionId, revision.Original, Comparison(index),
+            parsed.RootElement.GetProperty("issues")[index].GetProperty("type").GetString() ?? "consistency");
+    }
+    private Task MarkIntentional(int index) => Work(async ct => {
+        if (_proposal is null || _prepared is null || _consistencySource is null || _appliedSuggestions.Contains(index)) return;
+        Ai.RequireCurrentAccount(_proposal);
+        LocalConsistencyRevisions.RequireUnchanged(await Latest(ct), _consistencySource);
+        bool intentional = !_intentionalSuggestions.Contains(index);
+        await Store.SetConsistencyIntentionalAsync(DocumentId, Bibles.CurrentScope, DecisionKey(index), intentional, ct);
+        if (intentional) _intentionalSuggestions.Add(index); else _intentionalSuggestions.Remove(index);
+        if (_consistencyPreview?.Index == index) _consistencyPreview = null;
+        if (intentional) await ClearConsistencyHighlight.InvokeAsync();
+        _message = intentional ? "Marked intentional on this device. Your writing is unchanged." : "This finding will be checked again.";
+    }, saveDocument: false);
+    private async Task JumpComparison(int index)
+    {
+        ConsistencyPassage? passage = null;
+        await Work(async ct => {
+            if (_proposal is null || _prepared is null || _consistencySource is null || Comparison(index) is not { } comparison) return;
+            Ai.RequireCurrentAccount(_proposal); await RequireCanon(ct);
+            var current = await Latest(ct); LocalConsistencyRevisions.RequireUnchanged(current, _consistencySource);
+            var section = current.Sections.SingleOrDefault(s => s.SectionId == comparison.SectionId || s.ServerSectionId == comparison.SectionId)
+                ?? throw new InvalidDataException("The conflicting scene is unavailable. Run the check again.");
+            var pages = await PageTexts(current, ct, allSections: true);
+            var matches = pages.Where(p => section.Pages.Any(page => page.PageId == p.PageId) && p.PlainText.Contains(comparison.Quote, StringComparison.Ordinal)).ToArray();
+            if (matches.Length != 1) throw new InvalidDataException("The conflicting passage is missing or ambiguous. Run the check again.");
+            var page = matches[0]; int start = page.PlainText.IndexOf(comparison.Quote, StringComparison.Ordinal);
+            if (page.PlainText.IndexOf(comparison.Quote, start + 1, StringComparison.Ordinal) >= 0) throw new InvalidDataException("The conflicting passage is ambiguous.");
+            passage = new(page.PageId, page.PlainText, start, comparison.Quote, Guid.NewGuid(), current.DocumentId);
+        });
+        if (passage is not null && JumpConsistency.HasDelegate) await JumpConsistency.InvokeAsync(passage);
+    }
     private Task Apply() => Work(async ct=> {
         if(_proposal is null || _prepared is null || _record is null) return;
         Ai.RequireCurrentAccount(_proposal);
+        if (_prepared.Request.SynopsisRequest is not null) {
+            var nextSynopsis=LocalSynopsisCoaching.Preview(await Latest(ct),_prepared,_proposal);
+            var approved=_record with {Status="Applying",After=nextSynopsis};
+            await Store.SaveHistoryAsync(approved,ct);
+            Ai.RequireCurrentAccount(_proposal);ct.ThrowIfCancellationRequested();
+            await LocalSynopsisCoaching.ResumeAsync(Documents,Store,approved,ct);
+            _document=await Latest(ct);_proposal=null;_message="Approved synopsis field saved locally. Open History to undo or redo it.";return;
+        }
+        if (_prepared.Target == LocalAiTarget.SceneCard && _sceneReview is not null) {
+            LocalConsistencyContext.RequireSameCanon(_sceneReview.Canon, await Bibles.ContextAsync(_prepared.Source, ct));
+            var current = await Latest(ct);
+            var nextScene = LocalSceneCoaching.Preview(current, _sceneReview, _approvedSceneFields);
+            var approved = _record with { Status = "Applying", After = nextScene, SceneFields = _approvedSceneFields.ToArray() };
+            await Store.SaveHistoryAsync(approved, ct);
+            Ai.RequireCurrentAccount(_proposal); ct.ThrowIfCancellationRequested();
+            await LocalSceneCoaching.ResumeAsync(Documents, Store, approved, ct);
+            _document = await Latest(ct); _proposal = null; _sceneReview = null;
+            _message = "Approved scene fields saved locally. Sync uses the existing project transaction.";
+            return;
+        }
         var next=AdvancedAiRequests.Apply(await Latest(ct),_prepared,_proposal);
         await Store.SaveHistoryAsync(_record with { Status="Applying" },ct);
         Ai.RequireCurrentAccount(_proposal); ct.ThrowIfCancellationRequested();
@@ -156,7 +602,7 @@ else { <p>Analysis only. No manuscript changes will be applied.</p> }
         _history=await Store.HistoryAsync(DocumentId);_message="Planning proposal applied and saved locally. Manuscript prose was not changed.";
     });
     private Task Recover(Guid id) => Work(async ct=> {
-        var h=(await Store.HistoryAsync(DocumentId,ct)).Single(x=>x.Id==id);
+        var h=(await Store.HistoryAsync(DocumentId,ct)).Single(x=>x.Id==id); RequireHistoryAccount(h);
         var restored=await Documents.RecoverSnapshotAsync(h.Before,ct);
         _message=$"Original writing and planning recovered as {restored.Title} in the local library. Current writing is unchanged.";
     });
@@ -164,17 +610,20 @@ else { <p>Analysis only. No manuscript changes will be applied.</p> }
         ? AdvancedAiRequests.SynopsisValue(p.Source.Project!.Synopsis ?? new(),p.Field)
         : p.Target==LocalAiTarget.SceneCard ? System.Text.Json.JsonSerializer.Serialize(p.Source.Project!.Nodes.Single(n=>n.NodeId==p.NodeId).Card)
         : p.Request.Request.SurroundingText ?? "";
-    private async Task Work(Func<CancellationToken,Task> action) {
-        if(_busy) return;_busy=true;_error=null;_message=null; using var source=new CancellationTokenSource();_cancel=source;
+    private async Task Work(Func<CancellationToken,Task> action, bool saveDocument = true, int? consistencyIndex = null) {
+        if(IsBusy) return;_busy=true;_error=null;_message=null;_operation=null; using var source=new CancellationTokenSource();_cancel=source;
+        _consistencyReviewIndex = consistencyIndex;
+        await InvokeAsync(StateHasChanged);
         bool began = false;
-        try { if (BeforeWork is not null && !await BeforeWork()) { _error = "Save the current writing and planning before continuing."; return; } began = true; await action(source.Token); }
+        try { if (saveDocument && BeforeWork is not null && !await BeforeWork()) { _error = "Save the current writing and planning before continuing."; return; } began = saveDocument; await action(source.Token); }
         catch(OperationCanceledException) { _message="Canceled. Any saved changes remain in history."; }
-        catch(Exception e) when(e is DeviceSignInRequiredException or DeviceIdentityUnavailableException or DeviceAiException or IOException or InvalidDataException or InvalidOperationException or UnauthorizedAccessException or System.Text.Json.JsonException or HttpRequestException) { _error=e.Message; }
+        catch(Exception e) when(e is DeviceSignInRequiredException or DeviceIdentityUnavailableException or DeviceAiException or IOException or InvalidDataException or InvalidOperationException or UnauthorizedAccessException or System.Text.Json.JsonException or HttpRequestException or JSException) { _error=e.Message.Split('\n')[0]; }
         finally { try { if (began && AfterWork is not null) await AfterWork(); } finally {
             await RefreshDocumentAsync(afterWork: true);
-            try { _history = await Store.HistoryAsync(DocumentId); }
-            catch (Exception e) when(e is IOException or InvalidOperationException or UnauthorizedAccessException or System.Text.Json.JsonException) { _error=e.Message; }
-            _busy=false;_cancel=null;
+            try { _history = await Store.HistoryAsync(DocumentId); await LoadHistoryCache(); }
+            catch (Exception e) when(e is IOException or InvalidOperationException or UnauthorizedAccessException or System.Text.Json.JsonException or DeviceSignInRequiredException) { _error=e.Message; }
+            _busy=false;_cancel=null;_operation=null;
+            if (!_disposed) await InvokeAsync(StateHasChanged);
         } }
     }
     private void Cancel()=>_cancel?.Cancel();
@@ -183,6 +632,15 @@ else { <p>Analysis only. No manuscript changes will be applied.</p> }
         _disposed = true;
         Sync.Changed -= OnDocumentChanged;
         Documents.Changed -= OnDocumentChanged;
+        Account.Changed -= AccountChanged;
         Cancel();
+    }
+    public async ValueTask DisposeAsync()
+    {
+        Dispose();
+        Task[] pending;
+        lock(_documentRefreshes)pending=_documentRefreshes.ToArray();
+        // Finish any already-started file read before the host releases/removes its store.
+        await Task.WhenAll(pending);
     }
 }

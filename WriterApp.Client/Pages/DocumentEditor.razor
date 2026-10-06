@@ -5,7 +5,6 @@
 @using WriterApp.Application.Exporting
 @using WriterApp.Application.Subscriptions
 @using WriterApp.Client.Components.Editor
-@using WriterApp.Client.Components.AI
 @using WriterApp.Client.Components
 @using WriterApp.Client.Pages
 @using WriterApp.Client.Utilities
@@ -62,6 +61,19 @@ else
 
                 @if (!_isPreviewMode)
                 {
+                @if (!IsSceneRoute && GetPages(_activeSection.Id).Count>1)
+                {
+                    <div class="manuscript-page-picker">
+                        <label for="manuscript-page">Manuscript page</label>
+                        <select id="manuscript-page" @bind:get="_activePage.Id.ToString()" @bind:set="value=>SelectManuscriptPageAsync(new ChangeEventArgs{Value=value})" disabled="@(_webTranslationBusy || _webTranslationUncertainOperation is not null)">
+                            @foreach(var manuscriptPage in GetPages(_activeSection.Id))
+                            {
+                                <option value="@manuscriptPage.Id">@(manuscriptPage.OrderIndex+1). @manuscriptPage.Title</option>
+                            }
+                        </select>
+                        @if(_manuscriptPageError is not null) { <p role="alert">@_manuscriptPageError</p> }
+                    </div>
+                }
                 <EditorToolbar State="_formattingState" Tooltip="GetTooltip" OnBold="OnBoldRequested" OnItalic="OnItalicRequested" OnBulletList="OnBulletListRequested" OnOrderedList="OnOrderedListRequested" OnBlockquote="OnBlockquoteRequested" OnLink="OnLinkRequested" OnBlockType="@(value => OnBlockTypeChanged(new ChangeEventArgs { Value = value }))"><AdditionalControls>
                     <div class="editor-toolbar-group" aria-label="Table">
                         <button type="button" class="icon-only" disabled="@(!_formattingState.CanInsertTable)" title='@GetTooltip("Insert a 3x3 table.")' aria-label="Insert table" @onclick="OnInsertTableRequested"><Icon Name="table_chart" /></button>
@@ -275,8 +287,42 @@ else
                     </div>
                 }
 
+                <WriterApp.UI.Shared.AiRequestProgress IsPending="@(_clientAiRequest is not null)" RequestName="@(_clientAiRequest?.Label ?? "AI suggestion")" Cancel="CancelClientAiRequest" />
+                @if (_clientAiRequestMessage is { } requestMessage)
+                {
+                    <p role="status">@requestMessage</p>
+                }
+                @if (_webTranslationBusy)
+                {
+                    <p role="status">Preparing or saving checked translation…</p>
+                    <button type="button" @onclick="CancelStructuredTranslation">Cancel translation</button>
+                }
+                @if (_webTranslationError is { } translationError)
+                {
+                    <p role="alert">@translationError</p>
+                }
+                @if (_webTranslationReceipts.Count > 0 || _webTranslationError is not null)
+                {
+                    <details class="ai-preview">
+                        <summary>Writing &amp; translation recovery</summary>
+                        <p>Approvals are retained on this account's backend. Original-copy recovery creates a separate document and preserves current writing.</p>
+                        <button type="button" @onclick="RefreshTranslationRecoveryAsync" disabled="@_webTranslationBusy">Reload recovery</button>
+                        @foreach (var receipt in _webTranslationReceipts)
+                        {
+                            <div><span>@receipt.State — @receipt.OperationId</span>
+                                @if (receipt.State == "Approved") { <button type="button" @onclick="() => ResumeTranslationAsync(receipt)" disabled="@_webTranslationBusy">Finish approved save</button> }
+                                <button type="button" @onclick="() => RecoverTranslationOriginalAsync(receipt)" disabled="@_webTranslationBusy">Recover original as separate document</button>
+                            </div>
+                        }
+                    </details>
+                }
+                @if (_recommendedCopy is { } recommendedCopy) {
+                    <RecommendedTextReview @key="recommendedCopy.Proposal" ToolId="@recommendedCopy.ToolId" Result="recommendedCopy.Result"
+                        Busy="@(_clientAiRequest is not null || _isProposalApplying)" Message="@_recommendedCopyMessage" Copy="CopyRecommendedText" Dismiss="DismissRecommendedCopy" />
+                }
                 @if (_pendingAiProposal is not null)
                 {
+                    <WriterApp.UI.Shared.WritingOutlineSummary Value="@(_writingContexts.TryGetValue(_pendingAiProposal.ProposalId,out var writingContext) && WritingContextCurrent(writingContext) ? writingContext.Source : null)" />
                     <div class="ai-preview">
                         <div class="ai-preview-header">
                             <strong>AI suggestion</strong>
@@ -289,15 +335,20 @@ else
                         @if (IsTranslationProposal)
                         {
                             <TranslationProposalPanel SourceText="@_pendingAiProposal.OriginalText"
+                                                      Pages="@_webTranslationPreview?.Pages"
                                                       TranslatedText="@_pendingAiProposal.ProposedText"
                                                       AlignmentMode="@_translationAlignmentMode"
                                                       AlignmentModeChanged="OnTranslationAlignmentChanged"
                                                       OnCopyTranslated="CopyTranslatedTextAsync"
                                                       OnChangeLanguage="OpenTranslateModalFromProposal" />
                             <div class="translation-apply">
+                                @if (TranslationApplyRestriction is { } restriction)
+                                {
+                                    <p role="alert">@restriction</p>
+                                }
                                 <div class="translation-apply-mode">
                                     <label for="translation-apply-mode">Apply</label>
-                                    <select id="translation-apply-mode" @bind="_translationApplyMode">
+                                    <select id="translation-apply-mode" @bind="_translationApplyMode" disabled="@(TranslationApplyRestriction is not null || _webTranslationBusy)">
                                         @foreach (TranslationApplyOption option in GetTranslationApplyOptions())
                                         {
                                             <option value="@option.Value">@option.Label</option>
@@ -305,8 +356,8 @@ else
                                     </select>
                                 </div>
                                 <div class="translation-apply-actions">
-                                    <button type="button" @onclick="OnApplyPendingAiProposal">Apply</button>
-                                    <button type="button" class="btn btn-ghost" @onclick="OnDiscardPendingAiProposal">Discard</button>
+                                    <button type="button" @onclick="OnApplyPendingAiProposal" disabled="@(TranslationApplyRestriction is not null || _webTranslationBusy || _clientAiRequest is not null)">Apply</button>
+                                    <button type="button" class="btn btn-ghost" @onclick="OnDiscardPendingAiProposal" disabled="@_webTranslationBusy">Discard</button>
                                 </div>
                             </div>
                         }
@@ -327,7 +378,7 @@ else
                         @if (!IsTranslationProposal)
                         {
                             <div class="ai-preview-actions">
-                                <button type="button" @onclick="OnApplyPendingAiProposal">Apply</button>
+                                <button type="button" @onclick="OnApplyPendingAiProposal" disabled="@(_clientAiRequest is not null)">Apply</button>
                                 <button type="button" @onclick="OnDiscardPendingAiProposal">Discard</button>
                                 <button type="button"
                                         class="ai-details-toggle"
@@ -370,7 +421,7 @@ else
                     </div>
                 }
 
-                <div class="editor-surface" hidden="@_isPreviewMode">
+                <div class="editor-surface" hidden="@_isPreviewMode" inert="@(_webTranslationBusy || _webTranslationUncertainOperation is not null)">
                     <div class="editor-viewport">
                         <div class="editor-content">
                             @if (_isDiffMode)
@@ -635,6 +686,9 @@ else
                                 }
                                 else
                                 {
+                                    <StyleQualityOptions Goal="@_qualityStyleGoal" GoalChanged="QualityStyleGoalChanged" Busy="@StyleReviewBusy" />
+                                    <TargetedQualityRetryOptions Enabled="@_targetedStrictRetry" EnabledChanged="TargetedRetryChanged" Busy="@TargetedRetryBusy" />
+                                    <p class="quality-check-coverage"><strong>What rule checks cover:</strong> repeated words, sentences over 30 words, paragraphs over 120 words, readability hints, English passive-voice patterns, name casing, timeline hints and saved glossary terms. Review hints do not judge your writing quality.</p>
                                     <div class="quality-toolbar">
                                         <div class="quality-filter">
                                             <label class="quality-filter-label">Scope</label>
@@ -744,6 +798,7 @@ else
                         else if (_activeContextTab == ContextTab.Scene)
                         {
                             <div class="drawer-panel scene-card-panel">
+                                <fieldset disabled="@(_sceneApplying || _scopedRecoveryBusy)" style="border:0;padding:0;margin:0;min-width:0;">
                                 <div class="drawer-panel-subtitle">Capture metadata for this section.</div>
                                 <div class="scene-card-actions">
                                     <PlanGatedButton Feature="@nameof(FeatureKey.SceneAiSuggestions)"
@@ -792,135 +847,10 @@ else
                                         {
                                             <div class="scene-card-preview-explanation">@_sceneAiExplanation</div>
                                         }
-                                        @if (IsScopedSceneAiProposal())
-                                        {
-                                            <div class="scene-card-preview-grid">
-                                                <div class="scene-card-preview-col">
-                                                    <div class="scene-card-preview-label">Current</div>
-                                                    <div class="scene-card-preview-field">
-                                                        <strong>@GetSceneAiPreviewFieldLabel()</strong>
-                                                        <div>@GetCurrentSceneAiFieldDisplay()</div>
-                                                    </div>
-                                                </div>
-                                                <div class="scene-card-preview-col">
-                                                    <div class="scene-card-preview-label">Proposed</div>
-                                                    <div class="scene-card-preview-field">
-                                                        <strong>@GetSceneAiPreviewFieldLabel()</strong>
-                                                        <div>@GetProposedSceneAiFieldDisplay()</div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        }
-                                        else
-                                        {
-                                            <div class="scene-card-preview-grid">
-                                                <div class="scene-card-preview-col">
-                                                    <div class="scene-card-preview-label">Current</div>
-                                                    <div class="scene-card-preview-field">
-                                                        <strong>Summary</strong>
-                                                        <div>@(string.IsNullOrWhiteSpace(_sceneSummary) ? "(not provided)" : _sceneSummary)</div>
-                                                    </div>
-                                                    <div class="scene-card-preview-field">
-                                                        <strong>Status</strong>
-                                                        <div>@(string.IsNullOrWhiteSpace(_sceneCardMetadataStatus) ? "(not provided)" : _sceneCardMetadataStatus)</div>
-                                                    </div>
-                                                    <div class="scene-card-preview-field">
-                                                        <strong>Narrative role</strong>
-                                                        <div>@(string.IsNullOrWhiteSpace(_sceneNarrativeRole) ? "(not provided)" : _sceneNarrativeRole)</div>
-                                                    </div>
-                                                    <div class="scene-card-preview-field">
-                                                        <strong>Narrative intent</strong>
-                                                        <div>@(string.IsNullOrWhiteSpace(_sceneNarrativeIntent) ? "(not provided)" : _sceneNarrativeIntent)</div>
-                                                    </div>
-                                                    <div class="scene-card-preview-field">
-                                                        <strong>Emotional beat</strong>
-                                                        <div>@_sceneEmotionalBeat</div>
-                                                    </div>
-                                                    <div class="scene-card-preview-field">
-                                                        <strong>Key events</strong>
-                                                        <div>@_sceneKeyEvents</div>
-                                                    </div>
-                                                    <div class="scene-card-preview-field">
-                                                        <strong>Open questions</strong>
-                                                        <div>@_sceneOpenQuestions</div>
-                                                    </div>
-                                                    <div class="scene-card-preview-field">
-                                                        <strong>POV character</strong>
-                                                        <div>@(string.IsNullOrWhiteSpace(_scenePovCharacterId) ? "(not provided)" : _scenePovCharacterId)</div>
-                                                    </div>
-                                                    <div class="scene-card-preview-field">
-                                                        <strong>Setting / place</strong>
-                                                        <div>@(string.IsNullOrWhiteSpace(_scenePlaceId) ? "(not provided)" : _scenePlaceId)</div>
-                                                    </div>
-                                                    <div class="scene-card-preview-field">
-                                                        <strong>Timeline marker</strong>
-                                                        <div>@(string.IsNullOrWhiteSpace(_sceneTimeRef) ? "(not provided)" : _sceneTimeRef)</div>
-                                                    </div>
-                                                    <div class="scene-card-preview-field">
-                                                        <strong>Subplot tags</strong>
-                                                        <div>@(string.IsNullOrWhiteSpace(_sceneSubplotTagsText) ? "(not provided)" : _sceneSubplotTagsText)</div>
-                                                    </div>
-                                                    <div class="scene-card-preview-field">
-                                                        <strong>Tags</strong>
-                                                        <div>@(string.IsNullOrWhiteSpace(_sceneTagsText) ? "(not provided)" : _sceneTagsText)</div>
-                                                    </div>
-                                                </div>
-                                                <div class="scene-card-preview-col">
-                                                    <div class="scene-card-preview-label">Proposed</div>
-                                                    <div class="scene-card-preview-field">
-                                                        <strong>Summary</strong>
-                                                        <div>@_sceneAiProposal.Summary</div>
-                                                    </div>
-                                                    <div class="scene-card-preview-field">
-                                                        <strong>Status</strong>
-                                                        <div>@_sceneAiProposal.Status</div>
-                                                    </div>
-                                                    <div class="scene-card-preview-field">
-                                                        <strong>Narrative role</strong>
-                                                        <div>@GetSceneProposalNarrativeRoleDisplay(_sceneAiProposal)</div>
-                                                    </div>
-                                                    <div class="scene-card-preview-field">
-                                                        <strong>Narrative intent</strong>
-                                                        <div>@GetSceneProposalNarrativeIntentDisplay(_sceneAiProposal)</div>
-                                                    </div>
-                                                    <div class="scene-card-preview-field">
-                                                        <strong>Emotional beat</strong>
-                                                        <div>@_sceneAiProposal.EmotionalBeat</div>
-                                                    </div>
-                                                    <div class="scene-card-preview-field">
-                                                        <strong>Key events</strong>
-                                                        <div>@_sceneAiProposal.KeyEvents</div>
-                                                    </div>
-                                                    <div class="scene-card-preview-field">
-                                                        <strong>Open questions</strong>
-                                                        <div>@_sceneAiProposal.OpenQuestions</div>
-                                                    </div>
-                                                    <div class="scene-card-preview-field">
-                                                        <strong>POV character</strong>
-                                                        <div>@(string.IsNullOrWhiteSpace(_sceneAiProposal.PovCharacterId) ? "(not provided)" : _sceneAiProposal.PovCharacterId)</div>
-                                                    </div>
-                                                    <div class="scene-card-preview-field">
-                                                        <strong>Setting / place</strong>
-                                                        <div>@(string.IsNullOrWhiteSpace(_sceneAiProposal.PlaceId) ? "(not provided)" : _sceneAiProposal.PlaceId)</div>
-                                                    </div>
-                                                    <div class="scene-card-preview-field">
-                                                        <strong>Timeline marker</strong>
-                                                        <div>@(string.IsNullOrWhiteSpace(_sceneAiProposal.TimeRef) ? "(not provided)" : _sceneAiProposal.TimeRef)</div>
-                                                    </div>
-                                                    <div class="scene-card-preview-field">
-                                                        <strong>Subplot tags</strong>
-                                                        <div>@GetSceneProposalTagsDisplay(_sceneAiProposal.SubplotTags)</div>
-                                                    </div>
-                                                    <div class="scene-card-preview-field">
-                                                        <strong>Tags</strong>
-                                                        <div>@GetSceneProposalTagsDisplay(_sceneAiProposal.Tags)</div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        }
+                                        <SceneCoachingReview Changes="_sceneAiChanges" Approved="_approvedSceneFields" ApprovedChanged="ApprovedSceneFieldsChanged" Busy="@(_sceneSaveInFlight || _sceneAiInFlight || _sceneApplying)" />
                                         <div class="scene-card-preview-actions">
-                                            <button type="button" class="btn btn-primary" @onclick="ApplySceneAiProposalAsync">Apply</button>
-                                            <button type="button" class="btn btn-ghost" @onclick="DiscardSceneAiProposal">Discard</button>
+                                            <button type="button" class="btn btn-primary" disabled="@(_sceneApplying || _sceneSaveInFlight || _approvedSceneFields.Count == 0)" @onclick="ApplySceneAiProposalAsync">Apply approved fields</button>
+                                            <button type="button" class="btn btn-ghost" disabled="@_sceneApplying" @onclick="DiscardSceneAiProposal">Discard</button>
                                         </div>
                                     </div>
                                 }
@@ -1018,6 +948,7 @@ else
                                 {
                                     <div class="drawer-empty">@_sceneStatus</div>
                                 }
+                                </fieldset>
                             </div>
                         }
                         else if (_activeContextTab == ContextTab.Navigator)
@@ -1116,8 +1047,10 @@ else
                                     </div>
                                 }
 
-                                <AiHistoryPanel Entries="@(_aiHistoryEntries.Select(entry => new AiHistoryItem(entry.Id, entry.ActionKey, entry.Summary ?? entry.Label, entry.IsApplied ? "Applied" : "Reviewed", entry.Timestamp, FormatHistoryText(entry.BeforeText), FormatHistoryText(entry.AfterText))).ToArray())"
-                                    Refresh="LoadAiHistoryAsync" Busy="_aiUndoRedoInFlight" UndoLatest="OnAiUndoRequested" RedoLatest="OnAiRedoRequested"
+                                <WebAiHistoryDelivery Entries="@_historyDelivery" Error="@_historyDeliveryError" Busy="@_historyDeliveryBusy" Retry="RetryHistoryDelivery" />
+                                <WebAiRecoveryPanel DocumentId="DocumentId" IncludeAggregate="true" BeforeWork="SaveBeforeScopedRecovery" Changed="ReloadAfterScopedRecovery" BusyChanged="ScopedRecoveryBusyChanged" />
+                                <AiHistoryPanel Entries="@(_aiHistoryEntries.Select(entry => new AiHistoryItem(entry.Id, entry.ActionKey, entry.Summary ?? entry.Label, entry.IsApplied ? "Applied" : entry.AppliedCount > 0 ? "Undone" : "Generated", entry.Timestamp, FormatHistoryText(entry.BeforeText), FormatHistoryText(entry.AfterText), Origin:"Cloud", CanRecover:false)).ToArray())"
+                                    Refresh="@(() => LoadAiHistoryAsync())" Busy="_aiUndoRedoInFlight" UndoLatest="OnAiUndoRequested" RedoLatest="OnAiRedoRequested"
                                     CanUndoLatest="_hasAiUndoHistory" CanRedoLatest="_hasAiRedoHistory" />
                             </WritingPanel>
                         }
@@ -1136,19 +1069,15 @@ else
                                 }
                                 else
                                 {
+                                    <h3>Find story inconsistencies</h3>
+                                    <p>Find contradictions in characters, places and timing. Story references are prepared automatically. AI compares this scene with passages from the same manuscript.</p>
                                     <div class="ai-actions-list">
-                                        <PlanGatedButton Feature="@nameof(FeatureKey.CanonRefresh)"
-                                                         Class="quality-refresh primary"
-                                                         IsBusy="_continuityBusy"
-                                                         IsActionDisabled="@(!CanRunBibleUpdate)"
-                                                         OnClick="OnUpdateAllBiblesAsync">
-                                            @(_continuityBusy ? "Updating Story Canon..." : "Update Story Canon")
-                                        </PlanGatedButton>
                                         <PlanGatedButton Feature="@nameof(FeatureKey.ContinuityCheck)"
+                                                         Class="quality-refresh primary"
                                                          IsBusy="_continuityBusy"
                                                          IsActionDisabled="@(!CanRunContinuityCheck)"
                                                          OnClick="OnCheckContinuityAsync">
-                                            Check current section
+                                            Check consistency
                                         </PlanGatedButton>
                                         <button type="button"
                                                 disabled="@_continuityBusy"
@@ -1160,15 +1089,8 @@ else
                                     {
                                         <div class="drawer-empty">@_continuityStatus</div>
                                     }
-                                    <div class="drawer-empty">
-                                        Character canon: @GetBibleStatusLabel(_characterBibleSnapshot)
-                                    </div>
-                                    <div class="drawer-empty">
-                                        Place canon: @GetBibleStatusLabel(_placeBibleSnapshot)
-                                    </div>
-                                    <div class="drawer-empty">
-                                        Timeline canon: @GetBibleStatusLabel(_timelineBibleSnapshot)
-                                    </div>
+                                    @if (_continuityCoverage is not null) { <p role="status">@_continuityCoverage</p> }
+                                    @if (_continuityReport?.Coverage is { OmittedSections: > 0 } coverage) { <p role="status">This check compared @coverage.ComparedSections scenes. @coverage.OmittedSections additional scenes were outside the comparison limit.</p> }
                                     <div class="ai-history-toolbar">
                                         <label for="continuity-severity">Severity</label>
                                         <select id="continuity-severity"
@@ -1184,7 +1106,7 @@ else
                                     <div class="continuity-results">
                                         @if (!FilteredContinuityIssues.Any())
                                         {
-                                            <div class="drawer-empty">No issues in current report.</div>
+                                            <div class="drawer-empty">@(_continuityReport is null ? "Click Check consistency to find possible contradictions in this scene." : _continuityReport.Issues.Count == 0 ? "No consistency issues found in the analyzed writing." : "No findings match this severity filter.")</div>
                                         }
                                         else
                                         {
@@ -1197,26 +1119,57 @@ else
                                                             <span class="ai-history-summary">@issue.Type: @issue.Message</span>
                                                         </div>
                                                         <div class="ai-history-sub">
-                                                            <span>@issue.Evidence.Quote</span>
+                                                            <div>@(_activeSection?.Title)</div>
+                                                            <ConsistencyPrimaryPassageView Location="@ContinuityPrimaryLocation(issue)" Quote="@issue.Evidence.Quote" Error="@ContinuityPrimaryError(issue)" />
                                                         </div>
+                                                        @if (issue.ComparisonEvidence is { } comparison) {
+                                                        <div class="ai-history-sub">
+                                                            <div><strong>Conflicting passage · @ContinuityComparisonLocation(comparison)</strong><p>@comparison.Quote</p></div>
+                                                            <button type="button" disabled="@_continuityBusy" @onclick="() => ViewContinuityComparisonAsync(comparison)">View conflicting passage</button>
+                                                        </div>
+                                                        } else { <p>This saved finding has no conflicting passage attached. Run a new check for both source passages.</p> }
+                                                        @if (IsContinuityIntentional(issue)) { <p>Marked intentional in this browser. Your writing is unchanged.</p> }
+                                                        else if (issue.FixKind == "delete" || !string.IsNullOrWhiteSpace(issue.SuggestedFix) && issue.SuggestedFix.Trim() != issue.Evidence.Quote?.Trim()) {
+                                                        <div class="ai-history-sub">
+                                                            <div><strong>Suggested fix</strong><p>@(issue.FixKind == "delete" ? "Remove this passage; keep the conflicting passage." : issue.SuggestedFix)</p></div>
+                                                        </div>
+                                                        }
                                                         <div class="ai-history-actions">
-                                                            <button type="button" @onclick="() => OnJumpToContinuityIssueAsync(issue)">Jump</button>
-                                                            @if (CanShowContinuityCoachFixes)
+                                                            <button type="button" disabled="@(_continuityBusy || _isApplyingContinuityProposal)" @onclick="() => OnJumpToContinuityIssueAsync(issue)">Jump</button>
+                                                            @if (CanShowContinuityCoachFixes && !IsContinuityIntentional(issue))
                                                             {
                                                                 <PlanGatedButton Feature="@nameof(FeatureKey.ContinuityCheck)"
                                                                                  IsBusy="_continuityBusy"
-                                                                                 IsActionDisabled="@string.IsNullOrWhiteSpace(issue.SuggestedFix)"
                                                                                  ShowLockIndicator="false"
                                                                                  OnClick="() => OpenContinuityProposalAsync(issue)">
-                                                                    Apply suggested fix
+                                                                    Review &amp; apply suggestion
                                                                 </PlanGatedButton>
                                                             }
+                                                            <button type="button" disabled="@_continuityBusy" @onclick="() => MarkContinuityIntentionalAsync(issue)">@(IsContinuityIntentional(issue) ? "Check this again" : "Mark intentional")</button>
+                                                            <button type="button" disabled="@_continuityBusy" @onclick="() => DiscardContinuitySuggestionAsync(issue)">Discard suggestion</button>
                                                         </div>
                                                     </li>
                                                 }
                                             </ul>
                                         }
                                     </div>
+                                    <details class="consistency-reference">
+                                        <summary>Story reference</summary>
+                                        <p>The check loads and updates references automatically. Missing links in reference notes are not story inconsistencies.</p>
+                                        <p>Characters: @GetBibleStatusLabel(_characterBibleSnapshot)</p>
+                                        <p>Places: @GetBibleStatusLabel(_placeBibleSnapshot)</p>
+                                        <p>Timeline: @GetBibleStatusLabel(_timelineBibleSnapshot)</p>
+                                        <PlanGatedButton Feature="@nameof(FeatureKey.CanonRefresh)" IsBusy="_continuityBusy" IsActionDisabled="@(!CanRunBibleUpdate)" OnClick="OnUpdateAllBiblesAsync">Update story facts</PlanGatedButton>
+                                    </details>
+                                    @if (_continuitySourcePreview is { } sourcePreview) {
+                                        <section class="consistency-source-preview" aria-label="Conflicting passage in context">
+                                            <h4>@sourcePreview.Title</h4>
+                                            <blockquote>@sourcePreview.Quote</blockquote>
+                                            <details><summary>Read the source page</summary><p style="white-space:pre-wrap;overflow-wrap:anywhere">@sourcePreview.Text</p></details>
+                                            <a href="@sourcePreview.Url" target="_blank" rel="noopener">Open source scene</a>
+                                            <button type="button" @onclick="() => _continuitySourcePreview = null">Close source preview</button>
+                                        </section>
+                                    }
                                 }
                             </div>
                         }
@@ -1235,6 +1188,7 @@ else
                                 }
                                 else
                                 {
+                                    <PromptLibraryContinuity CloudLibrary="true" />
                                     <div class="ai-history-toolbar">
                                         <label for="prompt-run-scope">Run scope</label>
                                         <select id="prompt-run-scope" @bind="_promptRunScope">
@@ -1245,6 +1199,7 @@ else
                                     <div class="ai-actions-list">
                                         <button type="button" @onclick="BeginCreatePromptPreset">New preset</button>
                                         <button type="button" @onclick="SavePromptPresetAsync">Save preset</button>
+                                        <button type="button" @onclick="LoadPromptPresetsAsync">Refresh cloud presets</button>
                                     </div>
                                     <div class="template-grid">
                                         <label class="export-panel-label" for="prompt-name">Name</label>
@@ -1290,6 +1245,7 @@ else
                                                     </div>
                                                     <div class="ai-history-sub">
                                                         <span>@(preset.Category ?? preset.Kind)</span>
+                                                        <span>Cloud preset · saved in this account's library</span>
                                                     </div>
                                                     <div class="ai-history-actions">
                                                         <button type="button" @onclick="() => RunPromptPresetAsync(preset)">Run</button>
@@ -1365,6 +1321,13 @@ else
                         else if (_activeContextTab == ContextTab.Quality)
                         {
                             <div class="drawer-panel quality-panel">
+                                @if (CanShowQualityChecks) {
+                                    <StyleQualityCoachReview Report="@_styleReview?.Report" Source="@(_styleReview?.Source.Text ?? "")"
+                                        Goal="@(_styleReview?.Goal ?? _qualityStyleGoal)" Scope="@_styleReviewScope" ScopeChanged="StyleReviewScopeChanged"
+                                        Approved="@_approvedStyleEdits" ApprovedChanged="StyleEditsChanged" Busy="@StyleReviewBusy"
+                                        CanGenerate="@CanRunStyleReview" Unavailable="@StyleReviewUnavailable" Error="@_styleReviewError"
+                                        Generate="RunStyleReviewAsync" Apply="ApplyStyleReviewAsync" Dismiss="DismissStyleReview" />
+                                }
                                 @if (!CanShowQualityChecks)
                                 {
                                     <div class="drawer-empty">
@@ -1385,7 +1348,7 @@ else
                                 }
                                 else if (!_qualityHasRunOnce && _qualityIssues.Count == 0)
                                 {
-                                    <div class="drawer-empty quality-precheck-hint">Run quality check to find repetition, clarity issues, and pacing friction.</div>
+                                    <div class="drawer-empty quality-precheck-hint">Run quality checks to review the criteria above. Choose a finding to see its passage and review an individual fix.</div>
                                 }
                                 else if (_qualityIssues.Count == 0)
                                 {
@@ -1487,7 +1450,7 @@ else
                                 <div class="ai-history-toolbar">
                                     <button type="button"
                                             class="ai-history-button"
-                                            @onclick="LoadAiHistoryAsync">
+                                            @onclick="@(() => LoadAiHistoryAsync())">
                                         Refresh history
                                     </button>
                                     <PlanGatedButton Feature="@nameof(FeatureKey.AiUndoRedo)"
@@ -1768,6 +1731,8 @@ else
                         <span>@_proposalIssue.RuleId</span>
                     }
                 </div>
+                <p>Style goal: @WriterApp.Shared.StyleQualityReview.Goal(_qualityStyleGoal).Label</p>
+                <p>@WriterApp.Shared.StyleQualityReview.RuleGuidance(_proposalIssue.RuleId)</p>
                 <div class="quality-proposal-message">@_proposalIssue.Message</div>
                 @if (!string.IsNullOrWhiteSpace(_proposalIssue.Suggestion))
                 {
@@ -1776,10 +1741,7 @@ else
                 @if (_proposalPreview is not null)
                 {
                     <div class="quality-proposal-preview">
-                        <div class="quality-proposal-label">Before</div>
-                        <pre>@_proposalPreview.Before</pre>
-                        <div class="quality-proposal-label">After</div>
-                        <pre>@_proposalPreview.After</pre>
+                        <AiTextComparison OriginalLabel="Before" ProposedLabel="After" Original="@_proposalPreview.Before" Proposed="@_proposalPreview.After" HighlightChanges="true" />
                     </div>
                     @if (!string.IsNullOrEmpty(_proposalPreview.Prefix) || !string.IsNullOrEmpty(_proposalPreview.Suffix))
                     {
@@ -1826,7 +1788,7 @@ else
              aria-labelledby="continuityProposalTitle"
              tabindex="0"
              @onkeydown="OnContinuityProposalKeyDown">
-            <div class="modal-title" id="continuityProposalTitle">Apply suggested fix?</div>
+            <div class="modal-title" id="continuityProposalTitle">Review writing change</div>
             <div class="modal-body">
                 <div class="quality-proposal-meta">
                     <span>@_pendingContinuityIssue.Type</span>
@@ -1840,7 +1802,7 @@ else
                 @if (_continuityProposalPreview is not null)
                 {
                     <div class="quality-proposal-preview">
-                        <div class="quality-proposal-label">Before</div>
+                        <div class="quality-proposal-label">Current wording</div>
                         <pre>@_continuityProposalPreview.Before</pre>
                         @if (_continuityProposalPreview.IsDeletion)
                         {
@@ -1850,7 +1812,7 @@ else
                         }
                         else
                         {
-                            <div class="quality-proposal-label">After</div>
+                            <div class="quality-proposal-label">Suggested wording</div>
                             <pre>@_continuityProposalPreview.After</pre>
                         }
                     </div>
@@ -1892,12 +1854,12 @@ else
                         class="primary"
                         @onclick="ConfirmContinuityProposalApplyAsync"
                         disabled="@_isApplyingContinuityProposal">
-                    @(_isApplyingContinuityProposal ? "Applying..." : "Apply")
+                    @(_isApplyingContinuityProposal ? "Applying..." : "Apply suggestion")
                 </button>
                 <button type="button"
-                        @onclick="CancelContinuityProposal"
+                        @onclick="DiscardPendingContinuitySuggestionAsync"
                         disabled="@_isApplyingContinuityProposal">
-                    Cancel
+                    Discard suggestion
                 </button>
             </div>
         </div>
@@ -1973,50 +1935,8 @@ else
             </div>
             <div class="modal-body">
                 <div class="translate-form">
-                    <label for="translate-source-language">Source language</label>
-                    <input id="translate-source-language-search"
-                           class="export-panel-input"
-                           placeholder="Select language"
-                           @bind="_translateSourceLanguageQuery" />
-                    <select id="translate-source-language" @bind="_translateSourceLanguage">
-                        <option value="auto">Auto-detect</option>
-                        @foreach (TranslationLanguageOption language in GetPopularTranslationLanguages(_translateSourceLanguageQuery, _translateSourceLanguage, includeAuto: true))
-                        {
-                            <option value="@language.Code">@GetTranslationLanguageOptionLabel(language)</option>
-                        }
-                        @foreach (TranslationLanguageOption language in GetAdditionalTranslationLanguages(_translateSourceLanguageQuery, _translateSourceLanguage, includeAuto: true))
-                        {
-                            <option value="@language.Code">@GetTranslationLanguageOptionLabel(language)</option>
-                        }
-                    </select>
-
-                    <label for="translate-target-language">Target language</label>
-                    <input id="translate-target-language-search"
-                           class="export-panel-input"
-                           placeholder="Select language"
-                           @bind="_translateTargetLanguageQuery" />
-                    <select id="translate-target-language" @bind="_translateTargetLanguage">
-                        @if (ShouldShowTranslationLanguagePlaceholder(_translateTargetLanguage))
-                        {
-                            <option value="">Select language</option>
-                        }
-                        @foreach (TranslationLanguageOption language in GetPopularTranslationLanguages(_translateTargetLanguageQuery, _translateTargetLanguage))
-                        {
-                            <option value="@language.Code">@GetTranslationLanguageOptionLabel(language)</option>
-                        }
-                        @foreach (TranslationLanguageOption language in GetAdditionalTranslationLanguages(_translateTargetLanguageQuery, _translateTargetLanguage))
-                        {
-                            <option value="@language.Code">@GetTranslationLanguageOptionLabel(language)</option>
-                        }
-                    </select>
-
-                    <label for="translate-style">Style</label>
-                    <select id="translate-style" @bind="_translateStyle">
-                        <option value="literal">Literal</option>
-                        <option value="natural">Natural</option>
-                        <option value="formal">Formal</option>
-                        <option value="informal">Informal</option>
-                    </select>
+                    <TranslationOptions Scope="@(_pendingTranslateAction?.ActionKey == "translate.document" ? "document" : _pendingTranslateAction?.ActionKey == "translate.section" ? "section" : "selection")"
+                        FixedScope="true" @bind-TargetLanguage="_translateTargetLanguage" @bind-SourceLanguage="_translateSourceLanguage" @bind-Style="_translateStyle" />
                 </div>
             </div>
             <div class="modal-footer">

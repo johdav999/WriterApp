@@ -12,7 +12,7 @@ namespace WriterApp.Controllers
     [ApiController]
     [Route("api/onboarding")]
     [Authorize]
-    public sealed class OnboardingController : ControllerBase
+    public sealed partial class OnboardingController : ControllerBase
     {
         private const int MaxOnboardingStep = 10;
         private const int MaxIntentLength = 100;
@@ -152,7 +152,7 @@ namespace WriterApp.Controllers
             DateTime nowUtc = now.UtcDateTime;
 
             bool changed = false;
-            if (profile.OnboardingStep != request.Step)
+            if (profile.OnboardingStep < request.Step)
             {
                 profile.OnboardingStep = request.Step;
                 changed = true;
@@ -167,7 +167,11 @@ namespace WriterApp.Controllers
             if (changed)
             {
                 profile.UpdatedUtc = nowUtc;
-                await _dbContext.SaveChangesAsync(ct);
+                await _dbContext.UserProfiles.Where(item => item.UserId == userId).ExecuteUpdateAsync(update => update
+                    .SetProperty(item => item.OnboardingStep, item => item.OnboardingStep < request.Step ? request.Step : item.OnboardingStep)
+                    .SetProperty(item => item.OnboardingStartedUtc, item => item.OnboardingStartedUtc ?? now)
+                    .SetProperty(item => item.UpdatedUtc, nowUtc), ct);
+                await _dbContext.Entry(profile).ReloadAsync(ct);
             }
 
             _logger.LogInformation(

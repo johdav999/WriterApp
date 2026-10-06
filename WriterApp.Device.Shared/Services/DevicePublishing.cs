@@ -13,7 +13,8 @@ namespace WriterApp.Device.Shared.Services;
 public sealed record LocalPublishingOptions(DeviceExportFormat Format = DeviceExportFormat.Html,
     string Scope = "document", Guid? SectionId = null, string Template = "manuscript",
     bool TitlePage = true, bool IncludeCover = false);
-public sealed record PublishingSnapshot(Guid DocumentId, long Revision, LocalPublishingOptions Options, DevicePreparedExport File, string PreviewHtml);
+public sealed record PublishingSnapshot(Guid DocumentId, long Revision, LocalPublishingOptions Options, DevicePreparedExport File, string PreviewHtml,
+    long AccountGeneration = -1);
 
 public static class DevicePublishing
 {
@@ -55,6 +56,10 @@ public static class DevicePublishing
 
     public static async Task<PublishingSnapshot> PrepareAsync(LocalDocument document, LocalPublishingOptions options, LocalCover? cover = null)
     {
+        if(options.IncludeCover) cover=LocalCover.FromProject(document) ?? cover;
+        if(options.IncludeCover && document.Project?.CoverImageUrl is { } remote && remote.StartsWith("https://",StringComparison.OrdinalIgnoreCase)
+            && (cover?.RemoteReference!=remote || cover.ContentHash!=WriterApp.Shared.CoverAssetContract.Hash(cover.Png) || cover.AccountScope is not {Length:64}))
+            throw new InvalidDataException("Cache the exact owned project cover in Cover studio before offline publishing. The remote reference is preserved.");
         if (!Enum.IsDefined(options.Format) || options.Format == DeviceExportFormat.SourceBackup) throw new InvalidDataException("Choose a publishing format.");
         var selected = Select(document, options);
         foreach (var page in selected.Sections.SelectMany(s => s.Pages)) DeviceContentCompatibility.RequireEditable(page.Content, page.ContentFormat);

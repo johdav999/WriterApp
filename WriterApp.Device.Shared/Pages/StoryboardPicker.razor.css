@@ -1,0 +1,7 @@
+.storyboard-picker { max-width: 720px; margin: 0 auto; padding: var(--space-6); }
+.storyboard-picker h1 { margin-top: 0; }
+.storyboard-picker p { color: var(--color-text-muted); }
+.storyboard-picker ul { display: grid; gap: var(--space-3); padding: 0; list-style: none; }
+.storyboard-picker li a { display: block; padding: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface-1); text-decoration: none; }
+.storyboard-picker li a:hover { background: var(--color-surface-2); }
+.storyboard-picker a:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 3px; }

@@ -21,7 +21,7 @@ using Xunit;
 
 namespace WriterApp.Tests
 {
-    public sealed class DocumentBiblesControllerTests
+    public sealed partial class DocumentBiblesControllerTests
     {
         [Fact]
         public async Task Refresh_ReturnsProblemDetails_WhenCharacterRefreshPayloadIsInvalid()
@@ -48,12 +48,13 @@ namespace WriterApp.Tests
             Assert.Equal("ai_invalid_structured_data", problem.Extensions["code"]?.ToString());
         }
 
-        private static DocumentBiblesController BuildController(AppDbContext db, string payload)
+        private static DocumentBiblesController BuildController(AppDbContext db, string payload, Func<Task>? beforeResponse = null, Action<AiActionInput>? inspect = null)
         {
+            var store = new EfCoreBibleStore(db);
             BibleRefreshService refreshService = new(
-                new StubAiOrchestrator(payload),
+                new StubAiOrchestrator(payload, beforeResponse, inspect),
                 new StubEntitlementService(),
-                new InMemoryBibleStore(),
+                store,
                 new BiblePatchApplier(),
                 NullLogger<BibleRefreshService>.Instance);
 
@@ -62,10 +63,10 @@ namespace WriterApp.Tests
                 new SectionRepository(db, NullLogger<SectionRepository>.Instance, new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build()),
                 new PageRepository(db),
                 new StubUserIdResolver(),
-                new InMemoryBibleStore(),
+                store,
                 refreshService,
                 new StubEntitlementService(),
-                NullLogger<DocumentBiblesController>.Instance);
+                NullLogger<DocumentBiblesController>.Instance, db);
 
             controller.ControllerContext = new ControllerContext
             {
@@ -204,10 +205,14 @@ namespace WriterApp.Tests
         private sealed class StubAiOrchestrator : IAiOrchestrator
         {
             private readonly string _payload;
+            private readonly Func<Task>? _beforeResponse;
+            private readonly Action<AiActionInput>? _inspect;
 
-            public StubAiOrchestrator(string payload)
+            public StubAiOrchestrator(string payload, Func<Task>? beforeResponse = null, Action<AiActionInput>? inspect = null)
             {
                 _payload = payload;
+                _beforeResponse = beforeResponse;
+                _inspect = inspect;
             }
 
             public IReadOnlyList<IAiAction> Actions => Array.Empty<IAiAction>();
@@ -218,8 +223,10 @@ namespace WriterApp.Tests
 
             public AiStreamingCapabilities GetStreamingCapabilities(string actionId) => new(true, false);
 
-            public Task<AiExecutionResult> ExecuteActionAsync(string actionId, AiActionInput input, CancellationToken ct)
+            public async Task<AiExecutionResult> ExecuteActionAsync(string actionId, AiActionInput input, CancellationToken ct)
             {
+                if (_beforeResponse is not null) await _beforeResponse();
+                _inspect?.Invoke(input);
                 AiProposal proposal = new(
                     Guid.NewGuid(),
                     input.ActiveSectionId,
@@ -237,7 +244,7 @@ namespace WriterApp.Tests
                     null,
                     _payload);
 
-                return Task.FromResult(AiExecutionResult.Success(proposal));
+                return AiExecutionResult.Success(proposal);
             }
 
             public AiStreamingSession StreamActionAsync(string actionId, AiActionInput input, CancellationToken ct)

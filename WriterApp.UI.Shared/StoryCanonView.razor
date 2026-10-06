@@ -1,0 +1,26 @@
+@using WriterApp.Shared.Canon
+<section class="story-canon" aria-label="Story canon">
+    <div class="canon-heading"><h3>@CanonPresentation.Heading(Kind)</h3><span>@(Content?.Entries.Count ?? 0) @(Content?.Entries.Count == 1 ? "entry" : "entries")</span></div>
+    <p class="canon-status" role="status">@Status</p>
+    @if (RefreshedAt is { } refreshed) { <p class="canon-updated">Updated @refreshed.ToLocalTime().ToString("g")</p> }
+    @if (Content is { Entries.Count: > 0 })
+    {
+        @foreach (var entry in Content.Entries)
+        {
+            <details><summary>@entry.Name</summary>
+                <dl class="canon-fields">@foreach (var field in entry.Details) { <dt>@CanonValue.Label(field.Key)</dt><dd><CanonValue Value="field.Value" Field="@field.Key" Contents="Contents" SceneNames="SceneNames" /></dd> }</dl>
+            </details>
+        }
+    }
+    else { <p>No cached entries.</p> }
+    @ChildContent
+</section>
+@code {
+    [Parameter] public CanonKind Kind { get; set; }
+    [Parameter] public CanonContent? Content { get; set; }
+    [Parameter] public string Status { get; set; } = "Not loaded.";
+    [Parameter] public DateTimeOffset? RefreshedAt { get; set; }
+    [Parameter] public IReadOnlyDictionary<CanonKind, CanonContent>? Contents { get; set; }
+    [Parameter] public IReadOnlyDictionary<string, string>? SceneNames { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

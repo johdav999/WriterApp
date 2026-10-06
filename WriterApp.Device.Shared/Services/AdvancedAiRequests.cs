@@ -17,10 +17,8 @@ public static class AdvancedAiRequests
     public static IReadOnlyList<LocalSection> ActiveSections(LocalDocument document) => document.Sections
         .Where(s => document.Project is null || document.Project.Nodes.Any(n => n.NodeType == "scene" && n.SectionId == s.SectionId && n.DeletionId is null))
         .OrderBy(s => s.OrderIndex).ToArray();
-    public static readonly (string Key, string Field)[] SynopsisFields = [("logline","Logline"),("premise","Premise"),("theme","Theme"),
-        ("protagonist_arc","ProtagonistArc"),("central_conflict","CentralConflict"),("stakes","Stakes"),("setting","Setting"),
-        ("ending_intent","EndingIntent"),("open_questions","OpenQuestions"),("notes","Notes")];
-    public static AdvancedAiPrepared Build(LocalDocument doc, Guid sectionId, AdvancedAiAction action, string field = "logline", string instruction = "")
+    public static readonly (string Key, string Field)[] SynopsisFields = WriterApp.Shared.SynopsisCoaching.Fields.Select(f => (f.Key, f.Property)).ToArray();
+    public static AdvancedAiPrepared Build(LocalDocument doc, Guid sectionId, AdvancedAiAction action, string field = "logline", string instruction = "", IReadOnlyList<ConsistencyPageText>? consistencyPages = null)
     {
         if (!Enum.IsDefined(action)) throw new InvalidDataException("Unknown AI action.");
         if (instruction.Length > 2000) throw new InvalidDataException("Use at most 2,000 characters for coaching notes.");
@@ -29,8 +27,10 @@ public static class AdvancedAiRequests
         var page = section.Pages.OrderBy(p => p.OrderIndex).FirstOrDefault()
             ?? throw new InvalidDataException("Add a page to this section before using AI.");
         foreach (var p in section.Pages) DeviceContentCompatibility.RequireEditable(p.Content, p.ContentFormat);
-        var baseRequest = DeviceAiRequests.Build(doc, section, page, new AiEditorSnapshot(page.Content, DeviceAiRequests.PlainText(page), "", 0, 0, 0, 0, 0), DeviceAiAction.Summarize);
-        string context = DeviceAiRequests.SectionText(section, page.PageId, DeviceAiRequests.PlainText(page));
+        string context = consistencyPages is not null && action is AdvancedAiAction.Consistency or AdvancedAiAction.SceneCard
+            ? string.Join("\n\n", section.Pages.OrderBy(p => p.OrderIndex).Select(p => consistencyPages.Single(t => t.PageId == p.PageId).PlainText))
+            : DeviceAiRequests.SectionText(section, page.PageId, DeviceAiRequests.PlainText(page));
+        var baseRequest = DeviceAiRequests.Build(doc, section, page, new AiEditorSnapshot(page.Content, DeviceAiRequests.PlainText(page), "", 0, 0, 0, 0, 0), DeviceAiAction.Summarize, sectionContext: context);
         var node = doc.Project?.Nodes.SingleOrDefault(n => n.SectionId == sectionId && n.NodeType == "scene" && n.DeletionId is null);
         var parameters = new Dictionary<string, object?>(); string key; LocalAiTarget target = LocalAiTarget.Analysis;
         switch (action)
@@ -58,8 +58,7 @@ public static class AdvancedAiRequests
                 if (doc.Project is null) throw new InvalidDataException("Select a project before storyboard analysis.");
                 key = "storyboard.check-subplot-continuity";
                 if (!string.IsNullOrWhiteSpace(instruction)) parameters["instruction"] = instruction;
-                parameters["storyboard_context"] = JsonSerializer.Serialize(doc.Project.Nodes.Where(n => n.DeletionId is null)
-                    .Select(n => new { n.NodeId, n.ParentId, n.OrderIndex, n.NodeType, n.Title, n.Card })); break;
+                parameters["storyboard_context"] = StoryboardContext(doc); break;
             default: throw new InvalidDataException("Unknown AI action.");
         }
         var request = baseRequest with
@@ -75,20 +74,14 @@ public static class AdvancedAiRequests
         };
         return new(doc, sectionId, node?.NodeId, target == LocalAiTarget.SynopsisField ? field : "", target, request);
     }
-    public static string SynopsisValue(SyncSynopsis synopsis, string field) => field switch
+    public static string SynopsisValue(SyncSynopsis synopsis, string field) => WriterApp.Shared.SynopsisCoaching.Value(synopsis, field);
+    public static string StoryboardContext(LocalDocument doc)
     {
-        "logline" => synopsis.Logline,
-        "premise" => synopsis.Premise,
-        "theme" => synopsis.Theme,
-        "protagonist_arc" => synopsis.ProtagonistArc,
-        "central_conflict" => synopsis.CentralConflict,
-        "stakes" => synopsis.Stakes,
-        "setting" => synopsis.Setting,
-        "ending_intent" => synopsis.EndingIntent,
-        "open_questions" => synopsis.OpenQuestions,
-        "notes" => synopsis.Notes,
-        _ => throw new InvalidDataException("Unknown synopsis field.")
-    };
+        var project = doc.Project ?? throw new InvalidDataException("Select a project before storyboard analysis.");
+        return WriterApp.Shared.StoryboardAnalysis.Build(project.Title, project.Nodes.Where(n => n.DeletionId is null)
+            .Select(n => new WriterApp.Shared.StoryboardAnalysisNode(n.NodeId, n.ParentId, n.OrderIndex, n.NodeType, n.Title,
+                n.Card, n.MetadataJson)));
+    }
     public static void RequireFresh(LocalDocument current, AdvancedAiPrepared prepared)
     {
         // Sync acknowledgments and no-op saves can advance the local revision while

@@ -25,5 +25,7 @@ namespace WriterApp.Data.AI
         public DateTimeOffset CreatedUtc { get; set; }
 
         public DateTimeOffset UpdatedUtc { get; set; }
+        public int? Scope { get; set; }
+        public bool Pinned { get; set; }
     }
 }

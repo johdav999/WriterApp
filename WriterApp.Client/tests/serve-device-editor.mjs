@@ -3,11 +3,14 @@ import { readFile } from 'node:fs/promises';
 
 // Serve only the test harness and the two shipped assets, never the repository or user documents.
 const routes = new Map([
+  ['/WriterApp.Client/wwwroot/js/web-ai-history-outbox.js', [new URL('../wwwroot/js/web-ai-history-outbox.js', import.meta.url), 'text/javascript']],
   ['/WriterApp.UI.Shared/wwwroot/design-tokens.css', [new URL('../../WriterApp.UI.Shared/wwwroot/design-tokens.css', import.meta.url), 'text/css']],
   ['/WriterApp.Device.Shared/wwwroot/app.css', [new URL('../../WriterApp.Device.Shared/wwwroot/app.css', import.meta.url), 'text/css']],
   ['/WriterApp.UI.Shared/wwwroot/editor.css', [new URL('../../WriterApp.UI.Shared/wwwroot/editor.css', import.meta.url), 'text/css']],
   ['/WriterApp.Client/wwwroot/js/tiptap-editor.bundle.js', [new URL('../wwwroot/js/tiptap-editor.bundle.js', import.meta.url), 'text/javascript']],
+  ['/WriterApp.Client/wwwroot/js/tiptap-editor-patch.js', [new URL('../wwwroot/js/tiptap-editor-patch.js', import.meta.url), 'text/javascript']],
   ['/WriterApp.Client/tests/device-editor.html', [new URL('./device-editor.html', import.meta.url), 'text/html']],
+  ['/WriterApp.Client/tests/history-outbox.html', [new URL('./history-outbox.html', import.meta.url), 'text/html']],
   ['/WriterApp.Device.Shared/wwwroot/editor/device-editor.js', [new URL('../../WriterApp.Device.Shared/wwwroot/editor/device-editor.js', import.meta.url), 'text/javascript']],
   ['/WriterApp.Device.Shared/wwwroot/editor/device-editor.css', [new URL('../../WriterApp.Device.Shared/wwwroot/editor/device-editor.css', import.meta.url), 'text/css']]
 ]);

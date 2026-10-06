@@ -1,0 +1,7 @@
+{
+  "TenantId": "a000a187-b940-41c1-bebe-f30c4a351099",
+  "Authority": "https://prosaapp.ciamlogin.com/",
+  "ClientId": "",
+  "RedirectUri": "msauth.com.prosa.writer.ios://auth",
+  "Scopes": ["api://c0ecc793-e620-416c-a072-4e9eca30f048/access_as_user"]
+}

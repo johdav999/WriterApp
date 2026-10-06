@@ -8,8 +8,9 @@
 <style>* { box-sizing: border-box; }</style></head>
 <body><h1>Device editor verification</h1><ol id="results"></ol><div class="prosa-editor"><div id="editor" class="device-tiptap"></div></div>
 <script type="module">
-import { create } from '../../WriterApp.Device.Shared/wwwroot/editor/device-editor.js';
+import { create, previewConsistencyRevision, previewQualityRevision, previewTargetedQualityRevision, validateQualityRange, consistencyPlainText, previewSafeConsistencyRevision, captureTranslation, previewTranslation, previewContinuation, qualityPlainText } from '../../WriterApp.Device.Shared/wwwroot/editor/device-editor.js';
 import '../wwwroot/js/tiptap-editor.bundle.js';
+import '../wwwroot/js/tiptap-editor-patch.js';
 const results = document.querySelector('#results');
 const host = document.querySelector('#editor');
 const calls = [];
@@ -269,6 +270,20 @@ await test('annotation markup spans marks and Unicode, opens comments, and stays
  editor.setAnnotations([]); assert(!host.querySelector('.wa-annotation'), 'Old markup remained');
  editor.destroy();
 });
+await test('annotation colors remain visible when the device editor is hosted without the web editor wrapper', async () => {
+ const standalone = document.createElement('div'); standalone.className = 'device-tiptap'; document.body.append(standalone);
+ const standaloneEditor = create(standalone, '<p>Comment passage. Task passage.</p>', 'Html', receiver, true);
+ try {
+   standaloneEditor.setAnnotations([
+     {id:'comment',quote:'Comment passage.',kind:'comment',status:'open',content:'Comment title'},
+     {id:'task',quote:'Task passage.',kind:'todo',status:'open',content:'Task title'}
+   ]);
+   const comment = getComputedStyle(standalone.querySelector('.wa-annotation-comment')).backgroundColor;
+   const task = getComputedStyle(standalone.querySelector('.wa-annotation-todo')).backgroundColor;
+   assert(comment !== 'rgba(0, 0, 0, 0)' && task !== 'rgba(0, 0, 0, 0)', 'Device editor depends on a web wrapper for annotation colors');
+   assert(comment !== task, 'Comments and tasks use the same color');
+ } finally { standaloneEditor.destroy(); standalone.remove(); }
+});
 await test('annotation selection remains available while typing in an external comment box', async () => {
  editor = create(host, '<p>Before <strong>selected passage</strong> after</p>', 'Html', receiver, true);
  const before = editor.snapshot();
@@ -286,6 +301,29 @@ await test('annotation selection remains available while typing in an external c
    assert(window.getSelection().toString() === 'selected passage', 'Navigation did not select the annotated passage');
    assert(JSON.stringify(editor.snapshot()) === JSON.stringify(before), 'Annotation flow changed writing');
  } finally { comment.remove(); editor.destroy(); }
+});
+await test('a long annotation link reveals the start of its passage inside the writing viewport', async () => {
+ const viewport = document.createElement('div'); viewport.className = 'editor-viewport';
+ viewport.style.cssText = 'height:220px;max-height:220px;overflow:auto';
+ host.before(viewport); viewport.append(host);
+ const passage = 'The train eased into Vinterhamn just after sunset. '.repeat(35);
+ editor = create(host, '<p>Before the passage.</p><p>' + passage + '</p><p>After the passage.</p>', 'Html', receiver, true);
+ await settle();
+ const before = editor.snapshot();
+ editor.setAnnotations([{id:'long-quote', quote:passage, kind:'comment', status:'open', content:'Arrival'}]);
+ const title = document.createElement('button'); title.textContent = 'Arrival'; document.body.append(title);
+ title.addEventListener('click', () => editor.navigateToAnnotation('long-quote'));
+ try {
+   viewport.scrollTop = viewport.scrollHeight; title.focus(); title.click(); await settle();
+   const span = host.querySelector('[data-annotation-id="long-quote"]');
+   assert(span, 'The full paragraph was not highlighted');
+   const start = document.createRange(); start.setStart(span.firstChild,0); start.setEnd(span.firstChild,1);
+   const bounds = viewport.getBoundingClientRect(), position = start.getBoundingClientRect();
+   assert(position.top >= bounds.top && position.bottom <= bounds.bottom, `Jump left the start of the annotation outside the writing viewport (start ${position.top}, bottom ${position.bottom}, viewport ${bounds.top} to ${bounds.bottom}, scroll ${viewport.scrollTop})`);
+   assert(document.activeElement === host.querySelector('.tiptap'), 'Title click did not focus the writing');
+   assert(editor.selectedText() === passage, 'Title click selected the wrong passage');
+   assert(JSON.stringify(editor.snapshot()) === JSON.stringify(before), 'Jump changed saved writing');
+ } finally { title.remove(); editor.destroy(); viewport.before(host); viewport.remove(); }
 });
 await test('annotation markup revalidates quotes after typing and undo without entering history', async () => {
  editor = create(host, '<p>Before unique quote after</p>', 'Html', receiver, true);
@@ -449,6 +487,682 @@ await test('web writing background contains the continuous section canvas', asyn
   assert(viewport.scrollTop > 0 && text.lastElementChild.getBoundingClientRect().bottom <= viewport.getBoundingClientRect().bottom + 1, 'Cannot reach final web paragraph');
  } finally { window.tiptapEditor.destroy(web); fixture.remove(); }
 });
+await test('consistency revision preserves paragraphs, marks, and surrounding writing without changing the live editor', async () => {
+ const fixture = document.createElement('div'); document.body.append(fixture);
+ const live = create(fixture, '<p>Unrelated live writing</p>', 'Html', receiver, true);
+ try {
+ const before = live.snapshot().html;
+ const result = previewConsistencyRevision('<p>The train arrived.</p><p>Elin carried a <strong>heavy</strong> suitcase.</p>', 'Html', 'heavy', 'light');
+ assert(result === '<p>The train arrived.</p><p>Elin carried a <strong>light</strong> suitcase.</p>', result);
+ assert(live.snapshot().html === before, 'Preview changed live writing');
+ const next = previewConsistencyRevision(result, 'Html', 'The train arrived.', 'The train left.');
+ assert(next.includes('<strong>light</strong>') && next.includes('The train left.'), 'Second suggestion lost earlier revision');
+ } finally { live.destroy(); fixture.remove(); }
+});
+await test('consistency deletion removes only the later train arrival, preserving the first arrival and formatting', async () => {
+ const first = 'The train gently pulled into Vinterhamn. Elin stepped off.';
+ const quote = 'Then the train entered the station.';
+ const html = `<p>${first}</p><p>She smiled. ${quote}</p><p><strong>Jonas took her suitcase.</strong></p>`;
+ const start = consistencyPlainText(html, 'Html').indexOf(quote);
+ const after = previewSafeConsistencyRevision(html, 'Html', start, quote, '');
+ assert(after === `<p>${first}</p><p>She smiled. </p><p><strong>Jonas took her suitcase.</strong></p>`, after);
+ const repeated = '<p>The train arrived.</p><p>The train arrived.</p>';
+ const second = consistencyPlainText(repeated, 'Html').lastIndexOf('The train arrived.');
+ assert(previewSafeConsistencyRevision(repeated, 'Html', second, 'The train arrived.', '') === '<p>The train arrived.</p><p></p>', 'Deleted wrong arrival');
+});
+await test('consistency revision keeps provider HTML inert and supports legacy writing and paragraph spans', async () => {
+ const escaped = previewConsistencyRevision('<p>Original writing</p>', 'Html', 'Original', '<script>alert(1)</scr' + 'ipt>');
+ assert(!escaped.includes('<script>') && escaped.includes('&lt;script&gt;'), 'Provider HTML executed');
+ assert(previewConsistencyRevision('Alpha beta', 'LegacyText', 'beta', 'gamma') === '<p>Alpha gamma</p>', 'Legacy conversion failed');
+ const result = previewConsistencyRevision('<p>Alpha beta</p><p>Gamma delta</p>', 'Html', 'beta\nGamma', 'new\nnext');
+ assert(result === '<p>Alpha new</p><p>next delta</p>', result);
+});
+await test('consistency revision rejects missing and ambiguous writing', async () => {
+ for (const content of ['<p>Later edits</p>', '<p>heavy heavy</p>']) {
+  let rejected = false;
+  try { previewConsistencyRevision(content, 'Html', 'heavy', 'light'); } catch { rejected = true; }
+  assert(rejected, 'Unsafe replacement accepted');
+ }
+});
+await test('quality preview targets the second identical sentence and preserves surrounding marks', async () => {
+ const html = '<p>Elin <strong>carried carried</strong> her suitcase.</p><p>Elin <strong>carried carried</strong> her suitcase.</p><p><a href="https://example.org/">Keep link</a></p>';
+ const sentence = 'Elin carried carried her suitcase.';
+ const start = sentence.length + 2 + 'Elin '.length;
+ const result = previewQualityRevision(html, 'Html', start, start + 'carried carried'.length, 'carried carried', 'carried');
+ assert(result.startsWith('<p>Elin <strong>carried carried</strong> her suitcase.</p>'), 'Changed first occurrence');
+ assert(result.includes('<p>Elin <strong>carried</strong> her suitcase.</p>'), result);
+ assert(result.includes('href="https://example.org/"') && result.includes('Keep link'), 'Changed unrelated link');
+});
+await test('quality Unicode offsets support exact marked passages and table siblings', async () => {
+ const html = '<p>🧭 Åsa <em>was invited</em> by Elin.</p><table><tbody><tr><td><p>Untouched cell</p></td></tr></tbody></table>';
+ const expected = 'was invited', start = '🧭 Åsa '.length;
+ const result = previewQualityRevision(html, 'Html', start, start + expected.length, expected, 'received an invitation');
+ assert(result.includes('<em>received an invitation</em>'), result);
+ assert(result.includes('🧭 Åsa') && result.includes('<table') && result.includes('Untouched cell'), 'Lost Unicode or table content: ' + result);
+ const inert = previewQualityRevision('<p>Alpha beta</p>', 'Html', 6, 10, 'beta', '<b>inert</b>');
+ assert(inert.includes('&lt;b&gt;inert&lt;/b&gt;') && !inert.includes('<b>inert'), 'Provider markup was trusted');
+});
+await test('quality highlights and keyboard Jump preserve HTML, version and caret until typing invalidates them', async () => {
+ editor = create(host, '<p>🧭 Åsa waited. Anna Anna waited.</p>', 'Html', receiver, true);
+ try {
+  const source = editor.captureAi(true, false, true), start = source.plainText.lastIndexOf('Anna');
+  const item = { issueKey:'repeated', from:start, to:start+4, expectedText:'Anna', severity:'info' };
+  editor.navigateToText('Åsa'); const caret = editor.captureAi(false, true);
+  editor.setQualityHighlights(source.plainText, [item], 'repeated');
+  const highlighted = editor.captureAi(false, true);
+  assert(highlighted.html === source.html && highlighted.version === source.version, 'Decorations changed content/version');
+  assert(highlighted.from === caret.from && highlighted.to === caret.to, 'Decorations reset caret');
+  assert(host.querySelector('.wa-quality-selected')?.textContent === 'Anna', 'Missing exact highlight');
+  const callbacks = calls.length;
+  assert(editor.navigateToQuality(source.plainText, item), 'Jump failed');
+  const target = editor.captureAi(false, true);
+  assert(target.selectedText === 'Anna' && target.selectionStart === start, 'Jump targeted wrong duplicate');
+  assert(calls.slice(callbacks).every(c => !c.name.startsWith('OnContentChanged')), 'Jump emitted a writing change');
+  editor.applyAi(source.html, target.from, target.to, target.selectedText, 'Elin', 'replace');
+  assert(!host.querySelector('.wa-quality'), 'Typing/replacement retained stale decoration');
+  assert(!editor.navigateToQuality(source.plainText, item), 'Stale source allowed Jump');
+  editor.setQualityHighlights(source.plainText, [item], 'repeated');
+  assert(!host.querySelector('.wa-quality'), 'Stale source created highlights');
+ } finally { editor.destroy(); }
+});
+await test('quality filters remove decorations without content updates and hard-break ranges remain exact', async () => {
+ editor = create(host, '<p>One<br>Anna Anna waited.</p><p>Final writing.</p>', 'Html', receiver, true);
+ try {
+  const source = editor.captureAi(true, false, true), start = source.plainText.lastIndexOf('Anna');
+  const item = { issueKey:'hard-break', from:start, to:start+4, expectedText:'Anna', severity:'warning' };
+  editor.setQualityHighlights(source.plainText, [item], null);
+  assert(host.querySelector('.wa-quality-warning'), 'Hard break offset mismatch');
+  assert(editor.navigateToQuality(source.plainText, item), 'Hard break Jump failed');
+  const before = editor.captureAi(false, true);
+  editor.setQualityHighlights(source.plainText, [], null);
+  const after = editor.captureAi(false, true);
+  assert(before.html === after.html && before.version === after.version && before.from === after.from, 'Filtering changed editor');
+  const result = previewQualityRevision(source.html, 'Html', start, start+4, 'Anna', 'Elin');
+  assert(result.includes('<br>Anna Elin waited.') && result.includes('Final writing.'), result);
+ } finally { editor.destroy(); }
+});
+await test('quality local paragraph split preserves block attributes, marks and unrelated content', async () => {
+ const html = '<p style="text-align: center; margin-left: 2em;"><em>Alpha beta. Gamma delta.</em></p><p>Untouched ending.</p>';
+ const expected = 'Alpha beta. Gamma delta.';
+ const result = previewQualityRevision(html, 'Html', 0, expected.length, expected, 'Alpha beta.\n\nGamma delta.');
+ const fixture = document.createElement('div'); fixture.innerHTML = result;
+ const paragraphs = fixture.querySelectorAll('p');
+ assert(paragraphs.length === 4 && paragraphs[3].textContent === 'Untouched ending.', result);
+ for (const paragraph of [...paragraphs].slice(0,3)) {
+  assert(paragraph.style.textAlign === 'center' && paragraph.style.marginLeft === '2em', 'Split lost block attributes: ' + result);
+ }
+ assert(paragraphs[0].querySelector('em')?.textContent === 'Alpha beta.' && paragraphs[2].querySelector('em')?.textContent === 'Gamma delta.', 'Split lost inline marks');
+});
+await test('quality paragraph capture separates blocks from hard breaks and maps second-block highlights', async () => {
+ editor = create(host, '<p>First<br>line.</p><p>Second paragraph.</p>', 'Html', receiver, true);
+ try {
+  const quality = editor.captureAi(true, false, true);
+  assert(quality.plainText === 'First\nline.\n\nSecond paragraph.', quality.plainText);
+  assert(editor.captureAi(true).plainText === 'First\nline.\nSecond paragraph.', 'Changed general AI mapping');
+  const start = quality.plainText.indexOf('Second');
+  const item = { issueKey:'paragraph', from:start, to:start+6, expectedText:'Second', severity:'info' };
+  editor.setQualityHighlights(quality.plainText, [item], 'paragraph');
+  assert(host.querySelector('.wa-quality-selected')?.textContent === 'Second', 'Second paragraph highlight');
+  assert(editor.navigateToQuality(quality.plainText, item), 'Second paragraph Jump');
+  assert(editor.captureAi(false, true, true).selectionStart === start, 'Second paragraph selected offset');
+  const result = previewQualityRevision(quality.html, 'Html', start, start+6, 'Second', 'Next');
+  assert(result === '<p>First<br>line.</p><p>Next paragraph.</p>', result);
+ } finally { editor.destroy(); }
+});
+await test('quality history refresh can restore legacy source without interpreting it as HTML', async () => {
+ editor = create(host, '<p>Approved writing</p>', 'Html', receiver, true);
+ try {
+  const beforeCalls = calls.length;
+  editor.setContent('Original <script> writing', 'LegacyText');
+  assert(editor.snapshot().html === '<p>Original &lt;script&gt; writing</p>', editor.snapshot().html);
+  assert(!host.querySelector('script') && calls.slice(beforeCalls).every(c => !c.name.startsWith('OnContentChanged')), 'Restore interpreted legacy source or emitted an edit');
+  const json = JSON.stringify({type:'doc',content:[{type:'paragraph',content:[{type:'text',text:'Original marked writing',marks:[{type:'italic'}]}]}]});
+  editor.setContent(json, 'LegacyJson');
+  assert(editor.snapshot().html === '<p><em>Original marked writing</em></p>', editor.snapshot().html);
+ } finally { editor.destroy(); }
+});
+await test('quality preview rejects invalid ranges, mismatched targets, missing source and unsupported content', async () => {
+ for (const args of [
+  ['<p>Alpha beta</p>','Html',-1,3,'beta','new'],
+  ['<p>Alpha beta</p>','Html',6,11,'beta','new'],
+  ['<p>Alpha beta</p>','Html',6,10,'nope','new'],
+  ['<p>Later edit</p>','Html',6,10,'beta','new'],
+  ['<p>Alpha beta</p>','Html',1,5,'lpha','new'],
+  ['<p>🧭 Beta</p>','Html',1,2,'\uDDED','new'],
+  ['<iframe src="https://invalid/"></iframe>','Html',0,4,'beta','new'],
+  ['<p>Alpha <strong>beta</strong></p>','Html',0,10,'Alpha beta','New prose'],
+  ['<p>Alpha</p><p>beta</p>','Html',0,11,'Alpha\n\nbeta','New prose'],
+  ['<p>Alpha<br>beta</p>','Html',0,10,'Alpha\nbeta','New prose']
+ ]) {
+  let rejected = false; try { previewQualityRevision(...args); } catch { rejected = true; }
+  assert(rejected, 'Unsafe quality replacement accepted');
+ }
+});
+await test('consistency capture uses exact editor text including lists, hard breaks, tables and legacy JSON', async () => {
+ const content = '<h2>Heading</h2><p>Elin<br>arrived.</p><ul><li><p>Suitcase</p></li><li><p>Train</p></li></ul><table><tbody><tr><td><p>Cell</p></td></tr></tbody></table>';
+ editor.destroy(); editor = create(host, content, 'Html', receiver);
+ assert(consistencyPlainText(content, 'Html') === editor.captureAi(true).plainText, 'Detached/live mappings differ');
+ assert(consistencyPlainText('Inert <b>text</b>\nNext', 'LegacyText') === 'Inert <b>text</b>\nNext', 'Legacy text interpreted as markup');
+ const legacy = JSON.stringify({type:'doc',content:[{type:'paragraph',content:[{type:'text',text:'Alpha'}]},{type:'paragraph',content:[{type:'text',text:'Beta'}]}]});
+ assert(consistencyPlainText(legacy, 'LegacyJson') === 'Alpha\nBeta', 'Legacy JSON mapping lost text');
+});
+await test('consistency Jump selects exact marked passage with stable content and version', async () => {
+ editor.destroy(); editor = create(host, '<p>heavy then <strong>heavy</strong> suitcase.</p>', 'Html', receiver);
+ const before = editor.snapshot(), plain = editor.captureAi(true).plainText;
+ assert(editor.navigateToConsistency(plain, 11, 'heavy'), 'Verified repeated anchor refused');
+ const capture = editor.captureAi(false, true);
+ assert(capture.selectedText === 'heavy' && capture.selectionStart === 11, 'Jump selected wrong passage');
+ const highlight = host.querySelector('.wa-consistency-passage');
+ assert(highlight?.textContent === 'heavy' && highlight.closest('strong'), 'Jump did not highlight the exact repeated marked passage');
+ assert(getComputedStyle(highlight).backgroundColor === 'rgb(255, 226, 122)', 'Passage has no visible color');
+ assert(editor.snapshot().html === before.html && editor.snapshot().version === before.version, 'Jump mutated writing');
+ assert(!editor.navigateToConsistency('stale', 11, 'heavy'), 'Stale source selected');
+ assert(!host.querySelector('.wa-consistency-passage'), 'Failed jump left a misleading old highlight');
+ assert(!editor.navigateToConsistency(plain, 10, 'heavy'), 'Invalid anchor selected');
+});
+await test('consistency highlight survives coach focus and rerenders, replaces the previous passage, and never saves formatting', async () => {
+ editor.destroy(); editor = create(host, '<p>First <strong>marked</strong> passage.</p><p>Second passage.</p>', 'Html', receiver);
+ const before = editor.snapshot(), plain = editor.captureAi(true).plainText, callCount = calls.filter(c => c.name === 'OnContentChanged').length;
+ assert(editor.navigateToConsistency(plain, 0, 'First marked passage.'), 'Rich passage jump failed');
+ assert([...host.querySelectorAll('.wa-consistency-passage')].map(e => e.textContent).join('') === 'First marked passage.', 'Rich passage highlight lost text');
+ const coach = document.createElement('button'); coach.textContent = 'Coach action'; host.before(coach); coach.focus(); await settle();
+ assert(host.querySelector('.wa-consistency-passage'), 'Coach focus removed highlight');
+ editor.setContent(before.html); editor.setAnnotations([]);
+ assert(host.querySelector('.wa-consistency-passage'), 'Unchanged rerender removed highlight');
+ assert(editor.navigateToConsistency(plain, plain.indexOf('Second'), 'Second passage.'), 'Second passage jump failed');
+ assert([...host.querySelectorAll('.wa-consistency-passage')].map(e => e.textContent).join('') === 'Second passage.', 'Old passage remained highlighted');
+ assert(editor.snapshot().html === before.html && editor.snapshot().version === before.version, 'Highlight altered saved HTML/version');
+ assert(calls.filter(c => c.name === 'OnContentChanged').length === callCount, 'Highlight emitted a save callback');
+ coach.remove();
+});
+await test('consistency highlight can be cleared after discard or tab change without editing or resetting selection', async () => {
+ editor.destroy(); editor = create(host, '<p>First <strong>marked</strong> passage.</p>', 'Html', receiver);
+ const before = editor.snapshot(), plain = editor.captureAi(true).plainText;
+ const callCount = calls.filter(c => c.name === 'OnContentChanged').length;
+ assert(editor.navigateToConsistency(plain, 0, 'First marked passage.'), 'Passage jump failed');
+ const selected = editor.captureAi(false, true);
+ editor.clearConsistencyHighlight(); editor.setContent(before.html); editor.setAnnotations([]);
+ assert(!host.querySelector('.wa-consistency-passage'), 'Discard/tab change retained or restored highlight');
+ assert(editor.snapshot().html === before.html && editor.snapshot().version === before.version, 'Clear altered writing/version');
+ assert(editor.captureAi(false, true).selectedText === selected.selectedText, 'Clear moved selection');
+ assert(calls.filter(c => c.name === 'OnContentChanged').length === callCount, 'Clear emitted a save callback');
+ editor.clearConsistencyHighlight();
+ assert(editor.navigateToConsistency(plain, 0, 'First marked passage.'), 'Passage could not be highlighted again');
+ assert(host.querySelector('.wa-consistency-passage'), 'Next jump did not restore highlighting');
+});
+await test('consistency highlight spans paragraph breaks and clears on text edits, undo and page replacement', async () => {
+ editor.destroy(); editor = create(host, '<p>First line</p><p>Second line</p>', 'Html', receiver);
+ const before = editor.snapshot(), plain = editor.captureAi(true).plainText;
+ assert(editor.navigateToConsistency(plain, 6, 'line\nSecond'), 'Cross-paragraph jump failed');
+ assert([...host.querySelectorAll('.wa-consistency-passage')].map(e => e.textContent).join('|') === 'line|Second', 'Cross-paragraph highlight incorrect');
+ editor.applyAi(before.html, 1, 6, 'First', 'Revised', 'replace');
+ assert(!host.querySelector('.wa-consistency-passage'), 'Text edit retained stale highlight');
+ click('Undo'); assert(!host.querySelector('.wa-consistency-passage'), 'Undo restored transient highlighting');
+ assert(editor.snapshot().html === before.html, 'Highlight interfered with text undo');
+ assert(editor.navigateToConsistency(plain, 0, 'First'), 'Repeated jump failed');
+ editor.setContent('<p>Different page</p>');
+ assert(!host.querySelector('.wa-consistency-passage'), 'Page replacement retained stale highlighting');
+});
+await test('safe consistency preview targets a verified repeated phrase and retains heading attributes and links', async () => {
+ const content = '<h2 style="text-align: center;">heavy then <strong>heavy</strong> suitcase.</h2><p><a href="https://example.com/">Keep link</a></p>';
+ const after = previewSafeConsistencyRevision(content, 'Html', 11, 'heavy', 'light');
+ assert(after.includes('heavy then <strong>light</strong>'), 'Wrong repeated phrase replaced');
+ assert(after.includes('text-align: center') && after.includes('<h2') && after.includes('href="https://example.com/"'), 'Unrelated structure lost');
+});
+await test('safe consistency preview rejects changed source, partial words, mixed marks and cross-block replacements', async () => {
+ for (const args of [
+  ['<p>Alpha heavy</p>','Html',6,'missing','light'],
+  ['<p>Alpha heavy</p>','Html',7,'eavy','light'],
+  ['<p>Alpha <strong>heavy</strong></p>','Html',0,'Alpha heavy','New prose'],
+  ['<p>Alpha</p><p>heavy</p>','Html',0,'Alpha\nheavy','New prose'],
+  ['<p>Alpha<br>heavy</p>','Html',0,'Alpha\nheavy','New prose'],
+  ['<p>Alpha heavy</p>','Html',6,'heavy','new\nparagraph']
+ ]) { let rejected = false; try { previewSafeConsistencyRevision(...args); } catch { rejected = true; } assert(rejected, 'Unsafe span accepted'); }
+});
+await test('safe consistency revisions preserve unrelated table content and can be reopened and restored', async () => {
+ const before = '<p>Elin carried a <strong>heavy</strong> suitcase.</p><table><tbody><tr><td><p>Keep table</p></td></tr></tbody></table>';
+ const after = previewSafeConsistencyRevision(before, 'Html', 15, 'heavy', 'light');
+ editor.destroy(); editor = create(host, after, 'Html', receiver);
+ assert(editor.captureAi(true).plainText.startsWith('Elin carried a light suitcase.'), 'Reopened revision missing');
+ assert(editor.snapshot().html.includes('<table') && editor.snapshot().html.includes('Keep table'), 'Table lost');
+ const restored = editor.restoreAi(editor.snapshot().html, before);
+ assert(restored.html.includes('<strong>heavy</strong>') && restored.html.includes('Keep table'), 'Restore lost original structure');
+});
+await test('translation maps Unicode text runs across complete rich pages and preserves structure', async () => {
+ const pages = [
+  '<h2 style="text-align: center;">Åsa 日本語 🧭</h2><p>She <strong>arrived</strong><br>today.</p><ul><li><p>First</p></li><li><p>Second</p></li></ul>',
+  '<blockquote><p>Quoted writing</p></blockquote><table><tbody><tr><th><p>Heading</p></th><td><p><a href="https://example.com/">Linked text</a></p></td></tr></tbody></table>',
+  '<p></p>'
+ ];
+ for (const page of pages) {
+  const source = captureTranslation(page, 'Html');
+  const translated = source.runs.map(run => ({...run, text: run.text + ' translated'}));
+  const html = previewTranslation(page, 'Html', translated);
+  const reopened = captureTranslation(html, 'Html');
+  assert(JSON.stringify(reopened.runs) === JSON.stringify(translated), 'Reopen lost translation mapping');
+  const structural = html.replace(/ translated/g, '');
+  editor.destroy(); editor = create(host, page, 'Html', receiver);
+  assert(structural === editor.snapshot().html, 'Block attributes/marks/list/table/link lost');
+ }
+});
+await test('translation retains legacy JSON and treats provider markup as inert text', async () => {
+ const json = JSON.stringify({type:'doc',content:[{type:'heading',attrs:{level:2},content:[{type:'text',text:'日本語',marks:[{type:'bold'}]}]}]});
+ const source = captureTranslation(json,'LegacyJson');
+ const html = previewTranslation(json,'LegacyJson',source.runs.map(run => ({...run,text:'<b>inert</b> 🧭'})));
+ assert(html.includes('<h2>') && html.includes('<strong>') && html.includes('&lt;b&gt;') && !html.includes('<b>'), 'JSON formatting lost or HTML executed');
+ const plain = 'Inert <b>text</b>\nSecond page';
+ const runs = captureTranslation(plain,'LegacyText').runs;
+ assert(runs.length === 2 && runs[0].text.includes('<b>'), 'Legacy text flattened or interpreted');
+});
+await test('translation refuses partial duplicate reordered runs before preview', async () => {
+ const content = '<p>First <strong>marked</strong> last.</p>';
+ const runs = captureTranslation(content,'Html').runs;
+ for (const invalid of [runs.slice(1), [...runs,runs[0]], [...runs].reverse(), runs.map((run,index) => index ? run : {...run,text:'new\nblock'})]) {
+  let rejected = false; try { previewTranslation(content,'Html',invalid); } catch { rejected = true; }
+  assert(rejected, 'Partial/duplicate/reordered/structural output accepted');
+ }
+});
+await test('translation rejects unsupported sources without changing the editor', async () => {
+ const before = editor.snapshot();
+ for (const [content,format] of [
+  ['<p>Text</p><img src="/image.png" alt="Caption">','Html'], ['<pre><code>code</code></pre>','Html'], ['<p><code>code</code></p>','Html'],
+  ['<iframe src="https://example.com/"></iframe>','Html'], ['<p style="color:red">Text</p>','Html'],
+  ['<p>Text</p><!-- hidden -->','Html'], [JSON.stringify({type:'doc',content:[{type:'unknown'}]}),'LegacyJson']
+ ]) { let rejected=false; try { captureTranslation(content,format); } catch { rejected=true; } assert(rejected, 'Unsupported source accepted'); }
+ assert(editor.snapshot().html === before.html && editor.snapshot().version === before.version, 'Preflight mutated live editor');
+});
+await test('translated pages reopen in both shipped hosts with paragraph and mark preservation', async () => {
+ const source = '<h2>日本語</h2><p>Keep <em>emphasis</em><br>Break</p>';
+ const runs = captureTranslation(source,'Html').runs.map(run => ({...run,text:run.text==='日本語' ? 'Japanese' : run.text}));
+ const html = previewTranslation(source,'Html',runs);
+ editor.destroy(); editor = create(host,html,'Html',receiver);
+ assert(editor.snapshot().html.includes('<em>emphasis</em>') && editor.snapshot().html.includes('<br>'), 'Device host lost formatting');
+ const webHost = document.createElement('div'); webHost.id='translation-web-fixture'; document.body.append(webHost);
+ const web = window.tiptapEditor.create(webHost.id,html,receiver);
+ await settle(); const fromWeb = window.tiptapEditor.getContent(web);
+ assert(fromWeb.includes('Japanese') && fromWeb.includes('<em>emphasis</em>') && fromWeb.includes('<br>'), 'Client host lost translated page');
+ window.tiptapEditor.destroy(web); webHost.remove();
+});
+await test('writing selection preflight uses exact editor mapping for HTML and both legacy formats', async () => {
+ for(const [content,format] of [['<h2>Heading 🧭</h2><p>Saved<br>writing 日本語</p>','Html'],['Literal <em>source</em> 🧭\nNext line','LegacyText'],[JSON.stringify({type:'doc',content:[{type:'paragraph',content:[{type:'text',text:'Legacy saved prose',marks:[{type:'bold'}]}]},{type:'paragraph',content:[{type:'text',text:'Next paragraph'}]}]}),'LegacyJson']]) {
+  editor.destroy();editor=create(host,content,format,receiver);
+  assert(qualityPlainText(content,format)===editor.captureAi(true,false,true).plainText,'Selection preflight disagrees with live editor');
+ }
+});
+await test('writing selection ending in a blank paragraph reviews only the selected prose', async () => {
+ editor = create(host, '<p>The train arrived. Elin stepped down, gripping a suitcase.</p><p></p><p>Untouched ending.</p>', 'Html', receiver, true);
+ try {
+  const paragraphs = host.querySelectorAll('.tiptap p');
+  const range = document.createRange();
+  range.setStart(paragraphs[0].firstChild, 'The train arrived. '.length);
+  range.setEnd(paragraphs[1], 0);
+  const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+  host.querySelector('.tiptap').focus(); await settle();
+  const before = editor.snapshot(), source = editor.captureAi(false, true, true);
+  assert(source.selectedText === 'Elin stepped down, gripping a suitcase.', JSON.stringify(source));
+  validateQualityRange(source.html, 'Html', source.selectionStart, source.selectionEnd, source.selectedText, true);
+  const revised = previewQualityRevision(source.html, 'Html', source.selectionStart, source.selectionEnd, source.selectedText, 'Elin stepped down slowly, holding her heavy suitcase.');
+  assert(revised === '<p>The train arrived. Elin stepped down slowly, holding her heavy suitcase.</p><p></p><p>Untouched ending.</p>', revised);
+  assert(JSON.stringify(editor.snapshot()) === JSON.stringify(before), 'Preview changed the live writing');
+ } finally { editor.destroy(); }
+});
+await test('writing capture excludes blank boundary blocks while retaining marks, whitespace and real block spans', async () => {
+ editor = create(host, '<p></p><p><em> Åsa waited 日本語 </em></p><p></p><p>Next paragraph.</p>', 'Html', receiver, true);
+ try {
+  const paragraphs = host.querySelectorAll('.tiptap p');
+  const range = document.createRange(); range.setStart(paragraphs[0], 0); range.setEnd(paragraphs[2], 0);
+  const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+  host.querySelector('.tiptap').focus(); await settle();
+  editor.setEditable(false);
+  const source = editor.captureAi(false, true, true);
+  editor.setEditable(true);
+  assert(source.selectedText === ' Åsa waited 日本語 ', 'Boundary normalization trimmed authored text');
+  validateQualityRange(source.html, 'Html', source.selectionStart, source.selectionEnd, source.selectedText, true);
+  const result = previewQualityRevision(source.html, 'Html', source.selectionStart, source.selectionEnd, source.selectedText, ' Åsa waited patiently 日本語 ');
+  assert(result === '<p></p><p><em> Åsa waited patiently 日本語 </em></p><p></p><p>Next paragraph.</p>', result);
+  range.setStart(paragraphs[1], 0); range.setEnd(paragraphs[3], 1);
+  selection.removeAllRanges(); selection.addRange(range);
+  host.querySelector('.tiptap').focus(); await settle();
+  const multiple = editor.captureAi(false, true, true);
+  assert(multiple.selectedText.includes('Next paragraph.'), 'Capture dropped selected content in a later block');
+  let rejected = false;
+  try { validateQualityRange(multiple.html, 'Html', multiple.selectionStart, multiple.selectionEnd, multiple.selectedText, true); }
+  catch (error) { rejected = error.message.includes('different formatting, blocks or embedded content'); }
+  assert(rejected, 'Cross-block safety validation was bypassed');
+ } finally { editor.destroy(); }
+});
+await test('Rewrite expands a drag ending inside stubbornly and reviews the exact complete target', async () => {
+ editor = create(host, '<p>The train arrived in Vinterhamn. The old station clock ticked steadily, its hands stubbornly three minutes slow, just like always.</p><p>Untouched ending.</p>', 'Html', receiver, true);
+ try {
+  const paragraph = host.querySelector('.tiptap p'), node = paragraph.firstChild;
+  const range = document.createRange(); range.setStart(node, 0); range.setEnd(node, node.textContent.indexOf('stubbornly') + 'stubbo'.length);
+  const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+  host.querySelector('.tiptap').focus(); await settle();
+  const before = editor.snapshot(), changes = calls.filter(c => c.name === 'OnContentChanged').length;
+  const partial = editor.captureAi(false, true, true);
+  let refused = false;
+  try { validateQualityRange(partial.html, 'Html', partial.selectionStart, partial.selectionEnd, partial.selectedText); }
+  catch (error) { refused = error.message.includes('whole words'); }
+  assert(refused, 'Original partial-word failure was not reproduced');
+  // Preview runs while the writing surface is locked by the owning panel.
+  editor.setEditable(false);
+  const source = editor.captureAi(false, true, true, true);
+  assert(source.selectedText.endsWith('stubbornly'), JSON.stringify(source));
+  validateQualityRange(source.html, 'Html', source.selectionStart, source.selectionEnd, source.selectedText);
+  const revised = previewQualityRevision(source.html, 'Html', source.selectionStart, source.selectionEnd, source.selectedText, 'The old clock remained');
+  assert(revised === '<p>The old clock remained three minutes slow, just like always.</p><p>Untouched ending.</p>', revised);
+  const applyTarget = editor.captureAi(false, true, true, true);
+  assert(JSON.stringify(applyTarget) === JSON.stringify(source), 'Apply lost the reviewed target');
+  assert(window.getSelection().toString() === source.selectedText, 'Visible selection disagrees with the reviewed target');
+  assert(JSON.stringify(editor.snapshot()) === JSON.stringify(before), 'Normalization changed prose or its version');
+  assert(calls.filter(c => c.name === 'OnContentChanged').length === changes, 'Normalization emitted a save');
+ } finally { editor.destroy(); }
+});
+await test('writing word completion preserves Unicode, punctuation and backward selection boundaries', async () => {
+ const cases = [
+  ['Before stubbornly after.', 9, 13, 'stubbornly'],
+  ['Before Åsa’s suitcase after.', 10, 20, 'Åsa’s suitcase'],
+  ['Before cafe\u0301 slowly after.', 10, 12, 'cafe\u0301'],
+  ['Before 𐐀𐐁𐐂 after.', 8, 10, '𐐀𐐁𐐂'],
+  ['Before well-known after.', 9, 14, 'well-known'],
+  ['Before stubbornly, after.', 7, 18, 'stubbornly,'],
+  ['Before 🧭 after.', 8, 9, '🧭']
+ ];
+ for (const [text, from, to, expected] of cases) {
+  editor = create(host, '<p>' + text + '</p><p>Other paragraph.</p>', 'Html', receiver, true);
+  try {
+   const node = host.querySelector('.tiptap p').firstChild, selection = window.getSelection();
+   selection.setBaseAndExtent(node, to, node, from); host.querySelector('.tiptap').focus(); await settle();
+   const before = editor.snapshot(), source = editor.captureAi(false, true, true, true);
+   assert(source.selectedText === expected, JSON.stringify({text, source, expected}));
+   assert(source.plainText.slice(source.selectionStart, source.selectionEnd) === expected, 'Plain offsets changed');
+   validateQualityRange(source.html, 'Html', source.selectionStart, source.selectionEnd, source.selectedText);
+   assert(selection.anchorOffset > selection.focusOffset, 'Backward selection direction changed');
+   assert(JSON.stringify(before) === JSON.stringify(editor.snapshot()), 'Word completion changed writing');
+  } finally { editor.destroy(); }
+ }
+});
+await test('writing completion does not resurrect a collapsed selection or weaken quality and structure guards', async () => {
+ editor = create(host, '<p>Before stubbornly after.</p><p>Second paragraph.</p>', 'Html', receiver, true);
+ try {
+  const node = host.querySelector('.tiptap p').firstChild, selection = window.getSelection();
+  selection.setBaseAndExtent(node, 7, node, 13); host.querySelector('.tiptap').focus(); await settle();
+  assert(editor.captureAi(false, true, true, true).selectedText === 'stubbornly', 'Writing word completion missing');
+  selection.setBaseAndExtent(node, 7, node, 13); await settle();
+  assert(editor.captureAi(false, true, true).selectedText === 'stubbo', 'Quality range was expanded');
+  selection.collapse(node, 10); await settle();
+  assert(editor.captureAi(false, true, true, true).selectedText === '', 'Collapsed selection reused a previous passage');
+  selection.setBaseAndExtent(node, 10, host.querySelectorAll('.tiptap p')[1].firstChild, 4); await settle();
+  const source = editor.captureAi(false, true, true, true);
+  let rejected = false;
+  try { validateQualityRange(source.html, 'Html', source.selectionStart, source.selectionEnd, source.selectedText); }
+  catch (error) { rejected = error.message.includes('different formatting, blocks or embedded content'); }
+  assert(rejected, 'Writing completion bypassed block safety');
+ } finally { editor.destroy(); }
+});
+await test('writing section revisions map every rich page without altering formatting', async () => {
+ const pages = ['<h2>Åsa</h2><p><strong>Original words</strong> and <em>other words</em>.</p>', '<ul><li><p>日本語</p></li></ul><table><tbody><tr><td><p>Table words</p></td></tr></tbody></table>'];
+ for (const page of pages) {
+  const captured = captureTranslation(page,'Html');
+  const runs = captured.runs.map(run => ({ ...run, text:run.text.replace('Original','Expanded vivid').replace('日本語','日本語 続き') }));
+  const revised = previewTranslation(page,'Html',runs);
+  assert(captureTranslation(revised,'Html').runs.map(r=>r.id).join('|')===captured.runs.map(r=>r.id).join('|'),'Page run identities changed');
+  assert((revised.match(/<(?:strong|em|table|ul|h2)[ >]/g)||[]).length===(page.match(/<(?:strong|em|table|ul|h2)[ >]/g)||[]).length,'Formatting lost');
+ }
+});
+await test('continuation appends one inert paragraph retaining all rich source nodes', async () => {
+ const source = '<h2>Original heading</h2><p><strong>Original ending 🧭</strong></p><table><tbody><tr><td><p>Saved table</p></td></tr></tbody></table><p><img src="https://example.com/image.png" alt="saved"></p>';
+ const result = previewContinuation(source,'Html','A new event followed. <b>Inert text</b>');
+ editor.destroy(); editor = create(host,source,'Html',receiver); const before=editor.snapshot().html;
+ editor.setContent(result); const after=editor.snapshot().html;
+ assert(after.startsWith(before),'Existing source nodes changed');
+ assert(after.includes('&lt;b&gt;Inert text&lt;/b&gt;') && !after.includes('<b>Inert text</b>'),'Provider markup interpreted');
+ assert((after.match(/A new event followed/g)||[]).length===1,'Continuation repeated');
+});
+await test('continuation supports empty final pages and legacy formats without source replacement', async () => {
+ for(const [content,format] of [['<p></p>','Html'],['Literal <em>source</em> 🧭','LegacyText'],[JSON.stringify({type:'doc',content:[{type:'paragraph',content:[{type:'text',text:'Existing',marks:[{type:'italic'}]}]}]}),'LegacyJson']]) {
+  const result=previewContinuation(content,format,'Next events.');
+  assert(result.endsWith('<p>Next events.</p>'),'New paragraph missing');
+  if(format==='LegacyText') assert(result.includes('&lt;em&gt;source&lt;/em&gt;'),'Legacy source parsed as markup');
+  if(format==='LegacyJson') assert(result.includes('<em>Existing</em>'),'Legacy marks lost');
+ }
+});
+await test('continuation rejects invalid output and unsupported source without editing', async () => {
+ editor.destroy(); editor=create(host,'<p>Keep original</p>','Html',receiver);const before=editor.snapshot();
+ for(const args of [['<p>Original</p>','Html',''],['<p>Original</p>','Html','Two\nparagraphs'],['<p>Original</p>','Html','x'.repeat(20001)],['<iframe></iframe>','Html','New events.']]) {
+  let rejected=false;try{previewContinuation(...args);}catch{rejected=true;}assert(rejected,'Invalid continuation accepted');
+ }
+ assert(editor.snapshot().html===before.html && editor.snapshot().version===before.version,'Preview mutated live source');
+});
+await test('reviewed continuation reopens in both shipped editor hosts retaining source', async () => {
+ const source='<p>Keep <em>voice</em> 🧭 日本語.</p>';const revised=previewContinuation(source,'Html','Only the new paragraph.');
+ editor.destroy();editor=create(host,source,'Html',receiver);editor.setContent(revised);
+ assert(editor.snapshot().html.includes('<em>voice</em>') && editor.snapshot().html.endsWith('<p>Only the new paragraph.</p>'),'Device continuation lost');
+ const webHost=document.createElement('div');webHost.id='writing-web-fixture';document.body.append(webHost);const web=window.tiptapEditor.create(webHost.id,revised,receiver);await settle();
+ const fromWeb=window.tiptapEditor.getContent(web);assert(fromWeb.includes('<em>voice</em>')&&fromWeb.endsWith('<p>Only the new paragraph.</p>'),'Client continuation lost');window.tiptapEditor.destroy(web);webHost.remove();
+});
+await test('custom preset selection review is inert until application and retains unrelated rich nodes on reopen', async () => {
+ const source='<h2>Heading 🧭</h2><p>Lead <em>Åsa waited 日本語</em> tail.</p><ul><li><p>Unrelated list</p></li></ul>';
+ editor.destroy();editor=create(host,source,'Html',receiver);const before=editor.snapshot().html;
+ const text=qualityPlainText(before,'Html'),selected='Åsa waited 日本語',start=text.indexOf(selected);
+ const reviewed=previewQualityRevision(before,'Html',start,start+selected.length,selected,'Elin stepped forward 日本語');
+ assert(editor.snapshot().html===before,'Review mutated the editor');editor.setContent(reviewed);const after=editor.snapshot().html;
+ assert(after.includes('<em>Elin stepped forward 日本語</em>'),'Uniform selection marks lost');
+ assert(after.startsWith('<h2>Heading 🧭</h2>')&&after.endsWith('<ul><li><p>Unrelated list</p></li></ul>'),'Unrelated nodes changed');
+ editor.destroy();editor=create(host,after,'Html',receiver);assert(editor.snapshot().html===after,'Reopened custom selection changed');
+});
+await test('custom preset section review applies complete mapped pages and preserves marks tables and run identities', async () => {
+ const pages=['<p><strong>Åsa</strong> waited.</p>','<blockquote><p>Åsa spoke 日本語.</p></blockquote><table><tbody><tr><td><p>Åsa wrote.</p></td></tr></tbody></table>'];
+ for(const source of pages){editor.destroy();editor=create(host,source,'Html',receiver);const before=editor.snapshot().html,captured=captureTranslation(before,'Html');
+  const approved=captured.runs.map(r=>({...r,text:r.text.replace('Åsa','Elin')}));const reviewed=previewTranslation(before,'Html',approved);
+  assert(editor.snapshot().html===before,'Mapped review mutated source');editor.setContent(reviewed);const after=editor.snapshot().html;
+  assert(captureTranslation(after,'Html').runs.map(r=>r.id).join('|')===captured.runs.map(r=>r.id).join('|'),'Run identities changed');
+  assert(after.includes('Elin')&&!after.includes('Åsa'),'Custom revision was not applied');
+  assert((after.match(/<(?:strong|blockquote|table)[ >]/g)||[]).length===(before.match(/<(?:strong|blockquote|table)[ >]/g)||[]).length,'Section formatting lost');
+  editor.destroy();editor=create(host,after,'Html',receiver);assert(editor.snapshot().html===after,'Reopened custom section changed');
+ }
+});
+await test('web structured translation exports reuse device capture and complete inert preview including blank pages', async () => {
+ const pages=['<h2>Åsa 日本語 🧭</h2><p><strong>Opening</strong> paragraph.</p>','<p></p>','<table><tbody><tr><td><p><em>Voice</em></p></td></tr></tbody></table>'];
+ for (const source of pages) {
+  const webCapture=window.tiptapEditor.captureTranslation(source,'Html'),shared=captureTranslation(source,'Html');
+  assert(JSON.stringify(webCapture)===JSON.stringify(shared),'Web and device source mapping differ');
+  const translated=shared.runs.map(run=>({...run,text:run.text.replace(/\S+/,'Translated')}));
+  const webPreview=window.tiptapEditor.previewTranslation(source,'Html',translated);
+  assert(webPreview===previewTranslation(source,'Html',translated),'Web and device review differ');
+  const surface=document.createElement('div');surface.id='web-translation-reopen';document.body.append(surface);
+  let live=window.tiptapEditor.create(surface.id,source,receiver);const before=window.tiptapEditor.getContent(live);
+  assert(window.tiptapEditor.getContent(live)===before,'Preview mutated live writing');
+  window.tiptapEditor.setContent(live,webPreview);const after=window.tiptapEditor.getContent(live);
+  assert(JSON.stringify(window.tiptapEditor.captureTranslation(after,'Html').runs.map(r=>r.id))===JSON.stringify(shared.runs.map(r=>r.id)),'Run identities lost');
+  window.tiptapEditor.destroy(live);live=window.tiptapEditor.create(surface.id,after,receiver);
+  assert(window.tiptapEditor.getContent(live)===after,'Reopened translation differs');window.tiptapEditor.destroy(live);surface.remove();
+ }
+});
+await test('web translation mapper rejects unsupported source and incomplete or reordered output without mutating source', async () => {
+ for(const html of ['<p><img src="/keep.png"></p>','<pre><code>Keep code</code></pre>','<p>Keep</p><!--retained-->']) {
+  let rejected=false;try{window.tiptapEditor.captureTranslation(html,'Html')}catch{rejected=true}assert(rejected,'Unsupported source accepted');
+ }
+ const source='<p><strong>Åsa</strong> waited.</p>',runs=window.tiptapEditor.captureTranslation(source,'Html').runs;
+ for(const output of [runs.slice(0,1),runs.slice().reverse(),[runs[0],runs[0]]]) {
+  let rejected=false;try{window.tiptapEditor.previewTranslation(source,'Html',output)}catch{rejected=true}assert(rejected,'Incomplete/reordered output accepted');
+ }
+});
+await test('checked web writing maps whitespace and rich runs across all approved pages and reopens exact content', async () => {
+ const pages=['<h2>Åsa 日本語 🧭</h2><p><strong>Opening</strong> paragraph.</p>','<blockquote><p><em>Second</em> page.</p></blockquote>','<p></p>'];
+ const originals=pages.map(html=>window.tiptapEditor.captureTranslation(html,'Html'));
+ const approved=originals.map(c=>c.runs.map(r=>({...r,text:r.text.replace(/[\p{L}\p{N}]+/u,'Reviewed')})));
+ const previews=pages.map((html,i)=>window.tiptapEditor.previewTranslation(html,'Html',approved[i]));
+ assert(JSON.stringify(pages)==='["<h2>Åsa 日本語 🧭</h2><p><strong>Opening</strong> paragraph.</p>","<blockquote><p><em>Second</em> page.</p></blockquote>","<p></p>"]','Review changed original pages');
+ for(let i=0;i<pages.length;i++) {
+  const surface=document.createElement('div');surface.id='checked-writing-'+i;document.body.append(surface);
+  let live=window.tiptapEditor.create(surface.id,pages[i],receiver);window.tiptapEditor.setContent(live,previews[i]);
+  const saved=window.tiptapEditor.getContent(live);window.tiptapEditor.destroy(live);live=window.tiptapEditor.create(surface.id,saved,receiver);
+  assert(window.tiptapEditor.getContent(live)===saved,'Checked writing reopen changed rich content');
+  assert(JSON.stringify(window.tiptapEditor.captureTranslation(saved,'Html').runs.map(r=>r.id))===JSON.stringify(originals[i].runs.map(r=>r.id)),'Checked run identities changed');
+  if(i===0)assert(saved.includes('<strong>Reviewed</strong> Reviewed.'),'Leading boundary whitespace was lost');
+  if(i===1)assert(saved.includes('<em>Reviewed</em> Reviewed.'),'Emphasis or whitespace lost');
+  window.tiptapEditor.destroy(live);surface.remove();
+ }
+});
+await test('checked web aggregate writing preflights every page before an unsupported later page can change earlier content', async () => {
+ const first='<p><strong>Keep the first page.</strong></p>',last='<p>Keep</p><img src="/retained.png">';
+ const surface=document.createElement('div');surface.id='checked-writing-preflight';document.body.append(surface);const live=window.tiptapEditor.create(surface.id,first,receiver),before=window.tiptapEditor.getContent(live);
+ let rejected=false;try {[first,last].map(html=>window.tiptapEditor.captureTranslation(html,'Html'));}catch{rejected=true;}
+ assert(rejected,'Unsupported later page accepted');assert(window.tiptapEditor.getContent(live)===before,'Preflight partially changed the first page');
+ window.tiptapEditor.destroy(live);surface.remove();
+});
+const historyOutbox=await import('/WriterApp.Client/wwwroot/js/web-ai-history-outbox.js');
+// Prompt 1 runs the production client patch (including rewrite-to-replace
+// normalization) and the shipped device preview against synthetic rich prose.
+const targetedCases = [
+ {name:'unchanged bold duplicate clock',html:'<p>The <strong>clock</strong> rang while another clock answered the clock in the hall.</p>',expected:'The clock rang while another clock answered the clock in the hall.',proposed:'The clock rang while another clock answered the chime in the hall.',kept:'<strong>clock</strong>'},
+ {name:'unchanged italic and link context',html:'<p>The <em>clock</em> beside <a href="https://example.com">Anna</a> answered the clock.</p>',expected:'The clock beside Anna answered the clock.',proposed:'The clock beside Anna answered the chime.',kept:'<em>clock</em>'},
+ {name:'changed italic word',html:'<p>The <em>clock</em> rang.</p>',expected:'The clock rang.',proposed:'The chime rang.',kept:'<em>chime</em>'},
+ {name:'changed linked word',html:'<p>The <a href="https://example.com">clock</a> rang.</p>',expected:'The clock rang.',proposed:'The chime rang.',kept:'href="https://example.com"'},
+ {name:'mixed-mark deletion',html:'<p>The <strong>old</strong> <em>clock</em> rang.</p>',expected:'The old clock rang.',proposed:'The rang.'},
+ {name:'plain insertion preserves marked context',html:'<p>The <strong>clock</strong> rang.</p>',expected:'The clock rang.',proposed:'The clock rang loudly.',kept:'<strong>clock</strong>'},
+ {name:'combining word replacement',html:'<p>The <em>café</em> opened.</p>',expected:'The café opened.',proposed:'The cafè opened.',kept:'<em>cafè</em>'},
+ {name:'supplementary and joined emoji',html:'<p>The <strong>🧑‍🚀</strong> met Åsa 日本語 🧭.</p>',expected:'The 🧑‍🚀 met Åsa 日本語 🧭.',proposed:'The 🧑‍🚀 met Åsa 日本語 🌟.',kept:'<strong>🧑‍🚀</strong>'},
+ {name:'rich sibling structure',html:'<h2>Title</h2><p style="text-align: center; margin-left: 2em;">The <strong>clock</strong> rang beside the clock.</p><table><tbody><tr><td><p><em>Keep</em></p></td></tr></tbody></table><p>Untouched ending.</p>',expected:'The clock rang beside the clock.',proposed:'The clock rang beside the chime.',kept:'<strong>clock</strong>'},
+ {name:'provider markup is inert prose',html:'<p>The <strong>clock</strong> rang.</p>',expected:'The clock rang.',proposed:'The clock <img src=x onerror=alert(1)> rang.',kept:'<strong>clock</strong>'}
+];
+for (const fixture of targetedCases) await test('targeted parity: '+fixture.name+' Apply/reopen/Undo',async()=>{
+ const surface=document.createElement('div');surface.id='targeted-web';document.body.append(surface);
+ let web=window.tiptapEditor.create(surface.id,fixture.html,receiver);
+ const before=web.getHTML(),beforeJson=JSON.stringify(web.state.doc.toJSON());
+ const plain=qualityPlainText(before,'Html'),from=plain.indexOf(fixture.expected),to=from+fixture.expected.length;
+ const deviceAfter=previewTargetedQualityRevision(before,'Html',from,to,fixture.expected,fixture.proposed);
+ assert(web.getHTML()===before,'Preview mutated live source');
+ const applied=window.tiptapEditor.applyQualityIssueFixDetailed(web,{kind:'replace',from,to,expectedText:fixture.expected,anchorText:'clock',text:fixture.proposed});
+ assert(applied.applied&&applied.changed,JSON.stringify(applied));
+ const after=web.getHTML(),afterJson=JSON.stringify(web.state.doc.toJSON());
+ assert(after===deviceAfter,'Shipped editor previews differ: '+after+' versus '+deviceAfter);
+ if(fixture.kept)assert(after.includes(fixture.kept),'Lost required marks');
+ assert(qualityPlainText(after,'Html')===plain.slice(0,from)+fixture.proposed+plain.slice(to),'Complete resulting text differs');
+ if(fixture.name.includes('link'))assert(web.state.doc.textContent.includes('Anna')||after.includes('href="https://example.com"'),'Lost link');
+ assert(web.commands.undo()&&web.getHTML()===before&&JSON.stringify(web.state.doc.toJSON())===beforeJson,'Undo lost exact rich content');
+ assert(web.commands.redo()&&web.getHTML()===after&&JSON.stringify(web.state.doc.toJSON())===afterJson,'Redo lost exact result');
+ window.tiptapEditor.destroy(web);web=window.tiptapEditor.create(surface.id,after,receiver);assert(web.getHTML()===after,'Web reopen differs');
+ window.tiptapEditor.destroy(web);surface.remove();
+ const deviceHost=document.createElement('div');document.body.append(deviceHost);const live=create(deviceHost,before,'Html',receiver,true);
+ live.setContent(deviceAfter);assert(live.snapshot().html===deviceAfter,'Device Apply differs');
+ live.setContent(before);assert(live.snapshot().html===before,'Device source restoration differs');live.destroy();
+ const reopened=create(deviceHost,deviceAfter,'Html',receiver,true);assert(reopened.snapshot().html===deviceAfter,'Device reopen differs');reopened.destroy();deviceHost.remove();
+});
+const targetedRefusals = [
+ {name:'mixed changed word',html:'<p>The cl<strong>oc</strong>k rang.</p>',expected:'The clock rang.',proposed:'The chime rang.'},
+ {name:'separated changes across retained marks',html:'<p>Old <em>clock</em> rang.</p>',expected:'Old clock rang.',proposed:'New clock chimed.'},
+ {name:'image inside source',html:'<p>The clock.</p><img src="/keep.png"><p>The bell.</p>',expected:'The clock.\n\nThe bell.',proposed:'The chime rang.'},
+ {name:'hard break inside source',html:'<p>The<br>clock rang.</p>',expected:'The\nclock rang.',proposed:'The chime rang.'},
+ {name:'block crossing',html:'<p>The clock.</p><p>The bell.</p>',expected:'The clock.\n\nThe bell.',proposed:'The chime.'},
+ {name:'stale source',html:'<p>The bell rang.</p>',expected:'The clock rang.',proposed:'The chime rang.',from:0},
+ {name:'partial combining sequence',html:'<p>café opened.</p>',expected:'cafe',proposed:'shop',from:0},
+ {name:'partial surrogate',html:'<p>🧭 waited.</p>',expected:'\uD83E',proposed:'X',from:0},
+ {name:'mixed marks within combining word',html:'<p>The caf<em>é</em> opened.</p>',expected:'The café opened.',proposed:'The cafè opened.'},
+ {name:'mixed marks within joined emoji',html:'<p>The 🧑<em>‍🚀</em> waited.</p>',expected:'The 🧑‍🚀 waited.',proposed:'The 🧑‍🔬 waited.'},
+ {name:'malformed proposed Unicode',html:'<p>The clock rang.</p>',expected:'The clock rang.',proposed:'The \uD800 rang.'},
+ {name:'no change',html:'<p>The <strong>clock</strong> rang.</p>',expected:'The clock rang.',proposed:'The clock rang.'}
+];
+for(const fixture of targetedRefusals) await test('targeted parity refuses '+fixture.name+' without mutation',async()=>{
+ const surface=document.createElement('div');surface.id='targeted-refusal';document.body.append(surface);const web=window.tiptapEditor.create(surface.id,fixture.html,receiver);
+ const before=web.getHTML(),json=JSON.stringify(web.state.doc.toJSON()),plain=qualityPlainText(before,'Html');
+ const from=fixture.from??Math.max(0,plain.indexOf(fixture.expected));
+ const result=window.tiptapEditor.applyQualityIssueFixDetailed(web,{kind:'replace',from,to:from+fixture.expected.length,expectedText:fixture.expected,anchorText:'clock',text:fixture.proposed});
+ assert(!result.applied&&!result.changed,'Unsafe client result applied');
+ assert(web.getHTML()===before&&JSON.stringify(web.state.doc.toJSON())===json,'Refusal mutated document');
+ let rejected=false;try{previewTargetedQualityRevision(before,'Html',from,from+fixture.expected.length,fixture.expected,fixture.proposed)}catch{rejected=true}
+ assert(rejected,'Device accepted unsafe result');window.tiptapEditor.destroy(web);surface.remove();
+});
+await test('targeted client refuses stale captured ranges and duplicate-anchor recovery; exact ranges disambiguate duplicates',async()=>{
+ const surface=document.createElement('div');surface.id='targeted-anchors';document.body.append(surface);const web=window.tiptapEditor.create(surface.id,'<p>Clock rang. Clock rang.</p>',receiver),before=web.getHTML();
+ for(const fix of [
+  {from:0,to:11,expectedText:'Clock rang.',docFrom:13,docTo:24},
+  {from:0,to:5,expectedText:'Clock',anchorText:'Clock',expectedHtml:'<p>Stale</p>'},
+  {from:6,to:11,expectedText:'Clock',anchorText:'Clock'}
+ ])assert(!window.tiptapEditor.applyQualityIssueFixDetailed(web,{kind:'replace',text:'Chime',...fix}).applied,'Stale/ambiguous target applied');
+ assert(!window.tiptapEditor.resolvePlainRangeDetailed(web,{kind:'replace',from:6,to:11,anchorText:'Clock'}).resolved,'Duplicate anchor resolved by proximity');
+ assert(web.getHTML()===before,'Refused range changed source');
+ assert(window.tiptapEditor.applyQualityIssueFixDetailed(web,{kind:'replace',from:12,to:17,expectedText:'Clock',text:'Chime'}).applied,'Exact checked duplicate refused');
+ assert(web.getHTML()==='<p>Clock rang. Chime rang.</p>','Wrong duplicate changed');
+ assert(web.commands.undo()&&web.getHTML()===before,'Duplicate Undo differs');window.tiptapEditor.destroy(web);surface.remove();
+});
+await test('targeted client insertion and deletion are checked, preserve marks and Undo exactly',async()=>{
+ const surface=document.createElement('div');surface.id='targeted-kinds';document.body.append(surface);
+ for(const [html,fix,after] of [
+  ['<p>The <em>clock</em> rang.</p>',{kind:'insert',from:14,to:14,expectedText:'',text:' loudly'},'<p>The <em>clock</em> rang loudly.</p>'],
+  ['<p>The <em>old</em> <strong>clock</strong> rang.</p>',{kind:'delete',from:4,to:14,expectedText:'old clock ',text:''},'<p>The rang.</p>']
+ ]){const web=window.tiptapEditor.create(surface.id,html,receiver),before=web.getHTML();const result=window.tiptapEditor.applyQualityIssueFixDetailed(web,fix);assert(result.applied,JSON.stringify(result));assert(web.getHTML()===after,web.getHTML());assert(web.commands.undo()&&web.getHTML()===before,'Kind Undo differs');window.tiptapEditor.destroy(web);}
+ const web=window.tiptapEditor.create(surface.id,'<p>The <strong>clock</strong> rang.</p>',receiver),before=web.getHTML();
+ assert(!window.tiptapEditor.applyQualityIssueFixDetailed(web,{kind:'insert',from:4,to:4,expectedText:'',text:'old '}).applied,'Ambiguous insertion marks accepted');assert(web.getHTML()===before,'Ambiguous insertion changed source');window.tiptapEditor.destroy(web);surface.remove();
+});
+await test('client consistency uses the same formatting-preserving helper and Undo',async()=>{
+ const surface=document.createElement('div');surface.id='targeted-consistency';document.body.append(surface);
+ const web=window.tiptapEditor.create(surface.id,'<p><em>Anna</em> waited beside the clock.</p>',receiver),before=web.getHTML(),expected='Anna waited beside the clock.';
+ const range=window.tiptapEditor.resolvePlainRangeDetailed(web,{kind:'replace',from:0,to:expected.length,anchorText:expected});assert(range.resolved,'Consistency range unresolved');
+ const applied=window.tiptapEditor.applyQualityIssueFixDetailed(web,{kind:'replace',from:range.from,to:range.to,docFrom:range.docFrom,docTo:range.docTo,expectedText:expected,anchorText:expected,beforeAnchor:'',afterAnchor:'',needleText:expected,text:'Anna waited beside the chime.',issueKey:'consistency-fixture'});
+ assert(applied.applied&&web.getHTML()==='<p><em>Anna</em> waited beside the chime.</p>',JSON.stringify(applied));assert(web.commands.undo()&&web.getHTML()===before,'Consistency Undo lost marks');window.tiptapEditor.destroy(web);surface.remove();
+});
+await test('client deterministic paragraph split retains marks, attributes, siblings and Undo',async()=>{
+ const surface=document.createElement('div');surface.id='targeted-split';document.body.append(surface);const web=window.tiptapEditor.create(surface.id,'<p style="text-align: center;"><em>Alpha beta. Gamma delta.</em></p><p>Keep.</p>',receiver),before=web.getHTML(),expected='Alpha beta. Gamma delta.';
+ const result=window.tiptapEditor.applyQualityIssueFixDetailed(web,{kind:'replace',from:0,to:expected.length,expectedText:expected,text:'Alpha beta.\n\nGamma delta.'});assert(result.applied,JSON.stringify(result));
+ assert(web.getHTML()==='<p style="text-align: center"><em>Alpha beta.</em></p><p style="text-align: center"><em>Gamma delta.</em></p><p>Keep.</p>',web.getHTML());assert(web.commands.undo()&&web.getHTML()===before,'Split Undo differs');window.tiptapEditor.destroy(web);surface.remove();
+});
+await test('client refuses an appended editor transaction that would change unrelated structure',async()=>{
+ const surface=document.createElement('div');surface.id='targeted-appended';document.body.append(surface);
+ const web=window.tiptapEditor.create(surface.id,'<p>The <strong>clock</strong> rang beside the clock.</p><table><tbody><tr><td><p>Keep.</p></td></tr></tbody></table>',receiver),before=web.getHTML(),json=JSON.stringify(web.state.doc.toJSON()),expected='The clock rang beside the clock.';
+ const result=window.tiptapEditor.applyQualityIssueFixDetailed(web,{kind:'replace',from:0,to:expected.length,expectedText:expected,text:'The clock rang beside the chime.'});
+ assert(!result.applied&&web.getHTML()===before&&JSON.stringify(web.state.doc.toJSON())===json,'Appended transaction changed unrelated nodes');window.tiptapEditor.destroy(web);surface.remove();
+});
+const historyScope='synthetic-backend/account-'+crypto.randomUUID();
+const historyDocument=crypto.randomUUID();
+const historyIntent=()=>({version:1,operationId:crypto.randomUUID(),source:{documentId:historyDocument},beforeContent:'<p>Authored 日本語</p>',afterContent:'<p>Approved</p>'});
+await test('web history IndexedDB retains approved intent across module reopen before any Save confirmation',async()=>{
+ const intent=historyIntent();await historyOutbox.prepare(historyScope,JSON.stringify(intent));
+ const reopened=await import('/WriterApp.Client/wwwroot/js/web-ai-history-outbox.js?reopened');
+ const rows=JSON.parse(await reopened.list(historyScope,historyDocument));assert(rows.some(r=>r.operationId===intent.operationId&&r.status==='Prepared'&&JSON.parse(r.json).beforeContent===intent.beforeContent),'Intent lost or falsely confirmed');
+});
+await test('web history concurrent IndexedDB transactions retain both immutable operation identities',async()=>{
+ const a=historyIntent(),b=historyIntent();await Promise.all([historyOutbox.prepare(historyScope,JSON.stringify(a)),historyOutbox.prepare(historyScope,JSON.stringify(b))]);
+ const rows=JSON.parse(await historyOutbox.list(historyScope,historyDocument));assert(rows.some(r=>r.operationId===a.operationId)&&rows.some(r=>r.operationId===b.operationId),'Concurrent intent overwritten');
+});
+await test('web history duplicate operation cannot replace approved payload',async()=>{
+ const intent=historyIntent();await historyOutbox.prepare(historyScope,JSON.stringify(intent));await historyOutbox.prepare(historyScope,JSON.stringify(intent));
+ let rejected=false;try{await historyOutbox.prepare(historyScope,JSON.stringify({...intent,afterContent:'Different'}));}catch{rejected=true;}
+ assert(rejected,'Immutable operation reused');const row=JSON.parse(await historyOutbox.list(historyScope,historyDocument)).find(r=>r.operationId===intent.operationId);assert(JSON.parse(row.json).afterContent===intent.afterContent,'Approved evidence changed');
+});
+await test('web history account and backend scopes cannot read another retained operation',async()=>{
+ assert(JSON.parse(await historyOutbox.list(historyScope+'-other-account',historyDocument)).length===0,'Foreign account rows exposed');
+ assert(JSON.parse(await historyOutbox.list('other-backend/'+historyScope,historyDocument)).length===0,'Foreign backend rows exposed');
+});
+await test('web history confirmed delivery cannot be downgraded by a late tab update',async()=>{
+ const intent=historyIntent();await historyOutbox.prepare(historyScope,JSON.stringify(intent));await historyOutbox.mark(historyScope,intent.operationId,'Confirmed','Receipt confirmed','{}');
+ await historyOutbox.mark(historyScope,intent.operationId,'Rejected','Late stale failure',null);
+ assert(JSON.parse(await historyOutbox.list(historyScope,historyDocument)).find(r=>r.operationId===intent.operationId).status==='Confirmed','Late update downgraded delivery');
+});
+await test('web history storage refusal cannot create an approved or confirmed entry',async()=>{
+ const intent=historyIntent(),open=indexedDB.open;
+ let rejected=false;try{indexedDB.open=()=>{throw new DOMException('Synthetic refusal','SecurityError');};await historyOutbox.prepare(historyScope,JSON.stringify(intent));}catch{rejected=true;}finally{indexedDB.open=open;}
+ assert(rejected,'Storage refusal bypassed');assert(!JSON.parse(await historyOutbox.list(historyScope,historyDocument)).some(r=>r.operationId===intent.operationId),'Refused intent was stored');
+});
+await test('destroy cancels queued web pagination and resize callbacks', async () => {
+ const errors = []; const catchError = event => { errors.push(event.error?.message || event.message); };
+ window.addEventListener('error', catchError);
+ const viewport = document.createElement('div'); viewport.className = 'editor-viewport';
+ const webHost = document.createElement('div'); webHost.id = 'web-destroy-lifecycle'; viewport.append(webHost); document.body.append(viewport);
+ const count = calls.length;
+ try {
+  const web = window.tiptapEditor.create(webHost.id, '<p>Keep Åsa 日本語</p>', receiver);
+  window.tiptapEditor.registerPageBreakObserver(web, receiver, {pageHeightPx:980});
+  window.dispatchEvent(new Event('resize'));
+  window.dispatchEvent(new Event('scroll'));
+  window.tiptapEditor.destroy(web); window.tiptapEditor.destroy(web);
+  const afterDestroy = calls.length;
+  await new Promise(resolve => setTimeout(resolve, 350));
+  assert(errors.length === 0, errors.join('; '));
+  assert(calls.length === afterDestroy, 'Destroyed editor invoked receiver');
+ } finally { viewport.remove(); window.removeEventListener('error', catchError); }
+});
 const failed = [...results.children].filter(item => item.textContent.startsWith('FAIL')).length;
 document.title = failed ? `${failed} device editor tests failed` : 'All device editor tests passed';
 const summary = document.createElement('h2'); summary.textContent = document.title; results.after(summary);
@@ -457,4 +1171,20 @@ editor.setAnnotations([
  { id:'demo-comment', quote:'keyboard formatting', kind:'comment', status:'open', content:'Comment on this passage' },
  { id:'demo-task', quote:'narrow layouts', kind:'todo', status:'open', content:'Task on this passage' }
 ]);
+const jumpAnnotation = document.createElement('button');
+jumpAnnotation.type = 'button'; jumpAnnotation.textContent = 'Comment on this passage';
+jumpAnnotation.addEventListener('click', () => editor.navigateToAnnotation('demo-comment'));
+host.before(jumpAnnotation);
+const qualityPlain = editor.captureAi(true, false, true).plainText;
+const demoStart = qualityPlain.indexOf('keyboard formatting');
+const demoQuality = { issueKey:'quality-demo', from:demoStart, to:demoStart+'keyboard formatting'.length, expectedText:'keyboard formatting', severity:'info' };
+editor.setQualityHighlights(qualityPlain, [demoQuality], 'quality-demo');
+const jumpQuality = document.createElement('button');
+jumpQuality.type = 'button'; jumpQuality.textContent = 'Jump to quality example';
+jumpQuality.addEventListener('click', () => editor.navigateToQuality(qualityPlain, demoQuality));
+host.before(jumpQuality);
+const consistencyPlain = editor.captureAi(true).plainText;
+const jumpConsistency = document.createElement('button'); jumpConsistency.type = 'button'; jumpConsistency.textContent = 'Jump to consistency example';
+jumpConsistency.addEventListener('click', () => editor.navigateToConsistency(consistencyPlain, consistencyPlain.indexOf('narrow layouts'), 'narrow layouts'));
+host.before(jumpConsistency);
 </script></body></html>

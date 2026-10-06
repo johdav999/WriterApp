@@ -9,23 +9,31 @@ using Microsoft.Extensions.Logging;
 using WriterApp.Application.Covers;
 using WriterApp.Application.Subscriptions;
 using WriterApp.Shared;
+using Microsoft.EntityFrameworkCore;
+using WriterApp.Data;
+using WriterApp.Application.Security;
 
 namespace WriterApp.Controllers
 {
     [ApiController]
     [Route("api/covers")]
     [Authorize]
-    public sealed class CoversController : ControllerBase
+    public sealed partial class CoversController : ControllerBase
     {
         private readonly ICoverImageService _coverImageService;
         private readonly ILogger<CoversController> _logger;
+        private readonly AppDbContext? _db;
+        private readonly IUserIdResolver? _userIds;
+        private readonly CoverAssetService? _assets;
 
         public CoversController(
             ICoverImageService coverImageService,
-            ILogger<CoversController> logger)
+            ILogger<CoversController> logger, AppDbContext? db = null, IUserIdResolver? userIds = null, CoverAssetService? assets = null)
         {
             _coverImageService = coverImageService ?? throw new ArgumentNullException(nameof(coverImageService));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _db = db; _userIds = userIds;
+            _assets=assets;
         }
 
         [HttpPost("generate")]
@@ -40,9 +48,37 @@ namespace WriterApp.Controllers
 
             try
             {
-                List<string> imageUrls = await _coverImageService.GenerateCoverConceptsAsync(prompt, ct);
-                return Ok(new CoverGenerationResponse(imageUrls));
+                CoverStudioContract.ValidatePrompt(prompt);
+                if (prompt.ContractVersion == 1 && !await CurrentAsync(prompt, ct))
+                    return Conflict(new { code = "cover.stale_source", message = "The owned project or document changed. Synchronize and generate again." });
+                List<string> imageUrls = (await _coverImageService.GenerateCoverConceptsAsync(prompt, ct)).ToList();
+                if(imageUrls.Count is <1 or >4)throw new System.IO.InvalidDataException("Generation returned an invalid concept count.");
+                var identities=new List<CoverAssetIdentity?>();
+                for(int i=0;i<imageUrls.Count;i++) {
+                    if(imageUrls[i].StartsWith("data:",StringComparison.OrdinalIgnoreCase)) {
+                        if(_assets is not null && _userIds is not null && prompt.ContractVersion==1) {
+                            var inlineSource=await _assets.GenerationSourceAsync(_userIds.ResolveUserId(User),prompt,imageUrls[i],ct);
+                            var inline=await _assets.RegisterInlineAsync(_userIds.ResolveUserId(User),inlineSource,CoverStudioContract.ReadPng(imageUrls[i]),ct);
+                            identities.Add(inline.Asset);
+                        } else identities.Add(null);
+                        continue;
+                    }
+                    if(_assets is null || _userIds is null || imageUrls.Count is <1 or >4)
+                        throw new System.IO.InvalidDataException("Remote cover results require the owned asset backend and configured trusted PNG storage.");
+                    string owner=_userIds.ResolveUserId(User);
+                    var source=await _assets.GenerationSourceAsync(owner,prompt,imageUrls[i],ct);
+                    var asset=await _assets.MaterializeAsync(owner,source,imageUrls[i],false,ct);
+                    imageUrls[i]="data:image/png;base64,"+Convert.ToBase64String(asset.Bytes);identities.Add(asset.Asset);
+                }
+                if (prompt.ContractVersion == 1) {
+                    if (!await CurrentAsync(prompt, ct)) return Conflict(new { code = "cover.stale_source", message = "The project changed during generation. Generate again." });
+                    if (imageUrls.Count is < 1 or > 4) return UnprocessableEntity(new { message = "Generation returned an invalid concept count." });
+                    foreach (string image in imageUrls) CoverStudioContract.ReadPng(image);
+                }
+                return Ok(new CoverGenerationResponse(imageUrls, prompt.ContractVersion, prompt.ProjectId, prompt.DocumentId, prompt.ExpectedMetadataRevision, prompt.ExpectedDocumentVersion,identities));
             }
+            catch(CoverAssetException e){return StatusCode(e.Status,new {code=e.Code,message=e.Message});}
+            catch (System.IO.InvalidDataException ex) { return UnprocessableEntity(new { message = ex.Message }); }
             catch (EntitlementDeniedException ex)
             {
                 ProblemDetails problem = EntitlementDeniedApiError.ToProblemDetails(ex);
@@ -70,6 +106,18 @@ namespace WriterApp.Controllers
                     ex.Message,
                     "invalid_request"));
             }
+            catch(Exception e) when(e is System.IO.IOException or HttpRequestException or System.Data.Common.DbException or DbUpdateException) {
+                return StatusCode(503,new{code="cover.asset_unavailable",message="Owned cover storage was not acknowledged. Previous cover/cache is preserved. Check the asset migration/storage configuration or retry deliberately."});
+            }
+        }
+
+        private async Task<bool> CurrentAsync(CoverPrompt prompt, CancellationToken ct)
+        {
+            if (_db is null || _userIds is null) return false;
+            string owner = _userIds.ResolveUserId(User);
+            return await _db.Projects.AsNoTracking().AnyAsync(p => p.Id == prompt.ProjectId && p.OwnerUserId == owner && p.MetadataRevision == prompt.ExpectedMetadataRevision, ct)
+                && await _db.Documents.AsNoTracking().AnyAsync(d => d.Id == prompt.DocumentId && d.ProjectId == prompt.ProjectId && d.OwnerUserId == owner && d.DeletedAtUtc == null && !d.IsArchived, ct)
+                && await _db.DocumentSyncRecords.AsNoTracking().AnyAsync(r => r.DocumentId == prompt.DocumentId && r.OwnerUserId == owner && r.Version == prompt.ExpectedDocumentVersion && !r.IsDeleted && !r.IsTrashed, ct);
         }
 
         private ProblemDetails BuildProblemDetails(int statusCode, string title, string detail, string code)

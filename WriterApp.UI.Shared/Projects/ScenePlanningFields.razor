@@ -5,14 +5,14 @@
     <label>@field.Label
     @if (field.Key == "Status" || field.Key == "NarrativeRole")
     {
-        <select value="@Value(field.Key)" @onchange="e => Change(field.Key, e)">
+        <select disabled="@Busy" value="@Value(field.Key)" @onchange="e => Change(field.Key, e)">
         @foreach (var choice in Options(field.Key)) { <option value="@choice">@(choice.Length == 0 ? "Select role" : choice)</option> }
         </select>
     }
     else if (field.Multiline)
-    { <textarea rows="3" maxlength="100000" @bind:get="Value(field.Key)" @bind:set="value => ChangeValue(field.Key, value)" @bind:event="oninput" @onblur="Blurred"></textarea> }
+    { <textarea disabled="@Busy" rows="3" maxlength="100000" @bind:get="Value(field.Key)" @bind:set="value => ChangeValue(field.Key, value)" @bind:event="oninput" @onblur="Blurred"></textarea> }
     else
-    { <input @bind:get="Value(field.Key)" @bind:set="value => ChangeValue(field.Key, value)" @bind:event="oninput" maxlength="200" @onblur="Blurred" /> }
+    { <input disabled="@Busy" @bind:get="Value(field.Key)" @bind:set="value => ChangeValue(field.Key, value)" @bind:event="oninput" maxlength="200" @onblur="Blurred" /> }
     </label>
 }
 </section>
@@ -20,6 +20,7 @@
     [Parameter] public IReadOnlyDictionary<string,string> Values { get; set; } = new Dictionary<string,string>();
     [Parameter] public EventCallback<ScenePlanningChange> Changed { get; set; }
     [Parameter] public EventCallback Blurred { get; set; }
+    [Parameter] public bool Busy { get; set; }
     public static readonly (string Key, string Label, bool Multiline)[] Fields = [
         ("Title", "Title", false), ("Summary", "Summary", true), ("Notes", "Notes", true),
         ("NarrativeRole", "Narrative role", false), ("NarrativeIntent", "Narrative intent", true),
@@ -28,7 +29,7 @@
     private string Value(string key) => Values.GetValueOrDefault(key, "");
     private IEnumerable<string> Options(string key) => (key == "Status" ? new[] { "Idea", "Draft", "Revised", "Final" }
         : new[] { "" }.Concat(SceneNarrativeRoleCatalog.Values)).Append(Value(key)).Distinct();
-    private Task ChangeValue(string key, string value) => Changed.InvokeAsync(new(key, value));
-    private Task Change(string key, ChangeEventArgs args) => Changed.InvokeAsync(new(key, args.Value?.ToString() ?? ""));
+    private Task ChangeValue(string key, string value) => Busy ? Task.CompletedTask : Changed.InvokeAsync(new(key, value));
+    private Task Change(string key, ChangeEventArgs args) => ChangeValue(key,args.Value?.ToString() ?? "");
 }
 

@@ -11,9 +11,18 @@
 .device-tiptap .tiptap blockquote { border-left:3px solid #aa9161; margin-left:0; padding-left:1rem; }
 .device-tiptap .tiptap a { color:#443482; text-decoration:underline; }
 .device-tiptap .wa-annotation { cursor:pointer; }
+.device-tiptap .tiptap .wa-annotation { border-radius:2px; box-decoration-break:clone; }
+.device-tiptap .tiptap .wa-annotation-comment { background:#dedbfa; box-shadow:inset 0 -1px #8b80cf; }
+.device-tiptap .tiptap .wa-annotation-todo { background:#ffe4a3; box-shadow:inset 0 -1px #c79520; }
+.device-tiptap .tiptap .wa-annotation-highlight { background:#c9edcf; box-shadow:inset 0 -1px #6aab76; }
+.device-tiptap .tiptap .wa-annotation-resolved { opacity:.7; }
 .device-tiptap :focus-visible { outline:3px solid #b17a20; outline-offset:2px; }
 
 .device-editor-toolbar[hidden] { display:none; }
+.device-tiptap .wa-quality { background:#f6dda8; text-decoration:underline dotted #87631b; text-underline-offset:3px; }
+.device-tiptap .wa-quality-error { background:#f4c8c2; }
+.device-tiptap .wa-quality-selected { outline:2px solid #6556a8; border-radius:2px; }
+.device-tiptap .tiptap .wa-consistency-passage { background:#ffe27a; color:inherit; border-radius:2px; box-decoration-break:clone; box-shadow:inset 0 -2px #ba8300; }
 .device-tiptap .tiptap { font-family:var(--font-sans); min-height:60vh; border:0; padding:32px 48px; line-height:1.65; color:var(--color-text); }
 .device-tiptap .tiptap { font-size:calc(1rem * var(--editor-font-scale, 1)); }
 .device-tiptap .tiptap img { max-width:100%; height:auto; }

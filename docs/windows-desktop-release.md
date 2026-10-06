@@ -28,7 +28,7 @@ dotnet publish WriterApp.Desktop/WriterApp.Desktop.csproj --configuration Releas
   -p:ProsaEnvironment=Staging -p:ProsaApiBaseUrl=https://your-staging-host.example/
 ```
 
-That command illustrates environment selection; a distributable package also needs an appropriate trusted signing certificate. The included test-signing script builds **Production** only. Debug builds default to `Development` at `https://localhost:7384/` and may use `WRITERAPP_API_BASE_URL` for local debugging. Release builds ignore that environment variable. A staging build without `ProsaApiBaseUrl` fails, and non-local HTTP backends are rejected.
+That command illustrates environment selection; a distributable package also needs an appropriate trusted signing certificate. The test-signing script defaults to **Production** and accepts explicit `-Environment`, `-ApiBaseUrl`, `-NoRestore` and Development-only `-ValidationDataDirectory` parameters. It isolates build output beneath the requested output directory. Current Debug defaults are `Development` at `http://localhost:5387/`; `WRITERAPP_API_BASE_URL` remains a Debug-only override. Release uses embedded build properties. A staging build without `ProsaApiBaseUrl` fails, and non-local HTTP backends are rejected.
 
 ## Updates and local data
 
@@ -56,3 +56,24 @@ The panel exports JSON-lines logs via a native Save dialog. They are stored unde
 6. Export/back up writing, uninstall, and confirm the documented local-data behavior on the target Windows version.
 
 These installation, upgrade, and uninstall checks require a real signed package and a Windows test machine. They remain open in the [Prompt 12 UAT checklist](release-1-uat.md); a successful package build is not an installation pass. Microsoft documents the [MAUI MSIX CLI process](https://learn.microsoft.com/en-us/dotnet/maui/windows/deployment/publish-cli?view=net-maui-10.0), [package identity and update constraints](https://learn.microsoft.com/en-us/windows/msix/app-package-updates), and [MSIX local data behavior](https://learn.microsoft.com/en-us/windows/msix/msix-containerization-overview).
+
+## Desktop AI prompt 23 package verification (2026-10-04)
+
+The current local review package is `artifacts/desktopai-p23/msix/WriterApp.Desktop_0.1.0.1_x64_Test/WriterApp.Desktop_0.1.0.1_x64.msix`, SHA256 `D4058CC79528376152CF80090CD941D9B0A7AC2E9A232BC8954BFDBD0B9E1A14`. Its actual manifest identifies `Prosa.WriterApp.Desktop`, publisher `CN=Prosa Development`, x64, version `0.1.0.1`, executable `WriterApp.Desktop.exe`, and Windows App Runtime 1.7 dependency. Matching architecture dependency packages are in its `Dependencies` directories. This is an isolated **Development** review artifact, not a Production release.
+
+`Inspect-ProsaMsix.ps1` opens the real package, compares all 247 file block-map hashes, verifies the CMS signature without trusting its certificate, checks publisher/signing subject agreement and reads assembly metadata directly from the packaged DLL. Embedded metadata confirms Development, `http://127.0.0.1:5390/`, an absolute isolated `artifacts/desktopai-p22/acceptance-data-…/native` directory, and no update feed. The report records full paths, hashes, identity and the exact data directory. The packaged DLL SHA256 is `BCB9376FA5AC189318423876BC477AA1D330EFCB310CB5E8663DFAA5266BD066`.
+
+Reproduce after preparing the prompt-22 normal fixture:
+
+```powershell
+$fixture = Get-Content artifacts/desktopai-p22/acceptance-fixture.json -Raw | ConvertFrom-Json
+./scripts/windows/Build-ProsaTestMsix.ps1 -NoRestore -OutputDirectory artifacts/desktopai-p23/msix `
+  -Environment Development -ApiBaseUrl http://127.0.0.1:5390/ -ValidationDataDirectory (Join-Path $fixture.root 'native')
+./scripts/windows/Inspect-ProsaMsix.ps1 `
+  -PackagePath artifacts/desktopai-p23/msix/WriterApp.Desktop_0.1.0.1_x64_Test/WriterApp.Desktop_0.1.0.1_x64.msix `
+  -ReportPath artifacts/desktopai-p23/msix-inspection.json
+```
+
+Windows `signtool verify /pa /all /v` exits 1 because the self-signed root is untrusted; the review artifact has no timestamp. No Prosa package is installed and no desktop process was launched. The exact temporary signing key was removed from CurrentUser/My; its certificate is absent from both checked TrustedPeople stores. No machine trust was changed. Package integrity/CMS checks therefore pass independently of **trusted installation, actual native launch, clean install, same-family higher-version upgrade and distribution**, which remain open. Use an approved stable signing identity/test channel before those checks; preserve and back up isolated prior-version data, then inspect installed package identity, launched EXE, embedded backend and active storage path. Do not use this fresh temporary signer as evidence of an upgradeable release channel.
+
+Production-store tests now cover document versions 1–3, guide migration, interruption/retry and retained queued/private/recovery data. Those tests do not replace installed upgrade verification. Current native and iOS prerequisites and their independent statuses are in [the Desktop AI release checklist](desktopai-release-checklist.md).
