@@ -14,18 +14,23 @@
 .storyboard-page__layout {
     flex: 1 0 320px;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 320px 360px;
-    gap: var(--space-4);
+    grid-template-columns: minmax(0, 1fr) var(--space-4) var(--storyboard-insights-width, 320px) var(--space-4) var(--storyboard-detail-width, 360px);
+    gap: 0;
     align-items: stretch;
     min-height: 0;
     min-width: 0;
     overflow: hidden;
     position: relative;
-    transition: grid-template-columns 220ms ease;
 }
 
 .storyboard-page__layout--insights-collapsed {
-    grid-template-columns: minmax(0, 1fr) 360px;
+    grid-template-columns: minmax(0, 1fr) var(--space-4) var(--storyboard-detail-width, 360px);
+}
+
+.storyboard-page__layout.is-resizing-panel,
+.storyboard-page__layout.is-resizing-panel ::deep * {
+    cursor: col-resize !important;
+    user-select: none !important;
 }
 
 .storyboard-page__panel {
@@ -61,7 +66,7 @@
     appearance: none;
     position: absolute;
     top: 50%;
-    right: calc(360px + var(--space-2));
+    right: calc(var(--storyboard-detail-width, 360px) + var(--space-2));
     transform: translateY(-50%);
     display: inline-flex;
     align-items: center;
@@ -155,6 +160,7 @@
 @media (max-width: 1200px) {
     .storyboard-page { height: auto; min-height: 100%; overflow: visible; }
     .storyboard-page__layout {
+        gap: var(--space-4);
         flex: none;
         overflow: visible;
         grid-template-columns: 1fr;

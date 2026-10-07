@@ -27,7 +27,7 @@ public sealed partial class AiActionsControllerTests
         db.ProjectNodes.AddRange(new(){Id=chapter,DocumentId=id,ProjectId=project,NodeType=ProjectNodeType.Chapter,Title="Current chapter"},new(){Id=scene,DocumentId=id,ProjectId=project,ParentId=chapter,NodeType=ProjectNodeType.Scene,LinkedSectionId=section,Title="Current scene"});
         db.SceneCards.Add(new(){SceneNodeId=scene,Summary="Authored current summary",SubplotTagsJson="[\"Mystery\"]",KeyEvents="A clue is revealed"});db.DocumentSyncRecords.Add(new(){DocumentId=id,OwnerUserId="user-1",Version="v1",Sequence=1});await db.SaveChangesAsync();
         var source=await new WebAiSourceService(db,"user-1").Capture(id,section,null,null,default);var provider=new CheckedPlanningProvider();
-        var result=await BuildController(db,provider).ExecuteAction(key,new(id,section,null,null,null,null,"Old prose",null,new(){["storyboard_context"]="Old client planning"},WebSource:source),default);
+        var result=await BuildController(db,provider).ExecuteAction(key,new(id,section,null,null,null,null,"Old prose",null,new(){["storyboard_context"]="Old client planning",["selected_scene_title"]="Old scene title"},WebSource:source),default);
         Assert.IsType<OkObjectResult>(result.Result);Assert.Equal(1,provider.Calls);
         string context=provider.Request!.Inputs["storyboard_context"]!.ToString()!;Assert.Contains("Current chapter",context);Assert.Contains("Authored current summary",context);Assert.DoesNotContain("Old client planning",context);
         using var json=System.Text.Json.JsonDocument.Parse(context);
@@ -35,6 +35,11 @@ public sealed partial class AiActionsControllerTests
         Assert.Equal(System.Text.Json.JsonValueKind.Array,savedScene.GetProperty("subplotTags").ValueKind);
         Assert.Equal("Mystery",savedScene.GetProperty("subplotTags")[0].GetString());
         Assert.Equal("A clue is revealed",savedScene.GetProperty("keyEvents").GetString());
+        if (key == "storyboard.suggest-next-scene") {
+            Assert.Equal("Maya checked her phone at 08:05 and sighed.", provider.Request.Inputs["section_text"]);
+            Assert.Equal("Current scene", provider.Request.Inputs["selected_scene_title"]);
+            Assert.Equal("Current chapter", provider.Request.Inputs["preferred_chapter_title"]);
+        }
     }
     [Theory][InlineData("scene.suggest")][InlineData("scene.refine")][InlineData("scene.find-open-questions")]
     public async Task WebCheckedSceneCoachingUsesTypedOutputAndRejectsForeignEntityAllowList(string key)

@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using WriterApp.AI.Abstractions;
 using WriterApp.Application.Commands;
+using WriterApp.Application.State;
 
 namespace WriterApp.AI.Actions
 {
@@ -32,7 +34,18 @@ namespace WriterApp.AI.Actions
 
             string storyboardContext = GetOption(input.Options, "storyboard_context");
             string preferredChapterTitle = GetOption(input.Options, "preferred_chapter_title");
+            var section = input.Document.Chapters.SelectMany(chapter => chapter.Sections)
+                .FirstOrDefault(section => section.SectionId == input.ActiveSectionId);
             string selectedSceneTitle = GetOption(input.Options, "selected_scene_title");
+            if (string.IsNullOrWhiteSpace(selectedSceneTitle))
+            {
+                selectedSceneTitle = section?.Title ?? string.Empty;
+            }
+            // Desktop supplies its saved page text; checked web requests replace this
+            // override with owned server text. Preserve an explicitly empty scene.
+            string sectionText = input.Options?.ContainsKey("section_text_override") == true
+                ? GetOption(input.Options, "section_text_override")
+                : PlainTextMapper.ToPlainText(section?.Content.Value ?? string.Empty);
 
             AiRequestContext context = new(
                 input.Document.DocumentId,
@@ -55,7 +68,8 @@ namespace WriterApp.AI.Actions
                 ["instruction"] = instruction,
                 ["storyboard_context"] = storyboardContext,
                 ["preferred_chapter_title"] = preferredChapterTitle,
-                ["selected_scene_title"] = selectedSceneTitle
+                ["selected_scene_title"] = selectedSceneTitle,
+                ["section_text"] = sectionText
             };
 
             return new AiRequest(

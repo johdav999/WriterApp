@@ -235,6 +235,12 @@ public sealed class LocalStoryboardTests : IDisposable
         Assert.Equal(key, result.ActionKey); Assert.Equal(d.ServerDocumentId, _api.Request!.DocumentId);
         Assert.Equal(d.Sections[0].ServerSectionId, _api.Request.SectionId); Assert.Equal("v1", _api.Request.ExpectedDocumentVersion);
         Assert.Equal(AdvancedAiRequests.StoryboardContext(d), _api.Request.Parameters!["storyboard_context"]);
+        Assert.Equal("Original writing 日本語", _api.Request.SurroundingText);
+        if (key == "storyboard.suggest-next-scene")
+        {
+            Assert.Equal(d.Project!.Nodes.Single(n => n.NodeId == scene).Title, _api.Request.Parameters["selected_scene_title"]);
+            Assert.Equal(d.Project.Nodes.Single(n => n.NodeId == chapter).Title, _api.Request.Parameters["preferred_chapter_title"]);
+        }
         await data.ValidateSuggestionAsync(project);
         await data.CreateNodeAsync(project, new(chapter, "scene", "Changed board",null,null,null));
         await Assert.ThrowsAsync<InvalidOperationException>(() => data.ValidateSuggestionAsync(project));
@@ -313,8 +319,15 @@ public sealed class LocalStoryboardTests : IDisposable
                 (Task)typeof(StoryboardInsights).GetMethod("CheckSubplotContinuityAsync", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.Invoke(activator.Panel, null)!)).InvokeAsync());
             string html = await renderer.Dispatcher.InvokeAsync(root.ToHtmlString);
             Assert.Contains(expected, html); Assert.DoesNotContain("No subplot continuity findings were returned", html);
+            Assert.True(html.IndexOf("Analyze POV balance", StringComparison.Ordinal) < html.IndexOf(expected, StringComparison.Ordinal));
             Assert.Equal("<p>Original writing 日本語</p>", data.Document!.Sections[0].Pages[0].Content);
         }
+        _api.Output = "{\"findings\":[{\"title\":\"POV imbalance response\",\"explanation\":\"One perspective dominates the board.\",\"affectedPov\":\"Mara\",\"affectedChapters\":[],\"affectedScenes\":[],\"suggestion\":\"Consider another perspective.\"}]}";
+        await renderer.Dispatcher.InvokeAsync(() => EventCallback.Factory.Create(activator.Panel, (Func<Task>)(() =>
+            (Task)typeof(StoryboardInsights).GetMethod("AnalyzePovBalanceAsync", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.Invoke(activator.Panel, null)!)).InvokeAsync());
+        string povHtml = await renderer.Dispatcher.InvokeAsync(root.ToHtmlString);
+        Assert.Contains("POV imbalance response", povHtml);
+        Assert.True(povHtml.IndexOf("Analyze POV balance", StringComparison.Ordinal) < povHtml.IndexOf("POV imbalance response", StringComparison.Ordinal));
     }
     private sealed class Nav : NavigationManager { public Nav() => Initialize("http://localhost/", "http://localhost/"); protected override void NavigateToCore(string uri, bool forceLoad) { } }
     [Fact]

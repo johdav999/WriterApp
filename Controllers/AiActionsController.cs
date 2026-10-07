@@ -673,7 +673,8 @@ namespace WriterApp.Controllers
             else options.Remove(OnboardingDemoAiUsage.RequestParameterKey);
             options.Remove(WriterApp.Shared.WritingOutline.Option);
             if(request.WritingOutline is { } savedOutline)options[WriterApp.Shared.WritingOutline.Option]=WriterApp.Shared.WritingOutline.ProviderText(savedOutline);
-            if (!string.IsNullOrWhiteSpace(request.SurroundingText))
+            if (!string.IsNullOrWhiteSpace(request.SurroundingText)
+                || actionKey == StoryboardSuggestNextSceneAction.ActionIdValue && request.SurroundingText is not null)
             {
                 options["section_text_override"] = request.SurroundingText;
             }

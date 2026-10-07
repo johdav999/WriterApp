@@ -36,11 +36,13 @@
             </div>
             @if (!_insightsCollapsed)
             {
+                <StoryboardPanelResizeHandle Panel="insights" Label="Resize Storyboard Insights" />
                 <div class="storyboard-page__panel storyboard-page__panel--insights"><div class="storyboard-page__panel-body">
                     <StoryboardInsights Project="_tree.Project" ProjectId="ProjectId" Nodes="_tree.Nodes" SelectedSceneId="Selected?.NodeId" SelectedSceneIds="_selection"
                         IsCollapsedChanged="CollapsedChanged" CreateSuggestedScene="CreateSuggestedAsync" />
                 </div></div>
             }
+            <StoryboardPanelResizeHandle Panel="detail" Label="Resize Scene Detail" />
             <div class="storyboard-page__panel storyboard-page__panel--detail">
                 <aside class="storyboard-inspector" aria-label="Scene inspector">
                     <div class="storyboard-inspector-header"><div><h2>Scene Detail</h2><p>Edit the selected storyboard card without leaving the board.</p></div></div>

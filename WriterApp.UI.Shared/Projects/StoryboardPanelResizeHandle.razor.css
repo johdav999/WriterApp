@@ -1,0 +1,35 @@
+.storyboard-panel-resize-handle {
+    position: relative;
+    min-width: 0;
+    cursor: col-resize;
+    touch-action: none;
+    user-select: none;
+}
+
+.storyboard-panel-resize-handle::after {
+    content: "";
+    position: absolute;
+    top: 12px;
+    bottom: 12px;
+    left: 50%;
+    width: 2px;
+    transform: translateX(-50%);
+    border-radius: 2px;
+    background: var(--color-border);
+}
+
+.storyboard-panel-resize-handle:hover::after,
+.storyboard-panel-resize-handle:focus-visible::after,
+.storyboard-panel-resize-handle.is-dragging::after {
+    background: var(--color-primary);
+    width: 3px;
+}
+
+.storyboard-panel-resize-handle:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: -2px;
+}
+
+@media (max-width: 1200px) {
+    .storyboard-panel-resize-handle { display: none; }
+}

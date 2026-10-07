@@ -39,6 +39,11 @@ public sealed partial class AiActionsController
             var ids=nodes.Select(n=>n.Id).ToArray();
             var cards=await _dbContext.SceneCards.AsNoTracking().Where(c=>ids.Contains(c.SceneNodeId)).ToDictionaryAsync(c=>c.SceneNodeId,ct);
             var project=await _dbContext.Projects.AsNoTracking().Where(p=>p.Id==source.ProjectId).Select(p=>p.Title).SingleAsync(ct);
+            if (key == "storyboard.suggest-next-scene") {
+                var anchor = nodes.SingleOrDefault(n => n.NodeType == ProjectNodeType.Scene && n.LinkedSectionId == section);
+                parameters["selected_scene_title"] = anchor?.Title ?? "";
+                parameters["preferred_chapter_title"] = nodes.SingleOrDefault(n => n.Id == anchor?.ParentId)?.Title ?? "";
+            }
             parameters["storyboard_context"]=StoryboardAnalysis.Build(project,nodes.Select(n=> {
                 var c=cards.GetValueOrDefault(n.Id);
                 var card=c is null ? null : new WriterApp.Shared.Sync.SyncSceneCard(c.NarrativePurpose,c.NarrativeRole,c.NarrativeIntent,c.EmotionalBeat,

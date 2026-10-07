@@ -10,7 +10,10 @@ const css = (await Promise.all([
     'WriterApp.UI.Shared/wwwroot/design-tokens.css',
     'WriterApp.UI.Shared/RightPanelShell.razor.css',
     'WriterApp.UI.Shared/StoryPanelResizeHandle.razor.css',
-    'WriterApp.UI.Shared/Projects/ScenePlanningFields.razor.css'
+    'WriterApp.UI.Shared/Projects/ScenePlanningFields.razor.css',
+    'WriterApp.Device.Shared/Pages/DocumentWorkspace.razor.css',
+    'WriterApp.Device.Shared/Components/LocalAiPanel.razor.css',
+    'WriterApp.UI.Shared/wwwroot/editor.css'
 ].map(path => readFile(path, 'utf8')))).join('\n');
 const source = await readFile('WriterApp.UI.Shared/wwwroot/story-panel-resize.js', 'utf8');
 const summary = Array.from({ length: 60 }, (_, i) => `Summary line ${i + 1}`).join('\n');
@@ -18,15 +21,18 @@ const html = `<!doctype html><html lang="en"><meta charset="utf-8"><style>${css}
     *{box-sizing:border-box}body{margin:0;font:15px system-ui;background:#faf9f7}
     .fixture{height:720px;width:min(640px,100vw);margin:auto}.rp-tabs{height:150px}
     .rp-content>section{align-self:start}h2{margin-top:0}.fact{padding:24px;border:1px solid #ddd;margin-bottom:16px}
-    </style><div class="fixture"><div class="rp-shell has-pinned-body"><div class="rp-scroll">
+    </style><div class="prosa-editor"><div class="fixture"><div class="rp-shell has-pinned-body"><div class="rp-scroll">
     <div class="rp-sticky-header"><div class="rp-tabs">Writing · Story · Navigator<br><br>Scene card Coach · Storyboard · Synopsis</div><div class="rp-header">STORY</div></div>
     <div class="rp-panel"><div class="rp-content" tabindex="0"><section class="scene-planning-fields"><label>Title<input value="Chapter 1"></label>
     <label>Summary<textarea rows="3">${summary}</textarea></label>
     ${['Notes','Narrative intent','Emotional beat','Key events','Open questions'].map(x=>`<label>${x}<textarea rows="3"></textarea></label>`).join('')}</section></div>
     <div class="story-panel-resize-handle" role="separator" tabindex="0" aria-orientation="horizontal" aria-label="Resize Story and coaching panels"></div>
-    <div class="rp-trailing-body" tabindex="0"><h2>Scene card Coach</h2><p>Review every proposal before Apply.</p>
-    ${Array.from({length:12},(_,i)=>`<div class="fact">Saved story facts ${i+1}<p>Characters, places and events found in your manuscript.</p></div>`).join('')}</div>
-    </div></div></div></div></html>`;
+    <div class="rp-trailing-body" tabindex="0"><div class="desktop-context-ai"><div class="ai-workspace ai-workspace-fixed" role="region" aria-label="Scene card Coach" tabindex="0">
+    <div class="ai-request"><h2>Scene card Coach</h2><p>Review every proposal before Apply.</p>
+    ${Array.from({length:12},(_,i)=>`<div class="fact">Saved story facts ${i+1}<p>Characters, places and events found in your manuscript.</p></div>`).join('')}
+    <label>Coaching notes<textarea rows="3"></textarea></label><button>Suggest scene details</button></div>
+    <div class="ai-response"><p>Review the proposed scene card.</p><button>Apply approved fields</button></div>
+    </div></div></div></div></div></div></div></div></html>`;
 const browser = await chromium.launch({ channel: 'msedge', headless: true });
 const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 const checks = [];

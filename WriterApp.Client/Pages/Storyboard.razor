@@ -81,6 +81,7 @@
 
             @if (!_insightsCollapsed)
             {
+                <StoryboardPanelResizeHandle Panel="insights" Label="Resize Storyboard Insights" />
                 <div class="storyboard-page__panel storyboard-page__panel--insights">
                     <div class="storyboard-page__panel-body">
                         <StoryboardInsightsPanel Project="_project"
@@ -95,6 +96,7 @@
                 </div>
             }
 
+            <StoryboardPanelResizeHandle Panel="detail" Label="Resize Scene Detail" />
             <div class="storyboard-page__panel storyboard-page__panel--detail">
                 <div class="storyboard-page__panel-body">
                     <StoryboardSceneInspector @ref="_inspector" ProjectId="ProjectId"

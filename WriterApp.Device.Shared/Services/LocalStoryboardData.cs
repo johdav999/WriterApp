@@ -207,6 +207,12 @@ public sealed class LocalStoryboardData(LocalDocumentRepository documents, Devic
         var prepared = AdvancedAiRequests.Build(d, section, AdvancedAiAction.Storyboard).Request;
         var parameters = request.Parameters is null ? new Dictionary<string, object?>() : new(request.Parameters);
         parameters["storyboard_context"] = AdvancedAiRequests.StoryboardContext(d);
+        if (key == "storyboard.suggest-next-scene")
+        {
+            var anchor = d.Project!.Nodes.Single(n => n.NodeType == "scene" && n.SectionId == section && n.DeletionId is null);
+            parameters["selected_scene_title"] = anchor.Title;
+            parameters["preferred_chapter_title"] = d.Project.Nodes.SingleOrDefault(n => n.NodeId == anchor.ParentId && n.DeletionId is null)?.Title ?? "";
+        }
         prepared = prepared with { Key = key, Request = prepared.Request with { Parameters = parameters } };
         var proposal = await ai.ProposeAsync(prepared, CancellationToken.None);
         var latest = await documents.LoadAsync(d.DocumentId) ?? throw new IOException("Manuscript unavailable.");

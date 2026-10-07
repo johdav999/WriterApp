@@ -88,11 +88,6 @@
             </ul>
         }
 
-        @if (_subplotReportJson is not null)
-        {
-            <SubplotContinuityReview ResponseJson="@_subplotReportJson" StoryboardContext="@_subplotContext" />
-        }
-
         @if (PovCounts.Count > 0)
         {
             <div class="storyboard-insights-pov-summary">
@@ -104,6 +99,53 @@
                     }
                 </div>
             </div>
+        }
+
+    </div>
+
+    <div class="storyboard-insights-section">
+        <h3>Suggestions</h3>
+        <div class="storyboard-insights-empty">
+            Suggest next scene continues the selected scene, or the last scene if none is selected, using its saved writing and the board for context. Other analysis tools check the full board.
+        </div>
+        <div class="storyboard-insights-actions" aria-label="Storyboard AI suggestions">
+            <StoryboardActionButton Feature="StoryCoach" Class="storyboard-insights-action"
+                LockedTitle="Upgrade to check subplot continuity." AllowedTitle="Trace subplot threads across the saved storyboard."
+                ShowLockIndicator="false" IsBusy="@_subplotContinuityInFlight" OnClick="CheckSubplotContinuityAsync">
+                @(_subplotContinuityInFlight ? "Checking continuity…" : "Check subplot continuity")
+            </StoryboardActionButton>
+            <StoryboardActionButton Feature="StoryCoach"
+                             Class="storyboard-insights-action"
+                             LockedTitle="Upgrade to use storyboard structure suggestions."
+                             AllowedTitle="Suggest what happens after the selected scene using its saved writing and the board."
+                             ShowLockIndicator="false"
+                             IsBusy="@_nextSceneInFlight"
+                             OnClick="SuggestNextSceneAsync">
+                @(_nextSceneInFlight ? "Thinking..." : "Suggest next scene")
+            </StoryboardActionButton>
+            <StoryboardActionButton Feature="StoryCoach"
+                             Class="storyboard-insights-action"
+                             LockedTitle="Upgrade to detect missing scenes."
+                             AllowedTitle="Analyze the storyboard for likely missing scenes or weak transitions."
+                             ShowLockIndicator="false"
+                             IsBusy="@_missingScenesInFlight"
+                             OnClick="DetectMissingScenesAsync">
+                @(_missingScenesInFlight ? "Analyzing..." : "Detect missing scenes")
+            </StoryboardActionButton>
+            <StoryboardActionButton Feature="StoryCoach"
+                             Class="storyboard-insights-action"
+                             LockedTitle="Upgrade to analyze POV balance."
+                             AllowedTitle="Analyze POV balance across the storyboard."
+                             ShowLockIndicator="false"
+                             IsBusy="@_povBalanceInFlight"
+                             OnClick="AnalyzePovBalanceAsync">
+                @(_povBalanceInFlight ? "Analyzing..." : "Analyze POV balance")
+            </StoryboardActionButton>
+        </div>
+
+        @if (_subplotReportJson is not null)
+        {
+            <SubplotContinuityReview ResponseJson="@_subplotReportJson" StoryboardContext="@_subplotContext" />
         }
 
         @if (_povBalanceFindings.Count > 0)
@@ -142,47 +184,6 @@
                 }
             </div>
         }
-    </div>
-
-    <div class="storyboard-insights-section">
-        <h3>Suggestions</h3>
-        <div class="storyboard-insights-empty">
-            Storyboard-level analysis tools operate across the full board, not on the selected scene.
-        </div>
-        <div class="storyboard-insights-actions" aria-label="Storyboard AI suggestions">
-            <StoryboardActionButton Feature="StoryCoach" Class="storyboard-insights-action"
-                LockedTitle="Upgrade to check subplot continuity." AllowedTitle="Trace subplot threads across the saved storyboard."
-                ShowLockIndicator="false" IsBusy="@_subplotContinuityInFlight" OnClick="CheckSubplotContinuityAsync">
-                @(_subplotContinuityInFlight ? "Checking continuity…" : "Check subplot continuity")
-            </StoryboardActionButton>
-            <StoryboardActionButton Feature="StoryCoach"
-                             Class="storyboard-insights-action"
-                             LockedTitle="Upgrade to use storyboard structure suggestions."
-                             AllowedTitle="Suggest a strong next scene based on the current board."
-                             ShowLockIndicator="false"
-                             IsBusy="@_nextSceneInFlight"
-                             OnClick="SuggestNextSceneAsync">
-                @(_nextSceneInFlight ? "Thinking..." : "Suggest next scene")
-            </StoryboardActionButton>
-            <StoryboardActionButton Feature="StoryCoach"
-                             Class="storyboard-insights-action"
-                             LockedTitle="Upgrade to detect missing scenes."
-                             AllowedTitle="Analyze the storyboard for likely missing scenes or weak transitions."
-                             ShowLockIndicator="false"
-                             IsBusy="@_missingScenesInFlight"
-                             OnClick="DetectMissingScenesAsync">
-                @(_missingScenesInFlight ? "Analyzing..." : "Detect missing scenes")
-            </StoryboardActionButton>
-            <StoryboardActionButton Feature="StoryCoach"
-                             Class="storyboard-insights-action"
-                             LockedTitle="Upgrade to analyze POV balance."
-                             AllowedTitle="Analyze POV balance across the storyboard."
-                             ShowLockIndicator="false"
-                             IsBusy="@_povBalanceInFlight"
-                             OnClick="AnalyzePovBalanceAsync">
-                @(_povBalanceInFlight ? "Analyzing..." : "Analyze POV balance")
-            </StoryboardActionButton>
-        </div>
 
         @if (!string.IsNullOrWhiteSpace(_nextSceneError))
         {
@@ -421,10 +422,10 @@
                 null,
                 new Dictionary<string, object?>
                 {
-                    ["instruction"] = "Suggest one strong next scene based on the current storyboard structure. Focus on what most naturally advances the story from here.",
+                    ["instruction"] = "Suggest one concrete next scene that follows from the anchor scene's actual events and ending, using the storyboard for continuity.",
                     ["storyboard_context"] = contextJson,
                     ["preferred_chapter_title"] = GetPreferredChapterTitle(chapters),
-                    ["selected_scene_title"] = GetSelectedSceneTitle()
+                    ["selected_scene_title"] = Nodes.FirstOrDefault(node => node.Id == anchorSceneId.Value)?.Title
                 });
 
             AiActionExecuteResponseDto? result = await Data.ExecuteAiAsync(ProjectId, SuggestNextSceneActionKey, payload, Project?.DocumentId);
