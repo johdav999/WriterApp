@@ -1,0 +1,145 @@
+@using WriterApp.Shared.Brainstorming
+@implements IDisposable
+
+<details class="brainstorming-context-review" open="@Expanded">
+    <summary>Brainstorm story context</summary>
+    <p>Preparing context does not change your manuscript.</p>
+    <label>Destination <select aria-label="Destination" @bind="_destination" @bind:after="Changed" disabled="@_busy">
+        <option value="current">Current manuscript section</option><option value="chapter">First section in chapter</option><option value="new">New first section in chapter</option>
+    </select></label>
+    @if (_destination != "current") { <label>Saved chapter number <input type="number" min="1" max="1000" @bind="_chapter" @bind:after="Changed" disabled="@_busy" /></label> }
+    <button type="button" @onclick="LoadSupporting" disabled="@(_busy || SupportingDocuments is null)">@(_nextSupporting is null ? "Choose supporting document" : "Load more supporting documents")</button>
+    <label>Supporting document <select @bind="_support" @bind:after="Changed" disabled="@_busy"><option value="">None</option>
+        @foreach (var doc in _supporting) { <option value="@doc.Id">@doc.Title (@doc.Kind)</option> }
+    </select></label>
+    <button type="button" @onclick="Refresh" disabled="@(_busy || (PrepareServer ?? Prepare) is null)">@(_busy ? "Reading story context…" : "Prepare / refresh context")</button>
+    <details><summary>Advanced context settings</summary>
+        <label>Context character budget <input type="number" min="100" max="90000" @bind="_budget" @bind:after="Changed" disabled="@_busy" /></label>
+        @if (PrepareServer is not null && Prepare is not null) { <button type="button" @onclick="RefreshLocal" disabled="@_busy">Review local context (offline)</button> }
+        @if (_choices.Count != 0) { <button type="button" @onclick="ClearChoices" disabled="@_busy">Clear prior source choices for a fresh review</button> }
+    </details>
+    @if (_error is not null) { <p role="alert">@_error</p> }
+    @if (_needsRefresh && _result is not null) { <p role="status">This review needs refresh. Earlier proposals and discussion are retained; do not use an obsolete preview.</p> }
+    @if (_result?.Resolution.Clarification is { } question) { <p role="status">@question</p> }
+    @if (_result?.Resolution.Target is { } target && _result.Context is { } context) {
+        <p>Captured destination: @(TargetLabel?.Invoke(target) ?? $"section {target.SectionId ?? target.BeforeSectionId}, page {target.PageId}") · @(target.Kind == BrainstormingTargetKind.CreateSection ? "new first section before existing contents" : "page start; existing text is retained").</p>
+        <details><summary>Checked destination provenance</summary><p>Chapter @target.ChapterNodeId · section @(target.SectionId ?? target.BeforeSectionId) · page @target.PageId · outline @target.Source.StructureRevision.</p></details>
+        <p>Captured @context.CapturedAt.ToLocalTime() · @context.Policy?.CharactersUsed / @context.Policy?.CharacterBudget characters. @(!context.Policy!.Ready ? "Required text does not fit. Review a summary or explicitly omit a source for smaller context." : "Context budget reviewed.")</p>
+        <p>This character budget covers included story excerpts, titles and reasons. Provider token limits are checked separately when generation becomes available.</p>
+        @if (context.Policy.Limitation.Length != 0) { <p role="status">@context.Policy.Limitation</p> }
+        @foreach (var warning in context.Policy.Warnings) { <p role="status">@warning</p> }
+        @if (_result.ObsoleteDraftIds.Count != 0) { <p role="status">@_result.ObsoleteDraftIds.Count earlier draft previews need explicit refresh or rebase before use.</p> }
+        <p>Story excerpts are quoted data. Planning intent and extracted canon are shown separately from authored manuscript text.</p>
+        @foreach (var source in context.Sources) {
+            <details @key="source.Id">
+                <summary>@source.Title · @(source.Included ? "Included" : "Not included") · availability: @source.Availability · @source.Freshness · @source.Nature</summary>
+                <p>@source.Reason</p>
+                <p>Document @source.DocumentId · source @source.Id · revision @source.Source.ContentRevision · fingerprint @source.Source.Fingerprint · range @source.From–@source.To · @(source.IsSummary ? "Reviewed summary" : "Full source")</p>
+                @if (source.IsSummary) { <p>Summary of @source.SummaryOfSourceId at @source.SummaryOfRevision.</p> }
+                @if (source.Parts is { } parts) { <details><summary>@parts.Count full source pages in reading order</summary>@foreach (var part in parts) { <p>Section @part.SectionId · page @part.PageId · revision @part.Revision · fingerprint @part.ContentFingerprint · range @part.From–@part.To</p> }</details> }
+                <label><input type="checkbox" checked="@Enabled(source)" @onchange="e => SetEnabled(source, e.Value is true)" disabled="@_busy" /> Include this source</label>
+                @if (source.Mandatory && !source.Included) { <button type="button" @onclick="() => Omit(source)" disabled="@_busy">Review and omit this required source for smaller context</button> }
+                <label>Reviewed summary <textarea value="@Summary(source.Id)" @oninput="e => SetSummary(source, e.Value?.ToString() ?? string.Empty)" maxlength="50000" disabled="@_busy"></textarea></label>
+                <p>Entering a summary is an explicit author review. It is attributed to the source revision above; no AI summary request is made.</p>
+                @if (source.Included) { <pre>@source.Text</pre> }
+            </details>
+        }
+    }
+</details>
+
+@if (_result?.Context is { } conversationContext && ConversationWorkflow is not null && ConversationStore is not null) {
+    <BrainstormingConversationPanel @key="conversationContext.Scope" Scope="conversationContext.Scope" Ready="@(!_needsRefresh && conversationContext.Policy is { Ready: true, Limitation.Length: 0 })" Store="ConversationStore" Workflow="ConversationWorkflow" BeforeSend="BeforeSend" ReviewIdentity="ReviewIdentity" />
+}
+
+@code {
+    [Parameter] public bool Expanded { get; set; }
+    [Parameter] public Guid? SectionId { get; set; }
+    [Parameter] public Guid? SceneId { get; set; }
+    [Parameter] public bool SceneContentRoute { get; set; }
+    [Parameter] public Func<BrainstormingTargetQuery, IReadOnlyList<BrainstormingContextChoice>, IReadOnlyList<Guid>, int, Task<BrainstormingPreparation>>? Prepare { get; set; }
+    [Parameter] public Func<Guid?, Task<BrainstormingSupportingPage>>? SupportingDocuments { get; set; }
+    [Parameter] public IBrainstormingReviewIdentity? ReviewIdentity { get; set; }
+    [Parameter] public Func<BrainstormingTargetQuery, IReadOnlyList<BrainstormingContextChoice>, IReadOnlyList<Guid>, int, Task<BrainstormingPreparation>>? PrepareServer { get; set; }
+    [Parameter] public IBrainstormingCacheStore? ConversationStore { get; set; }
+    [Parameter] public BrainstormingConversationWorkflow? ConversationWorkflow { get; set; }
+    [Parameter] public Func<Task>? BeforeSend { get; set; }
+    [Parameter] public BrainstormingPreparation? InitialPreparation { get; set; }
+    [Parameter] public EventCallback<BrainstormingPreparation> Reviewed { get; set; }
+    [Parameter] public EventCallback ReviewChanged { get; set; }
+    [Parameter] public Func<BrainstormingTarget,string>? TargetLabel { get; set; }
+    private (Guid?,Guid?) _selectedTarget;
+    private Task RefreshServer() => RefreshCore(PrepareServer);
+    private Task RefreshLocal() => RefreshCore(Prepare);
+    private Task Refresh() => RefreshCore(PrepareServer ?? Prepare);
+    public async Task<string?> PrepareForSendAsync() {
+        await Refresh();
+        await InvokeAsync(StateHasChanged);
+        return _error ?? _result?.Resolution.Clarification
+            ?? (_result?.Context?.Policy is { Ready:true, Limitation.Length:0 } && !_needsRefresh ? null
+                : _result?.Context?.Policy?.Limitation is { Length:>0 } limitation ? limitation
+                : "Review the destination and required story sources in Brainstorm story context before sending.");
+    }
+    private string _destination = "current", _support = "";
+    private int _chapter = 2, _budget = BrainstormingContextPolicy.DefaultBudget;
+    private bool _busy, _needsRefresh;
+    private string? _error;
+    private BrainstormingPreparation? _result;
+    private readonly Dictionary<Guid, BrainstormingContextChoice> _choices = [];
+    private readonly List<BrainstormingSupportingDocument> _supporting = [];
+    private Guid? _nextSupporting;
+    private IBrainstormingReviewIdentity? _subscribedIdentity;
+    private long _identityEpoch;
+    private bool _disposed;
+    protected override void OnParametersSet() {
+        if (InitialPreparation is not null && !ReferenceEquals(InitialPreparation,_result)) {
+            _result = InitialPreparation; _choices.Clear(); _needsRefresh = true;
+            foreach(var source in _result.Context?.Sources ?? []) _choices[source.Id]=new(source.Id,source.Included,source.IsSummary?source.Text:null,source.IsSummary?source.Source.ContentRevision:null,source.IsSummary?source.Source.Fingerprint:null,!source.Included&&!source.Mandatory);
+            var support=_result.Context?.Sources.FirstOrDefault(s=>s.Kind==BrainstormingSourceKind.SupportingDocument && s.Included);
+            _support=support?.DocumentId.ToString()??"";
+            if(support is not null && !_supporting.Any(d=>d.Id==support.DocumentId))_supporting.Add(new(support.DocumentId,support.Title,"supporting document"));
+        }
+        if (_selectedTarget != (SectionId,SceneId)) { _selectedTarget = (SectionId,SceneId); _needsRefresh = true; }
+        if (_subscribedIdentity == ReviewIdentity) return;
+        if (_subscribedIdentity is not null) _subscribedIdentity.Changed -= IdentityChanged;
+        _subscribedIdentity = ReviewIdentity;
+        if (_subscribedIdentity is not null) _subscribedIdentity.Changed += IdentityChanged;
+    }
+    private void IdentityChanged() {
+        if (_disposed) return;
+        if (_result is not null || _supporting.Count != 0) _identityEpoch++;
+        _ = InvokeAsync(() => { if (_disposed) return; _result = null; _choices.Clear(); _supporting.Clear(); _support = ""; _nextSupporting = null; _needsRefresh = true; StateHasChanged(); });
+    }
+    public void Dispose() { _disposed = true; if (_subscribedIdentity is not null) _subscribedIdentity.Changed -= IdentityChanged; }
+    private async Task LoadSupporting() {
+        if (_busy || SupportingDocuments is null) return; _busy = true; _error = null;
+        try { var page = await SupportingDocuments(_nextSupporting); foreach (var doc in page.Items.Where(d => !_supporting.Any(s => s.Id == d.Id))) _supporting.Add(doc); _nextSupporting = page.NextAfter; }
+        catch (Exception e) when (e is InvalidOperationException or IOException or OperationCanceledException or System.Net.Http.HttpRequestException or System.Text.Json.JsonException) { _error = e.Message; }
+        finally { _busy = false; }
+    }
+    private void Changed() { _needsRefresh = true; _ = ReviewChanged.InvokeAsync(); }
+    private void ClearChoices() { _choices.Clear(); Changed(); }
+    private bool Enabled(BrainstormingContextSource source) => _choices.TryGetValue(source.Id, out var choice) ? choice.Enabled : source.Included || source.Mandatory;
+    private string Summary(Guid id) => _choices.GetValueOrDefault(id)?.Summary ?? "";
+    private BrainstormingContextChoice Choice(BrainstormingContextSource source) => _choices.GetValueOrDefault(source.Id) ?? new(source.Id, source.Included || source.Mandatory);
+    private void SetEnabled(BrainstormingContextSource source, bool enabled) { _choices[source.Id] = Choice(source) with { Enabled = enabled, DeliberateOmission = false }; Changed(); }
+    private void Omit(BrainstormingContextSource source) { _choices[source.Id] = Choice(source) with { Enabled = false, DeliberateOmission = true }; Changed(); }
+    private void SetSummary(BrainstormingContextSource source, string text) { _choices[source.Id] = Choice(source) with { Enabled = true, Summary = string.IsNullOrWhiteSpace(text) ? null : text,
+        SummaryOfRevision = string.IsNullOrWhiteSpace(text) ? null : source.Source.ContentRevision, SummaryOfFingerprint = string.IsNullOrWhiteSpace(text) ? null : source.Source.Fingerprint }; Changed(); }
+    private async Task RefreshCore(Func<BrainstormingTargetQuery, IReadOnlyList<BrainstormingContextChoice>, IReadOnlyList<Guid>, int, Task<BrainstormingPreparation>>? prepare)
+    {
+        if (prepare is null || _busy) return; _busy = true; _needsRefresh = true; _error = null; var epoch = _identityEpoch;
+        await ReviewChanged.InvokeAsync();
+        try {
+            Guid[] support = []; if (!string.IsNullOrWhiteSpace(_support)) { if (!Guid.TryParse(_support, out var id) || id == Guid.Empty) throw new InvalidDataException("Choose an available supporting document."); support = [id]; }
+            var selectedChoices = _choices.Values.Where(c => _result?.Context?.Sources.FirstOrDefault(s => s.Id == c.SourceId) is not { Kind: BrainstormingSourceKind.SupportingDocument } old || support.Contains(old.DocumentId)).ToArray();
+            var query = _destination == "current" ? new BrainstormingTargetQuery(SectionId: SectionId, SceneId: SceneId, SceneContentRoute: SceneContentRoute)
+                : new BrainstormingTargetQuery(ChapterNumber: _chapter, NewFirstSection: _destination == "new", SceneContentRoute: SceneContentRoute);
+            var result = await prepare(query, selectedChoices, support, _budget);
+            if (_disposed || epoch != _identityEpoch) throw new OperationCanceledException("The review account changed. Earlier sessions remain in their original private cache.");
+            _result = result; _needsRefresh = false;
+            await Reviewed.InvokeAsync(result);
+        } catch (Exception error) when (error is InvalidDataException or InvalidOperationException or IOException or OperationCanceledException or Microsoft.JSInterop.JSException
+            or System.Net.Http.HttpRequestException or System.Text.Json.JsonException or BrainstormingConcurrencyException) { _error = error.Message; }
+        finally { _busy = false; }
+    }
+}

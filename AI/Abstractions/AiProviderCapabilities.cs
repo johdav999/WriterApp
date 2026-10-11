@@ -1,4 +1,4 @@
 namespace WriterApp.AI.Abstractions
 {
-    public sealed record AiProviderCapabilities(bool SupportsText, bool SupportsImage);
+    public sealed record AiProviderCapabilities(bool SupportsText, bool SupportsImage, bool SupportsAudio = false);
 }

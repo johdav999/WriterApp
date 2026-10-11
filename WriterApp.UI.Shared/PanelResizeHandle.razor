@@ -10,15 +10,33 @@
     [Parameter] public string Label { get; set; } = "Resize right panel";
     private ElementReference _handle;
     private IJSObjectReference? _module;
+    private bool _disposed, _attaching;
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        _module ??= await JS.InvokeAsync<IJSObjectReference>("import", "/_content/WriterApp.UI.Shared/panel-resize.js");
-        await _module.InvokeVoidAsync("attach", _handle, Side);
+        if (_disposed || _attaching) return;
+        _attaching = true;
+        var handle = _handle;
+        var side = Side;
+        try
+        {
+            if (_module is null)
+            {
+                var module = await JS.InvokeAsync<IJSObjectReference>("import", "/_content/WriterApp.UI.Shared/panel-resize.js");
+                if (_disposed) { await module.DisposeAsync(); return; }
+                _module = module;
+            }
+            if (!_disposed) await _module.InvokeVoidAsync("attach", handle, side);
+        }
+        catch (Exception error) when (_disposed && (error is JSException or ObjectDisposedException)) { }
+        finally { _attaching = false; }
     }
     public async ValueTask DisposeAsync()
     {
-        if (_module is null) return;
-        try { await _module.InvokeVoidAsync("detach", _handle); await _module.DisposeAsync(); }
+        _disposed = true;
+        var module = _module;
+        _module = null;
+        if (module is null) return;
+        try { await module.InvokeVoidAsync("detach", _handle); await module.DisposeAsync(); }
         catch (JSDisconnectedException) { }
     }
 }

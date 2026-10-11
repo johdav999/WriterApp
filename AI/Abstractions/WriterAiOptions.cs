@@ -7,19 +7,29 @@ namespace WriterApp.AI.Abstractions
         public WriterAiStreamingOptions Streaming { get; set; } = new();
         public WriterAiUiOptions UI { get; set; } = new();
         public WriterAiRateLimitOptions RateLimiting { get; set; } = new();
+        public WriterAiSpeechOptions Speech { get; set; } = new();
     }
 
     public sealed class WriterAiProviderOptions
     {
         public string DefaultTextProviderId { get; set; } = "mock-text";
         public string DefaultImageProviderId { get; set; } = "mock-image";
+        public string DefaultAudioProviderId { get; set; } = "openai-speech";
         public bool AllowProviderFallback { get; set; } = true;
         public WriterAiOpenAiOptions OpenAI { get; set; } = new();
+    }
+
+    public sealed class WriterAiSpeechOptions
+    {
+        public bool Enabled { get; set; }
+        public string Model { get; set; } = "";
+        public int TimeoutSeconds { get; set; } = 90;
     }
 
     public sealed class WriterAiStreamingOptions
     {
         public bool Enabled { get; set; } = false;
+        public int BrainstormingTimeoutSeconds { get; set; } = 180;
     }
 
     public sealed class WriterAiUiOptions

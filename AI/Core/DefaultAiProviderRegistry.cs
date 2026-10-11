@@ -47,6 +47,7 @@ namespace WriterApp.AI.Core
             foreach (IAiProvider provider in Providers)
             {
                 AiProviderCapabilities capabilities = provider.Capabilities;
+                if (modality == AiModality.Audio && !capabilities.SupportsAudio) continue;
                 if (modality == AiModality.Text && !capabilities.SupportsText)
                 {
                     continue;

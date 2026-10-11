@@ -1,7 +1,49 @@
-.editor-context-host { position: relative; display: flex; min-width: 0; min-height: 0; height: 100%; }
-.editor-context-host ::deep .context-drawer { width: 100%; }
+.editor-context-host { position:relative; display:flex; min-width:0; min-height:0; height:100%; }
+.editor-context-host ::deep .context-drawer { width:100%; }
 .editor-workspace.is-context-collapsed > .editor-context-host,
 .editor-workspace.is-panels-collapsed > .editor-context-host,
-.editor-shell.is-focus-mode .editor-context-host { display: none; }
-.editor-shell.is-resizing-panel, .editor-shell.is-resizing-panel ::deep * { cursor: col-resize !important; user-select: none !important; }
-@media (max-width: 980px) { .editor-context-host { display: none; } }
+.editor-shell.is-focus-mode .editor-context-host { display:none; }
+.editor-shell.is-resizing-panel, .editor-shell.is-resizing-panel ::deep * { cursor:col-resize !important; user-select:none !important; }
+.editor-context-host[hidden], .brainstorming-host[hidden], .editor-main[hidden], .brainstorm-draft-host[hidden] { display:none !important; }
+.editor-shell.is-brainstorming { --brainstorm-outline-width:220px; --brainstorm-accent:var(--color-primary,#453363); display:grid; grid-template-columns:100px minmax(0,1fr); gap:0; padding:0; height:100%; min-height:0; }
+.editor-shell.is-brainstorming .editor-workspace { grid-template-columns:var(--brainstorm-outline-width) minmax(0,1fr) var(--context-panel-width,360px); gap:0; min-height:0; overflow:hidden; }
+.brainstorm-pane-controls { display:flex; flex-direction:column; gap:8px; padding:22px 8px; border-right:1px solid var(--color-border,#e6e3e9); }
+.brainstorm-pane-controls button { display:flex; flex-direction:column; align-items:center; gap:8px; font:12px/1.4 var(--font-sans,system-ui); min-height:62px; padding:10px 3px; border:0; border-radius:8px; background:transparent; color:var(--color-text,#252331); cursor:pointer; }
+.brainstorm-pane-controls button[aria-pressed=true] { background:var(--color-primary-soft,#eee9f7); color:var(--brainstorm-accent); }
+.brainstorm-pane-controls .brainstorm-collapse { margin-top:auto; min-height:36px; }
+.brainstorm-outline, .brainstorming-host { position:relative; min-width:0; min-height:0; overflow:auto; background:var(--color-surface-1,#fff); border-right:1px solid var(--color-border,#e6e3e9); padding:16px; }
+.brainstorming-host { display:flex; flex-direction:column; padding:0; overflow:hidden; border-right:0; border-left:1px solid var(--color-border,#e6e3e9); }
+.brainstorming-host ::deep .brainstorm-workspace { flex:1; }
+.brainstorm-draft-host { display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden; padding:24px; background:var(--color-surface-2,#faf9f7); }
+.brainstorm-draft-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:20px; flex-shrink:0; }
+.brainstorm-draft-heading h1 { margin:0 0 4px; font:600 26px/1.3 var(--font-sans,system-ui); }
+.brainstorm-draft-heading p { margin:0; font-size:14px; color:var(--color-text-muted,#6e6b7c); }
+.brainstorm-draft-heading button { border:0; background:transparent; color:var(--brainstorm-accent); cursor:pointer; font:inherit; }
+.brainstorm-draft-host ::deep .brainstorm-proposal-preview { flex:1; min-height:0; }
+.editor-shell.is-brainstorming .editor-main { padding:20px; overflow:auto; }
+.editor-shell.is-brainstorming .brainstorm-outline-collapsed { grid-template-columns:minmax(0,1fr) var(--context-panel-width,360px); }
+.brainstorm-outline-collapsed > .brainstorm-outline, .brainstorm-conversation-collapsed > .brainstorming-host { display:none; }
+.editor-shell.is-brainstorming .brainstorm-conversation-collapsed { grid-template-columns:var(--brainstorm-outline-width) minmax(0,1fr); }
+.editor-shell.is-brainstorming .brainstorm-outline-collapsed.brainstorm-conversation-collapsed { grid-template-columns:minmax(0,1fr); }
+button:focus-visible { outline:2px solid var(--brainstorm-accent); outline-offset:3px; }
+@media (max-width:1100px) {
+    .editor-shell.is-brainstorming { grid-template-columns:minmax(0,1fr); grid-template-rows:auto minmax(0,1fr); }
+    .brainstorm-pane-controls { flex-direction:row; padding:6px; border-right:0; border-bottom:1px solid var(--color-border,#e6e3e9); gap:4px; }
+    .brainstorm-pane-controls button { flex:1; min-height:44px; padding:6px; gap:2px; }
+    .brainstorm-pane-controls .brainstorm-collapse { display:none; }
+    .editor-shell.is-brainstorming .editor-workspace { grid-template-columns:minmax(0,1fr); }
+    .editor-shell.is-brainstorming .editor-workspace > .brainstorm-outline,
+    .editor-shell.is-brainstorming .editor-workspace > .brainstorming-host,
+    .editor-shell.is-brainstorming .editor-workspace > .editor-main,
+    .editor-shell.is-brainstorming .editor-workspace > .brainstorm-draft-host { display:none; }
+    .editor-shell.is-brainstorming [data-brainstorm-pane=outline] > .brainstorm-outline,
+    .editor-shell.is-brainstorming [data-brainstorm-pane=conversation] > .brainstorming-host,
+    .editor-shell.is-brainstorming [data-brainstorm-pane=manuscript] > .editor-main,
+    .editor-shell.is-brainstorming [data-brainstorm-pane=draft] > .editor-main:not([hidden]),
+    .editor-shell.is-brainstorming [data-brainstorm-pane=draft] > .brainstorm-draft-host { display:flex; flex-direction:column; }
+    .brainstorm-outline ::deep .panel-resize-handle, .brainstorming-host ::deep .panel-resize-handle { display:none; }
+    .brainstorm-draft-host { padding:12px; }
+    .brainstorm-draft-heading { margin-bottom:12px; }
+    .brainstorm-draft-heading h1 { font-size:22px; }
+}
+@media (max-width:980px) { .editor-context-host { display:none; } }

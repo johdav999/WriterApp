@@ -97,6 +97,17 @@ namespace WriterApp.AI.Providers.OpenAI
                 throw new ArgumentNullException(nameof(request));
             }
 
+            if (request.ActionId == WriterApp.AI.Actions.BrainstormingConversationAction.Id)
+            {
+                var text = new StringBuilder(); AiUsage usage = new(0, 0, TimeSpan.Zero); string model = _options.TextModel;
+                await foreach (var item in StreamConversationAsync(request, ct)) {
+                    if (item is AiStreamEvent.TextDelta delta) text.Append(delta.Delta);
+                    if (item is AiStreamEvent.Failed) throw new AiProviderException(ProviderIdValue, "Conversation stream did not complete.");
+                    if (item is AiStreamEvent.Completed completed) { usage = completed.Usage ?? usage; model = completed.Model ?? model; }
+                }
+                return new(request.RequestId, [new(Guid.NewGuid(), AiModality.Text, "application/json", text.ToString(), null, null)], usage, new() { ["model"] = model });
+            }
+
             string apiKey = _apiKey;
             if (string.IsNullOrWhiteSpace(apiKey))
             {
@@ -591,6 +602,11 @@ namespace WriterApp.AI.Providers.OpenAI
             if (request is null)
             {
                 throw new ArgumentNullException(nameof(request));
+            }
+
+            if (request.ActionId == WriterApp.AI.Actions.BrainstormingConversationAction.Id) {
+                await foreach (var item in StreamConversationAsync(request, ct)) yield return item;
+                yield break;
             }
 
             if (!string.Equals(request.ActionId, ActionRewrite, StringComparison.Ordinal)

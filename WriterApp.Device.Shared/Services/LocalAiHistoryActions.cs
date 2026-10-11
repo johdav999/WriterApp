@@ -17,6 +17,10 @@ public sealed class LocalAiHistoryActions(LocalDocumentRepository documents, Loc
         try
         {
             var entry = (await history.HistoryAsync(documentId, ct)).Single(h => h.Id == entryId);
+            if(entry.Brainstorming?.Scope is {AccountKey:not null} scope && (account?.IsSignedIn!=true || host is null
+                || scope.AccountKey!=WriterApp.Shared.Brainstorming.BrainstormingValidation.Fingerprint(account.AccountId??"")
+                || scope.BackendKey!=WriterApp.Shared.Brainstorming.BrainstormingValidation.Fingerprint(host.ApiBaseAddress.AbsoluteUri)))
+                throw new InvalidOperationException("Sign in to the original brainstorming account and backend before changing this history entry.");
             if (entry.CloudOrigin is { } origin && (account?.IsSignedIn != true || host is null || string.IsNullOrWhiteSpace(account.AccountId)
                 || origin.Scope != LocalBibleStore.ScopeKey(host.ApiBaseAddress, account.AccountId)))
                 throw new InvalidOperationException("Sign in to the original account and backend before changing this history entry. Local writing remains available.");
@@ -56,6 +60,7 @@ public sealed class LocalAiHistoryActions(LocalDocumentRepository documents, Loc
 
     public static LocalDocument Change(LocalDocument current, LocalAiHistory entry, bool redo)
     {
+        if(entry.Version==6)return LocalBrainstormingWriting.Change(current,entry,redo);
         if (entry.Version == 5) LocalSynopsisCoaching.ValidateEntry(entry);
         if (current.DocumentId != entry.DocumentId || current.DeletedAtUtc is not null || current.SyncState == LocalSyncState.Conflict)
             throw new InvalidOperationException("Restore the document and resolve any sync conflict before changing AI history.");

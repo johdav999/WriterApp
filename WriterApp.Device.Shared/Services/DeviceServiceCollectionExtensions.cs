@@ -12,6 +12,9 @@ public static class DeviceServiceCollectionExtensions
         string localDocumentPath)
     {
         ArgumentNullException.ThrowIfNull(services);
+        services.TryAddSingleton<WriterApp.Shared.Brainstorming.IBrainstormingMicrophone,WriterApp.Shared.Brainstorming.UnsupportedBrainstormingMicrophone>();
+        services.TryAddSingleton<WriterApp.Shared.Brainstorming.IBrainstormingSpeechOutput,WriterApp.Shared.Brainstorming.UnsupportedBrainstormingSpeechOutput>();
+        services.AddScoped<WriterApp.Shared.Brainstorming.BrainstormingVoiceCoordinator>();
         ArgumentNullException.ThrowIfNull(options);
         ArgumentException.ThrowIfNullOrWhiteSpace(localDocumentPath);
 
@@ -55,6 +58,17 @@ public static class DeviceServiceCollectionExtensions
         services.AddScoped<DeviceSyncEngine>();
         services.AddScoped<IDeviceAiApi, DeviceAiApi>();
         services.AddScoped<DeviceAiService>();
+        services.AddScoped<DeviceBrainstormingCapabilities>();
+        services.AddSingleton(_ => new LocalBrainstormingStore(Path.Combine(localDocumentPath, "brainstorming")));
+        services.AddScoped<DeviceBrainstormingSessions>();
+        services.AddScoped<LocalBrainstormingKeeps>();
+        services.AddScoped<LocalBrainstormingPlanningSaves>();
+        services.AddScoped<DeviceBrainstormingTextProjector>();
+        services.AddScoped<DeviceBrainstormingContext>();
+        services.AddScoped<WriterApp.Shared.Brainstorming.IBrainstormingCacheStore>(sp => sp.GetRequiredService<DeviceBrainstormingSessions>());
+        services.AddScoped<WriterApp.Shared.Brainstorming.IBrainstormingRemote>(sp => sp.GetRequiredService<DeviceBrainstormingSessions>().Remote);
+        services.AddScoped<WriterApp.Shared.Brainstorming.BrainstormingSessionService>();
+        services.AddScoped<WriterApp.Shared.Brainstorming.IBrainstormingCapabilityService>(sp => sp.GetRequiredService<DeviceBrainstormingCapabilities>());
         services.AddScoped<LocalStoryboardData>();
         services.AddScoped<WriterApp.UI.Shared.Projects.IStoryboardData>(sp => sp.GetRequiredService<LocalStoryboardData>());
         services.AddSingleton(_ => new DeviceAiUndoStore(Path.Combine(localDocumentPath, "ai-undo")));

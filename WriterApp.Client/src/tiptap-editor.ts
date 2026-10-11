@@ -6,7 +6,7 @@ declare global {
     }
 }
 import { Editor, Extension } from "@tiptap/core";
-import { captureTranslation, previewTranslation } from "./device-editor";
+import { captureTranslation, previewTranslation, qualityPlainText, previewBrainstormingKeep, create as createBrainstormProposal } from "./device-editor";
 import { targetedRevisionTransaction, validateTargetedRevisionRange } from "./targeted-revision";
 import { captureStyleQuality, previewStyleQuality, applyStyleQuality } from "./web-style-quality";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
@@ -3278,6 +3278,7 @@ if (!window.__writerAppDragInit) {
 
 console.log('tiptap bundle loaded', !!(window as any).tiptapEditor);
 (window as any).tiptapEditor.captureTranslation = captureTranslation;
+(window as any).tiptapEditor.brainstormingPlainText = qualityPlainText;
 (window as any).tiptapEditor.previewTranslation = previewTranslation;
 (window as any).tiptapEditor.targetedRevisionTransaction = targetedRevisionTransaction;
 (window as any).tiptapEditor.validateTargetedRevisionRange = validateTargetedRevisionRange;
@@ -3286,3 +3287,6 @@ console.log('tiptap bundle loaded', !!(window as any).tiptapEditor);
 (window as any).tiptapEditor.previewStyleQuality = previewStyleQuality;
 (window as any).tiptapEditor.applyStyleQuality = applyStyleQuality;
 
+
+(window as any).tiptapEditor.createBrainstormProposal = createBrainstormProposal;
+(window as any).tiptapEditor.previewBrainstormingKeep = previewBrainstormingKeep;

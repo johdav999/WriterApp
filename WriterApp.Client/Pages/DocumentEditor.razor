@@ -1,4 +1,4 @@
-@page "/documents/{DocumentId:guid}/sections/{SectionId:guid}"
+﻿@page "/documents/{DocumentId:guid}/sections/{SectionId:guid}"
 @page "/projects/{ProjectId:guid}/scenes/{SceneNodeId:guid}"
 @using WriterApp.Application.Documents
 @using WriterApp.Application.AI
@@ -27,7 +27,11 @@ else if (_activeSection is null || _activePage is null)
 }
 else
 {
-    <EditorWorkspace Class="@GetLayoutStateClass()" Style="@GetLayoutStyle()" WorkspaceClass="@GetWorkspaceClass()">
+    <EditorWorkspace @ref="_brainstormEditorWorkspace" ProposalId="SelectedBrainstormDraftId" Class="@GetLayoutStateClass()" Style="@GetLayoutStyle()" WorkspaceClass="@GetWorkspaceClass()" BrainstormOpen="_brainstormOpen" LeaveBrainstorm="ToggleBrainstorm">
+        <Proposal>
+                @if (_brainstormOpen) { <BrainstormingProposalPreview @ref="_brainstormProposal" ReviewIdentity="BrainstormSessions" Sessions="BrainstormSessions.Sessions" CacheChanged="cache => _brainstormCache = cache" EditorHost="Web" GenerationBusy="_brainstormGenerating" DocumentId="DocumentId" Cache="_brainstormCache" ActiveSectionId="_activeSection.Id" TargetLabel="BrainstormTargetLabel" Navigate="NavigateBrainstormTarget" ViewApplication="ViewBrainstormApplication" PrepareKeep="PrepareBrainstormKeep" ApplyKeep="ApplyBrainstormKeep" InspectApplication="InspectBrainstormKeep" ChangeApplication="ChangeBrainstormKeep" RecoverApplication="RecoverBrainstormKeep" /> }
+                @if (_brainstormNavigationError is not null) { <p role="alert">@_brainstormNavigationError</p> }
+        </Proposal>
         <Main>
                 <EditorHeading Label='@(_isPreviewMode ? "Manuscript" : "Section")' Title='@(_isPreviewMode ? GetPreviewDocumentTitle() : GetActiveEditorTitle())'><Actions>                        @if (ShowTranslationSwitcher)
                         {
@@ -53,11 +57,14 @@ else
                             <Icon Name="@(_isPreviewMode ? "edit" : "visibility")" />
                             <span>@(_isPreviewMode ? "Back to editing" : "Preview")</span>
                         </button>
+                        <button type="button" class="panel-toggle" aria-pressed="@_brainstormOpen" @onmousedown:preventDefault @onclick="ToggleBrainstorm">@(_brainstormOpen ? "Leave Brainstorm" : "Brainstorm")</button>
                         @if (!_isPreviewMode)
                         {
                             <EditorPanelControls FocusMode="@LayoutStateService.State.FocusMode" ContextCollapsed="@IsContextPanelCollapsed()" ToggleFocus="ToggleFocusMode" ToggleContext="ToggleContextPanel" />
                         }
 </Actions></EditorHeading>
+
+
 
                 @if (!_isPreviewMode)
                 {
@@ -594,6 +601,24 @@ else
                     }
                 </div>
         </Main>
+        <Outline>
+            @if (_documentKind == "manuscript" && GetNavigatorProjectId() is not null) {
+                <Projects ProjectId="@GetNavigatorProjectId()" EmbedNavigator="true" HostDocumentId="DocumentId" SceneOpenRequested="OpenSceneFromNavigatorAsync" />
+            }
+            <nav aria-label="Manuscript sections">
+                @foreach (var section in _sections) { <button type="button" class="panel-toggle" aria-current="@(section.Id == _activeSection.Id ? "page" : null)" @onclick="() => OnSectionSelected(section.Id)">@section.Title</button> }
+            </nav>
+        </Outline>
+        <Brainstorming>
+            @if (_brainstormVisited) {
+            <BrainstormingWorkspace Active="_brainstormOpen" ResumeScope="_brainstormContextScope" DocumentId="DocumentId" SectionId="_activeSection.Id" SceneId="@(IsSceneRoute ? SceneNodeId : null)" SceneContentRoute="IsSceneRoute"
+                Store="BrainstormSessions" Sessions="BrainstormSessions.Sessions" Workflow="BrainstormSessions.ConversationWorkflow" Dictation="BrainstormSessions.DictationWorkflow" Capabilities="BrainstormCapabilities" ReviewIdentity="BrainstormSessions"
+                Discover="scope=>BrainstormSessions.DiscoverAsync(scope)" SynchronizeSession="(scope,pull)=>BrainstormSessions.SyncAsync(scope,pull)" ForkServerSession="BrainstormSessions.ForkServerAsync"
+                BeforeDraftSend="PrepareBrainstormDraftSend" ShowDraftRequested="ShowBrainstormDraft" GeneratingChanged="value => _brainstormGenerating = value" ScopeFactory="CreateBrainstormScope" SessionChanged="SelectBrainstormSession" CacheChanged="cache => _brainstormCache = cache"
+                Prepare="PrepareBrainstormingContext" PrepareServer="PrepareSavedBrainstormingContext" SupportingDocuments="ListBrainstormingSupportingAsync" BeforeSend="BeforeBrainstormingSend" TargetLabel="BrainstormTargetLabel"
+                CapturePlanning="CaptureBrainstormPlanning" ApplyPlanning="ApplyBrainstormPlanning" InspectPlanning="InspectBrainstormPlanning" />
+            }
+        </Brainstorming>
         <Context>
             @if (!_isPreviewMode)
             {

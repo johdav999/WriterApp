@@ -1,0 +1,119 @@
+name: iOS TestFlight package
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_environment:
+        description: Backend environment embedded in the app
+        type: choice
+        options: [Staging, Development, Production]
+        default: Staging
+      upload_to_testflight:
+        description: Upload the signed package to App Store Connect
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Serialize uploads of this bundle, including builds from different branches.
+concurrency:
+  group: prosa-ios-testflight
+  cancel-in-progress: false
+
+jobs:
+  ios-package:
+    runs-on: macos-26
+    timeout-minutes: 60
+    environment: ios-testflight
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      PROSA_IOS_ENVIRONMENT: ${{ inputs.app_environment }}
+      PROSA_IOS_UPLOAD: ${{ inputs.upload_to_testflight }}
+      PROSA_IOS_API_BASE_URL: ${{ vars.IOS_API_BASE_URL }}
+      PROSA_IOS_AUTH_JSON: ${{ vars.IOS_NATIVE_AUTH_JSON }}
+      PROSA_IOS_XCODE_APP: ${{ vars.IOS_XCODE_APP_PATH }}
+      PROSA_IOS_BUILD_OFFSET: ${{ vars.IOS_BUILD_NUMBER_OFFSET || '0' }}
+      PROSA_IOS_WORKLOAD_VERSION: ${{ vars.IOS_WORKLOAD_VERSION }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up CI helper runtime
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Check CI helper without credentials
+        run: python3 scripts/ios/test_testflight.py
+
+      - name: Check setup before installing toolchains
+        env:
+          HAS_IOS_DISTRIBUTION_P12: ${{ secrets.IOS_DISTRIBUTION_P12_BASE64 != '' }}
+          HAS_IOS_DISTRIBUTION_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD != '' }}
+          HAS_IOS_APPSTORE_PROFILE: ${{ secrets.IOS_APPSTORE_PROFILE_BASE64 != '' }}
+          HAS_ASC_KEY: ${{ secrets.ASC_PRIVATE_KEY_BASE64 != '' }}
+          HAS_ASC_KEY_ID: ${{ secrets.ASC_KEY_ID != '' }}
+          HAS_ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID != '' }}
+        run: python3 scripts/ios/testflight.py preflight
+
+      - name: Select configured Xcode
+        run: |
+          sudo xcode-select --switch "$PROSA_IOS_XCODE_APP/Contents/Developer"
+          xcodebuild -version
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Install iOS MAUI workload
+        run: |
+          if [ -n "$PROSA_IOS_WORKLOAD_VERSION" ]; then
+            dotnet workload install maui-ios --version "$PROSA_IOS_WORKLOAD_VERSION"
+          else
+            dotnet workload install maui-ios
+          fi
+          dotnet --info
+          dotnet workload list
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: WriterApp.Client/package-lock.json
+
+      - name: Build bundled editor assets
+        working-directory: WriterApp.Client
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build signed iPhone package and optionally upload
+        id: package
+        env:
+          IOS_DISTRIBUTION_P12_BASE64: ${{ secrets.IOS_DISTRIBUTION_P12_BASE64 }}
+          IOS_DISTRIBUTION_P12_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD }}
+          IOS_APPSTORE_PROFILE_BASE64: ${{ secrets.IOS_APPSTORE_PROFILE_BASE64 }}
+          ASC_PRIVATE_KEY_BASE64: ${{ secrets.ASC_PRIVATE_KEY_BASE64 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: python3 scripts/ios/testflight.py build
+
+      - name: Remove signing and upload credentials
+        if: ${{ always() }}
+        run: python3 scripts/ios/testflight.py cleanup
+
+      - name: Save signed package and build receipt
+        if: ${{ !cancelled() && hashFiles('artifacts/ios-testflight/build-receipt.json') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Prosa-iOS-${{ github.run_number }}
+          path: |
+            artifacts/ios-testflight/*.ipa
+            artifacts/ios-testflight/build-receipt.json
+          if-no-files-found: error
+          retention-days: 7

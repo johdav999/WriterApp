@@ -8,7 +8,7 @@ namespace WriterApp.AI.Abstractions
 
         public sealed record ImageDelta(string Reference) : AiStreamEvent;
 
-        public sealed record Completed : AiStreamEvent;
+        public sealed record Completed(AiUsage? Usage = null, string? Model = null) : AiStreamEvent;
 
         public sealed record Failed(string Error) : AiStreamEvent;
     }

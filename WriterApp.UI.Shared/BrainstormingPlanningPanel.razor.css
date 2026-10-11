@@ -1,0 +1,6 @@
+.brainstorm-planning { border-top:1px solid var(--border-color,#bbb); padding-top:1rem; }
+.brainstorm-planning label { display:block; margin:.5rem 0; }
+.brainstorm-planning textarea,.brainstorm-planning select,.brainstorm-planning input:not([type=checkbox]) { width:100%; max-width:100%; box-sizing:border-box; }
+.brainstorm-planning pre { white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; }
+.brainstorm-planning article,.brainstorm-planning details { padding:.5rem; margin:.5rem 0; border:1px solid var(--border-color,#bbb); }
+.brainstorm-planning button { margin:.25rem; }

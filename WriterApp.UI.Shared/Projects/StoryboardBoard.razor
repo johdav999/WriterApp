@@ -348,6 +348,7 @@
                                                        AccentClass="@GetSceneAccentClass(scene)"
                                                        IsSelected="@(SelectedSceneIds.Contains(scene.SceneId))"
                                                        HasNotes="@scene.HasNotes"
+                                                       PlanningIdea="@(_renderNodes.FirstOrDefault(n=>n.Id==scene.SceneId) is {LinkedSectionId:null})"
                                                        UpdatedUtc="@scene.UpdatedUtc"
                                                        DuplicateScene="HandleDuplicateSceneAsync"
                                                        DeleteScene="PromptDeleteScene"

@@ -19,6 +19,7 @@ namespace WriterApp.Client.Services
         private readonly OnboardingOverlayStateService _onboardingOverlayStateService;
         private readonly LastOpenedDocumentStateService _lastOpenedDocumentStateService;
         private readonly AiCommandStatusService _aiCommandStatusService;
+        private readonly WebBrainstormingSessions? _brainstorming;
 
         public ClientLogoutService(
             NavigationManager navigation,
@@ -32,7 +33,7 @@ namespace WriterApp.Client.Services
             ProjectProgressCacheService projectProgressCacheService,
             OnboardingOverlayStateService onboardingOverlayStateService,
             LastOpenedDocumentStateService lastOpenedDocumentStateService,
-            AiCommandStatusService aiCommandStatusService)
+            AiCommandStatusService aiCommandStatusService, WebBrainstormingSessions? brainstorming = null)
         {
             _navigation = navigation ?? throw new ArgumentNullException(nameof(navigation));
             _authStateService = authStateService ?? throw new ArgumentNullException(nameof(authStateService));
@@ -46,11 +47,17 @@ namespace WriterApp.Client.Services
             _onboardingOverlayStateService = onboardingOverlayStateService ?? throw new ArgumentNullException(nameof(onboardingOverlayStateService));
             _lastOpenedDocumentStateService = lastOpenedDocumentStateService ?? throw new ArgumentNullException(nameof(lastOpenedDocumentStateService));
             _aiCommandStatusService = aiCommandStatusService ?? throw new ArgumentNullException(nameof(aiCommandStatusService));
+            _brainstorming = brainstorming;
         }
 
         public async Task ClearClientStateAsync()
         {
             _authStateService.Reset();
+            if (_brainstorming is not null) {
+                try { await _brainstorming.ClearReviewIdentityAsync(); }
+                // The module revokes its tab grant before touching IndexedDB. Storage failure must not stop logout.
+                catch (Microsoft.JSInterop.JSException) { }
+            }
             _authMeStateService.Reset();
             _currentDocumentStateService.Clear();
             _currentSceneStateService.Clear();

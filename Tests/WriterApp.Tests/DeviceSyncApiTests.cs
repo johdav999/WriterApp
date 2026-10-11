@@ -23,11 +23,11 @@ public sealed class DeviceSyncApiTests
         Assert.Equal(status, error.Status); Assert.Equal("reason", error.Code); Assert.Equal(retry, error.IsTransient);
     }
     [Fact]
-    public async Task MissingV4RouteExplainsBackendUpgradeWithoutFallback()
+    public async Task MissingV5RouteExplainsBackendUpgradeWithoutFallback()
     {
         var api = Api(request =>
         {
-            Assert.StartsWith("/api/sync/v4/documents", request.RequestUri!.AbsolutePath);
+            Assert.StartsWith("/api/sync/v5/documents", request.RequestUri!.AbsolutePath);
             return new(HttpStatusCode.NotFound) { Content = new StringContent("") };
         });
         var error = await Assert.ThrowsAsync<DeviceSyncApiException>(() => api.ChangesAsync(null, default));

@@ -79,6 +79,12 @@ namespace WriterApp.Data
         public DbSet<AiActionHistoryEntryRecord> AiActionHistoryEntries => Set<AiActionHistoryEntryRecord>();
         public DbSet<AiActionAppliedEventRecord> AiActionAppliedEvents => Set<AiActionAppliedEventRecord>();
         public DbSet<WebAiHistoryOperationRecord> WebAiHistoryOperations => Set<WebAiHistoryOperationRecord>();
+        public DbSet<BrainstormingSessionRecord> BrainstormingSessions => Set<BrainstormingSessionRecord>();
+        public DbSet<BrainstormingSessionOperationRecord> BrainstormingSessionOperations => Set<BrainstormingSessionOperationRecord>();
+        public DbSet<BrainstormingGenerationRecord> BrainstormingGenerations => Set<BrainstormingGenerationRecord>();
+        public DbSet<BrainstormingTranscriptionRecord> BrainstormingTranscriptions => Set<BrainstormingTranscriptionRecord>();
+        public DbSet<BrainstormingKeepRecord> BrainstormingKeeps => Set<BrainstormingKeepRecord>();
+        public DbSet<BrainstormingPlanningSaveRecord> BrainstormingPlanningSaves => Set<BrainstormingPlanningSaveRecord>();
         public DbSet<DeviceAiHistoryEventRecord> DeviceAiHistoryEvents => Set<DeviceAiHistoryEventRecord>();
         public DbSet<PromptPresetRecord> PromptPresets => Set<PromptPresetRecord>();
         public DbSet<PromptPresetTransferRecord> PromptPresetTransfers => Set<PromptPresetTransferRecord>();
@@ -138,6 +144,34 @@ namespace WriterApp.Data
 
         protected override void OnModelCreating(ModelBuilder builder)
         {
+            builder.Entity<BrainstormingPlanningSaveRecord>(e => {
+                e.HasKey(x=>new {x.SessionId,x.OperationId});
+                e.HasIndex(x=>new {x.SessionId,x.CandidateId}).IsUnique();
+                e.HasOne<BrainstormingSessionRecord>().WithMany().HasForeignKey(x=>x.SessionId).OnDelete(DeleteBehavior.Restrict);
+                e.Property(x=>x.ReviewJson).IsRequired();e.Property(x=>x.ReceiptJson).IsRequired();
+            });
+            builder.Entity<BrainstormingKeepRecord>(e => {
+                e.HasKey(x=>new{x.SessionId,x.OperationId});e.HasIndex(x=>new{x.SessionId,x.CandidateId}).IsUnique();
+                e.HasOne<BrainstormingSessionRecord>().WithMany().HasForeignKey(x=>x.SessionId).OnDelete(DeleteBehavior.Restrict);
+            });
+            builder.Entity<BrainstormingSessionRecord>(e => {
+                e.HasKey(x => x.Id); e.Property(x => x.OwnerUserId).HasMaxLength(128); e.Property(x => x.BackendKey).HasMaxLength(64);
+                e.Property(x => x.Revision).IsConcurrencyToken(); e.HasIndex(x => new { x.OwnerUserId, x.BackendKey, x.DocumentId, x.Id });
+                // Logical ownership is rechecked by the application. Retained conversation tombstones must not block document purge.
+            });
+            builder.Entity<BrainstormingGenerationRecord>(e => {
+                e.HasKey(x => new { x.SessionId, x.OperationId }); e.Property(x => x.PayloadHash).HasMaxLength(64);
+                e.Property(x => x.Revision).IsConcurrencyToken();
+                e.HasOne<BrainstormingSessionRecord>().WithMany().HasForeignKey(x => x.SessionId).OnDelete(DeleteBehavior.Restrict);
+            });
+            builder.Entity<BrainstormingTranscriptionRecord>(e => {
+                e.HasKey(x=>new {x.SessionId,x.OperationId});e.Property(x=>x.PayloadHash).HasMaxLength(64);
+                e.HasOne<BrainstormingSessionRecord>().WithMany().HasForeignKey(x=>x.SessionId).OnDelete(DeleteBehavior.Restrict);
+            });
+            builder.Entity<BrainstormingSessionOperationRecord>(e => {
+                e.HasKey(x => new { x.SessionId, x.OperationId }); e.Property(x => x.PayloadHash).HasMaxLength(64);
+                e.HasOne<BrainstormingSessionRecord>().WithMany().HasForeignKey(x => x.SessionId).OnDelete(DeleteBehavior.Restrict);
+            });
             builder.Entity<CoverEditProposalRecord>(e=>{
                 e.HasKey(x=>x.Id);e.Property(x=>x.OwnerUserId).HasMaxLength(128);e.HasIndex(x=>new{x.OwnerUserId,x.ProjectId});
             });

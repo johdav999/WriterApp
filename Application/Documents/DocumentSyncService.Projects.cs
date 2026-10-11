@@ -78,7 +78,8 @@ public sealed partial class DocumentSyncService
                 throw Invalid("Invalid project node metadata.");
             if (node.NodeType == "scene")
             {
-                if (node.SectionId is not { } section || !links.Add(section) || !sections.Any(s => s.Id == section)) throw Invalid("Scenes require unique canonical manuscript sections.");
+                if (node.SectionId is { } section ? !links.Add(section) || !sections.Any(s => s.Id == section)
+                    : !WriterApp.Shared.Brainstorming.BrainstormingPlanningContract.IsSceneIdea(node.MetadataJson)) throw Invalid("Scenes require unique canonical manuscript sections; planning ideas require an explicit unlinked marker.");
             }
             else if (node.SectionId is not null || node.Notes is not null || node.Card is not null) throw Invalid("Only scenes carry scene metadata.");
             if (node.MetadataJson is not null) { try { using var json = JsonDocument.Parse(node.MetadataJson); } catch (JsonException) { throw Invalid("Invalid node metadata JSON."); } }
@@ -128,11 +129,13 @@ public sealed partial class DocumentSyncService
             target.ParentId = node.ParentId; target.Parent = node.ParentId is { } parent ? existing[parent] : null;
             target.LinkedSectionId = node.SectionId; target.SyncDeletionId = node.DeletionId; target.MetadataJson = node.MetadataJson; target.UpdatedUtc = DateTimeOffset.UtcNow;
             if (node.NodeType != "scene") continue;
-            var section = document.Sections.Single(s => s.Id == node.SectionId);
-            var content = await db.SceneContents.SingleOrDefaultAsync(n => n.SceneNodeId == node.Id, ct);
-            if (content is null) { content = new() { SceneNodeId = node.Id }; db.SceneContents.Add(content); }
-            content.ContentJson = string.Join("\n\n", section.Pages.OrderBy(p => p.OrderIndex).ThenBy(p => p.Id).Select(p => p.Content));
-            content.LanguageCode = section.LanguageCode; content.UpdatedAtUtc = DateTimeOffset.UtcNow;
+            if(node.SectionId is { } sectionId) {
+                var section = document.Sections.Single(s => s.Id == sectionId);
+                var content = await db.SceneContents.SingleOrDefaultAsync(n => n.SceneNodeId == node.Id, ct);
+                if (content is null) { content = new() { SceneNodeId = node.Id }; db.SceneContents.Add(content); }
+                content.ContentJson = string.Join("\n\n", section.Pages.OrderBy(p => p.OrderIndex).ThenBy(p => p.Id).Select(p => p.Content));
+                content.LanguageCode = section.LanguageCode; content.UpdatedAtUtc = DateTimeOffset.UtcNow;
+            }
             var note = await db.SceneNotes.SingleOrDefaultAsync(n => n.SceneNodeId == node.Id, ct);
             if (node.Notes is not null) { if (note is null) { note = new() { SceneNodeId = node.Id }; db.SceneNotes.Add(note); } note.NotesText = node.Notes; note.UpdatedAtUtc = DateTimeOffset.UtcNow; }
             else if (note is not null) db.SceneNotes.Remove(note);

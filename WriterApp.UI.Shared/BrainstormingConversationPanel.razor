@@ -1,0 +1,266 @@
+@using WriterApp.Shared.Brainstorming
+@implements IDisposable
+@implements IAsyncDisposable
+@using Microsoft.JSInterop
+@inject IServiceProvider Services
+
+<section class="brainstorming-conversation" aria-label="Brainstorm conversation">
+    <div class="brainstorm-chat-scroll">
+    @if (_opening || _busy || _failed || _cache?.PendingGeneration is not null) { <p class="brainstorm-state" role="status">@StateLabel</p> }
+    @if (!_opening && (_cache?.Session.Turns.Count ?? 0) == 0) {
+        <div class="brainstorm-empty">
+            <span class="brainstorm-empty-mark" aria-hidden="true">✧</span>
+            <h3>Where could your story go?</h3>
+            <p>Ask questions, test ideas, and explore possibilities.</p>
+            <div class="brainstorm-starters">
+                @foreach (var starter in Starters) {
+                    <button type="button" disabled="@(_busy || _opening || _dictating || !string.IsNullOrEmpty(_composer))" @onclick="() => UseStarter(starter.Prompt)"><strong>@starter.Title</strong><span>@starter.Description</span></button>
+                }
+            </div>
+        </div>
+    }
+    @if ((_cache?.Session.Turns.Count ?? 0) > _visibleTurns) { <button type="button" @onclick="() => _visibleTurns += 40">Show earlier messages</button> }
+    <div class="brainstorm-transcript" role="log" aria-label="Saved conversation messages">
+    @foreach (var turn in (_cache?.Session.Turns ?? []).TakeLast(_visibleTurns)) { <article @key="turn.Id" class="@(turn.Role == BrainstormingRole.User ? "brainstorm-message is-user" : "brainstorm-message")"><p class="brainstorm-message-author"><strong>@(turn.Role == BrainstormingRole.User ? "You" : "Brainstorm")</strong>@if(turn.State != BrainstormingTurnState.Complete){<span> · @turn.State</span>}</p>
+        @if(turn.Role==BrainstormingRole.Assistant && turn.State!=BrainstormingTurnState.Complete) {
+            <p>@BrainstormingConversationContract.UnfinishedTurnMessage(turn.State)</p>
+            @* Old cached failures stored raw JSON in Text. Keep it inspectable without presenting it as a reply. *@
+            @if(turn.Text!=BrainstormingConversationContract.UnfinishedTurnMessage(turn.State)
+                && !(_cache?.LastGeneration is { } last && last.Send.AssistantTurnId==turn.Id && last.InspectionText.Length!=0)) {
+                <details><summary>Interrupted or rejected output · inspection only</summary><pre>@turn.Text</pre></details>
+            }
+        } else { <pre>@turn.Text</pre> }
+        @if (!ShowDrafts && turn.State == BrainstormingTurnState.Complete && _cache?.Session.Drafts.LastOrDefault(d => d.TurnId == turn.Id) is { } draft) {
+            <div class="brainstorm-generated-prose">
+                @if (ShowDraftRequested.HasDelegate) { <button type="button" @onclick="() => ShowDraftRequested.InvokeAsync()">View working draft <span aria-hidden="true">→</span></button> }
+                <details><summary>Generated prose</summary><pre>@draft.PlainText</pre></details>
+            </div>
+        }
+        @if(turn.State==BrainstormingTurnState.Complete && PlanningSelected.HasDelegate) {
+            <details class="brainstorm-save-idea"><summary>Save idea</summary>
+            @foreach(var kind in Enum.GetValues<BrainstormingPlanningKind>()) { <button type="button" disabled="@_busy" @onclick="()=>PlanningSelected.InvokeAsync((turn.Id,kind,(string?)null))">@PlanningLabel(kind)</button> }
+            </details>
+        }
+    </article> }
+    </div>
+    @if (_answer.Length != 0) { <p>Answer preview · incomplete until validated</p><pre>@_answer</pre> }
+    @if (_cache?.LastGeneration is { } operation) {
+        <details class="brainstorm-operation"><summary>Request details · @operation.State</summary><p>Usage @operation.Usage.State · @operation.Usage.InputTokens input / @operation.Usage.OutputTokens output tokens · @operation.Message</p></details>
+        @foreach (var contradiction in operation.Events.LastOrDefault()?.Output?.Contradictions ?? []) { <p role="alert">Story contradiction: @contradiction</p> }
+        @if (operation.State != BrainstormingGenerationState.Completed && operation.InspectionText.Length != 0) {
+            <details><summary>Interrupted or rejected output · inspection only</summary><pre>@operation.InspectionText</pre></details>
+        }
+    }
+    @foreach (var idea in _cache?.Session.Planning ?? []) { <details><summary>Planning proposal · @idea.Kind · @PlanningState(idea.Id)</summary><p>@idea.Field</p><pre>@idea.Proposed</pre>
+        @if(PlanningSelected.HasDelegate) {<button type="button" disabled="@_busy" @onclick="()=>PlanningSelected.InvokeAsync((idea.TurnId,idea.Kind,(string?)idea.Proposed))">Review planning destination</button>}
+    </details> }
+    @if (ShowDrafts) { @foreach (var draft in _cache?.Session.Drafts ?? []) { <details><summary>Proposed prose · version @draft.Revision · unapplied</summary><pre>@draft.PlainText</pre><p>@draft.Constraints</p></details> } }
+    </div>
+    <div class="brainstorm-composer">
+    <label class="brainstorm-composer-label">Your message <textarea placeholder="Explore an idea or refine this draft…" @ref="_composerElement" rows="3" maxlength="8000" @bind="_composer" @bind:event="oninput" @bind:after="SaveComposer" readonly="@(_busy || _opening || _dictating)" aria-describedby="brainstorm-compose-help" /></label>
+    <p id="brainstorm-compose-help">Enter adds a new line. Send submits only when you choose it.</p>
+    <div class="brainstorm-send-actions">
+        <button type="button" class="brainstorm-primary" @onmousedown:preventDefault @onclick="Send" disabled="@(!CanSend)">Send message</button>
+        @if (_busy && !_preparingContext) { <button type="button" @onclick="Stop">Stop generation</button> }
+        @if (_cache?.PendingGeneration is not null || _failed) { <button type="button" @onclick="Inspect" disabled="@(_busy || _opening || _dictating)">Reopen / inspect saved conversation</button> }
+        @if (_cache?.LastGeneration?.State is BrainstormingGenerationState.Failed or BrainstormingGenerationState.Cancelled && _cache.PendingGeneration is null) {
+            <button type="button" @onmousedown:preventDefault @onclick="Send" disabled="@(!CanSend)">Retry as a new request</button>
+        }
+    </div>
+    @if (SendBlocker is { } blocker && (!string.IsNullOrWhiteSpace(_composer) || _busy || _cache?.PendingGeneration is not null)) { <p role="status" class="brainstorm-send-blocker">@blocker</p> }
+    @if (_message is not null) { <p role="status">@_message</p> }
+
+    <details class="brainstorm-audio" open="@(_voiceMode || _dictating)"><summary>Voice &amp; dictation</summary>
+    <fieldset class="brainstorm-dictation"><legend>Microphone dictation</legend>
+        <label>Spoken language <select @bind="_speechLanguage" @bind:after="CheckVoice" disabled="@(_dictating || _busy)"><option value="en">English</option><option value="sv">Svenska</option></select></label>
+        <button type="button" @onclick="StartDictation" disabled="@(_dictating || _busy || _opening || Dictation is null || DictationAvailability?.IsAvailable!=true || _microphoneAvailability?.IsAvailable!=true || HasPendingDictation)">Start microphone</button>
+        <button type="button" @onclick="StopDictation" disabled="@(_recording is null || !_dictating)">Stop recording and transcribe</button>
+        <button type="button" @onclick="CancelDictation" disabled="@(!_dictating)">Cancel dictation</button>
+        <p role="status">@(_speechMessage ?? DictationAvailability?.Message ?? "Dictation unavailable. Continue typing.")</p>
+        @if(_microphoneAvailability is {IsAvailable:false}){<p>@_microphoneAvailability.Message</p>}
+        <p>Up to 60 seconds. Audio is transient; transcription uses your authorized AI quota. Final text fills this composer for correction. Recording never sends a turn or keeps writing.</p>
+        @if(HasPendingDictation || _cache?.Dictations?.Any(d=>d.Result?.State==BrainstormingSpeechState.Completed && !d.Adopted)==true){<button type="button" @onclick="InspectDictation" disabled="@(_dictating || _busy)">Inspect retained dictation</button>}
+        @if(_cache?.Dictations?.LastOrDefault(d=>d.Result?.State==BrainstormingSpeechState.Completed) is { } recorded){<details><summary>Final transcript · @recorded.Language · editable in composer</summary><pre>@recorded.Result!.Text</pre><p>@recorded.Result.Message · usage @recorded.Result.Usage.State · recognition @recorded.Result.Quality</p><p>Unassessed or uncertain recognition requires focused confirmation for voice approval.</p></details>
+            <button type="button" @onclick="ReviewDictatedProse" disabled="@(_busy || _dictating || !Ready || string.IsNullOrWhiteSpace(_composer))">Place corrected message as proposed prose · review destination</button>
+        }
+    </fieldset>
+    <fieldset class="brainstorm-voice"><legend>Spoken dialogue</legend>
+        <button type="button" @onclick="StartSpokenMode" disabled="@(_voiceMode || _busy || _dictating || !Ready || VoiceAvailability?.IsAvailable!=true)">Start spoken dialogue</button>
+        <button type="button" @onclick="RecordSpokenTurn" disabled="@(!_voiceMode || _voiceTurn || _busy || _dictating || !Ready)">Speak next turn / interrupt playback</button>
+        <button type="button" @onclick="FinishSpokenTurn" disabled="@(!_voiceTurn || _recording is null)">Finish spoken turn and send</button>
+        <button type="button" @onclick="InterruptVoice" disabled="@(!_voiceMode && Voice.Active?.Scope!=Scope)">Interrupt voice / stop answer</button>
+        <button type="button" @onclick="ToggleVoiceMute" disabled="@(!_voiceMode)">@(_muted?"Unmute spoken answers":"Mute spoken answers")</button>
+        <button type="button" @onclick="EndSpokenMode" disabled="@(!_voiceMode)">End spoken dialogue / use text</button>
+        <p role="status">@(_voiceMessage ?? VoiceAvailability?.Message ?? "Spoken dialogue unavailable. Continue typing.")</p>
+        @if(_outputAvailability is {IsAvailable:false}){<p>@_outputAvailability.Message</p>}
+        @if(Voice.Progress is { } playback && Voice.Active?.Scope==Scope){<p role="status">@playback.State · @playback.Message</p>}
+        <p>Local synthetic output voice. Microphone is closed while the answer plays. Finish sends a final spoken message in this session; unclear recognition and application requests require review.</p>
+    </fieldset>
+
+    </details>
+    <p class="brainstorm-proposal-note">Suggestions stay proposals until you review them.</p>
+    </div>
+</section>
+
+@code {
+    private static readonly (string Title, string Description, string Prompt)[] Starters = [
+        ("Explore a character", "Motives, conflicts, and what makes them tick.", "Help me explore a character's motives and inner conflict."),
+        ("Find the next scene", "Discover what could happen next.", "Suggest a few possibilities for the next scene."),
+        ("Untangle a plot point", "Look at a story problem from a new angle.", "Help me work through a plot point that feels stuck.")
+    ];
+    private async Task UseStarter(string prompt) {
+        if (_busy || _opening || _dictating || !string.IsNullOrEmpty(_composer)) return;
+        _composer = prompt;
+        await SaveComposer();
+        await _composerElement.FocusAsync();
+    }
+
+    [Parameter] public BrainstormingScope Scope { get; set; } = default!;
+    [Parameter] public bool Ready { get; set; }
+    [Parameter] public Func<Task<string?>>? PrepareContextForSend { get; set; }
+    [Parameter] public string? ReadinessMessage { get; set; }
+    [Parameter] public IBrainstormingCacheStore Store { get; set; } = default!;
+    [Parameter] public BrainstormingConversationWorkflow Workflow { get; set; } = default!;
+    [Parameter] public Func<Task>? BeforeSend { get; set; }
+    [Parameter] public Func<Task>? BeforeDraftSend { get; set; }
+    [Parameter] public IBrainstormingReviewIdentity? ReviewIdentity { get; set; }
+    [Parameter] public BrainstormingCapability? Availability { get; set; }
+    [Parameter] public bool ShowDrafts { get; set; } = true;
+    [Parameter] public EventCallback ShowDraftRequested { get; set; }
+    [Parameter] public EventCallback<BrainstormingCache> CacheChanged { get; set; }
+    [Parameter] public EventCallback<bool> BusyChanged { get; set; }
+    [Parameter] public EventCallback<(Guid Turn,BrainstormingPlanningKind Kind,string? Text)> PlanningSelected {get;set;}
+    private static string PlanningLabel(BrainstormingPlanningKind kind)=>kind switch {BrainstormingPlanningKind.SceneIdea=>"Save as scene idea",BrainstormingPlanningKind.StoryNote=>"Add to story notes",BrainstormingPlanningKind.SynopsisField=>"Propose synopsis update",_=>"Propose character-note update"};
+    private string PlanningState(Guid candidate) {
+        var approval=_cache?.Session.Approvals.FirstOrDefault(a=>a.CandidateId==candidate);
+        return approval is null?"Unapplied":_cache?.Session.Applications.FirstOrDefault(a=>a.ApprovalId==approval.Id)?.State.ToString()??"Approval retained; save unconfirmed";
+    }
+    private int _visibleTurns = 40;
+    private ElementReference _composerElement;
+    private IJSObjectReference? _module;
+    private ComposerSelection? _selectionToRestore;
+    private sealed record ComposerSelection(int Start,int End,string Direction);
+    private bool CanSend => !_busy && !_opening && !_dictating && Ready && Availability?.IsAvailable != false
+        && _cache?.PendingGeneration is null && !string.IsNullOrWhiteSpace(_composer);
+    private string? SendBlocker => _opening ? "Opening your retained message…"
+        : _preparingContext ? "Preparing current story context. Your message is retained."
+        : _dictating ? "Finish or cancel dictation before sending."
+        : _busy ? "Wait for the current operation, or stop generation."
+        : _cache?.PendingGeneration is not null ? "Inspect the saved operation before another send. Your message is retained."
+        : Availability is { IsAvailable:false } ? Availability.Message
+        : !Ready ? ReadinessMessage ?? "Prepare / refresh context in Brainstorm story context before sending. Your message is retained."
+        : string.IsNullOrWhiteSpace(_composer) ? "Type a message to enable Send."
+        : null;
+    private string StateLabel => _opening ? "Opening retained composer and saved messages…" : _preparingContext ? "Preparing story context · no message is sent." : _inspecting ? "Inspecting saved conversation · no generation is replayed." : _busy ? "Generating · reading the answer; prose stays incomplete until validated."
+        : _message?.Contains("quota",StringComparison.OrdinalIgnoreCase) == true ? "Quota unavailable · your message is retained."
+        : Availability is { State: BrainstormingCapabilityState.Offline } ? "Offline · cached conversation is available. Reconnect and review before sending."
+        : Availability is { State: BrainstormingCapabilityState.UnsupportedServer or BrainstormingCapabilityState.NotImplemented } ? "Unsupported server · update the backend; writing remains available."
+        : _cache?.PendingGeneration is not null ? "Interrupted or uncertain · inspect the original request before retrying."
+        : _cache?.LastGeneration?.State == BrainstormingGenerationState.Cancelled ? "Stopped · inspect the retained output or explicitly retry."
+        : _failed || _cache?.LastGeneration?.State == BrainstormingGenerationState.Failed ? "Error · your message and earlier conversation are retained."
+        : (_cache?.Session.Turns.Count ?? 0) == 0 ? "Empty conversation · review a destination and ask about the story."
+        : "Saved conversation · generation and manuscript application have separate states.";
+    private BrainstormingCache? _cache; private string _composer="",_answer="";private string? _message;private bool _busy,_disposed;private long _epoch;
+    private bool _failed,_inspecting;
+    private bool _opening;
+    private bool _preparingContext;
+    private CancellationTokenSource? _cancel;private IBrainstormingReviewIdentity? _identity;private BrainstormingScope? _loaded;
+    private readonly SemaphoreSlim _composerWrites=new(1,1);
+    protected override async Task OnParametersSetAsync() {
+        if(_identity!=ReviewIdentity) {if(_identity is not null)_identity.Changed-=IdentityChanged;_identity=ReviewIdentity;if(_identity is not null)_identity.Changed+=IdentityChanged;}
+        if(_loaded==Scope)return;_epoch++;InvalidateDictation();_cancel?.Cancel();_cancel=null;_busy=false;_preparingContext=false;_inspecting=false;_failed=false;_selectionToRestore=null;_message=null;_loaded=Scope;_cache=null;_composer="";_answer="";
+        _visibleTurns=40;_opening=true;var epoch=_epoch;
+        try {var value=await Store.ReadAsync(Scope);if(epoch!=_epoch||_disposed)return;_cache=value;_composer=value?.Composer??"";if(value is not null)await CacheChanged.InvokeAsync(value);await RecoverPending(Scope,epoch);}
+        catch(Exception e) when(e is IOException or HttpRequestException or OperationCanceledException or InvalidOperationException or JSException) {if(epoch==_epoch){_failed=true;_message=e.Message;}}
+        finally {if(epoch==_epoch)_opening=false;}
+    }
+    protected override async Task OnAfterRenderAsync(bool firstRender) {
+        await CheckMicrophone();
+        if(!_voiceSubscribed)await CheckVoice();
+        if (Services.GetService(typeof(IJSRuntime)) is not IJSRuntime js) return;
+        try { _module ??= await js.InvokeAsync<IJSObjectReference>("import","/_content/WriterApp.UI.Shared/brainstorming-workspace.js");
+            if(_voiceLifetime is null){_voiceReceiver??=DotNetObjectReference.Create(this);_voiceLifetime=await _module.InvokeAsync<IJSObjectReference>("voiceLifetime",_voiceReceiver);}
+            if (_selectionToRestore is { } selection && !_busy) { _selectionToRestore=null; await _module.InvokeVoidAsync("restoreComposer",_composerElement,selection); }
+        } catch(JSException) { }
+    }
+    private void IdentityChanged() { _epoch++;InvalidateDictation();_cancel?.Cancel();_selectionToRestore=null;_ = InvokeAsync(()=>{_busy=false;_preparingContext=false;_inspecting=false;_cache=null;_composer="";_answer="";_message="Sign in and reopen the original conversation.";StateHasChanged();}); }
+    private async Task SaveComposer() {
+        var epoch=_epoch;var scope=Scope;await _composerWrites.WaitAsync();
+        try {for(int attempt=0;attempt<3;attempt++) {
+            if(epoch!=_epoch||_disposed)return;var current=await Store.ReadAsync(scope);if(current is null||epoch!=_epoch)return;
+            try {var saved=await Store.WriteAsync(current with {Composer=_composer},current.CacheRevision,Guid.NewGuid());if(epoch==_epoch)_cache=saved;return;}
+            catch(BrainstormingConcurrencyException) when(attempt<2){}
+        }} catch(Exception e) when(e is IOException or InvalidDataException or OperationCanceledException or HttpRequestException or BrainstormingConcurrencyException) {if(epoch==_epoch)_message="Message remains in the composer. "+e.Message;}
+        finally {_composerWrites.Release();}
+    }
+    private async Task PrepareForSend() {
+        if (_busy || _opening || _dictating || _cache?.PendingGeneration is not null || PrepareContextForSend is null || Availability?.IsAvailable == false) return;
+        var epoch=_epoch;_busy=true;_preparingContext=true;_message=null;
+        try {
+            await BusyChanged.InvokeAsync(true);
+            await SaveComposer();
+            if(epoch!=_epoch || _disposed)return;
+            var message=await PrepareContextForSend();
+            if(epoch==_epoch && !_disposed)_message=message;
+        } catch(Exception e) when(e is IOException or InvalidDataException or InvalidOperationException or OperationCanceledException or HttpRequestException or BrainstormingConcurrencyException or System.Text.Json.JsonException or JSException) {
+            if(epoch==_epoch && !_disposed)_message=e.Message;
+        } finally {
+            if(epoch==_epoch && !_disposed){_busy=false;_preparingContext=false;await BusyChanged.InvokeAsync(false);}
+        }
+    }
+    private Task Send()=>SendConversation(spoken:false);
+    private async Task SendConversation(bool spoken) {
+        if(_dictating)return;
+        if(!CanSend)return;_busy=true;_failed=false;_message=null;_answer="";var epoch=_epoch;var scope=Scope;var cancellation=new CancellationTokenSource();_cancel=cancellation;if(spoken)_spokenCancellation=cancellation;
+        await BusyChanged.InvokeAsync(true);
+        try {
+            if(_module is not null)_selectionToRestore=await _module.InvokeAsync<ComposerSelection>("composerSelection",_composerElement);
+            await SaveComposer();if(BeforeDraftSend is not null)await BeforeDraftSend();if(BeforeSend is not null)await BeforeSend();if(epoch!=_epoch)return;
+            _cache=await Store.ReadAsync(scope,cancellation.Token)??throw new InvalidDataException("Conversation unavailable.");
+            var candidate=_cache.DraftReview?.UseForNextRequest==false?null:BrainstormingDrafts.Candidate(_cache);
+            if(candidate is not null && _cache.Session.Targets.LastOrDefault() is { } reviewedTarget
+                && !BrainstormingDrafts.SameLocation(_cache.Session.Targets.Single(t=>t.Id==candidate.TargetId),reviewedTarget))candidate=null;
+            await foreach(var item in Workflow.SendAsync(scope,_composer,candidate?.Id,cancellation.Token,_cache.DraftReview?.Selection)) {
+                if(epoch!=_epoch||Scope!=scope)break;
+                if(item.Kind==BrainstormingEventKind.AnswerDelta)_answer+=item.Text;
+                _message=item.Text;_cache=await Store.ReadAsync(scope,cancellation.Token);if(_cache is not null)await CacheChanged.InvokeAsync(_cache);StateHasChanged();
+            }
+            if(epoch==_epoch) {_cache=await Store.ReadAsync(scope);_composer=_cache?.Composer??_composer;_answer="";if(_cache is not null)await CacheChanged.InvokeAsync(_cache);}
+        } catch(Exception e) when(e is IOException or InvalidDataException or InvalidOperationException or OperationCanceledException or HttpRequestException or BrainstormingConcurrencyException or System.Text.Json.JsonException or JSException) {if(epoch==_epoch){_failed=true;_message=e is OperationCanceledException?"Generation interrupted. Inspect the saved operation before another send.":e.Message;}}
+        finally {try {if(epoch==_epoch && !_disposed){await RecoverPending(scope,epoch);_busy=false;await BusyChanged.InvokeAsync(false);try {_cache=await Store.ReadAsync(scope);_composer=_cache?.Composer??_composer;if(_cache is not null)await CacheChanged.InvokeAsync(_cache);}catch(Exception e) when(e is OperationCanceledException or IOException or HttpRequestException or InvalidOperationException or JSException) {_failed=true;_message="Reopen the original account's retained conversation. "+e.Message;}}}finally {if(ReferenceEquals(_cancel,cancellation))_cancel=null;if(ReferenceEquals(_spokenCancellation,cancellation))_spokenCancellation=null;cancellation.Dispose();}}
+    }
+    // Inspect the durable identity after a lost stream or reopen, never resubmit it.
+    private async Task RecoverPending(BrainstormingScope scope,long epoch) {
+        if(epoch!=_epoch || _disposed || Availability?.IsAvailable==false || Workflow is null)return;
+        using var recovery=new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        try {
+            var retained=await Store.ReadAsync(scope,recovery.Token);
+            if(retained?.PendingGeneration is null || retained.Mapping is null || epoch!=_epoch || _disposed)return;
+            _inspecting=true;
+            var value=await Workflow.InspectAsync(scope,recovery.Token);
+            // A cancelled HTTP stream may close before the server commits settlement.
+            for(int attempt=0;attempt<2 && value.LastGeneration?.State is BrainstormingGenerationState.Accepted or BrainstormingGenerationState.Streaming;attempt++) {
+                await Task.Delay(500,recovery.Token);
+                if(epoch!=_epoch || _disposed)return;
+                value=await Workflow.InspectAsync(scope,recovery.Token);
+            }
+            if(epoch!=_epoch || _disposed)return;
+            _cache=value;_composer=value.Composer;_answer="";
+            if(value.PendingGeneration is null){_failed=value.LastGeneration?.State==BrainstormingGenerationState.Failed;_message=value.LastGeneration?.Message;}
+            await CacheChanged.InvokeAsync(value);
+        } catch(Exception e) when(e is IOException or InvalidDataException or OperationCanceledException or HttpRequestException or BrainstormingConcurrencyException or InvalidOperationException or System.Text.Json.JsonException or JSException) {
+            if(epoch==_epoch && !_disposed)_message="Saved request retained. Server inspection could not finish; review it when connected.";
+        } finally {if(epoch==_epoch && !_disposed)_inspecting=false;}
+    }
+    private async Task Stop() {var epoch=_epoch;var cancellation=_cancel;try {await Workflow.StopAsync(Scope);}catch(Exception e) when(e is HttpRequestException or InvalidDataException or OperationCanceledException) {if(epoch==_epoch)_message=e.Message;}finally {if(epoch==_epoch && ReferenceEquals(_cancel,cancellation))cancellation?.Cancel();} }
+    private async Task Inspect() {
+        if(_busy || _dictating || _opening)return;var epoch=_epoch;_failed=false;_busy=true;_inspecting=true;
+        try {await BusyChanged.InvokeAsync(true);var cached=await Store.ReadAsync(Scope);var value=cached?.Mapping is null || Availability?.State==BrainstormingCapabilityState.Offline ? cached : await Workflow.InspectAsync(Scope);if(epoch==_epoch && value is not null){_cache=value;_composer=value.Composer;_message=value.PendingGeneration is null?"Saved conversation inspected. No generation was replayed.":"Original operation retained. Inspect its server state when online; do not send it again.";await CacheChanged.InvokeAsync(value);}}
+        catch(Exception e) when(e is IOException or InvalidDataException or OperationCanceledException or HttpRequestException or BrainstormingConcurrencyException) {if(epoch==_epoch){_failed=true;_message=e.Message;}}
+        finally {if(epoch==_epoch && !_disposed){_busy=false;_inspecting=false;await BusyChanged.InvokeAsync(false);}}
+    }
+    private DotNetObjectReference<BrainstormingConversationPanel>? _voiceReceiver;private IJSObjectReference? _voiceLifetime;
+    public void Dispose() {_disposed=true;_epoch++;InvalidateDictation();_cancel?.Cancel();if(_voice is not null){_voice.Changed-=VoiceChanged;_voice.Suspended-=VoiceSuspended;}if(_identity is not null)_identity.Changed-=IdentityChanged;}
+    public void Suspend() { _cancel?.Cancel(); InvalidateDictation(); }
+    public async ValueTask DisposeAsync() {Dispose();if(_voiceLifetime is not null)try{await _voiceLifetime.InvokeVoidAsync("dispose");await _voiceLifetime.DisposeAsync();}catch(Exception e) when(e is JSException or ObjectDisposedException){} _voiceReceiver?.Dispose();if(_module is not null)try {await _module.DisposeAsync();}catch(Exception e) when(e is JSException or ObjectDisposedException) {}}
+}

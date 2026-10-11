@@ -113,7 +113,7 @@
                     <article class="library-row @(row.IsProject ? "is-project" : "") @(row.IsChild ? "is-child" : "") @(_showTrash ? "is-trashed" : "") @(_menuId == row.Id ? "has-open-menu" : "") @(_selectedRowKey == row.Key ? "is-selected" : "")" @key="row.Key" aria-label="@row.Title"
                              data-library-project-id="@(row.IsProject && !_showTrash ? row.Id.ToString("D") : null)"
                              data-standalone-document-id="@(!row.IsProject && document.Project is null && !_showTrash ? document.DocumentId.ToString("D") : null)"
-                             draggable="@(!_busy && !_showTrash && !row.IsProject && document.Project is null ? "true" : "false")" @onclick="() => SelectRow(row)">
+                             draggable="@(!_busy && !_showTrash && !row.IsProject && document.Project is null ? "true" : "false")" @onclick="() => SelectRow(row)" @ondblclick="() => OpenDocument(row)">
                         <div class="library-document">
                             @if (row.IsProject && _filter == LocalLibraryFilter.All)
                             {
@@ -133,7 +133,7 @@
                             <LibraryIcon Name="@(status.Tone == "danger" || status.Tone == "warning" ? "warning" : document.ServerDocumentId is null ? "device" : "cloud")" />
                             <span>@(status.Tone == "local" ? "On this device" : status.Label)</span>
                         </span>
-                        <div class="library-row-actions">
+                        <div class="library-row-actions" @ondblclick:stopPropagation>
                             @if (!_showTrash) { <a class="library-open" href="@row.OpenUrl">@(row.IsProject ? "Open project" : "Open")<LibraryIcon Name="arrow" /></a> }
                             else { <button class="library-restore" type="button" disabled="@_busy" @onclick="() => RestoreAsync(document, row.IsProject)">Restore</button> }
                             <div class="library-menu">
@@ -166,7 +166,7 @@
                         </div>
                         @if (_renamingId == document.DocumentId && _renamingProject == row.IsProject && !row.IsChild && !_showTrash)
                         {
-                            <form class="rename-form" @onsubmit="() => RenameAsync(document)" @onsubmit:preventDefault>
+                            <form class="rename-form" @onsubmit="() => RenameAsync(document)" @onsubmit:preventDefault @ondblclick:stopPropagation>
                                 <label for="rename-title">@(_renamingProject ? "Rename project" : "Rename document")</label>
                                 <div class="inline-controls">
                                     <input id="rename-title" @ref="_renameInput" @bind="_renameTitle" @bind:event="oninput" @onkeydown="HandleRenameKey" maxlength="200" required disabled="@_busy" />
@@ -244,6 +244,11 @@
     {
         if (_busy || _showTrash) return;
         _selectedRowKey = row.Key;
+    }
+    private void OpenDocument(LocalLibraryRow row)
+    {
+        if (_busy || _showTrash || row.IsProject) return;
+        Navigation.NavigateTo(row.OpenUrl);
     }
     private ElementReference _collection;
     private ElementReference _dropZone;

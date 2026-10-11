@@ -41,6 +41,7 @@ namespace WriterApp.Client.Services
         public bool IsAuthenticated => _cached.IsAuthenticated;
         public bool HasResolvedState => _hasResolvedState;
         public string? UserId => _cached.UserId;
+        public event Action? Changed;
         public IReadOnlyDictionary<string, string> Claims => _cached.Claims;
 
         public void Reset()
@@ -50,6 +51,7 @@ namespace WriterApp.Client.Services
             _cachedAtUtc = DateTimeOffset.UtcNow;
             _deletedAccountStateService.Clear();
             _duplicateAccountStateService.Clear();
+            Changed?.Invoke();
         }
 
         public async Task<AuthState> GetAsync(bool forceRefresh = false, CancellationToken ct = default)
@@ -72,8 +74,10 @@ namespace WriterApp.Client.Services
                 FetchResult result = await FetchAsync(ct);
                 if (result.HasState && result.State is not null)
                 {
+                    bool identityChanged = _cached.UserId != result.State.UserId || _cached.IsAuthenticated != result.State.IsAuthenticated;
                     _cached = result.State;
                     _hasResolvedState = true;
+                    if (identityChanged) Changed?.Invoke();
                     _logger.LogInformation(
                         "AuthState refresh from {Endpoint}. IsAuthenticated={IsAuthenticated} Reason={Reason}",
                         result.Endpoint,

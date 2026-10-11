@@ -1,0 +1,137 @@
+@using WriterApp.Shared.Brainstorming
+@implements IDisposable
+
+<section class="brainstorm-planning" aria-label="Save brainstorming decisions into planning">
+    <h3>Save a planning decision</h3>
+    <p>Choose an authored destination and review selected fields. Scene ideas appear in the outline without creating manuscript prose. Story and character notes are saved in this manuscript's synopsis Notes; extracted canon has its own approval flow.</p>
+    @if (_selectedTurn is { } selected) { <p>Selected discussion message</p><pre>@Cache?.Session.Turns.SingleOrDefault(t=>t.Id==selected)?.Text</pre> }
+    <label>Decision <textarea rows="4" maxlength="8000" @bind="_decision" @bind:event="oninput" @bind:after="ResetReview" disabled="@_busy" /></label>
+    <button type="button" @onclick="NewDecision" disabled="@_busy">Start a new typed decision</button>
+    <label>Destination <select @bind="_kind" @bind:after="ResetDestination" disabled="@_busy">
+        <option value="@BrainstormingPlanningKind.SceneIdea">Save as scene idea</option><option value="@BrainstormingPlanningKind.StoryNote">Add to story notes</option>
+        <option value="@BrainstormingPlanningKind.SynopsisField">Propose synopsis update</option><option value="@BrainstormingPlanningKind.CharacterNote">Propose character-note update</option>
+    </select></label>
+    @if (_kind==BrainstormingPlanningKind.CharacterNote) { <label>Character name <input maxlength="200" @bind="_character" @bind:after="ResetDestination" disabled="@_busy" /></label> }
+    <button type="button" @onclick="Prepare" disabled="@(_busy || GenerationBusy || Cache is null || string.IsNullOrWhiteSpace(_decision))">Choose destination / refresh planning</button>
+    @if (_snapshot is { } snapshot) {
+        <p>Owned manuscript: @snapshot.Scope.DocumentId · saved source @snapshot.Source.ContentRevision</p>
+        @if (_kind==BrainstormingPlanningKind.SceneIdea) {
+            <label>Chapter <select @bind="_parent" @bind:after="ResetReview" disabled="@_busy"><option value="">Choose a chapter</option>@foreach(var chapter in snapshot.Chapters) { <option value="@chapter.Id">@chapter.Title</option> }</select></label>
+            <p>Proposed outline scene · not saved</p>
+        }
+        @if (_kind==BrainstormingPlanningKind.SynopsisField) {
+            <label>Add a field <select @bind="_addField">@foreach(var field in BrainstormingPlanningContract.SynopsisFields) { <option>@field</option> }</select></label>
+            <button type="button" @onclick="AddField" disabled="@_busy">Include field in proposal</button>
+        }
+        @foreach(var field in _fields.Keys.ToArray()) {
+            <article><label><input type="checkbox" checked="@_approved.Contains(field)" @onchange="e=>SelectField(field,e)" disabled="@_busy" /> Review @field</label>
+                <p>Before</p><pre>@Before(field)</pre><label>Proposed @field<textarea rows="3" maxlength="@(field=="Title"?200:100000)" value="@_fields[field]" @oninput="e=>Edit(field,e)" disabled="@_busy" /></label>
+            </article>
+        }
+        <button type="button" @onclick="Review" disabled="@(_busy || GenerationBusy || _approved.Count==0)">Review selected fields</button>
+        <button type="button" @onclick="Cancel" disabled="@_busy">Cancel planning review</button>
+    }
+    @if (_review is { } review) {
+        <p>Exact selected fields · @review.Kind · original source @review.Source.ContentRevision</p>
+        @foreach(var field in review.Fields) { <details open><summary>@field.Field</summary><p>Before</p><pre>@field.Before</pre><p>After</p><pre>@field.After</pre></details> }
+        <button type="button" @onclick="Approve" disabled="@(_busy || GenerationBusy)">Approve selected planning fields</button>
+    }
+    @if (_message is not null) { <p role="status">@_message</p> }
+    @foreach(var item in Cache?.PlanningOperations??[]) {
+        <details><summary>Planning operation · @item.Review.Kind · @(item.Receipt?.State.ToString()??"Review retained")</summary>
+            <p>Turn @item.Review.TurnId · context @item.Review.ContextId · version @item.Review.DraftId · source @item.Review.Source.ContentRevision</p>
+            <p>@item.Receipt?.Message</p>
+            @foreach(var field in item.Review.Fields) { <p>@field.Field original · select and copy to recover without replacing later planning</p><pre tabindex="0">@field.Before</pre><p>Approved</p><pre>@field.After</pre> }
+            <button type="button" @onclick="()=>Inspect(item)" disabled="@(_busy || GenerationBusy)">Inspect planning save</button>
+            @if(item.Receipt?.State is BrainstormingApplicationState.Failed or BrainstormingApplicationState.Approved) { <button type="button" @onclick="()=>Retry(item)" disabled="@(_busy || GenerationBusy)">Approve / retry these planning fields</button> }
+            @if(item.Receipt?.State==BrainstormingApplicationState.Committed) { <button type="button" @onclick="()=>Undo(item)" disabled="@(_busy || GenerationBusy)">Undo approved planning fields</button> }
+        </details>
+    }
+</section>
+
+@code {
+    [Parameter] public BrainstormingCache? Cache {get;set;}
+    [Parameter] public IBrainstormingCacheStore Store {get;set;}=default!;
+    [Parameter] public IBrainstormingReviewIdentity? ReviewIdentity {get;set;}
+    [Parameter] public bool GenerationBusy {get;set;}
+    [Parameter] public Func<BrainstormingScope,Task<BrainstormingPlanningSnapshot>> Capture {get;set;}=default!;
+    [Parameter] public Func<BrainstormingPlanningReview,Task<BrainstormingCache>> Apply {get;set;}=default!;
+    [Parameter] public Func<BrainstormingPlanningJournal,bool,Task<BrainstormingCache>> InspectOrUndo {get;set;}=default!;
+    [Parameter] public EventCallback<BrainstormingCache> CacheChanged {get;set;}
+    private BrainstormingScope? _scope;
+    [Inject] private IServiceProvider Services {get;set;}=default!;
+    private IDisposable? _voiceReview;
+    private void RegisterPlanningVoice(){_voiceReview?.Dispose();var review=_review;var voice=Services.GetService(typeof(BrainstormingVoiceCoordinator)) as BrainstormingVoiceCoordinator;if(review is null || _scope is null || voice is null)return;_voiceReview=voice.Register(BrainstormingVoiceCommand.Planning,_scope,BrainstormingPersistence.Hash(review),()=>!_disposed && !_busy && !GenerationBusy && _review==review,async()=>{await InvokeAsync(Approve);if(!_disposed)await InvokeAsync(StateHasChanged);});}
+    private IBrainstormingReviewIdentity? _identity;
+    private BrainstormingPlanningKind _kind=BrainstormingPlanningKind.StoryNote;
+    private BrainstormingPlanningSnapshot? _snapshot;
+    private BrainstormingPlanningReview? _review;
+    private Guid? _selectedTurn;
+    private string _decision="",_character="",_parent="",_addField="Logline";
+    private readonly Dictionary<string,string> _fields=[];
+    private readonly HashSet<string> _approved=[];
+    private string? _message;
+    private bool _busy,_disposed;
+    private long _epoch;
+    protected override void OnParametersSet() {
+        if(_identity!=ReviewIdentity) {if(_identity is not null)_identity.Changed-=IdentityChanged;_identity=ReviewIdentity;if(_identity is not null)_identity.Changed+=IdentityChanged;}
+        if(_scope!=Cache?.Session.Scope){_scope=Cache?.Session.Scope;Clear();}
+    }
+    private void Clear(){_epoch++;_decision="";_character="";_parent="";_selectedTurn=null;_snapshot=null;ResetReview();_fields.Clear();_approved.Clear();_message=null;_busy=false;}
+    private void IdentityChanged(){Cache=null;_scope=null;Clear();_=InvokeAsync(StateHasChanged);}
+    private void NewDecision(){_selectedTurn=null;_decision="";ResetDestination();}
+    public Task SelectAsync(Guid turn,BrainstormingPlanningKind kind,string? proposal=null) {
+        var message=Cache?.Session.Turns.SingleOrDefault(t=>t.Id==turn && t.State==BrainstormingTurnState.Complete)??throw new InvalidOperationException("Select a complete message.");
+        _selectedTurn=turn;_kind=kind;_decision=proposal??message.Text;ResetDestination();return InvokeAsync(StateHasChanged);
+    }
+    private void ResetReview(){_review=null;_voiceReview?.Dispose();_voiceReview=null;}
+    private void ResetDestination(){_snapshot=null;ResetReview();_fields.Clear();_approved.Clear();}
+    private string Before(string field)=>_kind==BrainstormingPlanningKind.SceneIdea?"":BrainstormingPlanningContract.Value(_snapshot!.Synopsis,field);
+    private void Edit(string field,ChangeEventArgs e){_fields[field]=e.Value?.ToString()??"";ResetReview();}
+    private void SelectField(string field,ChangeEventArgs e){if(e.Value is true)_approved.Add(field);else _approved.Remove(field);ResetReview();}
+    private void AddField(){if(!_fields.ContainsKey(_addField))_fields[_addField]=_decision;_approved.Add(_addField);ResetReview();}
+    private async Task Run(Func<long,Task> work) {
+        if(_busy || GenerationBusy)return;_busy=true;var epoch=_epoch;_message=null;
+        try{await work(epoch);}catch(Exception e) when(e is IOException or InvalidDataException or InvalidOperationException or HttpRequestException or OperationCanceledException or BrainstormingConcurrencyException or System.Text.Json.JsonException or Microsoft.JSInterop.JSException) {if(epoch==_epoch)_message=e.Message;}
+        finally{if(epoch==_epoch)_busy=false;}
+    }
+    private Task Prepare()=>Run(async epoch=>{
+        var scope=_scope??throw new InvalidOperationException("Open a conversation first.");var snapshot=await Capture(scope);
+        if(epoch!=_epoch || _disposed)return;
+        if(snapshot.Version!=1 || snapshot.Scope!=scope && snapshot.Scope!=Cache?.Mapping?.Server)throw new InvalidDataException("Planning snapshot ownership changed.");
+        if(_kind==BrainstormingPlanningKind.CharacterNote && string.IsNullOrWhiteSpace(_character))throw new InvalidOperationException("Name the character for this authored note.");
+        _snapshot=snapshot;ResetReview();_fields.Clear();_approved.Clear();
+        if(_kind==BrainstormingPlanningKind.SceneIdea){_fields["Title"]="Scene idea";_fields["Summary"]=_decision;_fields["Notes"]=_decision;}
+        else if(_kind==BrainstormingPlanningKind.SynopsisField)_fields[_addField]=_decision;
+        else _fields["Notes"]=snapshot.Synopsis.Notes+(snapshot.Synopsis.Notes.Length==0?"":"\n\n")+(_kind==BrainstormingPlanningKind.CharacterNote?$"Character: {_character}\n":"")+_decision;
+        foreach(var key in _fields.Keys)_approved.Add(key);
+    });
+    private Task Review()=>Run(async epoch=>{
+        var scope=_scope??throw new InvalidOperationException("Conversation unavailable.");var snapshot=_snapshot??throw new InvalidOperationException("Refresh planning first.");
+        var cache=await Store.ReadAsync(scope)??throw new InvalidDataException("Conversation unavailable.");
+        if(cache.Pending!=null || cache.PendingGeneration!=null || cache.DraftEdit!=null || cache.Conflicts.Count!=0)throw new InvalidOperationException("Settle retained conversation operations first.");
+        var session=cache.Session;Guid turnId,contextId;
+        if(_selectedTurn is { } selected) {var turn=session.Turns.Single(t=>t.Id==selected && t.State==BrainstormingTurnState.Complete);turnId=turn.Id;contextId=turn.ContextId??throw new InvalidOperationException("Review story context before saving a decision from this message.");}
+        else {
+            var context=session.Contexts.LastOrDefault()??throw new InvalidOperationException("Review story context before saving a typed decision.");contextId=context.Id;turnId=Guid.NewGuid();var now=DateTimeOffset.UtcNow;
+            var turn=new BrainstormingTurn(1,turnId,scope,session.Turns.Count+1,session.Turns.LastOrDefault()?.Id,Guid.NewGuid(),null,contextId,BrainstormingRole.User,BrainstormingTurnState.Complete,_decision,now);
+            session=session with {Revision=session.Revision+1,UpdatedAt=now,State=cache.Mapping is null?BrainstormingConversationState.LocalOnly:BrainstormingConversationState.PendingSave,Turns=[..session.Turns,turn]};
+            cache=await Store.WriteAsync(cache with {Session=session},cache.CacheRevision,Guid.NewGuid());
+            _selectedTurn=turnId;
+        }
+        if(epoch!=_epoch || _disposed)return;
+        var review=new BrainstormingPlanningReview(1,Guid.NewGuid(),Guid.NewGuid(),snapshot.Scope,turnId,contextId,
+            session.Drafts.LastOrDefault(d=>d.TurnId==turnId)?.Id,_kind,_kind==BrainstormingPlanningKind.SceneIdea && Guid.TryParse(_parent,out var parent)?parent:null,Guid.NewGuid(),snapshot.Source,
+            _fields.Where(f=>_approved.Contains(f.Key) && f.Value!=Before(f.Key)).Select(f=>new BrainstormingPlanningField(f.Key,Before(f.Key),f.Value)).ToArray(),DateTimeOffset.UtcNow,
+            _kind==BrainstormingPlanningKind.SceneIdea && Guid.TryParse(_parent,out var chapter)?snapshot.Chapters.Single(c=>c.Id==chapter).NextChildOrder:0);
+        BrainstormingPlanningContract.Validate(review);
+        cache=await new BrainstormingPlanningWorkflow(Store).RememberAsync(scope,review);
+        if(epoch!=_epoch || _disposed)return;_review=review;RegisterPlanningVoice();await CacheChanged.InvokeAsync(cache);
+    });
+    private Task Approve()=>Run(async epoch=>{if(_review is null)return;var cache=await Apply(_review);if(epoch!=_epoch || _disposed)return;ResetReview();_snapshot=null;_message="Inspect the saved operation below. Refresh story context before generating with changed planning.";await CacheChanged.InvokeAsync(cache);});
+    private void Cancel(){ResetReview();_snapshot=null;_message="Planning review cancelled. Authored destinations are unchanged.";}
+    private Task Inspect(BrainstormingPlanningJournal item)=>Run(async epoch=>{var cache=await InspectOrUndo(item,false);if(epoch==_epoch&&!_disposed)await CacheChanged.InvokeAsync(cache);});
+    private Task Undo(BrainstormingPlanningJournal item)=>Run(async epoch=>{var cache=await InspectOrUndo(item,true);if(epoch==_epoch&&!_disposed)await CacheChanged.InvokeAsync(cache);});
+    private Task Retry(BrainstormingPlanningJournal item)=>Run(async epoch=>{var cache=await Apply(item.Review);if(epoch==_epoch&&!_disposed)await CacheChanged.InvokeAsync(cache);});
+    public void Dispose(){ResetReview();_disposed=true;_epoch++;if(_identity is not null)_identity.Changed-=IdentityChanged;}
+}

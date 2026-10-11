@@ -16,7 +16,8 @@ public sealed record LocalAiHistory(int Version, Guid Id, Guid DocumentId, strin
     IReadOnlyList<WriterApp.Application.Documents.SceneCoachingField>? SceneFields = null,
     IReadOnlyList<WriterApp.Application.Documents.SceneEntity>? SceneEntities = null,
     string? SynopsisCommentary = null, string? SynopsisUserNotes = null, WriterApp.Shared.PromptDefinition? Preset = null,
-    WriterApp.Shared.AiHistoryOrigin? CloudOrigin = null, IReadOnlyList<WriterApp.Shared.AiHistoryDelivery>? Deliveries = null, string? RecommendationId = null);
+    WriterApp.Shared.AiHistoryOrigin? CloudOrigin = null, IReadOnlyList<WriterApp.Shared.AiHistoryDelivery>? Deliveries = null, string? RecommendationId = null,
+    WriterApp.Shared.Brainstorming.BrainstormingKeepReview? Brainstorming = null);
 
 /// <summary>Local authored prompts and recovery evidence. Never stores credentials or request diagnostics.</summary>
 public sealed partial class LocalAiStore(string root)
@@ -77,6 +78,7 @@ public sealed partial class LocalAiStore(string root)
         {
             previous = await Read<LocalAiHistory>(path, ct); Validate(previous);
             if (previous.Version != value.Version || previous.DocumentId != value.DocumentId || previous.Id != value.Id || previous.Proposed != value.Proposed
+                || JsonSerializer.Serialize(previous.Brainstorming)!=JsonSerializer.Serialize(value.Brainstorming)
                 || previous.SourceRevision != value.SourceRevision || previous.ServerVersion != value.ServerVersion || previous.CreatedAt != value.CreatedAt
                 || previous.Action != value.Action || previous.Target != value.Target || previous.PageId != value.PageId || previous.RecommendationId != value.RecommendationId
                 || previous.NodeId != value.NodeId || previous.SectionId != value.SectionId || previous.OriginalText != value.OriginalText
@@ -96,7 +98,7 @@ public sealed partial class LocalAiStore(string root)
     }
     private static void Validate(LocalAiHistory value)
     {
-        if (value.Version is not (1 or 2 or 3 or 4 or 5) || value.Version == 2 && (value.Target is not ("Translation:replace" or "Translation:duplicate-section" or "Translation:duplicate-document")
+        if (value.Version is not (1 or 2 or 3 or 4 or 5 or 6) || value.Version == 2 && (value.Target is not ("Translation:replace" or "Translation:duplicate-section" or "Translation:duplicate-document")
                 || value.After is null || value.Action is not ("translate.section" or "translate.document"))
             || value.Id == Guid.Empty || value.Before is null || value.DocumentId != value.Before.DocumentId
             || value.Proposed is null || value.Proposed.Length > 100000 || value.Status is not ("Reviewed" or "Applying" or "Applied" or "Undoing" or "Undone" or "Redoing"))
@@ -104,6 +106,8 @@ public sealed partial class LocalAiStore(string root)
         LocalDocumentCodec.Validate(value.Before);
         ValidateHistoryDelivery(value);
         if (value.Version == 3) LocalWriting.ValidateEntry(value);
+        if (value.Version == 6) LocalBrainstormingWriting.ValidateEntry(value);
+        if (value.Version != 6 && value.Brainstorming is not null)throw new InvalidDataException("Unsupported brainstorming recovery metadata.");
         if(value.Version!=3&&value.Preset is not null)throw new InvalidDataException("Unsupported preset recovery metadata.");
         if(value.Version!=3&&value.RecommendationId is not null)throw new InvalidDataException("Unsupported recommendation recovery metadata.");
         if (value.Version == 4) LocalSceneCoaching.ValidateEntry(value);

@@ -13,11 +13,14 @@ internal static partial class DeviceSyncMapping
                 p.ContentFormat == LocalContentFormat.Html ? "html" : p.ContentFormat == LocalContentFormat.LegacyJson ? "legacyJson" : "legacyText")).ToArray())).ToArray(),
         new(true, doc.DeletedSections.Select(x => x.Section.ServerSectionId ?? x.Section.SectionId).ToArray(),
             doc.DeletedSections.SelectMany(x => x.Section.Pages).Concat(doc.DeletedPages.Select(x => x.Page))
-                .Select(p => p.ServerPageId ?? p.PageId).ToArray()), UploadProject(doc), doc.Kind);
-    public static string Fingerprint(LocalDocument doc) => Convert.ToHexString(SHA256.HashData(
-        JsonSerializer.SerializeToUtf8Bytes(new { Content = Upload(doc) with { Structure = null,
+                .Select(p => p.ServerPageId ?? p.PageId).ToArray()), UploadProject(doc), doc.Kind,
+        doc.Project is null && doc.ExtensionData?.ContainsKey("authoredSynopsis")==true ? LocalBrainstormingPlanning.Synopsis(doc) : null);
+    public static string Fingerprint(LocalDocument doc) {
+        var bytes=JsonSerializer.SerializeToUtf8Bytes(new { Content = Upload(doc) with { Structure = null,Synopsis=LocalBrainstormingPlanning.Synopsis(doc)==new SyncSynopsis()?null:Upload(doc).Synopsis,
             Project = UploadProject(doc) is { } p ? p with { PrimaryDocumentId = doc.Project!.PrimaryDocumentId, MetadataRevision = 0 } : null },
-            Trashed = doc.DeletedAtUtc is not null }, DeviceSyncJournal.Json)));
+            Trashed = doc.DeletedAtUtc is not null }, DeviceSyncJournal.Json);
+        return Convert.ToHexString(SHA256.HashData(bytes));
+    }
     public static string WritingFingerprint(LocalDocument doc) => Hash(Upload(doc) with { Structure = null });
     public static string ContentFingerprint(LocalDocument doc) => Hash(Upload(doc) with { Title = "", Structure = null });
     private static string Hash(SyncUpload upload) => Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(
@@ -45,7 +48,7 @@ internal static partial class DeviceSyncMapping
             LocalRevision = previous?.LocalRevision ?? 1, CreatedAtUtc = doc.CreatedAt, UpdatedAtUtc = doc.UpdatedAt,
             DeletedAtUtc = snapshot.State.IsTrashed ? now : null, ServerVersion = snapshot.State.Version,
             LastSyncedAtUtc = now, SyncState = LocalSyncState.Synced,
-            ExtensionData = previous?.ExtensionData, DeletedSections = sectionTrash, DeletedPages = pageTrash,
+            ExtensionData = SynopsisExtensions(doc,previous), DeletedSections = sectionTrash, DeletedPages = pageTrash,
             Project = DownloadProject(doc, localId, previous),
             Sections = doc.Sections.Select(s =>
             {
@@ -71,6 +74,11 @@ internal static partial class DeviceSyncMapping
             }).ToArray()
         };
         return LocalPlanning.Reconcile(previous ?? downloaded, downloaded);
+    }
+    private static Dictionary<string,JsonElement>? SynopsisExtensions(SyncDocument doc,LocalDocument? previous) {
+        if(doc.Synopsis is null)return previous?.ExtensionData;
+        var data=previous?.ExtensionData is { } old?new Dictionary<string,JsonElement>(old):new Dictionary<string,JsonElement>();
+        data["authoredSynopsis"]=JsonSerializer.SerializeToElement(doc.Synopsis,DeviceSyncJournal.Json);return data;
     }
     public static LocalDocument Copy(LocalDocument source, Guid id, string suffix)
     {

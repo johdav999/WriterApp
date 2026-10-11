@@ -14,9 +14,11 @@ namespace WriterApp.Controllers;
 [Route("api/sync/v2/documents")]
 [Route("api/sync/v3/documents")]
 [Route("api/sync/v4/documents")]
+[Route("api/sync/v5/documents")]
 public sealed class DocumentSyncController(DocumentSyncService sync, IUserIdResolver users) : ControllerBase
 {
-    private bool SupportsMultipleDocuments => Request.Path.StartsWithSegments("/api/sync/v4");
+    private bool SupportsStandalonePlanning => Request.Path.StartsWithSegments("/api/sync/v5");
+    private bool SupportsMultipleDocuments => SupportsStandalonePlanning || Request.Path.StartsWithSegments("/api/sync/v4");
     private bool SupportsPlanning => SupportsMultipleDocuments || Request.Path.StartsWithSegments("/api/sync/v3");
     private bool SupportsProjects => SupportsPlanning || Request.Path.StartsWithSegments("/api/sync/v2");
 
@@ -27,7 +29,7 @@ public sealed class DocumentSyncController(DocumentSyncService sync, IUserIdReso
     [HttpGet("{id:guid}")]
     public Task<IActionResult> Download(Guid id, CancellationToken ct) => RunAsync(async () =>
     {
-        var result = await sync.DownloadAsync(users.ResolveUserId(User), id, ct, SupportsProjects, SupportsPlanning, SupportsMultipleDocuments);
+        var result = await sync.DownloadAsync(users.ResolveUserId(User), id, ct, SupportsProjects, SupportsPlanning, SupportsMultipleDocuments, standalonePlanning:SupportsStandalonePlanning);
         Response.Headers.ETag = $"\"{result.State.Version}\"";
         return result;
     });
@@ -36,7 +38,7 @@ public sealed class DocumentSyncController(DocumentSyncService sync, IUserIdReso
     [RequestSizeLimit(DocumentSyncService.MaxRequestBytes)]
     public Task<IActionResult> Mutate(Guid id, [FromBody] SyncMutation request, CancellationToken ct) => RunAsync(async () =>
     {
-        var result = await sync.MutateAsync(users.ResolveUserId(User), id, request, ct, SupportsProjects, SupportsPlanning, SupportsMultipleDocuments);
+        var result = await sync.MutateAsync(users.ResolveUserId(User), id, request, ct, SupportsProjects, SupportsPlanning, SupportsMultipleDocuments, standalonePlanning:SupportsStandalonePlanning);
         Response.Headers.ETag = $"\"{result.State.Version}\"";
         return result;
     });

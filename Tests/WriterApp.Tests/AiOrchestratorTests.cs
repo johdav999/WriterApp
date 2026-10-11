@@ -22,6 +22,29 @@ namespace WriterApp.Tests
     public sealed class AiOrchestratorTests
     {
         [Fact]
+        public async Task Brainstorming_CannotBypassDurableConversationRoute()
+        {
+            IAiProviderRegistry registry = new DefaultAiProviderRegistry(new IAiProvider[] { new MockTextProvider() });
+            WriterAiOptions options = new() { Enabled = true };
+            IAiRouter router = new DefaultAiRouter(registry, Options.Create(options), NullLogger<DefaultAiRouter>.Instance);
+            IAiOrchestrator orchestrator = new AiOrchestrator(
+                new AiActionExecutor(router, new InMemoryArtifactStore(), NullLogger<AiActionExecutor>.Instance),
+                registry, router, new AllowAllUsagePolicy(), new NoOpUsageMeter(), Options.Create(options),
+                new IAiAction[] { new BrainstormingConversationAction() });
+            string action = BrainstormingConversationAction.Id;
+            Assert.False(orchestrator.CanRunAction(action));
+            Assert.False(orchestrator.GetStreamingCapabilities(action).SupportsTextStreaming);
+            var document = DocumentFactory.CreateNewDocument();
+            var input = new AiActionInput(document, document.Chapters[0].Sections[0].SectionId,
+                new TextRange(0, 0), string.Empty, "Explore ideas", null);
+            Assert.False((await orchestrator.ExecuteActionAsync(action, input, CancellationToken.None)).Succeeded);
+            var stream = orchestrator.StreamActionAsync(action, input, CancellationToken.None);
+            await foreach (var item in stream.Events)
+                Assert.False(item is AiStreamEvent.TextDelta or AiStreamEvent.Completed);
+            Assert.Null(await stream.Completion);
+        }
+
+        [Fact]
         public void CanRunAction_HidesImageWhenOnlyTextProvider()
         {
             IAiProviderRegistry registry = new DefaultAiProviderRegistry(new IAiProvider[]

@@ -1,12 +1,35 @@
-<div class="editor-shell @Class" style="@Style">
-    <div class="editor-workspace @WorkspaceClass">
-        <section class="editor-main" id="onboarding-editor-scene">@Main</section>
+<div class="editor-shell @Class @(BrainstormOpen ? "is-brainstorming" : "")" style="@Style">
+    @if (BrainstormOpen) {
+        <nav class="brainstorm-pane-controls" aria-label="Brainstorm panes">
+            <button type="button" aria-pressed="@(_pane == "outline")" @onclick='() => SelectPane("outline")'><Icon Name="format_list_bulleted" /><span>Outline</span></button>
+            <button type="button" aria-pressed="@(_pane == "manuscript")" @onclick='() => SelectPane("manuscript")'><Icon Name="description" /><span>Manuscript</span></button>
+            <button type="button" aria-pressed="@(_pane == "draft")" @onclick='() => SelectPane("draft")'><Icon Name="lightbulb" /><span>Brainstorm</span></button>
+            <button type="button" aria-pressed="@(_pane == "conversation")" @onclick='() => SelectPane("conversation")'><Icon Name="chat_bubble_outline" /><span>Conversation</span></button>
+            <button class="brainstorm-collapse" type="button" aria-expanded="@(!_conversationCollapsed)" @onclick="() => _conversationCollapsed = !_conversationCollapsed">@(_conversationCollapsed ? "Show chat" : "Hide chat")</button>
+        </nav>
+    }
+    <div class="editor-workspace @WorkspaceClass @(_outlineCollapsed ? "brainstorm-outline-collapsed" : "") @(_conversationCollapsed ? "brainstorm-conversation-collapsed" : "")" data-brainstorm-pane="@_pane">
+        @if (BrainstormOpen && Outline is not null) {
+            <aside class="brainstorm-outline" aria-label="Brainstorm outline">@Outline<PanelResizeHandle Side="outline" Label="Resize Brainstorm outline" /></aside>
+        }
+        <section class="editor-main" id="onboarding-editor-scene" hidden="@(BrainstormOpen && Proposal is not null && _pane != "manuscript")">@Main</section>
+        @if (BrainstormOpen && Proposal is not null) {
+            <section class="brainstorm-draft-host" hidden="@(_pane == "manuscript")" aria-label="Brainstorm draft workspace">
+                <header class="brainstorm-draft-heading"><div><h1>Brainstorm</h1><p>Explore ideas. Shape a scene.</p></div><button type="button" @onclick="LeaveBrainstorm">Back to writing</button></header>
+                @Proposal
+            </section>
+        }
         @if (Context is not null)
         {
-            <div class="editor-context-host">
-                <PanelResizeHandle Side="right" Label="Resize right context panel" />
+            <div class="editor-context-host" hidden="@BrainstormOpen">
+                @if (!BrainstormOpen) { <PanelResizeHandle Side="right" Label="Resize right context panel" /> }
                 @Context
             </div>
+        }
+        @if (Brainstorming is not null) {
+            <aside class="brainstorming-host" aria-label="Brainstorm workspace" hidden="@(!BrainstormOpen)">
+                @if (BrainstormOpen) { <PanelResizeHandle Side="brainstorm-right" Label="Resize Brainstorm conversation" /> }@Brainstorming
+            </aside>
         }
     </div>
 </div>
@@ -16,4 +39,29 @@
     [Parameter] public string? WorkspaceClass { get; set; }
     [Parameter] public RenderFragment? Main { get; set; }
     [Parameter] public RenderFragment? Context { get; set; }
+    [Parameter] public bool BrainstormOpen { get; set; }
+    [Parameter] public RenderFragment? Outline { get; set; }
+    [Parameter] public RenderFragment? Brainstorming { get; set; }
+    [Parameter] public RenderFragment? Proposal { get; set; }
+    [Parameter] public Guid? ProposalId { get; set; }
+    [Parameter] public EventCallback LeaveBrainstorm { get; set; }
+    private string _pane = "draft";
+    private bool _outlineCollapsed = true, _conversationCollapsed;
+    private Guid? _knownProposalId;
+    protected override void OnParametersSet() {
+        if (BrainstormOpen && ProposalId is not null && ProposalId != _knownProposalId) {
+            _pane = "draft";
+            _conversationCollapsed = false;
+        }
+        _knownProposalId = ProposalId;
+    }
+    public Task ShowDraftAsync() => InvokeAsync(() => {
+        SelectPane("draft");
+        StateHasChanged();
+    });
+    private void SelectPane(string pane) {
+        _outlineCollapsed = pane != "outline";
+        _pane = pane;
+        if (pane == "conversation") _conversationCollapsed = false;
+    }
 }

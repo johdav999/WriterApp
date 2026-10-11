@@ -1,0 +1,262 @@
+@using WriterApp.Shared.Brainstorming
+@implements IDisposable
+
+<section class="brainstorm-workspace" aria-label="Brainstorm conversation and context">
+    <header class="brainstorm-header">
+        <div><h2>Conversation</h2><p>Develop your working draft, one turn at a time.</p></div>
+        <button type="button" class="brainstorm-new" disabled="@(_loading || _generating)" @onclick="CreateSession" aria-label="New conversation">+ New</button>
+    </header>
+    <nav class="brainstorm-tabs" aria-label="Brainstorm views">
+        @foreach (var view in Enum.GetValues<WorkspaceView>()) {
+            <button type="button" aria-pressed="@(_view == view ? "true" : "false")" @onclick="() => _view = view">@view</button>
+        }
+    </nav>
+    @if (_loading) { <p class="brainstorm-notice" role="status">Opening saved conversations…</p> }
+    @if (_availability?.Conversation is { IsAvailable: false } capability) {
+        <details class="brainstorm-availability"><summary>Connection needs attention</summary><p>@capability.Message</p><button type="button" disabled="@(_loading || _generating)" @onclick="Reload">Check connection</button></details>
+    }
+    @if (_error is not null) { <p class="brainstorm-notice" role="alert">@_error</p> }
+    @if (_preparing) { <p class="brainstorm-notice" role="status">Saving writing and preparing story context… @if (SynchronizationDestination is not null) { <span>Syncing with @SynchronizationDestination.</span> }</p> }
+    <div class="brainstorm-view brainstorm-history" hidden="@(_view != WorkspaceView.History)">
+    <h3>Your conversations</h3><p class="brainstorm-muted">Saved for this manuscript.</p>
+    <fieldset disabled="@(_loading || _generating)">
+        <legend class="brainstorm-sr-only">Conversations for this manuscript</legend>
+        <label>Saved conversation <select @bind="_selected"><option value="">Choose a conversation</option>
+            @foreach (var item in _summaries) { <option value="@item.Scope.SessionId">@item.UpdatedAt.ToLocalTime().ToString("g") · @SessionState(item.State)</option> }
+        </select></label>
+        <button type="button" @onclick="Reopen" disabled="@string.IsNullOrEmpty(_selected)">Open saved conversation</button>
+        <div class="brainstorm-secondary-actions"><button type="button" @onclick="Reload">Refresh list</button>
+        @if(Discover is not null){<button type="button" @onclick="DiscoverConversations">Find synced conversations</button>}</div>
+        @if (_more) { <button type="button" @onclick="More">Load more conversations</button> }
+    </fieldset>
+    @if (_scope is not null) {
+        <h3>Current conversation</h3>
+        <p class="brainstorm-muted">@(_cache?.Session.Turns.Count ?? 0) saved messages · @SessionState(_cache?.Session.State)</p>
+        <button type="button" disabled="@(_generating || _loading || SynchronizeSession is null)" @onclick="Synchronize">Sync conversation</button>
+        @if(_cache?.Conflicts.Count>0){<button type="button" disabled="@_generating" @onclick="ForkLocal">Fork retained local discussion</button><button type="button" disabled="@_generating" @onclick="ForkServer">Open retained server branch as a local copy</button>}
+        <BrainstormingRecoveryPanel Cache="_cache" />
+    }
+    </div>
+    @if (_scope is null) {
+        <div class="brainstorm-welcome" hidden="@(_view == WorkspaceView.History)"><span class="brainstorm-welcome-mark" aria-hidden="true">✧</span><h3>Make room for your next idea</h3><p>Explore a character, find your next scene, or talk through a plot point.</p><button class="brainstorm-primary" type="button" disabled="@_loading" @onclick="CreateSession">Start a conversation</button><p class="brainstorm-muted">Suggestions stay proposals until you review them.</p></div>
+    }
+    @if (_scope is { } scope) {
+        <div class="brainstorm-view brainstorm-context" hidden="@(_view != WorkspaceView.Context)">
+        <h3>Give your ideas a little context</h3><p class="brainstorm-muted">Choose the story material to include. Your manuscript stays unchanged.</p>
+        <fieldset disabled="@_generating"><legend class="brainstorm-sr-only">Destination and story sources</legend>
+            <BrainstormingContextReview @ref="_contextReview" @key="scope" Expanded="true" SectionId="SectionId" SceneId="SceneId" SceneContentRoute="SceneContentRoute"
+                Prepare="Prepare" PrepareServer="PrepareServer" SupportingDocuments="SupportingDocuments" ReviewIdentity="ReviewIdentity"
+                InitialPreparation="_prepared" Reviewed="Reviewed" ReviewChanged="ReviewChanged" TargetLabel="TargetLabel" />
+        </fieldset>
+        </div>
+        <div class="brainstorm-chat" hidden="@(_view != WorkspaceView.Chat)">
+        <div class="brainstorm-context-bar"><span>@(_reviewReady ? "Context ready" : "Story context needs review")</span><button type="button" @onclick="() => _view = WorkspaceView.Context">Review context <span aria-hidden="true">→</span></button></div>
+        @if (_cache?.Conflicts.Count > 0 || _cache?.PendingGeneration is not null) { <p class="brainstorm-notice" role="status">A saved operation needs attention. <button type="button" @onclick="() => _view = WorkspaceView.History">Review history</button></p> }
+        <BrainstormingConversationPanel @ref="_conversation" Scope="scope" Ready="@(_reviewReady && !_preparing && _availability?.Conversation.IsAvailable == true)"
+            Store="Store" Workflow="Workflow" ReviewIdentity="ReviewIdentity" BeforeSend="CheckBeforeSend" BeforeDraftSend="BeforeDraftSend"
+            PrepareContextForSend="@((PrepareServer ?? Prepare) is null ? null : PrepareContextForSend)" ReadinessMessage="@ReadinessMessage"
+            Availability="_availability?.Conversation" DictationAvailability="_availability?.Dictation" VoiceAvailability="_availability?.SpokenDialogue" Dictation="Dictation" Sessions="Sessions" CacheChanged="CacheUpdated" BusyChanged="GenerationChanged" ShowDrafts="false" ShowDraftRequested="ShowDraftRequested" PlanningSelected="SelectPlanning" />
+        @if(CapturePlanning is not null && ApplyPlanning is not null && InspectPlanning is not null) {
+            <details class="brainstorm-planning-review" open="@_planningOpen"><summary>Save a planning decision</summary>
+            <BrainstormingPlanningPanel @ref="_planning" Cache="_cache" Store="Store" ReviewIdentity="ReviewIdentity" GenerationBusy="_generating"
+                Capture="CapturePlanning" Apply="ApplyPlanning" InspectOrUndo="InspectPlanning" CacheChanged="PlanningUpdated" />
+            </details>
+        }
+        </div>
+    }
+</section>
+
+@code {
+    private enum WorkspaceView { Chat, Context, History }
+    private WorkspaceView _view;
+    private bool _planningOpen;
+    private static string SessionState(BrainstormingConversationState? state) => state switch {
+        BrainstormingConversationState.LocalOnly => "Saved on this device",
+        BrainstormingConversationState.PendingSave => "Waiting to sync",
+        BrainstormingConversationState.Saved => "Synced",
+        BrainstormingConversationState.Conflict => "Needs review",
+        BrainstormingConversationState.Deleted => "Deleted",
+        _ => "Not saved"
+    };
+    [Parameter] public BrainstormingDictationWorkflow? Dictation {get;set;}
+    [Parameter] public bool Active { get; set; }
+    [Parameter] public Guid DocumentId { get; set; }
+    [Parameter] public BrainstormingScope? ResumeScope { get; set; }
+    [Parameter] public Guid? SectionId { get; set; }
+    [Parameter] public Guid? SceneId { get; set; }
+    [Parameter] public bool SceneContentRoute { get; set; }
+    [Parameter] public IBrainstormingCacheStore Store { get; set; } = default!;
+    [Parameter] public BrainstormingSessionService Sessions { get; set; } = default!;
+    [Parameter] public Func<BrainstormingScope,Task>? Discover {get;set;}
+    [Parameter] public Func<BrainstormingScope,bool,Task<BrainstormingCache>>? SynchronizeSession {get;set;}
+    [Parameter] public Func<BrainstormingScope,Task<BrainstormingCache>>? ForkServerSession {get;set;}
+    [Parameter] public BrainstormingConversationWorkflow Workflow { get; set; } = default!;
+    [Parameter] public IBrainstormingCapabilityService Capabilities { get; set; } = default!;
+    [Parameter] public IBrainstormingReviewIdentity? ReviewIdentity { get; set; }
+    [Parameter] public Func<Task<BrainstormingScope>> ScopeFactory { get; set; } = default!;
+    [Parameter] public EventCallback<BrainstormingScope?> SessionChanged { get; set; }
+    [Parameter] public EventCallback<BrainstormingCache?> CacheChanged { get; set; }
+    [Parameter] public EventCallback ShowDraftRequested { get; set; }
+    [Parameter] public Func<Task>? BeforeSend { get; set; }
+    [Parameter] public Func<string?>? CurrentWritingVersion { get; set; }
+    private string? _reviewedWritingVersion;
+    private async Task CheckBeforeSend() {
+        try { if (BeforeSend is not null) await BeforeSend(); }
+        catch { _reviewReady=false; StateHasChanged(); throw; }
+    }
+    [Parameter] public Func<Task>? BeforeDraftSend { get; set; }
+    [Parameter] public Func<BrainstormingScope,Task<BrainstormingPlanningSnapshot>>? CapturePlanning {get;set;}
+    [Parameter] public Func<BrainstormingPlanningReview,Task<BrainstormingCache>>? ApplyPlanning {get;set;}
+    [Parameter] public Func<BrainstormingPlanningJournal,bool,Task<BrainstormingCache>>? InspectPlanning {get;set;}
+    private BrainstormingPlanningPanel? _planning;
+    private async Task SelectPlanning((Guid Turn,BrainstormingPlanningKind Kind,string? Text) selection) { _planningOpen = true; if (_planning is not null) await _planning.SelectAsync(selection.Turn,selection.Kind,selection.Text); }
+    private async Task PlanningUpdated(BrainstormingCache cache) {await CacheUpdated(cache);_reviewReady=false;}
+    [Parameter] public EventCallback<bool> GeneratingChanged { get; set; }
+    private async Task GenerationChanged(bool value) { _generating=value;await GeneratingChanged.InvokeAsync(value); }
+    [Parameter] public Func<BrainstormingTarget,string>? TargetLabel { get; set; }
+    [Parameter] public Func<BrainstormingTargetQuery,IReadOnlyList<BrainstormingContextChoice>,IReadOnlyList<Guid>,int,Task<BrainstormingPreparation>>? Prepare { get; set; }
+    [Parameter] public Func<BrainstormingTargetQuery,IReadOnlyList<BrainstormingContextChoice>,IReadOnlyList<Guid>,int,Task<BrainstormingPreparation>>? PrepareServer { get; set; }
+    [Parameter] public string? SynchronizationDestination { get; set; }
+    private bool _prepareOnRender, _preparing;
+    protected override async Task OnAfterRenderAsync(bool firstRender) {
+        if (!_prepareOnRender || !Active || _disposed || _loading || _generating || _preparing || _contextReview is null || _scope is null) return;
+        _prepareOnRender=false;
+        if ((PrepareServer ?? Prepare) is null) return;
+        var epoch=_epoch; var scope=_scope; var selection=_selection;
+        _preparing=true; _reviewReady=false; _error=null;
+        await GenerationChanged(true);
+        StateHasChanged();
+        try {
+            var error=await _contextReview.PrepareForSendAsync();
+            if (epoch==_epoch && scope==_scope && !_disposed) {
+                _error=error;
+                if (selection!=_selection) _reviewReady=false;
+            }
+        }
+        finally {
+            _preparing=false;
+            if (!_disposed) {
+                if (epoch==_epoch) await GenerationChanged(false);
+                StateHasChanged();
+            }
+        }
+    }
+    [Parameter] public Func<Guid?,Task<BrainstormingSupportingPage>>? SupportingDocuments { get; set; }
+    private BrainstormingScope? _partition, _scope;
+    private BrainstormingCache? _cache;
+    private BrainstormingPreparation? _prepared;
+    private BrainstormingCapabilities? _availability;
+    private readonly List<BrainstormingSummary> _summaries = [];
+    private BrainstormingConversationPanel? _conversation;
+    private BrainstormingContextReview? _contextReview;
+    private Task<string?> PrepareContextForSend() => _contextReview?.PrepareForSendAsync()
+        ?? Task.FromResult<string?>("Open a conversation and review its destination before sending.");
+    private string ReadinessMessage => _prepared?.Resolution.Clarification
+        ?? (_prepared?.Context?.Policy?.Limitation is { Length:>0 } limitation ? limitation
+            : _prepared?.Context?.Policy is { Ready:false } ? "Required story text does not fit. Review summaries or omissions in Brainstorm story context, then prepare again."
+            : _preparing || _prepareOnRender ? "Saving writing and preparing story context…"
+            : "Review story context to resolve preparation. Your message is retained.");
+    private IBrainstormingReviewIdentity? _identity;
+    private bool _initialized, _loading, _generating, _reviewReady, _more, _wasActive, _disposed;
+    private Guid _document;
+    private (Guid?,Guid?) _selection;
+    private string _selected = "";
+    private string? _error;
+    private long _epoch;
+    protected override async Task OnParametersSetAsync() {
+        if (Active && !_wasActive) { _prepareOnRender=true; _reviewReady=false; }
+        if (_reviewReady && CurrentWritingVersion is not null && _reviewedWritingVersion != CurrentWritingVersion()) _reviewReady=false;
+        var resume = !_initialized ? ResumeScope : null;
+        if (_identity != ReviewIdentity) { if (_identity is not null) _identity.Changed -= IdentityChanged; _identity = ReviewIdentity; if (_identity is not null) _identity.Changed += IdentityChanged; }
+        if (_document != DocumentId) { _epoch++; _conversation?.Suspend(); _document = DocumentId; _scope = null; _partition = null; _cache = null; _prepared = null; _summaries.Clear(); _initialized = false; _reviewReady = false; _generating = false; _loading = false; _selected = ""; _availability = null; _error = null; await SessionChanged.InvokeAsync(null); await CacheChanged.InvokeAsync(null); }
+        if (_selection != (SectionId,SceneId)) { _selection = (SectionId,SceneId); _reviewReady = false; _prepareOnRender=true; }
+        if (_wasActive && !Active) _conversation?.Suspend();
+        _wasActive = Active;
+        if (Active && !_initialized) {
+            await Reload();
+            if(resume is not null && _partition is not null && resume.DocumentId==DocumentId
+                && BrainstormingPersistence.Partition(resume)==BrainstormingPersistence.Partition(_partition)) {
+                await Run(async epoch=>{var retained=await Store.ReadAsync(resume);if(epoch!=_epoch || _disposed || retained is null)return;await Choose(retained);_selected=resume.SessionId.ToString();});
+            }
+            if (_scope is null && _partition is not null && (PrepareServer ?? Prepare) is not null) await CreateSession();
+        }
+    }
+    private void IdentityChanged() {
+        if (_disposed || _scope is null && _partition is null) return;
+        _prepareOnRender=false;
+        _epoch++; _conversation?.Suspend();
+        _ = InvokeAsync(async () => { if (_disposed) return; _scope = null; _partition = null; _cache = null; _prepared = null; _summaries.Clear(); _reviewReady = false; _initialized = false; _generating = false; _loading = false; _selected = ""; _availability = null; _error = null; await SessionChanged.InvokeAsync(null); await CacheChanged.InvokeAsync(null); StateHasChanged(); });
+    }
+    private async Task Run(Func<long,Task> action) {
+        if (_loading || _generating) return;
+        _loading = true; _error = null; long epoch = _epoch;
+        try { await action(epoch); }
+        catch (Exception e) when (e is IOException or InvalidDataException or InvalidOperationException or System.Net.Http.HttpRequestException or OperationCanceledException or System.Text.Json.JsonException or Microsoft.JSInterop.JSException or BrainstormingConcurrencyException) { if (epoch == _epoch) _error = e.Message; }
+        finally { if (epoch == _epoch) _loading = false; }
+    }
+    private Task Reload() => Run(async epoch => {
+        _initialized = true;
+        var availability = await Capabilities.ReadAsync(); if(epoch == _epoch)_availability=availability;
+        var partition = await ScopeFactory(); var items = await Store.ListAsync(partition,limit:25);
+        if (epoch != _epoch || _disposed) return;
+        _availability = availability; _partition = partition; _summaries.Clear(); _summaries.AddRange(items); _more = items.Count == 25;
+    });
+    private Task More() => Run(async epoch => {
+        if (_partition is null) return;
+        var items = await Store.ListAsync(_partition,_summaries.LastOrDefault()?.Scope.SessionId,25);
+        if (epoch != _epoch || _disposed) return;
+        _summaries.AddRange(items.Where(i => !_summaries.Any(old => old.Scope == i.Scope))); _more = items.Count == 25;
+    });
+    private Task DiscoverConversations()=>Run(async epoch=>{
+        var partition=_partition??await ScopeFactory();await Discover!(partition);if(epoch!=_epoch)return;
+        var items=await Store.ListAsync(partition,limit:25);if(epoch!=_epoch)return;_summaries.Clear();_summaries.AddRange(items);_more=items.Count==25;
+    });
+    private Task Synchronize()=>Run(async epoch=>{
+        if(_scope is null || SynchronizeSession is null)return;
+        if(BeforeDraftSend is not null && _cache?.Conflicts.Count==0)await BeforeDraftSend();
+        var current=await Store.ReadAsync(_scope)??throw new InvalidDataException("Conversation unavailable.");
+        var result=await SynchronizeSession(_scope,current.Session.State==BrainstormingConversationState.Saved || current.Conflicts.Count>0);
+        if(epoch!=_epoch)return;await CacheUpdated(result);_reviewReady=false;
+    });
+    private Task ForkLocal()=>Run(async epoch=>{
+        if(_scope is null)return;var branch=await Sessions.ForkAsync(_scope,Guid.NewGuid());if(epoch!=_epoch)return;
+        await Choose(branch);_selected=branch.Session.Scope.SessionId.ToString();_summaries.Insert(0,new(branch.Session.Scope,branch.Session.Revision,branch.Session.State,branch.Session.UpdatedAt));
+    });
+    private Task ForkServer()=>Run(async epoch=>{
+        if(_scope is null || ForkServerSession is null)return;var branch=await ForkServerSession(_scope);if(epoch!=_epoch)return;
+        await Choose(branch);_selected=branch.Session.Scope.SessionId.ToString();_summaries.Insert(0,new(branch.Session.Scope,branch.Session.Revision,branch.Session.State,branch.Session.UpdatedAt));
+    });
+    private Task CreateSession() => Run(async epoch => {
+        var scope = await ScopeFactory(); var cache = await Sessions.CreateAsync(scope);
+        if (epoch != _epoch || _disposed) return;
+        await Choose(cache); _selected = scope.SessionId.ToString(); _summaries.Insert(0,new(scope,cache.Session.Revision,cache.Session.State,cache.Session.UpdatedAt));
+    });
+    private Task Reopen() => Run(async epoch => {
+        if (!Guid.TryParse(_selected,out var id)) return;
+        var scope = _summaries.Single(i => i.Scope.SessionId == id).Scope;
+        var cache = await Store.ReadAsync(scope) ?? throw new InvalidDataException("Saved conversation unavailable. Its original cache has not been discarded.");
+        if (epoch != _epoch || _disposed) return;
+        await Choose(cache);
+    });
+    private async Task Choose(BrainstormingCache cache) {
+        if (cache.Session.Scope.DocumentId != DocumentId) throw new InvalidDataException("Conversation belongs to another manuscript.");
+        var epoch=_epoch;
+        if(BeforeDraftSend is not null && _cache?.Conflicts.Count is not >0)await BeforeDraftSend();
+        cache=await Store.ReadAsync(cache.Session.Scope)??throw new InvalidDataException("Conversation unavailable; earlier writing and proposals are retained.");
+        if(epoch!=_epoch || _disposed)throw new OperationCanceledException("The manuscript or account changed during proposal checkpoint.");
+        _conversation?.Suspend(); _scope = cache.Session.Scope; _cache = cache; _reviewReady = false; _view = WorkspaceView.Chat; _planningOpen = false;
+        _prepareOnRender=true;
+        var context = cache.Session.Contexts.LastOrDefault(); var target = cache.Session.Targets.LastOrDefault();
+        _prepared = context is not null && target is not null ? new(1,new(1,target,null,[],[],[]),context,[]) : null;
+        await SessionChanged.InvokeAsync(_scope); await CacheChanged.InvokeAsync(cache);
+    }
+    private async Task Reviewed(BrainstormingPreparation result) {
+        if (!Active || result.Context is null || _scope != result.Context.Scope) { _reviewReady = false; return; }
+        _prepared = result; _reviewReady = result.Context.Policy is { Ready:true, Limitation.Length:0 };
+        _reviewedWritingVersion = CurrentWritingVersion?.Invoke();
+        var cache = await Store.ReadAsync(_scope); if (cache is not null) await CacheUpdated(cache);
+    }
+    private void ReviewChanged() => _reviewReady = false;
+    private async Task CacheUpdated(BrainstormingCache cache) { if (cache.Session.Scope != _scope) return; _cache = cache; await CacheChanged.InvokeAsync(cache); }
+    public void Dispose() { _disposed = true; _epoch++; _conversation?.Suspend(); if (_identity is not null) _identity.Changed -= IdentityChanged; }
+}

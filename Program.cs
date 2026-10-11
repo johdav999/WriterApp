@@ -314,6 +314,7 @@ builder.Services.AddSingleton<IArtifactStore, InMemoryArtifactStore>();
 builder.Services.AddSingleton<IAiAttachmentStore, InMemoryAiAttachmentStore>();
 builder.Services.AddSingleton<IAiProvider, MockTextProvider>();
 builder.Services.AddSingleton<IAiProvider, MockImageProvider>();
+builder.Services.AddHttpClient("BrainstormingSpeech",client=>client.Timeout=Timeout.InfiniteTimeSpan);
 
 WriterAiOpenAiOptions openAiOptions = builder.Configuration
     .GetSection("WriterApp:AI:Providers:OpenAI")
@@ -321,6 +322,9 @@ WriterAiOpenAiOptions openAiOptions = builder.Configuration
 
 OpenAiKeyProvider openAiKeyProvider = OpenAiKeyProvider.FromEnvironment();
 builder.Services.AddSingleton(openAiKeyProvider);
+var speechOptions=builder.Configuration.GetSection("WriterApp:AI").Get<WriterAiOptions>()??new();
+if(OpenAiSpeechProvider.Configured(speechOptions,openAiKeyProvider.HasKey))
+    builder.Services.AddSingleton<IAiProvider>(sp=>new OpenAiSpeechProvider(sp.GetRequiredService<IHttpClientFactory>().CreateClient("BrainstormingSpeech"),speechOptions,openAiKeyProvider.ApiKey));
 
 if (openAiOptions.Enabled && openAiKeyProvider.HasKey)
 {
@@ -350,6 +354,7 @@ builder.Services.AddSingleton<IAiAction, StoryboardDetectMissingScenesAction>();
 builder.Services.AddSingleton<IAiAction, StoryboardCheckSubplotContinuityAction>();
 builder.Services.AddSingleton<IAiAction, StoryboardAnalyzePovBalanceAction>();
 builder.Services.AddSingleton<IAiAction, ProposeNextParagraphAction>();
+builder.Services.AddSingleton<IAiAction, BrainstormingConversationAction>();
 bool reviseToolsEnabled =
     builder.Configuration.GetValue<bool?>("AI:ReviseToolsEnabled")
     ?? builder.Configuration.GetValue<bool?>("WriterApp:AI:ReviseToolsEnabled")
@@ -406,6 +411,7 @@ if (promptLibraryEnabled)
 builder.Services.AddSingleton<IAiActionExecutor, AiActionExecutor>();
 builder.Services.AddSingleton<IAiProposalApplier, DefaultProposalApplier>();
 builder.Services.AddScoped<IAiOrchestrator, AiOrchestrator>();
+builder.Services.AddSingleton<WriterApp.Application.AI.BrainstormingGenerationStops>();
 builder.Services.AddScoped<WriterApp.Application.AI.IAiActionHistoryStore, WriterApp.Application.AI.EfCoreAiActionHistoryStore>();
 
 builder.Services.AddScoped<DocumentStorageService>();
@@ -522,9 +528,10 @@ using (IServiceScope scope = app.Services.CreateScope())
     LogRuntimeProbe(logger);
 
     AppDbContext dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    bool databaseReady = true;
     if (dbContext.Database.IsSqlServer())
     {
-        await WarmUpSqlServerConnectionAsync(dbContext, logger, CancellationToken.None);
+        databaseReady = await SqlServerStartupProbe.WaitAsync(dbContext, logger, app.Lifetime.ApplicationStopping);
     }
     if (dbContext.Database.IsSqlite())
     {
@@ -548,6 +555,10 @@ using (IServiceScope scope = app.Services.CreateScope())
         ?? false;
     if (autoMigrateOnStartup)
     {
+        if (!databaseReady)
+        {
+            throw new InvalidOperationException("Database startup migrations were requested, but SQL Server is unavailable. Restore database availability before starting with AutoMigrateOnStartup enabled.");
+        }
         await ApplyDatabaseMigrationsAsync(dbContext, logger, CancellationToken.None);
         logger.LogInformation("Migrations ok; schema up to date.");
     }
@@ -562,7 +573,7 @@ using (IServiceScope scope = app.Services.CreateScope())
     }
 
     bool adminApiEnabled = app.Configuration.GetValue<bool?>("Admin:EnableAdminApi") ?? false;
-    if (adminApiEnabled)
+    if (adminApiEnabled && databaseReady)
     {
         string[] appliedMigrations = (await dbContext.Database.GetAppliedMigrationsAsync(CancellationToken.None)).ToArray();
         string[] pendingMigrations = (await dbContext.Database.GetPendingMigrationsAsync(CancellationToken.None)).ToArray();
@@ -608,28 +619,31 @@ using (IServiceScope scope = app.Services.CreateScope())
         }
     }
 
-    try
-    {
-        IDocumentLifecycleService lifecycle =
-            scope.ServiceProvider.GetRequiredService<IDocumentLifecycleService>();
-        int removed = await lifecycle.CleanupExpiredTrashAsync(TimeSpan.FromDays(30), CancellationToken.None);
-        if (removed > 0)
-        {
-            logger.LogInformation("Startup trash cleanup removed {Count} documents.", removed);
-        }
-    }
-    catch (Exception ex)
+    if (databaseReady)
     {
         try
         {
-            logger.LogWarning(ex, "Startup trash cleanup failed.");
+            IDocumentLifecycleService lifecycle =
+                scope.ServiceProvider.GetRequiredService<IDocumentLifecycleService>();
+            int removed = await lifecycle.CleanupExpiredTrashAsync(TimeSpan.FromDays(30), CancellationToken.None);
+            if (removed > 0)
+            {
+                logger.LogInformation("Startup trash cleanup removed {Count} documents.", removed);
+            }
         }
-        catch (Exception logEx)
+        catch (Exception ex)
         {
-            Console.Error.WriteLine(
-                $"Startup trash cleanup failed and could not be logged via ILogger. " +
-                $"CleanupError: {ex.GetType().Name}: {ex.Message}; " +
-                $"LoggingError: {logEx.GetType().Name}: {logEx.Message}");
+            try
+            {
+                logger.LogWarning(ex, "Startup trash cleanup failed.");
+            }
+            catch (Exception logEx)
+            {
+                Console.Error.WriteLine(
+                    $"Startup trash cleanup failed and could not be logged via ILogger. " +
+                    $"CleanupError: {ex.GetType().Name}: {ex.Message}; " +
+                    $"LoggingError: {logEx.GetType().Name}: {logEx.Message}");
+            }
         }
     }
 
@@ -642,7 +656,7 @@ using (IServiceScope scope = app.Services.CreateScope())
         app.Configuration.GetValue<bool?>("Workflow:SceneContentBackfillRunOnStartup")
         ?? app.Configuration.GetValue<bool?>("WriterApp:Workflow:SceneContentBackfillRunOnStartup")
         ?? false;
-    if (runSceneContentBackfillOnStartup)
+    if (runSceneContentBackfillOnStartup && databaseReady)
     {
         try
         {
@@ -773,7 +787,11 @@ if (wasmEnabled)
         pathAnchors,
         "WriterApp.Client",
         "obj",
-        app.Environment.IsDevelopment() ? "Debug" : "Release",
+#if DEBUG
+        "Debug",
+#else
+        "Release",
+#endif
         "net10.0",
         "scopedcss",
         "bundle");
@@ -3518,23 +3536,6 @@ static string? ResolveSqlServerConnectionString(IConfiguration configuration)
 }
 
 
-static async Task WarmUpSqlServerConnectionAsync(AppDbContext dbContext, ILogger logger, CancellationToken ct)
-{
-    try
-    {
-        var strategy = dbContext.Database.CreateExecutionStrategy();
-        await strategy.ExecuteAsync(async () =>
-        {
-            await dbContext.Database.ExecuteSqlRawAsync("SELECT 1;", ct);
-        });
-
-        logger.LogInformation("SQL warmup probe succeeded.");
-    }
-    catch (Exception ex)
-    {
-        logger.LogWarning(ex, "SQL warmup probe failed at startup. App will continue; retries happen per request.");
-    }
-}
 static string? ResolveAppIndexPath(string runtimeAppIndex, string sourceAppIndex)
 {
     if (File.Exists(runtimeAppIndex))

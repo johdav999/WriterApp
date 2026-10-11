@@ -62,6 +62,9 @@ namespace WriterApp.Client.Pages
         [SupplyParameterFromQuery(Name = "search")]
         public string? SearchQuery { get; set; }
 
+        [SupplyParameterFromQuery(Name = "brainstorm-manuscript")]
+        public bool BrainstormManuscriptRoute { get; set; }
+
         [Inject]
         public GlobalSearchNavigationService GlobalSearchNavigationService { get; set; } = default!;
 
@@ -681,6 +684,7 @@ namespace WriterApp.Client.Pages
         }
         protected override async Task OnAfterRenderAsync(bool firstRender)
         {
+            await OpenBrainstormPageAfterNavigation();
             if(firstRender)StartHistoryDelivery();
             if (firstRender && !_layoutStateInitialized)
             {
@@ -745,6 +749,7 @@ namespace WriterApp.Client.Pages
 
         protected override async Task OnParametersSetAsync()
         {
+            if (BrainstormManuscriptRoute) { _brainstormVisited = true; _brainstormOpen = true; }
             if (_clientAiRequest is { } active && (active.Document != DocumentId || active.Section != SectionId)) CancelClientAiRequestCore(false);
             if (ProjectId != Guid.Empty && SceneNodeId != Guid.Empty)
             {
@@ -907,6 +912,8 @@ namespace WriterApp.Client.Pages
 
         private async Task<bool> TryRedirectLegacySectionRouteAsync()
         {
+            // Brainstorm needs the owned manuscript pages, not the scene-card copy.
+            if (BrainstormManuscriptRoute) return false;
             if (DocumentId == Guid.Empty || SectionId == Guid.Empty)
             {
                 return false;
@@ -914,6 +921,8 @@ namespace WriterApp.Client.Pages
 
             try
             {
+                var pages = await Http.GetFromJsonAsync<List<PageDto>>($"api/sections/{SectionId}/pages");
+                if (pages?.Count > 1) return false;
                 ProjectSceneOpenTargetDto? sceneTarget = await Http.GetFromJsonAsync<ProjectSceneOpenTargetDto>(
                     $"api/sections/{SectionId}/scene-target");
                 if (sceneTarget is null || sceneTarget.ProjectId == Guid.Empty || sceneTarget.SceneNodeId == Guid.Empty)
@@ -1281,7 +1290,7 @@ namespace WriterApp.Client.Pages
             await FlushActiveEditorAsync("navigate");
 
             await LastOpenedDocumentStateService.SaveAsync(DocumentId, sectionId);
-            Navigation.NavigateTo($"documents/{DocumentId}/sections/{sectionId}");
+            Navigation.NavigateTo($"documents/{DocumentId}/sections/{sectionId}" + (BrainstormManuscriptRoute ? "?brainstorm-manuscript=true" : ""));
         }
 
         private void BeginSectionRename(Guid sectionId)
@@ -6920,7 +6929,7 @@ namespace WriterApp.Client.Pages
 
         private async Task FlushNotesSaveAsync()
         {
-            if (_activeSection is null)
+            if (_activeSection is null || (_notesEditVersion == _notesSavedVersion && !_notesSaveInFlight && !_notesSaveQueued))
             {
                 return;
             }

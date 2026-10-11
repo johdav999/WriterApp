@@ -5,11 +5,21 @@
 @implements IDisposable
 
 <div class="local-search" @onkeydown="OnKeyDown">
-    <form @onsubmit="SearchNowAsync" @onsubmit:preventDefault>
-        <label class="visually-hidden" for="local-search-input">Search local documents and writing</label>
-        <input id="local-search-input" type="search" maxlength="200" placeholder="Search local documents and writing…" value="@_query" @oninput="OnInput" @onfocus="() => _open = true" />
-        <label>Search scope <select @bind="_scope" @bind:after="SearchNowAsync"><option value="Writing">Writing</option><option value="Planning">Planning &amp; notes</option><option value="All">Writing and planning</option></select></label>
-        <button type="submit">Search</button><button type="button" @onclick="Clear">Clear</button>
+    <form class="local-search-form" role="search" aria-label="Search this device" @onsubmit="SearchNowAsync" @onsubmit:preventDefault>
+        <div class="local-search-field">
+            <svg class="local-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4 4" /></svg>
+            <label class="local-search-sr-only" for="local-search-input">Search local documents and writing</label>
+            <input id="local-search-input" type="search" maxlength="200" autocomplete="off" placeholder="Search your documents…" value="@_query" @oninput="OnInput" @onfocus="() => _open = true" />
+            <button class="local-search-clear" type="button" aria-label="Clear search" title="Clear search" disabled="@(string.IsNullOrEmpty(_query))" @onclick="Clear">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17" /></svg>
+            </button>
+        </div>
+        <div class="local-search-scope">
+            <label class="local-search-sr-only" for="local-search-scope">Search scope</label>
+            <select id="local-search-scope" @bind="_scope" @bind:after="SearchNowAsync"><option value="Writing">Writing</option><option value="Planning">Planning &amp; notes</option><option value="All">Writing &amp; planning</option></select>
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m4 6 4 4 4-4" /></svg>
+        </div>
+        <button class="local-search-submit" type="submit">Search</button>
     </form>
     @if (_open && !string.IsNullOrWhiteSpace(_query))
     {
@@ -100,3 +110,4 @@
     private void Clear() { _query = ""; _open = false; _results = null; _error = null; ++_request; _runner.Cancel(); _loading = false; }
     public void Dispose() { _disposed = true; Documents.Changed -= Changed; _runner.Dispose(); }
 }
+

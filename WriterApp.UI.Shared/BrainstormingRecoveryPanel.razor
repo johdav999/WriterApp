@@ -1,0 +1,37 @@
+@using WriterApp.Shared.Brainstorming
+
+<details class="brainstorm-recovery">
+    <summary>Recovery and application history</summary>
+    <p>Opening, reconnecting and synchronizing never generate or apply an idea automatically.</p>
+    @if(Cache is { } cache) {
+        <p>@(cache.Composer.Length>0?"Unsent message retained.":"Composer empty.")
+            @(cache.PendingGeneration is null?"No pending generation.":"Generation outcome requires inspection.")
+            @(cache.Pending is null?"No pending conversation save.":"Exact conversation save awaiting acknowledgement.")
+            @(cache.DraftEdit is null?"Proposal checkpoint saved.":"Uncheckpointed authored proposal edit retained.")</p>
+        <p>@cache.Session.Drafts.Count saved proposal versions · @((cache.Keeps??[]).Count) original Keep journals · @((cache.PlanningOperations??[]).Count) original planning journals.</p>
+        @foreach(var conflict in cache.Conflicts) {
+            <details><summary>Retained conflict · local @conflict.Local.Revision / server @conflict.Server.Revision</summary>
+                <p>Both branches and the original pending journals remain available. Fork local discussion to continue; inspect the server branch before choosing it.</p>
+                <p>Server discussion</p>@foreach(var turn in conflict.Server.Turns.TakeLast(40)){<pre>@turn.Text</pre>}
+                @foreach(var draft in conflict.Server.Drafts.TakeLast(5)){<details><summary>Server proposal version @draft.Revision</summary><pre>@draft.PlainText</pre></details>}
+            </details>
+        }
+        @if(cache.Recovery is { } recovery) {
+            <p>Authoritative server history · @recovery.ServerKeeps.Count Keep operations · @recovery.ServerPlanning.Count planning operations.</p>
+            @foreach(var journal in recovery.ServerKeeps.TakeLast(_visible)){<details><summary>Server Keep · @(journal.Receipt?.State.ToString()??"Approval retained") · @journal.Review.OperationId</summary><p>@journal.Receipt?.Message</p><p>Approved prose</p><pre>@journal.Review.Candidate.PlainText</pre><p>Original writing for recovery</p>@foreach(var page in journal.Review.Before.Pages){<pre>@(page.Content)</pre>}</details>}
+            @foreach(var journal in recovery.ServerPlanning.TakeLast(_visible)){<details><summary>Server planning · @journal.Receipt?.State · @journal.Review.OperationId</summary>@foreach(var f in journal.Review.Fields){<p>@f.Field · original</p><pre>@f.Before</pre><p>Approved</p><pre>@f.After</pre>}</details>}
+            @foreach(var copy in recovery.Copies.TakeLast(_visible)){<details><summary>Retained device copy · @copy.Mapping.Local.DocumentId · @copy.Id[..8]</summary>
+                <p>Device-reported history and pending approvals. These are recovery evidence; they do not confirm a server commit. Original operations must be inspected in their original device/account. Copy original content below without changing current writing.</p>
+                @if(copy.DraftEdit is { } edit){<p>Retained authored proposal edit</p><pre>@edit.PlainText</pre>}
+                @foreach(var j in copy.Keeps.TakeLast(_visible)){<details><summary>Device Keep · @(j.Receipt?.State.ToString()??"Approval retained") · @j.Review.OperationId</summary><p>Approved prose</p><pre>@j.Review.Candidate.PlainText</pre><p>Original writing</p>@foreach(var page in j.Review.Before.Pages){<pre>@(page.Content)</pre>}</details>}
+                @foreach(var j in copy.Planning.TakeLast(_visible)){<details><summary>Device planning · @(j.Receipt?.State.ToString()??"Review retained") · @j.Review.OperationId</summary>@foreach(var f in j.Review.Fields){<p>@f.Field · original</p><pre>@f.Before</pre><p>Approved</p><pre>@f.After</pre>}</details>}
+            </details>}
+        }
+        <button type="button" @onclick="() => _visible += 10">Show more recovery history</button>
+        <p>Conversation: at most 500 messages, 2 MB per saved session, 8,000 characters per instruction; story context: at most 100 sources / 100,000 characters. Older messages are shown in groups of 40.</p>
+    }
+</details>
+
+@code { [Parameter] public BrainstormingCache? Cache {get;set;} private int _visible=10; }
+
+

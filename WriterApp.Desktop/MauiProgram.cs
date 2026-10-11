@@ -29,6 +29,11 @@ public static class MauiProgram
         builder.Services.AddWriterAppDeviceCore(
             new DeviceHostOptions("Windows desktop", apiBaseAddress),
             localDocumentPath);
+        builder.Services.AddSingleton<WriterApp.Shared.Brainstorming.IBrainstormingMicrophone,WindowsBrainstormingMicrophone>();
+        builder.Services.AddSingleton<WriterApp.Shared.Brainstorming.IBrainstormingSpeechOutput,WindowsBrainstormingSpeechOutput>();
+        // MAUI app lifecycle and Blazor WebView scopes share the same native audio
+        // floor/suspension signal; a scoped coordinator here would miss deactivation.
+        builder.Services.AddSingleton<WriterApp.Shared.Brainstorming.BrainstormingVoiceCoordinator>();
         builder.Services.AddMauiBlazorWebView();
 
 #if DEBUG

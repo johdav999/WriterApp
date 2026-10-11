@@ -6,6 +6,12 @@ namespace WriterApp.Device.Shared.Services;
 
 public static class LocalPlanning
 {
+    public static LocalDocument SceneIdea(LocalDocument document,LocalProjectNode node) {
+        var project=Active(document);
+        if(node.NodeType!="scene" || node.SectionId!=null || node.NodeId==Guid.Empty || project.Nodes.Any(n=>n.NodeId==node.NodeId))throw new InvalidOperationException("Create an unlinked planning scene idea.");
+        var next=document with {Project=project with {Version=Math.Max(2,project.Version),Nodes=[..project.Nodes,node]}};
+        LocalProjectStructure.Validate(next);return next;
+    }
     public static readonly SyncSceneCard EmptyCard = new(null, null, null, null, null, null, null, "Draft", null, null, null, null, null, null, null);
     public static LocalDocument Scene(LocalDocument document, Guid nodeId, SyncSceneCard card, string notes)
     {
@@ -13,8 +19,13 @@ public static class LocalPlanning
         if (!project.Nodes.Any(n => n.NodeId == nodeId && n.NodeType == "scene" && n.DeletionId is null)) throw new InvalidOperationException("Select an active scene.");
         return document with { Project = project with { Version = Math.Max(2, project.Version), Nodes = project.Nodes.Select(n => n.NodeId == nodeId ? n with { Card = card, Notes = notes } : n).ToArray() } };
     }
-    public static LocalDocument Synopsis(LocalDocument document, SyncSynopsis synopsis) =>
-        document with { Project = Active(document) with { Version = Math.Max(2, document.Project!.Version), Synopsis = synopsis } };
+    public static LocalDocument Synopsis(LocalDocument document, SyncSynopsis synopsis) {
+        if(document.DeletedAtUtc is not null || document.Kind!="manuscript")throw new InvalidOperationException("Select an active manuscript.");
+        if(document.Project is { } project)return document with {Project=project with {Version=Math.Max(2,project.Version),Synopsis=synopsis}};
+        var extensions=document.ExtensionData is null?new Dictionary<string,JsonElement>():new(document.ExtensionData);
+        extensions["authoredSynopsis"]=JsonSerializer.SerializeToElement(synopsis,WriterApp.Shared.Brainstorming.BrainstormingValidation.Json);
+        return document with {ExtensionData=extensions};
+    }
     public static LocalDocument AddAnnotation(LocalDocument document, Guid nodeId, string kind, string text, string quote)
     {
         var project = Active(document);

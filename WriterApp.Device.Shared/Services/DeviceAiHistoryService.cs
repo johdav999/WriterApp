@@ -120,7 +120,9 @@ public sealed class DeviceAiHistoryService : IDisposable
         IReadOnlyList<LocalAiHistory> local, LocalCloudHistoryCache? cache, IReadOnlySet<Guid>? dismissed = null)
     {
         string? scope = Scope;
-        var visible = local.Where(e => e.CloudOrigin is null || e.CloudOrigin.Scope == scope).ToArray();
+        var visible = local.Where(e => (e.CloudOrigin is null || e.CloudOrigin.Scope == scope)
+            && (e.Brainstorming?.Scope.AccountKey is not { } key || account.IsSignedIn && key==WriterApp.Shared.Brainstorming.BrainstormingValidation.Fingerprint(account.AccountId??"")
+                && e.Brainstorming.Scope.BackendKey==WriterApp.Shared.Brainstorming.BrainstormingValidation.Fingerprint(host.ApiBaseAddress.AbsoluteUri))).ToArray();
         var items = localItems.Where(e => visible.Any(l => l.Id == e.Id)).Select(e => e with { Origin = "Local",
             Freshness = "Durable local recovery", CanRecover = true }).ToList();
         if (cache is null || cache.Scope != scope || cache.LocalDocumentId != current.DocumentId || cache.Snapshot.DocumentId != current.ServerDocumentId)

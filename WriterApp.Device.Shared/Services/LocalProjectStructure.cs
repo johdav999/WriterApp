@@ -146,7 +146,8 @@ public static class LocalProjectStructure
             // Allowed Part -> Chapter -> Scene placement also rules out every possible cycle.
             if (node.NodeType == "scene")
             {
-                if (node.SectionId is not { } section || !sections.Add(section) || !document.Sections.Any(s => s.SectionId == section))
+                if (node.SectionId is { } section ? !sections.Add(section) || !document.Sections.Any(s => s.SectionId == section)
+                    : !WriterApp.Shared.Brainstorming.BrainstormingPlanningContract.IsSceneIdea(node.MetadataJson))
                     throw new JsonException("A scene must reference a unique active manuscript section. Restore/remove its project node before removing writing.");
             }
             else if (node.SectionId is not null) throw new JsonException("Only scenes reference writing.");

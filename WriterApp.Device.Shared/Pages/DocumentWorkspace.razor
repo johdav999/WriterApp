@@ -1,4 +1,4 @@
-@page "/documents/{DocumentId:guid}"
+﻿@page "/documents/{DocumentId:guid}"
 @using WriterApp.Device.Shared.Components
 @using WriterApp.Device.Shared.Pages
 @using WriterApp.Shared.Localization
@@ -33,7 +33,11 @@ else
     }
     DeviceDocumentStatus status = DeviceDocumentStatus.For(document, _saveFailed || _autosave?.Error is not null ? LocalSaveState.Error : _busy ? LocalSaveState.Saving : _session.SaveState);
     @if (document.Project is not null) { <a href="@($"/documents/{DocumentId}/cover")">Cover studio</a> }
-    <EditorWorkspace Class="@(View.FocusMode ? "is-focus-mode" : "")" WorkspaceClass="@(View.ContextCollapsed || View.FocusMode ? "is-context-collapsed" : "")" Style="@($"--editor-max-width: {(_wideWriting ? "100%" : "900px")}; --topbar-height: 72px;")">
+    <EditorWorkspace @ref="_brainstormEditorWorkspace" ProposalId="SelectedBrainstormDraftId" Class="@(View.FocusMode ? "is-focus-mode" : "")" WorkspaceClass="@(View.ContextCollapsed || View.FocusMode ? "is-context-collapsed" : "")" Style="@($"--editor-max-width: {(_wideWriting ? "100%" : "900px")}; --topbar-height: 72px;")" BrainstormOpen="_brainstormOpen" LeaveBrainstorm="ToggleBrainstormAsync">
+        <Proposal>
+            @if (_brainstormOpen) { <BrainstormingProposalPreview @ref="_brainstormProposal" ReviewIdentity="BrainstormSessions" Sessions="BrainstormSessions.Sessions" CacheChanged="cache => _brainstormCache = cache" EditorHost="Device" GenerationBusy="_brainstormGenerating" DocumentId="DocumentId" Cache="_brainstormCache" ActiveSectionId="CurrentSectionId" TargetLabel="BrainstormTargetLabel" Navigate="NavigateBrainstormTargetAsync" ViewApplication="ViewBrainstormApplicationAsync" PrepareKeep="PrepareBrainstormKeepAsync" ApplyKeep="ApplyBrainstormKeepAsync" InspectApplication="InspectBrainstormKeepAsync" ChangeApplication="ChangeBrainstormKeepAsync" RecoverApplication="RecoverBrainstormKeepAsync" /> }
+            @if (_brainstormNavigationError is not null) { <p role="alert">@_brainstormNavigationError</p> }
+        </Proposal>
         <Main>
             <EditorHeading Label="@document.Title" Title="@(document.Sections.FirstOrDefault(s => s.Pages.Any(p => p.PageId == _selectedPage))?.Title ?? "Document")">
                 <Actions>
@@ -41,8 +45,11 @@ else
                         <Icon Name="@(_preview is null ? "visibility" : "edit")" /><span>@(_preview is null ? "Preview" : "Back to editing")</span>
                     </button>
                     @if (_preview is not null || _selectedPage is null || _hasRecovery || document.DeletedAtUtc is not null) { @DocumentActions }
+                    <button type="button" class="panel-toggle" aria-pressed="@_brainstormOpen" @onmousedown:preventDefault @onclick="ToggleBrainstormAsync">@(_brainstormOpen ? "Leave Brainstorm" : "Brainstorm")</button>
                     <EditorPanelControls FocusMode="View.FocusMode" ContextCollapsed="@(View.ContextCollapsed || View.FocusMode)" ToggleFocus="View.ToggleFocusAsync" ToggleContext="View.ToggleContextAsync" /></Actions>
             </EditorHeading>
+
+
             @if (_error is not null) { <p role="alert">@_error</p> }
             @if (_autosave?.Error is not null) { <p role="alert">@_autosave.Error</p> }
             @if (_searchNotice is not null) { <p role="status">@_searchNotice</p> }
@@ -89,6 +96,23 @@ else
                 <span>Ctrl+S save · Ctrl+B bold · Ctrl+I italic</span>
             </EditorStatus>
         </Main>
+        <Outline>
+            @if (document.Kind == "manuscript" && document.Project is { } brainstormProject) {
+                <Projects ProjectId="brainstormProject.ProjectId" EmbedNavigator="true" HostDocumentId="document.DocumentId" HostRevision="document.LocalRevision"
+                    BeforeWork="BeforeContextWorkAsync" AfterWork="AfterContextWorkAsync" SceneOpenRequested="id => SwitchPageAsync(id)" />
+            }
+            <LocalStructureNavigator Document="document" SelectedPage="_selectedPage" Disabled="PanelOperationsDisabled" SelectPage="id => SwitchPageAsync(id)" Change="ChangeStructureAsync" />
+        </Outline>
+        <Brainstorming>
+            @if (_brainstormVisited) {
+            <BrainstormingWorkspace Active="_brainstormOpen" ResumeScope="_brainstormContextScope" DocumentId="DocumentId" SectionId="CurrentSectionId" Store="BrainstormSessions" Sessions="BrainstormSessions.Sessions"
+                Workflow="BrainstormSessions.ConversationWorkflow" Dictation="BrainstormSessions.DictationWorkflow" Capabilities="BrainstormCapabilities" ReviewIdentity="BrainstormSessions"
+                Discover="scope=>BrainstormSessions.DiscoverAsync(scope)" SynchronizeSession="(scope,pull)=>BrainstormSessions.SyncAsync(scope,pull)" ForkServerSession="BrainstormSessions.ForkServerAsync"
+                BeforeDraftSend="PrepareBrainstormDraftSend" ShowDraftRequested="ShowBrainstormDraft" GeneratingChanged="value => _brainstormGenerating = value" ScopeFactory="CreateBrainstormScopeAsync" SessionChanged="SelectBrainstormSession" CacheChanged="cache => _brainstormCache = cache"
+                Prepare="PrepareBrainstormingContextAsync" PrepareServer="PrepareServerBrainstormingContextAsync" SynchronizationDestination="@BrainstormSessions.SynchronizationDestination" SupportingDocuments="ListBrainstormingSupportingAsync" BeforeSend="BeforeBrainstormingSendAsync" CurrentWritingVersion="CurrentBrainstormWritingVersion" TargetLabel="BrainstormTargetLabel"
+                CapturePlanning="CaptureBrainstormPlanningAsync" ApplyPlanning="ApplyBrainstormPlanningAsync" InspectPlanning="InspectBrainstormPlanningAsync" />
+            }
+        </Brainstorming>
         <Context>
             <aside class="context-drawer @(View.ContextCollapsed || View.FocusMode ? "is-collapsed" : "")">
                 <RightPanelShell PanelId="editor-context-content" LabelledBy="@DeviceSubviewId" PinTrailingBody="@PinStoryCoaching" TrailingBodyVisible="@ShowContextAi">

@@ -1,5 +1,46 @@
 # Editor content compatibility
 
+## Brainstorming planning approval (2026-10-07)
+
+Planning approval uses typed selected fields and encoded text, independently of
+manuscript Keep. Save pending editor changes before capturing source revisions and
+keep editor writes guarded through confirmed receipt adoption. Old context manifests
+remain exact; next generation requires explicit fresh context preparation.
+
+An approved scene idea is a marked unlinked planning node/card/notes. It creates no
+manuscript section/page/prose, and ordinary project sync skips prose mirroring until
+a real section link exists. Existing linked-scene rich writing, tags/status/metadata
+and annotations are retained; later affected content prevents destructive Undo.
+Story/character notes use authored synopsis Notes and do not mutate extracted canon.
+
+Standalone desktop authored synopsis is local-only pending prompt 9's explicit owned
+sync contract. Local context contains it; server context refuses to omit it. See
+[P8 acceptance and recovery](brainstorming-p08-uat.md). No common rich-content
+vocabulary, editor source or generated bundle changes in P8; existing actual-editor
+projection, proposal and Keep suites pass against the currently shipped assets.
+
+## Brainstorming proposal editing (2026-10-07)
+
+Proposal editing reuses the shipped common TipTap editor/quality text mapper in web
+and Windows. Provider prose is escaped into paragraphs before mounting; provider
+markup is literal text. Authored rich HTML is validated by the common node/attribute
+and nesting contract before editing/checkpoint/revision. Unsupported or mismatched
+legacy snapshots remain inert original data with a refusal, never a lossy conversion.
+The common read-only server projection is now shared with draft validation through
+`BrainstormingDraftContent`; the existing browser parity cases still match it.
+
+Manual edit buffers and checkpoint versions retain exact supported HTML and mapped
+plain text separately from manuscript persistence. Normalization on a no-op open does
+not create a manual version. Verified proposal anchors pin exact candidate ID/content
+fingerprint, quote and UTF-16 quality mapping offsets; client/server reject changed
+or lost selections. Generated revisions remain separate candidates. Manuscript and
+rich source content remain unchanged until prompt 7's checked approved application.
+
+P6 exposes the existing common factory in the web bundle and rebuilds both editor
+assets; no common editor vocabulary/schema changes. See [P6 acceptance](brainstorming-p06-uat.md)
+for scoped C# handler, actual-editor/IndexedDB, rebuilt native startup and remaining
+interactive/provider acceptance evidence.
+
 ## AI parity prompt 4 — Glossary-aware quality checks (2026-10-05)
 
 Local quality analysis now passes the current account/document's saved glossary
@@ -468,3 +509,114 @@ navigation evidence are retained separately from exact pre-request AI snapshots.
 Follow-up must distinguish initialization/normalization from writer edits and test
 list/table-ended pages, autosave and reopen in both hosts. Native loading, external
 provider quality and deployed/package acceptance remain pending.
+
+### Brainstorming Keep checked rich mapping — 2026-10-07
+
+P7 adds `previewBrainstormingKeep` to the existing common device editor module and
+web global; both shipped bundles are regenerated with the same existing schema.
+The portable checked DOM transform pins exact AfterHtml; the actual editor proves
+the corresponding ProseMirror transaction using one schema instance for source,
+candidate fragments and comparison. Keep never flattens all pages of a section.
+
+Page-start insertion preserves existing blocks. Replacement uses the existing UTF-16
+quality projection and exact quote in one ordinary top-level paragraph/heading;
+multiple candidate blocks require a whole paragraph. Ambiguous/stale ranges, partial
+surrogate pairs, unsupported markup and nested images refuse before writing. Unchanged
+supported list/table/link/marks remain in the snapshot. Server anchored annotations
+currently cause an actionable refusal rather than incorrect reanchoring or lost author
+comments; new-section insertion retains annotations in existing pages. Device saves
+reuse local planning reconciliation. No editor schema/document wire-version changes.
+
+Actual web/device bundles passed empty/insert/replace/create mapping, rich author-edited
+Unicode content and factory reload, plus unsupported/stale/forged refusal. Existing
+109 common editor regressions also passed. See [P7 UAT](brainstorming-p07-uat.md) for
+fixture/module/native/live scopes. The separately recorded P14 list-ending normalization
+gate remains; these checks do not establish byte-identical navigation for every node.
+
+### Brainstorming prompt 9 recovery — 2026-10-07
+
+P9 changes session recovery/history and standalone synopsis sync, not the editor
+schema, projection algorithm or shipped assets. Both host callbacks and the shared
+Send/Keep/Undo controls are exercised in a Chapter 2 journey with retained manual
+rich proposal content and exact preservation of existing pages. Imported application
+history cannot authorize another Keep of the same candidate. Original device reports
+remain distinct from authoritative server receipts; copying recovery text does not
+apply it. Existing P7 rich mapping/refusal and annotated-page boundaries remain.
+
+All actual editor/proposal/context/Keep suites pass again in Edge; recovery history
+and exact original fields survive real IndexedDB reload and remain unclipped at
+390px. These fixtures and C# callbacks do not establish signed-in native/browser
+interaction or live provider acceptance. See [P9 UAT](brainstorming-p09-uat.md).
+P14 list-ending initialization/normalization and the unrelated targeted-quality
+diagnostic retain their separate reproductions. Speech was not implemented in P9;
+P10 evidence follows below.
+
+### Brainstorming prompt 9 recheck after P12 — 2026-10-07
+
+The P9 recheck after P12 fixes conversation access revocation at source/context,
+send/inspect/stop boundaries while retaining original cached writing. It changes no
+rich schema or editor assets. 821 regressions/eight browser suites and both builds
+pass; a fresh running LocalDev web journey preserves every original page through
+exact Keep/Undo/Redo, selected planning saves, offline review and reload. Real
+account/native/live-provider/SQL acceptance remains separate. P10–12 and the
+unrelated quality/P14 gates remain intact; latest commands/evidence are in
+[P9 UAT](brainstorming-p09-uat.md) and the status/handoff.
+
+### Brainstorming prompt 10 dictated author prose — 2026-10-07
+
+Dictation changes capture, authenticated transcription, composer and optional draft
+origin metadata. It does not change editor vocabulary, content projection or shipped
+editor bundles. Final speech text is encoded as inert author prose only after the
+explicit reviewed-destination action, with AuthorDictated origin and original speech
+operation provenance. It creates no assistant turn/request. The same proposal editor,
+exact Keep review, annotation/scene guard and Undo paths apply; a completed recording
+does not modify manuscript/planning content.
+
+Both actual web/device session adapters and shared Start/Stop/correct/place/Send handlers
+pass with labeled synthetic interop/provider responses. An owned migrated server test
+also applies precisely approved dictated text and undoes it. All actual editor module
+suites pass again. P10 worklet/browser render checks use synthetic audio and do not
+establish live English/Swedish recognition or native interaction. P14 normalization
+and the unrelated targeted-quality diagnostic remain unchanged. See
+[P10 UAT](brainstorming-p10-uat.md) and implementation status.
+
+### Brainstorming prompt 11 spoken review — 2026-10-07
+
+Spoken conversation uses the same checked text pipeline and proposed version model.
+Concise saved answers are spoken separately from generated prose; no audio callback
+injects provider HTML or changes the editor. Optional explicit read opening aloud is
+bound to a saved candidate ID/fingerprint and stops before manual proposal changes,
+on version/scope changes and on background/disposal. The full draft remains visible.
+
+Final exact spoken Keep/planning approval can enter the identical visible review
+handler once only with Clear recognition evidence, a review captured before recording
+and unchanged scope/hash/current candidate/target. Existing rich-content mapping,
+annotations/scenes, actual receipts, local history and guarded Undo remain authoritative.
+Negation, partial/interrupted/uncertain recognition, mixed typed prefix and changed
+reviews cannot apply. English/Swedish narrative revisions remain discussion/drafting.
+All editor bundles are rerun unchanged; no P11 schema or shipped editor asset change.
+
+P11 also fixes the shared local pull revision clock so repeated completed conversation
+generations remain valid/importable. It preserves original request provenance, pending
+manual edits and conflicts. See [P11 UAT](brainstorming-p11-uat.md) for callback/browser
+evidence and separate real microphone/provider/playback/native acceptance gates.
+The unrelated targeted-quality diagnostic and P14 list normalization gate remain.
+
+### P12 integrated rich-content acceptance — 2026-10-07
+
+Running LocalDev web acceptance uses two chapters/four pages with strong/emphasis,
+Unicode, a synopsis and an excluded conflicting note. Actual proposal editor manual
+checkpoints, exact reviewed Keep, original-page preservation, Undo/Redo, selected
+Notes save/Undo, reload and standalone isolation pass; restored prose is a labeled
+synthetic fixture. Three served WASM hashes match the rebuilt files. No rich schema
+or provider HTML admission changed. Both hosts restore only owned cached sessions
+after application remount and require a fresh source review; inspection is serialized.
+
+Multi-page linked sections remain in manuscript editing instead of scene aggregate
+redirects. Server scene saves refuse replacing combined multi-page content rather
+than writing it all into page 1 and emptying later pages. Language-only saves retain
+each page. Unedited notes flushing is a no-op, preserving captured source identity.
+Shared narrow shell/layout and the Release CSS fallback are verified in actual web.
+See [P12 UAT](brainstorming-p12-uat.md) for all B01–B23 boundaries and reproductions.
+Native/live AI/audio/SQL and real-account/device evidence remains separate; the
+feature is not release-ready. Unrelated targeted-quality/P14 gates remain intact.

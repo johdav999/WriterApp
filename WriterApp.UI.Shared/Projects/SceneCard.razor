@@ -5,6 +5,7 @@
          aria-label="@Title"
          title="@GetCardTooltip()">
     <div class="scene-card-top">
+        @if(PlanningIdea) {<p>Saved scene idea · no manuscript prose</p>}
         <div class="scene-card-title-row">
             @if (EnableDragging)
             {
@@ -226,6 +227,7 @@
 
     [Parameter]
     public bool HasNotes { get; set; }
+    [Parameter] public bool PlanningIdea {get;set;}
 
     [Parameter]
     public DateTimeOffset? UpdatedUtc { get; set; }

@@ -23,7 +23,7 @@ public interface IDeviceSyncApi
 public sealed class DeviceSyncApi(HttpClient client, WriterApp.Device.Shared.Storage.LocalOnboardingStore? onboarding = null,
     DeviceHostOptions? host = null) : IDeviceSyncApi
 {
-    private const string Root = "api/sync/v4/documents";
+    private const string Root = "api/sync/v5/documents";
     private Guid? _demoDocument;
     private string ActiveRoot => _demoDocument is null ? Root : "api/onboarding/demo/documents";
     public async Task<string> GetOwnerAsync(CancellationToken ct)
@@ -65,7 +65,7 @@ public sealed class DeviceSyncApi(HttpClient client, WriterApp.Device.Shared.Sto
                 try { error = await response.Content.ReadFromJsonAsync<SyncError>(cancellationToken: ct); }
                 catch (JsonException) { }
                 if ((int)response.StatusCode == 404 && error is null)
-                    throw new DeviceSyncApiException(426, "project_sync_backend_required", "This backend does not support multi-document sync v4. Local changes and queued operations are preserved until the backend is upgraded.");
+                    throw new DeviceSyncApiException(426, "project_sync_backend_required", "This backend does not support document and standalone planning sync v5. Local changes and queued operations are preserved until the backend is upgraded.");
                 throw new DeviceSyncApiException((int)response.StatusCode, error?.Code ?? "http_error", error?.Message ?? "The sync request was rejected.");
             }
             return await response.Content.ReadFromJsonAsync<T>(cancellationToken: ct) ?? throw new JsonException("Empty synchronization response.");

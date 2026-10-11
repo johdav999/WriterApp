@@ -1,0 +1,278 @@
+@using WriterApp.Shared.Brainstorming
+@using Microsoft.JSInterop
+@implements IAsyncDisposable
+@inject IServiceProvider Services
+
+@if (Cache?.Session.Scope.DocumentId == DocumentId && BrainstormingDrafts.Candidate(Cache) is { } draft) {
+    var target = Cache.Session.Targets.Single(t => t.Id == draft.TargetId);
+    <section class="brainstorm-proposal-preview" aria-label="Proposed prose review">
+        <header class="proposal-heading"><div><h2>@(_keepReview is null ? "Working draft" : "Place your draft")</h2>@if (_keepReview is null) { <p>@TargetLabel(target)</p> }</div><span class="proposal-status">@(ApplicationStatus(draft) == "Unreviewed" ? "Not yet applied" : ApplicationStatus(draft))</span></header>
+        <nav class="working-draft-tabs" aria-label="Draft alternatives" hidden="@(_keepReview is not null)">
+            @foreach(var branch in BrainstormingDrafts.Branches(Cache.Session)) {
+                <button type="button" aria-pressed="@(branch.BranchId==draft.BranchId ? "true":"false")" disabled="@(_busy || GenerationBusy || Cache.PendingGeneration is not null)" @onclick="() => SelectBranch(branch.Id)">@BrainstormingDrafts.BranchLabel(branch)</button>
+            }
+            <button type="button" disabled="@(_busy || GenerationBusy || Cache.PendingGeneration is not null)" @onclick="() => _creatingAlternative=!_creatingAlternative">+ Alternative</button>
+        </nav>
+        @if(_creatingAlternative) {
+            <div class="alternative-name"><label>Alternative name <input maxlength="60" @bind="_alternativeName" /></label><button type="button" disabled="@(_busy || GenerationBusy || Cache.PendingGeneration is not null || string.IsNullOrWhiteSpace(_alternativeName))" @onclick="CreateAlternative">Create alternative</button><button type="button" @onclick="()=>_creatingAlternative=false">Cancel</button></div>
+        }
+        <nav class="proposal-tabs" aria-label="Proposal views" hidden="@(_keepReview is not null)">
+            @foreach (var view in Enum.GetValues<ProposalView>()) {
+                <button type="button" aria-pressed="@(_view == view ? "true" : "false")" @onclick="() => _view = view">@view</button>
+            }
+            <label class="draft-change-toggle"><input type="checkbox" @bind="_showChanges" @bind:after="UpdateHighlights" /> Show changes</label>
+            <details class="working-history"><summary>Version history · @WorkingVersions.Count</summary>
+                <div class="working-history-menu"><strong>Saved versions · @BrainstormingDrafts.BranchLabel(draft)</strong>
+                @foreach(var version in WorkingVersions.Reverse()) {
+                    <div class="working-history-row"><span>v@(WorkingVersions.ToList().FindIndex(v=>v.Id==version.Id)+1) · @VersionLabel(version)</span><small>@version.CreatedAt.ToLocalTime().ToString("g") @(version.Id==draft.Id?"· Current":"")</small><button type="button" @onclick="()=>_historyPreview=version.Id">Preview / compare</button></div>
+                }</div>
+            </details>
+        </nav>
+        @if(_historyPreview is { } previewId && Cache.Session.Drafts.SingleOrDefault(d=>d.Id==previewId) is { } historic) {
+            <section class="draft-history-preview" aria-label="Saved version preview"><header><h3>Saved version · @VersionLabel(historic)</h3><button type="button" @onclick="()=>_historyPreview=null">Close preview</button></header><div class="brainstorm-comparison"><section><h4>Saved version</h4><pre>@historic.PlainText</pre></section><section><h4>Current working draft</h4><pre>@(Cache.DraftEdit?.PlainText??draft.PlainText)</pre></section></div><button type="button" disabled="@(_busy || GenerationBusy || Cache.PendingGeneration is not null)" @onclick="()=>RestoreVersion(historic.Id)">Restore as a new version</button><p>Later versions remain in history.</p></section>
+        }
+        @if (_error is not null) { <p class="proposal-notice" role="alert">@_error</p> }
+        @if (KeepJournal(draft) is { Receipt.State: BrainstormingApplicationState.Committed } kept) {
+            <aside class="proposal-kept" role="status"><div><strong>Added to your manuscript</strong><span>Your approved draft is saved in its chosen place.</span></div><div><button type="button" disabled="@_busy" @onclick="() => ViewKept(kept.Review)">View in manuscript</button><button type="button" disabled="@_busy" @onclick="() => MoveKeep(kept)">Undo</button></div></aside>
+        }
+        @if (_keepReview is null && KeepJournal(draft) is null && (target.SectionId ?? target.BeforeSectionId) != ActiveSectionId) { <p class="proposal-notice" role="status">This draft was prepared for another section. <button type="button" @onclick="() => Navigate.InvokeAsync(target)">View original section</button> You can choose where to add it in Review &amp; keep.</p> }
+        @foreach (var warning in draft.Contradictions ?? []) { <p class="proposal-notice" role="alert">Story contradiction: @warning</p> }
+        <div class="proposal-content" hidden="@(_keepReview is not null)">
+            <div hidden="@(_view != ProposalView.Draft)">
+                <div class="proposal-reading">
+                    <button type="button" @onclick="ReadDraftAloud" disabled="@(_busy || GenerationBusy || Cache.DraftEdit is not null || Voice?.IsCapturing == true)">Read aloud</button>
+                    @if (_reading) { <button type="button" @onclick="StopReading">Stop reading</button> }
+                    <details><summary aria-label="Read-aloud settings">Settings</summary><label>Read-aloud language <select @bind="_readLanguage"><option value="en">English</option><option value="sv">Svenska</option></select></label><p>Reads the opening, up to 1,000 characters.</p></details>
+                </div>
+                @if (_readMessage is not null) { <p class="proposal-notice" role="status">@_readMessage</p> }
+                <div class="brainstorm-proposal-editor" @key="draft.Id" @ref="_host"></div>
+                @if (_editor is null) { <pre class="proposal-fallback">@(Cache.DraftEdit?.CandidateId == draft.Id ? Cache.DraftEdit.PlainText : draft.PlainText)</pre> }
+                <details class="proposal-facts"><summary>Story facts introduced <span>@draft.IntroducedFacts.Count</span></summary>
+                    @foreach (var fact in draft.IntroducedFacts) { <p>Introduced story fact: @fact</p> }
+                </details>
+                @if (Cache.DraftReview?.Selection is { } selection) { <aside class="proposal-notice"><p>Verified selected passage: @selection.Quote</p><button type="button" @onclick="ClearSelection" disabled="@_busy">Clear passage selection</button></aside> }
+            </div>
+            <section class="proposal-tab-content" hidden="@(_view != ProposalView.Compare)">
+                <h3>Captured manuscript versus proposal</h3>
+                <div class="brainstorm-comparison"><section><h4>Captured manuscript sources</h4>
+                    @foreach (var source in OriginalSources(draft,target)) { <p>@source.Title · @source.Source.ContentRevision</p><pre>@source.Text</pre> }
+                </section><section><h4>Reviewed proposal</h4><pre>@(Cache.DraftEdit?.CandidateId == draft.Id ? Cache.DraftEdit.PlainText : draft.PlainText)</pre></section></div>
+            </section>
+            <section class="proposal-tab-content" hidden="@(_view != ProposalView.Details)">
+                <h3>Draft details</h3><p>Original destination: @TargetLabel(target)</p>
+                @if (target.Kind == BrainstormingTargetKind.CreateSection) { <label class="proposal-section-title">New section title <input maxlength="200" @bind="_sectionTitle" /></label> }
+                <button type="button" @onclick="() => Navigate.InvokeAsync(target)">Go to proposal destination</button>
+                <nav class="proposal-versions" aria-label="Proposal versions">
+                    <button type="button" disabled="@(_busy || GenerationBusy || Index <= 0 || Cache.PendingGeneration is not null)" @onclick="() => Move(-1)">Previous version</button>
+                    <span>Version @(Index + 1) of @WorkingVersions.Count</span>
+                    <button type="button" disabled="@(_busy || GenerationBusy || Index >= WorkingVersions.Count - 1 || Cache.PendingGeneration is not null)" @onclick="() => Move(1)">Next version</button>
+                </nav>
+                <p>@(draft.Origin == BrainstormingDraftOrigin.AuthorDictated ? "Author dictated" : draft.ManuallyEdited ? "Author edited" : "AI proposed") · @draft.CreatedAt.ToLocalTime()</p>
+                <p>Application status: @ApplicationStatus(draft)</p><p>@draft.Constraints</p>
+                <p>Edits are saved separately from your manuscript. Save version creates a checkpoint.</p>
+                <details><summary>Proposal provenance</summary><p>Version @draft.Id · parent @draft.ParentDraftId · context @draft.ContextId · target @draft.TargetId</p><p>Instruction: @draft.Instruction</p></details>
+                @if (PrepareKeep is not null && KeepJournal(draft) is { } journal) {
+                    <p role="status">Application @journal.Review.OperationId · @(journal.Receipt?.State.ToString() ?? "Approved locally") · @journal.Receipt?.Message</p>
+                    <button type="button" disabled="@(_busy || GenerationBusy)" @onclick="() => InspectKeep(journal)">Inspect application</button>
+                    @if (journal.Receipt?.State is BrainstormingApplicationState.Approved or BrainstormingApplicationState.Failed) { <button type="button" disabled="@_busy" @onclick="() => RetryKeep(journal)">Retry this approved operation</button> }
+                    @if (journal.Receipt?.State is BrainstormingApplicationState.Committed or BrainstormingApplicationState.Undone) { <button type="button" disabled="@_busy" @onclick="() => MoveKeep(journal)">@(journal.Receipt.State == BrainstormingApplicationState.Undone ? "Redo kept version" : "Undo kept version")</button> }
+                    <button type="button" disabled="@_busy" @onclick="() => RecoverKeep(journal)">Recover original as separate document</button>
+                } else if (TransferredApplicationStatus(draft) is { } history) { <p role="status">@history. Inspect recovery history and the operation in its original account/device before applying again.</p> }
+            </section>
+        </div>
+        @if (_keepReview is { } reviewed) {
+            <section class="proposal-approval proposal-content" aria-label="Confirm manuscript application">
+                <BrainstormingPlacementReview Review="reviewed" Disabled="@(_busy || GenerationBusy)" Changed="PlacementChanged" ValidityChanged="PlacementValidityChanged" />
+            </section>
+        }
+        <footer class="proposal-footer">
+            <div class="proposal-save-state" role="status"><strong>@(_busy ? "Saving…" : _error is not null || !_placementValid ? "Needs attention" : _keepReview is not null ? "Ready to add" : $"All {WorkingVersions.Count} versions saved")</strong><span>@(_keepReview is not null ? "Adds only when you approve this placement." : KeepJournal(draft) is not null || TransferredApplicationStatus(draft) is not null ? $"Application: {ApplicationStatus(draft)}" : "Changes stay in this draft until you keep them.")</span></div>
+            <div class="proposal-footer-actions">
+                @if (_keepReview is not null) {
+                    <button type="button" disabled="@_busy" @onclick="CancelKeepReview">Cancel review</button>
+                    <button class="proposal-primary" type="button" disabled="@(_busy || GenerationBusy || !_placementValid)" @onclick="ConfirmKeep">@(_keepReview.Kind == BrainstormingTargetKind.ReplaceRange ? "Replace selected passage" : "Add here")</button>
+                } else {
+                    <button type="button" disabled="@(_busy || GenerationBusy || Cache.PendingGeneration is not null)" @onclick="Checkpoint">Save version</button>
+                    @if (PrepareKeep is not null && KeepJournal(draft) is null && TransferredApplicationStatus(draft) is null) {
+                        <button class="proposal-primary" type="button" disabled="@(_busy || GenerationBusy || Cache.PendingGeneration is not null)" @onclick="() => ReviewKeep(false)">Review &amp; keep <span aria-hidden="true">→</span></button>
+                    }
+                    <details class="proposal-more"><summary aria-label="More draft actions">•••</summary><div class="proposal-more-actions">
+                        <button type="button" disabled="@(_busy || GenerationBusy || _editor is null || Cache.PendingGeneration is not null)" @onmousedown:preventDefault @onclick="SelectPassage">Use selected passage in next follow-up</button>
+                        <button type="button" disabled="@(_busy || GenerationBusy || Cache.PendingGeneration is not null)" @onclick="ToggleUse">@(Cache.DraftReview?.UseForNextRequest == false ? "Discuss this candidate" : "Discuss the reviewed destination without this candidate")</button>
+                        @if (PrepareKeep is not null && target.Kind != BrainstormingTargetKind.CreateSection && KeepJournal(draft) is null && TransferredApplicationStatus(draft) is null) { <button type="button" disabled="@(_busy || GenerationBusy || Cache.PendingGeneration is not null)" @onclick="() => ReviewKeep(true)">Review replacement of selected manuscript passage</button> }
+                    </div></details>
+                }
+            </div>
+        </footer>
+    </section>
+} else {
+    <div class="proposal-empty"><Icon Name="lightbulb" /><h2>A little room for your next idea</h2><p>Explore your story in the conversation. When you ask for prose, your draft will appear here.</p><p>Your manuscript stays unchanged until you review and approve a draft.</p></div>
+}
+@code {
+    private enum ProposalView { Draft, Compare, Details }
+    private ProposalView _view;
+    private bool _creatingAlternative,_showChanges=true;
+    private string _alternativeName="Alternative opening";
+    private Guid? _historyPreview;
+    private IReadOnlyList<BrainstormingDraft> WorkingVersions => Cache is null?[]:BrainstormingDrafts.Versions(Cache.Session,BrainstormingDrafts.Candidate(Cache)?.BranchId);
+    private static string VersionLabel(BrainstormingDraft draft) => draft.Instruction.Length>55?draft.Instruction[..52]+"…":draft.Instruction;
+    private Task SelectBranch(Guid id)=>Act(async()=>{await FlushAndCheckpointAsync();var selected=Cache!.Session.Drafts.Single(d=>d.Id==id);var head=BrainstormingDrafts.Versions(Cache.Session,selected.BranchId).Last();await UpdateReview(head.Id,true);_historyPreview=null;});
+    private Task CreateAlternative()=>Act(async()=>{await FlushAndCheckpointAsync();Cache=await Sessions!.CreateAlternativeAsync(_scope!,_alternativeName);_creatingAlternative=false;_historyPreview=null;await CacheChanged.InvokeAsync(Cache);});
+    private Task RestoreVersion(Guid id)=>Act(async()=>{await FlushAndCheckpointAsync();Cache=await Sessions!.RestoreDraftAsync(_scope!,id);_historyPreview=null;await CacheChanged.InvokeAsync(Cache);});
+    private async Task UpdateHighlights() {if(_editor is not null && _base is not null)await _editor.InvokeVoidAsync("setChanges",Cache?.Session.Drafts.SingleOrDefault(d=>d.Id==_base.ParentDraftId)?.PlainText??"",_showChanges);}
+    [Parameter] public BrainstormingCache? Cache { get; set; }
+    [Parameter] public Guid DocumentId { get; set; }
+    [Parameter] public Guid? ActiveSectionId { get; set; }
+    [Parameter] public Func<BrainstormingTarget,string> TargetLabel { get; set; } = target => $"Section {target.SectionId ?? target.BeforeSectionId}, page {target.PageId}";
+    [Parameter] public EventCallback<BrainstormingTarget> Navigate { get; set; }
+    [Parameter] public IBrainstormingReviewIdentity? ReviewIdentity { get; set; }
+    private IBrainstormingReviewIdentity? _identity;
+    [Parameter] public BrainstormingSessionService? Sessions { get; set; }
+    [Parameter] public EventCallback<BrainstormingCache> CacheChanged { get; set; }
+    [Parameter] public bool GenerationBusy { get; set; }
+    [Parameter] public string EditorHost { get; set; } = "Web";
+    [Parameter] public Func<Guid,bool,string,Task<BrainstormingKeepReview>>? PrepareKeep { get; set; }
+    [Parameter] public EventCallback<BrainstormingTarget> ViewApplication { get; set; }
+    [Parameter] public Func<BrainstormingKeepReview,Task<BrainstormingCache>>? ApplyKeep { get; set; }
+    [Parameter] public Func<BrainstormingKeepJournal,Task<BrainstormingCache>>? InspectApplication { get; set; }
+    [Parameter] public Func<BrainstormingKeepJournal,Task<BrainstormingCache>>? ChangeApplication { get; set; }
+    [Parameter] public Func<BrainstormingKeepJournal,Task>? RecoverApplication { get; set; }
+    private BrainstormingKeepReview? _keepReview;
+    private BrainstormingVoiceCoordinator? Voice=>Services.GetService(typeof(BrainstormingVoiceCoordinator)) as BrainstormingVoiceCoordinator;
+    private IDisposable? _voiceReview;private bool _reading;private string _readLanguage="en";private string? _readMessage;
+    private bool _placementValid=true;
+    private void CancelKeepReview(){_keepReview=null;_placementValid=true;_voiceReview?.Dispose();_voiceReview=null;}
+    private void PlacementValidityChanged(bool valid){_placementValid=valid;if(!valid){_voiceReview?.Dispose();_voiceReview=null;}}
+    private void PlacementChanged(BrainstormingKeepReview review){_keepReview=review;_sectionTitle=review.SectionTitle;_placementValid=true;RegisterKeepVoice();}
+    private Task ViewKept(BrainstormingKeepReview review) => Act(async()=>{
+        var destination=BrainstormingPlacements.Destination(review);
+        if(review.Kind==BrainstormingTargetKind.CreateSection)destination=destination with {SectionId=review.NewSectionId,PageId=review.NewPageId};
+        if(ViewApplication.HasDelegate)await ViewApplication.InvokeAsync(destination);else await Navigate.InvokeAsync(destination);
+    });
+    private void RegisterKeepVoice(){_voiceReview?.Dispose();var review=_keepReview;if(review is null || _scope is null || Voice is null)return;_voiceReview=Voice.Register(BrainstormingVoiceCommand.Keep,_scope,BrainstormingKeepContract.Hash(review),()=>!_disposed && !_busy && !GenerationBusy && _placementValid && _keepReview==review && Cache?.DraftEdit is null && BrainstormingDrafts.Candidate(Cache!)?.Id==review.Candidate.Id,async()=>{await InvokeAsync(ConfirmKeep);if(!_disposed)await InvokeAsync(StateHasChanged);});}
+    private async Task StopReading(){if(_scope is { } scope && Voice?.Active?.Kind==BrainstormingPlaybackKind.Draft)await Voice.StopAsync(scope);_reading=false;}
+    private async Task ReadDraftAloud(){if(_busy || GenerationBusy || Cache?.DraftEdit is not null || _base is null || _scope is null)return;var draft=_base;var scope=_scope;var epoch=_epoch;try{if(Voice is null)throw new InvalidOperationException("Local output voice is unavailable. Continue reading the proposal.");var available=await Voice.AvailabilityAsync(_readLanguage);if(!available.IsAvailable){_readMessage=available.Message;return;}if(epoch!=_epoch || _disposed)return;var text=BrainstormingVoiceCommands.Bounded(draft.PlainText,1000);_reading=true;_readMessage=$"Reading opening of version {draft.Id} · {text.Length} characters · local synthetic voice. Editing stops playback.";await Voice.PlayAsync(new(1,Guid.NewGuid(),scope,draft.Id,BrainstormingValidation.CandidateFingerprint(draft),_readLanguage,text,BrainstormingPlaybackKind.Draft));if(epoch==_epoch)_readMessage="Read-aloud ended. Manuscript/proposal unchanged.";}
+        catch(Exception e) when(e is IOException or InvalidOperationException or OperationCanceledException or JSException){if(epoch==_epoch)_readMessage=e is OperationCanceledException?"Read-aloud stopped; version retained.":e.Message;}finally{if(epoch==_epoch)_reading=false;}}
+    private string _sectionTitle="New section";
+    private BrainstormingKeepJournal? KeepJournal(BrainstormingDraft draft)=>(Cache?.Keeps??[]).SingleOrDefault(k=>k.Review.Candidate.Id==draft.Id);
+    private void RequireKeepIdentity(long epoch,BrainstormingScope? scope) {if(_disposed || epoch!=_epoch || scope!=_scope)throw new OperationCanceledException("The reviewed conversation or account changed. Inspect in its original account.");}
+    private Task ReviewKeep(bool replace)=>Act(async()=>{var epoch=_epoch;var scope=_scope;await FlushAndCheckpointAsync();RequireKeepIdentity(epoch,scope);var draft=BrainstormingDrafts.Candidate(Cache!)!;RequireNewApplication(draft);var review=await PrepareKeep!(draft.Id,replace,_sectionTitle);RequireKeepIdentity(epoch,scope);_keepReview=review;RegisterKeepVoice();});
+    private Task ConfirmKeep()=>Act(async()=>{
+        var epoch=_epoch;var scope=_scope;var review=_keepReview??throw new InvalidOperationException("Review this candidate first.");await FlushAndCheckpointAsync();RequireKeepIdentity(epoch,scope);
+        if(!_placementValid)throw new InvalidOperationException("Choose a valid manuscript placement before adding this draft.");
+        if(BrainstormingDrafts.Candidate(Cache!)?.Id!=review.Candidate.Id || Cache!.DraftEdit is not null)throw new InvalidOperationException("Proposal changed during approval. Review the new checkpoint.");
+        RequireNewApplication(review.Candidate);
+        var cache=await ApplyKeep!(review);RequireKeepIdentity(epoch,scope);CancelKeepReview();Cache=cache;await CacheChanged.InvokeAsync(cache);
+    });
+    private Task AdoptKeep(Func<Task<BrainstormingCache>> work)=>Act(async()=>{var epoch=_epoch;var scope=_scope;var cache=await work();RequireKeepIdentity(epoch,scope);Cache=cache;await CacheChanged.InvokeAsync(cache);});
+    private Task RetryKeep(BrainstormingKeepJournal journal)=>AdoptKeep(()=>ApplyKeep!(journal.Review));
+    private Task InspectKeep(BrainstormingKeepJournal journal)=>AdoptKeep(()=>InspectApplication!(journal));
+    private Task MoveKeep(BrainstormingKeepJournal journal)=>AdoptKeep(()=>ChangeApplication!(journal));
+    private Task RecoverKeep(BrainstormingKeepJournal journal)=>Act(()=>RecoverApplication!(journal));
+    private ElementReference _host;
+    private IJSObjectReference? _module,_editor;
+    private DotNetObjectReference<BrainstormingProposalPreview>? _receiver;
+    private BrainstormingDraft? _base;
+    private BrainstormingScope? _scope;
+    private readonly SemaphoreSlim _editGate=new(1,1);
+    private bool _busy,_disposed;
+    private bool _creatingEditor,_editorCreationFailed;
+    private long _epoch;
+    private string? _error;
+    private int Index => Cache is null || _base is null ? -1 : WorkingVersions.ToList().FindIndex(d=>d.Id==_base.Id);
+    private IReadOnlyList<BrainstormingContextSource> OriginalSources(BrainstormingDraft draft,BrainstormingTarget target) => Cache!.Session.Contexts.Single(c=>c.Id==draft.ContextId).Sources.Where(s=>s.Included && s.Kind==BrainstormingSourceKind.Manuscript && (s.SectionId==target.SectionId || (s.Parts??[]).Any(p=>p.SectionId==target.SectionId))).ToArray();
+    private string? TransferredApplicationStatus(BrainstormingDraft draft) {
+        if(Cache?.Recovery?.ServerKeeps.LastOrDefault(k=>k.Review.Candidate.Id==draft.Id) is { } server)return "Server operation " + (server.Receipt?.State.ToString()??"Approved");
+        if(Cache?.Recovery?.Copies.Any(c=>c.Keeps.Any(k=>k.Review.Candidate.Id==draft.Id))==true)return "Device-reported application history; server outcome unconfirmed";
+        if(Cache?.Session.Approvals.Any(a=>a.CandidateId==draft.Id)==true)return "Application reference retained; inspect its original operation";
+        return null;
+    }
+    private void RequireNewApplication(BrainstormingDraft draft) {if(KeepJournal(draft) is not null || TransferredApplicationStatus(draft) is not null)throw new InvalidOperationException("This proposal already has application history. Inspect the original operation; a recovered copy cannot authorize another application.");}
+    private string ApplicationStatus(BrainstormingDraft draft) => KeepJournal(draft)?.Receipt?.State.ToString() ?? TransferredApplicationStatus(draft) ?? "Unreviewed";
+    protected override async Task OnParametersSetAsync() {
+        if(_identity!=ReviewIdentity){if(_identity is not null)_identity.Changed-=IdentityChanged;_identity=ReviewIdentity;if(_identity is not null)_identity.Changed+=IdentityChanged;}
+        var next=Cache?.Session.Scope.DocumentId==DocumentId ? BrainstormingDrafts.Candidate(Cache) : null;
+        if(Cache?.DraftEdit is not null) {await StopReading();CancelKeepReview();}
+        if(_editor is not null)await _editor.InvokeVoidAsync("setEditable",!GenerationBusy && Cache?.PendingGeneration is null);
+        if(_base?.Id==next?.Id && _scope==Cache?.Session.Scope)return;
+        await StopReading();var epoch=++_epoch;CancelKeepReview();await DestroyEditor();
+        if(epoch!=_epoch || _disposed)return;
+        _base=next;_scope=Cache?.Session.Scope;_error=null;_editorCreationFailed=false;
+    }
+    protected override async Task OnAfterRenderAsync(bool firstRender) {
+        if(_disposed || _base is null || _editor is not null || _creatingEditor || _editorCreationFailed || Sessions is null || Services.GetService(typeof(IJSRuntime)) is not IJSRuntime js)return;
+        _creatingEditor=true;
+        var epoch=_epoch;var draft=_base;var host=_host;
+        try {
+            var html=Cache?.DraftEdit?.CandidateId==draft.Id?Cache.DraftEdit.Html:draft.EditorHtml??BrainstormingDraftContent.Html(draft.PlainText);
+            BrainstormingDraftContent.RequireHtml(html);
+            _module??=await js.InvokeAsync<IJSObjectReference>("import","/_content/WriterApp.UI.Shared/brainstorming-proposal.js");
+            if(epoch!=_epoch || _disposed)return;
+            _receiver??=DotNetObjectReference.Create(this);
+            var editor=await _module.InvokeAsync<IJSObjectReference>("create",host,html,EditorHost,_receiver,draft.Id,BrainstormingValidation.CandidateFingerprint(draft));
+            if(epoch!=_epoch || _disposed){await editor.InvokeVoidAsync("destroy");await editor.DisposeAsync();return;}
+            _editor=editor;await editor.InvokeVoidAsync("setEditable",!GenerationBusy && Cache?.PendingGeneration is null);await UpdateHighlights();
+        }catch(Exception e) when(e is JSException or InvalidDataException or InvalidOperationException){if(epoch==_epoch && !_disposed){_editorCreationFailed=true;_error="Proposal editor unavailable; original retained. "+e.Message;}}
+        finally {_creatingEditor=false;if(!_disposed)StateHasChanged();}
+    }
+    [JSInvokable] public async Task OnProposalChanged(string html,string plainText,Guid candidateId,string fingerprint) {
+        try{await SaveEdit(html,plainText,candidateId,fingerprint);}
+        catch(Exception e) when(e is IOException or InvalidDataException or InvalidOperationException or OperationCanceledException or JSException or BrainstormingConcurrencyException){_error="Proposal remains in the editor; saving failed. "+e.Message;}
+        if(!_disposed)await InvokeAsync(StateHasChanged);
+    }
+    private async Task SaveEdit(string html,string plainText,Guid candidateId,string fingerprint) {
+        await StopReading();CancelKeepReview();
+        var scope=_scope;var epoch=_epoch;
+        if(_disposed || scope is null || Sessions is null || _base?.Id!=candidateId)return;
+        await _editGate.WaitAsync();
+        try {
+            if(epoch!=_epoch || _disposed)return;
+            var value=await Sessions.SaveDraftEditAsync(scope,candidateId,fingerprint,html,plainText);
+            if(epoch!=_epoch || _disposed)return;
+            Cache=value;_error=null;await CacheChanged.InvokeAsync(value);
+        } finally {_editGate.Release();}
+    }
+    public async Task FlushAndCheckpointAsync() {
+        if(_base is null || _scope is null || Sessions is null)return;
+        var candidate=_base;var scope=_scope;var epoch=_epoch;
+        if(_editor is not null) {
+            var snapshot=await _editor.InvokeAsync<ProposalSnapshot>("snapshot");
+            if(epoch!=_epoch || _disposed)throw new OperationCanceledException("The reviewed proposal changed during capture. Its earlier edits remain in their original cache.");
+            var html=Cache?.DraftEdit?.Html ?? _base.EditorHtml ?? BrainstormingDraftContent.Html(_base.PlainText);
+            if(snapshot.Version>0 && (snapshot.Html!=html || snapshot.PlainText!=_base.PlainText && Cache?.DraftEdit is null))
+                await SaveEdit(snapshot.Html,snapshot.PlainText,candidate.Id,BrainstormingValidation.CandidateFingerprint(candidate));
+        }
+        await _editGate.WaitAsync();
+        try {if(epoch!=_epoch || _disposed)throw new OperationCanceledException("The reviewed conversation changed.");var value=await Sessions.CheckpointDraftAsync(scope);if(epoch!=_epoch || _disposed)return;Cache=value;await CacheChanged.InvokeAsync(value);}
+        finally {_editGate.Release();}
+    }
+    private async Task Act(Func<Task> action) {
+        if(_busy)return;var epoch=_epoch;_busy=true;_error=null;
+        try{await action();}catch(Exception e) when(e is IOException or InvalidDataException or InvalidOperationException or OperationCanceledException or JSException or System.Net.Http.HttpRequestException or BrainstormingConcurrencyException){
+            if(epoch!=_epoch || _disposed)return;_error="Review retained. "+e.Message;
+            if(Sessions is not null && _scope is { } scope)try{var retained=await Sessions.ReadAsync(scope);if(_scope==scope && retained is not null){Cache=retained;await CacheChanged.InvokeAsync(retained);}}catch(Exception failure) when(failure is OperationCanceledException or IOException or InvalidDataException){}
+        }finally{_busy=false;}
+    }
+    private Task Checkpoint()=>Act(FlushAndCheckpointAsync);
+    private Task Move(int step)=>Act(async()=>{
+        var wanted=WorkingVersions.ElementAtOrDefault(Index+step)?.Id;if(wanted is null)return;
+        await FlushAndCheckpointAsync();await UpdateReview(wanted.Value,true);
+    });
+    private Task ToggleUse()=>Act(async()=>{await FlushAndCheckpointAsync();await UpdateReview(BrainstormingDrafts.Candidate(Cache!)!.Id,Cache!.DraftReview?.UseForNextRequest==false);});
+    private Task ClearSelection()=>Act(()=>UpdateReview(BrainstormingDrafts.Candidate(Cache!)!.Id,true));
+    private Task SelectPassage()=>Act(async()=>{
+        if(_editor is null)return;
+        var snapshot=await _editor.InvokeAsync<ProposalSnapshot>("selection");
+        await FlushAndCheckpointAsync();var candidate=BrainstormingDrafts.Candidate(Cache!)!;
+        var selection=new BrainstormingDraftSelection(1,candidate.Id,BrainstormingValidation.CandidateFingerprint(candidate),BrainstormingDrafts.TextMapping,snapshot.SelectionStart,snapshot.SelectionEnd,snapshot.SelectedText);
+        BrainstormingDrafts.RequireSelection(selection,candidate);await UpdateReview(candidate.Id,true,selection);
+    });
+    private async Task UpdateReview(Guid id,bool use,BrainstormingDraftSelection? selection=null) {
+        if(Sessions is null || _scope is null)return;
+        var value=await Sessions.ReviewDraftAsync(_scope,id,use,selection);Cache=value;await CacheChanged.InvokeAsync(value);
+    }
+    private sealed record ProposalSnapshot(string Html,string PlainText,string SelectedText,int SelectionStart,int SelectionEnd,long Version);
+    private void IdentityChanged(){_ = StopReading();_epoch++;CancelKeepReview();_base=null;_scope=null;Cache=null;_ = InvokeAsync(async()=>{if(_disposed)return;await DestroyEditor();StateHasChanged();});}
+    private async Task DestroyEditor() {var editor=_editor;if(editor is null)return;_editor=null;try{await editor.InvokeVoidAsync("destroy");await editor.DisposeAsync();}catch(JSException){}}
+    public async ValueTask DisposeAsync(){await StopReading();CancelKeepReview();_disposed=true;_epoch++;if(_identity is not null)_identity.Changed-=IdentityChanged;await DestroyEditor();_receiver?.Dispose();if(_module is not null)try{await _module.DisposeAsync();}catch(JSException){}}
+}

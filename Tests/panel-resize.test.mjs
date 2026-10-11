@@ -21,6 +21,7 @@ function fixture(side, stored = null, storageBlocked = false) {
         querySelector: selector => selector === '.editor-workspace' ? { clientWidth: 1052 } : panel,
         closest: () => null };
     const handle = {
+        isConnected: true,
         closest: () => owner, setAttribute: (key, value) => attrs.set(key, value), classList: classes, focus() {},
         hasPointerCapture: id => captures.has(id), setPointerCapture: id => captures.add(id), releasePointerCapture: id => captures.delete(id),
         addEventListener: (key, value) => events.set(key, value), removeEventListener: key => events.delete(key)
@@ -37,6 +38,12 @@ test('Bounds reserve manuscript space and cap excessively wide saved panels', ()
     const f = fixture('right', 20000);
     assert.equal(f.attrs.get('aria-valuenow'), '632');
     detach(f.handle);
+});
+
+test('Late attachment to a removed Blazor handle cannot stop the editor renderer', () => {
+    assert.doesNotThrow(() => attach(null, 'right'));
+    assert.doesNotThrow(() => attach(undefined, 'brainstorm-right'));
+    assert.doesNotThrow(() => attach({ isConnected: false, closest() { throw Error('Detached handle must be ignored'); } }, 'outline'));
 });
 
 test('Right drag and arrow keys use opposite direction and persist the resulting width', () => {

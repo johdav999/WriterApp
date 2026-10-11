@@ -470,54 +470,7 @@ namespace WriterApp.Controllers
             Response.Headers["Link"] = "</api/projects/{projectId}/scenes/{sceneNodeId}/content>; rel=\"successor-version\"";
         }
 
-        private async Task MirrorSectionPagesToSceneContentAsync(Guid sectionId, CancellationToken ct)
-        {
-            Guid[] sceneNodeIds = await _dbContext.ProjectNodes
-                .Where(node => node.NodeType == ProjectNodeType.Scene && node.LinkedSectionId == sectionId)
-                .Select(node => node.Id)
-                .ToArrayAsync(ct);
-            if (sceneNodeIds.Length == 0)
-            {
-                return;
-            }
-
-            SectionRecord? section = await _dbContext.Sections
-                .AsNoTracking()
-                .FirstOrDefaultAsync(item => item.Id == sectionId, ct);
-
-            string combinedContent = string.Join(
-                "\n\n",
-                (await _dbContext.Pages
-                    .AsNoTracking()
-                    .Where(page => page.SectionId == sectionId)
-                    .OrderBy(page => page.OrderIndex)
-                    .ThenBy(page => page.Id)
-                    .Select(page => page.Content)
-                    .ToListAsync(ct))
-                    .Select(content => content ?? string.Empty));
-
-            Dictionary<Guid, SceneContentRecord> existing = await _dbContext.SceneContents
-                .Where(item => sceneNodeIds.Contains(item.SceneNodeId))
-                .ToDictionaryAsync(item => item.SceneNodeId, ct);
-
-            DateTimeOffset now = DateTimeOffset.UtcNow;
-            foreach (Guid sceneNodeId in sceneNodeIds)
-            {
-                if (!existing.TryGetValue(sceneNodeId, out SceneContentRecord? sceneContent))
-                {
-                    sceneContent = new SceneContentRecord
-                    {
-                        SceneNodeId = sceneNodeId
-                    };
-                    _dbContext.SceneContents.Add(sceneContent);
-                }
-
-                sceneContent.ContentJson = combinedContent;
-                sceneContent.LanguageCode = section?.LanguageCode;
-                sceneContent.UpdatedAtUtc = now;
-            }
-
-            await _dbContext.SaveChangesAsync(ct);
-        }
+        private Task MirrorSectionPagesToSceneContentAsync(Guid sectionId, CancellationToken ct)
+            => ManuscriptSceneMirror.UpdateAsync(_dbContext, sectionId, ct);
     }
 }

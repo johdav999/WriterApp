@@ -66,7 +66,7 @@ public sealed partial class DocumentSyncService(AppDbContext db, IUserEntitlemen
         return new(page.Select(State).ToArray(), protector.Protect((page.LastOrDefault()?.Sequence ?? sequence).ToString(CultureInfo.InvariantCulture)), more);
     }
 
-    public async Task<SyncSnapshot> DownloadAsync(string owner, Guid id, CancellationToken ct = default, bool projects = false, bool planning = false, bool multipleDocuments = false, bool onboardingDemo = false)
+    public async Task<SyncSnapshot> DownloadAsync(string owner, Guid id, CancellationToken ct = default, bool projects = false, bool planning = false, bool multipleDocuments = false, bool onboardingDemo = false, bool standalonePlanning = false)
     {
         await AuthorizeAsync(owner, ct, onboardingDemo ? id : null);
         return await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
@@ -76,7 +76,8 @@ public sealed partial class DocumentSyncService(AppDbContext db, IUserEntitlemen
             var document = state.IsDeleted ? null : await db.Documents.AsNoTracking().Include(x => x.Sections).ThenInclude(x => x.Pages)
                 .SingleAsync(x => x.Id == id && x.OwnerUserId == owner, ct);
             var dto = document is null ? null : ToDto(document);
-            if (projects && document is not null) dto = dto! with { Project = await ReadProjectAsync(document, ct, planning, multipleDocuments) };
+            if (document is not null && standalonePlanning && await IsStandaloneAsync(document,ct)) dto=dto! with {Synopsis=await ReadStandaloneSynopsisAsync(document.Id,ct)};
+            else if (projects && document is not null) dto = dto! with { Project = await ReadProjectAsync(document, ct, planning, multipleDocuments) };
             if (projects && document is not null) state = await OwnedStateAsync(owner, id, ct);
             var result = new SyncSnapshot(State(state), dto);
             await transaction.CommitAsync(ct);
@@ -88,10 +89,15 @@ public sealed partial class DocumentSyncService(AppDbContext db, IUserEntitlemen
         await db.DocumentSyncRecords.AsNoTracking().SingleOrDefaultAsync(x => x.DocumentId == id && x.OwnerUserId == owner, ct)
         ?? throw new DocumentSyncException(404, "document_not_found", "Document not found.");
 
-    public async Task<SyncMutationResult> MutateAsync(string owner, Guid id, SyncMutation request, CancellationToken ct = default, bool projects = false, bool planning = false, bool multipleDocuments = false, bool onboardingDemo = false)
+    public async Task<SyncMutationResult> MutateAsync(string owner, Guid id, SyncMutation request, CancellationToken ct = default, bool projects = false, bool planning = false, bool multipleDocuments = false, bool onboardingDemo = false, bool standalonePlanning = false)
     {
         await AuthorizeAsync(owner, ct, onboardingDemo ? id : null);
         Validate(id, request);
+        if(request.Document?.Synopsis is { } standalone) {
+            if(!standalonePlanning)throw StandalonePlanningCapability();
+            if(request.Document.Project is not null)throw Invalid("Project synopsis belongs in its manuscript-scoped project snapshot.");
+            ValidateStandaloneSynopsis(standalone);
+        }
         if(onboardingDemo && request.Action=="upload" && !await db.DocumentSyncRecords.AnyAsync(x => x.OwnerUserId==owner && x.DocumentId==id && !x.IsDeleted,ct))
             throw new DocumentSyncException(409,"demo_deleted","A missing demo cannot be recreated. Restore or recover its existing identity.");
         if (request.Document?.Project is { Version: >= 3 } && !multipleDocuments) throw MultipleDocumentCapability();
@@ -145,6 +151,7 @@ public sealed partial class DocumentSyncService(AppDbContext db, IUserEntitlemen
                 throw MultipleDocumentCapability();
             if (!planning && (projectRecord.PlanningSyncEnabled || await db.DocumentSynopses.AnyAsync(s => s.DocumentId == id, ct) || await db.SceneAnnotations.AnyAsync(a => a.SceneNode!.ProjectId == document.ProjectId, ct))) throw PlanningCapability();
             bool structured = projectRecord.SyncEnabled || await db.ProjectNodes.IgnoreQueryFilters().AnyAsync(n => n.ProjectId == document.ProjectId, ct);
+            if(request.Action=="upload" && request.Document?.Project is null && await db.DocumentSynopses.AnyAsync(s=>s.DocumentId==id,ct) && !standalonePlanning)throw StandalonePlanningCapability();
             if (structured && (!projects || (request.Action == "upload" && request.Document?.Project is null))) throw ProjectCapability();
             if (request.Document?.Project is { } incomingProject && incomingProject.Id != document.ProjectId)
                 projectRecord = await MoveStandaloneToProjectAsync(document, projectRecord, incomingProject, owner, multipleDocuments, ct);
@@ -155,6 +162,10 @@ public sealed partial class DocumentSyncService(AppDbContext db, IUserEntitlemen
                 case "upload":
                     ValidateUploadContent(document, request.Document!);
                     await ApplyUploadAsync(document, request.Document!, ct);
+                    if(standalonePlanning && request.Document!.Project is null) {
+                        if(!await IsStandaloneAsync(document,ct))throw Invalid("Standalone planning cannot replace a project manuscript.");
+                        await ApplySynopsisAsync(document.Id,request.Document.Synopsis,ct);
+                    }
                     if (request.Document!.Project is { } incoming)
                     {
                         await db.SaveChangesAsync(ct); // Materialize canonical section/page dependencies inside this transaction.

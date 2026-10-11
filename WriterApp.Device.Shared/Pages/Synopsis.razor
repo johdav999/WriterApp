@@ -21,7 +21,7 @@
             <ul>
                 @foreach (LocalDocument document in _documents)
                 {
-                    <li><a href="@($"/documents/{document.DocumentId:D}?panel=Story&view=synopsis")">@document.Project!.Title · @document.Title</a></li>
+                    <li><a href="@($"/documents/{document.DocumentId:D}?panel=Story&view=synopsis")">@(document.Project?.Title??"Standalone manuscript") · @document.Title</a></li>
                 }
             </ul>
         }
@@ -49,7 +49,7 @@
         try
         {
             LocalDocumentList result = await Documents.ListAsync();
-            _documents = result.Documents.Where(d => d.Project is not null && d.Kind == "manuscript").OrderBy(d => d.Project!.Title).ToArray();
+            _documents = result.Documents.Where(d => d.Kind == "manuscript").OrderBy(d => d.Project?.Title??d.Title).ToArray();
             if (DocumentId is { } id)
             {
                 if (_documents.Any(d => d.DocumentId == id)) _openDocumentId = id;

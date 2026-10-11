@@ -1,5 +1,213 @@
 # Device application development
 
+## Continuous Brainstorm working draft (2026-10-09)
+
+The shared draft UI now has automatic generation versions, named alternatives,
+preview/compare/restore and change highlighting. Continuations retain reviewed
+prose and rich formatting. Both backend and desktop changed; restart rebuilt
+versions of both. See [current UAT, exact build path and handoff](brainstorming-working-draft-uat.md).
+857 regressions, ten browser suites, rebuilt-app responsive checks and both host
+builds pass. Native/live-provider acceptance is separate; author data and running
+processes were preserved. These runtime instructions supersede earlier guidance
+that only the desktop needed rebuilding.
+
+## Brainstorm follow-up after Keep correction (2026-10-09)
+
+The author had kept the first generated scene. That changed the manuscript while
+chat readiness still referred to the previous snapshot, so the second Send was
+rejected before model dispatch. The native parent now supplies its authored-writing
+fingerprint to the shared workspace; changed writing revokes readiness and exposes
+preparation. Failed pre-send checks also revoke readiness in both hosts. Explicit
+fresh context uses the kept manuscript for the next proposal without rewriting the
+old draft's provenance or using it as an unapplied revision parent.853 regressions
+pass, including real mounted Keep/history/sync/context and two authenticated sends
+with a synthetic provider. Author-owned applications were preserved during checks;
+an open process does not load new assemblies until restarted. See
+[second-send UAT and handoff](brainstorming-second-send-uat.md) for exact evidence.
+
+All ten browser suites and host builds also pass. A rebuilt desktop using normal
+Prosa data is available under WriterApp.Desktop/artifacts/brainstorming-second-send/
+user-build/Debug/net10.0-windows10.0.19041.0/win-x64. Close the previous Prosa window
+and run `pwsh -File .\artifacts\brainstorming-second-send\start-fixed-prosa.ps1` from
+this repository to use it. The launcher stops no process and starts no backend.
+The previous normal desktop files are still in use and have not been replaced;
+restarting the previous binary alone does not load the fix. All 19 conversation
+cache files are unchanged. Native interaction/live model acceptance remains open.
+
+## Author launch port released (2026-10-09)
+
+The isolated agent backend also prevented the author's normal launch by occupying
+localhost:5387. Its verified owned process PID 34268 is now stopped, and the port
+has no listener. No background backend was restarted. Launch the normal backend
+with the usual HTTP profile. Earlier running-process evidence below is historical;
+keep author-controlled processes intact and stop agent verification hosts before
+handing the launch port back. Receipt:
+`artifacts/brainstorming-prose-intent/author-launch-port-release.json`.
+
+## Brainstorm backend build lock correction (2026-10-09)
+
+The agent background backend PID 30980 held normal Debug DLLs open and caused
+MSB3026/MSB3027/MSB3021 on the next author build. Its exact launch path/ownership was
+verified before stopping it. Normal Debug now builds without warnings/errors.
+The backend was rebuilt and restarted from separate output at
+`artifacts/brainstorming-prose-intent/runtime-build/Debug/net10.0`, PID 34268 at
+verification, localhost:5387, health 200. A second normal build succeeded while
+that backend was active, proving the build output remains available. All 18 saved
+conversation files remain byte-for-byte unchanged; no provider call was sent.
+Use separate output for agent background hosts and verify PID/path before stopping
+them. To run the normal backend on the same port, first release this owned listener;
+do not stop unrelated processes. Receipt: `artifacts/brainstorming-prose-intent/build-lock-verification.json`.
+PID 30980 in the earlier finalization record is superseded.
+
+## Brainstorm semantic prose creation correction (2026-10-09)
+
+The reported scene request was classified Explore and produced no draft. The
+backend model instruction now treats actionable scene creation as a prose request,
+without keyword/regex classification, forced author input or an extra API call.
+Prose goes to the existing editable middle proposal; Keep separately applies the
+reviewed version. A later saved draft and every original cache file are preserved.
+852 regressions, ten browser suites and both host builds pass. The normal Debug
+backend is rebuilt and healthy at localhost:5387 (PID 30980 at finalization), with
+matching DLL/listener evidence. No new live model request or native interaction
+acceptance was performed for this backend-only change. Read
+[prose intent UAT and handoff](brainstorming-prose-intent-uat.md) before continuing.
+Runtime IDs in earlier dated entries below are historical.
+
+## Brainstorm generation SQL transaction correction (2026-10-08)
+
+The next Send failure after schema installation came from direct generation
+transactions under SQL Server's retry strategy. Acceptance and terminal persistence
+now use the execution strategy, with immutable operation/snapshot checks; provider
+dispatch and usage charging remain outside retries. Nine actual local SQL groups
+and 849 regressions pass. The fixed backend is active at localhost:5387 (PID 13616),
+and its normal Debug output is rebuilt. The retained desktop cache file is unchanged;
+no desktop process was stopped by the agent and no live AI request was sent.
+Open the saved conversation, choose Reopen / inspect saved conversation, prepare
+fresh context and explicitly Send. Preserve unknown accepted operations for
+inspection; no automatic replay or cache deletion. See
+[generation SQL UAT and handoff](brainstorming-conversation-sql-uat.md).
+
+## Brainstorm live SQL schema correction applied (2026-10-08)
+
+The user explicitly approved the migration, and the exact six-migration script is
+now applied to configured Azure SQL Prosa. All six Brainstorm tables/history entries
+and RecoveryJson are verified. Ten unrelated migrations remain pending; existing
+non-Brainstorm columns and document/page/project counts are unchanged. The same
+running localhost backend now returns ordinary 404 for nonexistent conversation
+Read/Inspect, replacing HTTP 500; SQL health is 200. It required no restart. The
+initial save operation and unsent text remain on disk; no AI request was dispatched.
+The exact script also passed repeat application and six acceptance groups on owned
+disposable SQL Express. Latest 849 regressions, ten browser suites and isolated/
+normal builds pass; native/provider interaction remains a separate acceptance gate.
+Return to the retained conversation and explicitly retry Send. Preserve clear
+missing-schema/error guidance and the prior identity/recovery fix. See
+[concrete schema update and continuation](brainstorming-backend-schema-fix-proposal.md).
+
+## Brainstorm native identity fix and recovery (2026-10-08)
+
+After explicit user approval, Device Brainstorm resolves the canonical backend
+user ID through authenticated `api/auth/me`; MSAL HomeAccountId.Identifier remains
+the native account/generation guard. Strict shared/server ownership is unchanged.
+The currently authenticated native account's discussion/proposals/composer recover
+into its verified backend namespace on scope creation. Original files and pending
+operations stay intact; copies carry no application authority or outbox. Tombstones
+and foreign backend/accounts are excluded; repeated recovery retains canonical edits.
+Offline reopening uses only a prior backend/native keyed canonical hash, with remote
+leases requiring online verification. The missing destination Razor `@` is fixed.
+846 combined regressions, 14 device authentication checks, ten browser suites and
+isolated/normal builds pass. The ordinary desktop launch folder is rebuilt with
+normal storage. Reopen the same document/account and use Brainstorm History to
+restore the retained message. Actual native/MSAL/provider acceptance remains open.
+See [native identity UAT and handoff](brainstorming-native-identity-uat.md).
+
+## Brainstorm pending writing preparation (2026-10-08)
+
+Desktop Prepare now requests an explicit Save, sync & prepare confirmation showing
+the configured backend. Confirmation uses the ordinary planning/manuscript save,
+recovery and sync v5 path, then refreshes matching acknowledgment metadata in the
+open editor and checks exact current server sources. Cancel preserves the composer;
+preparation never sends a turn. Local-only documents require ordinary explicit sync
+activation. Offline/conflict/rejection/save failure/concurrent edits remain visible
+blockers with writing retained. The mounted regression now starts with advancing
+pending DOM text and exercises real device authentication, save and sync controllers.
+See [pending context UAT](brainstorming-pending-context-uat.md).
+
+## Brainstorm token notification repair (2026-10-08)
+
+`DeviceAccountService.Changed` is also a display/status notification after successful
+same-account token acquisition. It must not directly invalidate Brainstorm review.
+`DeviceBrainstormingSessions` now compares canonical account/backend, generation
+and access epoch before notifying mounted reviewers. Sign-out, reauthentication,
+token rejection and access revocation retain their invalidation behavior. The new
+mounted regression uses the actual `DeviceAuthenticatedHandler`; the previous
+direct TestServer client missed this path. Normal Debug desktop rebuilt; restart
+and reopen the saved conversation after the prior reset. No schema or editor change.
+See [preparation reset UAT](brainstorming-prepare-reset-uat.md).
+
+## Brainstorm Send preparation repair (2026-10-08)
+
+The shared primary context action now uses Windows' authenticated server preparation
+delegate; explicit local/offline context review remains separate. The composer has
+adjacent Prepare context for sending / Send actions and visible disabled-state
+reasons. Saving/synchronizing newer local manuscript text remains required; no older
+cloud writing is substituted and preparation never sends. Rebuild shared/device/UI
+together. The normal Debug desktop output has been rebuilt, with user data untouched;
+restart it to use the fix. No database, sync or editor-schema change. See
+[Send fix UAT](brainstorming-send-fix-uat.md) and the current status/handoff for
+evidence and remaining native/provider acceptance.
+
+## Brainstorming prompt 8 — Reviewed authored planning (2026-10-07)
+
+Both hosts use the shared planning review for selected discussion or a retained
+typed decision. Exact approved fields and source/turn/context/draft provenance live
+in private scoped cache journals. Device saves use normal planning commands and a
+single atomic document CAS containing a hashed operation marker; server saves use
+an owned transactional ledger. Unknown results require inspection, never replay.
+Confirm persistence before reloading planning; require fresh next-context review.
+Guarded Undo preserves later unrelated fields and refuses divergent affected content.
+
+Scene ideas are explicitly marked unlinked project nodes/cards/notes. They create
+no section/page/prose. Ordinary project sync accepts this marker and skips prose
+mirroring; unmarked unlinked scenes remain invalid. Authored story/character notes
+use synopsis Notes; generated canon retains its existing approval boundary.
+
+Standalone device synopsis uses `ExtensionData.authoredSynopsis`, visible in the
+ordinary Synopsis page and local checked context. It survives reload/download and
+participates in the real-edit fingerprint. It is **local-only**: prompt 9 must add
+owned standalone planning wire transfer/conflict handling. Server context preparation
+refuses these omitted local values instead of sending older cloud notes. Private
+operation markers/receipts are not fabricated server application evidence.
+
+Rebuild shared/UI/server/device together and apply the new SQLite/SQL Server planning
+ledger migrations. Existing optional version-1 cache fields remain compatible.
+No P8 editor schema/source/asset changes. See [P8 acceptance](brainstorming-p08-uat.md)
+and [current prompt 9 handoff](brainstorming-implementation-status.md). Native startup
+passes; interactive/native/provider/SQL/package gates are recorded separately.
+
+## Brainstorming prompt 6 — Persistent proposal review (2026-10-07)
+
+The shared middle-pane proposal review uses the existing common shipped editor in
+both Windows and web. Its rich edits go to a separately scoped conversation edit
+buffer and immutable checkpoint versions, never `LocalEditorSession.Edit` or
+manuscript autosave. A pre-send checkpoint uses the visible author-edited candidate
+as the next revision source. Workspace exit/conversation change also checkpoints
+retained edits; errors retain the review for recovery. Generation makes the proposal
+editor read-only; account/document changes invalidate private callbacks immediately.
+
+`BrainstormingDraftSelection` pins exact candidate fingerprint/quote/UTF-16 quality
+mapping offsets. Server/workflow both validate it before provider dispatch. A fresh
+same-destination review preserves the original target ID; stale source/position
+refuses revision. Different-scene requests use the new reviewed target and keep old
+proposals unchanged. Device's explicit synchronized server-context check and pending
+manuscript refusal remain required. No implicit source upload or automatic AI replay.
+
+Optional version-1 draft review/edit/selection/warning fields need matching rebuilt
+server/client; old scoped caches are readable. No document/sync schema or database
+migration. Shared adds existing portable AngleSharp 1.8.2 for common read-only
+projection/HTML compatibility. Rebuild editor assets with `npm run build` in the
+client; no common editor schema change. See [P6 acceptance](brainstorming-p06-uat.md)
+and the [current handoff](brainstorming-implementation-status.md). Prompt 7 is next.
+
 ## AI parity prompt 5 — Checked client consistency pages (2026-10-05)
 
 Client section consistency now reads the existing version-1 structured source with
@@ -1119,3 +1327,151 @@ partial approval, glossary refresh/offline disclosure, other-page consistency,
 pending Cancel/default-off retry and local recovery after restart. Use a verified
 supported external identity/backend for cloud freshness/transfer, separately from
 mock contract checks. Installed packaging and live-provider quality remain open.
+
+### Brainstorming prompt 7 manuscript Keep — 2026-10-07
+
+The shared proposal review reaches actual `DocumentWorkspace.BrainstormingKeep`
+callbacks. They checkpoint the visible candidate, flush/save pending local writing,
+prove mapped server-source freshness when needed, and independently confirm the
+shipped device editor transaction before durable approval/application. The new
+`LocalBrainstormingWriting` operation uses existing whole-aggregate atomic CAS saving
+for required text plus new section/page/scene/order; local AI history v6 durably records
+Applying/Applied/Undoing/Redoing snapshots and exact review. Inspection reconciles only
+proven history metadata; divergence retains later writing and offers snapshot recovery.
+The session cache receipt is local writing evidence, independent of cloud writing sync.
+Original account/backend guards apply to account-bound history; accountless data is not
+implicitly attached to sign-in. Reconnection never applies a queued candidate.
+
+The P7 isolated Windows Debug executable was rebuilt and launched for startup only:
+`WriterApp.Desktop/artifacts/brainstorming-p07/native-build/Debug/net10.0-windows10.0.19041.0/win-x64/WriterApp.Desktop.exe`.
+Data: `artifacts/brainstorming-p07/native-validation-data`. Only its owned PID was
+closed. Real interactive desktop approval/selection/pending edits and mapped-account
+acceptance remain separate from C# handler/file tests and actual browser modules. See
+[P7 UAT](brainstorming-p07-uat.md) and implementation status for commands/evidence/gates.
+
+### Brainstorming prompt 9 recovery and standalone sync — 2026-10-07
+
+Both hosts now expose explicit mapped session discovery/sync and retained local/server
+discussion forks. Pull retains uncheckpointed authored proposal buffers as conflicts;
+forking preserves the original pending journals and does not clone replayable approvals.
+Optional recovery copies retain device-local namespaces, original receipt hashes and
+exact before/approved content. Server history comes from actual server ledgers;
+device-reported copies are read-only evidence, requiring original-device inspection
+before any application retry. Revocation clears active private UI without deleting
+the local document. Reconnection/reload never sends or applies a candidate automatically.
+
+Standalone authored synopsis/notes now use optional top-level `SyncSynopsis` through
+`api/sync/v5/documents`, with existing aggregate/version conflict checks. Project
+planning retains the existing project wire. Device downloads preserve private local
+operation markers and unrelated extension data. Current server context requires exact
+saved authored values; missing v5 yields a backend-upgrade refusal with queue/writing
+retained. Matching shared/device/server builds and the nullable RecoveryJson migration
+for the configured database are required. Conversation CRUD never confirms local
+writing as a server commit.
+
+The P9 rebuilt isolated Windows executable was launched for startup only:
+`WriterApp.Desktop/artifacts/brainstorming-p09/native-build/Debug/net10.0-windows10.0.19041.0/win-x64/WriterApp.Desktop.exe`.
+Data: `artifacts/brainstorming-p09/native-validation-data`; only owned PID 34272 was
+closed. See [P9 UAT](brainstorming-p09-uat.md) for 716 regressions, actual host callback
+journeys, browser modules/recovery storage, measured limits and remaining interactive,
+SQL/provider/installed-package gates. P10's implementation/evidence follows below.
+
+### Brainstorming prompt 9 recheck after P12 — 2026-10-07
+
+P9 was rechecked after P12: shared conversation transport now revokes active private
+review on 401/403 and explicit lost-source/session access during context, send,
+inspection and stop. Backend unavailability retains review; cache and local writing
+are preserved. Existing device account-generation/late-adoption guards remain.
+821 regressions, eight browser suites and both builds pass in separate
+`artifacts/brainstorming-p09-recheck` outputs. The rebuilt Windows executable under
+`WriterApp.Desktop/artifacts/brainstorming-p09-recheck/native-build/Debug/net10.0-windows10.0.19041.0/win-x64/WriterApp.Desktop.exe`
+started with isolated data (owned PID 35588) and was closed. Actual LocalDev web
+Keep/Undo/Redo/planning/offline/reload checks pass; native interaction, real account/
+device exchange, live SQL/provider and human audio remain distinct gates. See the
+latest [P9 UAT](brainstorming-p09-uat.md) and status/handoff. P10–12 remain intact.
+Session saves also now use EF's transaction execution strategy, retaining exact
+operation receipts on retry. A disposable local SQL Express probe passes actual
+migrations, session CAS/recovery races and unique-index checks; its database was
+removed. Physical device/web and SQL Keep/planning mutation acceptance remain open.
+
+### Brainstorming prompt 10 microphone dictation — 2026-10-07
+
+`WindowsBrainstormingMicrophone` provides real audio-only MediaCapture, initialized
+on the UI thread only after explicit Start. English/Svenska language choice feeds
+the same authenticated speech transport and editable shared composer as web.
+PCM16 mono 16 kHz stays in a bounded in-memory stream (up to 60 seconds/1,921,024
+bytes); stop/cancel/failure disposes capture/stream. Background and native close
+cancel capture while retaining the existing save/flush boundary. Windows manifest
+adds microphone capability. Device-core/iOS keep the portable Unsupported adapter;
+no Windows API enters shared/device assemblies.
+
+Configured backend speech requires an accessible model, real Audio provider,
+entitlement/quota and both new BrainstormingTranscriptions migrations/model snapshots.
+Default Speech is disabled. Device session maps local identity to the owned server
+before capture/transcription. Dictations are durable original-operation outcomes,
+without raw audio; Unknown is inspected and never automatically reuploaded/rebilled.
+Corrected final text is explicitly sent or placed as AuthorDictated proposed prose;
+Keep is still a separate exact-version approval.
+
+P10 rebuilt isolated executable:
+`WriterApp.Desktop/artifacts/brainstorming-p10/native-build/Debug/net10.0-windows10.0.19041.0/win-x64/WriterApp.Desktop.exe`.
+Data: `artifacts/brainstorming-p10/native-validation-data`. The verification script
+launches/closes only its own PID and preserves existing editors. Startup and zero-error
+build pass; native live microphone/UI, model recognition, English/Swedish quality,
+live SQL and installed microphone capability remain explicit gates. See
+[P10 UAT](brainstorming-p10-uat.md) for setup and actual microphone reproductions.
+
+### Brainstorming prompt 11 spoken output — 2026-10-07
+
+Windows uses installed English/Swedish SpeechSynthesizer voices and MediaPlayer
+through `WindowsBrainstormingSpeechOutput`; shared/device assemblies retain the
+portable interface and Unsupported fallback. Local output reads bounded plain text
+only after an explicit spoken turn or read-draft-opening action, with no remote TTS
+credential or second assistant memory. Voice uses the existing mapped conversation,
+checked sources, metered generation and exact reviewed Keep/planning handlers.
+Clear recognition quality and a current review ticket are required for spoken apply;
+unknown/noisy/negated speech requires visible confirmation and an actual receipt.
+
+The host coordinator provides one microphone/output floor and ignores old playback
+IDs. Native deactivation/closing suspends the shared voice mode and generation,
+cancels capture/output and retains existing save/flush. Browser visibility/pagehide
+does the same and rejects late playback while hidden. Foregrounding cannot resume
+audio automatically. Draft edits/version/account changes stop read-aloud.
+Windows registers that coordinator as a singleton shared by the native App and
+Blazor WebView scopes; portable/web scoped lifetime remains unchanged. The shared
+pull clock now accepts long multi-turn server revision provenance without discarding
+local conflict branches. No P11 migration; P10 optional Quality JSON requires matching
+hosts and existing BrainstormingTranscriptions/P9 RecoveryJson migrations plus sync v5.
+
+Rebuilt isolated executable:
+`WriterApp.Desktop/artifacts/brainstorming-p11/native-build/Debug/net10.0-windows10.0.19041.0/win-x64/WriterApp.Desktop.exe`.
+Data: `artifacts/brainstorming-p11/native-validation-data`. Both builds and isolated
+startup pass; only the script-owned process is stopped. See [P11 UAT](brainstorming-p11-uat.md)
+and status for exact checks, output limits, pending real human EN/SV microphone/model,
+audible local voice/echo/native UI, SQL and package acceptance. Native startup and
+synthetic output events do not establish two-way audible speech. Prompt 12 is next.
+
+### Prompt 12 integrated acceptance — 2026-10-07
+
+P12 implementation and independent verification are complete with required live
+gates open; see [P12 UAT](brainstorming-p12-uat.md) and the current status handoff.
+Both hosts now pass an owned cached resume scope to the shared workspace after
+application reload. Restoration checks current account/backend partition, restores
+review/history only, and requires fresh context before generation. Inspection locks
+related actions during its cache exchange and never replays generation automatically.
+Web multi-page linked sections stay in manuscript routes; Brainstorm from a scene
+opens an explicit manuscript route after normal flush. Combined multi-page scene
+replacement is refused with 409 so individual pages cannot be flattened/emptied;
+language-only saves preserve them. Only edited/queued notes flush before review.
+Shared narrow Brainstorm shell navigation becomes a horizontal row, preserving
+the full conversation pane. Release development hosts select Release CSS fallback.
+
+Use `scripts/verify-brainstorming.ps1 -Phase p12` and the disposable fixture/launch
+commands in P12 UAT. Rebuilt native executable is under
+`WriterApp.Desktop/artifacts/brainstorming-p12/native-build/Debug/net10.0-windows10.0.19041.0/win-x64/WriterApp.Desktop.exe`,
+data under `artifacts/brainstorming-p12/native-validation-data`. Native startup is
+verified; Windows UI automation initialization failed twice with sandbox ACL error.
+Real native interaction, English/Swedish microphone/audible output/echo, approved
+live provider, real account/device/SQL Server sync and optional installed package
+retain separate gates. Preserve existing migrations through P10, P9 RecoveryJson,
+sync v5 and unrelated uncommitted work. No P12 migration or raw-audio persistence.

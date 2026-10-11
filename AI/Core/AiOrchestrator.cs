@@ -102,7 +102,7 @@ namespace WriterApp.AI.Core
         public bool CanRunAction(string actionId)
         {
             IAiAction? action = GetAction(actionId);
-            if (action is null)
+            if (action is null || actionId == BrainstormingConversationAction.Id)
             {
                 return false;
             }
@@ -142,7 +142,7 @@ namespace WriterApp.AI.Core
             }
 
             IAiAction? action = GetAction(actionId);
-            if (action is null)
+            if (action is null || actionId == BrainstormingConversationAction.Id)
             {
                 return new AiStreamingCapabilities(false, false);
             }
@@ -181,6 +181,9 @@ namespace WriterApp.AI.Core
 
         public async Task<AiExecutionResult> ExecuteActionAsync(string actionId, AiActionInput input, CancellationToken ct)
         {
+            if (actionId == BrainstormingConversationAction.Id)
+                return AiExecutionResult.Blocked("ai.dedicated_route_required", "Use the brainstorming conversation route with a reviewed context and durable operation identity.");
+
             IAiAction? action = GetAction(actionId);
             if (action is null)
             {
@@ -256,6 +259,9 @@ namespace WriterApp.AI.Core
 
         public AiStreamingSession StreamActionAsync(string actionId, AiActionInput input, CancellationToken ct)
         {
+            if (actionId == BrainstormingConversationAction.Id)
+                return CreateBlockedSession("ai.dedicated_route_required", "Use the brainstorming conversation route with a reviewed context and durable operation identity.");
+
             IAiAction? action = GetAction(actionId);
             if (action is null)
             {

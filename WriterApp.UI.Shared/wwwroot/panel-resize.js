@@ -9,14 +9,17 @@ export function widthBounds(side, available, otherPanel = 0) {
 }
 
 export function attach(handle, side) {
-    const left = side === "left";
-    const owner = handle.closest(left ? ".app-shell" : ".editor-shell");
-    const panel = owner?.querySelector(left ? ".app-nav" : ".context-drawer");
+    // A panel can be removed while Blazor awaits the module import.
+    if (!handle?.isConnected) return;
+    const outline = side === "outline";
+    const left = side === "left" || outline;
+    const owner = handle.closest(left && !outline ? ".app-shell" : ".editor-shell");
+    const panel = owner?.querySelector(outline ? ".brainstorm-outline" : side === "brainstorm-right" ? ".brainstorming-host" : left ? ".app-nav" : ".context-drawer");
     const existing = bindings.get(handle);
     if (existing?.panel === panel) { existing?.refresh(); return; }
     detach(handle);
     if (!owner || !panel) return;
-    const variable = left ? "--app-nav-width" : "--context-panel-width";
+    const variable = outline ? "--brainstorm-outline-width" : left ? "--app-nav-width" : "--context-panel-width";
     const key = `prosa.panel-width.${side}`;
     const defaultWidth = () => left ? 180 : window.innerWidth <= 1200 ? 300 : 360;
     let preferred = defaultWidth();
@@ -26,9 +29,11 @@ export function attach(handle, side) {
     } catch { /* Restricted storage must not prevent resizing. */ }
     let drag = null;
     const bounds = () => {
-        const area = left ? owner : owner.querySelector(".editor-workspace");
-        const other = left ? owner.querySelector(".context-drawer")?.getBoundingClientRect().width ?? 0 : 0;
-        return widthBounds(side, area?.clientWidth ?? owner.clientWidth, other);
+        const area = left && !outline ? owner : owner.querySelector(".editor-workspace");
+        const other = outline ? owner.querySelector(".brainstorming-host")?.getBoundingClientRect().width ?? 0 : left ? owner.querySelector(".context-drawer")?.getBoundingClientRect().width ?? 0 : owner.querySelector(".brainstorm-outline")?.getBoundingClientRect().width ?? 0;
+        const limits = widthBounds(left ? "left" : "right", area?.clientWidth ?? owner.clientWidth, left ? other : 0);
+        if (side === "brainstorm-right") limits.max = Math.max(limits.min, Math.min(limits.max, (area?.clientWidth ?? 1000) - other - 452));
+        return limits;
     };
     const clamp = value => { const { min, max } = bounds(); return Math.round(Math.min(max, Math.max(min, value))); };
     const apply = value => {

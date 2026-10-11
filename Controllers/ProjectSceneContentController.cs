@@ -117,6 +117,11 @@ namespace WriterApp.Controllers
             string? nextLanguage = string.IsNullOrWhiteSpace(request.LanguageCode) ? null : request.LanguageCode.Trim();
             bool contentChanged = !string.Equals(content.ContentJson ?? string.Empty, nextContent, StringComparison.Ordinal);
             bool languageChanged = !string.Equals(content.LanguageCode, nextLanguage, StringComparison.Ordinal);
+            if (contentChanged && scene.LinkedSectionId is { } linkedSection
+                && await _dbContext.Pages.CountAsync(p => p.SectionId == linkedSection, ct) > 1)
+            {
+                return Conflict(new { code = "scene.multipart_manuscript", message = "Open the linked manuscript pages to edit this multi-page section. Combined scene content cannot replace or empty its individual pages." });
+            }
             if (!contentChanged && !languageChanged && content.UpdatedAtUtc != default)
             {
                 return Ok(new SceneContentDto(
@@ -130,7 +135,7 @@ namespace WriterApp.Controllers
             content.ContentJson = nextContent;
             content.LanguageCode = nextLanguage;
             content.UpdatedAtUtc = DateTimeOffset.UtcNow;
-            await SyncLinkedSectionPagesAsync(scene, content.ContentJson, content.UpdatedAtUtc, ct);
+            if (contentChanged) await SyncLinkedSectionPagesAsync(scene, content.ContentJson, content.UpdatedAtUtc, ct);
             await _dbContext.SaveChangesAsync(ct);
             await _projectWordCountService.RefreshProjectAsync(projectId, ct);
 

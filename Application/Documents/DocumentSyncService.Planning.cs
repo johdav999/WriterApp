@@ -6,6 +6,18 @@ namespace WriterApp.Application.Documents;
 
 public sealed partial class DocumentSyncService
 {
+    private static DocumentSyncException StandalonePlanningCapability()=>new(426,"standalone_planning_sync_required","Authored standalone planning requires sync v5. Upgrade both client and server; original writing and notes are preserved.");
+    private async Task<bool> IsStandaloneAsync(DocumentRecord document,CancellationToken ct)=>
+        !await db.Projects.AnyAsync(p=>p.Id==document.ProjectId && p.SyncEnabled,ct)
+        && !await db.ProjectNodes.IgnoreQueryFilters().AnyAsync(n=>n.ProjectId==document.ProjectId,ct)
+        && !await db.Documents.AnyAsync(d=>d.ProjectId==document.ProjectId && d.Id!=document.Id,ct);
+    private async Task<SyncSynopsis> ReadStandaloneSynopsisAsync(Guid document,CancellationToken ct) {
+        var s=await db.DocumentSynopses.AsNoTracking().SingleOrDefaultAsync(s=>s.DocumentId==document,ct);
+        return s is null?new():new(s.Logline,s.Premise,s.Theme,s.ProtagonistArc,s.CentralConflict,s.Stakes,s.Setting,s.EndingIntent,s.OpenQuestions,s.Notes);
+    }
+    private static void ValidateStandaloneSynopsis(SyncSynopsis s) {
+        if(WriterApp.Shared.Brainstorming.BrainstormingPlanningContract.SynopsisFields.Any(f=>WriterApp.Shared.Brainstorming.BrainstormingPlanningContract.Value(s,f) is null or {Length:>100_000}))throw Invalid("Invalid standalone synopsis fields.");
+    }
     private static DocumentSyncException PlanningCapability() => new(426, "planning_sync_required", "This project has planning data. Upgrade to planning sync v3; originals are preserved.");
     private static void ValidatePlanning(SyncProject project)
     {

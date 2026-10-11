@@ -2,7 +2,13 @@
 @using WriterApp.Shared.Sync
 
 <div class="local-planning-panel">
-@if (_document is { Kind: "manuscript", Project: { } project })
+@if(_document is {Kind:"manuscript",Project:null} && Subview=="synopsis") {
+    <p class="panel-help">Authored synopsis and notes for this manuscript are saved on this device. Review synchronized story context separately before AI.</p>
+    <SynopsisFields ValueModel="_synopsis" Changed="SynopsisChanged" />
+    <button type="button" @onclick="SaveOnBlurAsync" disabled="@_saving">Save synopsis</button>
+    @if(_error is not null) {<p role="alert">@_error</p>}
+}
+else if (_document is { Kind: "manuscript", Project: { } project })
 {
     @if (Subview == "synopsis")
     {
@@ -21,7 +27,7 @@
                 @foreach (var scene in project.Nodes.Where(n => n.ParentId == chapter.NodeId && n.DeletionId is null).OrderBy(n => n.OrderIndex))
                 {
                     <div class="panel-scene-card" @key="scene.NodeId">
-                        <SceneCard SceneId="scene.NodeId" Title="@(scene.Title)" Summary="@(scene.Card?.Summary)" Status="@(scene.Card?.Status ?? "Draft")"
+                        <SceneCard SceneId="scene.NodeId" Title="@(scene.Title)" Summary="@(scene.Card?.Summary)" Status="@(scene.Card?.Status ?? "Draft")" PlanningIdea="@(scene.SectionId is null)"
                             Pov="@(scene.Card?.PovCharacterId)" NarrativeRole="@(scene.Card?.NarrativeRole)" NarrativeIntent="@(scene.Card?.NarrativeIntent)"
                             HasNotes="@(!string.IsNullOrWhiteSpace(scene.Notes))" SubplotTags="Tags(scene.Card?.SubplotTagsJson)"
                             IsSelected="@(_sceneId == scene.NodeId)" OpenScene="OpenSceneAsync" RevealInNavigator="RevealNavigator"
@@ -138,7 +144,7 @@ else
         bool newDocument = _document?.DocumentId != Document.DocumentId;
         bool newSection = newDocument || _sectionId != SectionId;
         _document = Document;
-        if (newDocument || !_synopsisDirty) _synopsis = Document.Project?.Synopsis ?? new();
+        if (newDocument || !_synopsisDirty) _synopsis = LocalBrainstormingPlanning.Synopsis(Document);
         if (newSection)
         {
             _sectionId = SectionId;

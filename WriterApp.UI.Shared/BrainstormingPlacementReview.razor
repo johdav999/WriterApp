@@ -1,0 +1,132 @@
+@using WriterApp.Shared.Brainstorming
+@using Microsoft.JSInterop
+@inject IServiceProvider Services
+
+<section class="placement-review" aria-label="Manuscript placement">
+    <header class="placement-heading">
+        <span class="placement-eyebrow">KEEP YOUR DRAFT</span>
+        <h3 tabindex="-1" @ref="_heading">Where should this text go?</h3>
+        <p>Choose its place in your story. Review the preview, then add it.</p>
+    </header>
+    @if (_error is not null) { <p class="placement-error" role="alert">@_error</p> }
+    @if (Review.Placement is not null) {
+        <fieldset class="placement-options" disabled="@Disabled">
+            <legend>How to add your draft</legend>
+            <div class="placement-cards">
+            @foreach (var mode in Enum.GetValues<BrainstormingPlacementMode>()) {
+                <label class="placement-option @(_mode == mode ? "selected" : "")">
+                    <input type="radio" name="@_radioName" value="@mode" checked="@(_mode == mode)" @onchange="() => ChangeMode(mode)" />
+                    <span><strong>@ModeTitle(mode)</strong><small>@ModeDescription(mode)</small></span>
+                </label>
+            }
+            </div>
+        </fieldset>
+        <div class="placement-fields">
+            <label> @(_mode == BrainstormingPlacementMode.NewSectionAfter ? "Place after section" : "Destination section")
+                <select value="@_section" @onchange="ChangeSection" disabled="@Disabled">
+                    @foreach (var section in Review.Before.Outline.Sections.OrderBy(s => s.Order)) {
+                        <option value="@section.Id">@(section.Order + 1). @BrainstormingPlacements.SectionLabel(Review.Before,section.Id)</option>
+                    }
+                </select>
+            </label>
+            @if (_mode == BrainstormingPlacementMode.NewSectionAfter) {
+                <label>New section title <input maxlength="200" value="@_title" @oninput="ChangeTitle" disabled="@Disabled" aria-invalid="@(string.IsNullOrWhiteSpace(_title) ? "true" : "false")" placeholder="Give this section a name" /></label>
+            }
+            @if (_mode == BrainstormingPlacementMode.PageBoundary) {
+                <label>Page <select value="@_page" @onchange="ChangePage" disabled="@Disabled">
+                    @foreach (var storyPage in Pages) { <option value="@storyPage.Id">@(storyPage.Order + 1). @storyPage.Title</option> }
+                </select></label>
+            }
+        </div>
+        @if (_mode == BrainstormingPlacementMode.PageBoundary && SelectedPage is { } selected) {
+            var blocks = BrainstormingPlacements.Blocks(selected.Content);
+            <details class="placement-picker" open>
+                <summary>Choose a paragraph boundary</summary>
+                <p>Choose “Insert here” between the passages below. Your manuscript stays unchanged.</p>
+                <div class="placement-passages" aria-label="Manuscript insertion points">
+                    <button type="button" class="placement-boundary @(_boundary == _blockStart ? "active" : "")" aria-pressed="@(_boundary == _blockStart ? "true" : "false")" disabled="@Disabled" @onclick="() => ChangeBoundary(_blockStart)">@(_blockStart == 0 ? "Insert at page beginning" : "Insert here")</button>
+                    @foreach (var block in blocks.Skip(_blockStart).Take(12)) {
+                        var boundary = block.Index + 1;
+                        <p class="placement-passage">@(string.IsNullOrEmpty(block.Text) ? "Empty paragraph" : Excerpt(block.Text))</p>
+                        <button type="button" class="placement-boundary @(_boundary == boundary ? "active" : "")" aria-pressed="@(_boundary == boundary ? "true" : "false")" disabled="@Disabled" @onclick="() => ChangeBoundary(boundary)">@(boundary == blocks.Count ? "Insert at page end" : "Insert here")</button>
+                    }
+                </div>
+                @if (blocks.Count > 12) {
+                    <nav class="placement-pagination" aria-label="Manuscript passages"><button type="button" disabled="@(_blockStart == 0 || Disabled)" @onclick="() => _blockStart = Math.Max(0, _blockStart - 12)">Earlier passages</button><span>@(_blockStart + 1)–@Math.Min(_blockStart + 12, blocks.Count) of @blocks.Count</span><button type="button" disabled="@(_blockStart + 12 >= blocks.Count || Disabled)" @onclick="() => _blockStart += 12">Later passages</button></nav>
+                }
+            </details>
+        }
+    } else if (Review.Kind == BrainstormingTargetKind.CreateSection) {
+        <label class="placement-title">New section title <input maxlength="200" value="@_title" @oninput="ChangeTitle" disabled="@Disabled" /></label>
+    }
+    <section class="placement-preview" aria-label="Manuscript insertion preview">
+        <header><span class="placement-eyebrow">PREVIEW</span><p aria-live="polite">@DestinationLabel</p></header>
+        @if (Review.Kind == BrainstormingTargetKind.ReplaceRange) {
+            <div class="placement-context"><small>Passage to replace</small><p>@Review.ReplacedText</p></div>
+        } else if (ContextBefore is {Length:>0} before) {
+            <div class="placement-context"><small>Before your draft</small><p>@Excerpt(before)</p></div>
+        } else { <p class="placement-edge">@(Review.Kind == BrainstormingTargetKind.CreateSection ? "New section begins" : "Page begins")</p> }
+        <div class="placement-added"><div class="placement-added-label"><span aria-hidden="true">＋</span> @(Review.Kind == BrainstormingTargetKind.ReplaceRange ? "Your replacement" : "Your draft")</div><div class="placement-prose">@((MarkupString)(Review.Candidate.EditorHtml ?? BrainstormingDraftContent.Html(Review.Candidate.PlainText)))</div></div>
+        @if (ContextAfter is {Length:>0} after) { <div class="placement-context"><small>After your draft</small><p>@Excerpt(after)</p></div> }
+        else { <p class="placement-edge">@(Review.Kind == BrainstormingTargetKind.CreateSection ? "New section ends" : "Page ends")</p> }
+    </section>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public BrainstormingKeepReview Review { get; set; } = default!;
+    [Parameter] public EventCallback<BrainstormingKeepReview> Changed { get; set; }
+    [Parameter] public EventCallback<bool> ValidityChanged { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    private BrainstormingPlacementMode _mode;
+    private Guid _section;
+    private Guid? _page;
+    private int _boundary, _blockStart;
+    private string _title = "New section", _radioName = "placement-" + Guid.NewGuid().ToString("N");
+    private string? _error;
+    private Guid? _candidate;
+    private ElementReference _heading;
+    private IReadOnlyList<BrainstormingStoryPage> Pages => Review.Before.Pages.Where(p => p.SectionId == _section).OrderBy(p => p.Order).ThenBy(p => p.Id).ToArray();
+    private BrainstormingStoryPage? SelectedPage => Pages.FirstOrDefault(p => p.Id == _page);
+    private BrainstormingTarget Destination => BrainstormingPlacements.Destination(Review);
+    private IReadOnlyList<BrainstormingPlacementBlock> PreviewBlocks => Review.Kind == BrainstormingTargetKind.CreateSection ? [] : BrainstormingPlacements.Blocks(Review.Before.Pages.Single(p => p.Id == Destination.PageId).Content);
+    private string? ContextBefore => Review.Kind == BrainstormingTargetKind.InsertInPage ? PreviewBlocks.ElementAtOrDefault(BrainstormingPlacements.Boundary(Review) - 1)?.Text : null;
+    private string? ContextAfter => Review.Kind == BrainstormingTargetKind.InsertInPage ? PreviewBlocks.ElementAtOrDefault(BrainstormingPlacements.Boundary(Review))?.Text : null;
+    private string DestinationLabel {
+        get {
+            var section = Review.Before.Outline.Sections.SingleOrDefault(s => s.Id == (Review.Placement?.SectionId ?? Destination.SectionId ?? Destination.BeforeSectionId));
+            var title = section is null ? "Selected chapter" : BrainstormingPlacements.SectionLabel(Review.Before,section.Id);
+            if (Review.Kind == BrainstormingTargetKind.CreateSection) return Review.Placement is null ? $"{Review.SectionTitle} · first section in the selected chapter" : $"{Review.SectionTitle} · new section after {title}";
+            var page = Review.Before.Pages.Single(p => p.Id == Destination.PageId);
+            var boundary = BrainstormingPlacements.Boundary(Review);
+            var position = Review.Kind == BrainstormingTargetKind.ReplaceRange ? "selected passage" : boundary == 0 ? "page beginning" : boundary == PreviewBlocks.Count ? "after the final paragraph" : $"after passage {boundary}";
+            return $"{title} → {page.Title} → {position}";
+        }
+    }
+    protected override void OnParametersSet() {
+        if (_candidate == Review.Candidate.Id) return;
+        _candidate = Review.Candidate.Id; _title = Review.SectionTitle;
+        var placement = Review.Placement;
+        _mode = placement?.Mode ?? BrainstormingPlacementMode.ContinueSection;
+        _section = placement?.SectionId ?? Review.Target.SectionId ?? Review.Target.BeforeSectionId ?? Guid.Empty;
+        _page = placement?.PageId ?? Pages.LastOrDefault()?.Id; _boundary = placement?.Mode == BrainstormingPlacementMode.PageBoundary ? placement.BoundaryIndex : SelectedPage is { } p ? BrainstormingPlacements.Blocks(p.Content).Count : 0;
+    }
+    protected override async Task OnAfterRenderAsync(bool firstRender) {
+        if(firstRender && Services.GetService(typeof(IJSRuntime)) is IJSRuntime)await _heading.FocusAsync(preventScroll: true);
+    }
+    private static string ModeTitle(BrainstormingPlacementMode mode) => mode switch { BrainstormingPlacementMode.ContinueSection => "Continue this section", BrainstormingPlacementMode.NewSectionAfter => "Create a new section", _ => "Choose a place in the manuscript" };
+    private static string ModeDescription(BrainstormingPlacementMode mode) => mode switch { BrainstormingPlacementMode.ContinueSection => "Add after the section’s final paragraph", BrainstormingPlacementMode.NewSectionAfter => "Start a named section after the one you choose", _ => "Place your draft between existing paragraphs" };
+    private static string Excerpt(string text) => text.Length <= 320 ? text : text[..(char.IsLowSurrogate(text[320]) ? 319 : 320)] + "…";
+    private Task ChangeMode(BrainstormingPlacementMode mode) { _mode = mode; _blockStart = mode == BrainstormingPlacementMode.PageBoundary ? Math.Max(0,(_boundary - 1)/12*12) : 0; return Commit(); }
+    private Task ChangeSection(ChangeEventArgs e) { if(Guid.TryParse(e.Value?.ToString(),out var id))_section = id; _page = Pages.LastOrDefault()?.Id; _boundary = SelectedPage is { } p ? BrainstormingPlacements.Blocks(p.Content).Count : 0; _blockStart = 0; return Commit(); }
+    private Task ChangePage(ChangeEventArgs e) { if(Guid.TryParse(e.Value?.ToString(),out var id))_page = id; _boundary = SelectedPage is { } p ? BrainstormingPlacements.Blocks(p.Content).Count : 0; _blockStart = 0; return Commit(); }
+    private Task ChangeBoundary(int boundary) { _boundary = boundary; return Commit(); }
+    private Task ChangeTitle(ChangeEventArgs e) { _title = e.Value?.ToString() ?? ""; return Commit(); }
+    private async Task Commit() {
+        if(Disabled)return;
+        try {
+            var review = Review.Placement is null ? Review with { SectionTitle = _title.Trim(), OperationId = Guid.NewGuid(), ReviewedAt = DateTimeOffset.UtcNow }
+                : BrainstormingPlacements.ReviewAt(Review,new(_mode,_section,_mode == BrainstormingPlacementMode.PageBoundary ? _page : null,_mode == BrainstormingPlacementMode.PageBoundary ? _boundary : 0),_mode == BrainstormingPlacementMode.NewSectionAfter ? _title : "New section");
+            BrainstormingKeepContract.Validate(review); _error = null; await ValidityChanged.InvokeAsync(true); await Changed.InvokeAsync(review);
+        } catch(InvalidDataException e) { _error = string.IsNullOrWhiteSpace(_title) ? "Give your new section a title before adding it." : e.Message; await ValidityChanged.InvokeAsync(false); }
+    }
+}

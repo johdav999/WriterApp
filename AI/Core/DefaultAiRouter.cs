@@ -31,6 +31,11 @@ namespace WriterApp.AI.Core
 
             bool needsText = request.Modalities.Contains(AiModality.Text);
             bool needsImage = request.Modalities.Contains(AiModality.Image);
+            if(request.Modalities.Contains(AiModality.Audio)) {
+                var audio=_registry.GetById(_options.Providers.DefaultAudioProviderId);
+                if(request.Modalities.Length!=1 || audio?.Capabilities.SupportsAudio!=true)throw new InvalidOperationException("Configured audio transcription provider is unavailable. Use text; audio never falls back to a text/mock provider.");
+                return new(audio,audio.ProviderId,false,"Configured audio provider selected.");
+            }
             AiModality modality = needsImage ? AiModality.Image : AiModality.Text;
             string preferredProviderId = needsImage
                 ? _options.Providers.DefaultImageProviderId

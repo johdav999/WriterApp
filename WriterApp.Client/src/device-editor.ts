@@ -273,6 +273,46 @@ export function consistencyPlainText(content: string, format: string) {
     const doc = getSchema(richExtensions()).nodeFromJSON(prepare(content, format));
     return doc.textBetween(0, doc.content.size, "\n", "\n");
 }
+// Independently prove a reviewed Keep mapping with the actual common editor schema.
+// Return the pinned HTML bytes only after its parsed tree equals the checked transaction.
+export function previewBrainstormingKeep(source: string, proposal: string, after: string, kind: number, from: number, to: number, quote: string, boundaryIndex = 0) {
+    for (const html of [source, proposal, after]) {
+        const body = new DOMParser().parseFromString(html, "text/html").body;
+        if ([...body.querySelectorAll("img")].some(image => image.parentElement !== body)) throw new Error("Nested images are unsupported by the checked Keep mapping.");
+    }
+    const originalJson = prepare(source || "<p></p>", "Html"), candidateJson = prepare(proposal, "Html"), resultJson = prepare(after, "Html");
+    const editor = new Editor({ element: document.createElement("div"), extensions: richExtensions(), content: originalJson, editable: false });
+    try {
+        // ProseMirror node equality uses schema type identity. All transaction fragments and
+        // the expected result must belong to this editor's actual schema instance.
+        const original = editor.state.doc, candidate = editor.schema.nodeFromJSON(candidateJson), result = editor.schema.nodeFromJSON(resultJson);
+        original.check(); candidate.check(); result.check();
+        let expected;
+        if (kind === 2) expected = candidate;
+        else if (kind === 0) {
+            if (from !== 0 || to !== 0) throw new Error("Unsupported insertion point.");
+            if (!Number.isInteger(boundaryIndex) || boundaryIndex < 0 || boundaryIndex > original.childCount) throw new Error("The paragraph insertion point changed.");
+            let position = 0;
+            for (let i = 0; i < boundaryIndex; i++) position += original.child(i).nodeSize;
+            expected = original.childCount === 1 && original.firstChild?.type.name === "paragraph" && original.firstChild.content.size === 0
+                ? candidate : editor.state.tr.insert(position, candidate.content).doc;
+        } else if (kind === 1) {
+            const range = qualityRange(original, { issueKey: "", from, to, expectedText: quote, severity: "info" });
+            if (!range) throw new Error("The selected passage no longer maps to this source.");
+            if (candidate.childCount === 1 && candidate.firstChild?.type.name === "paragraph")
+                expected = editor.state.tr.replaceWith(range.from, range.to, candidate.firstChild.content).doc;
+            else {
+                const start = original.resolve(range.from), end = original.resolve(range.to);
+                if (start.parent.type.name !== "paragraph" || start.parentOffset !== 0 || end.parentOffset !== end.parent.content.size || !start.sameParent(end))
+                    throw new Error("Multiple proposal blocks require a complete paragraph.");
+                expected = editor.state.tr.replaceWith(start.before(), end.after(), candidate.content).doc;
+            }
+        } else throw new Error("Unsupported Keep mode.");
+        if (!expected.eq(result)) throw new Error("The rich-editor mapping differs from the approved snapshot. Original retained.");
+        return after;
+    } finally { editor.destroy(); }
+}
+
 export function qualityPlainText(content: string, format: string) {
     const doc = getSchema(richExtensions()).nodeFromJSON(prepare(content, format));
     return doc.textBetween(0, doc.content.size, qualityBlockSeparator, "\n");

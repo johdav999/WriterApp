@@ -360,7 +360,30 @@
     .app-body:has(.synopsis-shell) > .app-nav .app-nav-link { width: auto; flex-shrink: 0; padding: 10px 12px; }
 }
 
+/* Keep the active Brainstorm conversation bounded on tablet and phone layouts too. */
+.app-shell:has(.editor-shell.is-brainstorming) { height: 100dvh; min-height: 0; overflow: hidden; }
+/* Keep the writing surface usable when the global search header would stack. */
+@media (max-width: 700px) {
+    .app-shell:has(.editor-shell.is-brainstorming) > .app-header { display:flex; justify-content:space-between; min-height:56px; padding:8px 12px; gap:12px; }
+    .app-shell:has(.editor-shell.is-brainstorming) > .app-header .app-header-center { display:none; }
+    .app-shell:has(.editor-shell.is-brainstorming) > .app-header .app-header-content { display:flex; justify-content:flex-end; width:auto; }
+    .app-shell:has(.editor-shell.is-brainstorming) > .app-header .app-brand { padding:0; }
+    .app-shell:has(.editor-shell.is-brainstorming) > .app-header .app-brand-logo { height:32px; max-height:32px; }
+}
+.app-shell:has(.editor-shell.is-brainstorming) > .app-header { flex-shrink: 0; }
+.app-main:has(.editor-shell.is-brainstorming),
+.app-body:has(.editor-shell.is-brainstorming),
+.content:has(.editor-shell.is-brainstorming),
+.prosa-editor:has(.editor-shell.is-brainstorming) { min-height: 0; height: 100%; overflow: hidden; }
+
 /* The device document library uses the quiet, full-height reference sidebar. */
+@media (max-width: 700px) {
+    .app-body:has(.editor-shell.is-brainstorming) { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+    .app-body:has(.editor-shell.is-brainstorming) > .app-nav { flex-direction: row; overflow-x: auto; padding: 8px; gap: 4px; border-right: 0; border-bottom: 1px solid var(--color-border); }
+    .app-body:has(.editor-shell.is-brainstorming) > .app-nav .app-nav-link { width: auto; flex-shrink: 0; padding: 10px 12px; }
+    .app-body:has(.editor-shell.is-brainstorming) > .app-nav .panel-resize-handle { display: none; }
+}
+
 .app-shell.is-library-shell { --app-nav-width:256px; height:100dvh; min-height:0; overflow:hidden; }
 .is-library-shell .app-nav { padding:18px 12px 20px; gap:0; background:#f8f7f5; overflow:visible; }
 .is-library-shell .sidebar-brand { display:flex; align-items:center; height:78px; padding:0 18px; margin-bottom:0; }

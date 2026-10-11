@@ -1,0 +1,45 @@
+.brainstorming-conversation { display:flex; flex-direction:column; flex:1; min-height:0; min-width:0; max-width:100%; font:14px/1.55 var(--font-sans,system-ui); color:var(--color-text,#222429); }
+.brainstorm-chat-scroll { flex:1; min-height:0; overflow:auto; overscroll-behavior:contain; padding:18px; }
+.brainstorm-empty { text-align:center; max-width:420px; margin:12px auto 24px; }
+.brainstorm-empty-mark { display:block; margin:0 0 12px; font-size:36px; color:var(--color-primary,#1f355f); }
+.brainstorm-empty h3 { font-size:19px; font-weight:600; line-height:1.4; margin:0 0 8px; }
+.brainstorm-empty p { color:var(--color-text-muted,#646973); margin:0 0 20px; font-size:13px; }
+.brainstorm-starters { display:grid; gap:8px; text-align:left; }
+.brainstorm-starters button { display:flex; flex-direction:column; align-items:flex-start; gap:2px; width:100%; padding:10px 12px; text-align:left; background:var(--color-surface-2,#f8f7f5); }
+.brainstorm-starters strong { font-weight:600; font-size:13px; }
+.brainstorm-starters span { font-size:12px; color:var(--color-text-muted,#646973); margin-top:2px; }
+button { font:inherit; cursor:pointer; min-height:36px; padding:7px 10px; border:1px solid var(--color-border,#ddd9d1); border-radius:8px; background:var(--color-surface-1,#fff); color:inherit; white-space:normal; }
+button:hover:not(:disabled) { background:var(--color-surface-2,#f8f7f5); border-color:var(--color-border-strong,#c8c2b5); }
+button:disabled { opacity:.5; cursor:not-allowed; }
+button:focus-visible, summary:focus-visible, textarea:focus-visible, select:focus-visible { outline:2px solid var(--color-primary,#1f355f); outline-offset:3px; }
+.brainstorm-composer { flex-shrink:0; max-height:70%; border-top:1px solid var(--color-border,#ddd9d1); background:var(--color-surface-1,#fff); padding:14px 18px 12px; overflow:auto; box-sizing:border-box; }
+.brainstorm-composer:has(.brainstorm-audio[open]) { max-height:70%; }
+.brainstorm-composer-label { display:block; font-size:12px; font-weight:600; }
+textarea { display:block; width:100%; min-height:84px; max-height:220px; resize:vertical; box-sizing:border-box; border:1px solid var(--color-border,#ddd9d1); background:var(--color-surface-1,#fff); color:inherit; border-radius:10px; padding:12px; font:14px/1.5 var(--font-sans,system-ui); margin-top:6px; }
+textarea::placeholder { color:var(--color-text-muted,#646973); }
+#brainstorm-compose-help, .brainstorm-proposal-note { margin:6px 0 0; color:var(--color-text-muted,#646973); font-size:11px; }
+.brainstorm-send-actions { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:10px; }
+.brainstorm-primary { background:var(--color-primary,#1f355f); border-color:var(--color-primary,#1f355f); color:#fff; margin-left:auto; order:1; }
+.brainstorm-primary:hover:not(:disabled) { background:var(--color-primary-hover,#294a82); }
+.brainstorm-send-blocker, .brainstorm-state { font-size:12px; color:var(--color-text-muted,#646973); overflow-wrap:anywhere; margin:8px 0; }
+.brainstorm-composer > p[role=status] { font-size:12px; overflow-wrap:anywhere; }
+.brainstorm-audio { margin:10px 0; font-size:12px; }
+summary { cursor:pointer; min-height:28px; padding:4px 0; }
+fieldset { min-width:0; border:1px solid var(--color-border,#ddd9d1); border-radius:8px; margin:12px 0; padding:12px; }
+fieldset legend { font-size:13px; font-weight:600; padding:0 4px; }
+fieldset button { margin:3px 0; }
+fieldset label { display:block; margin-bottom:8px; }
+select { max-width:100%; font:inherit; padding:6px; }
+pre { white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; margin:6px 0; }
+.brainstorm-message { padding:12px 0; margin:0 0 14px; border:0; border-radius:12px; background:transparent; }
+.brainstorm-message.is-user { margin-left:24px; padding:12px 14px; background:var(--color-primary-soft,#e8eefc); border-color:transparent; }
+.brainstorm-message-author { margin:0; font-size:11px; color:var(--color-text-muted,#646973); }
+.brainstorm-save-idea { margin-top:10px; font-size:12px; border-top:1px solid var(--color-border,#ddd9d1); padding-top:4px; }
+.brainstorm-save-idea button { margin:3px; font-size:12px; }
+.brainstorm-generated-prose { display:grid; gap:8px; margin-top:10px; }
+.brainstorm-generated-prose button { justify-self:start; }
+.brainstorm-generated-prose summary { font-size:12px; cursor:pointer; }
+.brainstorm-operation { font-size:12px; color:var(--color-text-muted,#646973); margin:8px 0; }
+@media (max-height:1000px) { .brainstorm-empty-mark { display:none; } .brainstorm-empty { margin-top:0; } }
+@media (max-height:700px) { .brainstorm-composer { padding-block:10px; } }
+@media (max-width:700px) { .brainstorm-composer { padding:10px 14px; } textarea { min-height:64px; height:70px; } .brainstorm-audio { margin:6px 0; } }
