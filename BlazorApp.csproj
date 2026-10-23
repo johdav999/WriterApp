@@ -7,6 +7,10 @@
     <BaseOutputPath>artifacts\bin\</BaseOutputPath>
     <DefaultItemExcludes>WriterApp.Publishing/**;WriterApp.UI.Shared/**;WriterApp.UI.Shared\**;$(DefaultItemExcludes);publish/**;publish\**;.azure-publish/**;.azure-publish\**;artifacts/**;artifacts\**;WriterApp.Device.Shared/**;WriterApp.Device.Shared\**;WriterApp.Desktop/**;WriterApp.Desktop\**;WriterApp.iOS/**;WriterApp.iOS\**</DefaultItemExcludes>
 
+    <DefaultItemExcludes>$(DefaultItemExcludes);WriterApp.Android/**;WriterApp.Android\**</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);WriterApp.Collaboration/**;WriterApp.Collaboration\**</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);Tools/Collaboration.Operations/**;Tools/Collaboration.Operations\**</DefaultItemExcludes>
+
     <!-- Let the host decide -->
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
 

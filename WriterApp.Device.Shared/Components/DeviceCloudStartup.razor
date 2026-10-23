@@ -1,0 +1,92 @@
+@implements IDisposable
+@inject DeviceSyncEngine Sync
+@inject DeviceAccountService Account
+@inject DeviceConnectivity Network
+@inject LocalDocumentRepository Documents
+
+@if (_ready && (!Account.IsSignedIn || _localCount > 0 || Sync.LastError is not null || _error is not null))
+{
+    <section class="cloud-startup" aria-label="Cloud synchronization recommendation">
+        @if (!Account.IsSignedIn || _localCount > 0)
+        {
+            <strong>Keep your writing in sync across devices</strong>
+            <p>@(_localCount > 0 ? $"{_localCount} manuscript(s) are saved only on this device. Enable cloud sync to back them up and access them on your other devices." : "Enable cloud sync to back up your writing and access it on your other devices.") Cloud sync requires an eligible paid account.</p>
+            <button type="button" disabled="@(_busy || Sync.IsRunning || !Network.IsOnline || !Account.IsConfigured)" @onclick="EnableAsync">Enable cloud sync</button>
+            @if (!Account.IsConfigured) { <p>Sign-in settings are missing from this build. Install a configured Prosa build to enable cloud sync.</p> }
+            else if (!Network.IsOnline) { <p>Connect to the internet to enable cloud sync.</p> }
+        }
+        @if (Sync.LastError is not null || _error is not null)
+        {
+            <p role="alert">@(_error ?? Sync.LastError)</p>
+            <button type="button" disabled="@(_busy || Sync.IsRunning || !Network.IsOnline)" @onclick="RetryAsync">Retry cloud sync</button>
+            <a href="/account">Account and plan</a>
+        }
+        @if (_busy) { <p role="status">Enabling cloud sync… Your writing remains saved on this device.</p> }
+    </section>
+}
+
+@code {
+    private bool _ready, _busy, _disposed;
+    private int _localCount;
+    private string? _error;
+    private readonly CancellationTokenSource _lifetime = new();
+    protected override async Task OnInitializedAsync()
+    {
+        Sync.Changed += Changed;
+        Account.Changed += Changed;
+        Network.Changed += Changed;
+        Documents.Changed += Changed;
+        await RunAsync(async () => { await Sync.StartAsync(); await RefreshAsync(); });
+        _ready = true;
+    }
+    private async Task RefreshAsync()
+    {
+        var list = await Documents.ListAsync(cancellationToken: _lifetime.Token);
+        _localCount = list.Documents.Count(doc => doc.ServerDocumentId is null && doc.DeletedAtUtc is null);
+    }
+    private void Changed()
+    {
+        if (_disposed) return;
+        _ = InvokeAsync(async () => { if (_disposed) return; await RunAsync(RefreshAsync); if (!_disposed) StateHasChanged(); });
+    }
+    private Task EnableAsync() => RunAsync(async () =>
+    {
+        if (_busy) return;
+        _error = null;
+        _busy = true;
+        try
+        {
+            if (!Account.IsSignedIn) await Account.SignInAsync(_lifetime.Token);
+            await Sync.EnableLocalDocumentsAsync(_lifetime.Token);
+            await RefreshAsync();
+        }
+        finally { _busy = false; }
+    });
+    private Task RetryAsync() => RunAsync(async () =>
+    {
+        if (_busy) return;
+        _error = null;
+        _busy = true;
+        try
+        {
+            if (!Account.IsSignedIn) await Account.SignInAsync(_lifetime.Token);
+            await Sync.SyncAsync(_lifetime.Token);
+            await RefreshAsync();
+        }
+        finally { _busy = false; }
+    });
+    private async Task RunAsync(Func<Task> action)
+    {
+        try { await action(); }
+        catch (OperationCanceledException) { }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or DeviceSignInRequiredException or DeviceIdentityUnavailableException or DeviceIdentityConfigurationException)
+        { _error = error.Message; }
+    }
+    public void Dispose()
+    {
+        _disposed = true;
+        Sync.Changed -= Changed; Account.Changed -= Changed;
+        Network.Changed -= Changed; Documents.Changed -= Changed;
+        _lifetime.Cancel(); _lifetime.Dispose();
+    }
+}

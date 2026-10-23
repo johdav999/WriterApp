@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Prosa isolated collaboration acceptance</title>
+<style>body{font:16px/1.6 system-ui;max-width:850px;margin:48px auto;color:#173b36;background:#f7f8f5}h1{font-size:24px}.ProseMirror{background:white;border:1px solid #a7bbb4;border-radius:10px;padding:24px;min-height:220px;outline:none}table{border-collapse:collapse}td,th{border:1px solid #a7bbb4;padding:8px}img{max-width:90px}#status{font-size:14px;color:#596a65}</style>
+<h1>Collaborative editor foundation</h1><p id="status">Isolated browser test. Updates remain in memory. Cloud saving is unavailable.</p><div id="editor"></div>
+<script type="module">
+const host = new URLSearchParams(location.search).get('host');
+if (host === 'web') {
+  await new Promise((resolve,reject)=>{const script=document.createElement('script');script.src='/web.js';script.onload=resolve;script.onerror=reject;document.head.append(script);});
+  window.api = window.tiptapEditor.collaboration;
+} else window.api = (await import('/device.js')).collaboration;
+window.updates=[];window.projections=[];
+window.mount=async(identity,seed)=>{
+  window.session=await api.createIsolatedEditor(document.getElementById('editor'),identity,{...seed,state:new Uint8Array(seed.state)}, {
+    onLocalUpdate:update=>updates.push({...update,bytes:Array.from(update.bytes)}),
+    onProjection:html=>projections.push(html)
+  });
+};
+window.receive=update=>session.receive({...update,bytes:new Uint8Array(update.bytes)});
+window.ready=true;
+</script></html>

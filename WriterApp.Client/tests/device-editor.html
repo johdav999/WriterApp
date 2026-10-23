@@ -416,7 +416,7 @@ await test('local images embed bytes and remain editable after reopening', async
  const png = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j1ioAAAAASUVORK5CYII='), char => char.charCodeAt(0));
  const transfer = new DataTransfer(); transfer.items.add(new File([png], 'pixel.png', { type:'image/png' }));
  const file = host.querySelector('input[type="file"]'); file.files = transfer.files; file.dispatchEvent(new Event('change'));
- await settle();
+ for(let attempt=0;attempt<120&&!editor.snapshot().html.includes('data:image/png;base64,');attempt++)await settle();
  const saved = editor.snapshot().html;
  assert(saved.includes('data:image/png;base64,') && saved.includes('alt="pixel.png"'), 'Local image was not embedded');
  assert(!saved.includes('blob:') && !saved.includes('file:'), 'Image depends on a temporary path');
@@ -1106,7 +1106,7 @@ await test('client consistency uses the same formatting-preserving helper and Un
 await test('client deterministic paragraph split retains marks, attributes, siblings and Undo',async()=>{
  const surface=document.createElement('div');surface.id='targeted-split';document.body.append(surface);const web=window.tiptapEditor.create(surface.id,'<p style="text-align: center;"><em>Alpha beta. Gamma delta.</em></p><p>Keep.</p>',receiver),before=web.getHTML(),expected='Alpha beta. Gamma delta.';
  const result=window.tiptapEditor.applyQualityIssueFixDetailed(web,{kind:'replace',from:0,to:expected.length,expectedText:expected,text:'Alpha beta.\n\nGamma delta.'});assert(result.applied,JSON.stringify(result));
- assert(web.getHTML()==='<p style="text-align: center"><em>Alpha beta.</em></p><p style="text-align: center"><em>Gamma delta.</em></p><p>Keep.</p>',web.getHTML());assert(web.commands.undo()&&web.getHTML()===before,'Split Undo differs');window.tiptapEditor.destroy(web);surface.remove();
+ const parsed=document.createElement('div');parsed.innerHTML=web.getHTML();const paragraphs=parsed.querySelectorAll('p');assert(paragraphs.length===3&&paragraphs[0].style.textAlign==='center'&&paragraphs[1].style.textAlign==='center'&&paragraphs[0].innerHTML==='<em>Alpha beta.</em>'&&paragraphs[1].innerHTML==='<em>Gamma delta.</em>'&&paragraphs[2].outerHTML==='<p>Keep.</p>',web.getHTML());assert(web.commands.undo()&&web.getHTML()===before,'Split Undo differs');window.tiptapEditor.destroy(web);surface.remove();
 });
 await test('client refuses an appended editor transaction that would change unrelated structure',async()=>{
  const surface=document.createElement('div');surface.id='targeted-appended';document.body.append(surface);

@@ -13,6 +13,24 @@ namespace WriterApp.Tests;
 
 public sealed class BrainstormingKeepTests
 {
+    [Theory]
+    [InlineData("empty")]
+    [InlineData("replace")]
+    [InlineData("new")]
+    public async Task ApprovedKeepCannotWriteAfterManuscriptBecomesCollaborative(string mode)
+    {
+        await using var f = new BrainstormingConversationTests.Fixture();
+        var review = await Server(f, mode);
+        var service = new BrainstormingKeeps(f.Db, "author", f.Data.Backend);
+        await service.PrepareAsync(review);
+        var original = await f.Db.Pages.AsNoTracking().OrderBy(p => p.Id).Select(p => p.Content).ToArrayAsync();
+        await f.Db.Documents.Where(d => d.Id == f.Data.Document).ExecuteUpdateAsync(s => s.SetProperty(d => d.CollaborationMode, WriterApp.Shared.Collaboration.CollaborationMode.Collaborative));
+        await Assert.ThrowsAsync<WriterApp.Application.Collaboration.CollaborationWriteException>(() => service.CommitAsync(review.Scope, review.OperationId));
+        f.Db.ChangeTracker.Clear();
+        Assert.Equal(original, await f.Db.Pages.AsNoTracking().OrderBy(p => p.Id).Select(p => p.Content).ToArrayAsync());
+        Assert.Empty(await f.Db.WebAiHistoryOperations.ToArrayAsync());
+        Assert.Equal(BrainstormingApplicationState.Approved, (await service.InspectAsync(review.Scope, review.OperationId))!.State);
+    }
     internal static async Task<BrainstormingKeepReview> Server(BrainstormingConversationTests.Fixture f,string mode)
     {
         await f.Start(true);

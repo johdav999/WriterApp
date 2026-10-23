@@ -167,7 +167,7 @@ public sealed class BrainstormingPersistenceTests
         var migrator = db.GetService<IMigrator>(); await migrator.MigrateAsync("20261006100000_WebScopedPlanningRecovery");
         db.Projects.Add(new() { Id=f.Project,OwnerUserId="author" }); db.Documents.Add(new() { Id=f.Document,ProjectId=f.Project,OwnerUserId="author" });
         db.Sections.Add(new() {Id=f.Section,DocumentId=f.Document}); db.Pages.Add(new(){Id=f.Page,DocumentId=f.Document,SectionId=f.Section,Content="<p><strong>Åsa 日本語 🧭</strong></p>"});
-        await db.SaveChangesAsync(); var version = (await db.DocumentSyncRecords.SingleAsync()).Version;
+        await LegacyMigrationSeed.SaveAsync(db); var version = (await db.DocumentSyncRecords.SingleAsync()).Version;
         await migrator.MigrateAsync(); db.ChangeTracker.Clear(); Assert.Empty(await db.BrainstormingSessions.ToArrayAsync());
         Assert.Empty(await db.BrainstormingSessionOperations.ToArrayAsync()); Assert.Equal(version,(await db.DocumentSyncRecords.SingleAsync()).Version);
         Assert.Equal("<p><strong>Åsa 日本語 🧭</strong></p>",(await db.Pages.SingleAsync()).Content); Assert.False(db.Database.HasPendingModelChanges());

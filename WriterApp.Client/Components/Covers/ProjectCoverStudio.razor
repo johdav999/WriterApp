@@ -25,6 +25,7 @@
             <button type="button" class="secondary" disabled="@(_isGenerating || _isSavingCover)" @onclick="DismissEditAsync">Dismiss preview</button>
             <button type="button"
                     class="@GetGenerationButtonClass("primary")"
+                    disabled="@(_isGenerating || _isSavingCover)"
                     title="@GetGenerationTooltip()"
                     aria-disabled="@(!IsProfessional)"
                     @onclick="OnGenerateCoverConceptsClickedAsync">
@@ -38,6 +39,7 @@
             </button>
             <button type="button"
                     class="@GetGenerationButtonClass("secondary")"
+                    disabled="@(_isGenerating || _isSavingCover)"
                     title="@GetGenerationTooltip()"
                     aria-disabled="@(!IsProfessional)"
                     @onclick="OnSurpriseMeClickedAsync">
@@ -56,8 +58,9 @@
 
         @if (!string.IsNullOrWhiteSpace(_saveStatus))
         {
-            <div class="cover-save-status">@_saveStatus</div>
+            <div class="cover-save-status" role="status">@_saveStatus</div>
         }
+        @if (!string.IsNullOrWhiteSpace(_lastAction)) { <p role="status">@_lastAction</p> }
         @if(_editPreview is { } review && review.Edit.Request.Source.MetadataRevision!=_metadataRevision && review.Receipt is null) {
             <p role="status">This cover review has an older project revision. Reconcile an approved save or generate a new edit before saving.</p>
         }
@@ -89,7 +92,7 @@
         <div class="cover-preview-frame">
             @if (!string.IsNullOrWhiteSpace(_coverError))
             {
-                <div class="cover-preview-placeholder">@_coverError</div>
+                <div class="cover-preview-placeholder" role="alert">@_coverError</div>
             }
             else if (_selectedImageUrl is not null)
             {
@@ -144,6 +147,7 @@
     private string? _coverError;
     private bool _isGenerating;
     private bool _isSavingCover;
+    private bool _cancelRequested;
     private string? _selectedImageUrl;
     private string? _saveStatus;
     private string? _projectCoverImageUrl;
@@ -256,7 +260,7 @@
     {
         if(_isGenerating || _isSavingCover) return;
         var sourceProject=Project?.Id; var epoch=_epoch;
-        using var request=System.Threading.CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token); _request=request;
+        using var request=System.Threading.CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token); request.CancelAfter(TimeSpan.FromMinutes(3)); _request=request; _cancelRequested=false;
         _isGenerating = true;
         _coverError = null;
         _saveStatus = null;
@@ -278,12 +282,14 @@
                 throw new InvalidOperationException("The backend did not confirm the saved cover source.");
             if(response.ImageUrls is null || response.ImageUrls.Count is <1 or >4) throw new InvalidOperationException("Invalid cover concept count.");
             foreach(var image in response.ImageUrls) CoverStudioContract.ReadPng(image);
-            _generatedImageUrls.Clear();
-            _editPreview=null;_conceptAssets.Clear();
+            var conceptAssets=new Dictionary<string,CoverAssetIdentity>();
             if(response.Assets is { } assets) {
                 if(assets.Count!=response.ImageUrls.Count)throw new InvalidOperationException("Cover asset mapping is incomplete.");
-                for(int i=0;i<assets.Count;i++)if(assets[i] is { } asset){CoverAssetContract.Validate(asset,CoverStudioContract.ReadPng(response.ImageUrls[i]),project);_conceptAssets[response.ImageUrls[i]]=asset;}
+                for(int i=0;i<assets.Count;i++)if(assets[i] is { } asset){CoverAssetContract.Validate(asset,CoverStudioContract.ReadPng(response.ImageUrls[i]),project);conceptAssets[response.ImageUrls[i]]=asset;}
             }
+            _generatedImageUrls.Clear();
+            _editPreview=null;_conceptAssets.Clear();
+            foreach(var asset in conceptAssets)_conceptAssets.Add(asset.Key,asset.Value);
             _generatedImageUrls.AddRange(response.ImageUrls);
             _selectedImageUrl = _generatedImageUrls.Count > 0 ? _generatedImageUrls[0] : null;
             _lastAction = _generatedImageUrls.Count > 0
@@ -293,8 +299,8 @@
         catch (Exception ex)
         {
             if(epoch!=_epoch) return;
-            _coverError = ex.Message;
             _lastAction = null;
+            ReportPreviewFailure(ex);
         }
         finally
         {

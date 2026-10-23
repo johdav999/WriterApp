@@ -22,7 +22,8 @@ namespace WriterApp.Application.Exporting
         string? TitlePageAuthor = null,
         string? TitlePageDraftLabel = null,
         string? TitlePageDate = null,
-        bool IncludeCover = false);
+        bool IncludeCover = false,
+        WriterApp.Shared.Collaboration.CollaborationReadRequest? Collaboration = null);
 
     public sealed record ExportPreviewResponse(string Html);
 }

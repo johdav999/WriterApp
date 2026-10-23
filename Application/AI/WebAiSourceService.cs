@@ -7,14 +7,50 @@ using WriterApp.Shared;
 
 namespace WriterApp.Application.AI;
 
-public sealed class WebAiSourceService(AppDbContext db, string owner)
+public sealed class WebAiSourceService(AppDbContext db, string owner, WriterApp.Application.Collaboration.CollaborationAccessService? access = null)
 {
     private static string Hash<T>(T value) => Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(value)));
     public async Task<WebAiSource> Capture(Guid id, Guid? section, Guid? page, Guid? scene, CancellationToken ct)
     {
-        var doc = await db.Documents.AsNoTracking().SingleOrDefaultAsync(d => d.Id == id && d.OwnerUserId == owner && d.DeletedAtUtc == null && !d.IsArchived, ct)
+        var doc = await db.Documents.AsNoTracking().SingleOrDefaultAsync(d => d.Id == id && (d.OwnerUserId == owner || access != null) && d.DeletedAtUtc == null && !d.IsArchived, ct)
             ?? throw new DocumentSyncException(404, "ai.source_missing", "Owned active manuscript not found.");
         if (await db.DeletedUserIdentities.AnyAsync(x => x.UserId == owner, ct)) throw new DocumentSyncException(404, "ai.owner_missing", "Account unavailable.");
+        if (doc.CollaborationMode != WriterApp.Shared.Collaboration.CollaborationMode.Legacy)
+        {
+            if (access is not null)
+            {
+                await using var sharedTransaction=db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable,ct) : null;
+                var grant=await access.Require(owner,id,WriterApp.Application.Collaboration.CollaborationOperation.PrepareAi,ct);
+                var snapshot = await WriterApp.Application.Collaboration.CollaborationProjectionService.Read(db, owner, id, new(), ct, access,
+                    WriterApp.Application.Collaboration.CollaborationOperation.PrepareAi);
+                if (scene is not null || section is { } sharedSection && !snapshot.Sections.Any(s => s.SectionId == sharedSection)
+                    || page is { } sharedPage && !snapshot.Pages.Any(p => p.PageId == sharedPage && (section == null || p.SectionId == section)))
+                    throw new DocumentSyncException(409, "ai.foreign_target", "Choose a current shared page.");
+                // Only this manuscript's planning/canon participates; a private project or
+                // sibling document is never implicitly included in a guest's AI context.
+                var sharedSynopsis=await db.DocumentSynopses.AsNoTracking().Where(s=>s.DocumentId==id)
+                    .Select(s=>new {s.Logline,s.Premise,s.Theme,s.ProtagonistArc,s.CentralConflict,s.Stakes,s.Setting,s.EndingIntent,s.OpenQuestions,s.Notes}).SingleOrDefaultAsync(ct);
+                var sharedCanon=await db.BibleSnapshots.AsNoTracking().Where(b=>b.DocumentId==id).OrderBy(b=>b.BibleType)
+                    .Select(b=>new {b.BibleType,b.ContentJson,b.LastRefreshSourceHash}).ToArrayAsync(ct);
+                var sharedPurpose=await db.Sections.AsNoTracking().Where(s=>s.DocumentId==id).OrderBy(s=>s.Id).Select(s=>new {s.Id,s.NarrativePurpose}).ToArrayAsync(ct);
+                var sectionIdsShared=snapshot.Sections.Select(s=>s.SectionId).ToArray();
+                var sharedNotes=await db.SectionNotes.AsNoTracking().Where(n=>sectionIdsShared.Contains(n.SectionId)).OrderBy(n=>n.SectionId).Select(n=>new {n.SectionId,n.NotesText}).ToArrayAsync(ct);
+                var sharedNodes=await db.ProjectNodes.AsNoTracking().Where(n=>n.DocumentId==id && n.ProjectId==doc.ProjectId && n.SyncDeletionId==null).OrderBy(n=>n.Id)
+                    .Select(n=>new {n.Id,n.ParentId,n.NodeType,n.Title,n.OrderIndex,n.LinkedSectionId,n.MetadataJson}).ToArrayAsync(ct);
+                var sharedNodeIds=sharedNodes.Select(n=>n.Id).ToArray();
+                var sharedCards=await db.SceneCards.AsNoTracking().Where(c=>sharedNodeIds.Contains(c.SceneNodeId)).OrderBy(c=>c.SceneNodeId).ToArrayAsync(ct);
+                var sharedSceneNotes=await db.SceneNotes.AsNoTracking().Where(n=>sharedNodeIds.Contains(n.SceneNodeId)).OrderBy(n=>n.SceneNodeId).Select(n=>new {n.SceneNodeId,n.NotesText}).ToArrayAsync(ct);
+                var sharedPageIds=snapshot.Pages.Select(p=>p.PageId).ToArray();
+                var sharedPageNotes=await db.PageNotes.AsNoTracking().Where(n=>sharedPageIds.Contains(n.PageId)).OrderBy(n=>n.PageId).Select(n=>new {n.PageId,n.Notes}).ToArrayAsync(ct);
+                var sharedSource=new {snapshot,grant.MembershipRevision,sharedSynopsis,sharedCanon,sharedPurpose,sharedNotes,sharedNodes,sharedCards,sharedSceneNotes,sharedPageNotes};
+                if(JsonSerializer.SerializeToUtf8Bytes(sharedSource).Length>4_000_000)throw new InvalidDataException("Choose a smaller shared manuscript for checked AI.");
+                var fingerprint = Hash(sharedSource);
+                if(sharedTransaction is not null)await sharedTransaction.CommitAsync(ct);
+                return new(1, Hash(owner), id, doc.ProjectId, "collaboration:" + fingerprint, fingerprint, section, page, null);
+            }
+            throw new DocumentSyncException(409, "collaboration_ai_watermark_required", "Use collaboration ai-context with a committed page vector. Legacy AI/history receipts cannot attest collaborative text.");
+        }
+        if (doc.OwnerUserId != owner) throw new DocumentSyncException(404, "ai.source_missing", "Owned manuscript not found.");
         var project = await db.Projects.AsNoTracking().Where(p => p.Id == doc.ProjectId && p.OwnerUserId == owner)
             .Select(p => new { p.Id, p.Title, p.Subtitle, p.AuthorName, p.Language, p.Genre, p.CoverImageUrl }).SingleOrDefaultAsync(ct);
         if (doc.ProjectId != Guid.Empty && project is null) throw new DocumentSyncException(404, "ai.project_missing", "Owned project unavailable.");

@@ -19,3 +19,29 @@
 button { min-height: 34px; padding: 6px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface-1); color: var(--color-text); font: inherit; cursor: pointer; }
 button:hover:not(:disabled) { border-color: var(--color-primary); }
 button:disabled { opacity: .55; cursor: not-allowed; }
+
+.annotation-navigation { display:none; }
+@media (max-width:1199px) {
+    .compact-annotations .annotation-navigation { display:flex; flex-wrap:wrap; gap:6px; }
+    .compact-annotations .panel-help, .compact-annotations .panel-scene-title, .compact-annotations .panel-save { display:none; }
+    .compact-annotations:not(.annotation-overview) .panel-annotation:not(.is-selected) { display:none; }
+    .compact-annotations:not(.annotation-composing) .annotation-composer { display:none; }
+    .compact-annotations.annotation-composing .panel-annotation { display:none; }
+    .compact-annotations button { min-height:44px; }
+    .compact-annotations .panel-annotation { margin:8px 0; padding:8px; }
+}
+
+@media (max-width:1199px) {
+    .compact-annotations.annotation-composing .annotation-navigation,
+    .compact-annotations.annotation-composing .annotation-filter { display:none; }
+    .compact-annotations .annotation-composer label { margin:4px 0; gap:2px; }
+    .compact-annotations .annotation-composer textarea { min-height:64px; }
+    .compact-annotations .annotation-composer .panel-actions { margin:6px 0; }
+    .compact-annotations .annotation-quote { margin:6px 0; }
+}
+
+@media (max-width:1199px) {
+    .compact-annotations .annotation-navigation { flex-wrap:nowrap; }
+    .compact-annotations .annotation-navigation button { padding:6px 8px; font-size:13px; }
+    .compact-annotations .annotation-filter { margin:4px 0; font-size:13px; }
+}

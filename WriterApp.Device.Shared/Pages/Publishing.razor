@@ -4,6 +4,8 @@
 @inject LocalPublishingStore Settings
 @inject IDeviceFileDialog Files
 @inject IDevicePdfExport Pdf
+@inject IDevicePdfPrint SystemPrint
+@inject IDeviceFileShare ShareFiles
 @inject DeviceCoverStudio CoverStudio
 @inject DeviceAccountService Account
 @implements IDisposable
@@ -21,7 +23,7 @@
         <label>Format<select @bind="Format">
             <option value="Html">HTML</option><option value="Text">Plain text</option><option value="Markdown">Markdown</option>
             <option value="Docx">DOCX</option><option value="Epub">EPUB</option>
-            @if (Pdf.IsAvailable) { <option value="Pdf">PDF (Windows)</option> }
+            @if (Pdf.IsAvailable || SystemPrint.IsAvailable) { <option value="Pdf">PDF</option> }
         </select></label>
         <ExportScopeFields Value="@Options.Scope" ValueChanged="ScopeChanged" />
         @if (Options.Scope == "section")
@@ -53,7 +55,8 @@
         <label>New preset name<input @bind="_presetName" @bind:event="oninput" maxlength="100" /></label>
         <button @onclick="SavePreset">Save new preset</button>
         <button @onclick="Preview">Preview saved writing</button>
-        <button @onclick="Export" disabled="@(!Files.IsAvailable || (Options.Format == DeviceExportFormat.Pdf && !Pdf.IsAvailable))">Export to file</button>
+        <button @onclick="Export" disabled="@(!Files.IsAvailable || (Options.Format == DeviceExportFormat.Pdf && !Pdf.IsAvailable && !SystemPrint.IsAvailable))">@(Options.Format == DeviceExportFormat.Pdf && SystemPrint.IsAvailable ? "Print / Save PDF" : "Export to file")</button>
+        @if (ShareFiles.IsAvailable) { <button @onclick="ShareExport" disabled="@(Options.Format == DeviceExportFormat.Pdf && !Pdf.IsAvailable)">Share export</button> }
         @if (!Files.IsAvailable) { <p>Native file saving is unavailable in this host. Preview remains available.</p> }
     </fieldset>
     <section aria-label="Publishing preview">
@@ -136,16 +139,26 @@ else if (_error is null) { <p>Loading publishing settings…</p> }
         return _snapshot;
     }
     private Task Preview() => Run(async () => { await Snapshot(); });
-    private Task Export() => Run(async () => {
+    private Task Export() => Output(false);
+    private Task ShareExport() => Output(true);
+    private Task Output(bool share) => Run(async () => {
         var snapshot=await Snapshot();long generation=snapshot.AccountGeneration;
         var file=snapshot.File;
         if(snapshot.Options.Format==DeviceExportFormat.Pdf) {
             var layout=ExportTemplatePresets.GetByKey(snapshot.Options.Template)!;
+            if (!share && SystemPrint.IsAvailable)
+            {
+                if (generation != Account.Generation || snapshot.DocumentId != DocumentId) throw new InvalidOperationException("Account or document changed. Reopen publishing before exporting.");
+                bool completed = await SystemPrint.PrintAsync(snapshot.PreviewHtml, layout.PageWidthMm, layout.PageHeightMm);
+                _message = completed ? "Android completed the print/export job." : "Print / Save PDF canceled. Writing remains saved.";
+                return;
+            }
             byte[]? pdf=await Pdf.RenderAsync(snapshot.PreviewHtml,layout.PageWidthMm,layout.PageHeightMm);
             if(pdf is null) { _message="PDF preview canceled. No file saved."; return; }
             file=new(Path.ChangeExtension(file.SuggestedFileName,".pdf"),".pdf",pdf);
         }
         if(generation!=Account.Generation || snapshot.DocumentId!=DocumentId)throw new InvalidOperationException("Account or document changed. Reopen publishing before exporting.");
+        if (share) { await ShareFiles.ShareAsync(file); _message="Export handed to Android's share sheet. The receiving app controls saving or sending."; return; }
         bool saved=await Files.SaveAsync(file.SuggestedFileName,file.Extension,file.Content);
         _message=saved ? $"Exported saved writing revision {snapshot.Revision}." : "Export canceled. No file saved.";
     });

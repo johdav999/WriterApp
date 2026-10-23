@@ -15,6 +15,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WriterApp.UI.Shared", "Writ
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WriterApp.Publishing", "WriterApp.Publishing\WriterApp.Publishing.csproj", "{DCBCA082-34BC-4FAA-80A6-1351FE5F0DCD}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WriterApp.Android", "WriterApp.Android\WriterApp.Android.csproj", "{276039C9-92BC-4EAB-A9DE-E6E6BFEA70C9}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -97,6 +99,18 @@ Global
 		{DCBCA082-34BC-4FAA-80A6-1351FE5F0DCD}.Release|x64.Build.0 = Release|Any CPU
 		{DCBCA082-34BC-4FAA-80A6-1351FE5F0DCD}.Release|x86.ActiveCfg = Release|Any CPU
 		{DCBCA082-34BC-4FAA-80A6-1351FE5F0DCD}.Release|x86.Build.0 = Release|Any CPU
+		{276039C9-92BC-4EAB-A9DE-E6E6BFEA70C9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{276039C9-92BC-4EAB-A9DE-E6E6BFEA70C9}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{276039C9-92BC-4EAB-A9DE-E6E6BFEA70C9}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{276039C9-92BC-4EAB-A9DE-E6E6BFEA70C9}.Debug|x64.Build.0 = Debug|Any CPU
+		{276039C9-92BC-4EAB-A9DE-E6E6BFEA70C9}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{276039C9-92BC-4EAB-A9DE-E6E6BFEA70C9}.Debug|x86.Build.0 = Debug|Any CPU
+		{276039C9-92BC-4EAB-A9DE-E6E6BFEA70C9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{276039C9-92BC-4EAB-A9DE-E6E6BFEA70C9}.Release|Any CPU.Build.0 = Release|Any CPU
+		{276039C9-92BC-4EAB-A9DE-E6E6BFEA70C9}.Release|x64.ActiveCfg = Release|Any CPU
+		{276039C9-92BC-4EAB-A9DE-E6E6BFEA70C9}.Release|x64.Build.0 = Release|Any CPU
+		{276039C9-92BC-4EAB-A9DE-E6E6BFEA70C9}.Release|x86.ActiveCfg = Release|Any CPU
+		{276039C9-92BC-4EAB-A9DE-E6E6BFEA70C9}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

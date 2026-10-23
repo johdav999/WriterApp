@@ -14,6 +14,19 @@ public partial class DocumentWorkspace
     private bool _brainstormGenerating;
     private WriterApp.UI.Shared.BrainstormingProposalPreview? _brainstormProposal;
     private WriterApp.UI.Shared.EditorWorkspace? _brainstormEditorWorkspace;
+    private WriterApp.UI.Shared.BrainstormingWorkspace? _brainstormWorkspace;
+    private async Task<bool> SaveBeforeBrainstormSyncAsync() {
+        if (_session is null || PanelOperationsDisabled) return false;
+        await PrepareBrainstormDraftSend();
+        return await SaveAllAsync();
+    }
+    private async Task PrepareAfterBrainstormSyncAsync() {
+        var session=_session;
+        if (session is null || _disposed) return;
+        await session.RefreshSyncMetadataAsync();
+        if (_session==session && !_disposed && session.Document.SyncState==WriterApp.Device.Shared.Storage.LocalSyncState.Synced)
+            _brainstormWorkspace?.RequestContextPreparation();
+    }
     private Task ShowBrainstormDraft() => _brainstormEditorWorkspace?.ShowDraftAsync() ?? Task.CompletedTask;
     private Task PrepareBrainstormDraftSend() => _brainstormProposal?.FlushAndCheckpointAsync() ?? Task.CompletedTask;
     private BrainstormingCache? _brainstormCache;

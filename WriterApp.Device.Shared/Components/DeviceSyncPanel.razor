@@ -9,7 +9,7 @@
 </section>
 
 @code {
-    protected override void OnInitialized() { Sync.Changed += Updated; Sync.Start(); }
+    protected override void OnInitialized() { Sync.Changed += Updated; }
     private void Updated() => _ = InvokeAsync(StateHasChanged);
     public void Dispose() => Sync.Changed -= Updated;
 }

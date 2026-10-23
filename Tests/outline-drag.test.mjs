@@ -4,6 +4,8 @@ import { readFile } from 'node:fs/promises';
 
 const source = await readFile(new URL('../WriterApp.Device.Shared/wwwroot/outline-drag.js', import.meta.url), 'utf8');
 const { attach, detach, dropPlacement } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+globalThis.requestAnimationFrame = () => 1;
+globalThis.cancelAnimationFrame = () => {};
 
 function fixture() {
     const classes = () => {
@@ -21,7 +23,10 @@ function fixture() {
         a = row('a', 'scene', 'chapter'), b = row('b', 'scene', 'chapter');
     const rootTarget = { classList: classes(), closest: selector => selector === '[data-outline-root]' ? rootTarget : null };
     const listeners = new Map(), calls = [], transfer = { effectAllowed: '', dropEffect: '', setData(type, value) { this.type = type; this.value = value; } };
+    let hit = null, captured = null;
     const root = { dataset: { outlineDisabled: 'false' }, classList: classes(), querySelectorAll: () => rows,
+        ownerDocument: { elementFromPoint: () => hit, defaultView: { addEventListener() {}, removeEventListener() {} } },
+        setPointerCapture: id => { captured = id; }, hasPointerCapture: id => captured === id, releasePointerCapture: () => { captured = null; },
         contains: node => rows.includes(node) || node === rootTarget,
         addEventListener: (name, fn) => listeners.set(name, fn), removeEventListener: name => listeners.delete(name) };
     let resolveDrop;
@@ -34,6 +39,8 @@ function fixture() {
     };
     attach(root, reference);
     return { root, part, chapter, empty, a, b, rootTarget, transfer, listeners, calls, reference, send,
+        hit: row => { hit = row; }, handle: row => ({ closest: selector => selector === '[data-outline-handle]' ? true : row.closest(selector) }),
+        pointer: (name, target, y = 20, extra = {}) => send(name, target, y, { pointerId: 1, button: 0, isPrimary: true, clientX: 10, ...extra }),
         hold: () => { wait = true; }, finish: () => resolveDrop() };
 }
 
@@ -121,4 +128,65 @@ test('Leaving the outline clears the indicator and a newly busy host rejects the
     f.root.dataset.outlineDisabled = 'true';
     await f.send('drop', f.b).result;
     assert.equal(f.calls.length, 0);
+});
+
+test('Captured touch uses hit coordinates to reorder and move inside a chapter', async () => {
+    const f = fixture();
+    f.pointer('pointerdown', f.handle(f.a), 0);
+    f.hit(f.b);
+    f.pointer('pointermove', f.root, 39);
+    assert.ok(f.b.classList.contains('outline-drop-after'));
+    await f.pointer('pointerup', f.root, 39).result;
+    assert.deepEqual(f.calls, [['DropOutlineAsync', 'a', 'b', 'after']]);
+    f.pointer('pointerdown', f.handle(f.a), 0);
+    f.hit(f.empty);
+    f.pointer('pointermove', f.root, 20);
+    await f.pointer('pointerup', f.root, 20).result;
+    assert.deepEqual(f.calls[1], ['DropOutlineAsync', 'a', 'empty', 'inside']);
+    assert.ok(!f.root.classList.contains('outline-drag-active'));
+});
+
+test('Touch scrolls outside grips; taps, cancellation, outside releases and disabled saves cannot move', async () => {
+    const f = fixture();
+    f.hit(f.b);
+    f.pointer('pointerdown', f.a, 0);
+    f.pointer('pointermove', f.root, 39);
+    await f.pointer('pointerup', f.root, 39).result;
+    f.pointer('pointerdown', f.handle(f.a), 20);
+    await f.pointer('pointerup', f.root, 20).result;
+    for (const cancellation of ['pointercancel', 'lostpointercapture', 'keydown']) {
+        f.pointer('pointerdown', f.handle(f.a), 0);
+        f.pointer('pointermove', f.root, 39);
+        f.pointer(cancellation, f.root, 39, { key: 'Escape' });
+        await f.pointer('pointerup', f.root, 39).result;
+    }
+    f.pointer('pointerdown', f.handle(f.a), 0);
+    f.pointer('pointermove', f.root, 39);
+    f.hit(null);
+    await f.pointer('pointerup', f.root, 39).result;
+    f.pointer('pointerdown', f.handle(f.a), 0);
+    f.hit(f.b);
+    f.pointer('pointermove', f.root, 39);
+    f.root.dataset.outlineDisabled = 'true';
+    await f.pointer('pointerup', f.root, 39).result;
+    assert.equal(f.calls.length, 0);
+    assert.ok(!f.b.classList.contains('outline-drop-after'));
+});
+
+test('Touch save is single-flight and dragging suppresses the following row click', async () => {
+    const f = fixture();
+    f.hold(); f.hit(f.b);
+    f.pointer('pointerdown', f.handle(f.a), 0);
+    f.pointer('pointermove', f.root, 39);
+    const save = f.pointer('pointerup', f.root, 39).result;
+    let stopped = false;
+    assert.ok(f.send('click', f.b, 39, { stopImmediatePropagation() { stopped = true; } }).event.prevented);
+    assert.ok(stopped);
+    f.pointer('pointerdown', f.handle(f.a), 0);
+    f.pointer('pointermove', f.root, 39);
+    await f.pointer('pointerup', f.root, 39).result;
+    assert.equal(f.calls.length, 1);
+    f.finish(); await save;
+    detach(f.root);
+    assert.equal(f.listeners.size, 0);
 });

@@ -1,0 +1,271 @@
+@using System.Net.Http.Json
+@using WriterApp.Shared.Collaboration
+@using System.Text.Json
+@implements IDisposable
+@inject HttpClient Api
+
+<section class="collaboration-sharing" aria-labelledby="sharing-title">
+    <header class="sharing-header">
+        <div>
+            <span class="sharing-eyebrow">YOUR WRITING, TOGETHER</span>
+            <h1 id="sharing-title">Sharing</h1>
+            <p>A place for your manuscripts and the people you trust with them.</p>
+        </div>
+        <button class="sharing-button" type="button" disabled="@_busy" @onclick="Reload"><Icon Name="refresh" /> Refresh access</button>
+    </header>
+    @if (_error is not null)
+    {
+        <div class="sharing-notice sharing-error" role="alert"><Icon Name="error_outline" /><div><strong>We couldn’t update sharing</strong><p>@_error</p></div></div>
+    }
+    @if (!_loaded && _busy)
+    {
+        <div class="sharing-loading" role="status"><span class="sharing-spinner" aria-hidden="true"></span> Loading your sharing workspace…</div>
+    }
+    else if (!_available && _error is null)
+    {
+        <div class="sharing-empty sharing-card"><Icon Name="lock" SizePx="32" /><h2>Your writing stays private</h2><p>Sharing is not available for this manuscript or build.</p><a class="sharing-button" href="@ProjectsUrl">Go to Projects <Icon Name="arrow_forward" /></a></div>
+    }
+    else if (_loaded)
+    {
+        @if (DocumentId is not null && _members is not null)
+        {
+            <section class="sharing-card sharing-management" aria-labelledby="manage-title">
+                <div class="sharing-section-heading"><div><span class="sharing-eyebrow">MANUSCRIPT ACCESS</span><h2 id="manage-title">@(_owned.FirstOrDefault(d => d.DocumentId == DocumentId)?.Title ?? "Manage sharing")</h2><p>Invite people to this manuscript. Your other project documents stay private.</p></div><span class="sharing-badge">Owner</span></div>
+                <form class="sharing-invite-form" @onsubmit="Invite" @onsubmit:preventDefault="true">
+                    <label class="sharing-email">Email address<input type="email" required placeholder="collaborator@example.com" @bind="_recipient" @bind:event="oninput" autocomplete="email" disabled="@(_busy || _pendingInvite is not null)" /></label>
+                    <label>Access<select @bind="_role" disabled="@(_busy || _pendingInvite is not null)"><option value="@CollaborationRole.Editor">Editor</option><option value="@CollaborationRole.Viewer">Viewer</option></select></label>
+                    <button class="sharing-button sharing-primary" type="submit" disabled="@(_busy || string.IsNullOrWhiteSpace(_recipient))"><Icon Name="person_add" /> @(_pendingInvite is not null ? "Retry invitation" : "Create invitation")</button>
+                </form>
+                <p class="sharing-helper">Editors can write, export and prepare AI context. Viewers can read. Invitations expire in seven days.</p>
+                @if (_created is not null) { <div class="sharing-notice sharing-success" role="status"><Icon Name="check_circle" /><p>Invitation ready. Your collaborator can accept it in Prosa’s Shared area. No code or email delivery is needed.</p></div> }
+                <h3>Pending invitations <span class="sharing-count">@_outgoing.Length</span></h3>
+                @if (_outgoing.Length == 0) { <p class="sharing-helper">No invitations waiting for a reply.</p> }
+                <ul class="sharing-list">
+                    @foreach (var invite in _outgoing)
+                    {
+                        <li class="sharing-person" @key="invite.Id"><div class="sharing-row-copy"><strong>@(invite.RecipientName ?? invite.RecipientEmail ?? "Prosa account")</strong><span class="sharing-helper">@invite.Role access · Awaiting acceptance</span></div><button class="sharing-button" type="button" disabled="@_busy" @onclick="() => CancelOutgoing(invite)">Cancel invitation</button></li>
+                    }
+                </ul>
+                <h3>People with access</h3>
+                <ul class="sharing-list">
+                    @foreach (var member in _members)
+                    {
+                        <li class="sharing-person" @key="member.UserId">
+                            <span class="sharing-avatar" aria-hidden="true"><Icon Name="person" /></span>
+                            <div class="sharing-row-copy"><strong>@(member.DisplayName ?? "Prosa account")</strong><span class="sharing-helper">@(member.Revoked ? "Access revoked" : member.Role.ToString())</span></div>
+                            @if (member.Role != CollaborationRole.Owner)
+                            {
+                                <div class="sharing-actions"><button class="sharing-button" type="button" aria-pressed="@(!member.Revoked && member.Role == CollaborationRole.Viewer)" disabled="@(_busy || (!member.Revoked && member.Role == CollaborationRole.Viewer))" @onclick="() => Change(member, CollaborationRole.Viewer, false)">Viewer</button><button class="sharing-button" type="button" aria-pressed="@(!member.Revoked && member.Role == CollaborationRole.Editor)" disabled="@(_busy || (!member.Revoked && member.Role == CollaborationRole.Editor))" @onclick="() => Change(member, CollaborationRole.Editor, false)">Editor</button><button class="sharing-button sharing-danger" type="button" disabled="@(_busy || member.Revoked)" @onclick="() => Change(member, member.Role, true)">Revoke access</button></div>
+                            }
+                            else { <span class="sharing-badge">Owner</span> }
+                        </li>
+                    }
+                </ul>
+                <details class="sharing-supporting"><summary>Supporting documents <span class="sharing-count">@_supporting.Count(d => d.Shared) shared</span></summary><p class="sharing-helper">Choose which supporting documents collaborators can read.</p>
+                    @if (_supporting.Length == 0) { <p class="sharing-helper">There are no supporting documents in this project.</p> }
+                    <ul class="sharing-list">@foreach (var choice in _supporting) { <li class="sharing-person" @key="choice.DocumentId"><div class="sharing-row-copy"><strong>@choice.Title</strong><span class="sharing-helper">@(choice.Shared ? "Shared for reading" : "Private")</span></div><button class="sharing-button" type="button" disabled="@_busy" @onclick="() => ChangeSupporting(choice)">@(choice.Shared ? "Remove shared access" : "Share with this manuscript")</button></li> }</ul>
+                </details>
+            </section>
+        }
+        <section class="sharing-card sharing-invitations" aria-labelledby="invitations-title">
+            <div class="sharing-section-heading"><div class="sharing-section-label"><span class="sharing-section-icon"><Icon Name="mail" /></span><div><h2 id="invitations-title">Your invitations <span class="sharing-count">@_inbox.Length</span></h2><p>Good writing starts with an invitation.</p></div></div>@if (_inbox.Length > 0) { <span class="sharing-badge sharing-attention">Awaiting your reply</span> }</div>
+            @if (_inbox.Length == 0)
+            {
+                <div class="sharing-inbox-empty"><Icon Name="check_circle" /><div><strong>You’re all caught up</strong><p>Invitations sent to this account will appear here.</p></div></div>
+            }
+            else
+            {
+                <ul class="sharing-list">@foreach (var invite in _inbox) {
+                    <li class="sharing-invitation" @key="invite.Id"><div class="sharing-row-copy"><span class="sharing-badge">@invite.Role</span><h3>@(invite.DocumentTitle ?? "Shared manuscript")</h3><p>@RoleDescription(invite.Role) Accept to open the manuscript.</p></div><div class="sharing-actions"><button class="sharing-button" type="button" disabled="@_busy" @onclick="() => Decline(invite.Id)">Decline</button><button class="sharing-button sharing-primary" type="button" disabled="@_busy" @onclick="() => Accept(invite)">Accept <Icon Name="arrow_forward" /></button></div></li>
+                }</ul>
+            }
+        </section>
+        <div class="sharing-library-toolbar"><div><span class="sharing-eyebrow">YOUR SHARED LIBRARY</span><p>Every collaboration, in one place.</p></div><label class="sharing-search"><Icon Name="search" /><input type="search" aria-label="Find a shared manuscript" placeholder="Find a manuscript…" @bind="_query" @bind:event="oninput" /></label></div>
+        <div class="sharing-library">
+            <section class="sharing-card" aria-labelledby="owned-title">
+                <div class="sharing-section-heading"><div><h2 id="owned-title">Your shared manuscripts <span class="sharing-count">@_owned.Length</span></h2><p>You own the writing. You choose who joins.</p></div></div>
+                @if (_owned.Length == 0)
+                {
+                    <div class="sharing-empty"><span class="sharing-empty-icon"><Icon Name="menu_book" SizePx="30" /></span><h3>Make room for another perspective</h3><p>Open a manuscript in Projects and choose Share to invite your first collaborator.</p><a class="sharing-button" href="@ProjectsUrl">Go to Projects <Icon Name="arrow_forward" /></a></div>
+                }
+                else if (!Filtered(_owned).Any()) { <p class="sharing-no-results" role="status">No owned manuscripts match “@_query”.</p> }
+                else
+                {
+                    <ul class="sharing-list">@foreach (var document in Filtered(_owned)) {
+                        <li class="sharing-manuscript" @key="document.DocumentId"><span class="sharing-book" aria-hidden="true"><Icon Name="menu_book" /></span><div class="sharing-row-copy"><span class="sharing-meta">YOUR MANUSCRIPT</span><h3>@document.Title</h3><span class="sharing-helper" title="Match this reference in both browsers to open the same manuscript.">Manuscript @document.DocumentId.ToString("N")[..8]</span><span class="sharing-helper">Owner · You manage access</span><div class="sharing-manuscript-actions"><button class="sharing-button" type="button" disabled="@_busy" @onclick="() => OpenShared(document.DocumentId)">Open <Icon Name="arrow_forward" /></button><a class="sharing-text-link" href="@($"documents/{document.DocumentId}/sharing")">Manage access</a></div></div></li>
+                    }</ul>
+                }
+            </section>
+            <section class="sharing-card" aria-labelledby="shared-title">
+                <div class="sharing-section-heading"><div><h2 id="shared-title">Shared with you <span class="sharing-count">@_shared.Length</span></h2><p>A fresh perspective begins here.</p></div></div>
+                @if (_shared.Length == 0)
+                {
+                    <div class="sharing-empty"><span class="sharing-empty-icon"><Icon Name="group" SizePx="30" /></span><h3>Your next collaboration awaits</h3><p>When you accept an invitation, the manuscript will appear here with your access level.</p></div>
+                }
+                else if (!Filtered(_shared).Any()) { <p class="sharing-no-results" role="status">No shared manuscripts match “@_query”.</p> }
+                else
+                {
+                    <ul class="sharing-list">@foreach (var document in Filtered(_shared)) {
+                        <li class="sharing-manuscript" @key="document.DocumentId"><span class="sharing-book sharing-book-guest" aria-hidden="true"><Icon Name="menu_book" /></span><div class="sharing-row-copy"><span class="sharing-badge">@document.Role</span><h3>@document.Title</h3><span class="sharing-helper" title="Match this reference in both browsers to open the same manuscript.">Manuscript @document.DocumentId.ToString("N")[..8]</span><span class="sharing-helper">@RoleDescription(document.Role)</span><div class="sharing-manuscript-actions"><button class="sharing-button" type="button" disabled="@_busy" @onclick="() => OpenShared(document.DocumentId)">Open <Icon Name="arrow_forward" /></button></div></div></li>
+                    }</ul>
+                }
+            </section>
+        </div>
+        @if (_view is not null)
+        {
+            <article class="sharing-card sharing-reader" aria-label="Shared manuscript read-only view">
+                <p>Read-only view</p>
+                @foreach (var section in _view.Sections) { <section><h2>@section.Title</h2>@((MarkupString)section.Html)</section> }
+                @if (_interactionsAvailable && _view.Pages.Length > 0)
+                {
+                    <label>Comments for page <select @bind="_commentPageId">@foreach (var choice in _view.Pages) { <option value="@choice.PageId">@choice.Title</option> }</select></label>
+                }
+                @if (_view.Pages.SingleOrDefault(p => p.PageId == _commentPageId) is { } page)
+                {
+                    var grant = _shared.SingleOrDefault(d => d.DocumentId == _view.DocumentId);
+                    <CollaborationCommentsPanel @key="page.PageId" Enabled="_interactionsAvailable" DocumentId="_view.DocumentId" PageId="page.PageId" Generation="page.Generation"
+                        ActorId="@(_accountId ?? string.Empty)" AccountContext="@AccountContext" MembershipRevision="@(grant?.MembershipRevision ?? 0)"
+                        CanComment="@(grant?.Role == CollaborationRole.Editor)" />
+                }
+            </article>
+        }
+
+        <aside class="sharing-privacy"><Icon Name="lock" /><div><strong>Your words. Your control.</strong><p>Revoking access stops future shared reads and writes. Writing already downloaded to another device cannot be remotely erased; unsent changes remain a private recovery copy.</p></div></aside>
+    }
+</section>
+
+@code {
+    [Parameter] public string ProjectsUrl { get; set; } = "documents";
+    [Parameter] public EventCallback<Guid> OpenDocument { get; set; }
+    [Parameter] public Guid? DocumentId { get; set; }
+    [Parameter, EditorRequired] public string AccountContext { get; set; } = "";
+    private string? _context;
+    private long _epoch;
+    private CancellationTokenSource _cancel = new();
+    private bool _busy, _available, _interactionsAvailable, _loaded;
+    private string _query = "";
+    private IEnumerable<CollaborationSharedDocument> Filtered(CollaborationSharedDocument[] documents) => documents.Where(d => (d.Title.Contains(_query.Trim(), StringComparison.OrdinalIgnoreCase) || d.DocumentId.ToString("N").Contains(_query.Trim().Replace("-", ""), StringComparison.OrdinalIgnoreCase)));
+    private static string RoleDescription(CollaborationRole role) => role == CollaborationRole.Viewer ? "Read-only access." : "Can write and collaborate.";
+    private bool _disposed;
+    private string? _error;
+    private string? _accountId;
+    private string _recipient = "";
+    private CollaborationRole _role = CollaborationRole.Editor;
+    private CollaborationCreatedInvitation? _created;
+    private CollaborationInviteRequest? _pendingInvite;
+    private CollaborationMember[]? _members;
+    private CollaborationInvitation[] _inbox = [];
+    private CollaborationInvitation[] _outgoing = [];
+    private CollaborationSupportingChoice[] _supporting = [];
+    private CollaborationSharedDocument[] _shared = [], _owned = [];
+    private SharedView? _view;
+    private Guid? _commentPageId;
+    private sealed record SharedSection(string Title, string Html);
+    private sealed record SharedPage(Guid PageId, Guid Generation, string Title);
+    private sealed record SharedView(Guid DocumentId, SharedSection[] Sections, SharedPage[] Pages);
+    private sealed record Availability(bool Enabled, bool InteractionsEnabled = false);
+    private sealed record Identity(bool IsAuthenticated, string UserId);
+    private sealed record SharedList(bool Complete, CollaborationSharedDocument[] Documents);
+    protected override async Task OnParametersSetAsync()
+    {
+        string context = AccountContext + "/" + DocumentId;
+        if (context == _context) return;
+        _context = context; _epoch++; _cancel.Cancel(); _cancel.Dispose(); _cancel = new();
+        _loaded = false; _query = ""; _recipient = ""; _created = null; _pendingInvite = null; _members = null; _inbox = []; _outgoing = []; _supporting = []; _shared = []; _owned = []; _view = null; _accountId = null; _available = false; _busy = false;
+        await Reload();
+        _ = Watch(_epoch, _cancel.Token);
+    }
+    private bool Current(long epoch) => epoch == _epoch && !_cancel.IsCancellationRequested;
+    public void Invalidate()
+    {
+        _interactionsAvailable = false;
+        _commentPageId = null;
+        if (_disposed) return;
+        _loaded = false; _query = ""; _epoch++; _cancel.Cancel(); _context = null; _created = null; _pendingInvite = null; _recipient = "";
+        _members = null; _inbox = []; _outgoing = []; _supporting = []; _shared = []; _owned = []; _view = null; _accountId = null; _available = false; _busy = false; _error = null;
+    }
+    private async Task Watch(long epoch, CancellationToken ct)
+    {
+        try
+        {
+            while (Current(epoch))
+            {
+                await Task.Delay(TimeSpan.FromSeconds(15), ct);
+                await InvokeAsync(async () => { if (Current(epoch) && !_busy) { await Reload(); StateHasChanged(); } });
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { }
+    }
+    private async Task Run(Func<long, CancellationToken, Task> work)
+    {
+        if (_busy) return;
+        long epoch = _epoch; var ct = _cancel.Token; _busy = true; _error = null;
+        try { await work(epoch, ct); }
+        catch (OperationCanceledException) { }
+        catch { if (Current(epoch)) _error = "Sharing could not be updated. Check your access, refresh, and try again."; }
+        finally { if (Current(epoch)) _busy = false; }
+    }
+    private Task Reload() => Run(async (epoch, ct) =>
+    {
+        var available = await Api.GetFromJsonAsync<Availability>("api/collaboration/availability", ct);
+        if (!Current(epoch)) return; _available = available?.Enabled == true; _interactionsAvailable = available?.InteractionsEnabled == true; if (!_available) { _loaded = true; _view = null; return; }
+        var me = await Api.GetFromJsonAsync<Identity>("api/auth/me", ct);
+        if (!Current(epoch)) return;
+        if (me is not { IsAuthenticated: true } || string.IsNullOrWhiteSpace(me.UserId)) { Invalidate(); return; }
+        if (_accountId is not null && _accountId != me.UserId) { Invalidate(); return; }
+        _accountId = me.UserId;
+        var inbox = await Api.GetFromJsonAsync<CollaborationInvitation[]>("api/collaboration/invitations", ct);
+        var shared = await Api.GetFromJsonAsync<SharedList>("api/collaboration/shared", ct);
+        var owned = await Api.GetFromJsonAsync<SharedList>("api/collaboration/owned", ct);
+        CollaborationMember[]? members = null;
+        CollaborationInvitation[] outgoing = [];
+        CollaborationSupportingChoice[] supporting = [];
+        if (DocumentId is { } id)
+        {
+            using var response = await Api.GetAsync($"api/collaboration/manuscripts/{id}/members", ct);
+            if (response.IsSuccessStatusCode) members = await response.Content.ReadFromJsonAsync<CollaborationMember[]>(ct);
+            if (members is not null) outgoing = await Api.GetFromJsonAsync<CollaborationInvitation[]>($"api/collaboration/manuscripts/{id}/invitations", ct) ?? [];
+            if (members is not null) supporting = await Api.GetFromJsonAsync<CollaborationSupportingChoice[]>($"api/collaboration/manuscripts/{id}/supporting", ct) ?? [];
+        }
+        if (!Current(epoch)) return;
+        _loaded = true;
+        _owned = owned is { Complete: true } ? owned.Documents : []; _inbox = inbox ?? []; _outgoing = outgoing; _supporting = supporting; _shared = shared is { Complete: true } ? shared.Documents : []; _members = members;
+        if (_view is not null && !_shared.Any(d => d.DocumentId == _view.DocumentId)) _view = null;
+    });
+    private Task OpenShared(Guid id) => Run(async (epoch, ct) =>
+    {
+        if (OpenDocument.HasDelegate) { await OpenDocument.InvokeAsync(id); return; }
+        using var response = await Api.PostAsJsonAsync($"api/documents/{id}/collaboration/read", new CollaborationReadRequest(), ct);
+        response.EnsureSuccessStatusCode(); var view = await response.Content.ReadFromJsonAsync<SharedView>(ct);
+        if (Current(epoch)) { _view = view; _commentPageId = view?.Pages.FirstOrDefault()?.PageId; }
+    });
+    private Task Invite() => Run(async (epoch, ct) =>
+    {
+        _pendingInvite ??= new CollaborationInviteRequest(Guid.NewGuid(), _role, RecipientEmail: _recipient.Trim());
+        using var response = await Api.PostAsJsonAsync($"api/collaboration/manuscripts/{DocumentId}/invitations/by-email",
+            new { _pendingInvite.OperationId, Email = _pendingInvite.RecipientEmail, _pendingInvite.Role }, ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.Conflict) { var problem = await response.Content.ReadFromJsonAsync<JsonElement>(ct); if (problem.TryGetProperty("code", out var code) && code.GetString() == "collaboration_recipient_unknown") { if(Current(epoch)){ _error = "Ask this person to sign in to Prosa on this build first, then try again."; _pendingInvite = null; } return; } }
+        response.EnsureSuccessStatusCode(); var result = await response.Content.ReadFromJsonAsync<CollaborationCreatedInvitation>(ct);
+        if (Current(epoch)) { _created = result; _recipient = ""; _pendingInvite = null; if (result is not null && !_outgoing.Any(i => i.Id == result.Invitation.Id)) _outgoing = [.. _outgoing, result.Invitation]; }
+    });
+    private async Task Accept(CollaborationInvitation invite)
+    {
+        long epoch = _epoch;
+        await Run(async (_, ct) => { using var response = await Api.PostAsJsonAsync($"api/collaboration/invitations/{invite.Id}/accept", new { }, ct); response.EnsureSuccessStatusCode(); });
+        if (Current(epoch) && _error is null) { await Reload(); if(Current(epoch)) await OpenShared(invite.DocumentId); }
+    }
+    private async Task CancelOutgoing(CollaborationInvitation invite)
+    {
+        long epoch = _epoch;
+        await Run(async (captured, ct) => { using var response = await Api.PostAsJsonAsync($"api/collaboration/manuscripts/{DocumentId}/invitations/{invite.Id}/cancel", invite.Revision, ct); response.EnsureSuccessStatusCode(); if (Current(captured) && _created?.Invitation.Id == invite.Id) _created = null; });
+        if (Current(epoch) && _error is null) await Reload();
+    }
+    private async Task Decline(Guid id)
+    { long epoch = _epoch; await Run(async (_, ct) => { using var response = await Api.PostAsJsonAsync($"api/collaboration/invitations/{id}/decline", new { }, ct); response.EnsureSuccessStatusCode(); }); if (Current(epoch) && _error is null) await Reload(); }
+    private async Task Change(CollaborationMember member, CollaborationRole role, bool revoke)
+    { long epoch = _epoch; await Run(async (_, ct) => { using var response = await Api.PostAsJsonAsync($"api/collaboration/manuscripts/{DocumentId}/members/{Uri.EscapeDataString(member.UserId)}/change", new CollaborationChangeMember(member.Revision, role, revoke), ct); response.EnsureSuccessStatusCode(); }); if (Current(epoch) && _error is null) await Reload(); }
+    private async Task ChangeSupporting(CollaborationSupportingChoice choice)
+    { long epoch = _epoch; await Run(async (_, ct) => { using var response = await Api.PostAsJsonAsync($"api/collaboration/manuscripts/{DocumentId}/supporting", new CollaborationSupportingLink(choice.DocumentId, choice.Revision, choice.Shared), ct); response.EnsureSuccessStatusCode(); }); if (Current(epoch) && _error is null) await Reload(); }
+    public void Dispose() { Invalidate(); _disposed = true; _cancel.Dispose(); }
+}

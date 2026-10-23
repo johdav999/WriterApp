@@ -1,0 +1,92 @@
+@using Microsoft.JSInterop
+@using WriterApp.Shared.Collaboration
+@using System.Text.Json
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+@inject DeviceCollaborationJournalHost Journals
+
+<p role="status" aria-live="polite">@_status</p>
+@if (_saveFailed && !_invalidated) { <button type="button" @onclick="RetrySaveAsync">Retry saving on this device</button> }
+@if (_error is not null) { <p role="alert">@_error</p> }
+<div @ref="_host" class="device-editor"></div>
+<WriterApp.UI.Shared.CollaborationCommentsPanel @ref="_comments" Enabled="@(Capabilities.InteractionsAvailable && !_invalidated && _editor is not null)"
+    DocumentId="Scope.DocumentId" PageId="Scope.PageId" Generation="Scope.Generation" MembershipRevision="Scope.MembershipRevision"
+    ActorId="Scope.OwnerId" AccountContext="@Scope.ToString()" CanComment="true" IsOwner="@(Capabilities.EffectiveAccess == "owner")"
+    CaptureAnchor="CaptureAnchor" ThreadsChanged="ThreadsChanged" FocusThread="FocusThread" />
+
+@code {
+    [Parameter, EditorRequired] public CollaborationJournalScope Scope { get; set; } = null!;
+    [Parameter, EditorRequired] public CollaborationCapabilities Capabilities { get; set; } = null!;
+    private ElementReference _host;
+    private IJSObjectReference? _module, _editor;
+    private DeviceCollaborationJournalBinding? _binding;
+    private DotNetObjectReference<DeviceCollaborationJournalBinding>? _bridge;
+    private DotNetObjectReference<DeviceCollaborationEditor>? _callbacks;
+    private string _status = "Opening saved writing…";
+    private string? _error;
+    private bool _invalidated;
+    private bool _saveFailed;
+    private CollaborationJournalScope? _mountedScope;
+    private WriterApp.UI.Shared.CollaborationCommentsPanel? _comments;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try
+        {
+            // Parent keys this component by the complete immutable page/account/generation identity.
+            if (!Capabilities.FeatureAvailable || !Capabilities.CanWriteCollaboratively || Capabilities.DocumentId != Scope.DocumentId)
+                throw new InvalidOperationException("This build has not enabled migrated manuscript editing. Your draft is retained.");
+            _mountedScope = Scope;
+            _binding = await Journals.OpenAsync(Scope);
+            _binding.Invalidated += Invalidate;
+            _bridge = DotNetObjectReference.Create(_binding); _callbacks = DotNetObjectReference.Create(this);
+            _module = await JS.InvokeAsync<IJSObjectReference>("import", "./editor/device-editor.js");
+            if (!_binding.IsCurrent() || _invalidated) throw new OperationCanceledException();
+            _editor = await _module.InvokeAsync<IJSObjectReference>("collaboration.mountNativeJournaledEditor", _host, _bridge, Scope, Capabilities, _callbacks);
+            if (!_binding.IsCurrent() || _invalidated) await _editor.InvokeVoidAsync("invalidate");
+        }
+        catch { _error = "Collaborative writing could not open safely. Keep your local draft and retry after checking access."; }
+        await InvokeAsync(StateHasChanged);
+    }
+    protected override void OnParametersSet()
+    {
+        if (_mountedScope is not null && _mountedScope != Scope) { Invalidate(); throw new InvalidOperationException("Mount a new keyed editor for a different manuscript identity."); }
+    }
+    private void Invalidate()
+    {
+        _invalidated = true;
+        _comments?.Invalidate();
+        _ = InvokeAsync(async () => { if (_editor is not null) await _editor.InvokeVoidAsync("invalidate"); _status = "Account changed. Private draft retained."; StateHasChanged(); });
+    }
+    [JSInvokable] public Task OnStatus(JsonElement status) => InvokeAsync(() =>
+    {
+        if (_invalidated) return;
+        _saveFailed = !status.GetProperty("localDurable").GetBoolean();
+        _status = status.TryGetProperty("recoveryReason", out var recovery) && recovery.ValueKind == JsonValueKind.String
+            ? "Private recovery draft · Check manuscript access before retrying"
+            : status.GetProperty("localDurable").GetBoolean()
+            ? status.GetProperty("remoteDurable").GetBoolean() ? "Saved to cloud" : "Saved on this device · Waiting to sync"
+            : "Writing is not saved on this device. Keep this page open and retry.";
+        StateHasChanged();
+    });
+    private async Task RetrySaveAsync()
+    {
+        try { if (_editor is not null) await _editor.InvokeVoidAsync("session.retryLocalPersistence"); }
+        catch { _error = "Writing is still not saved. Keep this page open; its private recovery state is retained."; }
+    }
+    private async Task<CollaborationAnchor?> CaptureAnchor() => _editor is null || _invalidated ? null : await _editor.InvokeAsync<CollaborationAnchor?>("interactions.selectionAnchor");
+    private async Task ThreadsChanged(CollaborationCommentThread[] threads) { if (_editor is not null && !_invalidated) await _editor.InvokeVoidAsync("interactions.setThreads", threads); }
+    private async Task FocusThread(Guid id) { if (_editor is not null && !_invalidated) await _editor.InvokeVoidAsync("interactions.focusThread", id.ToString()); }
+    // Navigation hosts must await this before replacing an editor; a failed flush deliberately refuses close.
+    public async Task CloseAsync()
+    {
+        if (_editor is not null) { await _editor.InvokeVoidAsync("destroy"); await _editor.DisposeAsync(); _editor = null; }
+    }
+    public async ValueTask DisposeAsync()
+    {
+        await CloseAsync();
+        if (_binding is not null) { _binding.Invalidated -= Invalidate; _binding.Dispose(); }
+        _bridge?.Dispose(); _callbacks?.Dispose(); if (_module is not null) await _module.DisposeAsync();
+    }
+}

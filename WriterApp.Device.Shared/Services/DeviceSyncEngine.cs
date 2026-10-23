@@ -6,6 +6,7 @@ namespace WriterApp.Device.Shared.Services;
 
 public sealed record DeviceSyncStatus(string Label, string? Error, DateTimeOffset? LastSynced, bool Conflict, bool Deleted);
 public sealed record DeviceSyncConflictView(Guid LocalId, Guid? RemoteCopyId, bool Deleted);
+public sealed class DeviceSyncConflictException() : InvalidOperationException("This manuscript has a cloud sync conflict. Review both versions and resolve the conflict, then retry. Your writing is retained.");
 
 /// <summary>Durable immutable requests plus a rescan of committed local revisions form the offline queue.</summary>
 public sealed class DeviceSyncEngine : IDisposable
@@ -22,6 +23,7 @@ public sealed class DeviceSyncEngine : IDisposable
     private readonly CancellationTokenSource _lifetime = new();
     private CancellationTokenSource? _run, _scheduled;
     private bool _signedIn, _disposed;
+    private Task? _startup;
     private long _generation;
     private SyncJournal? _journal;
     private string? _key;
@@ -41,6 +43,19 @@ public sealed class DeviceSyncEngine : IDisposable
         account.Changed += AccountChanged; network.Changed += NetworkChanged; repository.Changed += LocalChanged;
     }
     public void Start() => AccountChanged();
+    // One startup attempt per app service lifetime, independent of settings/menu rendering.
+    public Task StartAsync() => _startup ??= RestoreAndSyncAsync();
+    private async Task RestoreAndSyncAsync()
+    {
+        try
+        {
+            await _account.RestoreAsync(_lifetime.Token);
+            Stop(_scheduled);
+            if (_account.IsSignedIn) await SyncAsync(_lifetime.Token);
+        }
+        catch (OperationCanceledException) { }
+        catch (DeviceIdentityConfigurationException error) { Failed(error.Message); Changed?.Invoke(); }
+    }
     public DeviceSyncStatus? Status(Guid id)
     {
         var status = _statuses.GetValueOrDefault(id);
@@ -94,6 +109,32 @@ public sealed class DeviceSyncEngine : IDisposable
     }
     public void Cancel() => Stop(_run);
     public Task SyncAsync(CancellationToken ct = default) => ExecuteAsync(null, ct);
+    // Online writing tools call this after flushing and saving the editor/planning.
+    // SyncAsync deliberately retains failures in status; AI must not continue on that path.
+    public async Task<LocalDocument> SynchronizeForAiAsync(Guid id, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (!_account.IsSignedIn) throw new DeviceSignInRequiredException();
+        if (!_network.IsOnline) throw new InvalidOperationException("Connect to use this tool. Your writing is saved on this device.");
+        long generation = _account.Generation;
+        var source = await _repository.LoadAsync(id, ct) ?? throw new IOException("Manuscript unavailable.");
+        if (source.DeletedAtUtc is not null) throw new InvalidOperationException("Restore this manuscript before using writing tools.");
+        if (source.ServerDocumentId is null) await EnableAsync(id, ct);
+        else await SyncAsync(ct);
+        ct.ThrowIfCancellationRequested();
+        if (generation != _account.Generation || !_account.IsSignedIn) throw new DeviceSignInRequiredException();
+        var saved = await _repository.LoadAsync(id, ct) ?? throw new IOException("Manuscript unavailable.");
+        var status = Status(id);
+        if (status?.Conflict == true || saved.SyncState == LocalSyncState.Conflict)
+            throw new DeviceSyncConflictException();
+        if (status?.Deleted == true || saved.DeletedAtUtc is not null)
+            throw new InvalidOperationException("This manuscript was deleted in the cloud. Review the retained local copy in cloud sync details before retrying.");
+        if (status?.Error is not null || LastError is not null)
+            throw new InvalidOperationException(status?.Error ?? LastError);
+        if (saved.ServerDocumentId is null || string.IsNullOrWhiteSpace(saved.ServerVersion) || saved.SyncState != LocalSyncState.Synced)
+            throw new InvalidOperationException("Your writing is saved on this device, but cloud sync did not finish. Retry when connected.");
+        return saved;
+    }
     public Task EnableAsync(Guid id, CancellationToken ct = default) => ExecuteAsync(async token =>
     {
         var doc = await _store.GetAsync(id, token) ?? throw new IOException("Document not found.");
@@ -103,6 +144,19 @@ public sealed class DeviceSyncEngine : IDisposable
         _journal.Entries.Add(new() { LocalId = id, ServerId = Guid.NewGuid() });
         await PersistAsync(token);
         await UpdateMetadataAsync(_journal.Entries.Last(), token);
+    }, ct);
+    public Task EnableLocalDocumentsAsync(CancellationToken ct = default) => ExecuteAsync(async token =>
+    {
+        var documents = await _repository.ListAsync(cancellationToken: token);
+        foreach (var doc in documents.Documents.Where(doc => doc.ServerDocumentId is null && doc.DeletedAtUtc is null))
+        {
+            if (_journal!.Entries.Any(entry => entry.LocalId == doc.DocumentId)) continue;
+            await _disk.BindAsync(doc.DocumentId, _key!, token);
+            var entry = new SyncEntry { LocalId = doc.DocumentId, ServerId = Guid.NewGuid() };
+            _journal.Entries.Add(entry);
+            await PersistAsync(token);
+            await UpdateMetadataAsync(entry, token);
+        }
     }, ct);
     public Task DeleteAsync(Guid id, CancellationToken ct = default) => ExecuteAsync(async token =>
     {
@@ -194,7 +248,7 @@ public sealed class DeviceSyncEngine : IDisposable
         {
             var backend = new Uri(_backend);
             Failed($"Cannot reach the configured backend at {backend.GetLeftPart(UriPartial.Authority)}. "
-                + (backend.IsLoopback ? "Start the local API, then retry cloud sync." : "Check your connection, then retry cloud sync.")
+                + (backend.IsLoopback ? "Check that the local API is running and the device can reach it. On Android, run android.ps1 to restore localhost forwarding, then retry cloud sync." : "Check your connection, then retry cloud sync.")
                 + " Local writing and queued operations are preserved.");
         }
         catch (IOException) { Failed("Cloud sync could not access local storage. Close other app instances and check storage access, then retry. Local writing and queued operations are preserved."); }

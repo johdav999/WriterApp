@@ -17,6 +17,12 @@
     }
     @if (_error is not null) { <p class="brainstorm-notice" role="alert">@_error</p> }
     @if (_preparing) { <p class="brainstorm-notice" role="status">Saving writing and preparing story context… @if (SynchronizationDestination is not null) { <span>Syncing with @SynchronizationDestination.</span> }</p> }
+    @if (PreparationActions is not null) {
+        <fieldset class="brainstorm-preparation-actions" disabled="@(_loading || _generating || _preparing)">
+            <legend class="brainstorm-sr-only">Cloud sync for Brainstorm</legend>
+            @PreparationActions
+        </fieldset>
+    }
     <div class="brainstorm-view brainstorm-history" hidden="@(_view != WorkspaceView.History)">
     <h3>Your conversations</h3><p class="brainstorm-muted">Saved for this manuscript.</p>
     <fieldset disabled="@(_loading || _generating)">
@@ -57,7 +63,7 @@
             PrepareContextForSend="@((PrepareServer ?? Prepare) is null ? null : PrepareContextForSend)" ReadinessMessage="@ReadinessMessage"
             Availability="_availability?.Conversation" DictationAvailability="_availability?.Dictation" VoiceAvailability="_availability?.SpokenDialogue" Dictation="Dictation" Sessions="Sessions" CacheChanged="CacheUpdated" BusyChanged="GenerationChanged" ShowDrafts="false" ShowDraftRequested="ShowDraftRequested" PlanningSelected="SelectPlanning" />
         @if(CapturePlanning is not null && ApplyPlanning is not null && InspectPlanning is not null) {
-            <details class="brainstorm-planning-review" open="@_planningOpen"><summary>Save a planning decision</summary>
+            <details class="brainstorm-planning-review" open="@_planningOpen"><summary @onclick="() => _planningOpen = !_planningOpen" @onclick:preventDefault>Save a planning decision</summary>
             <BrainstormingPlanningPanel @ref="_planning" Cache="_cache" Store="Store" ReviewIdentity="ReviewIdentity" GenerationBusy="_generating"
                 Capture="CapturePlanning" Apply="ApplyPlanning" InspectOrUndo="InspectPlanning" CacheChanged="PlanningUpdated" />
             </details>
@@ -117,6 +123,14 @@
     [Parameter] public Func<BrainstormingTargetQuery,IReadOnlyList<BrainstormingContextChoice>,IReadOnlyList<Guid>,int,Task<BrainstormingPreparation>>? Prepare { get; set; }
     [Parameter] public Func<BrainstormingTargetQuery,IReadOnlyList<BrainstormingContextChoice>,IReadOnlyList<Guid>,int,Task<BrainstormingPreparation>>? PrepareServer { get; set; }
     [Parameter] public string? SynchronizationDestination { get; set; }
+    [Parameter] public RenderFragment? PreparationActions { get; set; }
+    public void RequestContextPreparation() {
+        if (_disposed) return;
+        _reviewReady=false;
+        _error=null;
+        _prepareOnRender=true;
+        StateHasChanged();
+    }
     private bool _prepareOnRender, _preparing;
     protected override async Task OnAfterRenderAsync(bool firstRender) {
         if (!_prepareOnRender || !Active || _disposed || _loading || _generating || _preparing || _contextReview is null || _scope is null) return;

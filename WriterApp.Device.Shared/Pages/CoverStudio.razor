@@ -1,12 +1,14 @@
 @page "/documents/{DocumentId:guid}/cover"
 @using WriterApp.Shared
 @using System.Text.Json
+@using Microsoft.Extensions.Logging
 @implements IDisposable
 @inject LocalDocumentRepository Documents
 @inject DeviceCoverStudio Studio
 @inject DeviceAccountService Account
 @inject DeviceConnectivity Network
 @inject IDeviceAiApi AiApi
+@inject ILogger<CoverStudio> Logger
 <PageTitle>Cover studio · Prosa</PageTitle>
 <main class="desktop-cover-studio">
     <h1>Cover studio</h1>
@@ -76,7 +78,11 @@
     private void NetworkChanged() { if(!Network.IsOnline) Cancel(); _=InvokeAsync(StateHasChanged); }
     private Task Generate() => Run(async ct => {
         var source=_document!; long generation=Account.Generation;
-        var usage=await AiApi.GetUsageAsync(ct);
+        WriterApp.Application.Usage.AiUsageStatusDto usage;
+        try { usage=await AiApi.GetUsageAsync(ct); }
+        catch(Exception e) when(e is HttpRequestException or IOException or System.Net.WebException) {
+            throw new DeviceAiException(DeviceAiFailure.Offline,"Could not connect to check AI access. Check your connection and that the backend is running, then try again. Your saved cover and cached concepts are preserved.");
+        }
         if(generation!=Account.Generation) throw new DeviceSignInRequiredException();
         _usage=$"{usage.PlanKey} · {usage.QuotaRemaining} AI tokens remaining (server rechecks image access).";
         if(!usage.AiEnabled || usage.HasReachedAiLimit || !string.Equals(usage.PlanKey,"Professional",StringComparison.OrdinalIgnoreCase))
@@ -96,8 +102,12 @@
     private async Task Run(Func<CancellationToken,Task> action) {
         if(_busy) return; _busy=true; _error=null; _message=null; using var operation=new CancellationTokenSource(); _operation=operation; var idle=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously); _idle=idle;
         try { await action(operation.Token); }
+        catch(OperationCanceledException) when (!operation.IsCancellationRequested) { _error="The cover request timed out. Try again later. Your saved cover and cached concepts are preserved."; }
         catch(OperationCanceledException) { _message="Canceled. Reopen to confirm any completed atomic cover save; the prior cover is retained for recovery."; }
-        catch(Exception e) when(e is IOException or InvalidDataException or InvalidOperationException or ArgumentException or HttpRequestException or JsonException or UnauthorizedAccessException or DeviceSignInRequiredException or DeviceAiException) { _error=e.Message; }
+        catch(Exception e) when(e is IOException or InvalidDataException or InvalidOperationException or ArgumentException or HttpRequestException or JsonException or UnauthorizedAccessException or DeviceSignInRequiredException or DeviceAiException) {
+            Logger.LogWarning("Cover operation failed. ExceptionType={ExceptionType} InnerExceptionType={InnerExceptionType}",e.GetType().FullName,e.InnerException?.GetType().FullName);
+            _error=e.Message;
+        }
         finally { if(_operation==operation) _operation=null; _busy=false; if(_idle==idle) _idle=null; idle.TrySetResult(); }
     }
     public void Dispose() { Cancel(); Account.Changed-=AccountChanged; Network.Changed-=NetworkChanged; }

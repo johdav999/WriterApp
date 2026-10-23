@@ -12,6 +12,7 @@ const server=createServer(async(req,res)=>{
  if(path==='/recovery'){res.setHeader('Content-Type','text/html');res.end('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="/recovery.css"><style>body{font:16px system-ui;margin:16px}*{box-sizing:border-box}</style>'+await readFile(resolve(directory,'recovery-review.html'),'utf8')+'<script type="module">window.store=await import("/store.js");</script>');return;}
  if(path==='/recovery.css'){res.setHeader('Content-Type','text/css');res.end(await readFile('WriterApp.UI.Shared/BrainstormingRecoveryPanel.razor.css'));return;}
  if(path==='/store.js'){res.setHeader('Content-Type','text/javascript');res.end(await readFile('WriterApp.Client/wwwroot/js/brainstorming-store.js'));return;}
+ if(path==='/indexeddb-connection.js'){res.setHeader('Content-Type','text/javascript');res.end(await readFile('WriterApp.Client/wwwroot/js/indexeddb-connection.js'));return;}
  res.writeHead(404);res.end();
 });
 await new Promise(done=>server.listen(0,'127.0.0.1',done));const browser=await chromium.launch({channel:'msedge',headless:true}),page=await browser.newPage({viewport:{width:1400,height:950}});const checks=[],errors=[];page.on('pageerror',e=>errors.push(e.message));

@@ -1,5 +1,6 @@
 .panel-resize-handle { position: absolute; top: 0; bottom: 0; width: 8px; z-index: 8; cursor: col-resize; touch-action: none; outline: none; }
 .is-left { right: 0; }
+.is-editor-left { right: 0; }
 .is-right { left: -12px; }
 .is-outline { right: 0; }
 .is-brainstorm-right { left: 0; }

@@ -4,26 +4,51 @@ using WriterApp.Data;
 using WriterApp.Shared;
 using WriterApp.Shared.Brainstorming;
 using WriterApp.Shared.Sync;
+using WriterApp.Application.Collaboration;
+using WriterApp.Shared.Collaboration;
 
 namespace WriterApp.Application.AI;
 
-/// <summary>Read-only owned manuscript adapter. No provider call, save, canon refresh or structure command.</summary>
-public sealed class BrainstormingStorySourceReader(AppDbContext db, string owner)
+/// <summary>Read-only checked manuscript adapter. Shared prose comes from committed projections.</summary>
+public sealed class BrainstormingStorySourceReader(AppDbContext db, string owner, CollaborationAccessService? access = null)
 {
-    public async Task<BrainstormingStorySnapshot> ReadAsync(Guid documentId, Guid? expectedProject = null, CancellationToken ct = default)
+    public Task<BrainstormingStorySnapshot> ReadAsync(Guid documentId, Guid? expectedProject = null, CancellationToken ct = default) =>
+        db.Database.CreateExecutionStrategy().ExecuteAsync(async () => {
+            await using var tx = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, ct) : null;
+            var result = await ReadCore(documentId, expectedProject, ct);
+            if (tx is not null) await tx.CommitAsync(ct);
+            return result;
+        });
+    private async Task<BrainstormingStorySnapshot> ReadCore(Guid documentId, Guid? expectedProject, CancellationToken ct)
     {
-        var checkedSources = new WebAiSourceService(db, owner);
+        var checkedSources = new WebAiSourceService(db, owner, access);
         var lease = await checkedSources.Capture(documentId, null, null, null, ct);
         var document = await db.Documents.AsNoTracking().SingleAsync(d => d.Id == documentId, ct);
         if (expectedProject is not null && document.ProjectId != expectedProject) throw new BrainstormingAccessException();
-        var project = await db.Projects.AsNoTracking().SingleAsync(p => p.Id == document.ProjectId && p.OwnerUserId == owner, ct);
-        var sections = await db.Sections.AsNoTracking().Where(s => s.DocumentId == documentId).OrderBy(s => s.OrderIndex).ThenBy(s => s.Id).Take(1001).ToArrayAsync(ct);
-        var pages = await db.Pages.AsNoTracking().Where(p => p.DocumentId == documentId && db.Sections.Any(s => s.Id == p.SectionId && s.DocumentId == documentId)).OrderBy(p => p.OrderIndex).ThenBy(p => p.Id).Take(1001).ToArrayAsync(ct);
+        var project = await db.Projects.AsNoTracking().SingleAsync(p => p.Id == document.ProjectId && p.OwnerUserId == document.OwnerUserId, ct);
+        var shared = document.CollaborationMode == CollaborationMode.Collaborative
+            ? await CollaborationProjectionService.Read(db, owner, documentId, new(), ct, access, CollaborationOperation.PrepareAi) : null;
+        var sectionQuery = db.Sections.AsNoTracking().Where(s => s.DocumentId == documentId);
+        var pageQuery = db.Pages.AsNoTracking().Where(p => p.DocumentId == documentId && db.Sections.Any(s => s.Id == p.SectionId && s.DocumentId == documentId));
+        if (shared is not null) {
+            var liveSections = shared.Sections.Select(s => s.SectionId).ToArray(); var livePages = shared.Pages.Select(p => p.PageId).ToArray();
+            sectionQuery = sectionQuery.Where(s => liveSections.Contains(s.Id)); pageQuery = pageQuery.Where(p => livePages.Contains(p.Id));
+        }
+        var sections = await sectionQuery.OrderBy(s => s.OrderIndex).ThenBy(s => s.Id).Take(1001).ToArrayAsync(ct);
+        var pages = await pageQuery.OrderBy(p => p.OrderIndex).ThenBy(p => p.Id).Take(1001).ToArrayAsync(ct);
         var nodes = await db.ProjectNodes.AsNoTracking().Where(n => n.DocumentId == documentId && n.ProjectId == document.ProjectId && n.SyncDeletionId == null).Take(1001).ToArrayAsync(ct);
-        var outline = WritingOutline.Create(documentId, project.SyncEnabled || nodes.Length != 0 ? document.ProjectId : null,
+        if (nodes.Length > 1000) throw new InvalidDataException("Story outline exceeds the supported source size.");
+        if (shared is not null) {
+            var excluded = nodes.Where(n => n.LinkedSectionId is { } section && !sections.Any(s => s.Id == section)).Select(n => n.Id).ToHashSet();
+            while (nodes.Any(n => !excluded.Contains(n.Id) && n.ParentId is { } parent && excluded.Contains(parent)))
+                foreach (var node in nodes.Where(n => n.ParentId is { } parent && excluded.Contains(parent))) excluded.Add(node.Id);
+            nodes = nodes.Where(n => !excluded.Contains(n.Id)).ToArray();
+        }
+        var outline = WritingOutline.Create(documentId, shared is not null || project.SyncEnabled || nodes.Length != 0 ? document.ProjectId : null,
             lease.DocumentVersion, sections.Select(s => new WritingOutlineSection(s.Id, s.OrderIndex, s.Title)),
             nodes.Select(n => new WritingOutlineNode(n.Id, n.ParentId, n.OrderIndex, n.NodeType.ToString().ToLowerInvariant(), n.Title, n.LinkedSectionId)));
-        var storyPages = pages.Select(p => new BrainstormingStoryPage(p.Id, p.SectionId, p.OrderIndex, p.Title, p.Content, "Html", lease.DocumentVersion, BrainstormingFreshness.Saved)).ToArray();
+        var storyPages = pages.Select(p => new BrainstormingStoryPage(p.Id, p.SectionId, p.OrderIndex, p.Title,
+            shared is null ? p.Content : shared.Pages.Single(active => active.PageId == p.Id).Html, "Html", lease.DocumentVersion, BrainstormingFreshness.Saved)).ToArray();
         var refs = new List<BrainstormingStoryReference>();
         void Add(Guid id, BrainstormingSourceKind kind, string title, object text, string revision, Guid? node = null) => refs.Add(new(id, documentId, kind, title[..Math.Min(200, title.Length)],
             text is string str ? str : JsonSerializer.Serialize(text, BrainstormingValidation.Json), revision, BrainstormingFreshness.Saved, BrainstormingSourceNature.PlanningIntent, NodeId: node));

@@ -5,6 +5,7 @@
 @inject NavigationManager Navigation
 @inject IWebAssemblyHostEnvironment HostEnvironment
 @inject IOptions<WriterAuthOptions> AuthOptions
+@inject HttpClient Http
 
 <PageTitle>Sign in</PageTitle>
 
@@ -18,15 +19,28 @@
                     <p class="lead mb-3">Pick the sign-in path that matches your account.</p>
                     <p class="text-muted mb-4">@_statusMessage</p>
                     <div class="d-grid gap-2">
+                        @if (_localSignIn)
+                        {
+                            <form method="get" action="/local-collaboration/sign-in" data-enhance="false">
+                                <input type="hidden" name="returnUrl" value="@_returnUrl" />
+                                <label for="prosa-email" class="form-label">Prosa account email</label>
+                                <input id="prosa-email" class="form-control mb-3" name="email" type="email" autocomplete="username" required maxlength="254" />
+                                <button class="btn btn-primary btn-lg" type="submit">Sign in with Prosa</button>
+                            </form>
+                            <p class="text-muted">Use your Prosa password on the next screen. Keep a different account in each browser profile.</p>
+                        }
                         @foreach (AuthLink link in _authLinks)
                         {
                             <a class="@link.CssClass" href="@link.Href">@link.Label</a>
                         }
                     </div>
+                    @if (!_localSignIn)
+                    {
                     <div class="mt-4 text-muted small">
                         <p class="mb-2">Prosa uses App Service Authentication for the sign-in transaction. Your account is provisioned after authentication at <code>/api/auth/me</code>.</p>
                         <p class="mb-0">Need a new customer account? Use <a href="@_registerUrl">Start free</a>.</p>
                     </div>
+                    }
                 </div>
             </div>
         </div>
@@ -38,8 +52,10 @@
     private string _statusMessage = "Checking sign-in...";
     private string _registerUrl = EasyAuthUrlBuilder.BuildAppRegisterUrl(DefaultReturnUrl, DefaultReturnUrl);
     private readonly List<AuthLink> _authLinks = new();
+    private bool _localSignIn;
+    private string _returnUrl = "/app/collaboration";
 
-    protected override Task OnInitializedAsync()
+    protected override async Task OnInitializedAsync()
     {
         Uri currentUri = Navigation.ToAbsoluteUri(Navigation.Uri);
         Dictionary<string, string> query = QueryStringParser.Parse(currentUri.Query);
@@ -48,11 +64,32 @@
         WriterAuthOptions authOptions = AuthOptions.Value;
         _registerUrl = EasyAuthUrlBuilder.BuildAppRegisterUrl(returnUrl, DefaultReturnUrl);
 
-        if (HostEnvironment.IsDevelopment() || currentUri.IsLoopback)
+        if (currentUri.IsLoopback)
+        {
+            try
+            {
+                using var mode = await Http.GetAsync("/local-collaboration/sign-in-mode");
+                if (mode.IsSuccessStatusCode)
+                {
+                    _localSignIn = true;
+                    _returnUrl = returnUrl.StartsWith("/app/", StringComparison.Ordinal) ? returnUrl : "/app/collaboration";
+                    _statusMessage = query.ContainsKey("signin")
+                        ? "Sign-in was not completed for the requested account. Please try again."
+                        : "Sign in with your real Prosa account to test the local editor.";
+                    return;
+                }
+            }
+            catch (HttpRequestException)
+            {
+                _statusMessage = "The local sign-in service could not be reached. Refresh to try again.";
+                return;
+            }
+        }
+        if (HostEnvironment.IsDevelopment())
         {
             _statusMessage = "Signed in (dev). Redirecting...";
             Navigation.NavigateTo(returnUrl, forceLoad: true);
-            return Task.CompletedTask;
+            return;
         }
 
         _authLinks.Clear();
@@ -92,7 +129,6 @@
             }
         }
 
-        return Task.CompletedTask;
     }
 
     private static string ResolveReturnUrl(Dictionary<string, string> query)

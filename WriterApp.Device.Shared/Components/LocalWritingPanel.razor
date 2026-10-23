@@ -30,6 +30,7 @@
             <WritingOptions Action="@_action" Value="@_settings" ValueChanged="SettingsChanged" Disabled="@ControlsBusy" />
         }
         <button type="button" class="writing-rewrite writing-preview" @onmousedown:preventDefault="true" disabled="@(ControlsBusy || !Available(SelectedKey))" @onclick="PreviewAction">@PreviewLabel</button>
+        @if (!_feedbackAfterCustom) { @WritingFeedback }
         <details class="writing-save-preset">
             <summary>Save as preset</summary>
             <div class="writing-details-content">
@@ -43,6 +44,7 @@
     } else {
         <label>Recommended craft focus <select aria-label="Recommended craft focus" @bind="_taskId" @bind:after="Dismiss" disabled="@(_busy || ExternalBusy)"><option value="">Continue naturally</option>@foreach (var tool in PromptStrategyResolver.GetTopWritingToolsForIntent(_intent)) { <option value="@tool.Id">@tool.DisplayName</option> }</select></label>
         <button type="button" @onmousedown:preventDefault="true" disabled="@(_busy || ExternalBusy || !Available("propose.next-paragraph"))" @onclick='() => Generate("propose.next-paragraph")'>Propose next paragraph</button>
+        @if (!_feedbackAfterCustom) { @WritingFeedback }
     }
     <h3>Recommended writing tools</h3>
     <label>Writing intent <select aria-label="Writing intent" @bind="_intent" @bind:after="IntentChanged" disabled="@ControlsBusy"><option>Novel</option><option>ShortStory</option><option>NonFiction</option><option>Blog</option><option>Other</option></select></label>
@@ -69,8 +71,13 @@
     }
     }
     @ChildContent
+    @if (PresetOnly || _feedbackAfterCustom) { @WritingFeedback }
+</section>
+@code {
+    private RenderFragment WritingFeedback => @<div class="writing-feedback" @ref="_feedback">
     @if (_busy) { <p role="status">Preparing writing. The original is retained.</p><button type="button" @onclick="() => _cancel?.Cancel()">Cancel writing request</button> }
     @if (_error is not null) { <p class="writing-status" role="@(_cloudLinked && Account.IsSignedIn ? "alert" : "status")">@_error</p> }
+    @if (_syncConflict) { <a href="/sync/conflicts">Review both versions</a> }
     @if (_demoError is not null) { <p role="status">@_demoError</p> }
     @if (_message is not null) { <p role="status">@_message</p> }
     @if (_copyReview is { } copyReview) { <RecommendedTextReview @key="copyReview.Proposal.ProposalId" ToolId="@copyReview.ToolId" Result="copyReview.Result" Busy="@ControlsBusy" Message="@_message" Copy="CopyRecommended" Dismiss="Dismiss" /> }
@@ -88,8 +95,8 @@
             </div>
         </section>
     }
-</section>
-@code {
+    </div>;
+
     [Parameter] public Guid DocumentId { get; set; }
     [Parameter] public RenderFragment? ChildContent { get; set; }
     [Parameter] public bool PresetOnly { get; set; }
@@ -104,6 +111,16 @@
     private WritingSettings _settings = new(); private WritingScope _scope; private WritingAvailability? _available;
     private string _intent = "Other", _taskId = ""; private Guid _documentId; private Guid? _sectionId;
     private bool _busy, _disposed; public bool IsBusy => _busy;
+    private bool _syncConflict, _revealFeedback, _feedbackAfterCustom;
+    private ElementReference _feedback;
+    protected override async Task OnAfterRenderAsync(bool firstRender) {
+        if (!_revealFeedback || _disposed) return;
+        _revealFeedback = false;
+        try {
+            await using var module = await JS.InvokeAsync<IJSObjectReference>("import", "./_content/WriterApp.Device.Shared/writing-feedback.js");
+            await module.InvokeVoidAsync("reveal", _feedback);
+        } catch (JSException) { /* Retain the request result if the view is closing. */ }
+    }
     private CancellationTokenSource? _cancel; private string? _error, _message;
     private LocalWritingPrepared? _prepared; private DeviceAiProposal? _proposal; private LocalAiHistory? _entry;
     private string _recommendedId = "";
@@ -120,11 +137,18 @@
     protected override void OnInitialized(){_accountGeneration=Account.Generation;_signedIn=Account.IsSignedIn;Account.Changed+=AccountChanged;}
     protected override async Task OnParametersSetAsync() {
         if (_documentId == DocumentId && _sectionId == SectionId && (!HasCloudCopy.HasValue || HasCloudCopy == _cloudLinked)) return;
+        if (_documentId == DocumentId && _sectionId == SectionId) {
+            // An on-demand upload can link this manuscript while its preview is running.
+            // Metadata refresh must not cancel that request or discard its reviewed result.
+            _cloudLinked = HasCloudCopy!.Value;
+            if (!_busy) await Refresh();
+            return;
+        }
         _cancel?.Cancel(); Dismiss(); _documentId = DocumentId; _sectionId = SectionId;
         try { var source = await Latest(default); _intent = PromptStrategyResolver.NormalizeIntent(source.Project?.Genre); _cloudLinked = HasCloudCopy ?? source.ServerDocumentId is not null; } catch (IOException) { _cloudLinked = false; }
         await Refresh();
     }
-    private bool Available(string key) => _cloudLinked && Account.IsSignedIn && _available?.SavedOutlineContext == true && _available.AllowedActions.Contains(key) && (_scope != WritingScope.Section || _available.StructuredSections) && !(key == "rewrite.section");
+    private bool Available(string key) => Account.IsSignedIn && _available?.SavedOutlineContext == true && _available.AllowedActions.Contains(key) && (_scope != WritingScope.Section || _available.StructuredSections) && !(key == "rewrite.section");
     private bool AnyUnavailable => _available is null || (_scope == WritingScope.Continuation ? !Available("propose.next-paragraph")
         : Operations.Where(a => _scope != WritingScope.Section || a.Key != "rewrite").Any(a => !Available(a.Key + (_scope == WritingScope.Section ? ".section" : ".selection"))));
     private void AccountChanged() {
@@ -144,7 +168,6 @@
         _availabilityCancel?.Cancel();
         _error = null; _available = null; _demoStatus = null; _demoDocumentId = null; _demoError = null;
         var generation = Account.Generation; var epoch = ++_availabilityEpoch;
-        if (!_cloudLinked) { _error = "Sync this document to use AI writing tools."; return; }
         if (!Account.IsSignedIn) { _error = "Sign in to use writing AI. Local writing remains available."; return; }
         using var cancel = new CancellationTokenSource(); _availabilityCancel = cancel;
         bool Current() => !_disposed && epoch == _availabilityEpoch && Account.Generation == generation && Account.IsSignedIn;
@@ -192,6 +215,7 @@
     public Task RunCustomAsync(string instruction) => GenerateRequest("",null,customInstruction:instruction);
     private Task GenerateRequest(string key,PromptDefinition? preset,bool demo=false,string? customInstruction=null,string? recommendationId=null) => Work(async ct => {
         Dismiss();
+        _feedbackAfterCustom = customInstruction is not null;
         QualityEditorSource? customSelection = null;
         if (customInstruction is not null) {
             if (string.IsNullOrWhiteSpace(customInstruction) || customInstruction.Length > 2000)
@@ -218,7 +242,9 @@
             if (command.Scope == WritingScope.Section) captures.Add(page.PageId, await module.InvokeAsync<TranslationPageCapture>("captureTranslation", ct, page.Content, page.ContentFormat.ToString()));
             else plain.Add(page.PageId, await module.InvokeAsync<string>("consistencyPlainText", ct, page.Content, page.ContentFormat.ToString()));
         }
-        await Sync.SyncAsync(ct); ct.ThrowIfCancellationRequested(); var saved = await Latest(ct);
+        var saved = await Sync.SynchronizeForAiAsync(DocumentId, ct);
+        _syncConflict = saved.SyncState == LocalSyncState.Conflict;
+        LocalWriting.RequireSynchronized(saved);
         if (LocalTranslation.Signature(saved) != LocalTranslation.Signature(source)) throw new InvalidOperationException("Writing changed during sync. Review and retry.");
         if (selection is not null) selection = selection with { Document = saved };
         var task = PromptStrategyResolver.GetTopWritingToolsForIntent(_intent).SingleOrDefault(t => t.Id == _taskId)?.Description ?? "Continue naturally";
@@ -273,18 +299,19 @@
     });
     private async Task<LocalDocument> Latest(CancellationToken ct) => await Documents.LoadAsync(DocumentId, ct) ?? throw new IOException("Manuscript unavailable.");
     private async Task Work(Func<CancellationToken, Task> action) {
-        if (_busy || ExternalBusy) return; _busy = true; _error = null; _message = null; bool began = false;
+        if (_busy || ExternalBusy) return; _busy = true; _error = null; _message = null; _syncConflict = false; _revealFeedback = true; bool began = false;
         using var cancel = new CancellationTokenSource(); _cancel = cancel;
         await BusyChanged.InvokeAsync(true);
         await InvokeAsync(StateHasChanged);
         try { if (BeforeWork is not null && !await BeforeWork()) throw new InvalidOperationException("Save writing and planning first."); began = true; await action(cancel.Token); }
         catch (OperationCanceledException) { _message = "Writing request canceled. History retains any approved save for recovery."; }
         catch (Exception e) when (e is IOException or InvalidDataException or InvalidOperationException or System.Text.Json.JsonException or DeviceAiException or DeviceSignInRequiredException or DeviceIdentityUnavailableException or HttpRequestException or UnauthorizedAccessException or JSException) {
+            _syncConflict = e is DeviceSyncConflictException || Sync.Status(DocumentId)?.Conflict == true;
             var message = e is JSException ? e.Message.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "The writing preview could not be created." : e.Message;
             _error = message.Replace("Translation", "Writing revision", StringComparison.Ordinal).Replace("translation", "writing revision", StringComparison.Ordinal)
                 .Replace("Translate", "Revise", StringComparison.Ordinal).Replace("translate", "revise", StringComparison.Ordinal);
         }
-        finally { try { if (began && AfterWork is not null) await AfterWork(); } finally { _busy = false; _cancel = null; if(!_disposed){await BusyChanged.InvokeAsync(false);await InvokeAsync(StateHasChanged);} } }
+        finally { try { if (began && AfterWork is not null) await AfterWork(); } finally { _busy = false; _cancel = null; _revealFeedback = true; if(!_disposed){await BusyChanged.InvokeAsync(false);await InvokeAsync(StateHasChanged);} } }
     }
     public void Dispose() { _disposed = true; _availabilityCancel?.Cancel(); _cancel?.Cancel(); Account.Changed -= AccountChanged; }
     public async ValueTask DisposeAsync() {

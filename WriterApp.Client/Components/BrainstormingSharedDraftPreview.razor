@@ -1,0 +1,49 @@
+@using WriterApp.Shared.Brainstorming
+@inject HttpClient Http
+@inject WriterApp.Client.Services.WebBrainstormingSessions Sessions
+@implements IAsyncDisposable
+
+@if (_draft is { IsMine: false } draft) {
+    <section class="shared-brainstorm-draft" aria-label="Collaborator's Brainstorm draft">
+        <header><h2>Collaborator's working draft</h2><span>Generated @draft.CreatedAt.ToLocalTime().ToString("t")</span></header>
+        <p>Shared generated prose. Your conversation stays private; approved changes appear in the manuscript.</p>
+        <div class="shared-brainstorm-prose">@draft.PlainText</div>
+    </section>
+}
+@if (_unavailable) { <p role="status">Shared Brainstorm updates are unavailable. Reconnecting…</p> }
+
+@code {
+    [Parameter] public Guid DocumentId { get; set; }
+    [Parameter] public EventCallback<BrainstormingSharedDraft?> Changed { get; set; }
+    private BrainstormingSharedDraft? _draft;
+    private bool _unavailable;
+    private bool _hasRead;
+    private CancellationTokenSource _stop = new();
+    private Task? _poll;
+    protected override void OnInitialized() => _poll = Poll();
+    private async Task Poll() {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
+        try {
+            do {
+                var document = DocumentId; var identity = Sessions.Identity;
+                try {
+                    using var response = await Http.GetAsync($"api/documents/{document}/collaboration/brainstorm-draft", _stop.Token);
+                    BrainstormingSharedDraft? next = response.StatusCode == System.Net.HttpStatusCode.NoContent ? null
+                        : response.IsSuccessStatusCode ? await response.Content.ReadFromJsonAsync<BrainstormingSharedDraft>(cancellationToken: _stop.Token) : null;
+                    if (_stop.IsCancellationRequested || DocumentId != document || Sessions.Identity != identity) continue;
+                    _unavailable = !response.IsSuccessStatusCode;
+                    if (!_hasRead || _draft?.Id != next?.Id || _draft?.IsMine != next?.IsMine) {
+                        _hasRead = true;
+                        _draft = next;
+                        await Changed.InvokeAsync(next is {IsMine:false} ? next : null);
+                    }
+                } catch (Exception e) when (e is HttpRequestException or System.Text.Json.JsonException) { _unavailable = true; }
+                catch (OperationCanceledException) when (!_stop.IsCancellationRequested) { _unavailable = true; }
+                if (!_stop.IsCancellationRequested) await InvokeAsync(StateHasChanged);
+            } while (await timer.WaitForNextTickAsync(_stop.Token));
+        } catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
+    }
+    public async ValueTask DisposeAsync() {
+        _stop.Cancel(); if (_poll is not null) await _poll; _stop.Dispose();
+    }
+}

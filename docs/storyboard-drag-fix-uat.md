@@ -1,5 +1,7 @@
 # Storyboard native drag fix — 2026-10-02
 
+Android follow-up: [touch capture transfer fix and emulator verification, 2026-10-14](android-storyboard-touch-fix.md).
+
 The original markup fix addressed one defect: Razor rendered the enumerated `draggable` attribute with an empty value. Explicit `"true"` / `"false"` values fixed browser drags. The running Windows app already included that fix, but native dragging still failed.
 
 The remaining cause is the desktop transport: MAUI's Windows BlazorWebView uses WinUI WebView2, where native in-page HTML5 drag/drop remains blocked. The upstream report explicitly distinguishes external-file `AllowDrop` support from this limitation: https://github.com/dotnet/maui/issues/37903 . Browser acceptance did not establish native acceptance.

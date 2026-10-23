@@ -1,0 +1,7 @@
+@page "/documents/{DocumentId:guid}/live"
+@inject NavigationManager Navigation
+<p>Opening the manuscript editor…</p>
+@code {
+    [Parameter] public Guid DocumentId { get; set; }
+    protected override void OnParametersSet() => Navigation.NavigateTo($"documents/{DocumentId}",replace:true);
+}

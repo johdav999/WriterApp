@@ -46,7 +46,15 @@ builder.Services.AddScoped<WriterApp.Client.State.DuplicateAccountStateService>(
 builder.Services.AddScoped<WriterApp.Client.State.AuthMeStateService>();
 builder.Services.AddScoped<FeatureAccessService>();
 builder.Services.AddScoped<ClientLogoutService>();
-builder.Services.AddScoped<CoverApiClient>();
+// Image generation has a longer budget than ordinary API calls. Keep the same
+// account/error and manuscript handlers without reusing an attached handler chain.
+builder.Services.AddKeyedScoped<HttpClient>("cover-studio",(sp,_)=>{
+    var unauthorized=ActivatorUtilities.CreateInstance<ApiUnauthorizedRedirectHandler>(sp);
+    var manuscript=ActivatorUtilities.CreateInstance<ManuscriptRequestHandler>(sp);
+    manuscript.InnerHandler=new HttpClientHandler();unauthorized.InnerHandler=manuscript;
+    return new HttpClient(unauthorized){BaseAddress=new Uri($"{origin}/"),Timeout=TimeSpan.FromMinutes(3)};
+});
+builder.Services.AddScoped(sp=>new CoverApiClient(sp.GetRequiredKeyedService<HttpClient>("cover-studio")));
 builder.Services.AddScoped<WriterApp.Client.Services.OnboardingService>();
 builder.Services.AddScoped<WriterApp.Client.State.OnboardingStateStore>();
 builder.Services.AddScoped<WriterApp.Client.State.OnboardingOverlayStateService>();

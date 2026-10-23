@@ -26,6 +26,12 @@ public sealed record BrainstormingConversationEvent(int Version, BrainstormingSc
     BrainstormingGenerationUsage Usage, BrainstormingGenerationState State, DateTimeOffset CreatedAt);
 public sealed record BrainstormingGeneration(int Version, BrainstormingSend Send, BrainstormingGenerationState State,
     IReadOnlyList<BrainstormingConversationEvent> Events, string InspectionText, BrainstormingGenerationUsage Usage, string Message, DateTimeOffset UpdatedAt);
+public sealed class BrainstormingSendRejectedException(string message,string code,Guid operationId,System.Net.HttpStatusCode status)
+    : HttpRequestException(message,null,status)
+{
+    public string Code {get;}=code;
+    public Guid OperationId {get;}=operationId;
+}
 public interface IBrainstormingConversation
 {
     IAsyncEnumerable<BrainstormingConversationEvent> SendAsync(BrainstormingSend send, CancellationToken ct = default);

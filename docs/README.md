@@ -4,6 +4,18 @@
 
 - Local prerequisites, configuration, build, test, and CI instructions:
   - [development-setup.md](development-setup.md)
+  - [Android build, authentication and release setup](android-development.md)
+  - [Android emulator acceptance](android-uat.md)
+  - [Responsive editor panels and verification](responsive-editor-panels-uat.md)
+  - [Android inline annotations and emulator verification](android-inline-annotations-uat.md)
+  - [Android writing-tools scrolling fix and verification](android-tools-scroll-fix.md)
+  - [Android storyboard touch dragging and verification](android-storyboard-touch-fix.md)
+  - [Real-time collaboration implementation status](realtime-implementation-status.md)
+  - [Collaborative manuscript conversion and consistent projections](realtime-conversion.md)
+  - [Manuscript sharing, roles and private recovery](realtime-sharing.md)
+  - [Authenticated presence, carets and relative comments](realtime-interactions.md)
+  - [Collaboration acceptance, backup/restore and operations](realtime-operations.md)
+  - [Local collaboration with two real Prosa accounts](local-collaboration-test.md)
 
 ## Feedback email
 - Mailgun feedback delivery setup:

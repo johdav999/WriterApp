@@ -1,7 +1,9 @@
 @using Microsoft.JSInterop
+@inject WriterApp.Client.Services.AuthStateService Authentication
 @implements IAsyncDisposable
 
 <div class="editor-canvas">
+    @if(_loadError is not null) { <p role="alert">@_loadError</p> }
     <div class="page-lane">
         <div class="pagebreak-overlay" aria-hidden="true"></div>
         <div id="@_elementId" tabindex="0"></div>
@@ -16,6 +18,26 @@
     private bool _isEditing;
     private bool _disposed;
     private bool _contextMenuAttached;
+    private bool _creating;
+    private bool _released;
+    private string? _loadError;
+    private IJSObjectReference? _collaboration;
+    private string? _accountId;
+    protected override void OnInitialized() => Authentication.Changed += AuthenticationChanged;
+    private void AuthenticationChanged()
+    {
+        if(!_disposed && Collaborative && _accountId is not null && (!Authentication.IsAuthenticated || Authentication.UserId!=_accountId))
+            _ = InvokeAsync(async()=> { if(_editor is not null && _collaboration is not null) await _collaboration.InvokeVoidAsync("invalidate",_editor); });
+    }
+    [Parameter] public bool Collaborative { get; set; }
+    [Parameter] public EventCallback SharedStructureChanged {get;set;}
+    [JSInvokable] public Task OnSharedStructureChanged() => SharedStructureChanged.InvokeAsync();
+    [Parameter] public Guid DocumentId { get; set; }
+    [Parameter] public Guid PageId { get; set; }
+    [Parameter] public EventCallback<CollaborationEditorStatus> CollaborationStatusChanged { get; set; }
+    public sealed record CollaborationEditorStatus(bool LocalDurable,bool RemoteDurable,int Pending,int Queued,bool Connected,string? Error,string? RecoveryReason,bool AccountChanged,bool ReadOnly=false,bool ReloadRequired=false);
+    [JSInvokable] public Task OnCollaborationStatus(CollaborationEditorStatus status) => CollaborationStatusChanged.InvokeAsync(status);
+    public async Task FlushCollaborationAsync() { if(_collaboration is not null && _editor is not null)await _collaboration.InvokeVoidAsync("flush",_editor); }
 
     [Parameter]
     [EditorRequired]
@@ -73,8 +95,36 @@
             return;
         }
 
+        _creating=true;
+        try { await InitializeEditorAsync(); }
+        catch(JSException) when(Collaborative)
+        {
+            _loadError="Shared writing could not be opened. Return to Shared and reopen this manuscript. Your saved writing is retained.";
+            _initialized=true;
+            if(!_disposed)await InvokeAsync(StateHasChanged);
+        }
+        finally
+        {
+            _creating=false;
+            if(_disposed)await ReleaseEditorAsync();
+        }
+    }
+
+    private async Task InitializeEditorAsync()
+    {
         _dotNetRef = DotNetObjectReference.Create(this);
-        _editor = await JSRuntime.InvokeAsync<IJSObjectReference>(
+        if(Collaborative)
+        {
+            _accountId=(await Authentication.GetAsync()).UserId;
+            _collaboration=await JSRuntime.InvokeAsync<IJSObjectReference>("import","./js/full-editor-collaboration.js");
+            _editor=await _collaboration.InvokeAsync<IJSObjectReference>("create",_elementId,DocumentId,PageId,_dotNetRef);
+            if(_disposed)
+            {
+                return;
+            }
+            AuthenticationChanged();
+        }
+        else _editor = await JSRuntime.InvokeAsync<IJSObjectReference>(
             "tiptapEditor.create",
             _elementId,
             Content,
@@ -249,6 +299,14 @@
         }
 
         _disposed = true;
+        Authentication.Changed -= AuthenticationChanged;
+        if(!_creating)await ReleaseEditorAsync();
+    }
+
+    private async ValueTask ReleaseEditorAsync()
+    {
+        if(_released)return;
+        _released=true;
 
         if (_contextMenuAttached)
         {
@@ -272,6 +330,7 @@
         {
             try
             {
+                if(_collaboration is not null) await _collaboration.InvokeVoidAsync("close",_editor);
                 await JSRuntime.InvokeVoidAsync("tiptapEditor.destroy", _editor);
             }
             catch (JSDisconnectedException)
@@ -297,6 +356,7 @@
             }
         }
 
+        if(_collaboration is not null) await _collaboration.DisposeAsync();
         _dotNetRef?.Dispose();
         _dotNetRef = null;
     }

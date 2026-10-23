@@ -1,4 +1,8 @@
-<div class="editor-shell @Class @(BrainstormOpen ? "is-brainstorming" : "")" style="@Style">
+@using Microsoft.JSInterop
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<div @ref="_root" class="editor-shell @Class @(BrainstormOpen ? "is-brainstorming" : "")" style="@Style" data-responsive-panels data-editor-location="@LocationKey" data-annotation-panel="@AnnotationPanel.ToString().ToLowerInvariant()">
     @if (BrainstormOpen) {
         <nav class="brainstorm-pane-controls" aria-label="Brainstorm panes">
             <button type="button" aria-pressed="@(_pane == "outline")" @onclick='() => SelectPane("outline")'><Icon Name="format_list_bulleted" /><span>Outline</span></button>
@@ -9,6 +13,13 @@
         </nav>
     }
     <div class="editor-workspace @WorkspaceClass @(_outlineCollapsed ? "brainstorm-outline-collapsed" : "") @(_conversationCollapsed ? "brainstorm-conversation-collapsed" : "")" data-brainstorm-pane="@_pane">
+        @if (!BrainstormOpen) {
+            <aside class="editor-navigation-host" aria-label="Projects and outline" tabindex="-1">
+                <header class="editor-panel-heading"><strong>Projects &amp; outline</strong><button type="button" class="panel-toggle" data-panel-action="close-left">Close</button></header>
+                <div class="editor-navigation-scroll"><nav class="editor-project-links" aria-label="Projects">@EditorNavigation</nav>@Outline</div>
+                <PanelResizeHandle Side="editor-left" Label="Resize projects and outline" />
+            </aside>
+        }
         @if (BrainstormOpen && Outline is not null) {
             <aside class="brainstorm-outline" aria-label="Brainstorm outline">@Outline<PanelResizeHandle Side="outline" Label="Resize Brainstorm outline" /></aside>
         }
@@ -21,7 +32,9 @@
         }
         @if (Context is not null)
         {
-            <div class="editor-context-host" hidden="@BrainstormOpen">
+            <div class="editor-context-host" hidden="@BrainstormOpen" aria-label="Writing tools" tabindex="-1">
+                <div class="annotation-resize-grip" role="separator" aria-label="Resize annotations" aria-orientation="horizontal"></div>
+                <header class="editor-panel-heading"><strong>@(AnnotationPanel ? "Annotations" : "Writing tools")</strong><div class="annotation-panel-controls">@if (AnnotationPanel) { <button type="button" class="annotation-all-tools" @onclick="ExitAnnotations">Tools</button> }<button type="button" class="annotation-panel-size" data-panel-action="annotation-size">More space</button><button type="button" class="panel-toggle" data-panel-action="close-right">@(AnnotationPanel ? "Close" : "Back to writing")</button></div></header>
                 @if (!BrainstormOpen) { <PanelResizeHandle Side="right" Label="Resize right context panel" /> }
                 @Context
             </div>
@@ -32,14 +45,19 @@
             </aside>
         }
     </div>
+    <button type="button" class="editor-panel-backdrop" data-panel-action="dismiss" aria-label="Close panel and return to writing" tabindex="-1"></button>
 </div>
 @code {
+    [CascadingParameter(Name = "EditorNavigation")] public RenderFragment? EditorNavigation { get; set; }
+    [Parameter] public string? LocationKey { get; set; }
     [Parameter] public string? Class { get; set; }
     [Parameter] public string? Style { get; set; }
     [Parameter] public string? WorkspaceClass { get; set; }
     [Parameter] public RenderFragment? Main { get; set; }
     [Parameter] public RenderFragment? Context { get; set; }
     [Parameter] public bool BrainstormOpen { get; set; }
+    [Parameter] public bool AnnotationPanel { get; set; }
+    [Parameter] public EventCallback ExitAnnotations { get; set; }
     [Parameter] public RenderFragment? Outline { get; set; }
     [Parameter] public RenderFragment? Brainstorming { get; set; }
     [Parameter] public RenderFragment? Proposal { get; set; }
@@ -48,12 +66,38 @@
     private string _pane = "draft";
     private bool _outlineCollapsed = true, _conversationCollapsed;
     private Guid? _knownProposalId;
+    private ElementReference _root;
+    private IJSObjectReference? _panels;
+    private bool _disposed, _attaching;
+    protected override async Task OnAfterRenderAsync(bool firstRender) {
+        if (_disposed || _attaching) return;
+        _attaching = true;
+        try {
+            if (_panels is null) {
+                var module = await JS.InvokeAsync<IJSObjectReference>("import", "/_content/WriterApp.UI.Shared/editor-panels.js");
+                if (_disposed) { await module.DisposeAsync(); return; }
+                _panels = module;
+            }
+            await _panels.InvokeVoidAsync("attach", _root);
+        } catch (JSDisconnectedException) { }
+        finally { _attaching = false; }
+    }
+    public async ValueTask DisposeAsync() {
+        _disposed = true;
+        if (_panels is null) return;
+        try { await _panels.InvokeVoidAsync("detach", _root); await _panels.DisposeAsync(); }
+        catch (JSDisconnectedException) { }
+    }
     protected override void OnParametersSet() {
         if (BrainstormOpen && ProposalId is not null && ProposalId != _knownProposalId) {
             _pane = "draft";
             _conversationCollapsed = false;
         }
         _knownProposalId = ProposalId;
+    }
+    public async Task OpenContextAsync() {
+        await InvokeAsync(StateHasChanged);
+        if (_panels is not null) await _panels.InvokeVoidAsync("openContext", _root);
     }
     public Task ShowDraftAsync() => InvokeAsync(() => {
         SelectPane("draft");

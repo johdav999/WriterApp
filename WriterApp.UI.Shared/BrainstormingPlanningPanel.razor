@@ -98,7 +98,13 @@
     private Task Prepare()=>Run(async epoch=>{
         var scope=_scope??throw new InvalidOperationException("Open a conversation first.");var snapshot=await Capture(scope);
         if(epoch!=_epoch || _disposed)return;
-        if(snapshot.Version!=1 || snapshot.Scope!=scope && snapshot.Scope!=Cache?.Mapping?.Server)throw new InvalidDataException("Planning snapshot ownership changed.");
+        // Capture can map and synchronize a brand-new local conversation. Validate
+        // against that durable mapping rather than the pre-capture component copy.
+        var current=await Store.ReadAsync(scope)??throw new InvalidDataException("Conversation unavailable.");
+        if(epoch!=_epoch || _disposed || _scope!=scope)return;
+        if(snapshot.Version!=1 || snapshot.Scope!=scope && snapshot.Scope!=current.Mapping?.Server)throw new InvalidDataException("Planning snapshot ownership changed.");
+        Cache=current;await CacheChanged.InvokeAsync(current);
+        if(epoch!=_epoch || _disposed || _scope!=scope)return;
         if(_kind==BrainstormingPlanningKind.CharacterNote && string.IsNullOrWhiteSpace(_character))throw new InvalidOperationException("Name the character for this authored note.");
         _snapshot=snapshot;ResetReview();_fields.Clear();_approved.Clear();
         if(_kind==BrainstormingPlanningKind.SceneIdea){_fields["Title"]="Scene idea";_fields["Summary"]=_decision;_fields["Notes"]=_decision;}

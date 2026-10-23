@@ -46,4 +46,4 @@ button:focus-visible { outline:2px solid var(--brainstorm-accent); outline-offse
     .brainstorm-draft-heading { margin-bottom:12px; }
     .brainstorm-draft-heading h1 { font-size:22px; }
 }
-@media (max-width:980px) { .editor-context-host { display:none; } }
+/* Responsive visibility is owned by the shared panel presentation controller. */

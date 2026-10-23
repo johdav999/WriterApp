@@ -75,6 +75,8 @@ public sealed partial class DocumentSyncService(AppDbContext db, IUserEntitlemen
             var state = await OwnedStateAsync(owner, id, ct);
             var document = state.IsDeleted ? null : await db.Documents.AsNoTracking().Include(x => x.Sections).ThenInclude(x => x.Pages)
                 .SingleAsync(x => x.Id == id && x.OwnerUserId == owner, ct);
+            if (document is not null && document.CollaborationMode != WriterApp.Shared.Collaboration.CollaborationMode.Legacy)
+                throw new DocumentSyncException(409, "collaboration_snapshot_unavailable", "This manuscript uses binary collaboration. Keep existing local drafts and open it with a compatible collaboration client.");
             var dto = document is null ? null : ToDto(document);
             if (document is not null && standalonePlanning && await IsStandaloneAsync(document,ct)) dto=dto! with {Synopsis=await ReadStandaloneSynopsisAsync(document.Id,ct)};
             else if (projects && document is not null) dto = dto! with { Project = await ReadProjectAsync(document, ct, planning, multipleDocuments) };
@@ -121,6 +123,7 @@ public sealed partial class DocumentSyncService(AppDbContext db, IUserEntitlemen
             var current = await db.DocumentSyncRecords.AsNoTracking().SingleOrDefaultAsync(x => x.DocumentId == id, ct);
             if (current is not null && current.OwnerUserId != owner)
                 throw new DocumentSyncException(404, "document_not_found", "Document not found.");
+            await WriterApp.Application.Collaboration.CollaborationWriteGuard.RequireLegacyAsync(db, id, ct);
             if (current is not null && (current.IsDeleted || current.Version != request.ExpectedVersion))
                 throw new DocumentSyncException(409, current.IsDeleted ? "document_deleted" : "version_conflict", "Preserve local writing and fetch the current server version.", State(current));
             if (current is null && (request.ExpectedVersion is not null || request.Action != "upload"))

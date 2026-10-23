@@ -10,6 +10,7 @@ using WriterApp.Application.Subscriptions;
 using WriterApp.Data;
 using WriterApp.Data.AI;
 using WriterApp.Shared;
+using WriterApp.Application.Collaboration;
 
 namespace WriterApp.Controllers;
 
@@ -18,6 +19,7 @@ public sealed class WebAiRecoveryController(AppDbContext db,IUserIdResolver user
 {
     private string Owner=>users.ResolveUserId(User);
     private WebAiHistoryOperations History=>new(db,Owner,HttpContext.RequestServices,HttpContext);
+    private CollaborationAccessService? SharedAccess=>HttpContext.RequestServices?.GetService<CollaborationAccessService>();
     [HttpGet("{document:guid}")]
     public Task<IActionResult> List(Guid document,CancellationToken ct)=>Run(async()=> {
         await History.RequireOwner(document,ct);
@@ -31,7 +33,7 @@ public sealed class WebAiRecoveryController(AppDbContext db,IUserIdResolver user
             var row=group.MaxBy(r=>r.Sequence)!;var intent=WebAiHistoryOperations.Intent(row);
             if(!WebPlanningRecovery.Supports(intent.TargetKind) && intent.TargetKind!="Aggregate")continue;
             var snapshot=row.RecoveryJson is null?null:WebPlanningRecovery.Parse(row.RecoveryJson);
-            bool supported=snapshot is not null && snapshot.Version==(intent.TargetKind=="Aggregate"?2:1);
+            bool supported=snapshot is not null && (intent.TargetKind=="Aggregate"?snapshot.Version is 2 or 3:snapshot.Version==1);
             bool undo=supported && row.Outcome!="Undone",redo=supported && row.Outcome=="Undone";
             string before=snapshot is null?intent.BeforeContent??"":Readable(snapshot,false),after=snapshot is null?intent.AfterContent??"":Readable(snapshot,true);
             string? reason=!supported?"Comparison only: this entry has no supported server-captured scoped recovery snapshot.":null;
@@ -70,10 +72,13 @@ public sealed class WebAiRecoveryController(AppDbContext db,IUserIdResolver user
             throw new InvalidDataException("Recovery targets another manuscript or planning identity.");
         if(latest.RecoveryJson is null)throw new InvalidOperationException("This older operation is comparison only. Exact snapshots are unavailable.");
         if(request.Outcome!=(latest.Outcome=="Undone"?"Redone":"Undone"))throw new InvalidOperationException("The current persisted outcome does not support this transition. Refresh history.");
-        await new WebAiSourceService(db,Owner).Require(request.Source,ct);
+        if(request.Source.DocumentVersion.StartsWith("collaboration:",StringComparison.Ordinal))await CollaborationMigrationService.Lock(db,request.Source.DocumentId,ct);
+        await new WebAiSourceService(db,Owner,SharedAccess).Require(request.Source,ct);
         var snapshot=WebPlanningRecovery.Parse(latest.RecoveryJson);
         if(snapshot.DocumentId!=request.Source.DocumentId || snapshot.ProjectId!=request.Source.ProjectId)throw new InvalidDataException("Recovery snapshots belong to another target.");
-        if(previous.TargetKind=="Aggregate")await new WebAggregateRecovery(db).Restore(snapshot,request.Outcome=="Undone",ct);
+        if(previous.TargetKind=="Aggregate" && snapshot.Version==3)
+            await new CollaborationAggregateEdits(db,HttpContext.RequestServices.GetRequiredService<ICollaborationCodec>(),SharedAccess ?? throw new InvalidOperationException("Shared recovery is unavailable.")).Restore(Owner,request.Source,snapshot,request.Outcome=="Undone",ct);
+        else if(previous.TargetKind=="Aggregate")await new WebAggregateRecovery(db).Restore(snapshot,request.Outcome=="Undone",ct);
         else await new WebPlanningRecovery(db).Restore(snapshot,request.Outcome=="Undone",ct);
         var intent=previous with {OperationId=request.OperationId,PreviousOperationId=latest.OperationId,Sequence=latest.Sequence+1,Source=request.Source,
             Outcome=request.Outcome,BeforeContent=previous.AfterContent,AfterContent=previous.BeforeContent};

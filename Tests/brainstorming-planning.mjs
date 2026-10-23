@@ -12,6 +12,7 @@ const server=createServer(async(req,res)=>{
  if(['web','device'].includes(name)){res.setHeader('Content-Type','text/html');res.end('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><link rel="stylesheet" href="/planning.css"><style>body{font:16px system-ui;margin:16px}*{box-sizing:border-box}</style>'+await readFile(resolve(directory,'planning-review-'+name+'.html'),'utf8')+'<script type="module">window.store=await import("/store.js");</script>');return;}
  if(name==='planning.css'){res.setHeader('Content-Type','text/css');res.end(await readFile('WriterApp.UI.Shared/BrainstormingPlanningPanel.razor.css'));return;}
  if(name==='store.js'){res.setHeader('Content-Type','text/javascript');res.end(await readFile('WriterApp.Client/wwwroot/js/brainstorming-store.js'));return;}
+ if(name==='indexeddb-connection.js'){res.setHeader('Content-Type','text/javascript');res.end(await readFile('WriterApp.Client/wwwroot/js/indexeddb-connection.js'));return;}
  res.writeHead(404);res.end();
 });
 await new Promise(done=>server.listen(0,'127.0.0.1',done));const browser=await chromium.launch({channel:'msedge',headless:true}),page=await browser.newPage({viewport:{width:1400,height:950}});const base=`http://127.0.0.1:${server.address().port}`,checks=[],errors=[];page.on('pageerror',e=>errors.push(e.message));

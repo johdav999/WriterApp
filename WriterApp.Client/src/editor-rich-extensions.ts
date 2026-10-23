@@ -1,6 +1,12 @@
 import { Extension } from "@tiptap/core";
 import Image from "@tiptap/extension-image";
 
+declare module "@tiptap/core" {
+    interface Commands<ReturnType> {
+        indent: { increaseIndent: () => ReturnType; decreaseIndent: () => ReturnType };
+    }
+}
+
 export const EditorImage = Image.extend({
     addAttributes() {
         return {

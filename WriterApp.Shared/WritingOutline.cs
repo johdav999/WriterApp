@@ -31,7 +31,7 @@ public static class WritingOutline
     private static void ValidateShape(WritingOutlineSnapshot value)
     {
         if(value is null || value.Version!=1 || value.DocumentId==Guid.Empty || value.ProjectId==Guid.Empty
-            || value.DocumentVersion is not {Length:>0 and <=64} || value.Sections is null || value.Nodes is null
+            || !(value.DocumentVersion is {Length:>0 and <=64} || value.DocumentVersion is {Length:78} sharedVersion && sharedVersion.StartsWith("collaboration:",StringComparison.Ordinal) && sharedVersion[14..].All(Uri.IsHexDigit)) || value.Sections is null || value.Nodes is null
             || value.Sections.Count>MaxEntities || value.Nodes.Count>MaxEntities || value.ProjectId is null && value.Nodes.Count!=0)
             throw new InvalidDataException("Unsupported saved writing outline. Save and synchronize this document or update the backend.");
         if(value.Sections.Any(s=>s is null || s.Id==Guid.Empty || s.Order<0 || s.Title is null || s.Title.Length>200)

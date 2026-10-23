@@ -11,6 +11,26 @@ namespace WriterApp.Tests;
 
 public sealed partial class LocalWritingPanelTests
 {
+    [Fact]
+    public async Task TonePreviewExplainsConflictBesideActionWithoutCallingProviderOrChangingWriting()
+    {
+        await using var h = new Harness(); await h.Start();
+        h.Source = await h.Fixture.Store.ApplySyncAsync(h.Source with { SyncState = LocalSyncState.Conflict }, h.Source.LocalRevision, default, projects: true);
+        var original = LocalDocumentCodec.Encode(h.Source);
+        h.Set("_scope", WritingScope.Section); await h.Event("ScopeChanged");
+        await h.Event("SelectAction", "change_tone");
+        await h.Event("SettingsChanged", new WritingSettings("Casual"));
+        await h.Event("PreviewAction");
+        var doc = new HtmlParser().ParseDocument(await h.Html());
+        var feedback = doc.QuerySelector(".writing-preview")!.NextElementSibling!;
+        Assert.Contains("writing-feedback", feedback.ClassList);
+        Assert.Contains("cloud sync conflict", feedback.TextContent);
+        Assert.Equal("/sync/conflicts", feedback.QuerySelector("a")!.GetAttribute("href"));
+        Assert.Equal(0, h.Api.Calls);
+        Assert.Empty(await h.Fixture.History.HistoryAsync(h.Source.DocumentId));
+        Assert.Equal(original, LocalDocumentCodec.Encode((await h.Fixture.Repository.LoadAsync(h.Source.DocumentId))!));
+    }
+
     [Theory]
     [InlineData("rewrite", "Preview rewrite", true, true)]
     [InlineData("expand", "Preview expansion", false, false)]

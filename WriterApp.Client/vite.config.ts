@@ -8,7 +8,7 @@ export default defineConfig({
     fileURLToPath(new URL("dist/web-retired/", import.meta.url))
   )],
   // Nested ProseMirror copies must share a single plugin registry in both hosts.
-  resolve: { dedupe: ["prosemirror-state", "prosemirror-model", "prosemirror-view", "prosemirror-transform", "prosemirror-keymap"] },
+  resolve: { dedupe: ["yjs", "y-protocols", "@tiptap/y-tiptap", "prosemirror-state", "prosemirror-model", "prosemirror-view", "prosemirror-transform", "prosemirror-keymap"] },
   build: {
     outDir: "dist/web-editor",
     emptyOutDir: true,

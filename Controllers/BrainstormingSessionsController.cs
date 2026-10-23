@@ -11,10 +11,11 @@ namespace WriterApp.Controllers;
 [ApiController, Authorize, Route("api/brainstorming/sessions")]
 public sealed class BrainstormingSessionsController(AppDbContext db, IUserIdResolver identity) : ControllerBase
 {
+    private WriterApp.Application.Collaboration.CollaborationAccessService? Access => HttpContext.RequestServices?.GetService<WriterApp.Application.Collaboration.CollaborationAccessService>();
     private BrainstormingSessions Service() {
         Response.Headers.CacheControl = "no-store";
         var backend = $"{Request.Scheme}://{Request.Host}{Request.PathBase}/";
-        return new(db, identity.ResolveUserId(User), BrainstormingValidation.Fingerprint(backend));
+        return new(db, identity.ResolveUserId(User), BrainstormingValidation.Fingerprint(backend), Access);
     }
     private async Task<ActionResult<T>> Run<T>(Func<BrainstormingSessions, Task<T>> work) {
         try { var result = await work(Service()); return result is null ? NotFound() : Ok(result); }
@@ -42,6 +43,6 @@ public sealed class BrainstormingSessionsController(AppDbContext db, IUserIdReso
     [HttpPost("{id:guid}/recovery"),RequestSizeLimit(6_100_000)]
     public Task<ActionResult<BrainstormingRecoveryBundle>> Recovery(Guid id,Guid documentId,BrainstormingRecoveryCopy? copy,CancellationToken ct)=>Run(async s=>{
         var session=await s.ReadAsync(documentId,id,ct)??throw new BrainstormingAccessException();
-        return await new BrainstormingRecoveryHistory(db,identity.ResolveUserId(User),session.Scope.BackendKey).ExchangeAsync(session.Scope,copy,ct);
+        return await new BrainstormingRecoveryHistory(db,identity.ResolveUserId(User),session.Scope.BackendKey,Access).ExchangeAsync(session.Scope,copy,ct);
     });
 }

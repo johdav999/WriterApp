@@ -49,6 +49,17 @@ else if (!string.IsNullOrWhiteSpace(_error))
                 return;
             }
 
+            // A shared manuscript has its own authoritative workspace. Opening
+            // it must not enter the legacy tree adoption or scene-copy routes.
+            using (var capabilities = await Http.GetAsync($"api/documents/{manuscriptTarget.DocumentId}/collaboration/capabilities")) {
+                if (capabilities.IsSuccessStatusCode) {
+                    var mode = await capabilities.Content.ReadFromJsonAsync<WriterApp.Shared.Collaboration.CollaborationCapabilities>();
+                    if (mode?.Mode is WriterApp.Shared.Collaboration.CollaborationMode.Collaborative or WriterApp.Shared.Collaboration.CollaborationMode.Migrating) {
+                        Navigation.NavigateTo($"documents/{manuscriptTarget.DocumentId}", replace: true); return;
+                    }
+                }
+            }
+
             ProjectTreeDto? tree = null;
             if (!ProjectStructureCacheService.TryGetProjectTree(ProjectId, out ProjectTreeDto cachedTree))
             {
@@ -187,8 +198,13 @@ else if (!string.IsNullOrWhiteSpace(_error))
         Guid? selected = RequestedDocumentId;
         if (selected is null)
         {
-            var tree = await Http.GetFromJsonAsync<ProjectTreeDto>($"api/projects/{projectId}/tree");
-            selected = tree?.Project.PrimaryDocumentId;
+            // Prefer the explicit selection. Shared primary resolution is
+            // read-only when the tree supplies the project's default.
+            selected = ManuscriptSelection.ForProject(projectId);
+            if (selected is null) {
+                var tree = await Http.GetFromJsonAsync<ProjectTreeDto>($"api/projects/{projectId}/tree");
+                selected = tree?.DocumentId ?? tree?.Project.PrimaryDocumentId;
+            }
         }
         ProjectDocumentDto? manuscript = docs?.FirstOrDefault(d => d.Id == selected && d.Kind == "manuscript" && d.DeletedAt is null);
         if (RequestedDocumentId is not null && manuscript is null) return null;

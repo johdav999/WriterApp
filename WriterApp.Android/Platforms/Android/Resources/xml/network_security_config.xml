@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+  <base-config cleartextTrafficPermitted="false" />
+  <debug-overrides><trust-anchors><certificates src="user" /></trust-anchors></debug-overrides>
+  <!-- adb reverse tcp:5387 tcp:5387 supports local development without LAN cleartext. -->
+  <domain-config cleartextTrafficPermitted="true"><domain>localhost</domain><domain>127.0.0.1</domain></domain-config>
+</network-security-config>

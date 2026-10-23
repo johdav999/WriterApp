@@ -1,0 +1,134 @@
+@using System.Net.Http.Json
+@using WriterApp.Shared.Collaboration
+@implements IDisposable
+@inject HttpClient Api
+
+@if (Enabled)
+{
+    <aside aria-label="Manuscript comments">
+        <h2>Comments</h2>
+        @if (_error is not null) { <p role="alert">@_error</p> }
+        <button type="button" disabled="@_busy" @onclick="Reload">Refresh comments</button>
+        @if (CanComment && CaptureAnchor is not null)
+        {
+            <label>Comment on the selected passage <textarea @bind="_body" maxlength="4000" disabled="@(_busy || _pendingCreate is not null)" /></label>
+            <button type="button" disabled="@_busy" @onclick="Create">@(_pendingCreate is null ? "Add comment" : "Retry comment")</button>
+        }
+        @if (IsOwner) { <button type="button" disabled="@_busy" @onclick="ImportLegacy">Import previous annotations as detached comments</button> }
+        @foreach (var thread in _threads)
+        {
+            <section @key="thread.Id" aria-label="Comment thread">
+                <p>@(thread.Resolved ? "Resolved" : "Open") · @(thread.Detached ? "Detached passage" : "Anchored passage")</p>
+                @if (!thread.Detached && FocusThread.HasDelegate) { <button type="button" @onclick="() => FocusThread.InvokeAsync(thread.Id)">Go to passage</button> }
+                @foreach (var message in thread.Messages) { <p><strong>@message.AuthorId</strong>: @message.Body</p> }
+                @if (CanComment && !thread.Resolved)
+                {
+                    <label>Reply <textarea value="@Reply(thread.Id)" @oninput="e => SetReply(thread.Id, e.Value?.ToString() ?? string.Empty)" maxlength="4000" disabled="@(_busy || _pendingChange is not null)" /></label>
+                    <button type="button" disabled="@_busy" @onclick='() => Change(thread, "reply")'>Reply</button>
+                }
+                @if (CanComment && (IsOwner || thread.AuthorId == ActorId))
+                { <button type="button" disabled="@_busy" @onclick='() => Change(thread, thread.Resolved ? "reopen" : "resolve")'>@(thread.Resolved ? "Reopen" : "Resolve")</button> }
+            </section>
+        }
+        @if (_pendingChange is not null) { <button type="button" disabled="@_busy" @onclick="RetryChange">Retry pending comment change</button> }
+        @if (_error is not null && (_pendingCreate is not null || _pendingChange is not null))
+        { <button type="button" disabled="@_busy" @onclick="ReleasePending">Keep draft and refresh comments</button><p>Check the refreshed comments before sending another request.</p> }
+        <p>Comments require a connection. Unsent comment text remains here until you leave this page; manuscript writing has its own durable journal.</p>
+    </aside>
+}
+
+@code {
+    [Parameter] public bool Enabled { get; set; }
+    [Parameter] public bool CanComment { get; set; }
+    [Parameter] public bool IsOwner { get; set; }
+    [Parameter, EditorRequired] public Guid DocumentId { get; set; }
+    [Parameter, EditorRequired] public Guid PageId { get; set; }
+    [Parameter, EditorRequired] public Guid Generation { get; set; }
+    [Parameter] public long MembershipRevision { get; set; }
+    [Parameter, EditorRequired] public string ActorId { get; set; } = "";
+    [Parameter, EditorRequired] public string AccountContext { get; set; } = "";
+    [Parameter] public Func<Task<CollaborationAnchor?>>? CaptureAnchor { get; set; }
+    [Parameter] public EventCallback<CollaborationCommentThread[]> ThreadsChanged { get; set; }
+    [Parameter] public EventCallback<Guid> FocusThread { get; set; }
+    private string? _identity, _error;
+    private string _body = "";
+    private long _epoch;
+    private bool _busy, _disposed;
+    private CancellationTokenSource _cancel = new();
+    private CollaborationCommentThread[] _threads = [];
+    private readonly Dictionary<Guid, string> _replies = [];
+    private CollaborationCreateComment? _pendingCreate;
+    private (Guid Thread, CollaborationCommentMutation Request)? _pendingChange;
+    private string Root => $"api/documents/{DocumentId}/pages/{PageId}/collaboration/comments";
+    protected override async Task OnParametersSetAsync()
+    {
+        string identity = $"{Enabled}/{DocumentId}/{PageId}/{Generation}/{MembershipRevision}/{ActorId}/{AccountContext}";
+        if (identity == _identity) return; Invalidate(); _identity = identity;
+        if (Enabled && !_disposed) { await Reload(); _ = Poll(_epoch, _cancel.Token); }
+    }
+    public void Invalidate()
+    {
+        _epoch++; _cancel.Cancel(); _cancel.Dispose(); _cancel = new(); _identity = null; _busy = false;
+        _threads = []; _body = ""; _replies.Clear(); _pendingCreate = null; _pendingChange = null; _error = null;
+    }
+    private bool Current(long epoch) => !_disposed && Enabled && epoch == _epoch;
+    private async Task Poll(long epoch, CancellationToken ct)
+    {
+        try { using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5)); while (await timer.WaitForNextTickAsync(ct))
+            { if (!Current(epoch)) return; if (!_busy && _pendingCreate is null && _pendingChange is null) await InvokeAsync(async () => { await Reload(); StateHasChanged(); }); } }
+        catch (OperationCanceledException) { }
+    }
+    private async Task Run(Func<long, CancellationToken, Task> work)
+    {
+        if (_busy || !Enabled || _disposed) return; long epoch = _epoch; var ct = _cancel.Token; _busy = true; _error = null;
+        try { await work(epoch, ct); }
+        catch (OperationCanceledException) { }
+        catch { if (Current(epoch)) _error = "Comments could not be updated. Keep this page open and retry. Your manuscript draft is retained."; }
+        finally { if (Current(epoch)) _busy = false; }
+    }
+    private async Task<CollaborationCommentSnapshot?> Read(long epoch, CancellationToken ct)
+    {
+        using var response = await Api.PostAsJsonAsync(Root + "/read", new CollaborationCommentRead(Generation), ct);
+        if ((int)response.StatusCode == 403) { if (Current(epoch)) { _threads = []; await ThreadsChanged.InvokeAsync(_threads); } response.EnsureSuccessStatusCode(); }
+        response.EnsureSuccessStatusCode(); var snapshot = await response.Content.ReadFromJsonAsync<CollaborationCommentSnapshot>(ct);
+        if (!Current(epoch)) return null;
+        if (snapshot is null || snapshot.PageId != PageId || snapshot.Generation != Generation) throw new InvalidDataException();
+        _threads = snapshot.Threads; await ThreadsChanged.InvokeAsync(_threads); return snapshot;
+    }
+    private Task Reload() => Run(async (epoch, ct) => { await Read(epoch, ct); });
+    private Task Create() => Run(async (epoch, ct) =>
+    {
+        if (!CanComment) return;
+        if (_pendingCreate is null)
+        {
+            var snapshot = await Read(epoch, ct); if (snapshot is null) return;
+            var anchor = CaptureAnchor is null ? null : await CaptureAnchor(); if (!Current(epoch)) return;
+            if (anchor is null || anchor.Start == anchor.End) throw new InvalidOperationException();
+            _pendingCreate = new(Guid.NewGuid(), Generation, MembershipRevision, snapshot.Sequence, anchor, _body);
+        }
+        using var response = await Api.PostAsJsonAsync(Root, _pendingCreate, ct); response.EnsureSuccessStatusCode();
+        if (Current(epoch)) { _pendingCreate = null; _body = ""; await Read(epoch, ct); }
+    });
+    private string Reply(Guid id) => _replies.GetValueOrDefault(id, "");
+    private void SetReply(Guid id, string body) { if (_pendingChange is null) _replies[id] = body; }
+    private Task Change(CollaborationCommentThread thread, string action)
+    {
+        if (_pendingChange is not null) return Task.CompletedTask;
+        _pendingChange = (thread.Id, new(Guid.NewGuid(), Generation, MembershipRevision, thread.Revision, action, action == "reply" ? Reply(thread.Id) : null));
+        return RetryChange();
+    }
+    private Task RetryChange() => Run(async (epoch, ct) =>
+    {
+        if (!CanComment || _pendingChange is not { } pending) return;
+        using var response = await Api.PostAsJsonAsync(Root + "/" + pending.Thread, pending.Request, ct); response.EnsureSuccessStatusCode();
+        if (Current(epoch)) { _pendingChange = null; _replies.Remove(pending.Thread); await Read(epoch, ct); }
+    });
+    private Task ImportLegacy() => Run(async (epoch, ct) =>
+    {
+        if (!IsOwner) return;
+        using var response = await Api.PostAsJsonAsync(Root + "/import-legacy", new CollaborationCommentRead(Generation), ct); response.EnsureSuccessStatusCode();
+        if (Current(epoch)) await Read(epoch, ct);
+    });
+    private async Task ReleasePending() { if (_busy) return; _pendingCreate = null; _pendingChange = null; await Reload(); }
+    public void Dispose() { Invalidate(); _disposed = true; _cancel.Dispose(); }
+}

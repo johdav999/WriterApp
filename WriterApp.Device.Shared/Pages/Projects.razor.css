@@ -10,7 +10,11 @@
 .device-project-storage { margin-top: 0; border-top: 1px solid var(--color-border); }
 .device-project-inspector { margin-top: var(--space-3); }
 .device-project-restore { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) 0; }
-.device-projects ::deep .tree-row { grid-template-columns: calc(var(--depth) * 12px) 24px 0 max-content minmax(0, 1fr) 0; }
+.device-projects ::deep .tree-row { grid-template-columns: calc(var(--depth) * 12px) 32px 24px max-content minmax(0, 1fr); }
+.outline-drag-row ::deep .outline-drag-handle { grid-column: 2; display: grid; place-items: center; align-self: stretch; min-height: 44px; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; color: var(--color-text-muted); }
+.outline-drag-row ::deep .tree-disclosure { grid-column: 3; }
+.outline-drag-row ::deep .tree-node-badge { grid-column: 4; }
+.outline-drag-row ::deep .tree-select { grid-column: 5; }
 .device-projects ::deep .tree-select-title { font-weight: 600; }
 .outline-drag-row { position: relative; border-radius: var(--radius-sm); }
 .outline-drag-row[draggable="true"] ::deep .tree-select { cursor: grab; }

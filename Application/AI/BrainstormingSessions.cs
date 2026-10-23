@@ -5,23 +5,31 @@ using Microsoft.EntityFrameworkCore;
 using WriterApp.Data;
 using WriterApp.Data.AI;
 using WriterApp.Shared.Brainstorming;
+using WriterApp.Application.Collaboration;
+using WriterApp.Shared.Collaboration;
 
 namespace WriterApp.Application.AI;
 
 public sealed class BrainstormingAccessException : Exception;
 /// <summary>Conversation-only storage. Never dispatches a provider or writes manuscript/planning/history.</summary>
-public sealed class BrainstormingSessions(AppDbContext db, string owner, string backendKey)
+public sealed class BrainstormingSessions(AppDbContext db, string owner, string backendKey, CollaborationAccessService? access = null)
 {
     private string AccountKey => BrainstormingValidation.Fingerprint(owner);
     private IQueryable<BrainstormingSessionRecord> Owned(Guid document) => db.BrainstormingSessions
         .Where(s => s.OwnerUserId == owner && s.BackendKey == backendKey && s.DocumentId == document);
     private async Task RequireDocument(Guid id, Guid? project, CancellationToken ct)
     {
-        var doc = await db.Documents.AsNoTracking().SingleOrDefaultAsync(d => d.Id == id && d.OwnerUserId == owner
+        var doc = await db.Documents.AsNoTracking().SingleOrDefaultAsync(d => d.Id == id && (d.OwnerUserId == owner || access != null)
             && d.DeletedAtUtc == null && !d.IsArchived, ct);
+        if (doc?.CollaborationMode == CollaborationMode.Collaborative && access is not null) {
+            try { await access.Require(owner, id, CollaborationOperation.PrepareAi, ct); }
+            catch (CollaborationSessionDeniedException) { throw new BrainstormingAccessException(); }
+        } else if (doc?.OwnerUserId != owner) throw new BrainstormingAccessException();
         if (doc is null || project is not null && doc.ProjectId != project || await db.DeletedUserIdentities.AnyAsync(u => u.UserId == owner, ct)
-            || !await db.Projects.AnyAsync(p => p.Id == doc.ProjectId && p.OwnerUserId == owner, ct)
-            || project is null && (await db.Projects.AnyAsync(p => p.Id == doc.ProjectId && p.SyncEnabled, ct)
+            || !await db.Projects.AnyAsync(p => p.Id == doc.ProjectId && p.OwnerUserId == doc.OwnerUserId, ct)
+            // Older shared sessions were manuscript-only until the first chapter.
+            // Adding outline structure must not revoke access to their private history.
+            || project is null && doc.CollaborationMode != CollaborationMode.Collaborative && (await db.Projects.AnyAsync(p => p.Id == doc.ProjectId && p.SyncEnabled, ct)
                 || await db.ProjectNodes.AnyAsync(n => n.DocumentId == id && n.SyncDeletionId == null, ct)))
             throw new BrainstormingAccessException();
     }
@@ -36,7 +44,8 @@ public sealed class BrainstormingSessions(AppDbContext db, string owner, string 
     {
         foreach (var id in session.Contexts.SelectMany(c => c.Sources).Select(s => s.DocumentId)
             .Concat((session.EnabledSources ?? []).Select(s => s.DocumentId)).Distinct())
-            if (!await db.Documents.AnyAsync(d => d.Id == id && d.OwnerUserId == owner && d.DeletedAtUtc == null && !d.IsArchived
+            if (id == session.Scope.DocumentId) await RequireDocument(id, session.Scope.ProjectId, ct);
+            else if (!await db.Documents.AnyAsync(d => d.Id == id && d.OwnerUserId == owner && d.DeletedAtUtc == null && !d.IsArchived
                 && db.Projects.Any(p => p.Id == d.ProjectId && p.OwnerUserId == owner), ct))
                 throw new BrainstormingAccessException();
     }
@@ -56,7 +65,7 @@ public sealed class BrainstormingSessions(AppDbContext db, string owner, string 
     public async Task<BrainstormingSessionPage> ListAsync(Guid document, Guid? after, int limit, CancellationToken ct)
     {
         if (limit is < 1 or > 50 || after == Guid.Empty) throw new InvalidDataException("Use a session page size of 1–50.");
-        var doc = await db.Documents.AsNoTracking().SingleOrDefaultAsync(d => d.Id == document && d.OwnerUserId == owner, ct)
+        var doc = await db.Documents.AsNoTracking().SingleOrDefaultAsync(d => d.Id == document && (d.OwnerUserId == owner || access != null), ct)
             ?? throw new BrainstormingAccessException();
         await RequireDocument(document, doc.ProjectId, ct);
         var query = Owned(document).AsNoTracking();

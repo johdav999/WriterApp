@@ -18,7 +18,7 @@ function fixture(side, stored = null, storageBlocked = false) {
     const variable = side === 'left' ? '--app-nav-width' : '--context-panel-width';
     const panel = { getBoundingClientRect: () => ({ width: parseFloat(styles.get(variable) ?? (side === 'left' ? '180' : '360')) }) };
     const owner = { clientWidth: 1280, style: { setProperty: (key, value) => styles.set(key, value) }, classList: classes,
-        querySelector: selector => selector === '.editor-workspace' ? { clientWidth: 1052 } : panel,
+        querySelector: selector => selector === '.editor-workspace' ? { clientWidth: 1052 } : selector === '.brainstorm-outline, .editor-navigation-host' ? null : panel,
         closest: () => null };
     const handle = {
         isConnected: true,

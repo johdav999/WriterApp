@@ -1,4 +1,4 @@
-﻿@page "/documents/{DocumentId:guid}"
+@page "/documents/{DocumentId:guid}"
 @using WriterApp.Device.Shared.Components
 @using WriterApp.Device.Shared.Pages
 @using WriterApp.Shared.Localization
@@ -29,11 +29,28 @@ else
     LocalDocument document = _session.Document;
     @if (document.Project is { } project)
     {
-        <nav class="local-project-context" aria-label="Writing context"><a href="/projects">Projects</a> / <a href="@($"/projects/{project.ProjectId}?documentId={(document.Kind == "manuscript" ? document.DocumentId : project.PrimaryDocumentId)}")">@project.Title</a> / @document.Title / @document.Sections.FirstOrDefault(s => s.Pages.Any(p => p.PageId == _selectedPage))?.Title @if (document.Kind == "manuscript") { <a href="@($"/projects/{project.ProjectId}/storyboard?documentId={document.DocumentId}&scene={project.Nodes.FirstOrDefault(n => n.SectionId == CurrentSectionId && n.DeletionId is null)?.NodeId}")">Storyboard</a> }</nav>
+        <div class="local-project-context">
+            <nav class="writing-breadcrumb" aria-label="Writing context">
+                <a class="writing-projects-link" href="/projects"><LibraryIcon Name="folder" /><span>Projects</span></a>
+                <span class="writing-context-separator" aria-hidden="true"><LibraryIcon Name="chevron" /></span>
+                <a class="writing-project-link" title="@project.Title" href="@($"/projects/{project.ProjectId}?documentId={(document.Kind == "manuscript" ? document.DocumentId : project.PrimaryDocumentId)}")"><span>@project.Title</span></a>
+                @if (!string.Equals(project.Title, document.Title, StringComparison.Ordinal))
+                {
+                    <span class="writing-context-separator" aria-hidden="true"><LibraryIcon Name="chevron" /></span>
+                    <span class="writing-document-title" title="@document.Title" aria-current="page">@document.Title</span>
+                }
+            </nav>
+            <nav class="writing-context-actions" aria-label="Project tools">
+                @if (document.Kind == "manuscript")
+                {
+                    <a href="@($"/projects/{project.ProjectId}/storyboard?documentId={document.DocumentId}&scene={project.Nodes.FirstOrDefault(n => n.SectionId == CurrentSectionId && n.DeletionId is null)?.NodeId}")"><LibraryIcon Name="storyboard" /><span>Storyboard</span></a>
+                }
+                <a href="@($"/documents/{DocumentId}/cover")"><LibraryIcon Name="document" /><span>Cover studio</span></a>
+            </nav>
+        </div>
     }
     DeviceDocumentStatus status = DeviceDocumentStatus.For(document, _saveFailed || _autosave?.Error is not null ? LocalSaveState.Error : _busy ? LocalSaveState.Saving : _session.SaveState);
-    @if (document.Project is not null) { <a href="@($"/documents/{DocumentId}/cover")">Cover studio</a> }
-    <EditorWorkspace @ref="_brainstormEditorWorkspace" ProposalId="SelectedBrainstormDraftId" Class="@(View.FocusMode ? "is-focus-mode" : "")" WorkspaceClass="@(View.ContextCollapsed || View.FocusMode ? "is-context-collapsed" : "")" Style="@($"--editor-max-width: {(_wideWriting ? "100%" : "900px")}; --topbar-height: 72px;")" BrainstormOpen="_brainstormOpen" LeaveBrainstorm="ToggleBrainstormAsync">
+    <EditorWorkspace ExitAnnotations="() => SelectCategoryAsync(DeviceEditorPanel.Writing)" AnnotationPanel="@(View.Panel == DeviceEditorPanel.Notes && ActiveSubview == "annotations")" @ref="_brainstormEditorWorkspace" LocationKey="@_selectedPage?.ToString()" ProposalId="SelectedBrainstormDraftId" Class="@(View.FocusMode ? "is-focus-mode" : "")" WorkspaceClass="@(View.ContextCollapsed || View.FocusMode ? "is-context-collapsed" : "")" Style="@($"--editor-max-width: {(_wideWriting ? "100%" : "900px")}; --topbar-height: 72px;")" BrainstormOpen="_brainstormOpen" LeaveBrainstorm="ToggleBrainstormAsync">
         <Proposal>
             @if (_brainstormOpen) { <BrainstormingProposalPreview @ref="_brainstormProposal" ReviewIdentity="BrainstormSessions" Sessions="BrainstormSessions.Sessions" CacheChanged="cache => _brainstormCache = cache" EditorHost="Device" GenerationBusy="_brainstormGenerating" DocumentId="DocumentId" Cache="_brainstormCache" ActiveSectionId="CurrentSectionId" TargetLabel="BrainstormTargetLabel" Navigate="NavigateBrainstormTargetAsync" ViewApplication="ViewBrainstormApplicationAsync" PrepareKeep="PrepareBrainstormKeepAsync" ApplyKeep="ApplyBrainstormKeepAsync" InspectApplication="InspectBrainstormKeepAsync" ChangeApplication="ChangeBrainstormKeepAsync" RecoverApplication="RecoverBrainstormKeepAsync" /> }
             @if (_brainstormNavigationError is not null) { <p role="alert">@_brainstormNavigationError</p> }
@@ -81,6 +98,7 @@ else
                     RequestedAnnotationId="@(_selectedPage == _annotationPage ? _requestedAnnotationId : null)" AnnotationRequest="_annotationRequest" AnnotationLocated="AnnotationLocated"
                     ConsistencyPassage="@(_consistencyPassage?.PageId == selected.PageId ? _consistencyPassage : null)" ConsistencyLocated="ConsistencyLocated">
                     <AdditionalActions>
+                        <button type="button" class="editor-action-link" disabled="@PanelOperationsDisabled" @onmousedown:preventDefault="true" @onclick="OpenAnnotationsAsync">Add comment / task</button>
                         <a class="editor-action-link" href="/account#feedback" title="Report a bug or request an enhancement" aria-label="User feedback"><Icon Name="feedback" /></a>
                         <button type="button" class="icon-only" title="Open Prosa documentation" aria-label="Documentation" disabled="@(!AccountLinks.IsAvailable)" @onclick="OpenDocumentationAsync"><Icon Name="menu_book" /></button>
                         @DocumentActions
@@ -98,18 +116,19 @@ else
         </Main>
         <Outline>
             @if (document.Kind == "manuscript" && document.Project is { } brainstormProject) {
-                <Projects ProjectId="brainstormProject.ProjectId" EmbedNavigator="true" HostDocumentId="document.DocumentId" HostRevision="document.LocalRevision"
-                    BeforeWork="BeforeContextWorkAsync" AfterWork="AfterContextWorkAsync" SceneOpenRequested="id => SwitchPageAsync(id)" />
+                <Projects IdPrefix="editor-outline" ProjectId="brainstormProject.ProjectId" EmbedNavigator="true" HostDocumentId="document.DocumentId" HostRevision="document.LocalRevision"
+                    BeforeWork="BeforeOutlineWorkAsync" AfterWork="AfterContextWorkAsync" SceneOpenRequested="id => SwitchPageAsync(id)" />
             }
-            <LocalStructureNavigator Document="document" SelectedPage="_selectedPage" Disabled="PanelOperationsDisabled" SelectPage="id => SwitchPageAsync(id)" Change="ChangeStructureAsync" />
+            <LocalStructureNavigator IdPrefix="editor-outline" Document="document" SelectedPage="_selectedPage" Disabled="PanelOperationsDisabled" SelectPage="id => SwitchPageAsync(id)" Change="ChangeStructureAsync" />
         </Outline>
         <Brainstorming>
             @if (_brainstormVisited) {
-            <BrainstormingWorkspace Active="_brainstormOpen" ResumeScope="_brainstormContextScope" DocumentId="DocumentId" SectionId="CurrentSectionId" Store="BrainstormSessions" Sessions="BrainstormSessions.Sessions"
+            <BrainstormingWorkspace @ref="_brainstormWorkspace" Active="_brainstormOpen" ResumeScope="_brainstormContextScope" DocumentId="DocumentId" SectionId="CurrentSectionId" Store="BrainstormSessions" Sessions="BrainstormSessions.Sessions"
                 Workflow="BrainstormSessions.ConversationWorkflow" Dictation="BrainstormSessions.DictationWorkflow" Capabilities="BrainstormCapabilities" ReviewIdentity="BrainstormSessions"
                 Discover="scope=>BrainstormSessions.DiscoverAsync(scope)" SynchronizeSession="(scope,pull)=>BrainstormSessions.SyncAsync(scope,pull)" ForkServerSession="BrainstormSessions.ForkServerAsync"
                 BeforeDraftSend="PrepareBrainstormDraftSend" ShowDraftRequested="ShowBrainstormDraft" GeneratingChanged="value => _brainstormGenerating = value" ScopeFactory="CreateBrainstormScopeAsync" SessionChanged="SelectBrainstormSession" CacheChanged="cache => _brainstormCache = cache"
                 Prepare="PrepareBrainstormingContextAsync" PrepareServer="PrepareServerBrainstormingContextAsync" SynchronizationDestination="@BrainstormSessions.SynchronizationDestination" SupportingDocuments="ListBrainstormingSupportingAsync" BeforeSend="BeforeBrainstormingSendAsync" CurrentWritingVersion="CurrentBrainstormWritingVersion" TargetLabel="BrainstormTargetLabel"
+                PreparationActions="@(document.ServerDocumentId is null || document.SyncState != LocalSyncState.Synced ? BrainstormSyncActions : null)"
                 CapturePlanning="CaptureBrainstormPlanningAsync" ApplyPlanning="ApplyBrainstormPlanningAsync" InspectPlanning="InspectBrainstormPlanningAsync" />
             }
         </Brainstorming>
@@ -142,14 +161,14 @@ else
                         <fieldset class="desktop-context-view planning-fields" disabled="@PanelOperationsDisabled" hidden="@(PanelOperationsBlocked || View.Panel is not (DeviceEditorPanel.Story or DeviceEditorPanel.Notes))">
                             <LocalPlanningPanel @key="DocumentId" @ref="_planningPanel" Document="document" SectionId="CurrentSectionId" Subview="@PlanningSubview"
                                 Commit="CommitPanelMutationAsync" OpenPage="id => SwitchPageAsync(id)" RevealNavigator="() => SelectCategoryAsync(DeviceEditorPanel.Navigator)"
-                                SelectedAnnotationId="_activeAnnotationId" AnnotationFocusRequest="_annotationFocusRequest" AnnotationRequested="NavigateToAnnotationAsync" GetSelectedText="SelectedAnnotationTextAsync" />
+                                SelectedAnnotationId="_activeAnnotationId" AnnotationFocusRequest="_annotationFocusRequest" AnnotationRequested="NavigateToAnnotationAsync" GetSelectedText="SelectedAnnotationTextAsync" CompactAnnotations="true" />
                         </fieldset>
                         @if (View.Panel == DeviceEditorPanel.Navigator)
                         {
                             @if (document.Kind == "manuscript" && document.Project is { } navigatorProject)
                             {
                                 <Projects ProjectId="navigatorProject.ProjectId" EmbedNavigator="true" HostDocumentId="document.DocumentId" HostRevision="document.LocalRevision"
-                                    BeforeWork="BeforeContextWorkAsync" AfterWork="AfterContextWorkAsync" SceneOpenRequested="id => SwitchPageAsync(id)" />
+                                    BeforeWork="BeforeOutlineWorkAsync" AfterWork="AfterContextWorkAsync" SceneOpenRequested="id => SwitchPageAsync(id)" />
                                 <details class="desktop-page-navigation"><summary>Sections and pages</summary>
                                     <LocalStructureNavigator Document="document" SelectedPage="_selectedPage" Disabled="PanelOperationsDisabled"
                                         SelectPage="id => SwitchPageAsync(id)" Change="ChangeStructureAsync" />
@@ -173,8 +192,8 @@ else
                 {
                     <StyleQualityOptions @bind-Goal="_styleGoal" Busy="@PanelOperationsDisabled" />
                     <p>Select text for a focused review, or leave the selection empty to check this page. Review findings and choose changes before applying.</p>
-                    <button type="button" disabled="@(PanelOperationsDisabled || document.ServerDocumentId is null)" @onmousedown:preventDefault="true" @onclick="() => RunAiAsync(DeviceAiAction.StyleQuality)">Suggest style & quality revision</button>
-                    @if (document.ServerDocumentId is null) { <p>Sync this document and sign in to request a style revision.</p> }
+                    <button type="button" disabled="@PanelOperationsDisabled" @onmousedown:preventDefault="true" @onclick="() => RunAiAsync(DeviceAiAction.StyleQuality)">Suggest style & quality revision</button>
+                    @if (document.ServerDocumentId is null) { <p>Your writing saves and syncs automatically before a style review. Sign in and connect to use AI.</p> }
                 }
                 else
                 {
@@ -188,19 +207,19 @@ else
                 <label for="custom-ai-instruction">Prompt for the next change</label>
                 <textarea id="custom-ai-instruction" @bind="_customAiInstruction" @bind:event="oninput" maxlength="2000" rows="2"
                           disabled="@(_contextBusy || _busy || _aiBusy || _transferBusy)" placeholder="Describe the change you want"></textarea>
-                <button type="button" disabled="@(_contextBusy || _busy || _aiBusy || _transferBusy || document.ServerDocumentId is null)" @onmousedown:preventDefault="true" @onclick="() => RunAiAsync(DeviceAiAction.Custom)">Preview custom action</button>
+                <button type="button" disabled="@(_contextBusy || _busy || _aiBusy || _transferBusy)" @onmousedown:preventDefault="true" @onclick="() => RunAiAsync(DeviceAiAction.Custom)">Preview custom action</button>
                 </div>
                 </details>
                     </LocalWritingPanel>
                 </div>
                 <div class="desktop-writing-utility">
-                    <button type="button" disabled="@(_contextBusy || _busy || _aiBusy || _transferBusy || document.ServerDocumentId is null)" @onmousedown:preventDefault="true" @onclick="() => RunAiAsync(DeviceAiAction.Summarize)">Summarize section</button>
+                    <button type="button" disabled="@(_contextBusy || _busy || _aiBusy || _transferBusy)" @onmousedown:preventDefault="true" @onclick="() => RunAiAsync(DeviceAiAction.Summarize)">Summarize section</button>
                 </div>
                 <details class="desktop-writing-more">
                     <summary>Translate &amp; more</summary>
                     <div class="desktop-writing-details-content">
                     <LocalTranslationPanel @key="DocumentId" @ref="_translationPanel" DocumentId="DocumentId" SectionId="CurrentSectionId"
-                        ExternalBusy="@(_contextBusy || _busy || _aiBusy || _applyingAi || _transferBusy || document.ServerDocumentId is null)"
+                        ExternalBusy="@(_contextBusy || _busy || _aiBusy || _applyingAi || _transferBusy)"
                         BeforeWork="BeforeContextWorkAsync" AfterWork="AfterContextWorkAsync" SelectionRequest="TranslateSelectionAsync" />
                     <button type="button" @onclick="() => SelectCategoryAsync(DeviceEditorPanel.Advanced)">Prompt Library</button>
                     </div>
@@ -259,7 +278,7 @@ else
                         { <p role="status">@(_hasRecovery ? "Resolve the recovery record before using Writing tools." : document.DeletedAtUtc is not null ? "Restore this document from Trash before editing." : "No page is available for Writing tools.")</p> }
                     </Body>
                     <TrailingBody>
-                        <div class="desktop-context-ai" hidden="@(!ShowContextAi)">
+                        <div class="desktop-context-ai @(ContextAiMode == "synopsis" ? "is-synopsis-coaching" : null)" hidden="@(!ShowContextAi)">
                             @if(ContextAiMode=="prompts") {
                                 <LocalPromptPanel @key="DocumentId" @ref="_promptPanel" DocumentId="DocumentId" SectionId="CurrentSectionId"
                                     CloudProjectId="@document.ServerProjectId"
@@ -278,6 +297,9 @@ else
 </div>
 
 @code {
+    private RenderFragment BrainstormSyncActions => @<div>
+        <DocumentSyncStatus Document="_session!.Document" BeforeSync="SaveBeforeBrainstormSyncAsync" AfterSync="PrepareAfterBrainstormSyncAsync" />
+    </div>;
     private bool _wideWriting, _printLayout;
     private RenderFragment DocumentActions => @<EditorDocumentActions IsOpen="_documentMenuOpen" Toggle="() => _documentMenuOpen = !_documentMenuOpen" PanelClass="is-file-transfer">
                         <button type="button" @onclick="() => _wideWriting = !_wideWriting">@(_wideWriting ? "Use focused writing width" : "Use full writing width")</button>
@@ -365,6 +387,17 @@ else
     private Guid? CurrentSectionId => _session?.Document.Sections.FirstOrDefault(s => s.Pages.Any(p => p.PageId == _selectedPage))?.SectionId;
     private Guid? _activeAnnotationId, _requestedAnnotationId, _annotationRequest, _annotationPage, _annotationFocusRequest;
     private string? _annotationNotice;
+    private async Task OpenAnnotationsAsync()
+    {
+        if (PanelOperationsDisabled) return;
+        await SelectCategoryAsync(DeviceEditorPanel.Notes);
+        if (View.Panel != DeviceEditorPanel.Notes) return;
+        await SelectSubviewAsync("annotations");
+        if (View.FocusMode) await View.ToggleFocusAsync();
+        if (View.ContextCollapsed) await View.ToggleContextAsync();
+        await _brainstormEditorWorkspace!.OpenContextAsync();
+        if (_planningPanel is not null) await _planningPanel.StartAnnotationAsync();
+    }
     private async Task ShowAnnotationAsync(Guid id)
     {
         if (PanelOperationsDisabled || !await FlushPlanningAsync()) return;
@@ -374,6 +407,7 @@ else
         await View.SelectPanelAsync(DeviceEditorPanel.Notes);
         if (View.FocusMode) await View.ToggleFocusAsync();
         if (View.ContextCollapsed) await View.ToggleContextAsync();
+        await _brainstormEditorWorkspace!.OpenContextAsync();
     }
     private async Task NavigateToAnnotationAsync(Guid id)
     {
@@ -463,6 +497,13 @@ else
             if (!_disposed) await InvokeAsync(StateHasChanged);
         }
     }
+    private async Task<bool> BeforeOutlineWorkAsync()
+    {
+        // Outline actions remain available from reading preview. Return to editing
+        // before the normal save/lock handshake instead of reporting a save failure.
+        if (_preview is not null) await TogglePreviewAsync();
+        return await BeforeContextWorkAsync();
+    }
     private async Task<bool> BeforeContextWorkAsync()
     {
         if (PanelOperationsBlocked || _structureBusy || _previewBusy || _transferBusy || _aiBusy || _applyingAi || !await SaveAllAsync(releaseEditor: false)) return false;
@@ -499,7 +540,7 @@ else
         "consistency" => [
             _session?.Document.Project is null ? "This document is not part of a project yet." : "Story planning is available in this project's workspace.",
             "Review character names, locations and chronology while drafting.",
-            "The web client offers automated consistency analysis."],
+            "Check consistency saves and syncs your latest writing automatically."],
         "quality" => [
             CurrentWordCount is > 0 ? $"This page has {CurrentWordCount} words." : "This page is ready for a first paragraph.",
             WritingLengthGuidance,
@@ -757,7 +798,7 @@ else
             { _aiError = _error ?? "Save the writing before requesting an AI review."; _aiMessage = null; return; }
             _aiMessage = "Synchronizing the saved writing before requesting AI…";
             StateHasChanged();
-            await Sync.SyncAsync(request.Token);
+            await Sync.SynchronizeForAiAsync(DocumentId, request.Token);
             request.Token.ThrowIfCancellationRequested();
             LocalDocument latest = await Documents.LoadAsync(DocumentId, request.Token)
                 ?? throw new IOException("The document is no longer available.");

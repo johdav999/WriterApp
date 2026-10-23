@@ -365,7 +365,7 @@ public sealed partial class DeviceSyncEngineTests : IAsyncLifetime
     [InlineData("consistency", "Check consistency")]
     [InlineData("quality", "Analyze style &amp; quality")]
     [InlineData("synopsis", "Improve synopsis field")]
-    public async Task OpenCoachEnablesAfterCloudSyncWithoutChangingPanel(string mode, string label)
+    public async Task OpenCoachCanPrepareCloudSyncOnDemandWithoutChangingPanel(string mode, string label)
     {
         var doc = await Store.CreateProjectAsync("Draft");
         using var services = RenderServices();
@@ -374,18 +374,18 @@ public sealed partial class DeviceSyncEngineTests : IAsyncLifetime
         var output = await renderer.Dispatcher.InvokeAsync(() => renderer.RenderComponentAsync<LocalAiPanel>(
             ParameterView.FromDictionary(new Dictionary<string, object?> { ["DocumentId"] = doc.DocumentId, ["Mode"] = mode })));
         string before = await renderer.Dispatcher.InvokeAsync(output.ToHtmlString);
-        Assert.Contains("Enable cloud sync explicitly", before);
-        Assert.True(ButtonDisabled(before, label));
+        Assert.Contains("saved and synced automatically", before);
+        Assert.False(ButtonDisabled(before, label));
 
         await renderer.Dispatcher.InvokeAsync(() => engine.EnableAsync(doc.DocumentId));
         Assert.Equal("Synchronization complete.", engine.Message);
-        string after = await WaitForHtmlAsync(renderer, output.ToHtmlString, html => !html.Contains("Enable cloud sync explicitly"));
+        string after = await WaitForHtmlAsync(renderer, output.ToHtmlString, html => !ButtonDisabled(html, label));
         Assert.DoesNotContain("Enable cloud sync explicitly", after);
         Assert.False(ButtonDisabled(after, label));
     }
 
     [Fact]
-    public async Task OpenWritingToolsEnableAfterCloudSyncWithoutReopeningDocument()
+    public async Task OpenWritingToolsCanPrepareCloudSyncOnDemandWithoutReopeningDocument()
     {
         var doc = await Store.CreateProjectAsync("Draft");
         using var services = RenderServices();
@@ -395,14 +395,14 @@ public sealed partial class DeviceSyncEngineTests : IAsyncLifetime
         var output = await renderer.Dispatcher.InvokeAsync(() => renderer.RenderComponentAsync<DocumentWorkspace>(
             ParameterView.FromDictionary(new Dictionary<string, object?> { ["DocumentId"] = doc.DocumentId })));
         string before = await renderer.Dispatcher.InvokeAsync(output.ToHtmlString);
-        Assert.Contains("Sync this document to use AI writing tools.", before);
+        Assert.DoesNotContain("Sync this document to use AI writing tools.", before);
         var markup = new AngleSharp.Html.Parser.HtmlParser().ParseDocument(before);
         var statusBar = markup.QuerySelector(".editor-status-bar");
         Assert.NotNull(statusBar);
         Assert.Single(statusBar.QuerySelectorAll("button"), b => b.TextContent == "Enable cloud sync");
         Assert.DoesNotContain(markup.QuerySelectorAll(".context-drawer button"), b => b.TextContent.Contains("Enable cloud sync"));
         string[] labels = ["Preview rewrite", "Expand", "Shorten", "Change tone", "Show, don&#x27;t tell", "Summarize section", "Preview custom action", "Translate selection"];
-        foreach (string label in labels) Assert.True(ButtonDisabled(before, label));
+        foreach (string label in labels) Assert.False(ButtonDisabled(before, label));
 
         await renderer.Dispatcher.InvokeAsync(() => engine.EnableAsync(doc.DocumentId));
         Assert.Equal("Synchronization complete.", engine.Message);
@@ -426,7 +426,9 @@ public sealed partial class DeviceSyncEngineTests : IAsyncLifetime
         await engine.EnableAsync(document.DocumentId);
         Assert.False(engine.IsRunning);
         Assert.Contains("Cannot reach the configured backend at http://localhost:5387", engine.LastError);
-        Assert.Contains("Start the local API", engine.Message);
+        Assert.Contains("local API is running", engine.Message);
+        Assert.Contains("android.ps1", engine.Message);
+        Assert.Contains("localhost forwarding", engine.Message);
         Assert.DoesNotContain("Internal transport details", engine.Message);
         Assert.Null((await Store.GetAsync(document.DocumentId))!.ServerDocumentId);
         Assert.Empty(_api.Requests);
@@ -458,8 +460,47 @@ public sealed partial class DeviceSyncEngineTests : IAsyncLifetime
         Assert.False(ButtonDisabled(html, "Retry cloud sync"));
     }
 
-    private ServiceProvider RenderServices() => new ServiceCollection()
+    [Fact]
+    public async Task BrainstormCloudSyncSavesPendingWritingBeforeUploadAndStopsOnSaveFailure()
+    {
+        var doc=await Store.CreateAsync("Brainstorm sync");
+        var components=new SyncStatusComponents();
+        using var services=RenderServices(components);
+        await using var renderer=new HtmlRenderer(services,services.GetRequiredService<ILoggerFactory>());
+        bool saved=false;int completed=0;
+        await renderer.Dispatcher.InvokeAsync(async()=>{
+            var output=await renderer.RenderComponentAsync<DocumentSyncStatus>(ParameterView.FromDictionary(new Dictionary<string,object?> {
+                ["Document"]=doc,
+                ["BeforeSync"]=(Func<Task<bool>>)(async()=>{if(!saved)return false;await EditAsync(doc.DocumentId,"<p>Pending writing Åsa 日本語</p>");return true;}),
+                ["AfterSync"]=EventCallback.Factory.Create(new object(),()=>completed++)
+            }));
+            async Task Enable() {
+                await (Task)typeof(DocumentSyncStatus).GetMethod("EnableAsync",System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic)!.Invoke(components.Status,[])!;
+                typeof(ComponentBase).GetMethod("StateHasChanged",System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic)!.Invoke(components.Status,[]);
+            }
+            Assert.Empty(_api.Requests); // Showing the recovery action must not opt in.
+            Assert.Contains("Saved only on this device.",output.ToHtmlString());
+            await Enable();
+            Assert.Empty(_api.Requests);Assert.Equal(0,completed);
+            Assert.Contains("Saving failed",output.ToHtmlString());
+            Assert.Null((await Store.GetAsync(doc.DocumentId))!.ServerDocumentId);
+            saved=true;await Enable();
+            Assert.Equal(1,completed);Assert.Single(_api.Requests);
+            Assert.Equal("<p>Pending writing Åsa 日本語</p>",_api.Requests[0].Document!.Sections[0].Pages[0].Content);
+            Assert.DoesNotContain("Saving failed",output.ToHtmlString());
+        });
+    }
+    private sealed class SyncStatusComponents : IComponentActivator {
+        public DocumentSyncStatus Status=default!;
+        public IComponent CreateInstance(Type type) {
+            var component=(IComponent)Activator.CreateInstance(type)!;
+            if(component is DocumentSyncStatus status)Status=status;
+            return component;
+        }
+    }
+    private ServiceProvider RenderServices(IComponentActivator? components=null) => new ServiceCollection()
         .AddLogging()
+        .AddSingleton<IComponentActivator>(components??new SyncStatusComponents())
         .AddWriterAppDeviceCore(new("Test", new Uri("https://test.invalid/")), _root)
         .AddSingleton<IDeviceIdentityClient, Identity>()
         .AddSingleton<IDeviceAiApi, LocalWritingTests.Api>()

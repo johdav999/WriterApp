@@ -1,5 +1,51 @@
 select { max-width:100%; width:100%; }
 h2 { font-size:1rem; }
+.local-project-context {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px 24px;
+    flex: 0 0 auto;
+    min-width: 0;
+    padding: 8px 24px;
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-surface-2);
+    font-size: .875rem;
+    line-height: 1.4;
+}
+.writing-breadcrumb { display:flex; align-items:center; gap:8px; min-width:0; }
+.writing-breadcrumb a { color:var(--color-text-muted); text-decoration:none; }
+.writing-projects-link { display:inline-flex; align-items:center; gap:8px; flex-shrink:0; min-height:44px; }
+.writing-project-link, .writing-document-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.writing-project-link { display:flex; align-items:center; min-height:44px; }
+.writing-project-link span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.writing-document-title { color:var(--color-text); font-weight:600; }
+.writing-context-separator { display:flex; flex-shrink:0; color:var(--color-text-subtle); }
+.local-project-context ::deep svg { width:18px; height:18px; flex-shrink:0; }
+.writing-context-separator ::deep svg { width:14px; height:14px; }
+.writing-context-actions { display:flex; gap:8px; flex-shrink:0; }
+.writing-context-actions a {
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    gap:8px;
+    min-height:44px;
+    padding:8px 12px;
+    border:1px solid var(--color-border);
+    border-radius:var(--radius-sm);
+    background:var(--color-surface-1);
+    color:var(--color-primary);
+    font-weight:600;
+    text-decoration:none;
+    white-space:nowrap;
+}
+.writing-breadcrumb a:hover { color:var(--color-primary); }
+.writing-context-actions a:hover { background:var(--color-primary-soft); border-color:var(--color-primary); }
+.local-project-context a:focus-visible { outline:2px solid var(--color-primary); outline-offset:2px; }
+@media (max-width:800px) {
+    .local-project-context { flex-direction:column; align-items:stretch; gap:4px; padding:4px 16px 12px; }
+    .writing-context-actions a { flex:1; }
+}
 .local-writing-view { display: contents; }
 .local-writing-view[hidden] { display: none; }
 
@@ -12,6 +58,12 @@ h2 { font-size:1rem; }
     flex: 0 1 auto;
     min-height: 0;
     overflow: hidden;
+}
+/* Let the pinned pane scroll the entire form instead of clipping it in a
+   shrinking wrapper, especially inside the Android Writing tools drawer. */
+.desktop-context-ai.is-synopsis-coaching {
+    flex: 0 0 auto;
+    overflow: visible;
 }
 .desktop-page-navigation { margin-block: var(--space-3); }
 .desktop-page-navigation summary { cursor: pointer; color: var(--color-text-muted); }

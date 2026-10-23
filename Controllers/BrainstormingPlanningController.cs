@@ -11,7 +11,7 @@ namespace WriterApp.Controllers;
 [ApiController,Authorize,Route("api/brainstorming/{session:guid}/planning")]
 public sealed class BrainstormingPlanningController(AppDbContext db,IUserIdResolver users):ControllerBase
 {
-    private BrainstormingPlanningSaves Service=>new(db,users.ResolveUserId(User),BrainstormingValidation.Fingerprint($"{Request.Scheme}://{Request.Host}{Request.PathBase}/"));
+    private BrainstormingPlanningSaves Service=>new(db,users.ResolveUserId(User),BrainstormingValidation.Fingerprint($"{Request.Scheme}://{Request.Host}{Request.PathBase}/"),HttpContext.RequestServices.GetService<WriterApp.Application.Collaboration.CollaborationAccessService>());
     private async Task<IActionResult> Run(Guid session,BrainstormingScope scope,Func<Task<object>> action) {
         Response.Headers.CacheControl="no-store";
         try {BrainstormingValidation.Validate(scope);if(scope.SessionId!=session)throw new InvalidDataException("Planning session changed.");return Ok(await action());}

@@ -13,6 +13,10 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using WriterApp.Application.Documents;
 using WriterApp.Application.Security;
+using WriterApp.Application.Collaboration;
+using Microsoft.EntityFrameworkCore;
+using WriterApp.Data;
+using WriterApp.Shared.Collaboration;
 
 namespace WriterApp.Controllers
 {
@@ -33,13 +37,17 @@ namespace WriterApp.Controllers
         private readonly IUserIdResolver _userIdResolver;
         private readonly IWebHostEnvironment _environment;
         private readonly IConfiguration _configuration;
+        private readonly CollaborationAccessService? _access;
+        private readonly AppDbContext? _db;
 
         public DocumentImageAssetsController(
             IDocumentRepository documents,
             IUserIdResolver userIdResolver,
             IWebHostEnvironment environment,
-            IConfiguration configuration)
+            IConfiguration configuration, CollaborationAccessService? access = null, AppDbContext? db = null)
         {
+            _db = db;
+            _access = access;
             _documents = documents ?? throw new ArgumentNullException(nameof(documents));
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
             _environment = environment ?? throw new ArgumentNullException(nameof(environment));
@@ -54,7 +62,11 @@ namespace WriterApp.Controllers
             CancellationToken ct)
         {
             string userId = _userIdResolver.ResolveUserId(User);
-            if (await _documents.GetAsync(documentId, userId, ct) is null)
+            bool shared = _db is not null && await _db.Documents.AnyAsync(d => d.Id == documentId && d.CollaborationMode == CollaborationMode.Collaborative, ct);
+            string resourceOwner = userId;
+            if (shared)
+                resourceOwner = (await (_access ?? throw new CollaborationSessionDeniedException()).Require(userId, documentId, CollaborationOperation.WriteText, ct)).ResourceOwnerId;
+            else if (await _documents.GetAsync(documentId, userId, ct) is null)
             {
                 return NotFound();
             }
@@ -89,7 +101,8 @@ namespace WriterApp.Controllers
             }
 
             Guid imageId = Guid.NewGuid();
-            string userFolder = ComputeUserFolder(userId);
+            if(shared) await _access!.Require(userId, documentId, CollaborationOperation.WriteText, ct);
+            string userFolder = ComputeUserFolder(resourceOwner);
             string rootPath = ResolveImageRootPath(_environment, _configuration);
             string documentFolder = Path.Combine(rootPath, userFolder, documentId.ToString("N", CultureInfo.InvariantCulture));
             Directory.CreateDirectory(documentFolder);
@@ -97,6 +110,10 @@ namespace WriterApp.Controllers
             string fileName = $"{imageId:N}{extension}";
             string fullPath = Path.Combine(documentFolder, fileName);
             await System.IO.File.WriteAllBytesAsync(fullPath, bytes, ct);
+            if(shared) {
+                try { await _access!.Require(userId, documentId, CollaborationOperation.WriteText, ct); }
+                catch { System.IO.File.Delete(fullPath); throw; }
+            }
 
             string url = $"/api/documents/{documentId:D}/assets/images/{imageId:D}";
             string dataUri = $"data:{contentType};base64,{Convert.ToBase64String(bytes)}";
@@ -116,12 +133,14 @@ namespace WriterApp.Controllers
             CancellationToken ct)
         {
             string userId = _userIdResolver.ResolveUserId(User);
-            if (await _documents.GetAsync(documentId, userId, ct) is null)
+            string resourceOwner = userId;
+            if (_access is not null) resourceOwner = (await _access.RequireResource(userId, documentId, ct)).ResourceOwnerId;
+            else if (await _documents.GetAsync(documentId, userId, ct) is null)
             {
                 return NotFound();
             }
 
-            string userFolder = ComputeUserFolder(userId);
+            string userFolder = ComputeUserFolder(resourceOwner);
             string rootPath = ResolveImageRootPath(_environment, _configuration);
             string documentFolder = Path.Combine(rootPath, userFolder, documentId.ToString("N", CultureInfo.InvariantCulture));
             if (!Directory.Exists(documentFolder))
@@ -148,6 +167,8 @@ namespace WriterApp.Controllers
             };
 
             byte[] content = await System.IO.File.ReadAllBytesAsync(filePath, ct);
+            if (_access is not null) await _access.RequireResource(userId, documentId, ct);
+            Response.Headers.CacheControl = "private, no-store";
             return File(content, contentType);
         }
 

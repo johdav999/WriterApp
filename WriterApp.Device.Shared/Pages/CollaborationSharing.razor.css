@@ -1,0 +1,2 @@
+.device-sharing-page { width: 100%; max-width: 1208px; margin: 0 auto; padding: clamp(24px, 4vw, 48px) 24px; }
+@media (max-width: 560px) { .device-sharing-page { padding: 24px 16px; } }

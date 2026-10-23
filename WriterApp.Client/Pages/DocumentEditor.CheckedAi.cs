@@ -101,7 +101,7 @@ public partial class DocumentEditor
                 throw new InvalidOperationException("This section preview has no supported rich multi-page application contract. Use a checked section writing preset or a selection action.");
             if(_pageEditor is not null && !_checkedWritingPreviews.ContainsKey(pending.ProposalId) && pending.ActionKey is not ("translate.section" or "translate.document"))
             {
-                _pageEditor.SetAiSaveSource(context.Lease.Source);
+                await _pageEditor.SetAiSaveSource(context.Lease.Source);
                 _pageEditor.SetAiHistoryProposal(pending.ProposalId,context.Lease);
             }
             return true;
@@ -129,7 +129,7 @@ public partial class DocumentEditor
                 await Checked.Confirm(lease);
                 // Persist browser/server intent before changing editor content; Move itself changes nothing.
                 await HistoryOutbox.Prepare(intent,lease);
-                _pageEditor.SetAiHistoryMove(intent,lease);
+                await _pageEditor.SetAiHistoryMove(intent,lease);
                 var result=new AiActionUndoRedoResponseDto(intent.ProposalId,intent.AfterContent!,intent.BeforeContent,lease.Source);
                 response.Content.Dispose();response.Content=JsonContent.Create(result);await response.Content.LoadIntoBufferAsync();
             }

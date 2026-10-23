@@ -12,7 +12,7 @@ export function dropPlacement(type, targetType, parentType, fraction) {
 
 export function attach(root, reference) {
     if (!root || bindings.has(root)) return;
-    let source = null, indicator = null, pending = false;
+    let source = null, indicator = null, pending = false, gesture = null, suppressClick = false, scrollFrame = null;
     const blocked = () => pending || root.dataset.outlineDisabled === "true";
     const rowAt = event => {
         const row = event.target.closest("[data-outline-id]");
@@ -23,6 +23,11 @@ export function attach(root, reference) {
         indicator = null;
     };
     const clear = () => {
+        const previous = gesture;
+        gesture = null;
+        if (scrollFrame !== null) cancelAnimationFrame(scrollFrame);
+        scrollFrame = null;
+        if (previous && root.hasPointerCapture(previous.id)) root.releasePointerCapture(previous.id);
         clearIndicator();
         source?.classList.remove("outline-is-dragging");
         source = null;
@@ -45,6 +50,7 @@ export function attach(root, reference) {
             ? { target: atRoot, id: null, placement: "inside" } : null;
     };
     const dragstart = event => {
+        if (gesture || event.target.closest('[data-outline-handle]')) { event.preventDefault(); return; }
         const row = rowAt(event);
         if (!row || blocked() || event.target.closest("button, input, select, textarea, a")) { event.preventDefault(); return; }
         source = row;
@@ -75,11 +81,87 @@ export function attach(root, reference) {
     };
     const dragleave = event => { if (!root.contains(event.relatedTarget)) clearIndicator(); };
     const keydown = event => { if (event.key === "Escape") clear(); };
+    // Pointer capture keeps touch gestures in the WebView. Hit testing must use
+    // coordinates because captured events keep targeting the source outline.
+    const pointerDestination = event => {
+        const target = root.ownerDocument.elementFromPoint(event.clientX, event.clientY);
+        return target ? destination({ target, clientY: event.clientY }) : null;
+    };
+    const showPointerDestination = event => {
+        const place = pointerDestination(event);
+        clearIndicator();
+        if (place) { indicator = place.target; indicator.classList.add(`outline-drop-${place.placement}`); }
+    };
+    const autoScroll = () => {
+        scrollFrame = null;
+        if (!gesture?.active) return;
+        if (blocked()) { clear(); return; }
+        const view = root.ownerDocument.defaultView;
+        for (let track = root; track; track = track.parentElement) {
+            if (track.scrollHeight <= track.clientHeight || !/(auto|scroll)/.test(view.getComputedStyle(track).overflowY)) continue;
+            const rect = track.getBoundingClientRect();
+            const top = Math.max(0, rect.top), bottom = Math.min(view.innerHeight, rect.bottom);
+            const y = gesture.last.clientY;
+            const delta = y < top + 40 ? -10 : y > bottom - 40 ? 10 : 0;
+            if (delta) { track.scrollTop += delta; showPointerDestination(gesture.last); }
+            break;
+        }
+        scrollFrame = requestAnimationFrame(autoScroll);
+    };
+    const pointerdown = event => {
+        suppressClick = false;
+        if (gesture || blocked() || event.button !== 0 || event.isPrimary === false || !event.target.closest('[data-outline-handle]')) return;
+        const row = rowAt(event);
+        if (!row) return;
+        gesture = { id: event.pointerId, row, x: event.clientX, y: event.clientY, active: false, last: event };
+        root.setPointerCapture(event.pointerId);
+    };
+    const pointermove = event => {
+        if (!gesture || event.pointerId !== gesture.id) return;
+        if (blocked()) { clear(); return; }
+        gesture.last = event;
+        if (!gesture.active && Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) < 6) return;
+        event.preventDefault();
+        if (!gesture.active) {
+            gesture.active = true;
+            source = gesture.row;
+            source.classList.add('outline-is-dragging');
+            root.classList.add('outline-drag-active');
+            scrollFrame = requestAnimationFrame(autoScroll);
+        }
+        showPointerDestination(event);
+    };
+    const pointerup = async event => {
+        if (!gesture || event.pointerId !== gesture.id) return;
+        const place = gesture.active ? pointerDestination(event) : null;
+        const id = source?.dataset.outlineId;
+        if (gesture.active) { event.preventDefault(); suppressClick = true; }
+        clear();
+        if (!place || !id) return;
+        pending = true;
+        try { await reference.invokeMethodAsync('DropOutlineAsync', id, place.id, place.placement); }
+        finally { pending = false; }
+    };
+    const cancelPointer = event => { if (event.pointerId === gesture?.id) clear(); };
+    const click = event => {
+        if (!suppressClick) return;
+        suppressClick = false;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+    };
     const listeners = { dragstart, dragover, drop, dragend: clear, dragleave, keydown };
     for (const [name, handler] of Object.entries(listeners)) root.addEventListener(name, handler);
+    const pointerListeners = { pointerdown, pointermove, pointerup, pointercancel: cancelPointer, lostpointercapture: cancelPointer };
+    for (const [name, handler] of Object.entries(pointerListeners)) root.addEventListener(name, handler);
+    root.addEventListener('click', click, true);
+    const blur = () => clear();
+    root.ownerDocument?.defaultView.addEventListener('blur', blur);
     bindings.set(root, () => {
         clear();
         for (const [name, handler] of Object.entries(listeners)) root.removeEventListener(name, handler);
+        for (const [name, handler] of Object.entries(pointerListeners)) root.removeEventListener(name, handler);
+        root.removeEventListener('click', click, true);
+        root.ownerDocument?.defaultView.removeEventListener('blur', blur);
     });
 }
 

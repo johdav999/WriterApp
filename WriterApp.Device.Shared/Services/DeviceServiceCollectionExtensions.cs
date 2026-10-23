@@ -39,11 +39,13 @@ public static class DeviceServiceCollectionExtensions
         services.AddScoped<DeviceOnboarding>();
         services.AddSingleton<LocalDocumentSearch>();
         services.TryAddSingleton<IDeviceFileDialog, UnavailableDeviceFileDialog>();
+        services.TryAddSingleton<IDeviceFileShare, UnavailableDeviceFileShare>();
         services.TryAddSingleton<IDeviceUpdateService, UnavailableDeviceUpdateService>();
         services.TryAddSingleton(_ => new DeviceDiagnostics(Path.Combine(localDocumentPath, "diagnostics"),
             "unconfigured", DeviceEnvironment.Development));
         services.AddScoped<DeviceDocumentTransfer>();
         services.TryAddSingleton<IDevicePdfExport, UnavailableDevicePdfExport>();
+        services.TryAddSingleton<IDevicePdfPrint, UnavailableDevicePdfPrint>();
         services.AddSingleton(_ => new LocalPublishingStore(Path.Combine(localDocumentPath,"publishing")));
         services.AddSingleton(_ => new LocalCoverStudioStore(Path.Combine(localDocumentPath,"cover-studio")));
         services.AddKeyedScoped<HttpClient>("cover-studio", (sp, _) => new HttpClient(new DeviceAuthenticatedHandler(sp.GetRequiredService<DeviceAccountService>(), options.ApiBaseAddress)
@@ -54,6 +56,8 @@ public static class DeviceServiceCollectionExtensions
             sp.GetRequiredService<LocalDocumentRepository>(), sp.GetRequiredService<LocalCoverStudioStore>()));
         services.AddSingleton<DeviceConnectivity>();
         services.AddSingleton(_ => new DeviceSyncJournal(Path.Combine(localDocumentPath, "sync")));
+        services.AddSingleton(_ => new DeviceCollaborationJournal(Path.Combine(localDocumentPath, "collaboration")));
+        services.AddScoped<DeviceCollaborationJournalHost>();
         services.AddScoped<IDeviceSyncApi, DeviceSyncApi>();
         services.AddScoped<DeviceSyncEngine>();
         services.AddScoped<IDeviceAiApi, DeviceAiApi>();

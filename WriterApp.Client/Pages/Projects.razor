@@ -12,6 +12,7 @@
 @using WriterApp.Client.Services
 @using WriterApp.Client.Utilities
 @inject HttpClient Http
+@inject WebCheckedAi CheckedAi
 @inject WriterApp.Client.State.ManuscriptSelectionState ManuscriptSelection
 @inject NavigationManager Navigation
 @inject IConfiguration Configuration
@@ -56,8 +57,8 @@
                 <p>Parts, chapters, and scenes in manuscript order.</p>
             </div>
             <div class="tree-actions">
-                <label for="add-node-type">Add...</label>
-                <select id="add-node-type" @bind="_addNodeType">
+                <label for='@ElementId("add-node-type")'>Add...</label>
+                <select id='@ElementId("add-node-type")' @bind="_addNodeType">
                     <option value="part">Part</option>
                     <option value="chapter">Chapter</option>
                     <option value="scene">Scene</option>
@@ -398,8 +399,8 @@ else
                 <ProjectWorkspacePanels OnPointerDragCancel="OnPointerDragCancel">
                     <Navigator>
                         <div class="tree-actions">
-                            <label for="add-node-type">Add...</label>
-                            <select id="add-node-type" @bind="_addNodeType">
+                            <label for='@ElementId("add-node-type")'>Add...</label>
+                            <select id='@ElementId("add-node-type")' @bind="_addNodeType">
                                 <option value="part">Part</option>
                                 <option value="chapter">Chapter</option>
                                 <option value="scene">Scene</option>
@@ -439,9 +440,9 @@ else
                         {
                             <div class="inspector-grid">
                                 <div class="inspector-field">
-                                    <label for="node-title-input">Name</label>
+                                    <label for='@ElementId("node-title-input")'>Name</label>
                                     <div class="inspector-name-row">
-                                        <input id="node-title-input"
+                                        <input id='@ElementId("node-title-input")'
                                                class="node-title-input"
                                                value="@_inspectorRenameDraft"
                                                @oninput="OnInspectorRenameInput"
@@ -599,9 +600,9 @@ else
             </div>
             <div class="projects-templates-body">
                 <div class="projects-templates-row">
-                    <label for="project-outline-template-name">Create from current navigator</label>
+                    <label for='@ElementId("project-outline-template-name")'>Create from current navigator</label>
                     <div class="projects-templates-create">
-                        <input id="project-outline-template-name"
+                        <input id='@ElementId("project-outline-template-name")'
                                placeholder="Template name"
                                @bind="_outlineTemplateName" />
                         <button type="button"
@@ -614,7 +615,7 @@ else
                 </div>
 
                 <div class="projects-templates-row">
-                    <label for="project-outline-template-select">Saved templates</label>
+                    <label for='@ElementId("project-outline-template-select")'>Saved templates</label>
                     @if (_isOutlineTemplatesLoading)
                     {
                         <div class="projects-empty">Loading templates...</div>
@@ -625,7 +626,7 @@ else
                     }
                     else
                     {
-                        <select id="project-outline-template-select"
+                        <select id='@ElementId("project-outline-template-select")'
                                 @bind="_selectedOutlineTemplateId"
                                 disabled="@_isOutlineTemplateActionInFlight">
                             @foreach (OutlineTemplateDto template in _outlineTemplates)
@@ -651,8 +652,8 @@ else
                                    disabled="@_isOutlineTemplateActionInFlight" />
                             Create linked sections/pages
                         </label>
-                        <label for="project-outline-template-link-strategy">Link strategy</label>
-                        <select id="project-outline-template-link-strategy"
+                        <label for='@ElementId("project-outline-template-link-strategy")'>Link strategy</label>
+                        <select id='@ElementId("project-outline-template-link-strategy")'
                                 @bind="_applyTemplateLinkStrategy"
                                 disabled="@_isOutlineTemplateActionInFlight">
                             <option value="none">No linking</option>
@@ -691,6 +692,8 @@ else
 </ProjectWorkspaceShell>
 
 @code {
+    [Parameter] public string IdPrefix { get; set; } = "";
+    private string ElementId(string name) => string.IsNullOrEmpty(IdPrefix) ? name : $"{IdPrefix}-{name}";
     // Temporary toggle: set to true to show navigator row word counts again.
     private bool _showNavigatorTreeWordCount = false;
 
@@ -3078,6 +3081,26 @@ else
             return;
         }
 
+        if (normalizedNodeType == "chapter" && _activeDocumentId is { } document)
+        {
+            var lease = await CheckedAi.Capture(document);
+            if (lease.Source.DocumentVersion.StartsWith("collaboration:", StringComparison.Ordinal))
+            {
+                var operation = Guid.NewGuid();
+                using var sharedResponse = await Http.PostAsJsonAsync($"api/documents/{document}/collaboration/tools/structure",
+                    new { operationId = operation, source = lease.Source, kind = "create-chapter", title, parentNodeId = parentId });
+                if (!sharedResponse.IsSuccessStatusCode)
+                {
+                    _error = await ReadApiErrorMessageAsync(sharedResponse, "Chapter was not confirmed. Refresh the outline before retrying.");
+                    return;
+                }
+                CheckedAi.RequireLease(lease);
+                await RefreshProjectAsync(_activeProject.Id);
+                _selectedNodeId = operation;
+                _error = null;
+                return;
+            }
+        }
         ProjectNodeCreateRequest request = new(parentId, normalizedNodeType, title, null, null, null);
         using HttpResponseMessage response = await Http.PostAsJsonAsync($"api/projects/{_activeProject.Id}/nodes", request);
         if (!response.IsSuccessStatusCode)

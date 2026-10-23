@@ -1,0 +1,25 @@
+{
+  "name": "prosa-collaboration",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "build:schema": "node scripts/build-schema.mjs",
+    "start": "node src/main.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@hocuspocus/common": "4.7.1",
+    "@hocuspocus/server": "4.7.1",
+    "happy-dom": "20.14.6",
+    "lib0": "0.2.119",
+    "y-protocols": "1.0.7",
+    "yjs": "13.6.33"
+  },
+  "devDependencies": {
+    "@hocuspocus/provider": "4.7.1"
+  }
+}

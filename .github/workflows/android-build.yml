@@ -1,0 +1,28 @@
+name: Android build
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['WriterApp.Android/**', 'WriterApp.Device.Shared/**', 'WriterApp.UI.Shared/**', 'WriterApp.Shared/**', 'WriterApp.Publishing/**', '.github/workflows/android-build.yml', 'scripts/android/**']
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: actions/setup-dotnet@v4
+        with: { global-json-file: global.json }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+      - run: dotnet workload install maui-android
+      - run: python3 scripts/android/test_package.py
+      - run: dotnet build WriterApp.Android/WriterApp.Android.csproj -c Debug -p:EmbedAssembliesIntoApk=true -warnaserror
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prosa-android-debug
+          path: WriterApp.Android/bin/Debug/net10.0-android/*-Signed.apk
+          if-no-files-found: error

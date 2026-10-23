@@ -11,17 +11,17 @@ export function widthBounds(side, available, otherPanel = 0) {
 export function attach(handle, side) {
     // A panel can be removed while Blazor awaits the module import.
     if (!handle?.isConnected) return;
-    const outline = side === "outline";
-    const left = side === "left" || outline;
-    const owner = handle.closest(left && !outline ? ".app-shell" : ".editor-shell");
-    const panel = owner?.querySelector(outline ? ".brainstorm-outline" : side === "brainstorm-right" ? ".brainstorming-host" : left ? ".app-nav" : ".context-drawer");
+    const outline = side === "outline", editorLeft = side === "editor-left";
+    const left = side === "left" || outline || editorLeft;
+    const owner = handle.closest(left && !outline && !editorLeft ? ".app-shell" : ".editor-shell");
+    const panel = owner?.querySelector(editorLeft ? ".editor-navigation-host" : outline ? ".brainstorm-outline" : side === "brainstorm-right" ? ".brainstorming-host" : left ? ".app-nav" : ".context-drawer");
     const existing = bindings.get(handle);
     if (existing?.panel === panel) { existing?.refresh(); return; }
     detach(handle);
     if (!owner || !panel) return;
-    const variable = outline ? "--brainstorm-outline-width" : left ? "--app-nav-width" : "--context-panel-width";
+    const variable = editorLeft ? "--editor-navigation-width" : outline ? "--brainstorm-outline-width" : left ? "--app-nav-width" : "--context-panel-width";
     const key = `prosa.panel-width.${side}`;
-    const defaultWidth = () => left ? 180 : window.innerWidth <= 1200 ? 300 : 360;
+    const defaultWidth = () => editorLeft ? 240 : left ? 180 : window.innerWidth <= 1200 ? 300 : 360;
     let preferred = defaultWidth();
     try {
         const saved = Number(localStorage.getItem(key));
@@ -29,9 +29,10 @@ export function attach(handle, side) {
     } catch { /* Restricted storage must not prevent resizing. */ }
     let drag = null;
     const bounds = () => {
-        const area = left && !outline ? owner : owner.querySelector(".editor-workspace");
-        const other = outline ? owner.querySelector(".brainstorming-host")?.getBoundingClientRect().width ?? 0 : left ? owner.querySelector(".context-drawer")?.getBoundingClientRect().width ?? 0 : owner.querySelector(".brainstorm-outline")?.getBoundingClientRect().width ?? 0;
+        const area = left && !outline && !editorLeft ? owner : owner.querySelector(".editor-workspace");
+        const other = outline ? owner.querySelector(".brainstorming-host")?.getBoundingClientRect().width ?? 0 : left ? owner.querySelector(".context-drawer")?.getBoundingClientRect().width ?? 0 : owner.querySelector(".brainstorm-outline, .editor-navigation-host")?.getBoundingClientRect().width ?? 0;
         const limits = widthBounds(left ? "left" : "right", area?.clientWidth ?? owner.clientWidth, left ? other : 0);
+        if (!left) limits.max = Math.max(limits.min, Math.min(limits.max, (area?.clientWidth ?? 1000) - other - 420));
         if (side === "brainstorm-right") limits.max = Math.max(limits.min, Math.min(limits.max, (area?.clientWidth ?? 1000) - other - 452));
         return limits;
     };

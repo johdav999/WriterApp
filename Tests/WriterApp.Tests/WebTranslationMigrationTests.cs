@@ -18,7 +18,7 @@ public sealed class WebTranslationMigrationTests
         var project=Guid.NewGuid();var document=Guid.NewGuid();var section=Guid.NewGuid();var page=Guid.NewGuid();
         db.Projects.Add(new(){Id=project,OwnerUserId="author"});db.Documents.Add(new(){Id=document,ProjectId=project,OwnerUserId="author"});
         db.Sections.Add(new(){Id=section,DocumentId=document});db.Pages.Add(new(){Id=page,DocumentId=document,SectionId=section,Content="<p><strong>Åsa 日本語 🧭</strong></p>"});
-        await db.SaveChangesAsync();
+        await LegacyMigrationSeed.SaveAsync(db);
         var before=await db.DocumentSyncRecords.AsNoTracking().SingleAsync(x => x.DocumentId==document);
         await migrator.MigrateAsync();
         db.ChangeTracker.Clear();Assert.Empty(await db.WebTranslationOperations.ToListAsync());

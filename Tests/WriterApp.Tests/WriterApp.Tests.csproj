@@ -1,4 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup><ProjectReference Include="../Collaboration.JournalCrash/Collaboration.JournalCrash.csproj" ReferenceOutputAssembly="false" /></ItemGroup>
+  <ItemGroup><ProjectReference Include="../../Tools/Collaboration.Operations/Collaboration.Operations.csproj" ReferenceOutputAssembly="false" /></ItemGroup>
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <IsPackable>false</IsPackable>
@@ -8,6 +10,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="../../WriterApp.Android/Authentication/AndroidIdentityOptions.cs" Link="AndroidIdentity/AndroidIdentityOptions.cs" />
+    <Compile Include="../../WriterApp.Android/Authentication/AndroidDeviceIdentityClient.cs" Link="AndroidIdentity/AndroidDeviceIdentityClient.cs" />
+    <Compile Include="../../WriterApp.Android/AndroidBuildConfiguration.cs" Link="AndroidIdentity/AndroidBuildConfiguration.cs" />
+    <Compile Include="../../WriterApp.Android/AndroidHostLifecycle.cs" Link="AndroidIdentity/AndroidHostLifecycle.cs" />
+    <Compile Include="../../WriterApp.Android/Audio/AndroidPcmWav.cs" Link="AndroidIdentity/AndroidPcmWav.cs" />
     <Compile Include="../../WriterApp.iOS/Authentication/IosIdentityOptions.cs" Link="IosIdentity/IosIdentityOptions.cs" />
     <Compile Include="../../WriterApp.iOS/Authentication/IosDeviceIdentityClient.cs" Link="IosIdentity/IosDeviceIdentityClient.cs" />
     <Compile Include="../../WriterApp.iOS/Authentication/IosIdentityLifecycle.cs" Link="IosIdentity/IosIdentityLifecycle.cs" />

@@ -87,8 +87,7 @@
             foreach (var section in LocalTranslation.Scope(source, sectionId, scope))
                 foreach (var page in section.Pages.OrderBy(p => p.OrderIndex))
                     captured.Add(page.PageId, await module.InvokeAsync<TranslationPageCapture>("captureTranslation", ct, page.Content, page.ContentFormat.ToString()));
-            await Sync.SyncAsync(ct); ct.ThrowIfCancellationRequested();
-            var saved = await Latest(ct);
+            var saved = await Sync.SynchronizeForAiAsync(DocumentId, ct);
             if (LocalTranslation.Signature(saved) != LocalTranslation.Signature(source)) throw new InvalidOperationException("Writing changed while synchronizing. Review and retry.");
             var prepared = LocalTranslation.Prepare(saved, sectionId, scope, language, captured, sourceLanguage, style);
             var proposal = await Ai.ProposeAsync(prepared.Request, ct); ct.ThrowIfCancellationRequested(); Ai.RequireCurrentAccount(proposal);

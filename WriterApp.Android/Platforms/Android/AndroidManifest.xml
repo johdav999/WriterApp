@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.INTERNET" />
+  <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+  <uses-permission android:name="android.permission.RECORD_AUDIO" />
+  <uses-feature android:name="android.hardware.microphone" android:required="false" />
+  <application android:allowBackup="false" android:label="Prosa" android:supportsRtl="true" android:networkSecurityConfig="@xml/network_security_config">
+    <activity android:name="microsoft.identity.client.BrowserTabActivity" android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.VIEW" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <category android:name="android.intent.category.BROWSABLE" />
+        <data android:scheme="msauth" android:host="com.prosa.writer.android" android:path="/${prosaAuthHash}" />
+      </intent-filter>
+    </activity>
+  </application>
+  <queries>
+    <intent><action android:name="android.intent.action.VIEW" /><data android:scheme="https" /></intent>
+    <intent><action android:name="android.intent.action.OPEN_DOCUMENT" /><data android:mimeType="*/*" /></intent>
+    <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>
+  </queries>
+</manifest>

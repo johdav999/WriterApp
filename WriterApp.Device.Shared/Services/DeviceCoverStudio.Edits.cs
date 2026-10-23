@@ -10,14 +10,14 @@ public sealed partial class DeviceCoverStudio
     private async Task<T> CoverCall<T>(HttpMethod method,string path,object? input,long generation,CancellationToken ct,int limit=4*1024*1024) {
         using var request=new HttpRequestMessage(method,path) {Content=input is null ? null : JsonContent.Create(input)};
         request.Options.Set(DeviceAuthenticatedHandler.ExpectedAccountGeneration,generation);
-        using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,ct);
+        using var response=await TransportAsync(()=>http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,ct));
         if(!response.IsSuccessStatusCode)throw new IOException((int)response.StatusCode switch {
             401=>"Sign in again to edit covers.",402 or 403=>"Cover edits require image access and available AI quota.",429=>"Image quota or rate limit was reached.",
             409=>"The cover source changed. Synchronize and reopen before editing or saving.",404 or 426=>"The owned source or image-edit backend is unavailable. Regenerate or update the backend.",
             422=>"This operation or image result is unsupported or invalid. The previous cover is preserved.",_=>"Cover editing is unavailable. The previous cover and cached concepts are preserved."});
         if(response.Content.Headers.ContentLength>limit)throw new InvalidDataException("Cover edit response exceeds the safe limit.");
-        await using var stream=await response.Content.ReadAsStreamAsync(ct);using var buffer=new MemoryStream();byte[] block=new byte[16384];int read;
-        while((read=await stream.ReadAsync(block,ct))>0) {if(buffer.Length+read>limit)throw new InvalidDataException("Cover edit response exceeds the safe limit.");await buffer.WriteAsync(block.AsMemory(0,read),ct);}
+        await using var stream=await TransportAsync(()=>response.Content.ReadAsStreamAsync(ct));using var buffer=new MemoryStream();byte[] block=new byte[16384];int read;
+        while((read=await TransportAsync(async ()=>await stream.ReadAsync(block,ct)))>0) {if(buffer.Length+read>limit)throw new InvalidDataException("Cover edit response exceeds the safe limit.");await buffer.WriteAsync(block.AsMemory(0,read),ct);}
         ct.ThrowIfCancellationRequested();
         return JsonSerializer.Deserialize<T>(buffer.ToArray(),new JsonSerializerOptions(JsonSerializerDefaults.Web){MaxDepth=16}) ?? throw new InvalidDataException("Empty cover edit response.");
     }

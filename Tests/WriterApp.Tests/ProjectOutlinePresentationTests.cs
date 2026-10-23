@@ -36,6 +36,7 @@ public sealed class ProjectOutlinePresentationTests : IDisposable
         var rows = new HtmlParser().ParseDocument(html).QuerySelectorAll(".outline-drag-row");
         Assert.Equal(document.Project!.Nodes.Count, rows.Length);
         Assert.All(rows, row => Assert.Equal("true", row.GetAttribute("draggable")));
+        Assert.All(rows, row => Assert.NotNull(row.QuerySelector("[data-outline-handle]")));
     }
 
     private sealed class TestNavigation : NavigationManager

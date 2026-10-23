@@ -17,6 +17,8 @@ public partial class DocumentEditor
     private Task ShowBrainstormDraft() => _brainstormEditorWorkspace?.ShowDraftAsync() ?? Task.CompletedTask;
     private Task PrepareBrainstormDraftSend() => _brainstormProposal?.FlushAndCheckpointAsync() ?? Task.CompletedTask;
     private BrainstormingCache? _brainstormCache;
+    private Guid? _sharedBrainstormDraftId;
+    private void SharedBrainstormDraftChanged(BrainstormingSharedDraft? draft) => _sharedBrainstormDraftId = draft?.Id;
     private Guid? SelectedBrainstormDraftId => _brainstormCache is null ? null : BrainstormingDrafts.Candidate(_brainstormCache)?.Id;
     private string? _brainstormNavigationError;
     private Guid? _brainstormPageToOpen;

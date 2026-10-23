@@ -172,6 +172,7 @@ public partial class DocumentEditor
         _pendingAiProposal=null;_webTranslationPreview=null;
         UpdateAiHistoryAppliedState(saved.ProposalId,DateTimeOffset.UtcNow);
         await RefreshHistoryDelivery(true);
+        _scopedHistoryRevision++;
         // The aggregate receipt is authoritative. Never send its snapshots to legacy page Undo.
         if(saved.ResultDocumentId!=id) Navigation.NavigateTo($"/documents/{saved.ResultDocumentId}");
         else {
@@ -180,7 +181,10 @@ public partial class DocumentEditor
     }
     protected virtual async Task ReloadTranslatedDocumentAsync() {
         await LoadDocumentAsync();
-        if(_pageEditor is not null && _activePage is not null) await _pageEditor.SetContentAsync(_activePage.Content,markDirty:false);
+        if(_pageEditor is not null && _activePage is not null) {
+            if(_collaborative)await _pageEditor.ReloadSharedCommittedAsync();
+            else await _pageEditor.SetContentAsync(_activePage.Content,markDirty:false);
+        }
     }
     private async Task RefreshTranslationRecoveryAsync() {
         Guid id=DocumentId;int generation=_webTranslationGeneration;string backend=Http.BaseAddress?.AbsoluteUri ?? "";

@@ -25,7 +25,8 @@ public sealed class BrainstormingBackendReadinessTests
         var missing=await Read();missing.Validate();Assert.False(missing.Sessions.IsAvailable);Assert.False(missing.Conversation.IsAvailable);
         Assert.Contains("database update",missing.Sessions.Message);Assert.Contains("unsent message",missing.Sessions.Message);
         var migrations=db.Database.GetMigrations().ToArray();
-        await db.GetService<IMigrator>().MigrateAsync(migrations.Last(m=>!m.Contains("Brainstorming",StringComparison.Ordinal)));
+        var firstBrainstorm = Array.FindIndex(migrations, m => m.Contains("Brainstorming", StringComparison.Ordinal));
+        await db.GetService<IMigrator>().MigrateAsync(migrations[firstBrainstorm - 1]);
         Assert.False((await Read()).Conversation.IsAvailable);
         await db.Database.MigrateAsync();var ready=await Read();ready.Validate();Assert.True(ready.Sessions.IsAvailable);Assert.True(ready.Conversation.IsAvailable);
         Assert.False(ready.Dictation.IsAvailable);

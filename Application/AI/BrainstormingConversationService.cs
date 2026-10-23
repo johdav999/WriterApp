@@ -24,10 +24,16 @@ public sealed class BrainstormingGenerationStops
     public bool Stop(Guid session,Guid operation) { if(!active.TryGetValue((session,operation),out var source))return false;source.Cancel();return true; }
     public bool Running(Guid session,Guid operation)=>active.ContainsKey((session,operation));
 }
-public sealed class BrainstormingConversationService(AppDbContext db,IAiRouter router,IAiUsagePolicy policy,IAiQuotaService quota,
-    IUsageMeter meter,IOptions<WriterAiOptions> options,BrainstormingGenerationStops stops,BrainstormingGenerationContext sources,string owner,string backend)
+// Only pre-acceptance policy/quota checks use this error. It cannot attest an uncertain database write.
+public sealed class BrainstormingRequestRejectedException(string code,string message) : InvalidOperationException(message)
 {
-    private BrainstormingSessions Sessions=>new(db,owner,backend);
+    public string Code {get;}=code;
+}
+public sealed class BrainstormingConversationService(AppDbContext db,IAiRouter router,IAiUsagePolicy policy,IAiQuotaService quota,
+    IUsageMeter meter,IOptions<WriterAiOptions> options,BrainstormingGenerationStops stops,BrainstormingGenerationContext sources,string owner,string backend,
+    WriterApp.Application.Collaboration.CollaborationAccessService? access = null)
+{
+    private BrainstormingSessions Sessions=>new(db,owner,backend,access);
     private async Task<BrainstormingSession> Session(BrainstormingScope scope,CancellationToken ct) {
         var result=await Sessions.ReadAsync(scope.DocumentId,scope.SessionId,ct)??throw new BrainstormingAccessException();
         BrainstormingValidation.RequireScope(result.Scope,scope);if(result.State==BrainstormingConversationState.Deleted)throw new BrainstormingAccessException();return result;
@@ -106,6 +112,16 @@ public sealed class BrainstormingConversationService(AppDbContext db,IAiRouter r
             Requests=session.Requests.Select(r=>r.Id==request.Id?r with { State=state,Intent=output?.Intent??r.Intent }:r).ToArray(),Drafts=draft is null?session.Drafts:[..session.Drafts,draft],Planning=[..session.Planning,..planning]};
         BrainstormingValidation.Validate(next);root.Revision=next.Revision;root.SnapshotJson=BrainstormingPersistence.Json(next);root.UpdatedUnixMilliseconds=next.UpdatedAt.ToUnixTimeMilliseconds();
         stored.Revision++;stored.SnapshotJson=snapshot;
+        if(draft is not null && access is not null
+            && await db.Documents.AsNoTracking().AnyAsync(d=>d.Id==session.Scope.DocumentId && d.CollaborationMode==WriterApp.Shared.Collaboration.CollaborationMode.Collaborative)) {
+            // Recheck access at publication; a revoked author's private terminal
+            // record may be retained, but must never become a shared publication.
+            try {
+                var grant=await access.Require(owner,session.Scope.DocumentId,WriterApp.Application.Collaboration.CollaborationOperation.PrepareAi,default);
+                db.CollaborationBrainstormDrafts.Add(new() {Id=draft.Id,DocumentId=session.Scope.DocumentId,BackendKey=backend,
+                    ResourceOwnerId=grant.ResourceOwnerId,AuthorId=owner,PlainText=draft.PlainText,CreatedUnixMilliseconds=assistant.CreatedAt.ToUnixTimeMilliseconds()});
+            } catch(WriterApp.Application.Collaboration.CollaborationSessionDeniedException) { }
+        }
         await db.SaveChangesAsync();await tx.CommitAsync();
     });
     public async IAsyncEnumerable<BrainstormingConversationEvent> SendAsync(BrainstormingSend send,[EnumeratorCancellation]CancellationToken ct) {
@@ -123,9 +139,11 @@ public sealed class BrainstormingConversationService(AppDbContext db,IAiRouter r
         var target=session.Targets.SingleOrDefault(t=>t.Id==send.TargetId)??throw new InvalidDataException("Resolve a destination before sending.");
         await sources.RequireAsync(context,target,ct);
         var request=BrainstormingConversationAction.Build(send,session,context,target);var provider=router.Route(request).Provider;
-        var decision=await policy.EvaluateAsync(provider,request.ActionId);if(!decision.Allowed || decision.UserId!=owner)throw new InvalidDataException(decision.ErrorMessage??"Conversation is not authorized.");
+        var decision=await policy.EvaluateAsync(provider,request.ActionId);
+        if(decision.UserId!=owner)throw new BrainstormingAccessException();
+        if(!decision.Allowed)throw new BrainstormingRequestRejectedException(decision.ErrorCode??"ai.unavailable",decision.ErrorMessage??"Conversation is not authorized.");
         bool billable=provider is IAiBillingProvider {IsBillable:true,RequiresEntitlement:true};
-        if(billable) { var allowed=await quota.EnsureAiAllowedAsync(owner,(request.Inputs["conversation_data"].ToString()!.Length+3)/4+Math.Clamp(Math.Max(options.Value.Providers.OpenAI.MaxOutputTokens,8192),8192,32768),ct);if(!allowed.Allowed)throw new InvalidDataException(allowed.ErrorMessage??"AI quota exceeded."); }
+        if(billable) { var allowed=await quota.EnsureAiAllowedAsync(owner,(request.Inputs["conversation_data"].ToString()!.Length+3)/4+Math.Clamp(Math.Max(options.Value.Providers.OpenAI.MaxOutputTokens,8192),8192,32768),ct);if(!allowed.Allowed)throw new BrainstormingRequestRejectedException(allowed.ErrorCode??"ai.quota_exceeded",allowed.ErrorMessage??"AI quota exceeded."); }
         using var stop=CancellationTokenSource.CreateLinkedTokenSource(ct);stop.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(options.Value.Streaming.BrainstormingTimeoutSeconds,1,300)));
         if(!stops.Add(send.Scope.SessionId,send.OperationId,stop))throw new BrainstormingConcurrencyException(session);
         var row=new BrainstormingGenerationRecord {SessionId=send.Scope.SessionId,OperationId=send.OperationId,PayloadHash=BrainstormingPersistence.Hash(send)};

@@ -1,4 +1,12 @@
+import { indexedDbConnection } from './indexeddb-connection.js';
 const database = 'writerapp.brainstorming.v1';
+const connection = indexedDbConnection(database, 1, db => {
+    const sessions = db.createObjectStore('sessions', {keyPath: 'key'});
+    sessions.createIndex('document', 'document');
+    const rejected = db.createObjectStore('rejected', {keyPath: 'key'});
+    rejected.createIndex('session', 'session');
+    db.createObjectStore('identity', {keyPath: 'key'});
+});
 const bytes = value => new TextEncoder().encode(value).length;
 const id = value => String(value).toLowerCase();
 function key(partition, document, session) {
@@ -6,24 +14,15 @@ function key(partition, document, session) {
     return partition + '/' + id(document) + '/' + id(session);
 }
 async function transaction(work) {
-    const db = await new Promise((resolve, reject) => {
-        const request = indexedDB.open(database, 1);
-        request.onupgradeneeded = () => {
-            const sessions = request.result.createObjectStore('sessions', {keyPath: 'key'});
-            sessions.createIndex('document', 'document');
-            const rejected = request.result.createObjectStore('rejected', {keyPath: 'key'});
-            rejected.createIndex('session', 'session');
-            request.result.createObjectStore('identity', {keyPath: 'key'});
-        };
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = request.onblocked = () => reject(new Error('Conversation storage unavailable. Existing data was retained.'));
-    });
-    try { return await new Promise((resolve, reject) => {
-        const tx = db.transaction(['sessions', 'rejected', 'identity'], 'readwrite'); let result;
+    let tx;
+    try { tx = await connection.transaction(['sessions', 'rejected', 'identity'], 'readwrite'); }
+    catch(error) { throw new Error(`Conversation storage unavailable (${error?.name ?? 'UnknownError'}). ${error?.message ?? ''} Existing data was retained. Refresh the conversation list before explicitly retrying.`); }
+    return await new Promise((resolve, reject) => {
+        let result;
         tx.oncomplete = () => resolve(result);
         tx.onerror = tx.onabort = () => reject(tx.error || new Error('Conversation transaction failed; existing data was retained.'));
         work(tx, value => { result = value; });
-    }); } finally { db.close(); }
+    });
 }
 export async function read(partition, document, session) {
     return await transaction((tx, done) => { const request = tx.objectStore('sessions').get(key(partition, document, session)); request.onsuccess = () => done(request.result?.json ?? null); });

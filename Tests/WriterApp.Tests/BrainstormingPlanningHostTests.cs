@@ -29,6 +29,31 @@ public sealed class BrainstormingPlanningHostTests
     }
     private sealed class ReviewIdentityFixture:IBrainstormingReviewIdentity {public string Identity=>"synthetic-owner";public string? ActiveAccountKey=>"synthetic-owner";public event Action? Changed;public void Change()=>Changed?.Invoke();}
     [Fact]
+    public async Task FirstPlanningCaptureAdoptsTheDurableMappingCreatedDuringCapture() {
+        var f=new BrainstormingPlanningTests.LocalFixture();await f.Start(false);
+        var snapshot=await f.Service.CaptureAsync(f.Cache.Session.Scope);
+        var scope=f.Cache.Session.Scope with {AccountKey=new string('A',64),LocalOwnerId=null};
+        var cache=f.Cache with {Session=BrainstormingPersistence.ReScope(f.Cache.Session,scope)};
+        var server=scope with {Space=BrainstormingIdentitySpace.Server,AccountKey=new string('A',64),LocalOwnerId=null};var components=new Components();
+        var store=new LocalBrainstormingStore(Path.Combine(Path.GetTempPath(),"BrainstormMapping",Guid.NewGuid().ToString()));
+        await store.WriteAsync(cache,0,Guid.NewGuid());
+        using var services=new ServiceCollection().AddLogging().AddSingleton<IComponentActivator>(components).BuildServiceProvider();
+        await using var renderer=new HtmlRenderer(services,services.GetRequiredService<ILoggerFactory>());
+        await renderer.Dispatcher.InvokeAsync(async()=>{
+            var html=await renderer.RenderComponentAsync<BrainstormingPlanningPanel>(ParameterView.FromDictionary(new Dictionary<string,object?> {
+                ["Cache"]=cache,["Store"]=store,["Capture"]=(Func<BrainstormingScope,Task<BrainstormingPlanningSnapshot>>)(async _=>{
+                    var latest=(await store.ReadAsync(scope))!;
+                    await store.WriteAsync(latest with {Mapping=new(1,scope,server,1,DateTimeOffset.UtcNow)},latest.CacheRevision,Guid.NewGuid());
+                    return snapshot with {Scope=server};
+                })
+            }));
+            Set(components.Panel,"_decision","A first typed planning note");await Call(components.Panel,"Prepare");
+            typeof(BrainstormingPlanningPanel).GetMethod("StateHasChanged",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(components.Panel,null);
+            Assert.True(html.ToHtmlString().Contains("Review selected fields"),html.ToHtmlString());Assert.DoesNotContain("ownership changed",html.ToHtmlString());
+            Assert.Equal(server,components.Panel.Cache!.Mapping!.Server);
+        });
+    }
+    [Fact]
     public async Task AccountChangeDuringCaptureClearsPrivateNotesAndRejectsLateReview() {
         var f=new BrainstormingPlanningTests.LocalFixture();await f.Start(false);var source=await f.Service.CaptureAsync(f.Cache.Session.Scope);var identity=new ReviewIdentityFixture();var components=new Components();
         using var services=new ServiceCollection().AddLogging().AddSingleton<IComponentActivator>(components).BuildServiceProvider();await using var renderer=new HtmlRenderer(services,services.GetRequiredService<ILoggerFactory>());

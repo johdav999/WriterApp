@@ -26,7 +26,20 @@ public sealed class BrainstormingConversationWorkflow(IBrainstormingCacheStore s
         BrainstormingConversationContract.Validate(send);
         cache=await store.WriteAsync(cache with {PendingGeneration=send,Composer=instruction},cache.CacheRevision,Guid.NewGuid(),ct);
         // The retained immutable identity proves which uncertain request needs inspection after restart.
-        await foreach(var item in remote.SendAsync(send,ct)) {
+        await using var stream=remote.SendAsync(send,ct).GetAsyncEnumerator(ct);
+        bool received=false;
+        while(true) {
+            BrainstormingConversationEvent item;
+            try {if(!await stream.MoveNextAsync())break;item=stream.Current;}
+            catch(BrainstormingSendRejectedException e) when(!received && e.OperationId==send.OperationId) {
+                var retained=await store.ReadAsync(local,ct)??throw new InvalidDataException("Conversation unavailable.");
+                if(retained.PendingGeneration!=send)throw new OperationCanceledException("Conversation generation changed.");
+                var rejected=new BrainstormingGeneration(1,send,BrainstormingGenerationState.Failed,[],"",new(BrainstormingUsageState.NotDispatched,"","",0,0),
+                    e.Message+" Message retained; retry only after resolving this issue.",DateTimeOffset.UtcNow);
+                await store.WriteAsync(retained with {LastGeneration=rejected},retained.CacheRevision,Guid.NewGuid(),ct);
+                throw;
+            }
+            received=true;
             if(item.Output is { } output)BrainstormingConversationContract.ReadAnswer(BrainstormingPersistence.Json(output),send,context);
             var current=await store.ReadAsync(local,ct)??throw new InvalidDataException("Conversation unavailable.");
             if(current.PendingGeneration!=send)throw new OperationCanceledException("Conversation generation changed.");
@@ -44,7 +57,8 @@ public sealed class BrainstormingConversationWorkflow(IBrainstormingCacheStore s
         var generation=await remote.InspectAsync(send.Scope,send.OperationId,ct);
         var current=await store.ReadAsync(local,ct)??throw new InvalidDataException("Conversation unavailable.");if(current.PendingGeneration!=send)throw new OperationCanceledException("Conversation changed.");
         bool settled=generation is null || generation.State is BrainstormingGenerationState.Completed or BrainstormingGenerationState.Cancelled or BrainstormingGenerationState.Failed;
-        var absent=generation is null?new BrainstormingGeneration(1,send,BrainstormingGenerationState.Failed,[],"",new(BrainstormingUsageState.NotDispatched,"","",0,0),"Owned server inspection confirmed this operation was never accepted. Message retained; retry is explicit.",DateTimeOffset.UtcNow):null;
+        var absent=generation is null?current.LastGeneration is {State:BrainstormingGenerationState.Failed,Usage.State:BrainstormingUsageState.NotDispatched} rejected && rejected.Send==send
+            ? rejected : new BrainstormingGeneration(1,send,BrainstormingGenerationState.Failed,[],"",new(BrainstormingUsageState.NotDispatched,"","",0,0),"Owned server inspection confirmed this operation was never accepted. Message retained; retry is explicit.",DateTimeOffset.UtcNow):null;
         var saved=await store.WriteAsync(current with {PendingGeneration=settled?null:send,LastGeneration=generation??absent,
             Composer=generation?.State==BrainstormingGenerationState.Completed && current.Composer==send.Instruction?"":current.Composer},current.CacheRevision,Guid.NewGuid(),ct);
         if(generation is null)return saved;

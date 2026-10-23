@@ -10,7 +10,8 @@ const repo=process.cwd();const output=path.resolve(process.env.BRAINSTORMING_EVI
 await fs.mkdir(output,{recursive:true});
 const fixture=JSON.parse(await fs.readFile(path.resolve(process.env.WRITERAPP_BRAINSTORMING_FIXTURE ?? 'artifacts/brainstorming-p02/browser-fixture.json'),'utf8'));
 const script=await fs.readFile(path.join(repo,'WriterApp.Client/wwwroot/js/brainstorming-store.js'));
-const server=http.createServer((req,res)=>{res.setHeader('Cache-Control','no-store');res.setHeader('Content-Type',req.url==='/store.js'?'text/javascript':'text/html');res.end(req.url==='/store.js'?script:'<!doctype html><title>Brainstorming IndexedDB fixture</title><script type="module">window.store=await import("/store.js");</script>');});
+const helper=await fs.readFile(path.join(repo,'WriterApp.Client/wwwroot/js/indexeddb-connection.js'));
+const server=http.createServer((req,res)=>{res.setHeader('Cache-Control','no-store');res.setHeader('Content-Type',['/store.js','/indexeddb-connection.js'].includes(req.url)?'text/javascript':'text/html');res.end(req.url==='/store.js'?script:req.url==='/indexeddb-connection.js'?helper:'<!doctype html><title>Brainstorming IndexedDB fixture</title><script type="module">window.store=await import("/store.js");</script>');});
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 const browser=await chromium.launch({channel:'msedge',headless:true});const context=await browser.newContext();
 const url=`http://127.0.0.1:${server.address().port}/`;const passed=[];

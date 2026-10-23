@@ -51,6 +51,8 @@ namespace WriterApp.Controllers
                 CoverStudioContract.ValidatePrompt(prompt);
                 if (prompt.ContractVersion == 1 && !await CurrentAsync(prompt, ct))
                     return Conflict(new { code = "cover.stale_source", message = "The owned project or document changed. Synchronize and generate again." });
+                // Verify required storage before sending a potentially chargeable image request.
+                if (_assets is not null) await _assets.EnsureGenerationStorageAsync(ct);
                 List<string> imageUrls = (await _coverImageService.GenerateCoverConceptsAsync(prompt, ct)).ToList();
                 if(imageUrls.Count is <1 or >4)throw new System.IO.InvalidDataException("Generation returned an invalid concept count.");
                 var identities=new List<CoverAssetIdentity?>();

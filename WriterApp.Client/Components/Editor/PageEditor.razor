@@ -21,10 +21,12 @@
 }
 else
 {
-    <SectionEditor @ref="_editorRef"
+    var mountPage = Page.Id;
+    var mountEpoch = _sharedEditorEpoch;
+    <SectionEditor @ref="_editorRef" @key="(Page.Id, _sharedEditorEpoch)" Collaborative="Collaborative" DocumentId="Page.DocumentId" PageId="Page.Id" CollaborationStatusChanged="@(status => SharedStatusForMount(status, mountPage, mountEpoch))" SharedStructureChanged="SharedStructureChanged"
                    Content="@_content"
                    ContentChanged="OnContentChanged"
-                   EditorReady="OnEditorReady"
+                   EditorReady="@(editor => EditorReadyForMount(editor, mountPage, mountEpoch))"
                    FormattingChanged="FormattingChanged"
                    SelectionChanged="SelectionChanged"
                    LinkShortcutRequested="OnLinkShortcutRequested"
@@ -46,6 +48,27 @@ else
 }
 
 @code {
+    [Parameter] public bool Collaborative { get; set; }
+    [Parameter] public EventCallback SharedStructureChanged {get;set;}
+    [Parameter] public EventCallback<PageDto> LiveContentChanged { get; set; }
+    private SectionEditor.CollaborationEditorStatus? _sharedStatus;
+    private TaskCompletionSource? _sharedReady;
+    private Task SharedStatusForMount(SectionEditor.CollaborationEditorStatus status, Guid page, int epoch) =>
+        Page?.Id == page && _sharedEditorEpoch == epoch ? SharedStatusChanged(status) : Task.CompletedTask;
+    private Task EditorReadyForMount(IJSObjectReference editor, Guid page, int epoch) =>
+        Page?.Id == page && _sharedEditorEpoch == epoch ? OnEditorReady(editor) : Task.CompletedTask;
+    private void CompleteSharedReady() {
+        if (_editorInstance is not null && _sharedStatus is { LocalDurable:true, RemoteDurable:true, Error:null, RecoveryReason:null, AccountChanged:false, ReloadRequired:false })
+            _sharedReady?.TrySetResult();
+    }
+    private async Task SharedStatusChanged(SectionEditor.CollaborationEditorStatus status)
+    {
+        _sharedStatus=status;
+        if(status.ReloadRequired && _checkedPreview is null) { _editorInstance=null;_sharedEditorEpoch++; }
+        CompleteSharedReady();
+        await NotifyStatusChangedAsync();
+        await InvokeAsync(StateHasChanged);
+    }
     private const string CommandsModuleVersion = "20260308.1";
     private SectionEditor? _editorRef;
     private PageDto? _currentPage;
@@ -201,22 +224,22 @@ else
             _wordCount = CountWords(_content);
             _lastLoadedHash = ComputeShortHash(_content);
             _pendingAutosavePageId = Page.Id;
-            SaveCoordinator.StartSession(CreateRecoveryDraftKey(Page), _content, SaveContentAsync);
+            if(!Collaborative) SaveCoordinator.StartSession(CreateRecoveryDraftKey(Page), _content, SaveContentAsync);
             SyncSaveStateFromCoordinator();
-            _pendingSetContent = true;
+            _pendingSetContent = !Collaborative;
             await DebugLogAsync("PAGE_FETCH_SUCCESS", new
             {
                 traceId = HeadingNumberingTraceId,
                 pageId = Page.Id,
                 fingerprint = BuildFingerprint(_content)
             });
-            if (_editorRef is not null)
+            if (_editorRef is not null && !Collaborative)
             {
                 await ApplyContentToEditorAsync("pageChange");
             }
             SchedulePageBreakUpdate();
             _isLoadingPage = false;
-            await PromptRecoveryDraftIfAvailableAsync(Page);
+            if(!Collaborative) await PromptRecoveryDraftIfAvailableAsync(Page);
             await NotifyStatusChangedAsync();
         }
 
@@ -294,7 +317,8 @@ else
     private Task OnEditorReady(IJSObjectReference editor)
     {
         _editorInstance = editor;
-        _ = JSRuntime.InvokeVoidAsync("tiptapEditor.setEditable", editor, !_translationReadOnly);
+        CompleteSharedReady();
+        if(!Collaborative) _ = JSRuntime.InvokeVoidAsync("tiptapEditor.setEditable", editor, !_translationReadOnly);
         _lastAnnotationsFingerprint = null;
         _lastQualityIssuesFingerprint = null;
         _ = UpdatePageBreaksAsync();
@@ -351,6 +375,13 @@ else
     private async Task OnContentChanged(string html)
     {
         _content = html ?? string.Empty;
+        if(Collaborative)
+        {
+            _wordCount=CountWords(_content);
+            if(_currentPage is not null) await LiveContentChanged.InvokeAsync(_currentPage with {Content=_content});
+            await NotifyStatusChangedAsync();
+            return;
+        }
         if (_isLoadingPage)
         {
             _wordCount = CountWords(_content);
@@ -573,6 +604,7 @@ else
 
     private async Task SaveAsync(bool force = false)
     {
+        if(Collaborative){if(_editorRef is not null)await _editorRef.FlushCollaborationAsync();return;}
         if (_currentPage is null || (_isLoadingPage && !force))
         {
             return;
@@ -600,6 +632,7 @@ else
 
     private async Task<EditorSaveResult> SaveContentAsync(string content, CancellationToken ct)
     {
+        if(Collaborative) return EditorSaveResult.Failed("Shared writing uses the collaboration journal.");
         if (_currentPage is null)
         {
             return EditorSaveResult.Failed("No active page.");
@@ -840,6 +873,7 @@ else
 
     private string GetSaveStatusLabel()
     {
+        if(Collaborative) return _sharedStatus?.RecoveryReason ?? (_sharedStatus?.Error is not null ? "Writing is not saved locally. Keep this page open." : _sharedStatus?.ReadOnly==true ? "Viewer · Live updates" : _sharedStatus?.RemoteDurable==true ? "Saved to shared manuscript" : _sharedStatus?.LocalDurable==true ? "Saved locally · Syncing…" : "Saving shared writing…");
         return _saveState switch
         {
             SaveState.Saving => "Saving...",
@@ -864,6 +898,8 @@ else
 
     public void Dispose()
     {
+        _sharedReady?.TrySetCanceled();
+        _ = CancelCheckedPreviewAsync();
         SaveCoordinator.StateChanged -= HandleSaveCoordinatorStateChangedAsync;
         _ = SaveCoordinator.DisposeAsync();
 
@@ -934,7 +970,7 @@ else
 
     public Task SaveNowAsync()
     {
-        if (_isDirty)
+        if (Collaborative || _isDirty)
         {
             return SaveAsync(force: true);
         }
@@ -942,6 +978,10 @@ else
         return Task.CompletedTask;
     }
     private WriterApp.Shared.WebAiSource? _aiSaveSource;
+    private int _sharedEditorEpoch;
+    private IJSObjectReference? _checkedPreview;
+    private IJSObjectReference? _liveEditor;
+    private string? _checkedBefore;
     [Inject] public WebAiHistoryOutbox? AiHistoryOutbox {get;set;}
     [Inject] public WebCheckedAi? CheckedAi {get;set;}
     private WebAiHistoryOutbox? _fallbackHistoryOutbox;
@@ -955,10 +995,42 @@ else
         if(_aiHistoryProposal!=proposal) { _aiHistoryOperation=Guid.NewGuid();_aiHistoryIntent=null; }
         _aiHistoryProposal=proposal;_aiHistoryAccount=lease.Account;
     }
-    public void SetAiHistoryMove(WriterApp.Shared.WebAiHistoryIntent intent,WebCheckedAi.Lease lease) {
+    public async Task SetAiHistoryMove(WriterApp.Shared.WebAiHistoryIntent intent,WebCheckedAi.Lease lease) {
+        await SetAiSaveSource(lease.Source);
         _aiHistoryProposal=intent.ProposalId;_aiHistoryOperation=intent.OperationId;_aiHistoryIntent=intent;_aiHistoryAccount=lease.Account;_aiSaveSource=lease.Source;
     }
-    public void SetAiSaveSource(WriterApp.Shared.WebAiSource source) => _aiSaveSource=source;
+    public async Task SetAiSaveSource(WriterApp.Shared.WebAiSource source) {
+        if(Collaborative && _checkedPreview is not null)await CancelCheckedPreviewAsync();
+        if(Collaborative && _checkedPreview is null) {
+            await ForceSaveIfDifferentAsync("checked-preview"); RequireSavedForAi();
+            _checkedBefore=await GetContentAsync(); _liveEditor=_editorInstance;
+            _checkedPreview=await JSRuntime.InvokeAsync<IJSObjectReference>("tiptapEditor.collaboration.createCheckedPreview",_editorInstance);
+            _editorInstance=_checkedPreview;
+        }
+        _aiSaveSource=source;
+    }
+    public async Task CancelCheckedPreviewAsync() {
+        var preview=_checkedPreview;
+        if(preview is null)return;
+        _checkedPreview=null;_editorInstance=_liveEditor;_liveEditor=null;_checkedBefore=null;
+        _aiSaveSource=null;_aiHistoryProposal=null;_aiHistoryIntent=null;_aiHistoryOperation=Guid.Empty;
+        try { await JSRuntime.InvokeVoidAsync("tiptapEditor.destroy",preview);await preview.DisposeAsync(); }
+        catch(JSDisconnectedException) { }
+        catch(ObjectDisposedException) { }
+        if(_sharedStatus?.ReloadRequired==true) {
+            _editorInstance=null;_sharedEditorEpoch++;await InvokeAsync(StateHasChanged);
+        }
+    }
+    public async Task ReloadSharedCommittedAsync() {
+        if(!Collaborative)return;
+        await CancelCheckedPreviewAsync();
+        _sharedReady?.TrySetCanceled();
+        var ready=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);_sharedReady=ready;
+        _sharedStatus=null;_editorInstance=null;_sharedEditorEpoch++;await InvokeAsync(StateHasChanged);
+        try {await ready.Task.WaitAsync(TimeSpan.FromSeconds(20));}
+        catch(TimeoutException){throw new InvalidOperationException("The saved manuscript is reconnecting. Inspect the retained operation before retrying; your draft is retained.");}
+        finally {if(_sharedReady==ready)_sharedReady=null;}
+    }
     public sealed record StyleQualitySource(string Html, string Plain, int From, string Text);
     public async Task<StyleQualitySource> CaptureStyleQualityAsync(bool wholePage, CancellationToken ct) =>
         await JSRuntime.InvokeAsync<StyleQualitySource>("tiptapEditor.captureStyleQuality", ct, [_editorInstance, wholePage])
@@ -972,7 +1044,7 @@ else
         RequireSavedForAi();
         if (_currentPage?.Id != lease.Source.PageId) throw new InvalidOperationException("The reviewed page changed. Generate another review.");
         await PreviewStyleQualityAsync(source, edits, default);
-        SetAiSaveSource(lease.Source); SetAiHistoryProposal(proposal, lease);
+        await SetAiSaveSource(lease.Source); SetAiHistoryProposal(proposal, lease);
         try {
             string html = await JSRuntime.InvokeAsync<string>("tiptapEditor.applyStyleQuality", _editorInstance, source, edits);
             if (string.IsNullOrEmpty(html) || html == source.Html) throw new InvalidOperationException("No style changes were applied.");
@@ -981,17 +1053,41 @@ else
         } catch {
             // A refused transaction must not attach AI metadata to later ordinary writing.
             // An uncertain or failed save retains its checked intent and recovery draft.
+            if(Collaborative)await CancelCheckedPreviewAsync();
             if (await GetContentAsync() == source.Html) { _aiSaveSource = null; _aiHistoryProposal = null; _aiHistoryIntent = null; }
             throw;
         }
     }
     public void RequireSavedForAi()
     {
+        if(Collaborative){if(_sharedStatus is not {RemoteDurable:true,Error:null,RecoveryReason:null})throw new InvalidOperationException("Wait for shared writing to save before using this tool.");return;}
         if(_isDirty || _isLoadingPage || SaveCoordinator.State is EditorSaveState.Saving or EditorSaveState.Failed)
             throw new InvalidOperationException("Finish saving the editor before AI generation or Apply. Your local draft is retained.");
     }
     public async Task SaveCheckedAiAsync()
     {
+        if(Collaborative && _aiSaveSource is { } source && _checkedPreview is not null) {
+          try {
+            string after=await GetContentAsync();
+            await JSRuntime.InvokeVoidAsync("tiptapEditor.collaboration.retainCheckedDraft",source.AccountKey,source.DocumentId,source.PageId,_aiHistoryOperation,after);
+            if(_aiHistoryProposal is { } proposal) _aiHistoryIntent ??= new(1,_aiHistoryOperation,_aiHistoryOperation,proposal,1,null,"Applied",source,"Page",_checkedBefore!,after);
+            if(_aiHistoryIntent is not null) {
+                if(_aiHistoryIntent.AfterContent!=after)throw new InvalidOperationException("The retained approval changed. Review the draft again.");
+                await HistoryOutbox.Prepare(_aiHistoryIntent,HistoryLease());
+            }
+            var operation=_aiHistoryIntent?.OperationId ?? (_aiHistoryOperation==Guid.Empty ? _aiHistoryOperation=Guid.NewGuid() : _aiHistoryOperation);
+            using var response=await Http.PostAsJsonAsync($"api/documents/{source.DocumentId}/collaboration/tools/replace",new {OperationId=operation,Source=source,BeforeContent=_checkedBefore,AfterContent=after,HistoryOperationId=_aiHistoryIntent?.OperationId});
+            WebCheckedAi.RequireMutationReceipt(response);
+            if(_aiHistoryIntent is not null)await HistoryOutbox.Saved(_aiHistoryIntent,HistoryLease(),response);
+            await JSRuntime.InvokeVoidAsync("tiptapEditor.destroy",_checkedPreview); await _checkedPreview.DisposeAsync();
+            _checkedPreview=null;_editorInstance=null;_liveEditor=null;_checkedBefore=null;
+            _aiSaveSource=null;_aiHistoryProposal=null;_aiHistoryIntent=null;_aiHistoryOperation=Guid.Empty;
+            _content=after;_sharedEditorEpoch++;await InvokeAsync(StateHasChanged);return;
+          } catch {
+            await CancelCheckedPreviewAsync();
+            throw;
+          }
+        }
         await ForceSaveIfDifferentAsync("checked-ai-apply");
         RequireSavedForAi();
         if(_aiSaveSource is not null)throw new InvalidOperationException("AI change is not confirmed saved. Reload current writing and use the retained draft for recovery.");
@@ -999,6 +1095,7 @@ else
 
     public async Task ForceSaveIfDifferentAsync(string reason)
     {
+        if(Collaborative){if(_editorRef is not null)await _editorRef.FlushCollaborationAsync();return;}
         if (_currentPage is null || _isLoadingPage)
         {
             return;
@@ -1054,7 +1151,7 @@ else
             return _content;
         }
 
-        string html = await _editorRef.GetContentAsync().WaitAsync(ct);
+        string html = _checkedPreview is not null ? await JSRuntime.InvokeAsync<string>("tiptapEditor.getContent",ct,[_checkedPreview]) : await _editorRef.GetContentAsync().WaitAsync(ct);
         ct.ThrowIfCancellationRequested();
         _content = html ?? string.Empty;
         return _content;
@@ -1062,6 +1159,10 @@ else
 
     public async Task SetContentAsync(string html, bool markDirty = true)
     {
+        if(Collaborative) {
+            if(_checkedPreview is null)throw new InvalidOperationException("Review and check the current shared page before replacing it.");
+            await JSRuntime.InvokeVoidAsync("tiptapEditor.setContent",_checkedPreview,html);_content=html;return;
+        }
         string next = html ?? string.Empty;
         _content = next;
         _wordCount = CountWords(_content);
@@ -1721,6 +1822,7 @@ else
 
     public async Task InvokeCommandAsync(string command, params object?[] extraArgs)
     {
+        if(Collaborative && (_sharedStatus?.ReadOnly==true || _sharedStatus?.RecoveryReason is not null || _sharedStatus?.AccountChanged==true))return;
         if (_translationReadOnly) return;
         if (_editorInstance is null)
         {

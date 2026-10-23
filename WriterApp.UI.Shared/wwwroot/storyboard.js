@@ -106,6 +106,12 @@ export function attachPointerDrag(root, reference) {
     const cancel = event => {
         if (!event || event.pointerId === gesture?.id) clear();
     };
+    const lostCapture = event => {
+        // Touch implicitly captures the pressed grip. Transferring capture to
+        // root emits a bubbling lostpointercapture from that grip; only losing
+        // the board's own capture cancels the active drag.
+        if (event.target === root) cancel(event);
+    };
     const keydown = event => { if (event.key === 'Escape') clear(); };
     // Track releases outside the board even before the movement threshold has
     // been crossed, so a short press cannot leave a stale active gesture.
@@ -114,7 +120,7 @@ export function attachPointerDrag(root, reference) {
         [root.ownerDocument, 'pointermove', pointermove],
         [root.ownerDocument, 'pointerup', pointerup],
         [root.ownerDocument, 'pointercancel', cancel],
-        [root, 'lostpointercapture', cancel]
+        [root, 'lostpointercapture', lostCapture]
     ];
     for (const [target, name, listener] of listeners) target.addEventListener(name, listener);
     root.addEventListener('click', click, true);

@@ -10,6 +10,14 @@ public sealed record LocalWritingPrepared(LocalDocument Source, Guid SectionId, 
 
 public static class LocalWriting
 {
+    public static Guid RequireSynchronized(LocalDocument source)
+    {
+        if (source.SyncState == LocalSyncState.Conflict)
+            throw new InvalidOperationException("This manuscript has a cloud sync conflict. Review both versions and resolve the conflict, then retry the writing preview. Your writing is retained.");
+        if (source.ServerDocumentId is null || source.ServerVersion is null || source.SyncState != LocalSyncState.Synced || source.DeletedAtUtc is not null)
+            throw new InvalidOperationException("Synchronize this manuscript before generating writing. Open cloud sync details to enable sync or retry a failed sync, then retry the preview.");
+        return source.ServerDocumentId.Value;
+    }
     public static LocalWritingPrepared Prepare(LocalDocument source, Guid sectionId, WritingCommand command,
         IReadOnlyDictionary<Guid, TranslationPageCapture>? captures = null, QualityEditorSource? selection = null,
         IReadOnlyDictionary<Guid, string>? plainPages = null, string task = "", PromptDefinition? preset = null, string? recommendationId = null)
@@ -22,8 +30,7 @@ public static class LocalWriting
                 throw new InvalidOperationException("This preset belongs to another project or writing target. Choose a matching preset.");
             preset=ReusablePrompts.Parse(ReusablePrompts.Serialize(preset));
         }
-        if (source.ServerDocumentId is null || source.ServerVersion is null || source.SyncState != LocalSyncState.Synced || source.DeletedAtUtc is not null)
-            throw new InvalidOperationException("Synchronize this manuscript before generating writing.");
+        var serverDocumentId = RequireSynchronized(source);
         var section = source.Sections.Single(s => s.SectionId == sectionId);
         var pages = section.Pages.OrderBy(p => p.OrderIndex).ToArray();
         if (pages.Length == 0 || section.ServerSectionId is null || pages.Any(p => p.ServerPageId is null))
@@ -49,7 +56,7 @@ public static class LocalWriting
             if (command.Scope == WritingScope.Section) {
                 if (captures is null || captures.Count != pages.Length || pages.Any(p => !captures.ContainsKey(p.PageId)))
                     throw new InvalidDataException("Capture every page before section revision.");
-                structure = new(1, source.ServerDocumentId.Value, section.ServerSectionId.Value,
+                structure = new(1, serverDocumentId, section.ServerSectionId.Value,
                     pages.Select(p => new TranslationPage(p.ServerPageId!.Value, captures[p.PageId].Runs)).ToArray());
                 parameters[WritingActions.Parameter] = WritingActions.Serialize(structure);
                 if (recommendationId is not null) {
@@ -71,7 +78,7 @@ public static class LocalWriting
             }
         }
         if(preset?.Kind=="custom")parameters["context"]=editor?.SelectedText??text;
-        var request = new AiActionExecuteRequestDto(source.ServerDocumentId.Value, section.ServerSectionId.Value, page.ServerPageId,
+        var request = new AiActionExecuteRequestDto(serverDocumentId, section.ServerSectionId.Value, page.ServerPageId,
             editor?.SelectionStart, editor?.SelectionEnd, editor?.SelectedText, text, null, parameters, source.ServerVersion,
             WritingOutline: LocalWritingOutline.Capture(source));
         return new(source, sectionId, page.PageId, command, new(command.Key, request, DeviceAiAction.Custom, page.PageId, page.Content,

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Net.Http.Json;
 using Microsoft.JSInterop;
 using WriterApp.Shared;
 using WriterApp.Shared.Brainstorming;
@@ -26,8 +27,13 @@ public sealed class WebBrainstormingContext(HttpClient http, WebCheckedAi checke
     }
     public async Task<BrainstormingStorySnapshot> ReadAsync(Guid document, Guid? project = null, CancellationToken ct = default)
     {
-        using var response = await http.GetAsync($"api/brainstorming/sources/{document}?projectId={project}", HttpCompletionOption.ResponseHeadersRead, ct);
-        if (!response.IsSuccessStatusCode) throw new InvalidOperationException("Owned story context is unavailable. Restore/save the manuscript, sign in, or update the backend.");
+        using var response = await ReadSource($"api/brainstorming/sources/{document}?projectId={project}", ct);
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException(response.StatusCode switch {
+            System.Net.HttpStatusCode.Unauthorized => "Sign in again to prepare story context. Your writing and conversation are retained.",
+            System.Net.HttpStatusCode.Forbidden => "Brainstorm requires owner or editor access to this manuscript. Your writing and conversation are retained.",
+            System.Net.HttpStatusCode.Conflict => "Shared writing or story context is still changing. Wait for writing to save, then reopen Brainstorm.",
+            _ => "Story context is unavailable. Check manuscript access and saved writing, then reopen Brainstorm."
+        });
         if (response.Content.Headers.ContentLength > 8_000_000) throw new InvalidDataException("Story source exceeds the transport limit. Select a smaller source.");
         await using var stream = await response.Content.ReadAsStreamAsync(ct); using var buffer = new MemoryStream(); var block = new byte[8192];
         int read; while ((read = await stream.ReadAsync(block, ct)) > 0) { if (buffer.Length + read > 8_000_000) throw new InvalidDataException("Story source exceeds the transport limit."); buffer.Write(block, 0, read); }
@@ -36,11 +42,25 @@ public sealed class WebBrainstormingContext(HttpClient http, WebCheckedAi checke
         if (source.Outline.DocumentId != document || project is not null && source.Outline.ProjectId != project) throw new InvalidDataException("Backend returned another story document/project.");
         return source;
     }
+    private async Task<HttpResponseMessage> ReadSource(string url, CancellationToken ct)
+    {
+        for (int attempt = 0; ; attempt++) {
+            var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
+            if (response.StatusCode != System.Net.HttpStatusCode.Conflict || attempt >= 19) return response;
+            try {
+                var error = await response.Content.ReadFromJsonAsync<JsonElement>(ct);
+                if (!error.TryGetProperty("code", out var code) || code.GetString() != "collaboration_projection_pending") return response;
+            } catch (JsonException) { return response; }
+            response.Dispose(); await Task.Delay(200, ct);
+        }
+    }
     public async Task<BrainstormingPreparation> PrepareAsync(Guid document, BrainstormingTargetQuery query, IReadOnlyList<BrainstormingContextChoice> choices,
         IReadOnlyList<Guid> supportingDocuments, int budget, Func<CancellationToken, Task<(Guid PageId, string Html)?>> capturePending,
         BrainstormingScope? sessionScope = null, BrainstormingSession? previous = null, CancellationToken ct = default)
     {
         var pending = await capturePending(ct); var lease = await checkedAi.Capture(document, ct: ct); var source = await ReadAsync(document, ct: ct);
+        if (sessionScope is { ProjectId:null } && source.Outline.ProjectId is not null)
+            throw new InvalidOperationException("This conversation predates the manuscript outline. Start a new conversation for the current outline; saved drafts and recovery history are retained.");
         if (source.Outline.DocumentVersion != lease.Source.DocumentVersion) throw new InvalidDataException("Source revision changed. Refresh story context.");
         bool dirty = false;
         if (pending is { } edit) {

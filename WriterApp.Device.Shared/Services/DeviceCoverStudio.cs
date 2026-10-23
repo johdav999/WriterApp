@@ -48,16 +48,17 @@ public sealed partial class DeviceCoverStudio(HttpClient http, DeviceAccountServ
         using var timeout=CancellationTokenSource.CreateLinkedTokenSource(ct); timeout.CancelAfter(TimeSpan.FromMinutes(3));
         using var request=new HttpRequestMessage(HttpMethod.Post,"api/covers/generate") { Content=JsonContent.Create(prompt) };
         request.Options.Set(DeviceAuthenticatedHandler.ExpectedAccountGeneration,generation);
-        using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,timeout.Token); Guard(scope,generation);
+        using var response=await TransportAsync(()=>http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,timeout.Token)); Guard(scope,generation);
         if(!response.IsSuccessStatusCode) throw new IOException((int)response.StatusCode switch {
             401=>"Sign in again to generate covers.",402 or 403=>"Cover generation requires the Professional plan and available AI quota.",
             409=>"The cloud project changed. Synchronize before generating again.",429=>"The image quota or rate limit was reached. Try again later.",
             404 or 426=>"Update the backend to support revision-checked cover generation.",422=>"The image service returned unsupported or invalid media. Choose a local PNG or retry.",
+            504=>"Cover generation timed out. Try again later. Your saved cover and cached concepts are preserved.",
             _=>"Cover generation is unavailable. The previous cover and cached concepts are preserved." });
         const int limit=16*1024*1024;
         if(response.Content.Headers.ContentLength>limit) throw new InvalidDataException("Cover response exceeds the safe limit.");
-        await using var stream=await response.Content.ReadAsStreamAsync(timeout.Token); using var buffer=new MemoryStream(); byte[] block=new byte[16384];
-        int read; while((read=await stream.ReadAsync(block,timeout.Token))>0) { if(buffer.Length+read>limit) throw new InvalidDataException("Cover response exceeds the safe limit."); await buffer.WriteAsync(block.AsMemory(0,read),timeout.Token); }
+        await using var stream=await TransportAsync(()=>response.Content.ReadAsStreamAsync(timeout.Token)); using var buffer=new MemoryStream(); byte[] block=new byte[16384];
+        int read; while((read=await TransportAsync(async ()=>await stream.ReadAsync(block,timeout.Token)))>0) { if(buffer.Length+read>limit) throw new InvalidDataException("Cover response exceeds the safe limit."); await buffer.WriteAsync(block.AsMemory(0,read),timeout.Token); }
         var result=JsonSerializer.Deserialize<CoverGenerationResponse>(buffer.ToArray(),new JsonSerializerOptions(JsonSerializerDefaults.Web){MaxDepth=16}) ?? throw new InvalidDataException("Empty cover response.");
         if(result.ContractVersion!=1 || result.ProjectId!=prompt.ProjectId || result.DocumentId!=prompt.DocumentId
             || result.MetadataRevision!=prompt.ExpectedMetadataRevision || result.DocumentVersion!=prompt.ExpectedDocumentVersion)

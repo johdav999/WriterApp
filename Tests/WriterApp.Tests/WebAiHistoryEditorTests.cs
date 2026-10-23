@@ -42,7 +42,7 @@ public sealed partial class DesktopAiWebPersistenceTests
         Property("Http",http);Property("JSRuntime",storage);Property("Logger",NullLogger<PageEditor>.Instance);
         var page=(await f.Http.GetFromJsonAsync<WriterApp.Application.Documents.PageDto[]>($"api/sections/{f.Sections[0]}/pages"))!.Single(p=>p.Id==f.Pages[0]);
         typeof(PageEditor).GetField("_currentPage",TranslationPrivate)!.SetValue(editor,page);typeof(PageEditor).GetField("_content",TranslationPrivate)!.SetValue(editor,page.Content);
-        var lease=new WebCheckedAi.Lease(intent.Source,http.BaseAddress!.AbsoluteUri,null);editor.SetAiSaveSource(intent.Source);editor.SetAiHistoryProposal(intent.ProposalId,lease);
+        var lease=new WebCheckedAi.Lease(intent.Source,http.BaseAddress!.AbsoluteUri,null);await editor.SetAiSaveSource(intent.Source);editor.SetAiHistoryProposal(intent.ProposalId,lease);
         var save=(Task<EditorSaveResult>)typeof(PageEditor).GetMethod("SaveContentAsync",TranslationPrivate)!.Invoke(editor,[intent.AfterContent!,CancellationToken.None])!;var result=await save;
         Assert.Equal(failure is not ("commit-ack" or "save-offline" or "storage"),result.Succeeded);
         await using(var verify=new AppDbContext(f.Options)) {var current=(await verify.Pages.SingleAsync(p=>p.Id==f.Pages[0])).Content;Assert.Equal(failure is "save-offline" or "storage"?intent.BeforeContent:intent.AfterContent,current);if(failure=="storage")Assert.Empty(await verify.WebAiHistoryOperations.ToListAsync());}

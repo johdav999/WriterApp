@@ -6,6 +6,7 @@ declare global {
     }
 }
 import { Editor, Extension } from "@tiptap/core";
+import * as collaboration from "./collaboration/session";
 import { captureTranslation, previewTranslation, qualityPlainText, previewBrainstormingKeep, create as createBrainstormProposal } from "./device-editor";
 import { targetedRevisionTransaction, validateTargetedRevisionRange } from "./targeted-revision";
 import { captureStyleQuality, previewStyleQuality, applyStyleQuality } from "./web-style-quality";
@@ -1356,6 +1357,9 @@ function runHeadingNumberingRebuild(editor, view, reason, traceId) {
     });
 
     requestAnimationFrame(() => {
+        // Keep/reload can retire this editor before the diagnostic frame runs.
+        // Tiptap's unmounted view proxy throws even with optional chaining.
+        if (!editor || editor.isDestroyed || view?.isDestroyed) return;
         const domCount = editor?.view?.dom?.querySelectorAll?.(".wa-heading-number")?.length ?? 0;
         const headingCount = countHeadingsInDoc(view.state.doc);
         debugHeading("DOM_VERIFY", { traceId: effectiveTraceId, domCount, headingCount });
@@ -2178,7 +2182,7 @@ function buildFormattingState(editor) {
         });
     }
 
-    return {
+    const state = {
         isBold: editor.isActive("bold"),
         isItalic: editor.isActive("italic"),
         isStrike: editor.isActive("strike"),
@@ -2216,6 +2220,8 @@ function buildFormattingState(editor) {
         fontSize: fontSizeResult.mixed ? null : normalizeFontSize(fontSizeResult.value),
         textAlign: textAlignResult.mixed ? null : (textAlignResult.value ?? "left")
     };
+    if(!editor.isEditable)for(const key of Object.keys(state))if(key.startsWith('can'))state[key]=false;
+    return state;
 }
 
 function buildPlainTextSegments(doc) {
@@ -2338,7 +2344,8 @@ function hasExtension(editor, name) {
 }
 
 window.tiptapEditor = {
-    create: function (elementId, initialContent, dotNetRef) {
+    collaboration,
+    create: function (elementId, initialContent, dotNetRef, sharedOptions = null) {
         const interopState = createInteropState(dotNetRef);
         console.info("[tiptap] mask pagination disabled:", window.__writer_disable_mask_pagination);
         const ShortcutExtension = Extension.create({
@@ -2406,14 +2413,17 @@ window.tiptapEditor = {
                         return true;
                     },
                     "Mod-z": () => {
+                        if(sharedOptions) return this.editor.commands.undo();
                         safeInvoke(dotNetRef, interopState, "OnUndoShortcut");
                         return true;
                     },
                     "Mod-Shift-z": () => {
+                        if(sharedOptions) return this.editor.commands.redo();
                         safeInvoke(dotNetRef, interopState, "OnRedoShortcut");
                         return true;
                     },
                     "Mod-y": () => {
+                        if(sharedOptions) return this.editor.commands.redo();
                         safeInvoke(dotNetRef, interopState, "OnRedoShortcut");
                         return true;
                     }
@@ -2450,8 +2460,9 @@ window.tiptapEditor = {
             ];
             editor = new Editor({
                 element: document.getElementById(elementId),
-                extensions,
-            content: initialContent,
+                ...sharedOptions,
+                extensions: sharedOptions ? [...sharedOptions.extensions, AiDecorationsExtension, AnnotationDecorationsExtension, QualityDecorationsExtension, PageGapDecorationsExtension, HeadingNumberingExtension, SearchHighlightExtension, ShortcutExtension] : extensions,
+            content: sharedOptions ? sharedOptions.content : initialContent,
             editorProps: {
                 attributes: {
                     class: "ProseMirror tiptap-content",
@@ -2474,8 +2485,8 @@ window.tiptapEditor = {
                     requestHeadingNumberingRebuild(editor, reason);
                 }
             },
-            onUpdate({ editor }) {
-                if (editor.__waLastWasLayoutTx) {
+            onUpdate({ editor, transaction }) {
+                if (transaction?.getMeta?.(WA_LAYOUT_META)) {
                     return;
                 }
                 safeInvoke(dotNetRef, interopState, "OnEditorContentChanged", normalizeTableHtml(editor.getHTML()));
@@ -2904,6 +2915,7 @@ window.tiptapEditor = {
     },
 
     setContent: function (editor, content) {
+        collaboration.requireLegacyReplacement(editor);
         const traceId = editor?.__headingNumberingTraceId;
         const pageId = editor?.__headingNumberingPageId;
         const contentLength = typeof content === "string" ? content.length : 0;
@@ -2927,6 +2939,8 @@ window.tiptapEditor = {
             return "";
         }
 
+        if(editor.__prosaCheckedPreview || editor.extensionManager?.extensions.some(extension=>extension.name==='collaboration'))
+            return collaboration.checkedContent(editor);
         return editor.getHTML ? normalizeTableHtml(editor.getHTML()) : "";
     },
 
@@ -3282,7 +3296,7 @@ console.log('tiptap bundle loaded', !!(window as any).tiptapEditor);
 (window as any).tiptapEditor.previewTranslation = previewTranslation;
 (window as any).tiptapEditor.targetedRevisionTransaction = targetedRevisionTransaction;
 (window as any).tiptapEditor.validateTargetedRevisionRange = validateTargetedRevisionRange;
-(window as any).tiptapEditor.setEditable = (editor: Editor, editable: boolean) => editor.setEditable(editable);
+(window as any).tiptapEditor.setEditable = (editor: Editor, editable: boolean) => editor.setEditable(editable && ((editor as any).__prosaCanEdit?.() ?? true));
 (window as any).tiptapEditor.captureStyleQuality = captureStyleQuality;
 (window as any).tiptapEditor.previewStyleQuality = previewStyleQuality;
 (window as any).tiptapEditor.applyStyleQuality = applyStyleQuality;

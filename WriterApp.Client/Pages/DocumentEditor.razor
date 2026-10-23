@@ -27,13 +27,16 @@ else if (_activeSection is null || _activePage is null)
 }
 else
 {
-    <EditorWorkspace @ref="_brainstormEditorWorkspace" ProposalId="SelectedBrainstormDraftId" Class="@GetLayoutStateClass()" Style="@GetLayoutStyle()" WorkspaceClass="@GetWorkspaceClass()" BrainstormOpen="_brainstormOpen" LeaveBrainstorm="ToggleBrainstorm">
+    <EditorWorkspace @ref="_brainstormEditorWorkspace" LocationKey="@_activePage.Id.ToString()" ProposalId="@(SelectedBrainstormDraftId ?? _sharedBrainstormDraftId)" Class="@GetLayoutStateClass()" Style="@GetLayoutStyle()" WorkspaceClass="@GetWorkspaceClass()" BrainstormOpen="_brainstormOpen" LeaveBrainstorm="ToggleBrainstorm">
         <Proposal>
-                @if (_brainstormOpen) { <BrainstormingProposalPreview @ref="_brainstormProposal" ReviewIdentity="BrainstormSessions" Sessions="BrainstormSessions.Sessions" CacheChanged="cache => _brainstormCache = cache" EditorHost="Web" GenerationBusy="_brainstormGenerating" DocumentId="DocumentId" Cache="_brainstormCache" ActiveSectionId="_activeSection.Id" TargetLabel="BrainstormTargetLabel" Navigate="NavigateBrainstormTarget" ViewApplication="ViewBrainstormApplication" PrepareKeep="PrepareBrainstormKeep" ApplyKeep="ApplyBrainstormKeep" InspectApplication="InspectBrainstormKeep" ChangeApplication="ChangeBrainstormKeep" RecoverApplication="RecoverBrainstormKeep" /> }
+                @if (_brainstormOpen && _collaborative) { <BrainstormingSharedDraftPreview @key="DocumentId" DocumentId="DocumentId" Changed="SharedBrainstormDraftChanged" /> }
+                @if (_brainstormOpen) { <BrainstormingProposalPreview @ref="_brainstormProposal" HideEmpty="@(_sharedBrainstormDraftId is not null)" ReviewIdentity="BrainstormSessions" Sessions="BrainstormSessions.Sessions" CacheChanged="cache => _brainstormCache = cache" EditorHost="Web" GenerationBusy="_brainstormGenerating" DocumentId="DocumentId" Cache="_brainstormCache" ActiveSectionId="_activeSection.Id" TargetLabel="BrainstormTargetLabel" Navigate="NavigateBrainstormTarget" ViewApplication="ViewBrainstormApplication" PrepareKeep="PrepareBrainstormKeep" ApplyKeep="ApplyBrainstormKeep" InspectApplication="InspectBrainstormKeep" ChangeApplication="ChangeBrainstormKeep" RecoverApplication="RecoverBrainstormKeep" /> }
                 @if (_brainstormNavigationError is not null) { <p role="alert">@_brainstormNavigationError</p> }
         </Proposal>
         <Main>
-                <EditorHeading Label='@(_isPreviewMode ? "Manuscript" : "Section")' Title='@(_isPreviewMode ? GetPreviewDocumentTitle() : GetActiveEditorTitle())'><Actions>                        @if (ShowTranslationSwitcher)
+                <EditorHeading Label='@(_isPreviewMode ? "Manuscript" : "Section")' Title='@(_isPreviewMode ? GetPreviewDocumentTitle() : GetActiveEditorTitle())'><Actions>
+                        @if (_documentKind == "manuscript" && (!_collaborative || _collaborationRole == "owner")) { <button type="button" class="panel-toggle" @onclick="OpenSharingAsync">Share</button> }
+                        @if (ShowTranslationSwitcher)
                         {
                             <div class="translation-switcher">
                                 <div class="translation-switcher-label">Translation</div>
@@ -63,9 +66,15 @@ else
                             <EditorPanelControls FocusMode="@LayoutStateService.State.FocusMode" ContextCollapsed="@IsContextPanelCollapsed()" ToggleFocus="ToggleFocusMode" ToggleContext="ToggleContextPanel" />
                         }
 </Actions></EditorHeading>
-
-
-
+                @if (_collaborative)
+                {
+                    <div class="shared-manuscript-identity" aria-label="Shared manuscript identity">
+                        <strong>@GetPreviewDocumentTitle()</strong>
+                        <span>@(_collaborationRole == "viewer" ? "Viewer · Read only" : _collaborationRole == "owner" ? "Owner" : "Editor")</span>
+                        <a href="@($"documents/{DocumentId}/sections/{SectionId}")" title="Copy this link to open the same manuscript in another browser. Existing access is required.">Manuscript @DocumentId.ToString("N")[..8]</a>
+                    </div>
+                    <div class="collaboration-presence-slot"></div>
+                }
                 @if (!_isPreviewMode)
                 {
                 @if (!IsSceneRoute && GetPages(_activeSection.Id).Count>1)
@@ -385,7 +394,7 @@ else
                         @if (!IsTranslationProposal)
                         {
                             <div class="ai-preview-actions">
-                                <button type="button" @onclick="OnApplyPendingAiProposal" disabled="@(_clientAiRequest is not null)">Apply</button>
+                                <button type="button" @onclick="OnApplyPendingAiProposal" disabled="@(_clientAiRequest is not null || string.IsNullOrWhiteSpace(_pendingAiProposal.ActionKey) || _pendingAiProposal.ProposedText is null)">Apply</button>
                                 <button type="button" @onclick="OnDiscardPendingAiProposal">Discard</button>
                                 <button type="button"
                                         class="ai-details-toggle"
@@ -510,16 +519,17 @@ else
                                     }
                                 </div>
                             }
-                            else
+                            else if(_activePage is not null)
                             {
                                 @* Pages are derived from continuous section content; breaks are visual only. *@
                                 <PageEditor @ref="_pageEditor"
                                             @key="_activePage.Id"
-                                            Page="_activePage"
-                                            UseSceneContentPersistence="@IsSceneRoute"
+                                            Page="_activePage" Collaborative="_collaborative"
+                                            UseSceneContentPersistence="@(IsSceneRoute && !_collaborative)"
                                             SceneProjectId="@(IsSceneRoute ? ProjectId : null)"
                                             SceneNodeId="@(IsSceneRoute ? SceneNodeId : null)"
                                             OnPageSaved="OnPageSaved"
+                                            LiveContentChanged="OnLiveContentChanged" SharedStructureChanged="RefreshSharedStructureAsync"
                                             ShowStatusBar="false"
                                             StatusChanged="OnEditorStatusChanged"
                                             Annotations="_annotations"
@@ -603,11 +613,29 @@ else
         </Main>
         <Outline>
             @if (_documentKind == "manuscript" && GetNavigatorProjectId() is not null) {
-                <Projects ProjectId="@GetNavigatorProjectId()" EmbedNavigator="true" HostDocumentId="DocumentId" SceneOpenRequested="OpenSceneFromNavigatorAsync" />
+                <Projects IdPrefix="editor-outline" ProjectId="@GetNavigatorProjectId()" EmbedNavigator="true" HostDocumentId="DocumentId" SceneOpenRequested="OpenSceneFromNavigatorAsync" />
             }
             <nav aria-label="Manuscript sections">
                 @foreach (var section in _sections) { <button type="button" class="panel-toggle" aria-current="@(section.Id == _activeSection.Id ? "page" : null)" @onclick="() => OnSectionSelected(section.Id)">@section.Title</button> }
             </nav>
+            @if(_collaborative && _collaborationRole is "owner" or "editor") {
+                <details class="shared-structure-tools">
+                    <summary>Organize manuscript</summary>
+                    <button type="button" @onclick="CreateSectionAsync" disabled="@_isCreatingSection">New section</button>
+                    <button type="button" @onclick="CreateSharedPageAsync">New page</button>
+                    <button type="button" @onclick="()=>BeginSectionRename(_activeSection.Id)">Rename section</button>
+                    <button type="button" @onclick="()=>DuplicateSectionAsync(_activeSection.Id)">Duplicate section</button>
+                    <button type="button" @onclick="()=>MoveSharedSectionAsync(-1)" disabled="@(_sections.First().Id==_activeSection.Id)">Move section up</button>
+                    <button type="button" @onclick="()=>MoveSharedSectionAsync(1)" disabled="@(_sections.Last().Id==_activeSection.Id)">Move section down</button>
+                    <button type="button" @onclick="()=>PromptDeleteSection(_activeSection.Id)" disabled="@(_sections.Count<2)">Delete section</button>
+                    @if(_renamingSectionId is { } renaming) {
+                        <label>Section name <input @bind="_sectionRenameDraft" maxlength="200" /></label>
+                        <button type="button" @onclick="()=>CommitSectionRenameAsync(renaming)">Save section name</button>
+                        <button type="button" @onclick="CancelSectionRename">Cancel rename</button>
+                    }
+                    @if(_sectionError is not null || _sectionRenameError is not null) { <p role="alert">@(_sectionRenameError ?? _sectionError)</p> }
+                </details>
+            }
         </Outline>
         <Brainstorming>
             @if (_brainstormVisited) {
@@ -811,6 +839,7 @@ else
                         {
                             <div class="notes-panel">
                                 <textarea class="notes-input"
+                                          readonly="@(_collaborative && _collaborationRole == "viewer")"
                                           value="@_notesDraft"
                                           @oninput="OnNotesInput"
                                           placeholder="Add notes for this section..."></textarea>
@@ -1073,7 +1102,7 @@ else
                                 }
 
                                 <WebAiHistoryDelivery Entries="@_historyDelivery" Error="@_historyDeliveryError" Busy="@_historyDeliveryBusy" Retry="RetryHistoryDelivery" />
-                                <WebAiRecoveryPanel DocumentId="DocumentId" IncludeAggregate="true" BeforeWork="SaveBeforeScopedRecovery" Changed="ReloadAfterScopedRecovery" BusyChanged="ScopedRecoveryBusyChanged" />
+                                <WebAiRecoveryPanel @key="(DocumentId, _scopedHistoryRevision)" DocumentId="DocumentId" IncludeAggregate="true" BeforeWork="SaveBeforeScopedRecovery" Changed="ReloadAfterScopedRecovery" BusyChanged="ScopedRecoveryBusyChanged" />
                                 <AiHistoryPanel Entries="@(_aiHistoryEntries.Select(entry => new AiHistoryItem(entry.Id, entry.ActionKey, entry.Summary ?? entry.Label, entry.IsApplied ? "Applied" : entry.AppliedCount > 0 ? "Undone" : "Generated", entry.Timestamp, FormatHistoryText(entry.BeforeText), FormatHistoryText(entry.AfterText), Origin:"Cloud", CanRecover:false)).ToArray())"
                                     Refresh="@(() => LoadAiHistoryAsync())" Busy="_aiUndoRedoInFlight" UndoLatest="OnAiUndoRequested" RedoLatest="OnAiRedoRequested"
                                     CanUndoLatest="_hasAiUndoHistory" CanRedoLatest="_hasAiRedoHistory" />
@@ -1531,7 +1560,7 @@ else
                                                         <button type="button" @onclick="() => SelectDiffBaseAsync(version)">
                                                             Compare
                                                         </button>
-                                                        <button type="button" class="danger" @onclick="() => PromptRestoreVersion(version)">
+                                                        <button type="button" class="danger" disabled="@(_collaborative && _collaborationRole=="viewer")" @onclick="() => PromptRestoreVersion(version)">
                                                             Restore
                                                         </button>
                                                     </div>

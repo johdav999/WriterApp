@@ -28,7 +28,17 @@ public partial class ProjectCoverStudio
         ct.ThrowIfCancellationRequested();
     }
     protected override async Task OnAfterRenderAsync(bool firstRender) {if(firstRender && Project is not null) {await RefreshEditsAsync();StateHasChanged();}}
-    private void CancelEdit()=>_request?.Cancel();
+    private void CancelEdit(){_cancelRequested=true;_request?.Cancel();}
+    private void ReportPreviewFailure(Exception error) {
+        if(error is OperationCanceledException) {
+            if(_cancelRequested)_saveStatus="Cover request canceled. Existing concepts and the saved cover are unchanged.";
+            else _coverError="The cover request timed out. Try again later. Existing concepts and the saved cover are unchanged.";
+        } else if(error is HttpRequestException or IOException or System.Net.WebException)
+            _coverError="The connection to the cover service was interrupted. Check your connection and try again. Existing concepts and the saved cover are unchanged.";
+        else if(error is JsonException or InvalidDataException)
+            _coverError="The cover service returned an incomplete or invalid response. Try again later. Existing concepts and the saved cover are unchanged.";
+        else _coverError=error.Message;
+    }
     private async Task DismissEditAsync() {
         if(_isGenerating || _isSavingCover)return;
         if(_editPreview?.SaveApproved==true && _editPreview.Receipt is null) {_coverError="Check the approved save before dismissing its recovery evidence.";return;}
@@ -37,7 +47,7 @@ public partial class ProjectCoverStudio
     private async Task RefreshEditsAsync() {
         if(Project is null || _isGenerating || _isSavingCover)return;
         long epoch=_epoch;Guid project=Project.Id;string backend=CoverApiClient.Backend;
-        using var ct=System.Threading.CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);_request=ct;_isGenerating=true;_coverError=null;
+        using var ct=System.Threading.CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);_request=ct;_isGenerating=true;_coverError=null;_cancelRequested=false;
         try {
             string scope=await CoverScopeAsync();
             string? json=await JS.InvokeAsync<string?>("localStorage.getItem",ct.Token,PreviewKey(scope,project));
@@ -52,7 +62,7 @@ public partial class ProjectCoverStudio
             if(CurrentEditContext(epoch,project,backend))_editCapabilities=capabilities;
             var recovery=await CoverApiClient.EditCallAsync<CoverEditRecoveryResponse>(HttpMethod.Get,$"api/covers/edit-recovery/{project}",null,ct.Token,6*1024*1024);
             if(CurrentEditContext(epoch,project,backend) && recovery.Receipt is {Version:1} latest && latest.ProjectId==project)_coverRecovery=latest;
-        } catch(Exception e) {if(CurrentEditContext(epoch,project,backend)) {_coverError=e.Message;_editCapabilities=null;}}
+        } catch(Exception e) {if(CurrentEditContext(epoch,project,backend)) {ReportPreviewFailure(e);_editCapabilities=null;}}
         finally {_isGenerating=false;if(_request==ct)_request=null;}
     }
     private bool CurrentEditContext(long epoch,Guid project,string backend)=>epoch==_epoch && Project?.Id==project && CoverApiClient.Backend==backend && !_lifetime.IsCancellationRequested;
@@ -67,7 +77,7 @@ public partial class ProjectCoverStudio
         var project=Project.Id;var document=Project.PrimaryDocumentId ?? Project.DocumentId;var revision=_metadataRevision;
         if(document is null) {_coverError="Choose a saved manuscript first.";return;}
         long epoch=_epoch;string backend=CoverApiClient.Backend,selected=_selectedImageUrl!;
-        using var ct=System.Threading.CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);ct.CancelAfter(TimeSpan.FromMinutes(3));_request=ct;_isGenerating=true;_coverError=null;_saveStatus=null;
+        using var ct=System.Threading.CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);ct.CancelAfter(TimeSpan.FromMinutes(3));_request=ct;_isGenerating=true;_coverError=null;_saveStatus=null;_cancelRequested=false;
         try {
             string scope=await CoverScopeAsync();var capabilities=await CoverApiClient.EditCapabilitiesAsync(ct.Token);
             if(capabilities.Version!=1 || capabilities.Operations?.Contains(operation)!=true)throw new InvalidOperationException(capabilities.UnavailableReason ?? "This operation is unavailable.");
@@ -86,7 +96,7 @@ public partial class ProjectCoverStudio
             var preview=new CoverEditPreview(1,scope,result,"data:image/png;base64,"+Convert.ToBase64String(source.Bytes),0,Guid.NewGuid(),OriginalAsset:source.Asset);
             await CacheEditAsync(preview,ct.Token);
             if(!CurrentEditContext(epoch,project,backend))return;InstallEdit(preview);_saveStatus="Review original and proposed. Select a concept, then explicitly save.";
-        } catch(Exception e){if(CurrentEditContext(epoch,project,backend))_coverError=e.Message;}
+        } catch(Exception e){if(CurrentEditContext(epoch,project,backend))ReportPreviewFailure(e);}
         finally {_isGenerating=false;if(_request==ct)_request=null;}
     }
     private async Task SelectEditAsync(int selected) {

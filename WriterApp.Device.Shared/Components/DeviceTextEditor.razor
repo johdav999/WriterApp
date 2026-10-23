@@ -139,7 +139,9 @@
         if (_lastAnnotations is null || !Annotations.SequenceEqual(_lastAnnotations))
         {
             var annotations = Annotations.ToArray();
-            await _editor.InvokeVoidAsync("setAnnotations", annotations);
+            // Pass the array as one JS argument; params covariance otherwise spreads
+            // LocalTextAnnotation[] into separate annotation arguments.
+            await _editor.InvokeVoidAsync("setAnnotations", (object)annotations);
             _lastAnnotations = annotations;
         }
         if (AnnotationRequest != _lastAnnotationRequest && RequestedAnnotationId is { } id)

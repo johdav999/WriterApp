@@ -1,0 +1,5 @@
+.shared-brainstorm-draft { padding: 1.25rem; background: var(--surface, #fff); border: 1px solid var(--border, #ddd); border-radius: .5rem; margin-bottom: 1rem; }
+.shared-brainstorm-draft header { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.shared-brainstorm-draft h2 { margin: 0; font-size: 1.15rem; }
+.shared-brainstorm-draft p, .shared-brainstorm-draft header span { color: var(--text-muted, #626b7a); font-size: .85rem; }
+.shared-brainstorm-prose { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.7; }

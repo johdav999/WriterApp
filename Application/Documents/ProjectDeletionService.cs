@@ -66,6 +66,12 @@ namespace WriterApp.Application.Documents
             }
 
             Guid projectId = project.Id;
+            var protectedMode = await _dbContext.Documents.AsNoTracking()
+                .Where(d => d.ProjectId == projectId && d.CollaborationMode != WriterApp.Shared.Collaboration.CollaborationMode.Legacy)
+                .Select(d => (WriterApp.Shared.Collaboration.CollaborationMode?)d.CollaborationMode).FirstOrDefaultAsync(ct);
+            if (protectedMode.HasValue)
+                throw new WriterApp.Application.Collaboration.CollaborationWriteException(
+                    WriterApp.Application.Collaboration.CollaborationWriteException.ForMode(protectedMode.Value));
             List<Guid> documentIds = await _dbContext.Documents
                 .AsNoTracking()
                 .Where(item => item.ProjectId == projectId && item.OwnerUserId == ownerUserId)
@@ -161,6 +167,7 @@ namespace WriterApp.Application.Documents
             if (_dbContext.Database.CurrentTransaction is null) throw new InvalidOperationException("Document deletion requires an existing transaction.");
             if (!await _dbContext.Documents.AnyAsync(d => d.Id == documentId && d.OwnerUserId == ownerUserId, ct))
                 throw new InvalidOperationException("Owned document not found.");
+            await WriterApp.Application.Collaboration.CollaborationWriteGuard.RequireLegacyAsync(_dbContext, documentId, ct);
             Guid[] documents = [documentId];
             var sections = await _dbContext.Sections.Where(s => s.DocumentId == documentId).Select(s => s.Id).ToListAsync(ct);
             var pages = await _dbContext.Pages.Where(p => p.DocumentId == documentId).Select(p => p.Id).ToListAsync(ct);

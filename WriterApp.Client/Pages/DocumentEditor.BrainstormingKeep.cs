@@ -5,6 +5,16 @@ namespace WriterApp.Client.Pages;
 
 public partial class DocumentEditor
 {
+    private async Task ReloadBrainstormManuscriptAsync() {
+        if(!_collaborative){await ReloadTranslatedDocumentAsync();return;}
+        // Keep the conversation, planning review and proposal controls mounted.
+        // A full document loader replaces the workspace and loses their view state.
+        await RefreshSharedStructureAsync();
+        if(_activeSection is null || _activePage is null)return;
+        _activePage=GetPages(_activeSection.Id).SingleOrDefault(p=>p.Id==_activePage.Id)??GetPages(_activeSection.Id).FirstOrDefault();
+        _synopsisPreviewCacheDocumentId=null;_synopsisPreviewCacheHtml=null;
+        if(_pageEditor is not null && _activePage is not null)await _pageEditor.ReloadSharedCommittedAsync();
+    }
     private bool _brainstormKeepUnknown;
     private async Task<BrainstormingKeepReview> PrepareBrainstormKeep(Guid candidateId,bool replace,string title)
     {
@@ -43,7 +53,7 @@ public partial class DocumentEditor
             _brainstormKeepUnknown=true;
             var result=await new BrainstormingKeepWorkflow(BrainstormSessions).ApplyAsync(local,r,review=>BrainstormSessions.Keeps.ApplyAsync(review));
             RequireBrainstormKeepIdentity(local,document,identity);
-            if(result.Keeps!.Single(k=>k.Review.OperationId==r.OperationId).Receipt?.State==BrainstormingApplicationState.Committed)await ReloadTranslatedDocumentAsync();
+            if(result.Keeps!.Single(k=>k.Review.OperationId==r.OperationId).Receipt?.State==BrainstormingApplicationState.Committed)await ReloadBrainstormManuscriptAsync();
             _brainstormKeepUnknown=false;
             return await BrainstormSessions.SyncAsync(local,true);
         }finally {_webTranslationBusy=false;if(_pageEditor is not null && !_brainstormKeepUnknown && DocumentId==document && identity==BrainstormSessions.Identity)await _pageEditor.SetTranslationReadOnlyAsync(false);}
@@ -51,18 +61,30 @@ public partial class DocumentEditor
     private void RequireBrainstormKeepIdentity(BrainstormingScope scope,Guid document,string? identity) {
         if(DocumentId!=document || _brainstormContextScope!=scope || identity!=BrainstormSessions.Identity)throw new OperationCanceledException("Application identity changed. Inspect in the original account.");
     }
+    private async Task SettleBrainstormConversationBeforeReplay(BrainstormingScope scope,Guid document,string? identity) {
+        // Reopening prepares a new private context. Publish that retained local
+        // revision before Undo/Redo advances the server conversation clock.
+        await PrepareBrainstormDraftSend();
+        var cache=await BrainstormSessions.SyncAsync(scope);
+        RequireBrainstormKeepIdentity(scope,document,identity);
+        if(cache.Pending is not null || cache.PendingGeneration is not null || cache.DraftEdit is not null || cache.Conflicts.Count!=0)
+            throw new InvalidOperationException("Settle retained conversation operations before changing an approved save.");
+    }
     private async Task<BrainstormingCache> InspectOrChangeBrainstormKeep(BrainstormingKeepJournal journal,bool change) {
         var scope=_brainstormContextScope??throw new InvalidOperationException("Open the original conversation.");var document=DocumentId;var identity=BrainstormSessions.Identity;
         if(_webTranslationBusy || IsSceneRoute || scope.DocumentId!=document || (await BrainstormSessions.Sessions.ReadAsync(scope))?.Mapping?.Server!=journal.Review.Scope)throw new InvalidOperationException("Open the original manuscript and finish the current writing operation.");
         _webTranslationBusy=true;
         try {
             await FlushActiveEditorAsync("brainstorming-inspect-history");_pageEditor?.RequireSavedForAi();await FlushNotesSaveAsync();RequireBrainstormKeepIdentity(scope,document,identity);
+            // Inspection must remain available for an uncertain operation; only
+            // an explicit undo/redo needs to settle new local conversation changes.
+            if(change)await SettleBrainstormConversationBeforeReplay(scope,document,identity);
             if(_pageEditor is not null)await _pageEditor.SetTranslationReadOnlyAsync(true);
             _brainstormKeepUnknown=true;
             var receipt=change?await BrainstormSessions.Keeps.MoveAsync(journal.Review,new(Guid.NewGuid(),journal.Receipt!.Sequence,journal.Receipt.State==BrainstormingApplicationState.Undone)):await BrainstormSessions.Keeps.InspectAsync(journal.Review);
             RequireBrainstormKeepIdentity(scope,document,identity);
             var cache=await new BrainstormingKeepWorkflow(BrainstormSessions).RememberAsync(scope,journal.Review,receipt);
-            if(receipt.State is BrainstormingApplicationState.Committed or BrainstormingApplicationState.Undone){await ReloadTranslatedDocumentAsync();cache=await BrainstormSessions.SyncAsync(scope,true);}
+            if(receipt.State is BrainstormingApplicationState.Committed or BrainstormingApplicationState.Undone){await ReloadBrainstormManuscriptAsync();cache=await BrainstormSessions.SyncAsync(scope,true);}
             RequireBrainstormKeepIdentity(scope,document,identity);_brainstormKeepUnknown=receipt.State==BrainstormingApplicationState.Unknown;return cache;
         }finally {_webTranslationBusy=false;if(_pageEditor is not null && !_brainstormKeepUnknown && DocumentId==document && identity==BrainstormSessions.Identity)await _pageEditor.SetTranslationReadOnlyAsync(false);}
     }

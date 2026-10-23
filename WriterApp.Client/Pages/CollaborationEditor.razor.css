@@ -1,0 +1,11 @@
+.live-workspace { max-width: 1100px; margin: 2rem auto; padding: 0 2rem; }
+header, .live-controls { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+header a { margin-left: 1rem; }
+h1 { margin-top: 0; }
+.eyebrow { margin-bottom: .4rem; font-size: .8rem; text-transform: uppercase; letter-spacing: .1em; }
+.live-controls { margin: 1rem 0; }
+select, button { padding: .5rem .9rem; border-radius: .4rem; border: 1px solid var(--border-color, #bbc5c1); }
+.live-toolbar { display: flex; gap: .4rem; margin-bottom: .75rem; }
+.live-paper { min-height: 55vh; padding: 2rem; background: var(--surface, white); color: var(--text-primary, #24302b); border: 1px solid var(--border-color, #d8dedb); border-radius: .6rem; line-height: 1.7; }
+.live-paper ::deep .tiptap { min-height: 45vh; outline: none; }
+[hidden] { display: none !important; }

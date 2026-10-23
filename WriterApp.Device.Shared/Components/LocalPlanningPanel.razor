@@ -1,7 +1,7 @@
 @using System.Text.Json
 @using WriterApp.Shared.Sync
 
-<div class="local-planning-panel">
+<div class="local-planning-panel @(CompactAnnotations && Subview == "annotations" ? "compact-annotations" : "") @(_annotationDraft ? "annotation-composing" : "") @(_annotationOverview ? "annotation-overview" : "")">
 @if(_document is {Kind:"manuscript",Project:null} && Subview=="synopsis") {
     <p class="panel-help">Authored synopsis and notes for this manuscript are saved on this device. Review synchronized story context separately before AI.</p>
     <SynopsisFields ValueModel="_synopsis" Changed="SynopsisChanged" />
@@ -57,12 +57,18 @@ else if (_document is { Kind: "manuscript", Project: { } project })
             }
             else if (Subview == "annotations")
             {
+                <div class="annotation-navigation">
+                    <button type="button" @onclick="PreviousAnnotationAsync" disabled="@(!VisibleAnnotations.Any())">Previous</button>
+                    <button type="button" @onclick="NextAnnotationAsync" disabled="@(!VisibleAnnotations.Any())">Next</button>
+                    <button type="button" @onclick="() => _annotationOverview = !_annotationOverview">@(_annotationOverview ? "One" : "All")</button>
+                    <button type="button" @onmousedown:preventDefault="true" @onclick="StartAnnotationAsync" title="New comment or task">New</button>
+                </div>
                 <p class="panel-help">Select a passage in the writing, then enter a comment or task. The selected passage is linked automatically. Click a linked comment to return to its text.</p>
-                <label>Show <select @bind="_filter"><option value="open">Open</option><option value="resolved">Resolved</option><option value="all">All</option></select></label>
-                @foreach (var annotation in selected.Annotations.Where(a => _filter == "all" || a.Value.Status == _filter))
+                <details class="annotation-filter"><summary>Show @(_filter == "all" ? "all annotations" : _filter + " annotations")</summary><label>Show <select @bind="_filter"><option value="open">Open</option><option value="resolved">Resolved</option><option value="all">All</option></select></label></details>
+                @foreach (var annotation in VisibleAnnotations)
                 {
                     bool linked = AnnotationRequested.HasDelegate && LocalAnnotationMarkup.PageFor(_document!, annotation.LocalId) is not null;
-                    <article class="panel-annotation @(SelectedAnnotationId == annotation.LocalId ? "is-selected" : "")" aria-current="@(SelectedAnnotationId == annotation.LocalId ? "true" : null)" @key="annotation.LocalId"><strong>@annotation.Value.Kind · @annotation.Value.Status</strong>
+                    <article class="panel-annotation @(CurrentAnnotationId == annotation.LocalId ? "is-selected" : "")" aria-current="@(CurrentAnnotationId == annotation.LocalId ? "true" : null)" @key="annotation.LocalId"><strong>@annotation.Value.Kind · @annotation.Value.Status</strong>
                     @if (linked)
                     { <button type="button" class="annotation-text-link annotation-title-link" title="Show this annotation in the text" @onmousedown:preventDefault="true" @onclick="() => AnnotationRequested.InvokeAsync(annotation.LocalId)">@AnnotationTitle(annotation)</button> }
                     else { <p class="annotation-title">@AnnotationTitle(annotation)</p> }
@@ -80,14 +86,17 @@ else if (_document is { Kind: "manuscript", Project: { } project })
                     { <button type="button" disabled="@_saving" @onmousedown:preventDefault="true" @onclick="() => ReanchorAsync(annotation)">Link to selected text</button> }
                     <button type="button" disabled="@_saving" @onclick="() => ResolveAsync(annotation)">@(annotation.Value.Status == "open" ? "Resolve" : "Reopen")</button></article>
                 }
+                <div class="annotation-composer">
                 <label>Kind <select @bind="_kind"><option value="comment">Comment</option><option value="todo">Task</option></select></label>
                 <label>Comment or task <textarea @bind="_annotationText" @bind:event="oninput" @onfocus="CaptureSelectedTextAsync" maxlength="100000" rows="3"></textarea></label>
-                <label>Exact quote (optional) <textarea @bind="_quote" @bind:event="oninput" maxlength="100000" rows="2"></textarea></label>
+                <details class="annotation-quote"><summary>@(_quote.Length > 0 ? "Selected passage" : "Link a passage (optional)")</summary><label>Exact quote (optional) <textarea @bind="_quote" @bind:event="oninput" maxlength="100000" rows="2"></textarea></label>
                 @if (GetSelectedText is not null)
                 { <button type="button" disabled="@_saving" @onmousedown:preventDefault="true" @onclick="UseSelectedTextAsync">Use selected text</button> }
+                </details>
                 <div class="panel-actions">
                     <button type="button" disabled="@_saving" @onclick="DiscardAnnotation">Discard draft</button>
                     <button type="button" disabled="@(_saving || string.IsNullOrWhiteSpace(_annotationText))" @onclick="AddAnnotationAsync">Add @(_kind == "todo" ? "task" : "comment")</button>
+                </div>
                 </div>
             }
         }
@@ -126,7 +135,23 @@ else
     [Parameter] public Guid? SelectedAnnotationId { get; set; }
     [Parameter] public Guid? AnnotationFocusRequest { get; set; }
     [Parameter] public EventCallback<Guid> AnnotationRequested { get; set; }
+    [Parameter] public bool CompactAnnotations { get; set; }
     [Parameter] public Func<Task<string>>? GetSelectedText { get; set; }
+    private bool _annotationDraft, _annotationOverview;
+    private IEnumerable<LocalSceneAnnotation> VisibleAnnotations => Selected?.Annotations.Where(a => _filter == "all" || a.Value.Status == _filter) ?? [];
+    private Guid? CurrentAnnotationId => VisibleAnnotations.Any(a => a.LocalId == SelectedAnnotationId) ? SelectedAnnotationId : VisibleAnnotations.FirstOrDefault()?.LocalId;
+    public async Task StartAnnotationAsync() { _annotationDraft = true; _annotationOverview = false; await CaptureSelectedTextAsync(); await InvokeAsync(StateHasChanged); }
+    private Task PreviousAnnotationAsync() => StepAnnotationAsync(-1);
+    private Task NextAnnotationAsync() => StepAnnotationAsync(1);
+    private async Task StepAnnotationAsync(int step) {
+        var items = VisibleAnnotations.ToArray();
+        if (items.Length == 0) return;
+        int index = Array.FindIndex(items, a => a.LocalId == CurrentAnnotationId);
+        var item = items[(index + step + items.Length) % items.Length];
+        SelectedAnnotationId = item.LocalId;
+        _annotationDraft = _annotationOverview = false;
+        if (LocalAnnotationMarkup.PageFor(_document!, item.LocalId) is not null) await AnnotationRequested.InvokeAsync(item.LocalId);
+    }
     private Guid? _lastSelectedAnnotationId, _lastAnnotationFocusRequest;
     private LocalDocument? _document;
     private Guid? _sceneId, _sectionId;
@@ -153,6 +178,7 @@ else
         if (newSection || !_sceneDirty) LoadScene();
         if (SelectedAnnotationId != _lastSelectedAnnotationId || AnnotationFocusRequest != _lastAnnotationFocusRequest)
         {
+            _annotationDraft = false;
             _lastSelectedAnnotationId = SelectedAnnotationId;
             _lastAnnotationFocusRequest = AnnotationFocusRequest;
             var scene = Document.Project?.Nodes.FirstOrDefault(n => n.DeletionId is null && n.Annotations.Any(a => a.LocalId == SelectedAnnotationId));
@@ -217,7 +243,7 @@ else
         { _error = "Planning was not saved. Your draft is still here. " + e.Message; return false; }
         finally { _saving = false; await InvokeAsync(StateHasChanged); }
     }
-    private void DiscardAnnotation() { _annotationText = ""; _quote = ""; _error = null; }
+    private void DiscardAnnotation() { _annotationDraft = false; _annotationText = ""; _quote = ""; _error = null; }
     private async Task UseSelectedTextAsync()
     {
         string text = GetSelectedText is null ? "" : await GetSelectedText();

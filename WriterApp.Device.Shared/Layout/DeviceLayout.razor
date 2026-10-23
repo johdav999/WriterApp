@@ -31,7 +31,7 @@
         </details>
         <DeviceAccountMenu Compact="true" />
     </SidebarFooter>
-    <ChildContent><CascadingValue Value="View">@Body</CascadingValue></ChildContent>
+    <ChildContent><DeviceCloudStartup /><CascadingValue Value="View">@Body</CascadingValue></ChildContent>
 </AppShell>
 @code {
     private DeviceWorkspaceView View { get; } = new();

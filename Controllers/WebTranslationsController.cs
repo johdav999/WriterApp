@@ -11,6 +11,7 @@ using WriterApp.Application.Security;
 using WriterApp.Data;
 using WriterApp.Data.Documents;
 using WriterApp.Shared;
+using WriterApp.Application.Collaboration;
 
 namespace WriterApp.Controllers;
 
@@ -19,6 +20,9 @@ public sealed class WebTranslationsController(AppDbContext db, IUserIdResolver u
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private string Owner => users.ResolveUserId(User);
+    private CollaborationAccessService SharedAccess=>HttpContext.RequestServices.GetRequiredService<CollaborationAccessService>();
+    private CollaborationAggregateEdits SharedEdits=>new(db,HttpContext.RequestServices.GetRequiredService<ICollaborationCodec>(),SharedAccess);
+    private Task<bool> IsShared(Guid id,CancellationToken ct)=>db.Documents.AnyAsync(d=>d.Id==id && d.CollaborationMode==WriterApp.Shared.Collaboration.CollaborationMode.Collaborative,ct);
     private static string Hash<T>(T value) => Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(value, Json)));
     private sealed record Recovery(WebTranslationSource Source, IReadOnlyList<NodeCopy> Nodes);
     private sealed record NodeCopy(Guid Id, Guid? ParentId, ProjectNodeType Type, string Title, int Order,
@@ -64,6 +68,8 @@ public sealed class WebTranslationsController(AppDbContext db, IUserIdResolver u
             throw new DocumentSyncException(409,"proposal_already_approved","This proposal already has a durable approval. Reload recovery and use that operation; it cannot create another copy.");
         var current = await Capture(documentId, request.Source.Scope, request.Source.Sections.First().Id, ct);
         Fresh(current, request.Source);
+        if(await IsShared(documentId,ct) && (!request.IsWriting || request.Mode!="replace"))
+            throw new InvalidDataException("Shared whole-section writing supports replacement. Translation and duplicate-copy approval are not yet available.");
         TranslationStructures.Validate(request.Original);
         _ = TranslationStructures.Result(TranslationStructures.Serialize(request.Translated), request.Original);
         ValidateMapping(current, request.Original, request.Translated);
@@ -104,16 +110,25 @@ public sealed class WebTranslationsController(AppDbContext db, IUserIdResolver u
         var html = ValidateMapping(current, approval.Original, approval.Translated);
         var history=await db.WebAiHistoryOperations.SingleOrDefaultAsync(h=>h.OwnerUserId==Owner && h.OperationId==operationId,ct);
         WebRecoverySnapshot? before=null;
+        bool shared=await IsShared(documentId,ct);
         if(history is not null) {
             var intent=WebAiHistoryOperations.Intent(history);
             if(intent.TargetKind!="Aggregate" || intent.AggregateOperationId!=operationId || intent.ProposalId!=row.ProposalId
                 || intent.Source.DocumentId!=documentId || history.CommittedAt!=null || intent.Sequence!=1)
                 throw new InvalidDataException("The prepared aggregate history does not match this approval.");
-            await new WebAiSourceService(db,Owner).Require(intent.Source,ct);
-            if(approval.Mode=="replace")before=await new WebAggregateRecovery(db).Capture(current,ct);
+            await new WebAiSourceService(db,Owner,shared?SharedAccess:null).Require(intent.Source,ct);
+            if(approval.Mode=="replace" && !shared)before=await new WebAggregateRecovery(db).Capture(current,ct);
         }
         Guid resultDocument = documentId; Guid? resultSection = null;
-        if (approval.Mode == "replace") {
+        if(shared) {
+            if(!approval.IsWriting || approval.Mode!="replace")throw new InvalidDataException("Unsupported shared aggregate approval.");
+            var source=await new WebAiSourceService(db,Owner,SharedAccess).Capture(documentId,null,null,null,ct);
+            before=await SharedEdits.Apply(Owner,source,html,ct);
+            // Collaboration barriers clear tracked state. Reload receipt rows in this
+            // same transaction so their commit markers cannot remain detached.
+            row=await Operation(documentId,operationId,ct);
+            history=await db.WebAiHistoryOperations.SingleOrDefaultAsync(h=>h.OwnerUserId==Owner && h.OperationId==operationId,ct);
+        } else if (approval.Mode == "replace") {
             var pages = await db.Pages.Where(p => p.DocumentId == documentId).ToListAsync(ct);
             foreach (var page in pages.Where(p => html.ContainsKey(p.Id))) { page.Content=html[page.Id]; page.UpdatedAt=DateTimeOffset.UtcNow; }
             var sections = await db.Sections.Where(s => s.DocumentId == documentId).ToListAsync(ct);
@@ -135,7 +150,7 @@ public sealed class WebTranslationsController(AppDbContext db, IUserIdResolver u
         row.ReceiptJson=JsonSerializer.Serialize(receipt,Json);
         await db.SaveChangesAsync(ct);
         if(history is not null) {
-            history.RecoveryJson=before is null?null:await new WebAggregateRecovery(db).Complete(before,ct) is { } snapshot?WebPlanningRecovery.Serialize(snapshot):null;
+            history.RecoveryJson=before is null?null:shared?WebPlanningRecovery.Serialize(before):await new WebAggregateRecovery(db).Complete(before,ct) is { } snapshot?WebPlanningRecovery.Serialize(snapshot):null;
             history.CommittedAt=DateTimeOffset.UtcNow;history.SavedResponseJson=row.ReceiptJson;
             await db.SaveChangesAsync(ct);
         }
@@ -144,6 +159,7 @@ public sealed class WebTranslationsController(AppDbContext db, IUserIdResolver u
 
     [HttpPost("operations/{operationId:guid}/original")]
     public Task<IActionResult> Original(Guid documentId, Guid operationId, CancellationToken ct) => Transaction(async () => {
+        if(await IsShared(documentId,ct))throw new InvalidDataException("Use shared history Undo or Redo for this approval. Creating a private original copy from a shared manuscript is not yet available.");
         var row=await Operation(documentId,operationId,ct);
         var receipt=JsonSerializer.Deserialize<WebTranslationReceipt>(row.ReceiptJson,Json)!;
         var existing=await db.Documents.AsNoTracking().SingleOrDefaultAsync(d => d.Id==receipt.OriginalCopyId,ct);
@@ -163,12 +179,29 @@ public sealed class WebTranslationsController(AppDbContext db, IUserIdResolver u
     private async Task<WebTranslationOperation> Operation(Guid id,Guid operation,CancellationToken ct) =>
         await db.WebTranslationOperations.SingleOrDefaultAsync(x => x.OwnerUserId==Owner && x.DocumentId==id && x.OperationId==operation,ct)
         ?? throw new DocumentSyncException(404,"operation_missing","Approved translation not found for this account/document.");
-    private async Task<DocumentRecord> Owned(Guid id,CancellationToken ct) =>
-        await db.Documents.SingleOrDefaultAsync(d => d.Id==id && d.OwnerUserId==Owner && d.DeletedAtUtc==null && !d.IsArchived,ct)
-        ?? throw new DocumentSyncException(404,"document_missing","Owned active document not found.");
+    private async Task<DocumentRecord> Owned(Guid id,CancellationToken ct) {
+        if(await IsShared(id,ct)) {
+            await SharedAccess.Require(Owner,id,CollaborationOperation.PrepareAi,ct);
+            return await db.Documents.SingleAsync(d=>d.Id==id,ct);
+        }
+        return await db.Documents.SingleOrDefaultAsync(d => d.Id==id && d.OwnerUserId==Owner && d.DeletedAtUtc==null && !d.IsArchived,ct)
+            ?? throw new DocumentSyncException(404,"document_missing","Owned active document not found.");
+    }
     private async Task<WebTranslationSource> Capture(Guid id,string scope,Guid? sectionId,CancellationToken ct,bool annotatedRead = false)
     {
         var doc=await Owned(id,ct);
+        if(doc.CollaborationMode==WriterApp.Shared.Collaboration.CollaborationMode.Collaborative) {
+            if(scope is not ("section" or "document"))throw new InvalidDataException("Choose a manuscript or section.");
+            await using var tx=db.Database.CurrentTransaction is null?await db.Database.BeginTransactionAsync(IsolationLevel.Serializable,ct):null;
+            var source=await new WebAiSourceService(db,Owner,SharedAccess).Capture(id,null,null,null,ct);
+            var projected=await CollaborationProjectionService.Read(db,Owner,id,new(),ct,SharedAccess,CollaborationOperation.PrepareAi);
+            var metadata=await db.Sections.AsNoTracking().Where(s=>s.DocumentId==id).ToDictionaryAsync(s=>s.Id,ct);
+            var sharedSections=projected.Sections.Where(s=>scope=="document" || s.SectionId==sectionId).Select(s=>new WebTranslationSection(s.SectionId,s.Title,metadata[s.SectionId].NarrativePurpose,s.OrderIndex,metadata[s.SectionId].LanguageCode,metadata[s.SectionId].TranslationGroupId,
+                projected.Pages.Where(p=>p.SectionId==s.SectionId).Select(p=>new WebTranslationPage(p.PageId,p.Title,p.OrderIndex,p.Html)).ToArray())).ToArray();
+            if(sharedSections.Length==0 || sharedSections.Length>100 || sharedSections.Sum(s=>s.Pages.Sum(p=>(long)p.Content.Length))>2_000_000)throw new InvalidDataException("Missing or oversized shared source.");
+            if(tx is not null)await tx.CommitAsync(ct);
+            return new(1,source.AccountKey,id,doc.ProjectId,doc.Title,doc.LanguageCode,source.DocumentVersion,source.Fingerprint,scope,sharedSections);
+        }
         // Capability discovery must fail before provider generation on an unmigrated backend.
         _=await db.WebTranslationOperations.AsNoTracking().Select(x => x.OperationId).Take(1).ToListAsync(ct);
         if(!await db.Projects.AnyAsync(p => p.Id==doc.ProjectId && p.OwnerUserId==Owner,ct))

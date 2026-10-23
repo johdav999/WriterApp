@@ -8,6 +8,8 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using WriterApp.Application.Exporting;
+using WriterApp.Application.Collaboration;
+using WriterApp.Shared.Collaboration;
 using WriterApp.Application.Security;
 using WriterApp.Data;
 using WriterApp.Data.Documents;
@@ -21,6 +23,8 @@ namespace WriterApp.Controllers
     [Authorize]
     public sealed class ExportPreviewController : ControllerBase
     {
+        private CollaborationReadRequest? _collaborationWatermark;
+        private readonly CollaborationAccessService? _access;
         private readonly AppDbContext _dbContext;
         private readonly IUserIdResolver _userIdResolver;
         private readonly IOutlineOrderResolver _outlineOrderResolver;
@@ -34,8 +38,9 @@ namespace WriterApp.Controllers
             IOutlineOrderResolver outlineOrderResolver,
             ExportService exportService,
             IExportTemplateResolver templateResolver,
-            ILogger<ExportPreviewController> logger)
+            ILogger<ExportPreviewController> logger, CollaborationAccessService? access = null)
         {
+            _access = access;
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
             _outlineOrderResolver = outlineOrderResolver ?? throw new ArgumentNullException(nameof(outlineOrderResolver));
@@ -49,6 +54,7 @@ namespace WriterApp.Controllers
             [FromBody] ExportPreviewRequest request,
             CancellationToken ct)
         {
+            _collaborationWatermark = request.Collaboration;
             if (request.DocumentId == Guid.Empty)
             {
                 return BadRequest(new { message = "documentId is required." });
@@ -157,9 +163,8 @@ namespace WriterApp.Controllers
             string? selectionText,
             CancellationToken ct)
         {
-            DocumentRecord? documentRecord = await _dbContext.Documents
-                .AsNoTracking()
-                .FirstOrDefaultAsync(document => document.Id == documentId && document.OwnerUserId == userId, ct);
+            string owner = _access is null ? userId : (await _access.Require(userId, documentId, CollaborationOperation.Export, ct)).ResourceOwnerId;
+            DocumentRecord? documentRecord = await _dbContext.Documents.AsNoTracking().SingleOrDefaultAsync(d => d.Id == documentId && d.OwnerUserId == owner, ct);
             if (documentRecord is null)
             {
                 return null;
@@ -307,6 +312,14 @@ namespace WriterApp.Controllers
                 documentRecord.ProjectId,
                 sectionIds,
                 ct);
+            CollaborationReadSnapshot? collaborative = documentRecord.CollaborationMode == CollaborationMode.Legacy ? null
+                : await CollaborationProjectionService.Read(_dbContext, _userIdResolver.ResolveUserId(User), documentRecord.Id,
+                    _collaborationWatermark is { StructureRevision: not null, Required: not null } value ? value : throw new CollaborationCommitException("collaboration_export_watermark_required"), ct, _access, CollaborationOperation.Export);
+            if (collaborative is not null)
+            {
+                sceneContentBySection.Clear();
+                if (string.Equals(scope, "selection", StringComparison.OrdinalIgnoreCase)) throw new CollaborationCommitException("collaboration_selection_watermark_required");
+            }
 
             if (!string.Equals(scope, "selection", StringComparison.OrdinalIgnoreCase))
             {
@@ -316,6 +329,8 @@ namespace WriterApp.Controllers
                     .OrderBy(page => page.SectionId)
                     .ThenBy(page => page.OrderIndex)
                     .ToListAsync(ct);
+                if (collaborative is not null) pages = collaborative.Pages.Where(p => sectionIds.Contains(p.SectionId)).Select(p => new PageRecord
+                    { Id = p.PageId, DocumentId = collaborative.DocumentId, SectionId = p.SectionId, Title = p.Title, OrderIndex = p.OrderIndex, Content = p.Html }).ToList();
 
                 if (string.Equals(scope, "page", StringComparison.OrdinalIgnoreCase) && scopeIds is not null)
                 {

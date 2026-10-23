@@ -20,7 +20,7 @@ public sealed class DeviceBrainstormingTextProjector(IJSRuntime js) : IBrainstor
 public sealed class DeviceBrainstormingContext(LocalDocumentRepository documents, DeviceBibleService canon, DeviceAccountService account,
     DeviceBrainstormingSessions conversations, DeviceBrainstormingTextProjector projector)
 {
-    // Called only after the workspace's destination-specific Save, sync & prepare confirmation.
+    // Preparation synchronizes an already opted-in manuscript; enabling cloud sync stays explicit.
     public async Task SynchronizeForReviewAsync(LocalEditorSession editor, Func<Task<bool>> save, DeviceSyncEngine sync)
     {
         var generation = account.Generation;
@@ -31,7 +31,7 @@ public sealed class DeviceBrainstormingContext(LocalDocumentRepository documents
             throw new InvalidDataException("Saving failed. Your writing and message are retained. Retry Save before preparing context.");
         await editor.RefreshSyncMetadataAsync();
         if (editor.Document.ServerDocumentId is null)
-            throw new InvalidDataException("Your writing is saved on this device. Enable cloud sync for this manuscript in its sync controls, then prepare context again.");
+            throw new InvalidDataException("Your writing is saved on this device. Enable cloud sync below to prepare Brainstorm. Your message is retained.");
         if (editor.Document.SyncState != LocalSyncState.Synced)
         {
             await sync.SyncAsync();

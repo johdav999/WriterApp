@@ -12,11 +12,23 @@ public sealed class WebCheckedAi(HttpClient http, AuthStateService? auth = null)
     {
         if(auth is not null) await auth.GetAsync(ct:ct);
         string backend=http.BaseAddress?.AbsoluteUri ?? ""; string? account=auth?.UserId;
-        using var response=await http.GetAsync($"api/ai/actions/web-source/{document}?sectionId={section}&pageId={page}&sceneId={scene}",ct);
+        using var response=await ReadSource($"api/ai/actions/web-source/{document}?sectionId={section}&pageId={page}&sceneId={scene}",ct);
         if(!response.IsSuccessStatusCode) throw new InvalidOperationException("Checked AI source is unavailable. Save/synchronize and update the backend; this preview cannot use an unchecked fallback.");
         var source=await WebAiSources.Read<WebAiSource>(response.Content,ct); WebAiSources.Validate(source);
         if(source.DocumentId!=document || source.SectionId!=section || source.PageId!=page || source.SceneId!=scene) throw new InvalidDataException("Backend returned another AI target.");
         var lease=new Lease(source,backend,account); RequireLease(lease); return lease;
+    }
+    private async Task<HttpResponseMessage> ReadSource(string url,CancellationToken ct)
+    {
+        for(int attempt=0;;attempt++) {
+            var response=await http.GetAsync(url,ct);
+            if(response.StatusCode!=System.Net.HttpStatusCode.Conflict || attempt>=19)return response;
+            try {
+                var error=await response.Content.ReadFromJsonAsync<JsonElement>(ct);
+                if(!error.TryGetProperty("code",out var code)||code.GetString()!="collaboration_projection_pending")return response;
+            } catch(JsonException){return response;}
+            response.Dispose();await Task.Delay(200,ct);
+        }
     }
     public void RequireLease(Lease lease)
     {

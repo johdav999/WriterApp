@@ -29,6 +29,7 @@ public sealed class LocalConsistencyPanelTests : IDisposable
     private LocalDocumentRepository _repository = null!; private LocalAiStore _history = null!;
     private LocalBibleStore _canon = null!; private LocalDocument _source = null!;
     private readonly DeviceConnectivity _network = new(); private int _before, _after, _jumps, _highlightClears;
+    private Func<Task<bool>>? _saveBeforeWork;
     private const string Backend = "https://test.invalid/";
     private static string Scope => LocalBibleStore.ScopeKey(new(Backend), "account-1");
     private async Task<(ServiceProvider Services, HtmlRenderer Renderer, Microsoft.AspNetCore.Components.Web.HtmlRendering.HtmlRootComponent Root)> Render(bool currentCanon = true, string? content = null)
@@ -53,7 +54,7 @@ public sealed class LocalConsistencyPanelTests : IDisposable
         var renderer = new HtmlRenderer(services, services.GetRequiredService<ILoggerFactory>());
         var root = await renderer.Dispatcher.InvokeAsync(() => renderer.RenderComponentAsync<LocalAiPanel>(ParameterView.FromDictionary(new Dictionary<string, object?> {
             ["DocumentId"] = _source.DocumentId, ["SectionId"] = _source.Sections[0].SectionId, ["Mode"] = "consistency",
-            ["BeforeWork"] = (Func<Task<bool>>)(() => { _before++; return Task.FromResult(true); }),
+            ["BeforeWork"] = (Func<Task<bool>>)(() => { _before++; return _saveBeforeWork?.Invoke() ?? Task.FromResult(true); }),
             ["AfterWork"] = (Func<Task>)(() => { _after++; return Task.CompletedTask; }),
             ["JumpConsistency"] = EventCallback.Factory.Create<ConsistencyPassage>(this, p => { Assert.Equal(_source.Sections[0].Pages[0].PageId, p.PageId); Assert.Equal(p.Quote, p.PlainText.Substring(p.Start, p.Quote.Length)); _jumps++; }),
             ["ClearConsistencyHighlight"] = EventCallback.Factory.Create(this, () => { _highlightClears++; })
@@ -63,6 +64,36 @@ public sealed class LocalConsistencyPanelTests : IDisposable
     private Task Event(HtmlRenderer r, string name, params object?[] args) => r.Dispatcher.InvokeAsync(() => ((IHandleEvent)_components.Panel!).HandleEventAsync(new EventCallbackWorkItem((Func<Task>)(() => (Task)typeof(LocalAiPanel).GetMethod(name, BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(_components.Panel, args)!)), null));
     private void Set(string name, object value) => typeof(LocalAiPanel).GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(_components.Panel, value);
     private async Task<string> Html(HtmlRenderer r, Microsoft.AspNetCore.Components.Web.HtmlRendering.HtmlRootComponent root) => await r.Dispatcher.InvokeAsync(root.ToHtmlString);
+    [Fact]
+    public async Task FailedAutomaticSaveStopsBeforeAiAndRetryUsesTheSavedWriting()
+    {
+        var (services, renderer, root) = await Render(); await using var ownedServices = services; await using var ownedRenderer = renderer;
+        _saveBeforeWork = () => Task.FromResult(false);
+        await Event(renderer, "RunAi");
+        Assert.Equal(0, _api.Requests);
+        Assert.Contains("Automatic saving could not finish", await Html(renderer, root));
+        _saveBeforeWork = () => Task.FromResult(true);
+        await Event(renderer, "RunAi");
+        Assert.Equal(1, _api.Requests);
+        Assert.Equal(2, _before); Assert.Equal(1, _after);
+        Assert.Equal("v1", _api.Last!.ExpectedDocumentVersion);
+    }
+    [Fact]
+    public async Task PendingSyncConflictStopsConsistencyBeforeCanonOrAiAndOffersReview()
+    {
+        var (services, renderer, root) = await Render(); await using var ownedServices = services; await using var ownedRenderer = renderer;
+        _saveBeforeWork = async () => {
+            _source = await new FileLocalDocumentStore(_root).ApplySyncAsync(_source with { SyncState = LocalSyncState.Conflict }, _source.LocalRevision, default, projects: true);
+            return true;
+        };
+        await Event(renderer, "RunAi");
+        Assert.Equal(0, _api.Requests);
+        var html = await Html(renderer, root);
+        Assert.Contains("cloud sync conflict", html);
+        Assert.Contains("href=\"/sync/conflicts\"", html);
+        Assert.DoesNotContain("Save and synchronize this manuscript before", html);
+        Assert.Empty(await _history.HistoryAsync(_source.DocumentId));
+    }
     [Fact]
     public async Task ReportWithMidWordTrainAnchorReviewsAndAppliesTheExactQuotedPassage()
     {

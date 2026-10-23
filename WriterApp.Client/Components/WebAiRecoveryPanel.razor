@@ -25,7 +25,14 @@
         var entries=await WebAiSources.Read<WebRecoveryItem[]>(response.Content);
         CheckedAi.RequireLease(lease);if(DocumentId!=document)throw new InvalidOperationException("History target changed.");
         _entries=entries.Where(i=>IncludeAggregate || (Aggregate?i.TargetKind=="Aggregate":i.TargetKind!="Aggregate")).ToArray();_message=null;
-    }catch(Exception e)when(e is HttpRequestException or InvalidOperationException or InvalidDataException or System.Text.Json.JsonException){_entries=[];_message="Recovery unavailable. Update/refresh the matching backend: "+e.Message;}finally{_busy=false;}}
+    }catch(Exception e)when(e is HttpRequestException or InvalidOperationException or InvalidDataException or System.Text.Json.JsonException){_entries=[];_message=e switch {
+        HttpRequestException {StatusCode:System.Net.HttpStatusCode.PaymentRequired} => "AI history recovery requires the matching plan. Your manuscript and Brainstorm saves are unaffected.",
+        HttpRequestException {StatusCode:System.Net.HttpStatusCode.Unauthorized} => "Sign in again to view AI history recovery.",
+        HttpRequestException {StatusCode:System.Net.HttpStatusCode.Forbidden} => "This account does not have access to AI history recovery for this manuscript.",
+        HttpRequestException {StatusCode:System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.MethodNotAllowed} => "Recovery unavailable. Update/refresh the matching backend.",
+        HttpRequestException => "AI history recovery could not be loaded. Refresh to retry; your saved writing is retained.",
+        _ => "Recovery unavailable. Update/refresh the matching backend: "+e.Message
+    };}finally{_busy=false;}}
     private async Task Replay(Guid id,string outcome){if(_busy)return;_busy=true;_message=null;try{
         await BusyChanged.InvokeAsync(true);
         if(BeforeWork is not null && !await BeforeWork())throw new InvalidOperationException("Save current writing and planning before recovery.");

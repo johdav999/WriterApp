@@ -58,9 +58,9 @@ else if (WriterApp.Shared.SynopsisCoaching.Fields.All(f=>string.IsNullOrWhiteSpa
 @if (Account.Generation == _cloudGeneration) { @foreach (var cloud in _cloudPrompts) { <button @onclick="() => ImportPrompt(cloud.Id)">Copy @cloud.Name to this device</button> } }
 <p>Only account-wide custom prompts without extra parameters are supported. If an upload is interrupted, refresh the cloud list before retrying; the server may already have saved the copy.</p>
 }
-<button class="@(Mode is "consistency" or "storyboard" ? "primary consistency-run" : Mode == "synopsis" ? "primary synopsis-run" : null)" disabled="@(_document.ServerDocumentId is null || _document.DeletedAtUtc is not null || (_action == AdvancedAiAction.Synopsis ? _document.Project is null : _section == Guid.Empty))" @onclick="RunAi">@RunLabel</button>
+<button class="@(Mode is "consistency" or "storyboard" ? "primary consistency-run" : Mode == "synopsis" ? "primary synopsis-run" : null)" disabled="@(_document.DeletedAtUtc is not null || (_action == AdvancedAiAction.Synopsis ? _document.Project is null : _section == Guid.Empty))" @onclick="RunAi">@RunLabel</button>
 @if (Mode == "consistency") { <p class="consistency-request-note">AI compares your saved scene with passages from this manuscript and available story references. Writing changes only when you apply a reviewed revision.</p> }
-@if(_document.ServerDocumentId is null) { <p>Enable cloud sync explicitly in the document before running AI. Local prompts and history remain available.</p> }
+<p>Writing and planning are saved and synced automatically before a check. Sign in and connect to use AI.</p>
 </fieldset>
 }
 </div>
@@ -116,6 +116,7 @@ else if (_prepared.Request.SynopsisRequest is null) { <p>Analysis only. No manus
 <button disabled="@_busy" @onclick="() => _proposal=null">Dismiss</button></div></section>
 }
 @if(_error is not null) { <p role="alert">@_error</p> }
+@if (_syncConflict) { <a href="/sync/conflicts">Review both versions</a> }
 @if(_message is not null) { <p role="status">@_message</p> }
 @if (Mode == "history") {
     @if (CloudHistory is { } cloudHistory) {
@@ -174,6 +175,7 @@ else if (_prepared.Request.SynopsisRequest is null) { <p>Analysis only. No manus
     private IReadOnlyList<ConsistencyPageText> _reportPages = [];
     private long _accountGeneration;
     private bool _bibleBusy;
+    private bool _syncConflict;
     public bool IsBusy => _busy || _bibleBusy;
     private bool _refineScene;
     private string _sceneField = "";
@@ -371,8 +373,9 @@ else if (_prepared.Request.SynopsisRequest is null) { <p>Analysis only. No manus
     private void GuardNavigation(Microsoft.AspNetCore.Components.Routing.LocationChangingContext context) { if(IsBusy) context.PreventNavigation(); }
     private Task SavePrompt() => Work(async ct=> { await Store.SavePromptAsync(_name,_instruction,ct);_prompts=await Store.PromptsAsync(ct);_message="Prompt saved locally."; });
     private Task RunAi() => Work(async ct=> {
-        _proposal=null; _sceneReview=null; _approvedSceneFields=[]; _consistencyPreview=null; _consistencyReviewIndex=null; _appliedSuggestions.Clear(); _discardedSuggestions.Clear(); _intentionalSuggestions.Clear(); await Sync.SyncAsync(ct);ct.ThrowIfCancellationRequested();
-        _document=await Latest(ct);
+        _proposal=null; _sceneReview=null; _approvedSceneFields=[]; _consistencyPreview=null; _consistencyReviewIndex=null; _appliedSuggestions.Clear(); _discardedSuggestions.Clear(); _intentionalSuggestions.Clear();
+        _operation = "Syncing your latest writing and planning…"; await InvokeAsync(StateHasChanged);
+        _document=await Sync.SynchronizeForAiAsync(DocumentId, ct);
         if (_action == AdvancedAiAction.Consistency) {
             _runCanon = await Bibles.PrepareConsistencyAsync(_document, _section, async kind => {
                 _operation = $"Preparing {kind.ToString().ToLowerInvariant()} references…";
@@ -611,13 +614,13 @@ else if (_prepared.Request.SynopsisRequest is null) { <p>Analysis only. No manus
         : p.Target==LocalAiTarget.SceneCard ? System.Text.Json.JsonSerializer.Serialize(p.Source.Project!.Nodes.Single(n=>n.NodeId==p.NodeId).Card)
         : p.Request.Request.SurroundingText ?? "";
     private async Task Work(Func<CancellationToken,Task> action, bool saveDocument = true, int? consistencyIndex = null) {
-        if(IsBusy) return;_busy=true;_error=null;_message=null;_operation=null; using var source=new CancellationTokenSource();_cancel=source;
+        if(IsBusy) return;_busy=true;_error=null;_message=null;_syncConflict=false;_operation=saveDocument ? "Saving your latest writing and planning…" : null; using var source=new CancellationTokenSource();_cancel=source;
         _consistencyReviewIndex = consistencyIndex;
         await InvokeAsync(StateHasChanged);
         bool began = false;
-        try { if (saveDocument && BeforeWork is not null && !await BeforeWork()) { _error = "Save the current writing and planning before continuing."; return; } began = saveDocument; await action(source.Token); }
+        try { if (saveDocument && BeforeWork is not null && !await BeforeWork()) { _error = "Automatic saving could not finish. Your edits are retained; retry when saving is available."; return; } began = saveDocument; source.Token.ThrowIfCancellationRequested(); await action(source.Token); }
         catch(OperationCanceledException) { _message="Canceled. Any saved changes remain in history."; }
-        catch(Exception e) when(e is DeviceSignInRequiredException or DeviceIdentityUnavailableException or DeviceAiException or IOException or InvalidDataException or InvalidOperationException or UnauthorizedAccessException or System.Text.Json.JsonException or HttpRequestException or JSException) { _error=e.Message.Split('\n')[0]; }
+        catch(Exception e) when(e is DeviceSignInRequiredException or DeviceIdentityUnavailableException or DeviceAiException or IOException or InvalidDataException or InvalidOperationException or UnauthorizedAccessException or System.Text.Json.JsonException or HttpRequestException or JSException) { _error=e.Message.Split('\n')[0]; _syncConflict=e is DeviceSyncConflictException; }
         finally { try { if (began && AfterWork is not null) await AfterWork(); } finally {
             await RefreshDocumentAsync(afterWork: true);
             try { _history = await Store.HistoryAsync(DocumentId); await LoadHistoryCache(); }

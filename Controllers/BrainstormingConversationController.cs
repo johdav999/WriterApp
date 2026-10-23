@@ -20,8 +20,9 @@ public sealed class BrainstormingConversationController(AppDbContext db,IUserIdR
 {
     private string Owner=>identity.ResolveUserId(User);
     private string Backend=>BrainstormingValidation.Fingerprint($"{Request.Scheme}://{Request.Host}{Request.PathBase}/");
-    private BrainstormingGenerationContext Sources=>new(db,bibles,entitlements,Owner);
-    private BrainstormingConversationService Service=>new(db,router,policy,quota,meter,options,stops,Sources,Owner,Backend);
+    private WriterApp.Application.Collaboration.CollaborationAccessService? Access => HttpContext.RequestServices?.GetService<WriterApp.Application.Collaboration.CollaborationAccessService>();
+    private BrainstormingGenerationContext Sources=>new(db,bibles,entitlements,Owner,Access);
+    private BrainstormingConversationService Service=>new(db,router,policy,quota,meter,options,stops,Sources,Owner,Backend,Access);
     private void Require(BrainstormingScope scope) {
         Response.Headers.CacheControl="no-store";BrainstormingValidation.Validate(scope);
         if(scope.AccountKey!=BrainstormingValidation.Fingerprint(Owner)||scope.BackendKey!=Backend||scope.Space!=BrainstormingIdentitySpace.Server)throw new BrainstormingAccessException();
@@ -40,6 +41,9 @@ public sealed class BrainstormingConversationController(AppDbContext db,IUserIdR
             await foreach(var item in Service.SendAsync(send,ct)) {
                 await Response.WriteAsync(BrainstormingPersistence.Json(item)+"\n",ct);await Response.Body.FlushAsync(ct);
             }
+        } catch(BrainstormingRequestRejectedException e) {
+            Response.ContentType="application/json";Response.StatusCode=400;
+            await Response.WriteAsJsonAsync(new {code=e.Code,message=e.Message,accepted=false,operationId=send.OperationId},ct);
         } catch(Exception e) when(e is BrainstormingAccessException or InvalidDataException or BrainstormingConcurrencyException or DocumentSyncException or DbUpdateException or InvalidOperationException) {
             if(Response.HasStarted)return; // durable inspect endpoint is authoritative after a broken stream
             var accessLost=e is BrainstormingAccessException || e is DocumentSyncException {Status:404};

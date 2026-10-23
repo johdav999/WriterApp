@@ -1,0 +1,17 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Collaboration journal acceptance</title>
+<body><p>Owned synthetic journal test.</p><script type="module">
+const host = new URLSearchParams(location.search).get('host');
+if (host === 'device') window.api = (await import('/device.js')).collaboration;
+else { await new Promise((resolve,reject)=>{const s=document.createElement('script');s.src='/web.js';s.onload=resolve;s.onerror=reject;document.head.append(s);}); window.api=window.tiptapEditor.collaboration; }
+window.seed = await (await fetch('/seed')).json();
+window.scope = { backend: location.origin+'/', ownerId:'owner', environment:'test', documentId:seed.documentId,pageId:seed.pageId,generation:seed.generation,support:await api.getSupport() };
+window.statuses=[];
+window.start=async(database='journal-main', chosen=scope, committedSeed=new Uint8Array(seed.state))=>{
+ window.store = new api.IndexedDbJournal(chosen,database); window.accountFence=new api.CollaborationAccountFence();accountFence.activate(chosen,1);
+ window.session=await api.JournaledSession.open({store,account:accountFence.capture(chosen),committedSeed,autoReconnect:false,getTicket:api.webTicketSource(chosen),onStatus:value=>statuses.push(value)});
+};
+window.insert=text=>{const node=session.doc.getXmlFragment('default').get(0).get(0);node.insert(node.length,text);};
+window.text=()=>session.doc.getXmlFragment('default').toString();
+window.stop=async()=>{await session?.dispose();await store?.close();accountFence?.close();};
+window.ready=true;
+</script></body></html>

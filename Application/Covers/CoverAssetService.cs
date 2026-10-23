@@ -8,6 +8,9 @@ namespace WriterApp.Application.Covers;
 
 public sealed partial class CoverAssetService(AppDbContext db,TrustedCoverFetcher fetcher)
 {
+    public Task EnsureGenerationStorageAsync(CancellationToken ct) =>
+        db.CoverAssets.AsNoTracking().Select(asset=>asset.Id).Take(1).ToListAsync(ct);
+
     public async Task<bool> CurrentAsync(string owner,CoverAssetSource source,CancellationToken ct) {
         if(await db.DeletedUserIdentities.AsNoTracking().AnyAsync(x=>x.UserId==owner,ct))return false;
         return await db.Projects.AsNoTracking().AnyAsync(p=>p.Id==source.ProjectId && p.OwnerUserId==owner && p.MetadataRevision==source.MetadataRevision,ct)

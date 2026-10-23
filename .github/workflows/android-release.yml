@@ -1,0 +1,57 @@
+name: Android release package
+on:
+  workflow_dispatch:
+    inputs:
+      app_environment:
+        description: Backend embedded in the signed package
+        type: choice
+        options: [Staging, Production]
+        default: Staging
+      signing_mode:
+        description: Direct APK installation or Google Play app signing
+        type: choice
+        options: [direct, play]
+        default: direct
+permissions:
+  contents: read
+concurrency:
+  group: prosa-android-release
+  cancel-in-progress: false
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: android-release
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - uses: actions/setup-dotnet@v4
+        with: { global-json-file: global.json }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+      - run: dotnet workload install maui-android
+      - run: python3 scripts/android/test_package.py
+      - name: Sign packages and write public receipt
+        env:
+          PROSA_ANDROID_ENVIRONMENT: ${{ inputs.app_environment }}
+          ANDROID_SIGNING_MODE: ${{ inputs.signing_mode }}
+          ANDROID_API_BASE_URL: ${{ vars.ANDROID_API_BASE_URL }}
+          ANDROID_NATIVE_AUTH_JSON: ${{ vars.ANDROID_NATIVE_AUTH_JSON }}
+          ANDROID_CALLBACK_SIGNATURE_HASH: ${{ vars.ANDROID_CALLBACK_SIGNATURE_HASH }}
+          ANDROID_BUILD_NUMBER_OFFSET: ${{ vars.ANDROID_BUILD_NUMBER_OFFSET || '0' }}
+          ANDROID_KEY_ALIAS: ${{ vars.ANDROID_KEY_ALIAS }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: python3 scripts/android/package.py --output artifacts/android-release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prosa-android-release-${{ github.run_number }}
+          path: |
+            artifacts/android-release/*-Signed.apk
+            artifacts/android-release/*-Signed.aab
+            artifacts/android-release/receipt.json
+          if-no-files-found: error
+          retention-days: 14

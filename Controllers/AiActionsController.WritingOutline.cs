@@ -18,6 +18,11 @@ public sealed partial class AiActionsController
     private async Task<WritingOutlineSnapshot?> ReadWritingOutlineAsync(Guid id,string owner,CancellationToken ct)
     {
         if(await _dbContext.DeletedUserIdentities.AsNoTracking().AnyAsync(x=>x.UserId==owner,ct))return null;
+        if(await _dbContext.Documents.AnyAsync(d=>d.Id==id && d.CollaborationMode==WriterApp.Shared.Collaboration.CollaborationMode.Collaborative,ct)) {
+            var access=HttpContext.RequestServices?.GetService<WriterApp.Application.Collaboration.CollaborationAccessService>()
+                ?? throw new InvalidDataException("Shared writing access is unavailable.");
+            return await WriterApp.Application.Collaboration.CollaborationWritingOutline.Read(_dbContext,access,owner,id,ct);
+        }
         var doc=await _dbContext.Documents.AsNoTracking().SingleOrDefaultAsync(d=>d.Id==id && d.OwnerUserId==owner && d.DeletedAtUtc==null && !d.IsArchived,ct);
         if(doc is null)return null;
         if(doc.ProjectId is { } project && !await _dbContext.Projects.AsNoTracking().AnyAsync(p=>p.Id==project && p.OwnerUserId==owner,ct))return null;

@@ -1,0 +1,76 @@
+@page "/collaboration"
+@page "/documents/{DocumentId:guid}/sharing"
+@attribute [Microsoft.AspNetCore.Authorization.Authorize]
+@implements IDisposable
+@inject WriterApp.Client.Services.AuthStateService Authentication
+@inject HttpClient Http
+@inject NavigationManager Navigation
+@using System.Net.Http.Json
+@using WriterApp.Shared.Collaboration
+
+<PageTitle>Sharing · Prosa</PageTitle>
+<div class="sharing-page">
+@if (_loading) { <p>Loading sharing…</p> }
+else if (_error is not null) { <p role="alert">@_error</p><button @onclick="Load">Try again</button> }
+else if (_setup is not null && _setup.CollaborationMode != CollaborationMode.Collaborative)
+{
+    <section class="sharing-setup">
+    <h1>Share @_setup.Title</h1>
+    <p>Enable live writing for this manuscript, then invite someone as an editor or viewer.</p>
+    <p>Live writing uses the full Prosa editor, with checked page and section AI edits, AI history, page restore, notes, and section organization. Whole-manuscript translation and planning tools are still being integrated. Finish syncing changes from your other devices first. Older editors cannot edit it after this change.</p>
+    <label><input type="checkbox" @bind="_ready" /> My changes are synced and any conflicts are resolved.</label>
+    <p><button class="primary" disabled="@(!_ready || _busy)" @onclick="Enable">@(_busy ? "Preparing manuscript…" : "Enable sharing and live editing")</button></p>
+    </section>
+}
+else
+{
+    @if(DocumentId is {} id) { <p><a href="@(ReturnSection is {} section ? $"documents/{id}/sections/{section}" : $"documents/{id}")">Back to manuscript</a></p> }
+    <WriterApp.UI.Shared.CollaborationSharingPanel @ref="_panel" DocumentId="DocumentId" AccountContext="@_epoch.ToString()" OpenDocument="Open" />
+}
+</div>
+
+@code {
+    [Parameter] public Guid? DocumentId { get; set; }
+    [SupplyParameterFromQuery(Name="section")] public Guid? ReturnSection {get;set;}
+    private long _epoch;
+    private WriterApp.UI.Shared.CollaborationSharingPanel? _panel;
+    private Setup? _setup;
+    private bool _loading, _busy, _ready;
+    private string? _error;
+    private Guid _operation = Guid.NewGuid();
+    private sealed record Setup(string Title, CollaborationMode CollaborationMode, string ExpectedVersion, Guid? OperationId);
+    private sealed record Progress(Guid JobId, CollaborationMode Mode, string? FailureCode);
+    protected override void OnInitialized() => Authentication.Changed += Changed;
+    protected override Task OnParametersSetAsync() => Load();
+    private void Open(Guid id) => Navigation.NavigateTo($"documents/{id}");
+    private async Task Load()
+    {
+        var epoch=++_epoch; _loading=true; _error=null; _setup=null; _ready=false;
+        try { if(DocumentId is {} id) { var setup=await Http.GetFromJsonAsync<Setup>($"api/documents/{id}/collaboration/setup"); if(epoch==_epoch) { _setup=setup; _operation=setup?.OperationId??Guid.NewGuid(); } } }
+        catch { if(epoch==_epoch) _error="Sharing could not be opened. Check that you own this manuscript and sharing is enabled for this build."; }
+        finally { if(epoch==_epoch) _loading=false; }
+    }
+    private async Task Enable()
+    {
+        if(_busy || !_ready || _setup is null || DocumentId is not {} id) return;
+        var epoch=_epoch; _busy=true;
+        try
+        {
+            using var response=await Http.PostAsJsonAsync($"api/documents/{id}/collaboration/migration",new { OperationId=_operation, _setup.ExpectedVersion, SynchronizedAndConflictsResolved=true });
+            response.EnsureSuccessStatusCode(); var progress=await response.Content.ReadFromJsonAsync<Progress>();
+            if(epoch!=_epoch) return;
+            if(progress?.Mode!=CollaborationMode.Collaborative)
+            {
+                using var resume=await Http.PostAsJsonAsync($"api/documents/{id}/collaboration/migration/{_operation}/resume",new{});
+                resume.EnsureSuccessStatusCode(); progress=await resume.Content.ReadFromJsonAsync<Progress>();
+            }
+            if(epoch!=_epoch) return;
+            if(progress?.Mode!=CollaborationMode.Collaborative) throw new InvalidOperationException();
+            await Load();
+        }
+        catch { if(epoch==_epoch) _error="The manuscript could not be prepared. Your writing is retained. Try again after syncing other devices and resolving any conflicting scene text."; }
+        finally { _busy=false; }
+    }
+    private void Changed() { _epoch++; _panel?.Invalidate(); _ = InvokeAsync(async()=>{await Load();StateHasChanged();}); }
+    public void Dispose() => Authentication.Changed -= Changed;
+}

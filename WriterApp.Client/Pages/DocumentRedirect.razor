@@ -20,6 +20,7 @@ else if (!string.IsNullOrWhiteSpace(_error))
     [Parameter]
     public Guid DocumentId { get; set; }
 
+    private sealed record SharedWorkspace(SectionDto[] Sections);
     private bool _loading = true;
     private string? _error;
 
@@ -30,7 +31,23 @@ else if (!string.IsNullOrWhiteSpace(_error))
 
         try
         {
-            DocumentDetailDto? document =
+            using (var modeResponse = await Http.GetAsync($"api/documents/{DocumentId}/collaboration/capabilities"))
+                {
+                    if(modeResponse.IsSuccessStatusCode)
+                    {
+                        var capabilities=await modeResponse.Content.ReadFromJsonAsync<WriterApp.Shared.Collaboration.CollaborationCapabilities>();
+                        if(capabilities?.Mode is WriterApp.Shared.Collaboration.CollaborationMode.Collaborative or WriterApp.Shared.Collaboration.CollaborationMode.Migrating)
+                        {
+                            if(capabilities.Mode==WriterApp.Shared.Collaboration.CollaborationMode.Migrating){Navigation.NavigateTo($"documents/{DocumentId}/sharing",replace:true);return;}
+                            using var response=await Http.GetAsync($"api/documents/{DocumentId}/collaboration/workspace");response.EnsureSuccessStatusCode();
+                            var workspace=await response.Content.ReadFromJsonAsync<SharedWorkspace>();
+                            var firstShared=workspace?.Sections.FirstOrDefault();
+                            if(firstShared is null){_error="No sections available.";return;}
+                            Navigation.NavigateTo($"documents/{DocumentId}/sections/{firstShared.Id}",replace:true);return;
+                        }
+                    }
+                }
+                DocumentDetailDto? document =
                 await Http.GetFromJsonAsync<DocumentDetailDto>($"api/documents/{DocumentId}");
             if (document is null)
             {

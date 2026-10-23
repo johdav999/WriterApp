@@ -1,5 +1,6 @@
-<button type="button" class="panel-toggle" title="Hide panels and focus on writing." @onclick="ToggleFocus">@(FocusMode ? "Exit focus" : "Focus mode")</button>
-<button type="button" class="panel-toggle" title="Toggle the right-hand panel." @onclick="ToggleContext">@(ContextCollapsed ? "Show panel" : "Hide panel")</button>
+<button type="button" class="panel-toggle" data-panel-action="left" aria-expanded="false" title="Open projects and the document outline.">Projects &amp; outline</button>
+<button type="button" class="panel-toggle" data-panel-action="right" aria-expanded="@(!ContextCollapsed)" title="Open writing tools, story details, and notes." @onclick="ToggleContext">Writing tools</button>
+<button type="button" class="panel-toggle" data-panel-action="focus" aria-pressed="@FocusMode" title="Hide panels and focus on writing." @onclick="ToggleFocus">@(FocusMode ? "Exit focus" : "Focus mode")</button>
 @code {
     [Parameter] public bool FocusMode { get; set; }
     [Parameter] public bool ContextCollapsed { get; set; }

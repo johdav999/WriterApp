@@ -213,8 +213,7 @@
         if (fix.LocalReplacement is { } local) proposed = local;
         else
         {
-            await Sync.SyncAsync(ct); ct.ThrowIfCancellationRequested();
-            var synchronized = await Documents.LoadAsync(DocumentId, ct) ?? throw new IOException("Manuscript unavailable.");
+            var synchronized = await Sync.SynchronizeForAiAsync(DocumentId, ct);
             var prepared = LocalQualityChecks.Rewrite(synchronized, fix, StyleGoal);
             async Task Check(CancellationToken token)
             {

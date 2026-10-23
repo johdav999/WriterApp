@@ -3,6 +3,7 @@ const projectBindings = new WeakMap();
 const documentType = 'application/x-prosa-standalone-document';
 
 export function attachProjects(collection, receiver) {
+    if (!collection || collection.isConnected === false) return;
     detachProjects(collection);
     let source = null;
     let target = null;
@@ -64,6 +65,7 @@ export function detachProjects(collection) {
 }
 
 export function attach(zone, receiver) {
+    if (!zone || zone.isConnected === false) return;
     detach(zone);
     let depth = 0;
     const hasFiles = event => Array.from(event.dataTransfer?.types ?? []).includes('Files');

@@ -3259,7 +3259,7 @@
     }
 
     .prosa-editor .section-panel,
-    .prosa-editor .context-drawer {
+    .prosa-editor .editor-shell:not([data-responsive-panels]) .context-drawer {
         display: none;
     }
 }
@@ -4295,4 +4295,130 @@
 
 .prosa-editor .editor-navigator-host .tree-row-actions {
     grid-column: 5;
+}
+
+/* Shared responsive editor panels: docked preferences and transient compact drawers. */
+.app-shell:has(.editor-shell[data-responsive-panels]:not(.is-brainstorming)) > .app-main > .app-body {
+    grid-template-columns: minmax(0, 1fr);
+}
+.app-shell:has(.editor-shell[data-responsive-panels]:not(.is-brainstorming)) > .app-main > .app-body > .app-nav { display: none; }
+.editor-account-menu > summary { display: none; }
+.editor-account-menu > div { display: flex; align-items: center; gap: 16px; }
+.editor-shell[data-responsive-panels] { --editor-navigation-width: 240px; }
+.editor-shell[data-responsive-panels]:not(.is-brainstorming) > .editor-workspace {
+    grid-template-columns: minmax(0, 1fr) var(--context-panel-width); gap: 20px;
+}
+.editor-shell[data-responsive-panels][data-left-open=true]:not(.is-brainstorming) > .editor-workspace {
+    grid-template-columns: var(--editor-navigation-width) minmax(0, 1fr) var(--context-panel-width);
+}
+.editor-shell[data-responsive-panels][data-right-open=false]:not(.is-brainstorming) > .editor-workspace,
+.editor-shell[data-responsive-panels].is-focus-mode:not(.is-brainstorming) > .editor-workspace { grid-template-columns: minmax(0, 1fr); }
+.editor-shell[data-responsive-panels][data-left-open=true][data-right-open=false]:not(.is-brainstorming) > .editor-workspace {
+    grid-template-columns: var(--editor-navigation-width) minmax(0, 1fr);
+}
+.editor-navigation-host { display: none; position: relative; flex-direction: column; min-width: 0; min-height: 0; height: 100%; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface-1); overflow: hidden; }
+.editor-shell[data-responsive-panels][data-left-open=true]:not(.is-focus-mode) .editor-navigation-host { display: flex; }
+.editor-navigation-scroll { flex: 1; min-height: 0; overflow: auto; padding: 12px; overscroll-behavior: contain; }
+.editor-project-links { display: flex; flex-direction: column; gap: 4px; padding-bottom: 16px; margin-bottom: 16px; border-bottom: 1px solid var(--color-border); }
+.editor-project-links a { padding: 10px; border-radius: 6px; color: var(--color-text); text-decoration: none; }
+.editor-project-links a:hover { background: var(--color-surface-2); }
+.editor-navigation-scroll > nav[aria-label='Manuscript sections'] { display: flex; flex-direction: column; gap: 8px; }
+.editor-panel-heading { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px; border-bottom: 1px solid var(--color-border); background: var(--color-surface-1); }
+.editor-panel-heading strong { font-size: 14px; }
+.editor-shell[data-responsive-panels]:not(.is-brainstorming) .editor-context-host { flex-direction: column; }
+.editor-shell[data-responsive-panels][data-right-open=true]:not(.is-focus-mode):not(.is-brainstorming) .editor-context-host,
+.editor-shell[data-responsive-panels][data-right-open=true]:not(.is-focus-mode):not(.is-brainstorming) .context-drawer { display: flex !important; }
+.editor-shell[data-responsive-panels][data-right-open=false]:not(.is-brainstorming) .editor-context-host { display: none !important; }
+.editor-shell[data-responsive-panels] .editor-context-host > .context-drawer { flex: 1; min-height: 0; height: auto; border-top-left-radius: 0; border-top-right-radius: 0; }
+.editor-panel-backdrop { display: none; }
+.editor-shell[data-responsive-panels] .editor-main-header-actions { gap: 6px; }
+.editor-shell[data-responsive-panels] [data-panel-action] { min-height: 44px; }
+.editor-shell[data-responsive-panels] [data-panel-action][hidden] { display: none !important; }
+@media (max-width:1199px) {
+    .app-shell:has(.editor-shell[data-responsive-panels]) { height: 100dvh; min-height: 0; overflow: hidden; }
+    .app-shell:has(.editor-shell[data-responsive-panels]) .app-main,
+    .app-shell:has(.editor-shell[data-responsive-panels]) .app-body,
+    .app-shell:has(.editor-shell[data-responsive-panels]) .content { height: 100%; min-height: 0; overflow: hidden; }
+    .app-shell:has(.editor-shell[data-responsive-panels]) .app-header { display: flex; min-height: 52px; padding: 4px 12px; gap: 8px; }
+    .app-shell:has(.editor-shell[data-responsive-panels]) .app-header-content { display: flex; justify-content: flex-end; }
+    .app-shell:has(.editor-shell[data-responsive-panels]) .app-header-center { display: none; }
+    .app-shell:has(.editor-shell[data-responsive-panels]) .app-brand { padding: 0; }
+    .app-shell:has(.editor-shell[data-responsive-panels]) .app-brand-logo { height: 32px; max-height: 32px; width: auto; }
+    .app-shell:has(.editor-shell[data-responsive-panels]) .editor-account-menu { display: block; position: relative; }
+    .app-shell:has(.editor-shell[data-responsive-panels]) .editor-account-menu > summary { display: block; cursor: pointer; padding: 10px 4px; font-size: 13px; }
+    .app-shell:has(.editor-shell[data-responsive-panels]) .editor-account-menu > div { position: absolute; right: 0; top: 100%; z-index: 30; width: min(340px, 85vw); padding: 16px; display: flex; flex-direction: column; gap: 12px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface-1); box-shadow: var(--shadow-lg); }
+    .prosa-editor:has(.editor-shell[data-responsive-panels]) { flex: 1; min-height: 0; overflow: auto; }
+    .prosa-editor .editor-shell[data-responsive-panels]:not(.is-brainstorming) { height: 100%; padding: 12px; min-height: 0; }
+    .editor-shell[data-responsive-panels]:not(.is-brainstorming) > .editor-workspace { grid-template-columns: minmax(0,1fr) !important; height: 100%; }
+    .editor-shell[data-responsive-panels]:not(.is-brainstorming) .editor-main { min-width: 0; overflow: auto; }
+    .editor-shell[data-responsive-panels] .editor-main-header { gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+    .editor-shell[data-responsive-panels] .editor-main-header-actions { display: flex; flex-wrap: wrap; justify-content: flex-start; }
+    .editor-shell[data-responsive-panels] .editor-main-header-actions .panel-toggle { padding: 8px 10px; font-size: 13px; }
+    .editor-shell[data-responsive-panels] .editor-panel-backdrop { position: fixed; inset: 0; z-index: 99; border: 0; padding: 0; background: rgba(20,18,30,.35); cursor: pointer; }
+    .editor-shell[data-responsive-panels][data-open-drawer=left] .editor-panel-backdrop,
+    .editor-shell[data-responsive-panels][data-open-drawer=right] .editor-panel-backdrop { display: block; }
+    .editor-shell[data-responsive-panels]:not(.is-brainstorming) .editor-navigation-host,
+    .editor-shell[data-responsive-panels]:not(.is-brainstorming) .editor-context-host { position: fixed; top: 0; bottom: 0; width: min(440px,90vw); height: 100dvh; max-height: 100dvh; z-index: 100; background: var(--color-surface-1); border-radius: 0; border: 0; box-shadow: var(--shadow-lg); }
+    .editor-shell[data-responsive-panels] .editor-navigation-host { left: 0; }
+    .editor-shell[data-responsive-panels] .editor-context-host { right: 0; }
+    .editor-shell[data-responsive-panels] .editor-context-host .context-drawer { width: 100%; border: 0; border-radius: 0; box-shadow: none; overflow: auto; overscroll-behavior: contain; }
+    /* Compact drawers constrain their content to the viewport. The legacy
+       stacked layout's overflow:visible leaves rp-shell clipping every tool. */
+    .prosa-editor .editor-shell[data-responsive-panels] .rp-scroll { overflow-y: auto; overflow-x: hidden; }
+    .editor-shell[data-responsive-panels] .editor-panel-heading { padding-top: max(12px,env(safe-area-inset-top)); }
+    .editor-shell[data-responsive-panels] .editor-navigation-scroll,
+    .editor-shell[data-responsive-panels] .context-drawer { padding-bottom: max(12px,env(safe-area-inset-bottom)); }
+    .editor-shell[data-responsive-panels]:not(.is-brainstorming) .panel-resize-handle { display: none; }
+    .editor-shell[data-responsive-panels]:not([data-panels-ready]) .editor-context-host { display: none; }
+}
+@media (max-width:600px) {
+    .editor-shell[data-responsive-panels]:not(.is-brainstorming) .editor-context-host { width: 100vw; }
+}
+
+/* Annotations support the manuscript rather than replacing it on compact screens. */
+.annotation-panel-controls { display:flex; gap:8px; }
+.annotation-panel-size { display:none; }
+.annotation-navigation { display:none; }
+@media (max-width:1199px) {
+    .editor-shell[data-annotation-panel=true][data-right-open=true]:not(.is-brainstorming) > .editor-workspace { grid-template-rows:minmax(0,1fr) var(--annotation-height, 38%); gap:8px; }
+    .editor-shell[data-annotation-panel=true][data-annotation-expanded=true] { --annotation-height:55%; }
+    .editor-shell[data-annotation-panel=true][data-right-open=true]:not(.is-brainstorming) .editor-context-host { position:relative; top:auto; bottom:auto; right:auto; width:100%; height:100%; max-height:100%; grid-row:2; border:1px solid var(--color-border); border-radius:12px; box-shadow:none; }
+    .editor-shell[data-annotation-panel=true][data-open-drawer=right] .editor-panel-backdrop { display:none; }
+    .editor-shell[data-annotation-panel=true][data-right-open=true] .annotation-panel-size { display:block; }
+    .editor-shell[data-annotation-panel=true][data-right-open=true] .editor-panel-heading { padding:6px 10px; }
+    .editor-shell[data-annotation-panel=true][data-right-open=true] .context-drawer-tabs,
+    .editor-shell[data-annotation-panel=true][data-right-open=true] .rp-header,
+    .editor-shell[data-annotation-panel=true][data-right-open=true] .desktop-ai-guide { display:none; }
+    .editor-shell[data-annotation-panel=true][data-right-open=true] .rp-panel { padding:8px; }
+    .editor-shell[data-annotation-panel=true][data-right-open=true] .context-drawer { padding:0; }
+    .editor-shell[data-annotation-panel=true][data-right-open=true] .editor-main-header,
+    .editor-shell[data-annotation-panel=true][data-right-open=true] .editor-status { display:none; }
+    .editor-shell[data-annotation-panel=true][data-right-open=true] .local-writing-view { min-height:0; }
+}
+
+@media (max-width:1199px) {
+    .content:has(.editor-shell[data-annotation-panel=true][data-right-open=true]) > .cloud-startup,
+    .prosa-editor:has(.editor-shell[data-annotation-panel=true][data-right-open=true]) > .local-project-context,
+    .prosa-editor:has(.editor-shell[data-annotation-panel=true][data-right-open=true]) > a { display:none; }
+    .editor-shell[data-annotation-panel=true][data-right-open=true]:not(.is-brainstorming) > .editor-workspace { display:grid !important; min-height:0; overflow:hidden; }
+    .editor-shell[data-annotation-panel=true][data-right-open=true] .editor-main { min-height:0; height:100%; overflow:auto !important; }
+    .editor-shell[data-annotation-panel=true][data-right-open=true] .editor-toolbar { display:none; }
+}
+
+@media (max-width:1199px) {
+    .editor-shell[data-annotation-panel=true][data-right-open=true] .editor-status-bar,
+    .editor-shell[data-annotation-panel=true][data-right-open=true] .editor-actions { display:none; }
+    .editor-shell[data-annotation-panel=true][data-right-open=true] .rp-sticky-header { display:none; }
+    .editor-shell[data-annotation-panel=true][data-right-open=true] .rp-content { padding:0; }
+    .editor-shell[data-annotation-panel=true][data-right-open=true] .editor-surface .device-tiptap .ProseMirror { min-height:180px; }
+}
+
+.annotation-resize-grip { display:none; }
+@media (max-width:1199px) {
+    .editor-shell[data-annotation-panel=true][data-right-open=true] .annotation-resize-grip { display:block; flex:0 0 16px; cursor:ns-resize; touch-action:none; }
+    .annotation-resize-grip::after { content:""; display:block; width:40px; height:4px; margin:6px auto; border-radius:4px; background:var(--color-border); }
+}
+
+@media (max-width:1199px) {
+    .app-shell:has(.editor-shell[data-annotation-panel=true][data-right-open=true]) { height:var(--annotation-viewport-height,100dvh); }
 }

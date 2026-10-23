@@ -47,6 +47,7 @@ public sealed class DocumentSyncController(DocumentSyncService sync, IUserIdReso
     {
         Response.Headers.CacheControl = "no-store";
         try { return Ok(await action()); }
+        catch (WriterApp.Application.Collaboration.CollaborationWriteException error) { return Conflict(error.Error); }
         catch (DocumentSyncException error) { return StatusCode(error.Status, error.Error); }
         catch (DeletedUserIdentityException) { return StatusCode(403, new SyncError("account_deleted", "This account has been deleted.")); }
         catch (Exception error) when (error is DbUpdateException or DbException)

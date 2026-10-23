@@ -6,13 +6,14 @@ using WriterApp.Shared.Brainstorming;
 
 namespace WriterApp.Application.AI;
 
-public sealed class BrainstormingRecoveryHistory(AppDbContext db,string owner,string backend)
+public sealed class BrainstormingRecoveryHistory(AppDbContext db,string owner,string backend,
+    WriterApp.Application.Collaboration.CollaborationAccessService? access = null)
 {
     private static T Decode<T>(string json)=>JsonSerializer.Deserialize<T>(json,BrainstormingValidation.Json)??throw new InvalidDataException("Recovery record unavailable.");
     public Task<BrainstormingRecoveryBundle> ExchangeAsync(BrainstormingScope scope,BrainstormingRecoveryCopy? copy,CancellationToken ct=default)=>db.Database.CreateExecutionStrategy().ExecuteAsync(async()=>{
         db.ChangeTracker.Clear();await using var tx=await db.Database.BeginTransactionAsync(IsolationLevel.Serializable,ct);
         await db.Database.ExecuteSqlRawAsync("UPDATE DocumentSyncClocks SET Sequence=Sequence WHERE Id=1",ct);
-        var session=await new BrainstormingSessions(db,owner,backend).ReadAsync(scope.DocumentId,scope.SessionId,ct)??throw new BrainstormingAccessException();
+        var session=await new BrainstormingSessions(db,owner,backend,access).ReadAsync(scope.DocumentId,scope.SessionId,ct)??throw new BrainstormingAccessException();
         BrainstormingValidation.RequireScope(session.Scope,scope);
         var row=await db.BrainstormingSessions.SingleAsync(s=>s.Id==scope.SessionId,ct);
         var copies=row.RecoveryJson is null?new List<BrainstormingRecoveryCopy>():Decode<List<BrainstormingRecoveryCopy>>(row.RecoveryJson);

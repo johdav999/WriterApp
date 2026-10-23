@@ -9,13 +9,24 @@ namespace WriterApp.Tests;
 public sealed class CoverAssetMigrationTests
 {
     [Fact]
+    public async Task MissingCoverStorageBlocksBeforeChargeableProviderDispatch()
+    {
+        using var fixture=new CoverTestFixture();await fixture.Start();fixture.OwnedInline=true;
+        await using var db=fixture.Db();await db.Database.ExecuteSqlRawAsync("DROP TABLE CoverAssets");
+        var response=await fixture.Controller(db).Generate(fixture.Checked(),default);
+        var error=Assert.IsType<Microsoft.AspNetCore.Mvc.ObjectResult>(response.Result);
+        Assert.Equal(503,error.StatusCode);Assert.Equal(0,fixture.Provider.Calls);
+        Assert.Null((await fixture.Documents.LoadAsync(fixture.Source.DocumentId))!.Project!.CoverImageUrl);
+    }
+
+    [Fact]
     public async Task SqliteUpgradePreservesRemoteReferenceMetadataWritingAndSyncAndCreatesNoUnverifiedCache() {
         await using var db=new AppDbContext(new DbContextOptionsBuilder<AppDbContext>().UseSqlite("Data Source=:memory:").Options);
         await db.Database.OpenConnectionAsync();var migrator=db.GetService<IMigrator>();await migrator.MigrateAsync("20261004064041_OwnedOnboardingDemo");
         var project=Guid.NewGuid();var document=Guid.NewGuid();var section=Guid.NewGuid();
         db.Projects.Add(new(){Id=project,OwnerUserId="author",CoverImageUrl=RemoteCoverNetwork.Reference});db.Documents.Add(new(){Id=document,ProjectId=project,OwnerUserId="author"});
         db.Sections.Add(new(){Id=section,DocumentId=document});db.Pages.Add(new(){Id=Guid.NewGuid(),DocumentId=document,SectionId=section,Content="<p><strong>Åsa 日本語 🧭</strong></p>"});
-        await db.SaveChangesAsync();var before=await db.DocumentSyncRecords.AsNoTracking().SingleAsync();var revision=(await db.Projects.SingleAsync()).MetadataRevision;
+        await LegacyMigrationSeed.SaveAsync(db);var before=await db.DocumentSyncRecords.AsNoTracking().SingleAsync();var revision=(await db.Projects.SingleAsync()).MetadataRevision;
         await migrator.MigrateAsync();db.ChangeTracker.Clear();Assert.Empty(await db.CoverAssets.ToListAsync());
         var saved=await db.Projects.SingleAsync();Assert.Equal(RemoteCoverNetwork.Reference,saved.CoverImageUrl);Assert.Equal(revision,saved.MetadataRevision);
         Assert.Equal(before.Version,(await db.DocumentSyncRecords.SingleAsync()).Version);Assert.Equal("<p><strong>Åsa 日本語 🧭</strong></p>",(await db.Pages.SingleAsync()).Content);

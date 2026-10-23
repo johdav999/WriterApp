@@ -11,6 +11,8 @@ button { min-height: 42px; padding: 10px 12px; line-height: 1.35; }
 p { margin: 0; line-height: 1.5; }
 .writing-hint, .writing-details-content { color: var(--color-text-muted); font-size: var(--font-size-helper); }
 .writing-status { font-size: var(--font-size-helper); color: var(--color-text-muted); }
+.writing-feedback { display: grid; gap: var(--space-3); min-width: 0; }
+.writing-feedback:empty { display: none; }
 details { min-width: 0; }
 summary { padding: 10px 0; color: var(--color-text); font-size: var(--font-size-helper); font-weight: 600; line-height: 1.5; cursor: pointer; }
 summary span { margin-left: var(--space-2); color: var(--color-text-muted); font-size: var(--font-size-caption); font-weight: 400; }

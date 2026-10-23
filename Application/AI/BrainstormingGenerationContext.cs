@@ -18,12 +18,13 @@ public sealed class BrainstormingServerProjector : IBrainstormingTextProjector
         return Task.FromResult(new BrainstormingProjectedPage(page.Id,BrainstormingValidation.Fingerprint(page.Content),BrainstormingDraftContent.PlainText(page.Content)));
     }
 }
-public sealed class BrainstormingGenerationContext(AppDbContext db,IBibleStore bibles,IEntitlementService entitlements,string owner)
+public sealed class BrainstormingGenerationContext(AppDbContext db,IBibleStore bibles,IEntitlementService entitlements,string owner,
+    WriterApp.Application.Collaboration.CollaborationAccessService? access = null)
 {
     public async Task<BrainstormingServerContext> PrepareAsync(BrainstormingServerContextRequest request,CancellationToken ct) {
         if(request.Version!=1 || request.Scope.Space!=BrainstormingIdentitySpace.Server || request.Query is null || request.Choices is null || request.Choices.Count>100
             || request.SupportingDocuments is null || request.SupportingDocuments.Count>10 || request.SupportingDocuments.Distinct().Count()!=request.SupportingDocuments.Count)throw new InvalidDataException("Invalid server context review.");
-        var reader=new BrainstormingStorySourceReader(db,owner); var source=await reader.ReadAsync(request.Scope.DocumentId,request.Scope.ProjectId,ct);
+        var reader=new BrainstormingStorySourceReader(db,owner,access); var source=await reader.ReadAsync(request.Scope.DocumentId,request.Scope.ProjectId,ct);
         var documents=new List<BrainstormingStorySnapshot>{source};var refs=source.References.ToList(); var projector=new BrainstormingServerProjector();
         foreach(var kind in Enum.GetValues<CanonKind>()) {
             var type=Enum.Parse<BrainstormingSourceKind>(kind.ToString());var id=BrainstormingStorySources.Identity(source.Outline.DocumentId,type.ToString());

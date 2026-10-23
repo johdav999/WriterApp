@@ -22,6 +22,43 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationBrainstormDraftRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("BackendKey")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("ResourceOwnerId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("AuthorId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<long>("CreatedUnixMilliseconds")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("PlainText")
+                        .IsRequired()
+                        .HasMaxLength(500000)
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("Id");
+                    b.HasIndex("DocumentId", "BackendKey", "CreatedUnixMilliseconds");
+                    b.ToTable("CollaborationBrainstormDrafts");
+                });
+
             modelBuilder.Entity("WriterApp.Data.AI.AiActionAppliedEventRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -602,6 +639,645 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
                     b.ToTable("DeletedUserIdentities");
                 });
 
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationCommandRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("RequestSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<long>("StructureRevision")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DocumentId");
+
+                    b.ToTable("CollaborationCommands", (string)null);
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationCommentMessageRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("AuthorId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("Body")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<long>("CreatedAtUnixMilliseconds")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("ThreadId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ThreadId");
+
+                    b.ToTable("CollaborationCommentMessages", (string)null);
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationCommentOperationRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("ActorId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("RequestSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<long>("ResultRevision")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("ThreadId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ThreadId");
+
+                    b.ToTable("CollaborationCommentOperations", (string)null);
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationCommentRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("AuthorId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("Body")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("nvarchar(4000)");
+
+                    b.Property<long>("CreatedAtUnixMilliseconds")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("End")
+                        .HasMaxLength(1024)
+                        .HasColumnType("nvarchar(1024)");
+
+                    b.Property<Guid>("Generation")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("LegacySource")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<Guid>("PageId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("Resolved")
+                        .HasColumnType("bit");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Start")
+                        .HasMaxLength(1024)
+                        .HasColumnType("nvarchar(1024)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DocumentId");
+
+                    b.HasIndex("PageId", "Generation");
+
+                    b.ToTable("CollaborationComments", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_CollaborationComments_Revision", "Revision > 0");
+                        });
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationInvitationRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<long?>("AcceptedAtUnixMilliseconds")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("AcceptedBy")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<long>("ExpiresAtUnixMilliseconds")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("RecipientEmail")
+                        .HasMaxLength(254)
+                        .HasColumnType("nvarchar(254)");
+
+                    b.Property<string>("RecipientUserId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<string>("RequestSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<bool>("Revoked")
+                        .HasColumnType("bit");
+
+                    b.Property<int>("Role")
+                        .HasColumnType("int");
+
+                    b.Property<string>("TokenSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DocumentId");
+
+                    b.ToTable("CollaborationInvitations", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_CollaborationInvitations_TargetRole", "Role IN (1,2) AND Revision > 0 AND ((RecipientUserId IS NULL AND RecipientEmail IS NOT NULL) OR (RecipientUserId IS NOT NULL AND RecipientEmail IS NULL))");
+                        });
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationManifestRecord", b =>
+                {
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<long>("StructureRevision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("DocumentId");
+
+                    b.ToTable("CollaborationManifests", (string)null);
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationMemberRecord", b =>
+                {
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("UserId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<bool>("Revoked")
+                        .HasColumnType("bit");
+
+                    b.Property<int>("Role")
+                        .HasColumnType("int");
+
+                    b.HasKey("DocumentId", "UserId");
+
+                    b.HasIndex("UserId", "Revoked");
+
+                    b.ToTable("CollaborationMembers", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_CollaborationMembers_RoleRevision", "Role IN (1,2) AND Revision > 0");
+                        });
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationMigrationJobRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<long?>("CompletedAtUnixMilliseconds")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("CreatedAtUnixMilliseconds")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("FailureCode")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<byte[]>("RecoverySnapshot")
+                        .IsRequired()
+                        .HasColumnType("varbinary(max)");
+
+                    b.Property<string>("SourceSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("SourceVersion")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DocumentId")
+                        .IsUnique();
+
+                    b.ToTable("CollaborationMigrationJobs", (string)null);
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationOutboxEventRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("int");
+
+                    b.Property<long>("CommitSequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("CompletedAtUnixMilliseconds")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("CreatedAtUnixMilliseconds")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("Generation")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("PageId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CompletedAtUnixMilliseconds");
+
+                    b.HasIndex("PageId", "Generation", "CommitSequence")
+                        .IsUnique();
+
+                    b.ToTable("CollaborationOutboxEvents", (string)null);
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationPageRecord", b =>
+                {
+                    b.Property<Guid>("PageId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("Generation")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<long>("CommittedSequence")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("ContentContractVersion")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("bit");
+
+                    b.Property<long>("LeaseEpoch")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("LeaseExpiresAtUnixMilliseconds")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("LeaseOwner")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<long>("ProjectionSequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("ProtocolVersion")
+                        .HasColumnType("int");
+
+                    b.Property<string>("SchemaFingerprint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<long>("SnapshotSequence")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("PageId", "Generation");
+
+                    b.HasIndex("DocumentId", "PageId", "Generation")
+                        .IsUnique();
+
+                    b.ToTable("CollaborationPages", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_CollaborationPages_Sequences", "CommittedSequence >= 0 AND SnapshotSequence >= 0 AND ProjectionSequence >= 0 AND SnapshotSequence <= CommittedSequence AND ProjectionSequence <= CommittedSequence AND LeaseEpoch >= 0");
+                        });
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationProjectionRecord", b =>
+                {
+                    b.Property<Guid>("PageId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("Generation")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Html")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Json")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<long>("Sequence")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("StateSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("Text")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("PageId", "Generation");
+
+                    b.ToTable("CollaborationProjections", (string)null);
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationReceiptRecord", b =>
+                {
+                    b.Property<Guid>("PageId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("Generation")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("InstallationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("UpdateId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<long>("CommitSequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("CommittedAtUnixMilliseconds")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Sha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.HasKey("PageId", "Generation", "InstallationId", "UpdateId");
+
+                    b.HasIndex("PageId", "Generation", "CommitSequence")
+                        .IsUnique();
+
+                    b.ToTable("CollaborationReceipts", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_CollaborationReceipts_Sequence", "CommitSequence > 0");
+                        });
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationRecoveryStateRecord", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)");
+
+                    b.Property<Guid>("OperationId")
+                        .IsConcurrencyToken()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("RequiredEnvironment")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<long>("SealedAtUnixMilliseconds")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("CollaborationRecoveryStates", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_CollaborationRecoveryStates_Singleton", "Id = 'database'");
+                        });
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationSessionRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<bool>("CommitAllowed")
+                        .HasColumnType("bit");
+
+                    b.Property<Guid?>("ConnectionId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("ContentContractVersion")
+                        .HasColumnType("int");
+
+                    b.Property<Guid>("DocumentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Environment")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<long>("ExpiresAtUnixMilliseconds")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("Generation")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("InstallationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<long>("MembershipRevision")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("OwnerUserId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<Guid>("PageId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("ProtocolVersion")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ResourceOwnerUserId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<bool>("Revoked")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("SchemaFingerprint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAtUnixMilliseconds");
+
+                    b.HasIndex("PageId", "Generation");
+
+                    b.ToTable("CollaborationSessions", (string)null);
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationSnapshotRecord", b =>
+                {
+                    b.Property<Guid>("PageId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("Generation")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<long>("Sequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("CreatedAtUnixMilliseconds")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Sha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<byte[]>("State")
+                        .IsRequired()
+                        .HasColumnType("varbinary(max)");
+
+                    b.HasKey("PageId", "Generation", "Sequence");
+
+                    b.ToTable("CollaborationSnapshots", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_CollaborationSnapshots_Sequence", "Sequence >= 0");
+                        });
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationSupportingRecord", b =>
+                {
+                    b.Property<Guid>("ManuscriptId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("SupportingDocumentId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<bool>("Revoked")
+                        .HasColumnType("bit");
+
+                    b.HasKey("ManuscriptId", "SupportingDocumentId");
+
+                    b.HasIndex("SupportingDocumentId");
+
+                    b.ToTable("CollaborationSupportingLinks", (string)null);
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationUpdateRecord", b =>
+                {
+                    b.Property<Guid>("PageId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("Generation")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<long>("Sequence")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("AuthorUserId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<long>("CommittedAtUnixMilliseconds")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("InstallationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Sha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<byte[]>("Update")
+                        .IsRequired()
+                        .HasColumnType("varbinary(max)");
+
+                    b.Property<Guid>("UpdateId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("PageId", "Generation", "Sequence");
+
+                    b.HasIndex("PageId", "Generation", "InstallationId", "UpdateId")
+                        .IsUnique();
+
+                    b.ToTable("CollaborationUpdates", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_CollaborationUpdates_Sequence", "Sequence > 0");
+                        });
+                });
+
             modelBuilder.Entity("WriterApp.Data.Continuity.BibleSnapshotRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -865,7 +1541,14 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
 
                     b.HasIndex("DocumentId", "ParentId", "Order");
 
-                    b.ToTable("DocumentOutlineNodes");
+                    b.ToTable("DocumentOutlineNodes", null, t =>
+                        {
+                            t.HasTrigger("CollaborationFence_DocumentOutlineNodes");
+                        });
+
+                    b
+                        .HasAnnotation("Sqlite:UseSqlReturningClause", false)
+                        .HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("WriterApp.Data.Documents.DocumentOutlineRecord", b =>
@@ -882,7 +1565,14 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
 
                     b.HasKey("DocumentId");
 
-                    b.ToTable("DocumentOutlines");
+                    b.ToTable("DocumentOutlines", null, t =>
+                        {
+                            t.HasTrigger("CollaborationFence_DocumentOutlines");
+                        });
+
+                    b
+                        .HasAnnotation("Sqlite:UseSqlReturningClause", false)
+                        .HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("WriterApp.Data.Documents.DocumentRecord", b =>
@@ -893,6 +1583,16 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
 
                     b.Property<DateTimeOffset?>("ArchivedAt")
                         .HasColumnType("datetimeoffset");
+
+                    b.Property<int>("CollaborationMigrationState")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(0);
+
+                    b.Property<int>("CollaborationMode")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(0);
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("datetimeoffset");
@@ -952,6 +1652,10 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
                     b.ToTable("Documents", null, t =>
                         {
                             t.HasTrigger("Sync_Documents");
+
+                            t.HasCheckConstraint("CK_Documents_CollaborationMigrationState", "CollaborationMigrationState BETWEEN 0 AND 4");
+
+                            t.HasCheckConstraint("CK_Documents_CollaborationMode", "CollaborationMode IN (0,1,2)");
                         });
 
                     b
@@ -1850,7 +2554,14 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
 
                     b.HasKey("SceneNodeId");
 
-                    b.ToTable("SceneContents");
+                    b.ToTable("SceneContents", null, t =>
+                        {
+                            t.HasTrigger("CollaborationFence_SceneContents");
+                        });
+
+                    b
+                        .HasAnnotation("Sqlite:UseSqlReturningClause", false)
+                        .HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("WriterApp.Data.Documents.SceneNoteRecord", b =>
@@ -3025,6 +3736,168 @@ namespace BlazorApp.Migrations.SqlServerMigrationsDb
                     b.HasOne("WriterApp.Data.AI.BrainstormingSessionRecord", null)
                         .WithMany()
                         .HasForeignKey("SessionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationCommandRecord", b =>
+                {
+                    b.HasOne("WriterApp.Data.Documents.DocumentRecord", null)
+                        .WithMany()
+                        .HasForeignKey("DocumentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationCommentMessageRecord", b =>
+                {
+                    b.HasOne("WriterApp.Data.Collaboration.CollaborationCommentRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ThreadId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationCommentOperationRecord", b =>
+                {
+                    b.HasOne("WriterApp.Data.Collaboration.CollaborationCommentRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ThreadId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationCommentRecord", b =>
+                {
+                    b.HasOne("WriterApp.Data.Documents.DocumentRecord", null)
+                        .WithMany()
+                        .HasForeignKey("DocumentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("WriterApp.Data.Collaboration.CollaborationPageRecord", null)
+                        .WithMany()
+                        .HasForeignKey("PageId", "Generation")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationInvitationRecord", b =>
+                {
+                    b.HasOne("WriterApp.Data.Documents.DocumentRecord", null)
+                        .WithMany()
+                        .HasForeignKey("DocumentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationManifestRecord", b =>
+                {
+                    b.HasOne("WriterApp.Data.Documents.DocumentRecord", null)
+                        .WithOne()
+                        .HasForeignKey("WriterApp.Data.Collaboration.CollaborationManifestRecord", "DocumentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationMemberRecord", b =>
+                {
+                    b.HasOne("WriterApp.Data.Documents.DocumentRecord", null)
+                        .WithMany()
+                        .HasForeignKey("DocumentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationMigrationJobRecord", b =>
+                {
+                    b.HasOne("WriterApp.Data.Documents.DocumentRecord", null)
+                        .WithMany()
+                        .HasForeignKey("DocumentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationOutboxEventRecord", b =>
+                {
+                    b.HasOne("WriterApp.Data.Collaboration.CollaborationPageRecord", null)
+                        .WithMany()
+                        .HasForeignKey("PageId", "Generation")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationPageRecord", b =>
+                {
+                    b.HasOne("WriterApp.Data.Documents.DocumentRecord", null)
+                        .WithMany()
+                        .HasForeignKey("DocumentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("WriterApp.Data.Documents.PageRecord", null)
+                        .WithMany()
+                        .HasForeignKey("PageId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationProjectionRecord", b =>
+                {
+                    b.HasOne("WriterApp.Data.Collaboration.CollaborationPageRecord", null)
+                        .WithOne()
+                        .HasForeignKey("WriterApp.Data.Collaboration.CollaborationProjectionRecord", "PageId", "Generation")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationReceiptRecord", b =>
+                {
+                    b.HasOne("WriterApp.Data.Collaboration.CollaborationPageRecord", null)
+                        .WithMany()
+                        .HasForeignKey("PageId", "Generation")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationSessionRecord", b =>
+                {
+                    b.HasOne("WriterApp.Data.Collaboration.CollaborationPageRecord", null)
+                        .WithMany()
+                        .HasForeignKey("PageId", "Generation")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationSnapshotRecord", b =>
+                {
+                    b.HasOne("WriterApp.Data.Collaboration.CollaborationPageRecord", null)
+                        .WithMany()
+                        .HasForeignKey("PageId", "Generation")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationSupportingRecord", b =>
+                {
+                    b.HasOne("WriterApp.Data.Documents.DocumentRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ManuscriptId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("WriterApp.Data.Documents.DocumentRecord", null)
+                        .WithMany()
+                        .HasForeignKey("SupportingDocumentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("WriterApp.Data.Collaboration.CollaborationUpdateRecord", b =>
+                {
+                    b.HasOne("WriterApp.Data.Collaboration.CollaborationPageRecord", null)
+                        .WithMany()
+                        .HasForeignKey("PageId", "Generation")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

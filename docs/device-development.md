@@ -1,5 +1,11 @@
 # Device application development
 
+## Android host (2026-10-11)
+
+Android now has a native MAUI host reusing the shared device application. See
+[build, identity and distribution setup](android-development.md) and
+[emulator acceptance and remaining device gates](android-uat.md).
+
 ## Continuous Brainstorm working draft (2026-10-09)
 
 The shared draft UI now has automatic generation versions, named alternatives,
@@ -381,6 +387,33 @@ closes its browser/listener in `finally`, and writes evidence beneath
 `artifacts/ai-parity-p01/` (overridable by `EDITOR_EVIDENCE_DIR`).
 
 Desktop now includes local projects/scenes, section/page management, search/preview, storyboard/planning, notes/tasks/quote annotations, synopsis, translation/analysis adapters, local AI history and Account & Help. It still has a smaller rich-text schema, fewer specialized web panels and publishing controls, and no full cloud-version history. See the [current parity acceptance report](desktop-client-parity-release-checklist.md) and [gap matrix](desktop-client-gap-analysis.md) for implementation versus live-release status. Prompt 21 supplies iOS native MSAL identity and authentication lifecycle hooks; registration/signing/Mac/device acceptance and other native adapters remain separate gates. See [shared UI verification](shared-ui-uat.md) for evidence and remaining acceptance gates.
+
+## Collaboration editor foundation (2026-10-17)
+
+The web and device editor bundles now include the shared module at
+`WriterApp.Client/src/collaboration/session.ts`. Access it through
+`window.tiptapEditor.collaboration` on web or the device module's named
+`collaboration` export. Shared content/schema validation lives in
+`src/editor-content.ts` and `src/editor-schema.ts`; change these sources rather
+than editing generated editor JavaScript. Rebuild both bundles with
+`npm run build` from `WriterApp.Client`, and run `npm run check:collaboration`
+for the module and its schema/content dependencies.
+
+This is an isolated in-memory foundation. The live factory checks the backend
+capability response and remains disabled independently of that response. Native
+hosts will need to supply capabilities through their authenticated .NET boundary
+and implement the durable update journal/lifecycle work before live editing.
+Existing native documents and snapshot synchronization have not been migrated.
+The isolated browser checks do not establish WebView WebCrypto, native storage,
+packaged-client or physical-device acceptance.
+
+From the repository root, set `PLAYWRIGHT_MODULE` to the available Playwright
+package path and run `node WriterApp.Client/tests/verify-collaboration.mjs`.
+The test owns an ephemeral loopback listener and closes it and the browser in
+`finally`; evidence is written under `artifacts/realtime-p3/`. Read
+[the collaboration status](realtime-implementation-status.md) before continuing
+with authenticated sessions or transport. Never attach the stock provider's
+default write synchronization to real pages ahead of durable commit protection.
 
 ## Build and run
 
@@ -1475,3 +1508,73 @@ Real native interaction, English/Swedish microphone/audible output/echo, approve
 live provider, real account/device/SQL Server sync and optional installed package
 retain separate gates. Preserve existing migrations through P10, P9 RecoveryJson,
 sync v5 and unrelated uncommitted work. No P12 migration or raw-audio persistence.
+
+### Collaboration journal foundation (Prompt 6)
+
+The common service setup now registers `DeviceCollaborationJournalHost` and the
+atomic native collaboration journal for desktop/iOS/Android. Both editor bundles
+also expose the journaled-session APIs. See [realtime-journals.md](realtime-journals.md)
+for generation-bound JS interop, cold-offline private recovery, receipt handling
+and the required `Invalidated` subscription when wiring a migrated WebView editor.
+Product authoring activation remains gated. Native file process-crash and desktop
+browser bundle checks are separate from packaged/mobile WebView acceptance.
+
+### Collaboration editor adapter (Prompt 7)
+
+`DeviceCollaborationEditor` now connects a verified native journal binding to the
+shared journal-backed Tiptap editor, subscribes account invalidation before mounting,
+rechecks mount completion, shows local/cloud durability and retries failed local saves.
+Parents must key by immutable scope and await `CloseAsync` before route replacement.
+Capability gates remain closed, and product routes do not select this adapter yet.
+See [realtime-conversion.md](realtime-conversion.md) for safe migration, projection
+vectors, export/AI consumer gates and the remaining packaged/native acceptance work.
+
+### Manuscript sharing foundation (Prompt 8)
+
+The shared `CollaborationSharingPanel` is hosted at `/collaboration` and
+`/documents/{id}/sharing` in web and native clients. Backend sharing defaults off.
+The panel supports invitations, roles, explicit supporting links, scoped discovery
+and read-only manuscript viewing. Account changes immediately invalidate its state;
+late completions cannot install another account's invitation code or prose.
+
+Guest journal scopes must capture the authenticated membership revision returned by
+capabilities/discovery, in addition to the immutable actor/backend/page/generation.
+Fresh tickets require the same revision. A later grant uses a separate journal;
+old pending edits remain private recovery data. Owner revision zero preserves old
+keys. Invited editors use the resource owner's subscription; backend authority still
+controls every ticket and commit. See [realtime-sharing.md](realtime-sharing.md).
+Component tests and rebuilt desktop-browser bundles pass; packaged Windows/Android,
+actual iOS WebViews and cross-device suspend/navigation acceptance remain open.
+
+### Presence and comments (Prompt 9)
+
+`DeviceCollaborationEditor` connects the common comment panel to selection capture,
+relative highlights and passage navigation. The shared read view also displays
+comments and permitted replies/resolution. Both editor bundles render ephemeral
+authenticated rosters/carets without enabling Yjs awareness writes. Backend
+`Collaboration:Interactions:Enabled` and Node `COLLABORATION_INTERACTIONS_ENABLED`
+default off; the independent product editor activation gate remains closed.
+
+Comment requests require current generation/membership and server authority. Text
+undo excludes comment decorations, presence and other authors' updates. Legacy
+annotations import explicitly as detached; originals remain intact. Unsent comment
+text is retained only while the component is open, unlike the durable manuscript
+journal. See [realtime-interactions.md](realtime-interactions.md). Desktop browser
+bundle/service evidence does not establish packaged or physical WebView acceptance.
+
+### Restore scopes and final local checks (Prompt 10)
+
+Construct collaboration scopes from the authenticated capability's `environment`.
+An offline restored-copy seal persists a fresh required environment and revokes old
+sessions/sharing. Keep the prior environment and journal identities in recovery
+records: the new namespace must not silently adopt old pending or acknowledged
+local state. Recovery-required status is private/local and cannot display cloud
+saved. The native status panel labels that condition explicitly.
+
+Quiet live sessions now use a bounded authenticated 10-second heartbeat, with
+cleanup on account change/disconnect; this does not save text or enable awareness.
+The original Windows and Android development builds passed, with an APK matching
+that build's editor. The later latency-fix bundles have desktop-browser evidence;
+the prior APK predates them, as recorded in the readiness report. Installed MSIX, physical Android and actual iOS
+journeys remain unverified. See [operations and measured acceptance](realtime-operations.md)
+for the runner, restore procedure, passing local latency rerun and rollout gates.

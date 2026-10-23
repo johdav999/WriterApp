@@ -2,13 +2,14 @@ namespace WriterApp.Client.Pages;
 public partial class DocumentEditor
 {
     private bool _scopedRecoveryBusy;
+    private int _scopedHistoryRevision;
     private async Task<bool> SaveBeforeScopedRecovery(){
         if(_clientAiRequest is not null || _isProposalApplying && !_scopedRecoveryBusy || _webTranslationBusy || _webTranslationUncertainOperation is not null)return false;
         await FlushActiveEditorAsync("scoped-history");await FlushNotesSaveAsync();
         _pageEditor?.RequireSavedForAi();
         if(_sceneSaveInFlight || _sceneApplying)return false;
-        if(_activeSection is { } section)await SaveSceneCardAsync(section.Id,false);
-        return !_sceneSaveInFlight && (_sceneStatus is null || !_sceneStatus.Contains("failed",StringComparison.OrdinalIgnoreCase));
+        if(!_collaborative && _activeSection is { } section)await SaveSceneCardAsync(section.Id,false);
+        return !_sceneSaveInFlight && (_collaborative || _sceneStatus is null || !_sceneStatus.Contains("failed",StringComparison.OrdinalIgnoreCase));
     }
     private async Task ScopedRecoveryBusyChanged(bool busy){
         if(busy && (_clientAiRequest is not null || _isProposalApplying || _webTranslationBusy || _sceneApplying))throw new InvalidOperationException("Finish the current AI action before recovery.");

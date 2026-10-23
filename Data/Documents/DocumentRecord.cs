@@ -7,6 +7,9 @@ namespace WriterApp.Data.Documents
     {
         public Guid Id { get; set; }
 
+        public WriterApp.Shared.Collaboration.CollaborationMode CollaborationMode { get; set; }
+        public WriterApp.Shared.Collaboration.CollaborationMigrationState CollaborationMigrationState { get; set; }
+
         public Guid ProjectId { get; set; }
 
         public ProjectRecord? Project { get; set; }

@@ -1,0 +1,19 @@
+@page "/collaboration"
+@page "/documents/{DocumentId:guid}/sharing"
+@implements IDisposable
+@inject DeviceAccountService Account
+
+<div class="device-sharing-page">
+@if (Account.IsSignedIn)
+{ <WriterApp.UI.Shared.CollaborationSharingPanel @ref="_panel" DocumentId="DocumentId" ProjectsUrl="/projects" AccountContext="@Account.Generation.ToString()" /> }
+else { <p>Sign in to view invitations and shared manuscripts.</p> }
+
+</div>
+
+@code {
+    [Parameter] public Guid? DocumentId { get; set; }
+    private WriterApp.UI.Shared.CollaborationSharingPanel? _panel;
+    protected override void OnInitialized() => Account.Changed += Changed;
+    private void Changed() { _panel?.Invalidate(); _ = InvokeAsync(StateHasChanged); }
+    public void Dispose() => Account.Changed -= Changed;
+}

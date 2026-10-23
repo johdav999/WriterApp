@@ -1,0 +1,5 @@
+.cloud-startup { margin: 1rem; padding: 1rem; border: 1px solid var(--border-color, #d9d3c8); border-radius: 12px; background: var(--surface-color, #fffaf2); color: var(--text-color, #302b25); }
+.cloud-startup p { margin: .5rem 0; }
+.cloud-startup button { min-height: 44px; padding: .5rem 1rem; cursor: pointer; }
+.cloud-startup button:disabled { cursor: default; opacity: .6; }
+.cloud-startup a { display: inline-block; margin: .5rem; }

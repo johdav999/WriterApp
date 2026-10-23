@@ -59,7 +59,7 @@ public sealed class WebAiHistoryController(AppDbContext db,IUserIdResolver users
     public Task<IActionResult> Move(WebAiHistoryMoveRequest request,CancellationToken ct)=>Run(async()=> {
         if(request.Outcome is not ("Undone" or "Redone"))throw new InvalidDataException("Choose Undo or Redo.");
         var gate=await Gate(FeatureKey.AiUndoRedo);if(gate is not null)return gate;
-        await new WebAiSourceService(db,Owner).Require(request.Source,ct);
+        await new WebAiSourceService(db,Owner,HttpContext.RequestServices?.GetService<WriterApp.Application.Collaboration.CollaborationAccessService>()).Require(request.Source,ct);
         var rows=await db.WebAiHistoryOperations.AsNoTracking().Where(o=>o.OwnerUserId==Owner && o.DocumentId==request.Source.DocumentId && o.CommittedAt!=null).Take(1001).ToListAsync(ct);
         if(rows.Count>1000)throw new InvalidOperationException("History inspection exceeds the supported limit; use original-copy recovery.");
         var current=rows.Select(row=>(Row:row,Intent:WebAiHistoryOperations.Intent(row))).Where(x=>x.Intent.TargetKind is "Page" or "SceneContent"

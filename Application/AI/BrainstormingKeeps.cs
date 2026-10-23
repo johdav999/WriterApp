@@ -6,29 +6,33 @@ using WriterApp.Data.AI;
 using WriterApp.Data.Documents;
 using WriterApp.Shared;
 using WriterApp.Shared.Brainstorming;
+using WriterApp.Application.Collaboration;
 
 namespace WriterApp.Application.AI;
 
-public sealed class BrainstormingKeeps(AppDbContext db,string owner,string backend)
+public sealed partial class BrainstormingKeeps(AppDbContext db,string owner,string backend,CollaborationAccessService? access=null,ICollaborationCodec? codec=null)
 {
+    private bool shared;
+    private CollaborationBrainstormingWrites Writes=>new(db,owner,access,codec);
     private T Read<T>(string json)=>JsonSerializer.Deserialize<T>(json,BrainstormingValidation.Json)!;
     private async Task<BrainstormingSession> Session(BrainstormingScope scope,CancellationToken ct)
     {
-        var s=await new BrainstormingSessions(db,owner,backend).ReadAsync(scope.DocumentId,scope.SessionId,ct)??throw new BrainstormingAccessException();
+        var s=await new BrainstormingSessions(db,owner,backend,access).ReadAsync(scope.DocumentId,scope.SessionId,ct)??throw new BrainstormingAccessException();
         BrainstormingValidation.RequireScope(s.Scope,scope);if(s.State==BrainstormingConversationState.Deleted)throw new BrainstormingAccessException();return s;
     }
-    private async Task<T> Transaction<T>(Func<Task<T>> work,CancellationToken ct)=>await db.Database.CreateExecutionStrategy().ExecuteAsync(async()=>{
+    private async Task<T> Transaction<T>(Guid document,Guid operation,Func<Task<T>> work,CancellationToken ct)=>await db.Database.CreateExecutionStrategy().ExecuteAsync(async()=>{
         db.ChangeTracker.Clear();await using var tx=await db.Database.BeginTransactionAsync(IsolationLevel.Serializable,ct);
         await db.Database.ExecuteSqlRawAsync("UPDATE DocumentSyncClocks SET Sequence=Sequence WHERE Id=1",ct);
-        var result=await work();await db.SaveChangesAsync(ct);await tx.CommitAsync(ct);return result;
+        shared=await Writes.Begin(document,operation,ct);
+        var result=await work();await db.SaveChangesAsync(ct);if(shared)await Writes.End(document,operation,ct);await tx.CommitAsync(ct);return result;
     });
     private async Task Fresh(BrainstormingKeepReview r,CancellationToken ct)
     {
-        var current=await new BrainstormingStorySourceReader(db,owner).ReadAsync(r.Scope.DocumentId,r.Scope.ProjectId,ct);
+        var current=await new BrainstormingStorySourceReader(db,owner,access).ReadAsync(r.Scope.DocumentId,r.Scope.ProjectId,ct);
         if(current.Stamp!=r.Target.Source || BrainstormingKeepContract.WritingHash(BrainstormingKeepContract.Writing(current))!=BrainstormingKeepContract.WritingHash(r.Before))
             throw new InvalidOperationException("Source writing, planning, document revision or outline changed. Refresh and review a new proposal.");
     }
-    public Task<BrainstormingKeepReceipt> PrepareAsync(BrainstormingKeepReview r,CancellationToken ct=default)=>Transaction(async()=>{
+    public Task<BrainstormingKeepReceipt> PrepareAsync(BrainstormingKeepReview r,CancellationToken ct=default)=>Transaction(r.Scope.DocumentId,r.OperationId,async()=>{
         BrainstormingKeepContract.Validate(r);var session=await Session(r.Scope,ct);
         var old=await db.BrainstormingKeeps.SingleOrDefaultAsync(k=>k.SessionId==r.Scope.SessionId && (k.OperationId==r.OperationId || k.CandidateId==r.Candidate.Id),ct);
         if(old is not null){if(old.ReviewJson!=BrainstormingPersistence.Json(r))throw new InvalidDataException("Candidate already has an immutable application identity. Inspect its original operation.");return Read<BrainstormingKeepReceipt>(old.ReceiptJson);}
@@ -42,11 +46,13 @@ public sealed class BrainstormingKeeps(AppDbContext db,string owner,string backe
         await Session(scope,ct);var row=await db.BrainstormingKeeps.AsNoTracking().SingleOrDefaultAsync(k=>k.SessionId==scope.SessionId && k.OperationId==operation,ct);
         return row is null?null:Read<BrainstormingKeepReceipt>(row.ReceiptJson);
     }
-    public Task<BrainstormingKeepReceipt> CommitAsync(BrainstormingScope scope,Guid operation,CancellationToken ct=default)=>Transaction(async()=>{
+    public Task<BrainstormingKeepReceipt> CommitAsync(BrainstormingScope scope,Guid operation,CancellationToken ct=default)=>Transaction(scope.DocumentId,operation,async()=>{
         var session=await Session(scope,ct);var row=await db.BrainstormingKeeps.SingleAsync(k=>k.SessionId==scope.SessionId && k.OperationId==operation,ct);
         var receipt=Read<BrainstormingKeepReceipt>(row.ReceiptJson);if(receipt.State is BrainstormingApplicationState.Committed or BrainstormingApplicationState.Undone)return receipt;
         var r=Read<BrainstormingKeepReview>(row.ReviewJson);await Fresh(r,ct);var destination=BrainstormingPlacements.Destination(r);
-        var webSource=await new WebAiSourceService(db,owner).Capture(scope.DocumentId,destination.SectionId,destination.PageId,null,ct);
+        var webSource=await new WebAiSourceService(db,owner,access).Capture(scope.DocumentId,destination.SectionId,destination.PageId,null,ct);
+        if(shared)await ApplyShared(r,operation,false,ct);
+        else {
         if(r.Kind==BrainstormingTargetKind.CreateSection)await Create(r,ct);else {
             await RequireUnannotatedPage(r,ct);
             var page=await db.Pages.SingleAsync(p=>p.Id==destination.PageId && p.DocumentId==scope.DocumentId && p.SectionId==destination.SectionId,ct);
@@ -54,6 +60,7 @@ public sealed class BrainstormingKeeps(AppDbContext db,string owner,string backe
         }
         (await db.Documents.SingleAsync(d=>d.Id==scope.DocumentId,ct)).UpdatedAt=DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct);await WriterApp.Application.Documents.ManuscriptSceneMirror.UpdateAsync(db,destination.SectionId??r.NewSectionId,ct);
+        }
         receipt=receipt with {State=BrainstormingApplicationState.Committed,Sequence=1,Message="Confirmed manuscript and structure transaction.",UpdatedAt=DateTimeOffset.UtcNow};row.ReceiptJson=BrainstormingPersistence.Json(receipt);
         db.AiActionHistoryEntries.Add(new(){Id=r.OperationId,OwnerUserId=owner,DocumentId=scope.DocumentId,SectionId=destination.SectionId??r.NewSectionId,PageId=destination.PageId??r.NewPageId,ActionKey="brainstorming.keep",RequestJson=row.ReviewJson,
             ResultJson=JsonSerializer.Serialize(new AiActionExecuteResponseDto(r.OperationId,r.ReplacedText,r.Candidate.PlainText,"Approved manuscript version. Guarded undo/redo and original-copy recovery are available in its brainstorming conversation.",receipt.UpdatedAt,"brainstorming.keep",WebSource:webSource),WebAiHistoryContracts.Json),CreatedAt=receipt.UpdatedAt});
@@ -76,18 +83,18 @@ public sealed class BrainstormingKeeps(AppDbContext db,string owner,string backe
         var row=await db.BrainstormingSessions.SingleAsync(s=>s.Id==session.Scope.SessionId,ct);var now=DateTimeOffset.UtcNow;
         var approval=session.Approvals.SingleOrDefault(a=>a.OperationId==r.OperationId)??new(1,r.OperationId,session.Scope,r.OperationId,r.Candidate.Id,r.Candidate.Revision,BrainstormingValidation.CandidateFingerprint(r.Candidate),r.ReviewedAt);
         await db.SaveChangesAsync(ct);
-        var committed=await new BrainstormingStorySourceReader(db,owner).ReadAsync(session.Scope.DocumentId,session.Scope.ProjectId,ct);
+        var committed=await new BrainstormingStorySourceReader(db,owner,access).ReadAsync(session.Scope.DocumentId,session.Scope.ProjectId,ct);
         var app=new BrainstormingApplication(1,r.OperationId,session.Scope,approval.Id,receipt.State,r.OperationId,r.OperationId,committed.Stamp,receipt.Message,receipt.UpdatedAt);
         var next=session with {Revision=session.Revision+1,UpdatedAt=now,Approvals=session.Approvals.Any(a=>a.Id==approval.Id)?session.Approvals:[..session.Approvals,approval],Applications=[..session.Applications.Where(a=>a.OperationId!=r.OperationId),app]};
         BrainstormingValidation.Validate(next);row.Revision=next.Revision;row.SnapshotJson=BrainstormingPersistence.Json(next);row.UpdatedUnixMilliseconds=now.ToUnixTimeMilliseconds();
     }
-    public Task<BrainstormingKeepReceipt> MoveAsync(BrainstormingScope scope,Guid operation,BrainstormingKeepMove move,CancellationToken ct=default)=>Transaction(async()=>{
+    public Task<BrainstormingKeepReceipt> MoveAsync(BrainstormingScope scope,Guid operation,BrainstormingKeepMove move,CancellationToken ct=default)=>Transaction(scope.DocumentId,move.OperationId,async()=>{
         var session=await Session(scope,ct);var row=await db.BrainstormingKeeps.SingleAsync(k=>k.SessionId==scope.SessionId && k.OperationId==operation,ct);
         var receipt=Read<BrainstormingKeepReceipt>(row.ReceiptJson);var moves=Read<List<BrainstormingKeepMove>>(row.MovesJson);
         var prior=moves.SingleOrDefault(m=>m.OperationId==move.OperationId);if(prior is not null){if(prior!=move)throw new InvalidDataException("Undo/redo identity changed.");return receipt;}
         if(move.OperationId==Guid.Empty || moves.Count>=500 || move.ExpectedSequence!=receipt.Sequence || (move.Redo?receipt.State!=BrainstormingApplicationState.Undone:receipt.State!=BrainstormingApplicationState.Committed))throw new InvalidOperationException("Inspect the application before undo/redo.");
         var r=Read<BrainstormingKeepReview>(row.ReviewJson);
-        await Restore(r,move.Redo,ct);
+        if(shared)await MoveShared(r,move,ct);else await Restore(r,move.Redo,ct);
         receipt=receipt with {State=move.Redo?BrainstormingApplicationState.Committed:BrainstormingApplicationState.Undone,Sequence=receipt.Sequence+1,UpdatedAt=DateTimeOffset.UtcNow,Message=move.Redo?"Confirmed guarded redo.":"Confirmed guarded undo."};
         row.ReceiptJson=BrainstormingPersistence.Json(receipt);row.MovesJson=BrainstormingPersistence.Json(moves.Append(move).ToArray());
         var previous=await db.WebAiHistoryOperations.Where(h=>h.OwnerUserId==owner && h.ApplicationId==operation).OrderByDescending(h=>h.Sequence).FirstAsync(ct);
@@ -132,7 +139,7 @@ public sealed class BrainstormingKeeps(AppDbContext db,string owner,string backe
         if(await db.PageAnnotations.AnyAsync(a=>a.PageId==destination.PageId,ct) || await db.SceneAnnotations.AnyAsync(a=>a.SceneNode!.DocumentId==r.Scope.DocumentId && a.SceneNode.LinkedSectionId==destination.SectionId,ct))
             throw new InvalidOperationException("This destination has anchored annotations. Keep them intact: review insertion into a new section or apply the passage through the annotation-aware manuscript editor.");
     }
-    public Task<Guid> RecoverAsync(BrainstormingScope scope,Guid operation,CancellationToken ct=default)=>Transaction(async()=>{
+    public Task<Guid> RecoverAsync(BrainstormingScope scope,Guid operation,CancellationToken ct=default)=>Transaction(scope.DocumentId,operation,async()=>{
         await Session(scope,ct);var row=await db.BrainstormingKeeps.SingleAsync(k=>k.SessionId==scope.SessionId && k.OperationId==operation,ct);var r=Read<BrainstormingKeepReview>(row.ReviewJson);
         Guid Identity(string suffix)=>new(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(operation+suffix))[..16]);
         var id=Identity("recovered-writing");var project=Identity("recovered-project");

@@ -8,12 +8,21 @@ using WriterApp.Shared;
 namespace WriterApp.Controllers;
 public sealed partial class AiActionsController
 {
+    private async Task<IReadOnlyList<PageRecord>> CheckedPagesAsync(Guid section, string actor, CancellationToken ct)
+    {
+        var document=await _dbContext.Sections.AsNoTracking().Where(s=>s.Id==section).Select(s=>s.DocumentId).SingleOrDefaultAsync(ct);
+        if(await _dbContext.Documents.AnyAsync(d=>d.Id==document && d.CollaborationMode==WriterApp.Shared.Collaboration.CollaborationMode.Collaborative,ct)) {
+            var access=HttpContext.RequestServices.GetRequiredService<WriterApp.Application.Collaboration.CollaborationAccessService>();
+            var snapshot=await WriterApp.Application.Collaboration.CollaborationProjectionService.Read(_dbContext,actor,document,new(),ct,access,WriterApp.Application.Collaboration.CollaborationOperation.PrepareAi);
+            return snapshot.Pages.Where(p=>p.SectionId==section).Select(p=>new PageRecord {Id=p.PageId,DocumentId=document,SectionId=section,Title=p.Title,OrderIndex=p.OrderIndex,Content=p.Html}).ToArray();
+        }
+        return await _pages.ListBySectionAsync(section,actor,ct);
+    }
     // A current receipt must never bless older client-provided writing or storyboard context.
     private async Task<AiActionExecuteRequestDto> PrepareWebInput(string key,AiActionExecuteRequestDto request,Guid section,CancellationToken ct)
     {
         var source=request.WebSource!;
-        var pages=await _dbContext.Pages.AsNoTracking().Where(p=>p.DocumentId==source.DocumentId && p.SectionId==section)
-            .OrderBy(p=>p.OrderIndex).ThenBy(p=>p.Id).ToArrayAsync(ct);
+        var pages=await CheckedPagesAsync(section,_userIdResolver.ResolveUserId(User),ct);
         string text=source.SceneId is { } scene
             ? PlainTextMapper.ToPlainText(await _dbContext.SceneContents.AsNoTracking().Where(s=>s.SceneNodeId==scene).Select(s=>s.ContentJson).SingleOrDefaultAsync(ct) ?? "")
             : request.PageId is { } page && request.SelectionStart is not null

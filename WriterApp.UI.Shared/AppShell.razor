@@ -15,7 +15,7 @@
                 @Search
             </div>
             <div class="app-header-right">
-                @Account
+                <details class="editor-account-menu" open><summary aria-label="Account and settings">Account &amp; settings</summary><div>@Account</div></details>
             </div>
         </div>
     </header>
@@ -41,7 +41,9 @@
                 }
             </nav>
             <article class="content">
-                @ChildContent
+                <CascadingValue Name="EditorNavigation" Value="Navigation">
+                    @ChildContent
+                </CascadingValue>
             </article>
         </div>
     </main>

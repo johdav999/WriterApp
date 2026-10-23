@@ -83,7 +83,7 @@ test('A click keeps normal selection; a drag captures and invokes exactly one mo
 test('Escape, cancellation, outside releases, and self drops cannot save or strand the next drag', async () => {
     const f = fixture();
     for (const [surface, event, extra] of [[f.doc, 'keydown', { key: 'Escape' }],
-        [f.doc, 'pointercancel', {}], [f.root, 'lostpointercapture', {}], [f.win, 'blur', {}]]) {
+        [f.doc, 'pointercancel', {}], [f.root, 'lostpointercapture', { target: f.root }], [f.win, 'blur', {}]]) {
         f.start(); f.send(surface, event, f.b, extra);
         await f.send(f.doc, 'pointerup', f.b).result;
         assert.equal(f.calls.length, 0); assert.equal(f.captures.size, 0); assert.equal(f.frames.size, 0);
@@ -94,6 +94,31 @@ test('Escape, cancellation, outside releases, and self drops cannot save or stra
     assert.equal(f.calls.length, 0);
     f.start(); await f.send(f.doc, 'pointerup', f.b).result;
     assert.equal(f.calls.length, 1);
+    detachPointerDrag(f.root);
+});
+
+test('Touch capture transfers from the grip to the board without canceling the drag', async () => {
+    const f = fixture();
+    f.send(f.root, 'pointerdown', f.a, { pointerType: 'touch' });
+    f.send(f.doc, 'pointermove', f.a, { pointerType: 'touch', clientX: 20 });
+    // Android implicitly captures the touched grip. Its lost-capture event
+    // bubbles when setPointerCapture transfers ownership to the board.
+    f.send(f.root, 'lostpointercapture', f.a, { pointerType: 'touch' });
+    assert.equal(f.root.classList.contains('is-pointer-dragging'), true);
+    assert.equal(f.captures.has(1), true);
+    await f.send(f.doc, 'pointerup', f.b, { pointerType: 'touch' }).result;
+    assert.deepEqual(f.calls, [['DropStoryboardSceneAsync', 'a', 'chapter', 'b']]);
+    detachPointerDrag(f.root);
+});
+
+test('Losing the board capture still cancels an active touch drag', async () => {
+    const f = fixture();
+    f.start();
+    f.send(f.root, 'lostpointercapture', f.root, { pointerType: 'touch' });
+    await f.send(f.doc, 'pointerup', f.b, { pointerType: 'touch' }).result;
+    assert.equal(f.calls.length, 0);
+    assert.equal(f.root.classList.contains('is-pointer-dragging'), false);
+    assert.equal(f.frames.size, 0);
     detachPointerDrag(f.root);
 });
 

@@ -41,11 +41,14 @@ public sealed class SearchIndexService : ISearchIndexService, ISearchIndexBackfi
     private readonly AppDbContext _dbContext;
     private readonly ILogger<SearchIndexService> _logger;
     private readonly ISearchIndexBackfillQueue _backfillQueue;
+    private readonly WriterApp.Application.Collaboration.CollaborationAccessService? _access;
     private volatile bool _disabled;
     private string? _disabledReason;
 
-    public SearchIndexService(AppDbContext dbContext, ILogger<SearchIndexService> logger, ISearchIndexBackfillQueue backfillQueue)
+    public SearchIndexService(AppDbContext dbContext, ILogger<SearchIndexService> logger, ISearchIndexBackfillQueue backfillQueue,
+        WriterApp.Application.Collaboration.CollaborationAccessService? access = null)
     {
+        _access = access;
         _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _backfillQueue = backfillQueue ?? throw new ArgumentNullException(nameof(backfillQueue));
@@ -64,8 +67,18 @@ public sealed class SearchIndexService : ISearchIndexService, ISearchIndexBackfi
 
     public async Task UpsertPageAsync(PageRecord page, CancellationToken ct)
     {
+        string pageContent = page.Content;
+        if (await _dbContext.Documents.AsNoTracking().AnyAsync(d => d.Id == page.DocumentId && d.CollaborationMode != WriterApp.Shared.Collaboration.CollaborationMode.Legacy, ct))
+        {
+            var committed = await (from state in _dbContext.CollaborationPages.AsNoTracking() join projection in _dbContext.CollaborationProjections.AsNoTracking()
+                on new { state.PageId, state.Generation } equals new { projection.PageId, projection.Generation }
+                where state.PageId == page.Id && !state.IsDeleted && state.ProjectionSequence == projection.Sequence
+                select projection.Html).ToArrayAsync(ct);
+            if (committed.Length != 1) { await DeleteByEntityAsync(SearchEntityTypes.Page, page.Id, ct); return; }
+            pageContent = committed[0];
+        }
         Guid projectId = page.Document?.ProjectId ?? await ResolveProjectIdForDocumentAsync(page.DocumentId, ct);
-        await UpsertEntryAsync(new SearchIndexEntry(SearchEntityTypes.Page, page.Id, page.DocumentId, projectId, page.SectionId, page.Id, page.Title ?? string.Empty, NormalizeText(page.Content), page.UpdatedAt), ct);
+        await UpsertEntryAsync(new SearchIndexEntry(SearchEntityTypes.Page, page.Id, page.DocumentId, projectId, page.SectionId, page.Id, page.Title ?? string.Empty, NormalizeText(pageContent), page.UpdatedAt), ct);
     }
 
     public async Task UpsertPageNotesAsync(PageRecord page, PageNoteRecord notes, CancellationToken ct)
@@ -147,10 +160,18 @@ public sealed class SearchIndexService : ISearchIndexService, ISearchIndexBackfi
             return Array.Empty<SearchResultDto>();
         }
 
-        List<DocumentLookup> docs = await _dbContext.Documents.AsNoTracking()
-            .Where(d => d.OwnerUserId == userId && d.ProjectId == projectId)
+        var candidates = _access?.Candidates(userId) ?? _dbContext.Documents.AsNoTracking().Where(d => d.OwnerUserId == userId);
+        List<DocumentLookup> docs = await candidates
+            .Where(d => d.ProjectId == projectId && !d.IsArchived && d.DeletedAtUtc == null && d.CollaborationMode != WriterApp.Shared.Collaboration.CollaborationMode.Migrating)
             .Select(d => new DocumentLookup(IdNorm.Norm(d.Id), d.Title))
             .ToListAsync(ct);
+        if (_access is not null)
+        {
+            var allowed = new List<DocumentLookup>();
+            foreach (var d in docs)
+            { try { await _access.RequireResource(userId, Guid.Parse(d.DocumentId), ct); allowed.Add(d); } catch (WriterApp.Application.Collaboration.CollaborationSessionDeniedException) { } }
+            docs = allowed;
+        }
         if (docs.Count == 0)
         {
             return Array.Empty<SearchResultDto>();
@@ -183,8 +204,12 @@ public sealed class SearchIndexService : ISearchIndexService, ISearchIndexBackfi
 
         string like = $"%{normalizedQuery.ToLowerInvariant()}%";
         int clampedLimit = Math.Clamp(limit, 1, 200);
+        var tombstones = (await _dbContext.CollaborationPages.AsNoTracking().Where(p => p.IsDeleted
+            && _dbContext.Documents.Any(d => d.Id == p.DocumentId && d.OwnerUserId == userId && d.ProjectId == projectId))
+            .Select(p => p.PageId).ToArrayAsync(ct)).Select(IdNorm.Norm).ToArray();
         List<SearchIndexEntryRecord> rows = await _dbContext.SearchIndexEntries.AsNoTracking()
             .Where(e => e.ProjectId == normalizedProjectId && docIds.Contains(e.DocumentId))
+            .Where(e => e.PageId == null || !tombstones.Contains(e.PageId))
             .Where(e =>
                 (e.EntityType.ToLower() == SearchEntityTypes.Page && EF.Functions.Like((e.Content ?? string.Empty).ToLower(), like)) ||
                 (includeMeta && e.EntityType.ToLower() != SearchEntityTypes.Page &&
@@ -198,6 +223,14 @@ public sealed class SearchIndexService : ISearchIndexService, ISearchIndexBackfi
             .ThenByDescending(e => e.UpdatedAt)
             .Take(clampedLimit)
             .ToListAsync(ct);
+
+        if (_access is not null)
+        {
+            var current = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var id in rows.Select(r => r.DocumentId).Distinct())
+            { try { await _access.RequireResource(userId, Guid.Parse(id), ct); current.Add(id); } catch (WriterApp.Application.Collaboration.CollaborationSessionDeniedException) { } }
+            rows = rows.Where(r => current.Contains(r.DocumentId)).ToList();
+        }
 
         Dictionary<string, string> docTitles = docs.ToDictionary(d => d.DocumentId, d => d.Title ?? string.Empty, StringComparer.Ordinal);
         return rows.Select(row =>

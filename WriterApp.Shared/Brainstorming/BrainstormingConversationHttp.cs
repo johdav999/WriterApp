@@ -15,7 +15,7 @@ public sealed class BrainstormingConversationHttp(HttpClient http,Func<Brainstor
         while((n=await stream.ReadAsync(block,ct))>0) {if(bytes.Length+n>8000)return null;bytes.Write(block,0,n);}
         try {using var json=JsonDocument.Parse(bytes.ToArray());return json.RootElement.Clone();}catch(JsonException){return null;}
     }
-    private static async Task Success(HttpResponseMessage response,CancellationToken ct,Action? accessRevoked=null) {
+    private static async Task Success(HttpResponseMessage response,CancellationToken ct,Action? accessRevoked=null,Guid? sendOperation=null) {
         if(response.IsSuccessStatusCode)return;
         if(response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden) {
             accessRevoked?.Invoke();
@@ -29,6 +29,12 @@ public sealed class BrainstormingConversationHttp(HttpClient http,Func<Brainstor
                 message="Conversation access was revoked. Reopen the original account; local writing is retained.";
             }
             else if(json.TryGetProperty("message",out var text)&&text.GetString() is {Length:>0 and <2000} detail)message=detail;
+            if(sendOperation is { } operation && response.StatusCode==HttpStatusCode.BadRequest
+                && json.TryGetProperty("accepted",out var accepted) && accepted.ValueKind==JsonValueKind.False
+                && json.TryGetProperty("operationId",out var id) && id.ValueKind==JsonValueKind.String && id.TryGetGuid(out var rejected) && rejected==operation
+                && json.TryGetProperty("code",out var rejectionCode) && rejectionCode.ValueKind==JsonValueKind.String
+                && rejectionCode.GetString() is {Length:>0 and <=200} reason)
+                throw new BrainstormingSendRejectedException(message,reason,operation,response.StatusCode);
         }
         throw new HttpRequestException(message,null,response.StatusCode);
     }
@@ -62,7 +68,7 @@ public sealed class BrainstormingConversationHttp(HttpClient http,Func<Brainstor
         // Browser fetch otherwise buffers the response, defeating real streaming.
         request.Options.Set(new HttpRequestOptionsKey<bool>("WebAssemblyEnableStreamingResponse"),true);
         using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,ct);captured.RequireCurrent();
-        await Success(response,ct,captured.AccessRevoked);
+        await Success(response,ct,captured.AccessRevoked,send.OperationId);
         if(response.Content.Headers.ContentType?.MediaType!="application/x-ndjson")throw new InvalidDataException("Update the backend for conversation streaming.");
         await using var stream=await response.Content.ReadAsStreamAsync(ct);using var reader=new StreamReader(stream,Encoding.UTF8);
         long sequence=0;bool terminal=false;var seen=new Dictionary<long,string>();

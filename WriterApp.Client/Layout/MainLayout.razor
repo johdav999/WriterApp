@@ -69,6 +69,7 @@
                    href="documents"
                    @onclick="OnDocumentsNavClicked"
                    @onclick:preventDefault="true">Projects</a>
+                <NavLink class="app-nav-link" href="collaboration" Match="NavLinkMatch.Prefix">Shared</NavLink>
                 <NavLink class="app-nav-link" href="account" Match="NavLinkMatch.Prefix">Account</NavLink>
 </Navigation>
     <ChildContent>@Body</ChildContent>

@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+  <Import Project="native-auth.local.props" Condition="'$(Configuration)' == 'Debug' and Exists('native-auth.local.props')" />
+  <PropertyGroup>
+    <TargetFramework>net10.0-android</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>WriterApp.Android</RootNamespace>
+    <UseMaui>true</UseMaui>
+    <SingleProject>true</SingleProject>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <EnableDefaultCssItems>false</EnableDefaultCssItems>
+    <ApplicationTitle>Prosa</ApplicationTitle>
+    <ApplicationId>com.prosa.writer.android</ApplicationId>
+    <ApplicationDisplayVersion>0.1.0</ApplicationDisplayVersion>
+    <ApplicationVersion Condition="'$(ApplicationVersion)' == ''">1</ApplicationVersion>
+    <SupportedOSPlatformVersion>26.0</SupportedOSPlatformVersion>
+    <AndroidPackageFormats Condition="'$(AndroidPackageFormats)' == ''">apk</AndroidPackageFormats>
+    <ProsaEnvironment Condition="'$(ProsaEnvironment)' == '' and '$(Configuration)' == 'Debug'">Development</ProsaEnvironment>
+    <ProsaEnvironment Condition="'$(ProsaEnvironment)' == ''">Production</ProsaEnvironment>
+    <ProsaApiBaseUrl Condition="'$(ProsaApiBaseUrl)' == '' and '$(ProsaEnvironment)' == 'Development'">http://localhost:5387/</ProsaApiBaseUrl>
+    <ProsaApiBaseUrl Condition="'$(ProsaApiBaseUrl)' == '' and '$(ProsaEnvironment)' == 'Production'">https://app.prosa-app.com/</ProsaApiBaseUrl>
+    <ProsaAndroidAuthSettingsFile Condition="'$(ProsaAndroidAuthSettingsFile)' == ''">native-auth.json</ProsaAndroidAuthSettingsFile>
+    <ProsaAndroidSignatureHash Condition="'$(ProsaAndroidSignatureHash)' == ''">unconfigured</ProsaAndroidSignatureHash>
+    <AndroidManifestPlaceholders>prosaAuthHash=$(ProsaAndroidSignatureHash)</AndroidManifestPlaceholders>
+  </PropertyGroup>
+  <ItemGroup>
+    <MauiIcon Include="Resources/AppIcon/appicon.svg" ForegroundFile="Resources/AppIcon/appiconfg.svg" Color="#17133B" />
+    <MauiSplashScreen Include="Resources/Splash/splash.svg" Color="#17133B" BaseSize="128,128" />
+    <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebView.Maui" Version="$(MauiVersion)" />
+    <PackageReference Include="Microsoft.Identity.Client" Version="4.90.1" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.12" />
+    <ProjectReference Include="../WriterApp.Device.Shared/WriterApp.Device.Shared.csproj" />
+    <EmbeddedResource Include="$(ProsaAndroidAuthSettingsFile)" LogicalName="Prosa.AndroidNativeAuthentication" />
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute"><_Parameter1>ProsaEnvironment</_Parameter1><_Parameter2>$(ProsaEnvironment)</_Parameter2></AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute"><_Parameter1>ProsaApiBaseUrl</_Parameter1><_Parameter2>$(ProsaApiBaseUrl)</_Parameter2></AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute"><_Parameter1>ProsaAndroidSignatureHash</_Parameter1><_Parameter2>$(ProsaAndroidSignatureHash)</_Parameter2></AssemblyAttribute>
+  </ItemGroup>
+  <Target Name="ValidateProsaAndroidEnvironment" BeforeTargets="CoreCompile">
+    <Error Condition="'$(ApplicationId)' != 'com.prosa.writer.android'" Text="Update Android package, callback host and identity validation together before changing ApplicationId." />
+    <Error Condition="'$(ProsaEnvironment)' != 'Development' and '$(ProsaEnvironment)' != 'Staging' and '$(ProsaEnvironment)' != 'Production'" Text="Choose Development, Staging or Production." />
+  </Target>
+</Project>

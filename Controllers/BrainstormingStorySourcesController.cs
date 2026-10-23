@@ -31,7 +31,7 @@ public sealed class BrainstormingStorySourcesController(AppDbContext db, IUserId
     public async Task<ActionResult<BrainstormingStorySnapshot>> Read(Guid documentId, Guid? projectId, CancellationToken ct)
     {
         Response.Headers.CacheControl = "no-store";
-        try { return Ok(await new BrainstormingStorySourceReader(db, identity.ResolveUserId(User)).ReadAsync(documentId, projectId, ct)); }
+        try { return Ok(await new BrainstormingStorySourceReader(db, identity.ResolveUserId(User), HttpContext.RequestServices?.GetService<WriterApp.Application.Collaboration.CollaborationAccessService>()).ReadAsync(documentId, projectId, ct)); }
         catch (BrainstormingAccessException) { return NotFound(new {code="brainstorming.access_revoked"}); }
         catch (System.Security.SecurityException) { return Unauthorized(); }
         catch (WriterApp.Application.Documents.DocumentSyncException e) { return e.Status == 404 ? NotFound(new {code="brainstorming.access_revoked"}) : Conflict(new { code = "brainstorming.source_changed", message = e.Message }); }

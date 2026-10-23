@@ -17,6 +17,7 @@ public partial class DocumentEditor
         _webTranslationBusy=true;
         try {
             await FlushActiveEditorAsync("brainstorming-planning-save");_pageEditor?.RequireSavedForAi();await FlushNotesSaveAsync();RequireBrainstormKeepIdentity(scope,document,identity);
+            if(undo)await SettleBrainstormConversationBeforeReplay(scope,document,identity);
             if(_pageEditor is not null)await _pageEditor.SetTranslationReadOnlyAsync(true);
             BrainstormingCache cache;
             if(inspect) {
@@ -29,7 +30,7 @@ public partial class DocumentEditor
             }
             RequireBrainstormKeepIdentity(scope,document,identity);
             if(cache.PlanningOperations!.Single(p=>p.Review.OperationId==r.OperationId).Receipt?.State is BrainstormingApplicationState.Committed or BrainstormingApplicationState.Undone) {
-                await ReloadTranslatedDocumentAsync();cache=await BrainstormSessions.SyncAsync(scope,true);
+                await ReloadBrainstormManuscriptAsync();cache=await BrainstormSessions.SyncAsync(scope,true);
             }
             RequireBrainstormKeepIdentity(scope,document,identity);return cache;
         }finally {_webTranslationBusy=false;if(_pageEditor is not null && DocumentId==document && identity==BrainstormSessions.Identity)await _pageEditor.SetTranslationReadOnlyAsync(false);}

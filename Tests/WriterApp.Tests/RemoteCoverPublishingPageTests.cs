@@ -28,7 +28,9 @@ public sealed class RemoteCoverPublishingPageTests
         await settings.SaveAsync(f.Source,state with{Options=new(DeviceExportFormat.Html,IncludeCover:true)});
         var components=new Components();var files=new Files();using var services=new ServiceCollection().AddLogging()
             .AddSingleton(f.Documents).AddSingleton(f.Account).AddSingleton(f.Studio).AddSingleton(settings)
-            .AddSingleton<IDeviceFileDialog>(files).AddSingleton<IDevicePdfExport>(new UnavailableDevicePdfExport()).AddSingleton<IComponentActivator>(components).BuildServiceProvider();
+            .AddSingleton<IDeviceFileDialog>(files).AddSingleton<IDevicePdfExport>(new UnavailableDevicePdfExport())
+            .AddSingleton<IDeviceFileShare,UnavailableDeviceFileShare>().AddSingleton<IDevicePdfPrint,UnavailableDevicePdfPrint>()
+            .AddSingleton<IComponentActivator>(components).BuildServiceProvider();
         await using var renderer=new HtmlRenderer(services,services.GetRequiredService<ILoggerFactory>());
         var root=await renderer.Dispatcher.InvokeAsync(()=>renderer.RenderComponentAsync<Publishing>(ParameterView.FromDictionary(new Dictionary<string,object?>{[nameof(Publishing.DocumentId)]=f.Source.DocumentId})));
         Task Event(string name)=>renderer.Dispatcher.InvokeAsync(()=>EventCallback.Factory.Create(components.Page,(Func<Task>)(()=>

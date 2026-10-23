@@ -1,0 +1,36 @@
+@using Microsoft.AspNetCore.Components
+@using Microsoft.AspNetCore.Components.Routing
+@using WriterApp.Device.Shared.Services
+@implements IDisposable
+@inject NavigationManager Navigation
+@inject LocalDocumentRepository Documents
+@inject WriterApp.Android.Authentication.AndroidIdentityOptions Options
+
+@code {
+    private string Key => "prosa.android.route." + Options.Environment.Environment;
+    private bool disposed;
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        Navigation.LocationChanged += Changed;
+        string route = Preferences.Default.Get(Key, "");
+        // Restore only a local document. Authentication, external callbacks and actions are never replayed.
+        var pieces = route.Trim('/').Split('/');
+        if (pieces.Length == 2 && pieces[0] == "documents" && Guid.TryParse(pieces[1], out var id))
+        {
+            try
+            {
+                var document = await Documents.LoadAsync(id);
+                if (!disposed && document is { DeletedAtUtc: null } && Navigation.ToBaseRelativePath(Navigation.Uri).Length == 0)
+                    Navigation.NavigateTo(route, replace: true);
+            }
+            catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException) { }
+        }
+    }
+    private void Changed(object? sender, LocationChangedEventArgs args)
+    {
+        string route = Navigation.ToBaseRelativePath(args.Location);
+        Preferences.Default.Set(Key, route.Length <= 100 && !route.Contains('?') && !route.Contains('#') ? route : "");
+    }
+    public void Dispose() { disposed = true; Navigation.LocationChanged -= Changed; }
+}

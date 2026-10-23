@@ -2,3 +2,23 @@
 .manuscript-page-picker { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: .5rem 0; }
 .manuscript-page-picker select { max-width: 100%; padding: .4rem .6rem; border-radius: .4rem; }
 .manuscript-page-picker [role=alert] { flex-basis: 100%; margin: 0; }
+
+.shared-structure-tools { margin-top: 1rem; padding: .75rem; border: 1px solid var(--border-color, #ddd); border-radius: .5rem; }
+.shared-structure-tools summary { cursor: pointer; font-weight: 600; margin-bottom: .5rem; }
+.shared-structure-tools button { display: block; width: 100%; margin: .35rem 0; padding: .4rem; }
+.shared-structure-tools input { max-width: 100%; box-sizing: border-box; }
+.shared-manuscript-identity {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.75rem;
+    margin: 0 0 0.65rem;
+    color: var(--text-muted, #596579);
+    font-size: 0.8rem;
+    overflow-wrap: anywhere;
+}
+
+.shared-manuscript-identity a {
+    color: inherit;
+    text-decoration: underline;
+}

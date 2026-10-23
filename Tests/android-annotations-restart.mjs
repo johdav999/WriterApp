@@ -1,0 +1,9 @@
+// Run after android-annotations.mjs verify against its synthetic test manuscript.
+process.argv[2]='helper';process.env.PROSA_ADB='C:/Program Files (x86)/Android/android-sdk/platform-tools/adb.exe';process.env.PROSA_ANDROID_EVIDENCE='artifacts/android-annotations';
+const {connect,adb,capture}=await import('./android-native-smoke.mjs');const {readFileSync,writeFileSync}=await import('node:fs');
+const receipt=JSON.parse(readFileSync('artifacts/android-annotations/results.json','utf8'));
+let c=await connect();try {const text=await c.evaluate(`document.querySelector('.ProseMirror').innerText`);adb('shell','input','keyevent','KEYCODE_HOME');await new Promise(r=>setTimeout(r,1400));adb('shell','am','force-stop','com.prosa.writer.android');c.close();adb('shell','monkey','-p','com.prosa.writer.android','-c','android.intent.category.LAUNCHER','1');await new Promise(r=>setTimeout(r,2000));c=await connect();for(let i=0;i<30&&!await c.evaluate(`!!document.querySelector('.ProseMirror')`);i++)await new Promise(r=>setTimeout(r,500));
+const state=await c.evaluate(`JSON.stringify({route:location.pathname,text:document.querySelector('.ProseMirror')?.innerText,comments:document.querySelectorAll('.wa-annotation-comment').length,tasks:document.querySelectorAll('.wa-annotation-todo').length})`);
+const actual=JSON.parse(state);if(actual.route!==receipt.route||actual.text!==text||actual.comments!==2||actual.tasks!==1)throw Error(state);
+await c.evaluate(`document.querySelector('.wa-annotation-comment').click()`);await new Promise(r=>setTimeout(r,700));capture('final-text-and-comment');receipt.checks.push('Background save and full process restart retain exact manuscript, two comments, one task and highlight navigation');receipt.restart=actual;writeFileSync('artifacts/android-annotations/results.json',JSON.stringify(receipt,null,2));console.log('PASS: Exact text and all three annotations restored after Android process restart.');
+}finally{c.close()}

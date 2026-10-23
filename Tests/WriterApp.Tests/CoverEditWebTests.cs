@@ -39,17 +39,33 @@ public sealed partial class DesktopAiWebPersistenceTests
     }
     private sealed class CoverNavigation:NavigationManager {public CoverNavigation()=>Initialize("http://web.test/","http://web.test/project");protected override void NavigateToCore(string uri,bool forceLoad){} }
     private sealed class CoverWebWire(HttpClient upstream):HttpMessageHandler {
-        public bool Offline,LostAck;public Func<Task>? After;public int Edits;
+        public bool Offline,LostAck,BadGenerationAssets;public Func<Task>? After;public int Edits,Generations;
+        public Exception? GenerationFailure;public bool InterruptGenerationBody;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken ct) {
             if(Offline)throw new HttpRequestException("Offline: cached review remains available.");
             var path=request.RequestUri!.PathAndQuery;bool edit=path=="/api/covers/edit";
+            bool generation=path=="/api/covers/generate";
+            if(generation){Generations++;if(GenerationFailure is { } failure)throw failure;}
             if(edit)Edits++;
             using var copy=new HttpRequestMessage(request.Method,path){Content=request.Content is null ? null : new ByteArrayContent(await request.Content.ReadAsByteArrayAsync(ct))};
             if(copy.Content is not null)copy.Content.Headers.ContentType=request.Content!.Headers.ContentType;
             var response=await upstream.SendAsync(copy,ct);
+            if(generation && response.IsSuccessStatusCode && BadGenerationAssets) {
+                var value=(await response.Content.ReadFromJsonAsync<CoverGenerationResponse>(ct))!;
+                response.Content.Dispose();response.Content=JsonContent.Create(value with{Assets=[]});
+            }
+            if(generation && InterruptGenerationBody){response.Content.Dispose();response.Content=new BrokenCoverBody();}
             if(edit && After is not null)await After();
             if(LostAck && path=="/api/covers/edit-save") {LostAck=false;response.Dispose();throw new HttpRequestException("Lost save acknowledgement");}
             return response;
+        }
+        private sealed class BrokenCoverBody:HttpContent {
+            protected override Task SerializeToStreamAsync(Stream stream,System.Net.TransportContext? context)=>throw new IOException("Private transport detail");
+            protected override bool TryComputeLength(out long length){length=0;return false;}
+            protected override Task<Stream> CreateContentReadStreamAsync()=>Task.FromResult<Stream>(new BrokenCoverStream());
+        }
+        private sealed class BrokenCoverStream:MemoryStream {
+            public override ValueTask<int> ReadAsync(Memory<byte> buffer,CancellationToken ct=default)=>throw new IOException("Private transport detail");
         }
     }
     private const BindingFlags CoverPrivate=BindingFlags.NonPublic|BindingFlags.Instance;

@@ -8,7 +8,7 @@ export default defineConfig({
     fileURLToPath(new URL("dist/device-retired/", import.meta.url))
   )],
   // The existing lockfile has nested ProseMirror copies; a single plugin registry is required.
-  resolve: { dedupe: ["prosemirror-state", "prosemirror-model", "prosemirror-view", "prosemirror-transform", "prosemirror-keymap"] },
+  resolve: { dedupe: ["yjs", "y-protocols", "@tiptap/y-tiptap", "prosemirror-state", "prosemirror-model", "prosemirror-view", "prosemirror-transform", "prosemirror-keymap"] },
   build: {
     // Rolldown can safely truncate staging files; published assets may be mapped.
     outDir: "dist/device-editor",

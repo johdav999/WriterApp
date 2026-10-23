@@ -21,7 +21,8 @@ public sealed partial class DeviceCoverStudioPanelTests
     }
     private sealed class Usage:IDeviceAiApi {
         public bool Free;
-        public Task<AiUsageStatusDto> GetUsageAsync(CancellationToken ct)=>Task.FromResult(new AiUsageStatusDto{PlanKey=Free?"Free":"Professional",UiEnabled=true,AiEnabled=true,QuotaRemaining=10});
+        public Exception? Failure;
+        public Task<AiUsageStatusDto> GetUsageAsync(CancellationToken ct)=>Failure is { } error ? Task.FromException<AiUsageStatusDto>(error) : Task.FromResult(new AiUsageStatusDto{PlanKey=Free?"Free":"Professional",UiEnabled=true,AiEnabled=true,QuotaRemaining=10});
         public Task<AiActionExecuteResponseDto> ExecuteAsync(string key,AiActionExecuteRequestDto request,CancellationToken ct)=>throw new NotSupportedException();
     }
     private sealed class Harness:IAsyncDisposable {
@@ -60,5 +61,24 @@ public sealed partial class DeviceCoverStudioPanelTests
         var generating=h.Event("Generate");await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Contains("Working",await h.Html());await h.Evidence("cover-loading");await h.Event("Cancel");await generating;
         Assert.Contains("Canceled",await h.Html());Assert.Null(await h.Fixture.Studio.CachedAsync(h.Fixture.Source));Assert.Null((await h.Fixture.Documents.LoadAsync(h.Fixture.Source.DocumentId))!.Project!.CoverImageUrl);
+    }
+    [Theory][InlineData("headers")][InlineData("android")][InlineData("body")][InlineData("usage")][InlineData("timeout")]
+    public async Task InterruptedRequestShowsRecoveryAndPreservesConceptsWithoutAutomaticRetry(string stage) {
+        await using var h=new Harness();await h.Start();await h.Event("Generate");
+        var cached=await h.Fixture.Studio.CachedAsync(h.Fixture.Source);
+        int requests=h.Fixture.Api.Calls;
+        if(stage=="headers")h.Fixture.Api.TransportFailure=new HttpRequestException("unexpected end of stream on com.android.okhttp.Address@92812848");
+        if(stage=="android")h.Fixture.Api.TransportFailure=new System.Net.WebException("unexpected end of stream on com.android.okhttp.Address@92812848");
+        if(stage=="body")h.Fixture.Api.Interrupted=true;
+        if(stage=="usage")h.Usage.Failure=new IOException("unexpected end of stream on com.android.okhttp.Address@92812848");
+        if(stage=="timeout")h.Fixture.Api.TransportFailure=new TaskCanceledException("Request timed out.");
+        await h.Event("Generate");var html=await h.Html();
+        Assert.Contains(stage=="timeout"?"timed out":"backend is running",html);
+        Assert.Contains("saved cover and cached concepts are preserved",html);
+        Assert.DoesNotContain("okhttp",html);Assert.DoesNotContain("Canceled.",html);
+        Assert.Contains("Select cover concept 2",html);
+        Assert.Equal(cached!.Id,(await h.Fixture.Studio.CachedAsync(h.Fixture.Source))!.Id);
+        Assert.Null((await h.Fixture.Documents.LoadAsync(h.Fixture.Source.DocumentId))!.Project!.CoverImageUrl);
+        Assert.Equal(requests+(stage=="usage"?0:1),h.Fixture.Api.Calls);
     }
 }

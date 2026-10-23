@@ -1,4 +1,6 @@
 using System.Net.Http.Json;
+using System.Net;
+using Microsoft.AspNetCore.TestHost;
 using System.Reflection;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.RenderTree;
@@ -19,6 +21,35 @@ namespace WriterApp.Tests;
 #pragma warning disable BL0006 // Dispatch compiled production recovery buttons.
 public sealed partial class DesktopAiWebPersistenceTests
 {
+    private sealed class RecoveryFailureTransport(TranslationFixture fixture,HttpStatusCode status):DelegatingHandler(fixture.Server.GetTestServer().CreateHandler()) {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken ct)=>
+            request.RequestUri!.AbsolutePath.Contains("/history/recovery/")
+                ? Task.FromResult(new HttpResponseMessage(status){Content=JsonContent.Create(new {message="Recovery refused."})})
+                : base.SendAsync(request,ct);
+    }
+    [Theory]
+    [InlineData(HttpStatusCode.PaymentRequired,"requires the matching plan")]
+    [InlineData(HttpStatusCode.Unauthorized,"Sign in again")]
+    [InlineData(HttpStatusCode.Forbidden,"does not have access")]
+    [InlineData(HttpStatusCode.NotFound,"matching backend")]
+    [InlineData(HttpStatusCode.ServiceUnavailable,"Refresh to retry")]
+    public async Task WebScopedRecoveryShowsTheActualFailureCategoryWithoutMisdiagnosingPlanGating(HttpStatusCode status,string expected) {
+        await using var fixture=new TranslationFixture();await fixture.Start();
+        using var transport=new RecoveryFailureTransport(fixture,status);
+        using var http=new HttpClient(transport){BaseAddress=fixture.Http.BaseAddress};http.DefaultRequestHeaders.Add("X-Test-Owner","ordinary-author");
+        await using var outbox=new WebAiHistoryOutbox(http,new HistoryMemoryModule(),new WebCheckedAi(http));
+        var panel=new WebAiRecoveryPanel();var flags=BindingFlags.Instance|BindingFlags.Public|BindingFlags.NonPublic;
+        typeof(WebAiRecoveryPanel).GetProperty("Http",flags)!.SetValue(panel,http);
+        typeof(WebAiRecoveryPanel).GetProperty("CheckedAi",flags)!.SetValue(panel,new WebCheckedAi(http));
+        typeof(WebAiRecoveryPanel).GetProperty("Outbox",flags)!.SetValue(panel,outbox);
+        using var services=new ServiceCollection().AddLogging().BuildServiceProvider();
+        await using var renderer=new RecoveryRenderer(services,services.GetRequiredService<ILoggerFactory>());
+        int changed=0;await renderer.Show(panel,fixture.Document,false,()=>changed++,[]);
+        var message=(string)typeof(WebAiRecoveryPanel).GetField("_message",flags)!.GetValue(panel)!;
+        Assert.Contains(expected,message);Assert.Equal(0,changed);
+        Assert.Empty((IReadOnlyList<WebRecoveryItem>)typeof(WebAiRecoveryPanel).GetField("_entries",flags)!.GetValue(panel)!);
+        if(status!=HttpStatusCode.NotFound)Assert.DoesNotContain("matching backend",message);
+    }
     private sealed class RecoveryRenderer(IServiceProvider services,ILoggerFactory logs) : Renderer(services,logs) {
         private int _root;
         public override Dispatcher Dispatcher {get;}=Dispatcher.CreateDefault();

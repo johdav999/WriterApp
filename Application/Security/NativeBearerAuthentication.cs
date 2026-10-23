@@ -34,6 +34,21 @@ public static class NativeBearerAuthentication
     public const string Router = "WebOrNative";
     public const string Policy = "NativeApi";
 
+    public static bool NormalizeDelegatedPrincipal(ClaimsPrincipal user, NativeBearerOptions settings)
+    {
+        if(user.FindFirst("ver")?.Value!="2.0" || !string.Equals(user.FindFirst("tid")?.Value,settings.TenantId,StringComparison.OrdinalIgnoreCase)
+            ||!Guid.TryParse(user.FindFirst("oid")?.Value,out _)
+            ||!settings.AllowedClientIds.Contains(user.FindFirst("azp")?.Value,StringComparer.OrdinalIgnoreCase)
+            ||!(user.FindFirst("scp")?.Value.Split(' ',StringSplitOptions.RemoveEmptyEntries).Contains(settings.RequiredScope,StringComparer.Ordinal)??false))return false;
+        var identity=(ClaimsIdentity)user.Identity!;
+        foreach(var claim in identity.Claims.Where(c=>c.Type.Equals("roles",StringComparison.OrdinalIgnoreCase)
+            ||c.Type.Equals("appRole",StringComparison.OrdinalIgnoreCase)||c.Type.Equals(identity.RoleClaimType,StringComparison.OrdinalIgnoreCase)
+            ||c.Type.Equals(ClaimTypes.Role,StringComparison.OrdinalIgnoreCase)||c.Type==ClaimTypes.NameIdentifier
+            ||c.Type==ExternalIdentityClaims.EasyAuthProviderClaimType).ToArray())identity.RemoveClaim(claim);
+        identity.AddClaim(new Claim(ClaimTypes.NameIdentifier,ExternalIdentityClaims.ResolveStableUserId(user.Claims)!));
+        return true;
+    }
+
     // Any explicit Authorization header must fail closed, including malformed/unsupported schemes.
     public static string SelectScheme(HttpContext context, string webScheme) =>
         context.Request.Headers.ContainsKey("Authorization") ? Scheme : webScheme;
@@ -77,24 +92,11 @@ public static class NativeBearerAuthentication
                   OnTokenValidated = context =>
                   {
                       ClaimsPrincipal user = context.Principal!;
-                      if (user.FindFirst("ver")?.Value != "2.0"
-                          || !string.Equals(user.FindFirst("tid")?.Value, settings.TenantId, StringComparison.OrdinalIgnoreCase)
-                          || !Guid.TryParse(user.FindFirst("oid")?.Value, out _)
-                          || !settings.AllowedClientIds.Contains(user.FindFirst("azp")?.Value, StringComparer.OrdinalIgnoreCase)
-                          || !(user.FindFirst("scp")?.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                              .Contains(settings.RequiredScope, StringComparer.Ordinal) ?? false))
+                      if (!NormalizeDelegatedPrincipal(user,settings))
                       {
                           context.Fail("A permitted delegated API token is required.");
                           return Task.CompletedTask;
                       }
-                      var identity = (ClaimsIdentity)user.Identity!;
-                      // API roles cannot masquerade as legacy web Admin claims. App-managed roles still apply.
-                      foreach (Claim claim in identity.Claims.Where(c => c.Type.Equals("roles", StringComparison.OrdinalIgnoreCase)
-                          || c.Type.Equals("appRole", StringComparison.OrdinalIgnoreCase)
-                          || c.Type.Equals(identity.RoleClaimType, StringComparison.OrdinalIgnoreCase)
-                          || c.Type.Equals(ClaimTypes.Role, StringComparison.OrdinalIgnoreCase) || c.Type == ClaimTypes.NameIdentifier
-                          || c.Type == ExternalIdentityClaims.EasyAuthProviderClaimType).ToArray()) identity.RemoveClaim(claim);
-                      identity.AddClaim(new Claim(ClaimTypes.NameIdentifier, ExternalIdentityClaims.ResolveStableUserId(user.Claims)!));
                       return Task.CompletedTask;
                   }
               };

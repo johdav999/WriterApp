@@ -1,0 +1,46 @@
+html, body { overscroll-behavior-y: none; }
+/* These panels are stacked at the shared storyboard's 1200px breakpoint.
+   At an inner scroll boundary, vertical swipes must continue on the page so
+   authors can return to the heading. Keep horizontal chapter containment. */
+@media (max-width: 1200px) {
+  .storyboard-page .project-storyboard-board,
+  .storyboard-page .storyboard-insights-scroll,
+  .storyboard-page .storyboard-inspector-scroll { overscroll-behavior-y: auto; }
+}
+/* The shared desktop rail must not consume half a phone's writing area. */
+@media (max-width: 800px) {
+  .app-shell { height: 100dvh; }
+  .app-shell .app-body { display: flex; flex-direction: column; min-width: 0; }
+  .app-shell .app-nav { display: flex; flex-direction: row; flex-wrap: nowrap; overflow-x: auto; width: 100%; min-width: 0; flex: 0 0 auto; padding: 4px 8px; gap: 4px; border-bottom: 1px solid var(--color-border); }
+  .app-shell .app-nav-link { flex: 0 0 auto; white-space: nowrap; padding: 8px 12px; min-height: 44px; }
+  .app-nav .panel-resize-handle, .app-nav .sidebar-brand { display: none; }
+  .app-sidebar-footer { flex: 0 0 auto; margin: 0; display: flex; }
+  .app-shell .content { width: 100%; min-width: 0; flex: 1; overflow: auto; }
+  .app-shell .app-header { display: flex; padding: 4px 8px; min-height: 48px; gap: 8px; flex: 0 0 auto; }
+  .app-header-left .app-brand { padding: 0; }
+  .app-brand-logo { max-width: 100px; max-height: 36px; }
+  .app-shell .app-header-content { display: flex; justify-content: space-between; gap: 8px; }
+  .app-header-center { display: none; }
+  .app-header-right { margin-left: auto; gap: 12px; }
+  /* Phone writing uses one page scroller. Match the shared responsive shell's
+     selector so its overflow:hidden cannot clip the expanded Android editor.
+     Annotations keep their bounded split view; Brainstorm owns its own panes. */
+  .app-shell:has(.editor-shell[data-responsive-panels]:not(.is-brainstorming):not([data-annotation-panel=true][data-right-open=true])) .content { overflow-y: auto; }
+  .app-shell .editor-shell:not(.is-brainstorming) { height: auto; min-height: 100%; overflow: visible; padding: 12px; }
+  .app-shell .editor-main { padding: 12px; min-width: 0; }
+  .app-shell .editor-shell:not(.is-brainstorming) .editor-workspace { display: flex; flex-direction: column; height: auto; overflow: visible; }
+  .app-shell .editor-shell:not(.is-brainstorming) .editor-main { height: auto; flex: 0 0 auto; overflow: visible; }
+  .app-shell .editor-context-host:not([hidden]) { display: flex; flex-direction: column; min-width: 0; height: 55dvh; max-height: 55dvh; flex: 0 0 auto; overflow: auto; }
+  .app-shell .editor-context-host .context-drawer { display: flex; width: 100%; min-height: 0; }
+  .app-shell .editor-workspace.is-context-collapsed .editor-context-host { display: none; }
+  .app-shell.is-focus-mode .editor-context-host { display: none; }
+  .editor-context-host .panel-resize-handle { display: none; }
+  .editor-heading-actions { flex-wrap: wrap; }
+  .app-shell .editor-toolbar { flex-wrap: nowrap; flex-shrink: 0; overflow-x: auto; padding: 6px; gap: 6px; }
+  .app-shell .editor-toolbar-group { flex-wrap: nowrap; flex: 0 0 auto; gap: 6px; padding-right: 6px; }
+  .app-shell .editor-toolbar-group button { flex: 0 0 auto; }
+  .app-shell .editor-toolbar-overflow-panel { position: fixed; left: 12px; right: 12px; max-width: calc(100vw - 24px); }
+}
+@media (max-width: 600px) {
+  input, textarea, select { font-size: 16px; }
+}

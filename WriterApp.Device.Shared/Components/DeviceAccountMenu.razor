@@ -36,14 +36,9 @@
     private string? _message;
     private CancellationTokenSource? _operation;
     private bool _disposed;
-    protected override async Task OnInitializedAsync()
+    protected override void OnInitialized()
     {
         Account.Changed += Changed;
-        await RunAsync(async ct =>
-        {
-            await Account.RestoreAsync(ct);
-            if (Account.IsSignedIn) await VerifyBackendAsync(ct);
-        });
     }
     private void Changed() { if (!_disposed) _ = InvokeAsync(StateHasChanged); }
     private Task SignInAsync() => RunAsync(async ct =>

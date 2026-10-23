@@ -13,7 +13,7 @@ public sealed class BrainstormingKeepsController(AppDbContext db,IUserIdResolver
 {
     private string Owner=>users.ResolveUserId(User);
     private string Backend=>BrainstormingValidation.Fingerprint($"{Request.Scheme}://{Request.Host}{Request.PathBase}/");
-    private BrainstormingKeeps Service=>new(db,Owner,Backend);
+    private BrainstormingKeeps Service=>new(db,Owner,Backend,HttpContext.RequestServices.GetService<WriterApp.Application.Collaboration.CollaborationAccessService>(),HttpContext.RequestServices.GetService<WriterApp.Application.Collaboration.ICollaborationCodec>());
     private BrainstormingScope Scope(Guid session,Guid documentId,Guid? projectId)=>new(1,session,documentId,projectId,BrainstormingIdentitySpace.Server,Backend,BrainstormingValidation.Fingerprint(Owner),null);
     [HttpPost,RequestSizeLimit(2_100_000)]
     public Task<IActionResult> Prepare(Guid session,Guid operation,BrainstormingKeepReview review,CancellationToken ct)=>Run(async()=>{

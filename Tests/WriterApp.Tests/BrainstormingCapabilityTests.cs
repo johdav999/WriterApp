@@ -69,6 +69,7 @@ public sealed class BrainstormingCapabilityTests
     {
         using var host = new HostBuilder().ConfigureWebHost(web => web.UseTestServer().ConfigureServices(services =>
         {
+            services.Configure<WriterApp.AI.Abstractions.WriterAiOptions>(o => o.Enabled = true);
             services.AddAuthentication("test").AddScheme<AuthenticationSchemeOptions, TestAuthentication>("test", _ => { });
             services.AddAuthorization(); services.AddControllers().AddApplicationPart(typeof(BrainstormingCapabilitiesController).Assembly);
         }).Configure(app => { app.UseRouting(); app.UseAuthentication(); app.UseAuthorization(); app.UseEndpoints(e => e.MapControllers()); })).Build();

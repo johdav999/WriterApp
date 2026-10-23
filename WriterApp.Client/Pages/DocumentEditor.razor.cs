@@ -939,6 +939,70 @@ namespace WriterApp.Client.Pages
             }
         }
 
+        private bool _collaborative;
+        private string? _collaborationRole;
+        private sealed record SharedWorkspace(DocumentDetailDto Document, SectionDto[] Sections, PageDto[] Pages);
+        private async Task<SharedWorkspace?> ReadSharedWorkspaceAsync()
+        {
+            for(int attempt=0;;attempt++){
+                using var response=await Http.GetAsync($"api/documents/{DocumentId}/collaboration/workspace");
+                if(response.IsSuccessStatusCode)return await response.Content.ReadFromJsonAsync<SharedWorkspace>();
+                if(response.StatusCode!=System.Net.HttpStatusCode.Conflict || attempt>=20)response.EnsureSuccessStatusCode();
+                await Task.Delay(250);
+            }
+        }
+        private async Task CreateSharedPageAsync()
+        {
+            try {
+                using var response=await SharedStructureAsync("create-page",_activeSection!.Id);
+                response.EnsureSuccessStatusCode();await RefreshSharedStructureAsync();
+                var page=GetPages(_activeSection.Id).OrderBy(p=>p.OrderIndex).Last();
+                await SelectManuscriptPageAsync(new ChangeEventArgs{Value=page.Id.ToString()});
+            } catch(Exception) { _sectionError="The page could not be added. Refresh the manuscript and try again."; }
+        }
+        private async Task MoveSharedSectionAsync(int delta)
+        {
+            int index=_sections.FindIndex(s=>s.Id==_activeSection!.Id),target=index+delta;
+            if(index<0 || target<0 || target>=_sections.Count)return;
+            (_sections[index],_sections[target])=(_sections[target],_sections[index]);await SaveSectionOrderAsync();
+        }
+        private async Task RefreshSharedStructureAsync()
+        {
+            if(!_collaborative)return;
+            var workspace=await ReadSharedWorkspaceAsync();if(workspace is null)return;
+            _sections.Clear();_sections.AddRange(workspace.Sections);
+            foreach(var group in workspace.Pages.GroupBy(p=>p.SectionId))_pagesBySection[group.Key]=group.ToList();
+            foreach(var key in _pagesBySection.Keys.Where(id=>!workspace.Sections.Any(s=>s.Id==id)).ToArray())_pagesBySection.Remove(key);
+            if(_activeSection is not null && !workspace.Sections.Any(s=>s.Id==_activeSection.Id)) {
+                _activePage=null;
+                Navigation.NavigateTo($"documents/{DocumentId}/sections/{workspace.Sections.First().Id}");
+            } else if(_activeSection is not null)_activeSection=workspace.Sections.Single(s=>s.Id==_activeSection.Id);
+            await InvokeAsync(StateHasChanged);
+        }
+        private async Task<HttpResponseMessage> SharedStructureAsync(string kind,Guid? section=null,string? title=null,Guid[]? ids=null)
+        {
+            await FlushActiveEditorAsync("shared-structure");
+            var lease=await Checked.Capture(DocumentId,null,null,null);
+            var operation=Guid.NewGuid();
+            var response=await Http.PostAsJsonAsync($"api/documents/{DocumentId}/collaboration/tools/structure",new {OperationId=operation,Source=lease.Source,Kind=kind,SectionId=section,Title=title,OrderedIds=ids});
+            if(!response.IsSuccessStatusCode)return response;
+            var workspace=await ReadSharedWorkspaceAsync();
+            if(workspace is not null) {
+                foreach(var group in workspace.Pages.GroupBy(p=>p.SectionId))_pagesBySection[group.Key]=group.ToList();
+                response.Content.Dispose();
+                response.Content=kind=="reorder-sections" ? JsonContent.Create(workspace.Sections) : kind=="delete-section" ? JsonContent.Create(new {})
+                    : JsonContent.Create(workspace.Sections.Single(s=>s.Id==(kind is "create-section" or "duplicate-section" ? operation : section)));
+            }
+            return response;
+        }
+        private async Task OpenSharingAsync()
+        {
+            await FlushActiveEditorAsync("share");
+            try { _pageEditor?.RequireSavedForAi(); }
+            catch { _brainstormNavigationError = "Finish saving your writing before enabling sharing. Your local draft is retained."; return; }
+            Navigation.NavigateTo($"documents/{DocumentId}/sharing?section={_activeSection?.Id}");
+        }
+
         private async Task LoadDocumentAsync()
         {
             CancelClientAiRequestCore(false);
@@ -966,7 +1030,18 @@ namespace WriterApp.Client.Pages
                     sectionId = SectionId
                 });
 
-                DocumentDetailDto? document = await Http.GetFromJsonAsync<DocumentDetailDto>($"api/documents/{DocumentId}");
+                _collaborative=false;_collaborationRole=null;
+                using(var response=await Http.GetAsync($"api/documents/{DocumentId}/collaboration/capabilities"))
+                {
+                    if(response.IsSuccessStatusCode){
+                        var caps=await response.Content.ReadFromJsonAsync<WriterApp.Shared.Collaboration.CollaborationCapabilities>();
+                        if(caps?.Mode==WriterApp.Shared.Collaboration.CollaborationMode.Migrating){Navigation.NavigateTo($"documents/{DocumentId}/sharing",replace:true);return;}
+                        _collaborative=caps?.Mode==WriterApp.Shared.Collaboration.CollaborationMode.Collaborative;
+                        _collaborationRole=caps?.EffectiveAccess;
+                    }
+                }
+                var shared=_collaborative?await ReadSharedWorkspaceAsync():null;
+                DocumentDetailDto? document=shared?.Document ?? await Http.GetFromJsonAsync<DocumentDetailDto>($"api/documents/{DocumentId}");
                 if (document is null)
                 {
                     _loadError = "Document not found.";
@@ -1006,7 +1081,7 @@ namespace WriterApp.Client.Pages
                     _loadedDocumentId = DocumentId;
                 }
 
-                List<SectionDto>? sections = await Http.GetFromJsonAsync<List<SectionDto>>(
+                List<SectionDto>? sections = shared?.Sections.ToList() ?? await Http.GetFromJsonAsync<List<SectionDto>>(
                     $"api/documents/{DocumentId}/sections");
                 List<SectionDto> orderedSections = sections?.OrderBy(section => section.OrderIndex).ToList()
                     ?? new List<SectionDto>();
@@ -1015,7 +1090,7 @@ namespace WriterApp.Client.Pages
 
                 foreach (SectionDto section in orderedSections)
                 {
-                    List<PageDto>? pages = await Http.GetFromJsonAsync<List<PageDto>>(
+                    List<PageDto>? pages = shared?.Pages.Where(p=>p.SectionId==section.Id).ToList() ?? await Http.GetFromJsonAsync<List<PageDto>>(
                         $"api/sections/{section.Id}/pages");
                     List<PageDto> ordered = pages?.OrderBy(page => page.OrderIndex).ToList() ?? new List<PageDto>();
                     _pagesBySection[section.Id] = ordered;
@@ -1047,7 +1122,7 @@ namespace WriterApp.Client.Pages
                     return;
                 }
 
-                if (IsSceneRoute)
+                if (IsSceneRoute && !_collaborative)
                 {
                     await LoadSceneContentIntoActivePageAsync();
                 }
@@ -1247,6 +1322,11 @@ namespace WriterApp.Client.Pages
 
         private async Task EnsureSectionHasPageAsync(Guid sectionId)
         {
+            if(_collaborative) {
+                var workspace=await ReadSharedWorkspaceAsync();
+                if(workspace is not null) _pagesBySection[sectionId]=workspace.Pages.Where(p=>p.SectionId==sectionId).ToList();
+                return;
+            }
             List<PageDto> pages = GetPages(sectionId);
             if (pages.Count > 0)
             {
@@ -1390,7 +1470,7 @@ namespace WriterApp.Client.Pages
                 SectionDto? current = _sections.FirstOrDefault(item => item.Id == sectionId);
                 SectionUpdateRequest request = new(trimmed, current?.NarrativePurpose);
                 using HttpResponseMessage response =
-                    await Http.PutAsJsonAsync($"api/documents/{DocumentId}/sections/{sectionId}", request);
+                    (_collaborative ? await SharedStructureAsync("rename-section",sectionId,trimmed) : await Http.PutAsJsonAsync($"api/documents/{DocumentId}/sections/{sectionId}", request));
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -1445,7 +1525,7 @@ namespace WriterApp.Client.Pages
             try
             {
                 using HttpResponseMessage response =
-                    await Http.PostAsync($"api/documents/{DocumentId}/sections/{sectionId}/duplicate", null);
+                    (_collaborative ? await SharedStructureAsync("duplicate-section",sectionId) : await Http.PostAsync($"api/documents/{DocumentId}/sections/{sectionId}/duplicate", null));
                 if (!response.IsSuccessStatusCode)
                 {
                     _sectionError = "Duplicate failed.";
@@ -1461,7 +1541,7 @@ namespace WriterApp.Client.Pages
 
                 _sections.Add(created);
                 _sections.Sort((left, right) => left.OrderIndex.CompareTo(right.OrderIndex));
-                _pagesBySection[created.Id] = new List<PageDto>();
+                if(!_collaborative) _pagesBySection[created.Id] = new List<PageDto>();
                 await LastOpenedDocumentStateService.SaveAsync(DocumentId, created.Id);
                 Navigation.NavigateTo($"documents/{DocumentId}/sections/{created.Id}", replace: true);
             }
@@ -1643,7 +1723,7 @@ namespace WriterApp.Client.Pages
             try
             {
                 using HttpResponseMessage response =
-                    await Http.DeleteAsync($"api/documents/{DocumentId}/sections/{sectionId}");
+                    (_collaborative ? await SharedStructureAsync("delete-section",sectionId) : await Http.DeleteAsync($"api/documents/{DocumentId}/sections/{sectionId}"));
 
                 if (response.StatusCode == HttpStatusCode.Conflict)
                 {
@@ -1967,7 +2047,7 @@ namespace WriterApp.Client.Pages
                     payload.OrderedSectionIds.Count,
                     correlationId);
 
-                using HttpResponseMessage response = await Http.SendAsync(request);
+                using HttpResponseMessage response = _collaborative ? await SharedStructureAsync("reorder-sections",null,null,payload.OrderedSectionIds.ToArray()) : await Http.SendAsync(request);
                 if (!response.IsSuccessStatusCode)
                 {
                     string? body = null;
@@ -2039,6 +2119,7 @@ namespace WriterApp.Client.Pages
 
         private async Task ReloadSectionsAsync()
         {
+            if(_collaborative) { await RefreshSharedStructureAsync();return; }
             List<SectionDto>? sections = await Http.GetFromJsonAsync<List<SectionDto>>(
                 $"api/documents/{DocumentId}/sections");
             if (sections is null)
@@ -2071,7 +2152,7 @@ namespace WriterApp.Client.Pages
                     UpdatedAt: null);
 
                 using HttpResponseMessage response =
-                    await Http.PostAsJsonAsync($"api/documents/{DocumentId}/sections", request);
+                    (_collaborative ? await SharedStructureAsync("create-section",null,request.Title) : await Http.PostAsJsonAsync($"api/documents/{DocumentId}/sections", request));
                 response.EnsureSuccessStatusCode();
 
                 SectionDto? created = await response.Content.ReadFromJsonAsync<SectionDto>();
@@ -2083,7 +2164,7 @@ namespace WriterApp.Client.Pages
 
                 _sections.Add(created);
                 _sections.Sort((left, right) => left.OrderIndex.CompareTo(right.OrderIndex));
-                _pagesBySection[created.Id] = new List<PageDto>();
+                if(!_collaborative) _pagesBySection[created.Id] = new List<PageDto>();
                 Navigation.NavigateTo($"documents/{DocumentId}/sections/{created.Id}");
             }
             catch (Exception ex)
@@ -2096,6 +2177,17 @@ namespace WriterApp.Client.Pages
                 _isCreatingSection = false;
                 await InvokeAsync(StateHasChanged);
             }
+        }
+
+        private void OnLiveContentChanged(PageDto page)
+        {
+            // Keep previews current without issuing a legacy save.
+            if(_pagesBySection.TryGetValue(page.SectionId,out var pages))
+            {
+                var index=pages.FindIndex(p=>p.Id==page.Id);
+                if(index>=0)pages[index]=page;
+            }
+            if(_activePage?.Id==page.Id)_activePage=page;
         }
 
         private async Task OnPageSaved(PageDto page)
@@ -3319,7 +3411,11 @@ namespace WriterApp.Client.Pages
                 return;
             }
 
-            if (tab == ContextTab.Annotations)
+            if (tab == ContextTab.History)
+            {
+                await LoadPageVersionsAsync();await LoadAiHistoryAsync();
+            }
+            else if (tab == ContextTab.Annotations)
             {
                 await LoadAnnotationsAsync();
             }
@@ -4735,7 +4831,7 @@ namespace WriterApp.Client.Pages
                 applyRange.DocTo,
                 fixText.Length);
 
-            try { _pageEditor.SetAiSaveSource(await ContinuitySaveSourceAsync()); } catch(Exception e) { _continuityStatus=e.Message;return false; }
+            try { await _pageEditor.SetAiSaveSource(await ContinuitySaveSourceAsync()); } catch(Exception e) { _continuityStatus=e.Message;return false; }
             if(_continuityHistoryProposals.TryGetValue(issueKey,out var continuityProposal) && _checkedProposals.TryGetValue(continuityProposal,out var continuityContext))
                 _pageEditor.SetAiHistoryProposal(continuityProposal,continuityContext.Lease);
             bool applySucceeded = await _pageEditor.ApplyQualityIssueFixAsync(continuityFix, applyRange.Before, issueKey);
@@ -6827,10 +6923,16 @@ namespace WriterApp.Client.Pages
         {
             await RefreshHistoryDelivery(true);
         }
+        private string _sharedNotesBefore = "";
         private async Task<string> LoadSectionNotesAsync(Guid sectionId, CancellationToken ct)
         {
             try
             {
+                if(_collaborative) {
+                    var notes=await Http.GetFromJsonAsync<SectionNotesDto>($"api/documents/{DocumentId}/collaboration/tools/sections/{sectionId}/notes",ct);
+                    _notesLastSavedAtUtc=notes?.UpdatedAtUtc;_notesError=null;
+                    return _sharedNotesBefore=notes?.NotesText ?? "";
+                }
                 if (IsSceneRoute)
                 {
                     SceneNotesDto? result = await Http.GetFromJsonAsync<SceneNotesDto>($"api/scenes/{SceneNodeId}/notes", ct);
@@ -6852,6 +6954,12 @@ namespace WriterApp.Client.Pages
 
         private async Task<DateTimeOffset?> SaveSectionNotesAsync(Guid sectionId, string value, CancellationToken ct)
         {
+            if(_collaborative) {
+                using var response=await Http.PutAsJsonAsync($"api/documents/{DocumentId}/collaboration/tools/sections/{sectionId}/notes",new {Before=_sharedNotesBefore,Notes=value},ct);
+                if(!response.IsSuccessStatusCode)throw new HttpRequestException(await ReadApiErrorMessageAsync(response,"Could not save shared notes."),null,response.StatusCode);
+                var saved=await response.Content.ReadFromJsonAsync<SectionNotesDto>(ct);_sharedNotesBefore=saved?.NotesText ?? value;
+                return saved?.UpdatedAtUtc;
+            }
             if (IsSceneRoute)
             {
                 SceneNotesUpdateRequest payload = new(value ?? string.Empty);
@@ -7093,6 +7201,28 @@ namespace WriterApp.Client.Pages
             return builder.ToString().TrimEnd();
         }
 
+        private async Task<WriterApp.Shared.Collaboration.CollaborationReadRequest?> SharedExportWatermarkAsync()
+        {
+            if(!_collaborative)return null;
+            if(string.Equals(_exportScopeType,"selection",StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Choose a page, section, or manuscript for shared export. Selection export is not yet available for shared writing.");
+            for(var attempt=0;attempt<20;attempt++)
+            {
+                using var response=await Http.PostAsJsonAsync($"api/documents/{DocumentId}/collaboration/read",new {});
+                if(response.StatusCode==System.Net.HttpStatusCode.Conflict && attempt<19)
+                {
+                    await Task.Delay(250);
+                    continue;
+                }
+                response.EnsureSuccessStatusCode();
+                using var snapshot=await response.Content.ReadFromJsonAsync<JsonDocument>() ?? throw new InvalidOperationException("Shared writing could not be read.");
+                var root=snapshot.RootElement;
+                return new(root.GetProperty("structureRevision").GetInt64(),root.GetProperty("pages").EnumerateArray()
+                    .Select(p=>new WriterApp.Shared.Collaboration.CollaborationWatermark(p.GetProperty("pageId").GetGuid(),p.GetProperty("generation").GetGuid(),p.GetProperty("sequence").GetInt64())).ToArray());
+            }
+            throw new InvalidOperationException("Shared writing is still saving. Try again shortly.");
+        }
+
         private async Task OnExportRequested(string kind, string format)
         {
             _isDocumentMenuOpen = false;
@@ -7153,7 +7283,7 @@ namespace WriterApp.Client.Pages
                     string.IsNullOrWhiteSpace(_titlePageAuthor) ? null : _titlePageAuthor,
                     string.IsNullOrWhiteSpace(_titlePageDraftLabel) ? null : _titlePageDraftLabel,
                     string.IsNullOrWhiteSpace(_titlePageDate) ? null : _titlePageDate,
-                    _exportIncludeCover);
+                    _exportIncludeCover, await SharedExportWatermarkAsync());
 
                 using HttpResponseMessage exportResponse = await Http.PostAsJsonAsync(
                     $"api/documents/{DocumentId}/export",
@@ -7209,7 +7339,7 @@ namespace WriterApp.Client.Pages
                     string.IsNullOrWhiteSpace(_titlePageAuthor) ? null : _titlePageAuthor,
                     string.IsNullOrWhiteSpace(_titlePageDraftLabel) ? null : _titlePageDraftLabel,
                     string.IsNullOrWhiteSpace(_titlePageDate) ? null : _titlePageDate,
-                    _exportIncludeCover);
+                    _exportIncludeCover, await SharedExportWatermarkAsync());
 
                 using HttpResponseMessage response = await Http.PostAsJsonAsync(
                     $"api/documents/{DocumentId}/export/print",
@@ -7284,7 +7414,7 @@ namespace WriterApp.Client.Pages
                     string.IsNullOrWhiteSpace(_titlePageAuthor) ? null : _titlePageAuthor,
                     string.IsNullOrWhiteSpace(_titlePageDraftLabel) ? null : _titlePageDraftLabel,
                     string.IsNullOrWhiteSpace(_titlePageDate) ? null : _titlePageDate,
-                    _exportIncludeCover);
+                    _exportIncludeCover, await SharedExportWatermarkAsync());
 
                 using HttpResponseMessage response = await Http.PostAsJsonAsync("api/export/preview", request);
                 if (!response.IsSuccessStatusCode)
@@ -10174,6 +10304,7 @@ private const string PreviewBootstrapScript = @"
 
         private async Task OnDiscardPendingAiProposal()
         {
+            if(_pageEditor is not null)await _pageEditor.CancelCheckedPreviewAsync();
             _webTranslationPreview = null;
             _pendingAiProposal = null;
             _pendingDetailsExpanded = false;
@@ -11051,7 +11182,7 @@ private const string PreviewBootstrapScript = @"
             {
                 List<PageVersionListItemDto>? versions =
                     await Http.GetFromJsonAsync<List<PageVersionListItemDto>>(
-                        $"api/pages/{_activePage.Id}/versions");
+                        $"{(_collaborative ? $"api/documents/{DocumentId}/collaboration/tools/" : "api/")}pages/{_activePage.Id}/versions");
                 _pageVersions.Clear();
                 if (versions is not null)
                 {
@@ -11717,7 +11848,7 @@ private const string PreviewBootstrapScript = @"
                 }
 
                 try { await RequireCheckedProposal(_qualityCheckedSource); } catch(Exception e) { return(false,e.Message); }
-                _pageEditor.SetAiSaveSource(_qualityCheckedSource.Lease.Source);
+                await _pageEditor.SetAiSaveSource(_qualityCheckedSource.Lease.Source);
                 if(_qualityHistoryProposals.TryGetValue(issue.IssueKey,out var historyProposal) && _checkedProposals.TryGetValue(historyProposal,out var historyContext))
                     _pageEditor.SetAiHistoryProposal(historyProposal,historyContext.Lease);
                 bool applied = await _pageEditor.ApplyQualityIssueFixAsync(effectiveIssue.Fix, effectiveIssue.AnchorText, effectiveIssue.IssueKey);
@@ -12574,7 +12705,7 @@ private const string PreviewBootstrapScript = @"
 
             try
             {
-                string url = $"api/pages/{_activePage.Id}/versions/diff?fromVersionId={_diffBaseVersionId.Value}";
+                string url = $"{(_collaborative ? $"api/documents/{DocumentId}/collaboration/tools/" : "api/")}pages/{_activePage.Id}/versions/diff?fromVersionId={_diffBaseVersionId.Value}";
                 if (_diffCompareVersionId.HasValue)
                 {
                     url += $"&toVersionId={_diffCompareVersionId.Value}";
@@ -12760,6 +12891,18 @@ private const string PreviewBootstrapScript = @"
             try
             {
                 await FlushActiveEditorAsync("restore-version");
+                if(_collaborative && _pageEditor is not null) {
+                    // Capture BEFORE retrieving the selected version; changes during review reject the save.
+                    var lease=await Checked.Capture(DocumentId,_activeSection!.Id,_activePage.Id,null);
+                    using var versionResponse=await Http.GetAsync($"api/documents/{DocumentId}/collaboration/tools/pages/{_activePage.Id}/versions/{_pendingRestoreVersion.Id}");
+                    versionResponse.EnsureSuccessStatusCode();
+                    var version=await versionResponse.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+                    await Checked.Confirm(lease);
+                    await _pageEditor.SetAiSaveSource(lease.Source);
+                    await _pageEditor.SetContentAsync(version.GetProperty("content").GetString() ?? "");
+                    await _pageEditor.SaveCheckedAiAsync();
+                    await LoadPageVersionsAsync();CancelRestoreVersion();return;
+                }
 
                 using HttpResponseMessage response = await Http.PostAsync(
                     $"api/pages/{_activePage.Id}/versions/{_pendingRestoreVersion.Id}/restore",

@@ -33,8 +33,8 @@
                 <h2>Create project from a standalone document</h2>
                 <p>Your writing and page identities are preserved. Each section becomes a scene in Chapter 1. Duplicate cloud-linked documents in Documents first.</p>
                 <div class="inspector-grid">
-                    <div class="inspector-field"><label for="project-conversion-title">Project title</label><input id="project-conversion-title" class="node-title-input" @bind="_title" @bind:event="oninput" maxlength="200" disabled="@_busy" /></div>
-                    <div class="inspector-field"><label for="project-conversion-document">Standalone document</label><select id="project-conversion-document" @bind="_attachId" disabled="@_busy"><option value="">Choose document</option>
+                    <div class="inspector-field"><label for='@ElementId("project-conversion-title")'>Project title</label><input id='@ElementId("project-conversion-title")' class="node-title-input" @bind="_title" @bind:event="oninput" maxlength="200" disabled="@_busy" /></div>
+                    <div class="inspector-field"><label for='@ElementId("project-conversion-document")'>Standalone document</label><select id='@ElementId("project-conversion-document")' @bind="_attachId" disabled="@_busy"><option value="">Choose document</option>
                         @foreach (var doc in StandaloneDocuments) { <option value="@doc.DocumentId">@doc.Title</option> }
                     </select></div>
                     <div class="node-actions"><button type="button" class="primary" disabled="@(_busy || _attachId is null || !ValidTitle(_title))" @onclick="AttachAsync">Create project with this document</button><button type="button" class="secondary" disabled="@_busy" @onclick="() => _showConversion = false">Cancel</button></div>
@@ -76,12 +76,12 @@
             <ProjectWorkspacePanels>
                 <Navigator>
                     <div class="tree-actions">
-                        <label for="add-node-type">Add...</label>
-                        <select id="add-node-type" @bind="_type" @bind:after="ResolveAddParent" disabled="@_busy"><option value="part">Part</option><option value="chapter">Chapter</option><option value="scene">Scene</option></select>
+                        <label for='@ElementId("add-node-type")'>Add...</label>
+                        <select id='@ElementId("add-node-type")' @bind="_type" @bind:after="ResolveAddParent" disabled="@_busy"><option value="part">Part</option><option value="chapter">Chapter</option><option value="scene">Scene</option></select>
                         <button type="button" class="secondary" disabled="@(_busy || (_nodeTitle.Length > 0 && !ValidTitle(_nodeTitle)) || !ValidParent(project, _type, _parent))" @onclick="AddNodeAsync">Add @_type @(_parent is null ? "at root" : "to parent")</button>
                         <span class="tree-actions-hint">@AddHint(project)</span>
                     </div>
-                    <p class="inspector-help">Drag items between rows to reorder, or onto a chapter or part to move inside it.</p>
+                    <p class="inspector-help">Drag the grip beside an item between rows to reorder, or onto a chapter or part to move inside it.</p>
                     <div @ref="_outline" class="tree-list" role="tree" aria-label="Project manuscript" data-outline-disabled="@_busy.ToString().ToLowerInvariant()">
                         @foreach (var row in Rows(project, null, 0))
                         {
@@ -91,6 +91,7 @@
                             <NavigatorRow Depth="row.Depth" Title="@row.Node.Title" Selected="@(_nodeId == row.Node.NodeId)" Disabled="_busy" Expanded="@(hasChildren ? !_collapsed.Contains(row.Node.NodeId) : (bool?)null)"
                                 OnSelect="() => SelectNode(row.Node)" OnKeyDown="e => SelectKey(e, row.Node)">
                                 <span class="tree-indent" aria-hidden="true"></span>
+                                <span class="outline-drag-handle" data-outline-handle title="Drag to move" aria-hidden="true">⠿</span>
                                 @if (hasChildren)
                                 {
                                     <button type="button" class="tree-disclosure @(!_collapsed.Contains(row.Node.NodeId) ? "is-expanded" : "")" aria-label="@($"{(_collapsed.Contains(row.Node.NodeId) ? "Expand" : "Collapse")} {row.Node.Title}")" disabled="@_busy" @onclick="() => ToggleNode(row.Node.NodeId)" @onclick:stopPropagation="true" @onkeydown:stopPropagation="true">▸</button>
@@ -106,8 +107,8 @@
                     <details class="device-project-details">
                         <summary>Add options</summary>
                         <div class="inspector-grid">
-                            <div class="inspector-field"><label for="add-node-title">Title (optional)</label><input id="add-node-title" class="node-title-input" placeholder="@DefaultNodeTitle(_type)" @bind="_nodeTitle" @bind:event="oninput" maxlength="200" disabled="@_busy" /></div>
-                            <div class="inspector-field"><label for="add-node-parent">Parent</label><select id="add-node-parent" @bind="_parent" disabled="@_busy"><option value="">Project root</option>
+                            <div class="inspector-field"><label for='@ElementId("add-node-title")'>Title (optional)</label><input id='@ElementId("add-node-title")' class="node-title-input" placeholder="@DefaultNodeTitle(_type)" @bind="_nodeTitle" @bind:event="oninput" maxlength="200" disabled="@_busy" /></div>
+                            <div class="inspector-field"><label for='@ElementId("add-node-parent")'>Parent</label><select id='@ElementId("add-node-parent")' @bind="_parent" disabled="@_busy"><option value="">Project root</option>
                                 @foreach (var node in project.Nodes.Where(n => n.DeletionId is null && ProjectNodeHierarchyRules.IsPlacementAllowed(_type, n.NodeType))) { <option value="@node.NodeId">@node.Title</option> }
                             </select></div>
                         </div>
@@ -130,7 +131,7 @@
                     @if (project.Nodes.FirstOrDefault(n => n.NodeId == _nodeId && n.DeletionId is null) is { } selected)
                     {
                         <div class="inspector-grid device-project-inspector">
-                            <div class="inspector-field"><label for="selected-node-name">Name</label><div class="inspector-name-row"><input id="selected-node-name" class="node-title-input" @bind="_rename" @bind:event="oninput" maxlength="200" disabled="@_busy" /><button type="button" class="secondary" disabled="@(_busy || !ValidTitle(_rename) || _rename.Trim() == selected.Title)" @onclick="() => ChangeAsync(new(LocalProjectAction.Rename, selected.NodeId, Title: _rename))">Rename</button></div></div>
+                            <div class="inspector-field"><label for='@ElementId("selected-node-name")'>Name</label><div class="inspector-name-row"><input id='@ElementId("selected-node-name")' class="node-title-input" @bind="_rename" @bind:event="oninput" maxlength="200" disabled="@_busy" /><button type="button" class="secondary" disabled="@(_busy || !ValidTitle(_rename) || _rename.Trim() == selected.Title)" @onclick="() => ChangeAsync(new(LocalProjectAction.Rename, selected.NodeId, Title: _rename))">Rename</button></div></div>
                             <div class="inspector-field"><span class="node-kind">Type</span><div class="inspector-readonly">@NodeLabel(selected.NodeType)</div></div>
                             @if (selected.SectionId is { } sectionId)
                             {
@@ -141,7 +142,7 @@
                                 <button type="button" class="secondary" disabled="@(_busy || AtEnd(project, selected, false))" @onclick="() => ChangeAsync(new(LocalProjectAction.Up, selected.NodeId))">Move up</button>
                                 <button type="button" class="secondary" disabled="@(_busy || AtEnd(project, selected, true))" @onclick="() => ChangeAsync(new(LocalProjectAction.Down, selected.NodeId))">Move down</button>
                             </div>
-                            <div class="inspector-field"><label for="move-node-parent">Move under</label><select id="move-node-parent" @bind="_moveParent" disabled="@_busy"><option value="">Project root</option>
+                            <div class="inspector-field"><label for='@ElementId("move-node-parent")'>Move under</label><select id='@ElementId("move-node-parent")' @bind="_moveParent" disabled="@_busy"><option value="">Project root</option>
                                 @foreach (var node in project.Nodes.Where(n => n.DeletionId is null && n.NodeId != selected.NodeId && ProjectNodeHierarchyRules.IsPlacementAllowed(selected.NodeType, n.NodeType))) { <option value="@node.NodeId">@node.Title</option> }
                             </select></div>
                             <div class="node-actions"><button type="button" class="secondary" disabled="@(_busy || !ValidParent(project, selected.NodeType, _moveParent) || _moveParent == selected.ParentId)" @onclick="() => ChangeAsync(new(LocalProjectAction.Move, selected.NodeId, ParentId: _moveParent))">Move node</button><button type="button" class="danger" disabled="@_busy" @onclick="() => ChangeAsync(new(LocalProjectAction.Delete, selected.NodeId))">Delete tree item</button></div>
@@ -164,6 +165,8 @@
 </div>
 </ProjectWorkspaceShell>
 @code {
+    [Parameter] public string IdPrefix { get; set; } = "";
+    private string ElementId(string name) => string.IsNullOrEmpty(IdPrefix) ? name : $"{IdPrefix}-{name}";
     [Parameter] public Guid? ProjectId { get; set; }
     [SupplyParameterFromQuery(Name = "documentId")] public Guid? RequestedDocumentId { get; set; }
     [Parameter] public Guid? HostDocumentId { get; set; }

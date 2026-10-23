@@ -26,15 +26,24 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
-          cache-dependency-path: WriterApp.Client/package-lock.json
+          cache-dependency-path: |
+            WriterApp.Client/package-lock.json
+            WriterApp.Collaboration/package-lock.json
 
       - name: Build editor assets
         working-directory: WriterApp.Client
         run: |
           npm ci
           npm run build
+
+      - name: Validate collaboration service and shared schema
+        run: |
+          npm ci --prefix WriterApp.Collaboration --ignore-scripts --no-audit --no-fund
+          npm run check:collaboration --prefix WriterApp.Client
+          npm run build:schema --prefix WriterApp.Collaboration
+          npm test --prefix WriterApp.Collaboration
 
       - name: Restore .NET dependencies
         run: dotnet restore BlazorApp.sln

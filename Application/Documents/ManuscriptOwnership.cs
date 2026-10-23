@@ -15,6 +15,9 @@ public static class ManuscriptOwnership
         var primary = manuscripts.FirstOrDefault(d => d.Id == project.PrimaryDocumentId && d.DeletedAtUtc == null)
             ?? manuscripts.FirstOrDefault(d => d.DeletedAtUtc == null);
         if (primary is null) return null;
+        // Conversion already assigns the manuscript tree. A read must never
+        // repair project metadata through the fenced legacy write path.
+        if (primary.CollaborationMode != WriterApp.Shared.Collaboration.CollaborationMode.Legacy) return primary.Id;
         project.PrimaryDocumentId = primary.Id;
         var legacy = await db.ProjectNodes.IgnoreQueryFilters().Where(n => n.ProjectId == project.Id && n.DocumentId == null).ToListAsync(ct);
         foreach (var node in legacy) node.DocumentId = primary.Id;

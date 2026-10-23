@@ -21,6 +21,7 @@ else
 
 @code {
     private RenderFragment SyncDetails => @<div class="document-sync-content">
+@if (_actionError is not null) { <p role="alert">@_actionError</p> }
 @if (Document.Project is not null)
 {
     <p>Project and manuscript save on this device. Cloud synchronization requires a paid account and a project-aware backend.</p>
@@ -30,7 +31,7 @@ else
     <div class="document-sync-details">
         <p role="status">@status.Label</p>
         @if (status.LastSynced is { } last) { <small>Last synchronized @last.ToLocalTime().ToString("g")</small> }
-        @if (status.Error is not null) { <p role="alert">@status.Error</p><button disabled="@Sync.IsRunning" @onclick="() => Sync.RetryAsync(Document.DocumentId)">Retry after fixing</button> }
+        @if (status.Error is not null) { <p role="alert">@status.Error</p><button disabled="@Sync.IsRunning" @onclick="RetryDocumentAsync">Retry after fixing</button> }
         @if (status.Conflict) { <a href="/sync/conflicts">Review both versions</a> }
         @if (Document.DeletedAtUtc is not null && !status.Deleted && !status.Conflict)
         {
@@ -49,7 +50,7 @@ else if (Document.ServerDocumentId is null && !Compact)
     <button disabled="@Sync.IsRunning" @onclick="EnableAsync">Enable cloud sync for this @(Document.Project is null ? "document" : "project")</button>
 }
 else if (Document.ServerDocumentId is not null) { <p>Sign in to the linked account to synchronize this document.</p> }
-<p role="@(Sync.LastError is null ? "status" : "alert")">@Sync.Message</p>
+<p role="@(Sync.LastError is null ? "status" : "alert")">@(Document.ServerDocumentId is null && Sync.Status(Document.DocumentId) is null && !Sync.IsRunning && Sync.LastError is null ? "Saved only on this device." : Sync.Message)</p>
 @if (Sync.LastError is not null)
 {
     <button type="button" disabled="@Sync.IsRunning" @onclick="RetryAsync">Retry cloud sync</button>
@@ -58,13 +59,33 @@ else if (Document.ServerDocumentId is not null) { <p>Sign in to the linked accou
 
     [Parameter, EditorRequired] public LocalDocument Document { get; set; } = default!;
     [Parameter] public bool Compact { get; set; }
+    [Parameter] public Func<Task<bool>>? BeforeSync { get; set; }
+    [Parameter] public EventCallback AfterSync { get; set; }
+    private string? _actionError;
     private bool _confirm;
     private bool _showDetails;
-    private async Task EnableAsync() { await Sync.EnableAsync(Document.DocumentId); _showDetails = Sync.LastError is not null; }
-    private async Task RetryAsync()
+    private Task EnableAsync() => RunSyncAsync(() => Sync.EnableAsync(Document.DocumentId));
+    private Task RetryDocumentAsync() => RunSyncAsync(() => Sync.RetryAsync(Document.DocumentId));
+    private Task RetryAsync() => RunSyncAsync(async () =>
     {
-        if (Document.ServerDocumentId is null && Sync.Status(Document.DocumentId) is null) await EnableAsync();
-        else { await Sync.SyncAsync(); _showDetails = Sync.LastError is not null; }
+        if (Document.ServerDocumentId is null && Sync.Status(Document.DocumentId) is null) await Sync.EnableAsync(Document.DocumentId);
+        else await Sync.SyncAsync();
+    });
+    private async Task RunSyncAsync(Func<Task> sync)
+    {
+        _actionError=null;
+        try {
+            if (BeforeSync is not null && !await BeforeSync()) {
+                _actionError="Saving failed. Your writing and message are retained. Retry saving before cloud sync.";
+                return;
+            }
+            await sync();
+            await AfterSync.InvokeAsync();
+        }
+        catch (Exception e) when (e is IOException or InvalidOperationException or UnauthorizedAccessException or Microsoft.JSInterop.JSException) {
+            _actionError="Cloud sync stopped. Your writing and message are retained. " + e.Message;
+        }
+        finally { _showDetails=_actionError is not null || Sync.LastError is not null; }
     }
     protected override void OnInitialized() => Sync.Changed += Updated;
     private void Updated() => _ = InvokeAsync(StateHasChanged);

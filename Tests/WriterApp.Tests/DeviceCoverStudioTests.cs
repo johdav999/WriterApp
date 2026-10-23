@@ -66,9 +66,9 @@ internal sealed class CoverTestFixture : IDisposable
         public async Task<List<string>> GenerateCoverConceptsAsync(CoverPrompt prompt,CancellationToken ct=default){Calls++; if(During is not null)await During(ct);ct.ThrowIfCancellationRequested();return Values;}
     }
     internal sealed class Handler(CoverTestFixture f):HttpMessageHandler {
-        public int Calls;public int? Failure;public bool OldBackend,WrongDocument,Oversize,Interrupted,WrongHash,MissingAsset; public Func<Task>? After;
+        public int Calls;public int? Failure;public Exception? TransportFailure;public bool OldBackend,WrongDocument,Oversize,Interrupted,WrongHash,MissingAsset; public Func<Task>? After;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken ct) {
-            if(request.Method!=HttpMethod.Get)Calls++;if(Failure is { } status)return new((HttpStatusCode)status);
+            if(request.Method!=HttpMethod.Get)Calls++;if(TransportFailure is { } failure)throw failure;if(Failure is { } status)return new((HttpStatusCode)status);
             await using var db=f.Db();var controller=f.Controller(db,f.Account.AccountId=="account-1"?"user-1":"other");
             IActionResult? result;
             if(request.RequestUri!.AbsolutePath.EndsWith("/edit-capabilities"))result=controller.EditCapabilities();

@@ -7,20 +7,34 @@
     "build": "vite build && vite build --config vite.device.config.ts",
     "dev": "vite build --watch",
     "dev:device": "vite build --config vite.device.config.ts --watch",
-    "test:device": "node tests/serve-device-editor.mjs"
+    "test:device": "node tests/serve-device-editor.mjs",
+    "check:collaboration": "tsc --project tsconfig.collaboration.json"
   },
   "dependencies": {
+    "@hocuspocus/provider": "4.7.1",
     "@tiptap/core": "3.31.3",
+    "@tiptap/extension-collaboration": "3.31.3",
     "@tiptap/extension-image": "3.31.3",
+    "@tiptap/extension-link": "3.31.3",
+    "@tiptap/extension-list": "3.31.3",
     "@tiptap/extension-table": "3.31.3",
     "@tiptap/extension-table-cell": "3.31.3",
     "@tiptap/extension-table-header": "3.31.3",
     "@tiptap/extension-table-row": "3.31.3",
-    "@tiptap/extension-link": "3.31.3",
     "@tiptap/extension-text-align": "3.31.3",
     "@tiptap/extension-text-style": "3.31.3",
     "@tiptap/pm": "3.31.3",
-    "@tiptap/starter-kit": "3.31.3"
+    "@tiptap/starter-kit": "3.31.3",
+    "@tiptap/y-tiptap": "3.0.10",
+    "y-protocols": "1.0.7",
+    "yjs": "13.6.33"
+  },
+  "overrides": {
+    "prosemirror-model": "1.25.12",
+    "prosemirror-state": "1.4.4",
+    "prosemirror-view": "1.42.6",
+    "prosemirror-transform": "1.12.2",
+    "prosemirror-keymap": "1.2.3"
   },
   "devDependencies": {
     "typescript": "5.4.5",

@@ -180,7 +180,17 @@ public sealed class BrainstormingWorkspaceTests
             Render(components.Workspace);await AfterRender(components.Workspace);Render(components.Workspace);
             Assert.Equal(2,serverReads);Assert.Equal(0,remote.Sends);
             Assert.Equal("My story idea\nÅsa and her brother",(await files.ReadAsync(local))!.Composer);
-            if(fail){Assert.Contains("Save and synchronize this manuscript",html.ToHtmlString());await Call(components.Panel,"Send");Assert.Equal(0,remote.Sends);}
+            if(fail){
+                Assert.Contains("Save and synchronize this manuscript",html.ToHtmlString());await Call(components.Panel,"Send");Assert.Equal(0,remote.Sends);
+                // Completing manuscript sync must retry preparation on the same conversation.
+                fail=false;components.Workspace.RequestContextPreparation();
+                await AfterRender(components.Workspace);Render(components.Workspace);Render(components.Panel);
+                Assert.True(components.Panel.Ready);Assert.Equal(3,serverReads);Assert.Equal(0,remote.Sends);
+                Assert.Equal(local,Get(components.Workspace,"_scope"));
+                Assert.Equal("My story idea\nÅsa and her brother",(await files.ReadAsync(local))!.Composer);
+                Assert.Equal("My story idea\nÅsa and her brother",Get(components.Panel,"_composer"));
+                Assert.DoesNotContain("disabled>Send message</button>",html.ToHtmlString());
+            }
             else {
                 var output=html.ToHtmlString();Assert.Contains(">Send message</button>",output);
                 Assert.DoesNotContain("disabled>Send message</button>",output);

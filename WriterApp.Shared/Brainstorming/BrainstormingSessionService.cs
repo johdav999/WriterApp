@@ -24,6 +24,7 @@ public sealed class BrainstormingSessionService(IBrainstormingCacheStore store, 
         if (preparation.Version != 1 || preparation.Context is null || preparation.Resolution.Target is null) throw new InvalidDataException("Resolve the context and destination before saving preparation.");
         BrainstormingValidation.Validate(preparation.Context, scope); BrainstormingValidation.Validate(preparation.Resolution.Target, scope.DocumentId);
         var current = await Required(scope, ct);
+        for(int attempt=0;;attempt++) {
         if (current.Session.State is BrainstormingConversationState.Deleted or BrainstormingConversationState.Conflict) throw new InvalidDataException("Resolve or branch this conversation first.");
         var session = current.Session with { Revision = current.Session.Revision + 1, UpdatedAt = DateTimeOffset.UtcNow,
             State = current.Mapping is null ? BrainstormingConversationState.LocalOnly : BrainstormingConversationState.PendingSave,
@@ -37,11 +38,28 @@ public sealed class BrainstormingSessionService(IBrainstormingCacheStore store, 
                 review = new(1, candidate.Id, false);
         }
         // Old contexts, proposals, approvals, turns and unsent composer remain immutable and inspectable.
-        return await store.WriteAsync(current with { Session = session, DraftReview = review }, current.CacheRevision, Guid.NewGuid(), ct);
+        try {return await store.WriteAsync(current with { Session = session, DraftReview = review }, current.CacheRevision, Guid.NewGuid(), ct);}
+        catch(BrainstormingConcurrencyException) when(attempt<3) {
+            var latest=await Required(scope,ct);
+            // Typing is independent of context capture. Rebase only that field;
+            // a changed conversation, operation or review still requires inspection.
+            if(BrainstormingPersistence.Json(current with {CacheRevision=latest.CacheRevision,Composer=latest.Composer,LocalReceipts=latest.LocalReceipts})!=BrainstormingPersistence.Json(latest))throw;
+            current=latest;
+        }
+        }
     }
     public async Task<BrainstormingCache> SaveComposerAsync(BrainstormingScope scope, string text, CancellationToken ct = default)
     {
-        var current = await Required(scope, ct); return await store.WriteAsync(current with { Composer = text }, current.CacheRevision, Guid.NewGuid(), ct);
+        var current = await Required(scope, ct);
+        for(int attempt=0;;attempt++) {
+            if(current.Composer==text)return current;
+            try {return await store.WriteAsync(current with { Composer = text }, current.CacheRevision, Guid.NewGuid(), ct);}
+            catch(BrainstormingConcurrencyException) when(attempt<3) {
+                var latest=await Required(scope,ct);
+                if(latest.Composer!=current.Composer && latest.Composer!=text)throw;
+                current=latest;
+            }
+        }
     }
     public async Task<BrainstormingCache> AppendUnsentAsync(BrainstormingScope scope, string text, Guid sendOperationId, CancellationToken ct = default)
     {

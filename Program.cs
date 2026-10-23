@@ -35,6 +35,7 @@ using WriterApp.AI.Core;
 using WriterApp.AI.Providers.Mock;
 using WriterApp.AI.Providers.OpenAI;
 using WriterApp.Application.AI;
+using WriterApp.Application.Collaboration;
 using WriterApp.Application.Security;
 using WriterApp.Application.Billing;
 using WriterApp.Application.Subscriptions;
@@ -59,7 +60,8 @@ using WriterApp.Shared;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.AddEnvironmentVariables();
-if (OperatingSystem.IsWindows() && builder.Environment.IsDevelopment())
+bool localCollaborationTest = WriterApp.Application.Collaboration.LocalCollaborationTest.Configure(builder);
+if (OperatingSystem.IsWindows() && (builder.Environment.IsDevelopment() || localCollaborationTest))
 {
     // Local API startup must not require access to the Windows Event Log.
     // Console/debug logging remains available; hosted logging is unchanged.
@@ -178,10 +180,10 @@ else
         {
             options.DefaultAuthenticateScheme = useExternalIdAuth
                 ? EasyAuthAuthenticationHandler.SchemeName
-                : FakeAuthAuthenticationHandler.SchemeName;
+                : localCollaborationTest ? WriterApp.Application.Collaboration.LocalCollaborationTest.CookieScheme : FakeAuthAuthenticationHandler.SchemeName;
             options.DefaultChallengeScheme = useExternalIdAuth
                 ? EasyAuthAuthenticationHandler.SchemeName
-                : FakeAuthAuthenticationHandler.SchemeName;
+                : localCollaborationTest ? WriterApp.Application.Collaboration.LocalCollaborationTest.CookieScheme : FakeAuthAuthenticationHandler.SchemeName;
         })
         .AddScheme<AuthenticationSchemeOptions, EasyAuthAuthenticationHandler>(
             EasyAuthAuthenticationHandler.SchemeName,
@@ -193,7 +195,7 @@ else
 builder.Services.AddNativeBearerAuthentication(
     builder.Configuration.GetSection("NativeAuth").Get<NativeBearerOptions>() ?? new(),
     builder.Environment.IsDevelopment() ? LocalDevAuthenticationHandler.SchemeName
-        : useExternalIdAuth ? EasyAuthAuthenticationHandler.SchemeName : FakeAuthAuthenticationHandler.SchemeName);
+        : useExternalIdAuth ? EasyAuthAuthenticationHandler.SchemeName : localCollaborationTest ? WriterApp.Application.Collaboration.LocalCollaborationTest.CookieScheme : FakeAuthAuthenticationHandler.SchemeName);
 builder.Services.AddAuthorization(options =>
 {
     options.AddPolicy("AdminOnly", policy =>
@@ -202,7 +204,29 @@ builder.Services.AddAuthorization(options =>
 });
 builder.Services.Configure<WriterAuthOptions>(builder.Configuration.GetSection("WriterApp:Auth"));
 builder.Services.AddScoped<WriterApp.Application.AI.WebAiMutationFilter>();
-var mvcBuilder = builder.Services.AddControllers(options => options.Filters.AddService<WriterApp.Application.AI.WebAiMutationFilter>());
+builder.Services.AddScoped<WriterApp.Application.Collaboration.CollaborationWriteFilter>();
+builder.Services.AddSingleton<WriterApp.Application.Collaboration.CollaborationStagedTestGate>();
+builder.Services.AddScoped<WriterApp.Application.Collaboration.LocalCollaborationSignIn>();
+builder.Services.AddDataProtection();
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.Configure<WriterApp.Application.Collaboration.CollaborationSessionOptions>(builder.Configuration.GetSection("Collaboration"));
+builder.Services.AddScoped<WriterApp.Application.Collaboration.CollaborationSessionService>();
+builder.Services.AddScoped<WriterApp.Application.Collaboration.CollaborationCommitService>();
+builder.Services.Configure<WriterApp.Application.Collaboration.CollaborationSharingOptions>(builder.Configuration.GetSection("Collaboration:Sharing"));
+builder.Services.AddScoped<WriterApp.Application.Collaboration.CollaborationAccessService>();
+builder.Services.AddScoped<WriterApp.Application.Collaboration.CollaborationSharingService>();
+builder.Services.Configure<WriterApp.Application.Collaboration.CollaborationInteractionOptions>(builder.Configuration.GetSection("Collaboration:Interactions"));
+builder.Services.AddScoped<WriterApp.Application.Collaboration.CollaborationCommentService>();
+builder.Services.Configure<WriterApp.Application.Collaboration.CollaborationConversionOptions>(builder.Configuration.GetSection("Collaboration:Conversion"));
+builder.Services.AddScoped<WriterApp.Application.Collaboration.ICollaborationCodec, WriterApp.Application.Collaboration.CollaborationCodec>();
+builder.Services.AddScoped<WriterApp.Application.Collaboration.CollaborationMigrationService>();
+builder.Services.AddScoped<WriterApp.Application.Collaboration.CollaborationProjectionService>();
+builder.Services.AddHostedService<WriterApp.Application.Collaboration.CollaborationProjectionWorker>();
+var mvcBuilder = builder.Services.AddControllers(options =>
+{
+    options.Filters.AddService<WriterApp.Application.Collaboration.CollaborationWriteFilter>();
+    options.Filters.AddService<WriterApp.Application.AI.WebAiMutationFilter>();
+});
 mvcBuilder.ConfigureApplicationPartManager(manager =>
 {
     manager.ApplicationParts.Clear();
@@ -252,6 +276,7 @@ else
 // Domain services
 builder.Services.AddScoped<IPlanRepository, PlanRepository>();
 builder.Services.AddScoped<IUserEntitlementStore, UserEntitlementStore>();
+if (localCollaborationTest) builder.Services.AddScoped<IUserEntitlementStore, WriterApp.Application.Collaboration.LocalCollaborationEntitlements>();
 builder.Services.AddScoped<IDeletedUserIdentityService, DeletedUserIdentityService>();
 builder.Services.AddScoped<IEntitlementService, EntitlementService>();
 builder.Services.AddScoped<IUserIdResolver, UserIdResolver>();
@@ -447,6 +472,7 @@ builder.Services.AddServerSideBlazor()
     .AddCircuitOptions(o => o.DetailedErrors = true);
 
 var app = builder.Build();
+if (localCollaborationTest) app.UseLocalCollaborationTest();
 
 if (!app.Environment.IsDevelopment())
 {
@@ -725,12 +751,12 @@ if (openAiOptions.Enabled && !openAiKeyProvider.HasKey)
 // --------------------
 
 app.UseForwardedHeaders();
-if (!app.Environment.IsDevelopment())
+if (!app.Environment.IsDevelopment() && !localCollaborationTest)
 {
     app.UseHttpsRedirection();
 }
 
-if (!app.Environment.IsDevelopment())
+if (!app.Environment.IsDevelopment() && !localCollaborationTest)
 {
     app.UseExceptionHandler("/Error", createScopeForErrors: true);
     app.UseHsts();
@@ -3475,7 +3501,7 @@ static string ResolveSqliteConnectionString(IConfiguration configuration, IHostE
     SqliteConnectionStringBuilder sqliteBuilder = new(baseConnection);
 
     string dataSource = sqliteBuilder.DataSource ?? string.Empty;
-    if (environment.IsDevelopment())
+    if (environment.IsDevelopment() || WriterApp.Application.Collaboration.LocalCollaborationTest.Active(environment,configuration))
     {
         if (!string.IsNullOrWhiteSpace(dataSource) && !Path.IsPathRooted(dataSource))
         {

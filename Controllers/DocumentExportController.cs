@@ -10,6 +10,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using WriterApp.Application.Exporting;
+using WriterApp.Application.Collaboration;
+using WriterApp.Shared.Collaboration;
 using WriterApp.Application.Security;
 using WriterApp.Application.Subscriptions;
 using WriterApp.Data;
@@ -23,6 +25,19 @@ namespace WriterApp.Controllers
     [Authorize]
     public sealed class DocumentExportController : ControllerBase
     {
+        private CollaborationReadRequest? _collaborationWatermark;
+        private readonly CollaborationAccessService? _access;
+        private async Task<string> FundingActor(string actor, Guid id, CancellationToken ct) => _access is null ? actor
+            : (await _access.Require(actor, id, CollaborationOperation.Export, ct)).ResourceOwnerId;
+        private async Task<DocumentRecord?> ExportRecord(string actor, Guid id, CancellationToken ct)
+        {
+            string owner = await FundingActor(actor, id, ct);
+            return await _dbContext.Documents.AsNoTracking().SingleOrDefaultAsync(d => d.Id == id && d.OwnerUserId == owner, ct);
+        }
+        private CollaborationReadRequest RequiredWatermark() => _collaborationWatermark is { StructureRevision: not null, Required: not null } value
+            ? value : throw new CollaborationCommitException("collaboration_export_watermark_required");
+        private static List<PageRecord> ProjectionPages(CollaborationReadSnapshot snapshot) => snapshot.Pages.Select(p =>
+            new PageRecord { Id = p.PageId, DocumentId = snapshot.DocumentId, SectionId = p.SectionId, Title = p.Title, OrderIndex = p.OrderIndex, Content = p.Html }).ToList();
         private readonly AppDbContext _dbContext;
         private readonly IUserIdResolver _userIdResolver;
         private readonly IOutlineOrderResolver _outlineOrderResolver;
@@ -38,8 +53,9 @@ namespace WriterApp.Controllers
             ExportService exportService,
             IEntitlementService entitlementService,
             IConfiguration configuration,
-            ILogger<DocumentExportController> logger)
+            ILogger<DocumentExportController> logger, CollaborationAccessService? access = null)
         {
+            _access = access;
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _userIdResolver = userIdResolver ?? throw new ArgumentNullException(nameof(userIdResolver));
             _outlineOrderResolver = outlineOrderResolver ?? throw new ArgumentNullException(nameof(outlineOrderResolver));
@@ -73,7 +89,7 @@ namespace WriterApp.Controllers
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
-            ActionResult? gate = await EnsureExportAllowedAsync(userId, exportFormat, templateId, requiresPreview: false);
+            ActionResult? gate = await EnsureExportAllowedAsync(await FundingActor(userId, documentId, ct), exportFormat, templateId, requiresPreview: false);
             if (gate is not null)
             {
                 return gate;
@@ -123,6 +139,7 @@ namespace WriterApp.Controllers
             [FromBody] ExportDocumentRequest request,
             CancellationToken ct = default)
         {
+            _collaborationWatermark = request?.Collaboration;
             if (request is null || documentId == Guid.Empty)
             {
                 return BadRequest(new { message = "Invalid export request." });
@@ -145,7 +162,7 @@ namespace WriterApp.Controllers
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
-            ActionResult? gate = await EnsureExportAllowedAsync(userId, exportFormat, request.TemplateId, requiresPreview: false);
+            ActionResult? gate = await EnsureExportAllowedAsync(await FundingActor(userId, documentId, ct), exportFormat, request.TemplateId, requiresPreview: false);
             if (gate is not null)
             {
                 return gate;
@@ -206,7 +223,7 @@ namespace WriterApp.Controllers
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
-            ActionResult? gate = await EnsureExportAllowedAsync(userId, ExportFormat.Html, templateId, requiresPreview: true);
+            ActionResult? gate = await EnsureExportAllowedAsync(await FundingActor(userId, documentId, ct), ExportFormat.Html, templateId, requiresPreview: true);
             if (gate is not null)
             {
                 return gate;
@@ -243,6 +260,7 @@ namespace WriterApp.Controllers
             [FromBody] ExportDocumentRequest request,
             CancellationToken ct = default)
         {
+            _collaborationWatermark = request?.Collaboration;
             if (request is null || documentId == Guid.Empty)
             {
                 return BadRequest(new { message = "Invalid export request." });
@@ -255,7 +273,7 @@ namespace WriterApp.Controllers
             }
 
             string userId = _userIdResolver.ResolveUserId(User);
-            ActionResult? gate = await EnsureExportAllowedAsync(userId, ExportFormat.Html, request.TemplateId, requiresPreview: true);
+            ActionResult? gate = await EnsureExportAllowedAsync(await FundingActor(userId, documentId, ct), ExportFormat.Html, request.TemplateId, requiresPreview: true);
             if (gate is not null)
             {
                 return gate;
@@ -295,9 +313,7 @@ namespace WriterApp.Controllers
 
         private async Task<Document?> BuildExportDocumentAsync(Guid documentId, string userId, CancellationToken ct)
         {
-            DocumentRecord? documentRecord = await _dbContext.Documents
-                .AsNoTracking()
-                .FirstOrDefaultAsync(document => document.Id == documentId && document.OwnerUserId == userId, ct);
+            DocumentRecord? documentRecord = await ExportRecord(userId, documentId, ct);
             if (documentRecord is null)
             {
                 return null;
@@ -321,6 +337,9 @@ namespace WriterApp.Controllers
                 .ThenBy(page => page.OrderIndex)
                 .ToListAsync(ct);
 
+            if (documentRecord.CollaborationMode != CollaborationMode.Legacy)
+                pages = ProjectionPages(await CollaborationProjectionService.Read(_dbContext, userId, documentId, RequiredWatermark(), ct, _access, CollaborationOperation.Export));
+
             Dictionary<Guid, List<PageRecord>> pagesBySection = pages
                 .GroupBy(page => page.SectionId)
                 .ToDictionary(group => group.Key, group => group.OrderBy(page => page.OrderIndex).ToList());
@@ -328,6 +347,7 @@ namespace WriterApp.Controllers
                 documentRecord.ProjectId,
                 sections.Select(section => section.Id).ToList(),
                 ct);
+            if (documentRecord.CollaborationMode != CollaborationMode.Legacy) sceneContentBySection.Clear();
 
             Chapter chapter = new()
             {
@@ -399,9 +419,7 @@ namespace WriterApp.Controllers
             string? selectionText,
             CancellationToken ct)
         {
-            DocumentRecord? documentRecord = await _dbContext.Documents
-                .AsNoTracking()
-                .FirstOrDefaultAsync(document => document.Id == documentId && document.OwnerUserId == userId, ct);
+            DocumentRecord? documentRecord = await ExportRecord(userId, documentId, ct);
             if (documentRecord is null)
             {
                 return null;
@@ -570,6 +588,15 @@ namespace WriterApp.Controllers
                 sectionIds,
                 ct);
 
+            CollaborationReadSnapshot? collaborative = documentRecord.CollaborationMode == CollaborationMode.Legacy ? null
+                : await CollaborationProjectionService.Read(_dbContext, _userIdResolver.ResolveUserId(User), documentRecord.Id, RequiredWatermark(), ct, _access, CollaborationOperation.Export);
+            if (collaborative is not null)
+            {
+                sceneContentBySection.Clear();
+                if (string.Equals(scope, "selection", StringComparison.OrdinalIgnoreCase))
+                    throw new CollaborationCommitException("collaboration_selection_watermark_required");
+            }
+
             if (!string.Equals(scope, "selection", StringComparison.OrdinalIgnoreCase))
             {
                 List<PageRecord> pages = await _dbContext.Pages
@@ -578,6 +605,8 @@ namespace WriterApp.Controllers
                     .OrderBy(page => page.SectionId)
                     .ThenBy(page => page.OrderIndex)
                     .ToListAsync(ct);
+
+                if (collaborative is not null) pages = ProjectionPages(collaborative).Where(p => sectionIds.Contains(p.SectionId)).ToList();
 
                 if (string.Equals(scope, "page", StringComparison.OrdinalIgnoreCase) && scopeIds is not null)
                 {

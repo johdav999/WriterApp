@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 
 [assembly: InternalsVisibleTo("WriterApp.Tests")]
+[assembly: InternalsVisibleTo("WriterApp.CollaborationJournalCrash")]
 
 namespace WriterApp.Device.Shared.Storage;
 

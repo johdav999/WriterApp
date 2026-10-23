@@ -412,3 +412,23 @@
     .is-library-shell .app-sidebar-footer .sidebar-account { display:none; }
     .is-library-shell .app-main,.is-library-shell .content { height:auto; overflow:visible; }
 }
+/* Sharing has its own manuscript search and needs a full-width, scrollable mobile workspace. */
+@media (max-width: 900px) {
+    .app-shell:has(.sharing-page), .app-shell:has(.device-sharing-page) { height: auto; min-height: 100dvh; overflow: visible; }
+    .app-main:has(.collaboration-sharing), .app-body:has(.collaboration-sharing), .content:has(.collaboration-sharing) { height: auto; min-height: 0; overflow: visible; }
+}
+@media (max-width: 700px) {
+    .app-body:has(.sharing-page), .app-body:has(.device-sharing-page) { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto; height: auto; overflow: visible; }
+    .app-body:has(.collaboration-sharing) > .app-nav { flex-direction: row; flex-wrap: wrap; overflow-x: visible; padding: 8px; gap: 4px; border-right: 0; border-bottom: 1px solid var(--color-border); }
+    .app-body:has(.collaboration-sharing) > .app-nav .app-nav-link { width: auto; flex-shrink: 0; min-height: 44px; padding: 10px 12px; }
+    .app-body:has(.collaboration-sharing) > .app-nav .panel-resize-handle { display: none; }
+    .app-shell:has(.collaboration-sharing) > .app-header { display: flex; align-items: center; justify-content: space-between; min-height: 64px; padding: 12px 16px; gap: 12px; }
+    .app-shell:has(.collaboration-sharing) > .app-header .app-header-center { display: none; }
+    .app-shell:has(.collaboration-sharing) > .app-header .app-header-content { display: flex; justify-content: flex-end; width: auto; }
+    .app-shell:has(.collaboration-sharing) > .app-header .app-brand { padding: 0; }
+    .app-shell:has(.collaboration-sharing) > .app-header .app-brand-logo { height: 32px; max-height: 32px; }
+}
+@media (max-width: 900px) {
+    html:has(.collaboration-sharing), body:has(.collaboration-sharing), #app:has(.collaboration-sharing) { height: auto; min-height: 100%; }
+    body:has(.collaboration-sharing) { overflow: visible; }
+}

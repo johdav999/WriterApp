@@ -393,11 +393,18 @@ namespace WriterApp.Controllers
             }
 
             DocumentRecord? documentRecord = await _documents.GetAsync(documentId, userId, ct);
+            var sharedAccess = HttpContext.RequestServices?.GetService<WriterApp.Application.Collaboration.CollaborationAccessService>();
+            if (sharedAccess is not null && await _dbContext.Documents.AnyAsync(d=>d.Id==documentId && d.CollaborationMode==WriterApp.Shared.Collaboration.CollaborationMode.Collaborative,ct)) {
+                await sharedAccess.Require(userId,documentId,WriterApp.Application.Collaboration.CollaborationOperation.PrepareAi,ct);
+                documentRecord=await _dbContext.Documents.AsNoTracking().SingleAsync(d=>d.Id==documentId,ct);
+            }
             if (documentRecord is null)
             {
                 return NotFound();
             }
             var manuscriptProject = await _dbContext.Projects.FirstOrDefaultAsync(p => p.Id == documentRecord.ProjectId && p.OwnerUserId == userId, ct);
+            if (documentRecord.CollaborationMode != WriterApp.Shared.Collaboration.CollaborationMode.Legacy && request.WebSource is null)
+                return Conflict(new { code = "collaboration_ai_watermark_required", message = "Capture current shared writing before generating." });
             if (manuscriptProject is not null) await ManuscriptOwnership.ResolvePrimaryAsync(_dbContext, manuscriptProject, ct);
             _dbContext.ManuscriptScopeId = documentId;
 
@@ -427,7 +434,9 @@ namespace WriterApp.Controllers
                 }
             }
 
-            IReadOnlyList<SectionRecord> sectionRecords = await _sections.ListByDocumentAsync(documentId, userId, ct);
+            IReadOnlyList<SectionRecord> sectionRecords = documentRecord.CollaborationMode == WriterApp.Shared.Collaboration.CollaborationMode.Collaborative
+                ? await _dbContext.Sections.AsNoTracking().Where(s=>s.DocumentId==documentId && _dbContext.Pages.Any(p=>p.SectionId==s.Id && _dbContext.CollaborationPages.Any(c=>c.PageId==p.Id && !c.IsDeleted))).OrderBy(s=>s.OrderIndex).ToArrayAsync(ct)
+                : await _sections.ListByDocumentAsync(documentId, userId, ct);
             if (sectionRecords.Count == 0)
             {
                 return BadRequest(new { message = "document has no sections." });
@@ -583,7 +592,7 @@ namespace WriterApp.Controllers
                     if (request.ExpectedDocumentVersion is null || !(WriterApp.Shared.WritingActions.SectionKeys.Contains(actionKey)||actionKey=="custom_transform"&&(reusablePreset?.Scope==WriterApp.Shared.WritingScope.Section || recommendation is not null))
                         || writingSource.DocumentId != documentId || writingSource.SectionId != sectionId)
                         return BadRequest(new { message = "Section revision requires its synchronized document and section." });
-                    var pages = await _pages.ListBySectionAsync(sectionId, userId, ct);
+                    var pages = await CheckedPagesAsync(sectionId, userId, ct);
                     if (recommendation is not null) {
                         WriterApp.Shared.RecommendedWriting.ValidateSource(writingSource, recommendation.ToolId);
                         WriterApp.Shared.RecommendedWriting.ValidateOpeningHtml(pages.OrderBy(p => p.OrderIndex).First().Content, recommendation.ToolId);
@@ -620,7 +629,7 @@ namespace WriterApp.Controllers
                         return BadRequest(new { message = "Translation must contain every intended section in order." });
                     foreach (var section in translationSource.Sections)
                     {
-                        var pages = await _pages.ListBySectionAsync(section.Id, userId, ct);
+                        var pages = await CheckedPagesAsync(section.Id, userId, ct);
                         if (!pages.OrderBy(p => p.OrderIndex).Select(p => p.Id).SequenceEqual(section.Pages.Select(p => p.Id)))
                             return BadRequest(new { message = "Translation must contain every intended page in order." });
                     }
@@ -1295,7 +1304,7 @@ namespace WriterApp.Controllers
             List<Section> domainSections = new();
             foreach (SectionRecord sectionRecord in sections.OrderBy(section => section.OrderIndex))
             {
-                IReadOnlyList<PageRecord> pages = await _pages.ListBySectionAsync(sectionRecord.Id, ownerUserId, ct);
+                IReadOnlyList<PageRecord> pages = await CheckedPagesAsync(sectionRecord.Id, ownerUserId, ct);
                 string content = string.Join("\n\n", pages.Select(page => page.Content ?? string.Empty));
 
                 domainSections.Add(new Section
@@ -1346,7 +1355,7 @@ namespace WriterApp.Controllers
             List<Section> domainSections = new();
             foreach (SectionRecord sectionRecord in sections.OrderBy(section => section.OrderIndex).Take(OutlineMaxSections))
             {
-                IReadOnlyList<PageRecord> pages = await _pages.ListBySectionAsync(sectionRecord.Id, ownerUserId, ct);
+                IReadOnlyList<PageRecord> pages = await CheckedPagesAsync(sectionRecord.Id, ownerUserId, ct);
                 string html = string.Join("\n\n", pages.Select(page => page.Content ?? string.Empty));
                 string plain = PlainTextMapper.ToPlainText(html);
                 if (plain.Length > OutlineMaxSectionChars)

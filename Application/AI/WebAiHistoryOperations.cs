@@ -11,8 +11,10 @@ public sealed class WebAiHistoryOperations(AppDbContext db,string owner,IService
     public static WebAiHistoryIntent Intent(WebAiHistoryOperationRecord row) => JsonSerializer.Deserialize<WebAiHistoryIntent>(row.IntentJson,WebAiHistoryContracts.Json)!;
     public static WebAiHistoryReceipt Receipt(WebAiHistoryOperationRecord row) => new(1,row.OperationId,row.ApplicationId,row.ProposalId,
         row.Sequence,row.Outcome,row.RequestHash,row.ReportedAt is not null?"Confirmed":row.CommittedAt is not null?"Pending":"Prepared",row.CommittedAt,row.SavedResponseJson);
+    private WriterApp.Application.Collaboration.CollaborationAccessService? SharedAccess => services?.GetService<WriterApp.Application.Collaboration.CollaborationAccessService>();
     public async Task RequireOwner(Guid document,CancellationToken ct)
     {
+        if (SharedAccess is { } access && await db.Documents.AnyAsync(d=>d.Id==document && d.CollaborationMode==WriterApp.Shared.Collaboration.CollaborationMode.Collaborative,ct)) { await access.Require(owner,document,WriterApp.Application.Collaboration.CollaborationOperation.WriteText,ct); return; }
         if(!await db.Documents.AnyAsync(d=>d.Id==document && d.OwnerUserId==owner && d.DeletedAtUtc==null && !d.IsArchived,ct)
             || await db.DeletedUserIdentities.AnyAsync(u=>u.UserId==owner,ct))
             throw new InvalidOperationException("The owned manuscript/account is unavailable. Reporting intent is retained.");
@@ -35,6 +37,10 @@ public sealed class WebAiHistoryOperations(AppDbContext db,string owner,IService
                 if(result.Result is Microsoft.AspNetCore.Mvc.OkObjectResult {Value:WriterApp.Application.Documents.SectionSceneCardDto card})return WebSceneCardSources.Canonical(card);
             }
             throw new InvalidDataException("Owned planning target is unavailable.");
+        }
+        if(intent.TargetKind=="Page" && intent.Source.DocumentVersion.StartsWith("collaboration:")) {
+            var snapshot=await WriterApp.Application.Collaboration.CollaborationProjectionService.Read(db,owner,intent.Source.DocumentId,new(),ct,SharedAccess,WriterApp.Application.Collaboration.CollaborationOperation.PrepareAi);
+            return snapshot.Pages.Single(p=>p.PageId==intent.Source.PageId).Html;
         }
         if(intent.TargetKind=="Page")return (await db.Pages.AsNoTracking().SingleOrDefaultAsync(p=>p.Id==intent.Source.PageId && p.DocumentId==intent.Source.DocumentId && p.SectionId==intent.Source.SectionId,ct))?.Content
             ?? throw new InvalidDataException("History page target is unavailable.");
@@ -88,7 +94,7 @@ public sealed class WebAiHistoryOperations(AppDbContext db,string owner,IService
                 || intent.Outcome!=(previous.Outcome=="Undone"?"Redone":"Undone") || intent.BeforeContent!=old.AfterContent || intent.AfterContent!=old.BeforeContent)
                 throw new InvalidOperationException("Invalid ordered Undo/Redo transition.");
         }
-        await new WebAiSourceService(db,owner).Require(intent.Source,ct);
+        await new WebAiSourceService(db,owner,SharedAccess).Require(intent.Source,ct);
         if(intent.TargetKind!="Aggregate" && await Content(intent,ct)!=intent.BeforeContent)throw new InvalidOperationException("Writing changed before approval. Nothing was saved.");
     }
     public async Task ReconcileAggregate(WebAiHistoryOperationRecord row,CancellationToken ct)

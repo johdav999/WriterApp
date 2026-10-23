@@ -17,7 +17,7 @@ using WriterApp.Data.Usage;
 
 namespace WriterApp.Data
 {
-    public class AppDbContext : DbContext
+    public partial class AppDbContext : DbContext
     {
         // Request-local manuscript scope. Project administration and sync leave this unset.
         public Guid? ManuscriptScopeId { get; set; }
@@ -97,10 +97,7 @@ namespace WriterApp.Data
 
         public override int SaveChanges()
         {
-            AssignManuscriptScope();
-            NormalizeStringIds();
-            SyncDocumentUnixTimestamps();
-            return base.SaveChanges();
+            return SaveChanges(true);
         }
 
         public override int SaveChanges(bool acceptAllChangesOnSuccess)
@@ -108,23 +105,26 @@ namespace WriterApp.Data
             AssignManuscriptScope();
             NormalizeStringIds();
             SyncDocumentUnixTimestamps();
-            return base.SaveChanges(acceptAllChangesOnSuccess);
+            Application.Collaboration.CollaborationWriteGuard.Validate(this);
+            try { return base.SaveChanges(acceptAllChangesOnSuccess); }
+            catch (Exception error) when (Application.Collaboration.CollaborationWriteException.FromStorage(error) is not null)
+            { throw Application.Collaboration.CollaborationWriteException.FromStorage(error)!; }
         }
 
         public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
         {
-            AssignManuscriptScope();
-            NormalizeStringIds();
-            SyncDocumentUnixTimestamps();
-            return base.SaveChangesAsync(cancellationToken);
+            return SaveChangesAsync(true, cancellationToken);
         }
 
-        public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+        public override async Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
         {
             AssignManuscriptScope();
             NormalizeStringIds();
             SyncDocumentUnixTimestamps();
-            return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+            await Application.Collaboration.CollaborationWriteGuard.ValidateAsync(this, cancellationToken);
+            try { return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken); }
+            catch (Exception error) when (Application.Collaboration.CollaborationWriteException.FromStorage(error) is not null)
+            { throw Application.Collaboration.CollaborationWriteException.FromStorage(error)!; }
         }
 
         private void AssignManuscriptScope()
@@ -144,6 +144,7 @@ namespace WriterApp.Data
 
         protected override void OnModelCreating(ModelBuilder builder)
         {
+            ConfigureCollaboration(builder);
             builder.Entity<BrainstormingPlanningSaveRecord>(e => {
                 e.HasKey(x=>new {x.SessionId,x.OperationId});
                 e.HasIndex(x=>new {x.SessionId,x.CandidateId}).IsUnique();
@@ -1102,8 +1103,12 @@ namespace WriterApp.Data
                 if (entry.State == EntityState.Added || entry.State == EntityState.Modified)
                 {
                     entry.Entity.DeletedAtUtc = NormalizeUtc(entry.Entity.DeletedAtUtc);
-                    entry.Entity.CreatedAtUnixSeconds = entry.Entity.CreatedAt.ToUnixTimeSeconds();
-                    entry.Entity.UpdatedAtUnixSeconds = entry.Entity.UpdatedAt.ToUnixTimeSeconds();
+                    // A mode-only transition must retain the legacy timestamp columns,
+                    // including when a database planning trigger last touched UpdatedAt.
+                    if(entry.State==EntityState.Added || entry.Property(d=>d.CreatedAt).IsModified)
+                        entry.Entity.CreatedAtUnixSeconds = entry.Entity.CreatedAt.ToUnixTimeSeconds();
+                    if(entry.State==EntityState.Added || entry.Property(d=>d.UpdatedAt).IsModified)
+                        entry.Entity.UpdatedAtUnixSeconds = entry.Entity.UpdatedAt.ToUnixTimeSeconds();
                 }
             }
         }
